@@ -1,0 +1,7 @@
+{
+ "doctype":"DocType", "name":"HERO GraphQL Schema Snapshot", "module":"HERO Integration", "autoname":"hash", "track_changes":1,
+ "fields":[
+  {"fieldname":"snapshot_json","fieldtype":"Code","options":"JSON","reqd":1}, {"fieldname":"schema_fingerprint","fieldtype":"Data","reqd":1,"read_only":1,"unique":1},
+  {"fieldname":"analysis_status","fieldtype":"Select","options":"Validated\nRejected","default":"Validated","read_only":1}, {"fieldname":"analysis_detail","fieldtype":"Small Text","read_only":1}
+ ], "permissions":[{"role":"System Manager","read":1,"write":1,"create":1,"delete":1}], "modified":"2026-10-18 00:00:00.000000"
+}

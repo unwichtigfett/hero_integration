@@ -1,0 +1,7 @@
+{
+ "doctype": "DocType", "name": "HERO Integration Record", "module": "HERO Integration", "autoname": "hash",
+ "fields": [
+  {"fieldname": "run", "fieldtype": "Link", "options": "HERO Integration Run", "reqd": 1, "in_list_view": 1}, {"fieldname": "source_type", "fieldtype": "Data", "reqd": 1, "in_list_view": 1}, {"fieldname": "source_id", "fieldtype": "Data", "reqd": 1, "in_list_view": 1},
+  {"fieldname": "result", "fieldtype": "Select", "options": "PREVIEW_OK\nCREATED\nSKIPPED\nSKIPPED_AMBIGUOUS\nBLOCKED_RECORD\nCONFLICT\nUNAVAILABLE", "reqd": 1, "in_list_view": 1}, {"fieldname": "detail", "fieldtype": "Small Text"}, {"fieldname": "target_doctype", "fieldtype": "Data"}, {"fieldname": "target_name", "fieldtype": "Data"}
+ ], "permissions": [{"role": "System Manager", "read": 1, "write": 1, "create": 1}], "modified": "2026-10-16 00:00:00.000000"
+}
