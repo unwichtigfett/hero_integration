@@ -1,0 +1,11 @@
+{
+ "doctype": "DocType", "name": "HERO Integration Link", "module": "HERO Integration", "autoname": "hash",
+ "fields": [
+  {"fieldname": "source_system", "fieldtype": "Data", "default": "HERO", "reqd": 1, "read_only": 1, "in_list_view": 1}, {"fieldname": "source_instance", "fieldtype": "Data", "read_only": 1},
+  {"fieldname": "source_type", "label": "HERO Entity Type", "fieldtype": "Data", "reqd": 1, "read_only": 1, "in_list_view": 1}, {"fieldname": "source_id", "label": "HERO External ID", "fieldtype": "Data", "reqd": 1, "read_only": 1, "in_list_view": 1},
+  {"fieldname": "source_key", "fieldtype": "Data", "reqd": 1, "read_only": 1, "unique": 1},
+  {"fieldname": "target_doctype", "fieldtype": "Data", "reqd": 1, "read_only": 1}, {"fieldname": "target_name", "fieldtype": "Dynamic Link", "options": "target_doctype", "reqd": 1, "read_only": 1},
+  {"fieldname": "sync_status", "fieldtype": "Select", "options": "Synchronized\nConflict\nSource Deleted", "default": "Synchronized", "reqd": 1, "read_only": 1, "in_list_view": 1}, {"fieldname": "last_synced_on", "fieldtype": "Datetime", "read_only": 1}, {"fieldname": "conflict_detail", "fieldtype": "Small Text", "read_only": 1},
+  {"fieldname": "source_payload_hash", "fieldtype": "Data", "reqd": 1, "read_only": 1}, {"fieldname": "target_payload_hash", "fieldtype": "Data", "reqd": 1, "read_only": 1}, {"fieldname": "mapping_version", "fieldtype": "Data", "reqd": 1, "read_only": 1}
+ ], "permissions": [{"role": "System Manager", "read": 1, "write": 1, "create": 1, "delete": 1}], "modified": "2026-10-16 00:00:00.000000"
+}

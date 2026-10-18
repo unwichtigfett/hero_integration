@@ -1,0 +1,25 @@
+[project]
+name = "hero_integration"
+version = "0.1.0"
+description = "Native Frappe v16 integration for HERO"
+readme = "README.md"
+requires-python = ">=3.14,<3.15"
+license = {file = "LICENSE"}
+dependencies = []
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["hero_integration*"]
+
+[tool.setuptools.package-data]
+hero_integration = ["modules.txt", "**/*.json", "**/*.js"]
+
+[tool.bench.frappe-dependencies]
+frappe = ">=16.0.0-dev,<17.0.0"
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
