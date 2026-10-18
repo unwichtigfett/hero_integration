@@ -1,0 +1,6 @@
+{
+ "doctype": "DocType", "name": "HERO Integration Sync State", "module": "HERO Integration", "issingle": 1,
+ "fields": [
+  {"fieldname": "active_run", "fieldtype": "Link", "options": "HERO Integration Run", "read_only": 1}, {"fieldname": "customer_offset", "fieldtype": "Int", "default": "0", "read_only": 1}, {"fieldname": "project_offset", "fieldtype": "Int", "default": "0", "read_only": 1}
+ ], "permissions": [{"role": "System Manager", "read": 1, "write": 1, "create": 1}], "modified": "2026-10-16 00:00:00.000000"
+}
