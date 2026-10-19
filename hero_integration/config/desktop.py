@@ -8,5 +8,6 @@ def get_data():
             "type": "module",
             "label": "HERO Integration",
             "icon": "octicon octicon-sync",
+            "link": "/app/hero-integration",
         }
     ]

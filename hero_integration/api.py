@@ -74,6 +74,69 @@ def integration_profiles() -> dict[str, str]:
 
 
 @frappe.whitelist()
+def integration_overview() -> dict[str, object]:
+    """Return a redacted, stored-state-only summary for the HERO Desk overview."""
+    frappe.only_for("System Manager")
+    settings = frappe.get_single("HERO Integration Settings")
+    mapping_counts = {
+        state: frappe.db.count("HERO Frappe Mapping", {"status": state})
+        for state in ("Draft", "Active", "Disabled", "Rejected")
+    }
+    return {
+        "connection": {
+            "endpoint_configured": bool(settings.hero_api_url),
+            "allowed_host_count": len([host for host in (settings.allowed_hero_hosts or "").splitlines() if host.strip()]),
+            "scheduled_sync_enabled": bool(settings.scheduled_sync_enabled),
+            "sync_status": settings.sync_status or "Not started",
+            "last_successful_sync": settings.last_successful_sync,
+        },
+        "snapshot_count": frappe.db.count("HERO GraphQL Schema Snapshot"),
+        "service_count": frappe.db.count("HERO GraphQL Service"),
+        "mapping_counts": mapping_counts,
+        "latest_run": frappe.get_all(
+            "HERO Integration Run",
+            fields=["name", "action", "state", "modified"],
+            order_by="modified desc",
+            limit_page_length=1,
+        ),
+    }
+
+
+@frappe.whitelist()
+def schema_snapshot_list() -> list[dict[str, object]]:
+    """List saved snapshots without exposing configuration or making network calls."""
+    frappe.only_for("System Manager")
+    return frappe.get_all(
+        "HERO GraphQL Schema Snapshot",
+        fields=["name", "schema_fingerprint", "analysis_status", "analysis_detail", "modified"],
+        order_by="modified desc",
+        limit_page_length=100,
+    )
+
+
+@frappe.whitelist()
+def graphql_service_list() -> list[dict[str, object]]:
+    """List saved GraphQL services. Execution remains a separate explicit action."""
+    frappe.only_for("System Manager")
+    return frappe.get_all(
+        "HERO GraphQL Service",
+        fields=[
+            "name",
+            "service_name",
+            "operation_name",
+            "schema_snapshot",
+            "schema_fingerprint",
+            "service_revision",
+            "status",
+            "validation_summary",
+            "modified",
+        ],
+        order_by="modified desc",
+        limit_page_length=100,
+    )
+
+
+@frappe.whitelist()
 def graph_view(snapshot_name: str) -> dict[str, object]:
     """Return a stored schema graph without contacting HERO."""
     frappe.only_for("System Manager")

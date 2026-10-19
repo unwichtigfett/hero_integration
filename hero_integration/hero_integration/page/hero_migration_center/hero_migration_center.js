@@ -1,5 +1,8 @@
 frappe.pages["hero-migration-center"].on_page_load = function (wrapper) {
+    if (window.hero_integration_ui) window.hero_integration_ui.ensureStyles();
+    else frappe.require("/assets/hero_integration/js/hero_workspace.js");
     const page = frappe.ui.make_app_page({parent: wrapper, title: __("HERO Migration Center"), single_column: true});
+    page.main.addClass("hero-integration-ui");
     const actions = ["Customer Migration", "Project Migration", "Cheap Data Migration", "Full Data Migration", "Sync"];
     actions.forEach((action) => page.add_menu_item(__(action + " Preview"), () => start(action, 1)));
     actions.forEach((action) => page.add_action_item(__(action), () => confirm_start(action)));
