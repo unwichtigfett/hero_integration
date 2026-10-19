@@ -769,11 +769,7 @@
         }
         async validateQuery(){const stamp=this.draftString();const data=this.query&&!this.dirty?await call('validate_saved_query',{...this.serviceScope(true),query_id:this.query.query_id,expected_revision:this.query.revision},true):await call('preview_query',{...this.serviceScope(true),payload:this.payload()},true);if(stamp!==this.draftString())return;this.validation=data;this.queryOutput.textContent=JSON.stringify(data,null,2);}
         async executeQuery(){
-            if(this.dirty||!this.query||!this.validation?.can_execute)throw new Error('Save and validate the current service first.');
-            const mutation=this.serviceKind==='mutation';
-            if(mutation&&!window.confirm(`Mutation "${this.query.name}" · Revision ${this.query.revision} mit den angezeigten Variablen auf HERO ausführen? Dies schreibt Daten.`))return;
-            const data=await call('execute_service',{...this.serviceScope(true),query_id:this.query.query_id,expected_revision:this.query.revision,variables:JSON.parse(this.variables.value),mutation_confirmed:mutation},true);
-            this.queryOutput.textContent=JSON.stringify(data,null,2);
+            throw new Error('HERO_MUTATION_EXECUTION_DISABLED');
         }
         async deleteQuery(){if(!this.query||!window.confirm(this.dirty?'Delete the saved service and discard the unsaved draft?':'Delete the saved service?'))return;await call('delete_query',{...this.serviceScope(),query_id:this.query.query_id,expected_revision:this.query.revision},true);this.setQuery();await this.loadQueries();}
         updateActions(){if(!this.saveButton)return;
@@ -782,9 +778,9 @@
             if(this.analyzerServiceForm)this.analyzerServiceForm.save.disabled=!analyzerAllowed||this.analyzerServiceForm.saved;
             if(this.queryProvenance)this.queryProvenance.textContent='Provenance='+(this.query?.provenance||this.draftProvenance||'GraphQL-Services');
             if(this.serviceHint)this.serviceHint.textContent=this.serviceKind==='mutation'
-                ? 'Mutation drafts are validated only against the saved schema. Storage and HERO execution remain disabled.'
+                ? 'Mutation drafts are local-only, stored locally, and validated only against the saved schema. HERO execution remains disabled.'
                 : 'Gespeicherte Queries lesen Daten aus HERO. Ergebnisse werden nicht automatisch gespeichert.';
-this.queryStatus.textContent=this.query?`${this.serviceLabel()} ${this.query.query_id} · Revision ${this.query.revision}${this.dirty?' · Unsaved changes':''}`:'New unsaved draft';const allowed=!!this.context?.can_write&&!this.context.needs_binding_update&&!this.busy;for(const b of [this.newButton,this.copyButton])b.disabled=!allowed;this.saveButton.disabled=!allowed||this.serviceKind==='mutation';this.saveButton.title=this.serviceKind==='mutation'?'Mutation drafts are local-only.':' ';this.validateButton.disabled=!allowed||!this.schema;this.executeButton.disabled=true;this.executeButton.title='Remote execution is disabled in the native workspace.';this.deleteButton.disabled=!allowed||!this.query||this.serviceKind==='mutation';this.bindButton.disabled=!this.context?.can_write||this.busy;}
+this.queryStatus.textContent=this.query?`${this.serviceLabel()} ${this.query.query_id} · Revision ${this.query.revision}${this.dirty?' · Unsaved changes':''}`:'New unsaved draft';const allowed=!!this.context?.can_write&&!this.context.needs_binding_update&&!this.busy;for(const b of [this.newButton,this.copyButton])b.disabled=!allowed;this.saveButton.disabled=!allowed;this.saveButton.title=this.serviceKind==='mutation'?'Stores a local-only disabled mutation draft.':' ';this.validateButton.disabled=!allowed||!this.schema;this.executeButton.disabled=true;this.executeButton.title='HERO_MUTATION_EXECUTION_DISABLED';this.deleteButton.disabled=!allowed||!this.query;this.bindButton.disabled=!this.context?.can_write||this.busy;}
         destroy(){
             this.cancelGraph?.();
             this.focusDialog?.hide?.();

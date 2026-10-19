@@ -58,10 +58,10 @@ class TestHeroDeskUiContract(unittest.TestCase):
         source = "\n".join((WORKSPACE_JS.read_text(), TOOLS_JS.read_text()))
         self.assertIn("workspace_mutation_draft_validate", source)
         self.assertIn("Mutation drafts are local-only", source)
-        self.assertIn("Remote execution is disabled", source)
+        self.assertIn("HERO_MUTATION_EXECUTION_DISABLED", source)
         api_source = (PACKAGE_ROOT / "api.py").read_text()
         execution = api_source.split("def execute_graphql_service", 1)[1].split("class _FrappePickerMetadata", 1)[0]
-        self.assertIn("HERO service execution is disabled", execution)
+        self.assertIn("MUTATION_EXECUTION_DISABLED", execution)
         self.assertNotIn("HeroGraphQLClient", execution)
 
     def test_graph_viewer_keeps_snapshot_selection_separate_from_performance_overview(self):
