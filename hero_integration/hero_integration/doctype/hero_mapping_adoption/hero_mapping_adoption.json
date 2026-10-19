@@ -1,13 +1,13 @@
 {
  "doctype": "DocType", "name": "HERO Mapping Adoption", "module": "HERO Integration", "autoname": "format:HERO-ADOPT-{#####}", "track_changes": 1,
  "fields": [
-  {"fieldname":"schema_snapshot","fieldtype":"Link","options":"HERO GraphQL Schema Snapshot","reqd":1,"read_only":1,"in_list_view":1},
-  {"fieldname":"package_fingerprint","fieldtype":"Data","reqd":1,"read_only":1,"in_list_view":1},
-  {"fieldname":"status","fieldtype":"Select","options":"Queued\nCompleted\nFailed","default":"Queued","read_only":1,"in_list_view":1},
-  {"fieldname":"selected_ids_json","fieldtype":"Code","options":"JSON","read_only":1},
-  {"fieldname":"package_json","fieldtype":"Code","options":"JSON","read_only":1},
-  {"fieldname":"outcome_json","fieldtype":"Code","options":"JSON","read_only":1},
-  {"fieldname":"error_message","fieldtype":"Small Text","read_only":1}
+  {"fieldname":"schema_snapshot","label":"HERO Schema Snapshot","fieldtype":"Link","options":"HERO GraphQL Schema Snapshot","reqd":1,"read_only":1,"in_list_view":1},
+  {"fieldname":"package_fingerprint","label":"Package Fingerprint","fieldtype":"Data","reqd":1,"read_only":1,"in_list_view":1},
+  {"fieldname":"status","label":"Status","fieldtype":"Select","options":"Queued\nCompleted\nFailed","default":"Queued","read_only":1,"in_list_view":1},
+  {"fieldname":"selected_ids_json","label":"Selected Definition IDs","fieldtype":"Code","options":"JSON","read_only":1},
+  {"fieldname":"package_json","label":"Mapping Package","fieldtype":"Code","options":"JSON","read_only":1},
+  {"fieldname":"outcome_json","label":"Adoption Outcome","fieldtype":"Code","options":"JSON","read_only":1},
+  {"fieldname":"error_message","label":"Error Message","fieldtype":"Small Text","read_only":1}
  ],
  "permissions":[{"role":"System Manager","read":1,"write":1,"create":1}], "modified":"2026-10-19 00:00:00.000000"
 }
