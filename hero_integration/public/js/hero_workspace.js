@@ -1,9 +1,28 @@
+/* Preserved HERO Adapter host rendered against native saved Frappe state. */
 (() => {
     "use strict";
 
     if (window.hero_integration_ui) return;
 
     const API = "hero_integration.api";
+    const CANONICAL_PAGE = "hero-integration";
+    const SECTION_NAMES = Object.freeze({
+        overview: "Overview / Connection",
+        analyzer: "API Analyzer",
+        graph: "Graph Viewer",
+        services: "GraphQL Services",
+        mapping: "ERPNext Mapping",
+        migration: "Migration / Synchronisation",
+        settings: "Settings",
+    });
+    const legacyPageSections = Object.freeze({
+        "hero-api-analyzer": "analyzer",
+        "hero-graph-viewer": "graph",
+        "hero-graphql-services": "services",
+        "hero-adapter-tools": "mapping",
+        "hero-migration-center": "migration",
+        "hero-settings": "settings",
+    });
     const ASSETS = [
         "/assets/hero_integration/css/hero_tools.css",
         "/assets/hero_integration/css/hero_adapter.css",
@@ -12,14 +31,9 @@
         "/assets/hero_integration/js/hero_tools.js",
         "/assets/hero_integration/js/hero_overview.js",
         "/assets/hero_integration/js/hero_settings.js",
+        "/assets/hero_integration/js/hero_mapping_editor.js",
+        "/assets/hero_integration/js/hero_migration.js",
     ];
-    const routes = {
-        "connections/hero/api-analyzer": "hero-api-analyzer",
-        "connections/hero/graph-viewer": "hero-graph-viewer",
-        "connections/hero/graphql-services": "hero-graphql-services",
-        "connections/hero/variable-mapping": "hero-adapter-tools",
-        "connections/hero/settings": "hero-settings",
-    };
     const unsupported = new Set([
         "synchronize_connection", "refresh_schema", "list_candidates", "mark_candidate",
         "remove_candidate", "execute_service", "get_analyzer_service_draft", "save_analyzer_service",
@@ -27,38 +41,22 @@
 
     const request = (method, args = {}) =>
         frappe.call({method: `${API}.${method}`, args}).then((response) => response.message);
-
     const snapshotName = (args) => args.snapshot_name || args.connection_id || "";
 
     async function rpc(method, args = {}) {
         if (unsupported.has(method)) {
-            throw new Error("This historic action is intentionally unavailable in the native workspace. Use the Mapping Editor or saved read-only service definitions.");
+            throw new Error("This historic action is intentionally unavailable in the native workspace. Use the ERPNext Mapping Editor or saved read-only service definitions.");
         }
         const snapshot_name = snapshotName(args);
         if (method === "get_context") return request("workspace_context", {snapshot_name});
-        if (method === "get_schema") return request("workspace_schema", {
-            snapshot_name, search: args.search || "", kind: args.kind || "", start: args.start || 0, page_size: args.page_size || 50,
-        });
-        if (method === "get_graph") return request("workspace_graph", {
-            snapshot_name, start: args.start || 0, page_size: args.page_size || 200, node_id: args.node_id || "",
-        });
-        if (method === "list_services") return request("workspace_service_list", {
-            snapshot_name, operation_kind: args.operation_kind || "query", start: args.start || 0, page_size: args.page_size || 50,
-        });
+        if (method === "get_schema") return request("workspace_schema", {snapshot_name, search: args.search || "", kind: args.kind || "", start: args.start || 0, page_size: args.page_size || 50});
+        if (method === "get_graph") return request("workspace_graph", {snapshot_name, start: args.start || 0, page_size: args.page_size || 200, node_id: args.node_id || ""});
+        if (method === "list_services") return request("workspace_service_list", {snapshot_name, operation_kind: args.operation_kind || "query", start: args.start || 0, page_size: args.page_size || 50});
         if (method === "get_query") return request("workspace_service_detail", {query_id: args.query_id});
-        if (method === "save_query") return request("workspace_service_save", {
-            snapshot_name, query_id: args.query_id || "", expected_revision: args.expected_revision || 0,
-            payload_json: JSON.stringify({...args.payload, operation_kind: args.operation_kind || "query"}),
-        });
-        if (method === "validate_saved_query") return request("workspace_service_validate", {
-            snapshot_name, query_id: args.query_id || "", expected_revision: args.expected_revision || 0,
-        });
-        if (method === "preview_query") return request("workspace_service_validate", {
-            snapshot_name, payload_json: JSON.stringify({...args.payload, operation_kind: args.operation_kind || "query"}),
-        });
-        if (method === "delete_query") return request("workspace_service_delete", {
-            query_id: args.query_id, expected_revision: args.expected_revision || 0,
-        });
+        if (method === "save_query") return request("workspace_service_save", {snapshot_name, query_id: args.query_id || "", expected_revision: args.expected_revision || 0, payload_json: JSON.stringify({...args.payload, operation_kind: args.operation_kind || "query"})});
+        if (method === "validate_saved_query") return request("workspace_service_validate", {snapshot_name, query_id: args.query_id || "", expected_revision: args.expected_revision || 0});
+        if (method === "preview_query") return request("workspace_service_validate", {snapshot_name, payload_json: JSON.stringify({...args.payload, operation_kind: args.operation_kind || "query"})});
+        if (method === "delete_query") return request("workspace_service_delete", {query_id: args.query_id, expected_revision: args.expected_revision || 0});
         throw new Error("This historic action has no native compatibility mapping.");
     }
 
@@ -68,86 +66,113 @@
         link.rel = "stylesheet"; link.href = path; link.onload = resolve; link.onerror = reject;
         document.head.append(link);
     });
-    const loadScript = (path) => new Promise((resolve, reject) => {
-        if ([...document.scripts].some((script) => script.src.endsWith(path))) return resolve();
-        frappe.require(path, resolve);
-        window.setTimeout(() => {
-            if (!window.hero_workspace_tools && path.endsWith("hero_tools.js")) reject(new Error("HERO workspace asset failed to load."));
-        }, 10000);
-    });
-
+    const loadScript = (path) => new Promise((resolve) => frappe.require(path, resolve));
     let assets;
-    const ensureAssets = () => assets ||= Promise.all(ASSETS.map((path) =>
-        path.endsWith(".css") ? loadStyle(path) : loadScript(path)
-    ));
+    const ensureAssets = () => assets ||= Promise.all(ASSETS.map((path) => path.endsWith(".css") ? loadStyle(path) : loadScript(path)));
+
+    function routeOptions() {
+        const params = new URLSearchParams(location.search);
+        return Object.assign({}, frappe.route_options || {}, Object.fromEntries(params.entries()));
+    }
+    function sectionForRoute(route = "") {
+        if (SECTION_NAMES[route]) return route;
+        return legacyPageSections[route] || "overview";
+    }
+    function routeUrl(section, params = {}) {
+        const query = new URLSearchParams({hero_section: section, ...params});
+        return `/app/${CANONICAL_PAGE}?${query.toString()}`;
+    }
 
     window.hero_integration_i18n = Object.freeze({text: (value) => __(value)});
     window.hero_integration_shell = Object.freeze({
-        href: (_page, params = {}) => `/app/${params.tool === "graph" ? "hero-graph-viewer" : params.tool === "services" ? "hero-graphql-services" : "hero-api-analyzer"}`,
-        mapping: () => "/app/hero-adapter-tools",
+        href: (_page, params = {}) => routeUrl(params.tool === "graph" ? "graph" : params.tool === "services" ? "services" : "analyzer"),
+        mapping: () => routeUrl("mapping"),
         navigationLink: (anchor) => anchor,
     });
     window.hero_integration_platform = Object.freeze({
         boot: {csrf_token: frappe.csrf_token || ""},
-        url: (route) => `/app/${routes[route] || "hero-integration"}`,
-        api: (method, args = {}) => {
-            if (method === "workspace_settings_get") return request(method);
-            if (method === "workspace_settings_save") return request(method, args);
-            return rpc(method, args);
-        },
+        url: (route) => routeUrl(route.includes("graph-viewer") ? "graph" : route.includes("graphql-services") ? "services" : route.includes("variable-mapping") ? "mapping" : route.includes("settings") ? "settings" : "analyzer"),
+        api: (method, args = {}) => method === "workspace_settings_get" || method === "workspace_settings_save" ? request(method, args) : rpc(method, args),
         loadAce: async () => {
-            if (window.ace) return;
-            await frappe.ui.form.ControlCode.prototype.load_lib.call({});
+            if (!window.ace) await frappe.ui.form.ControlCode.prototype.load_lib.call({});
         },
     });
     window.hero_integration_rpc = Object.freeze({call: (method, args) => rpc(method, args)});
 
-    const page = (wrapper, title) => {
-        const appPage = frappe.ui.make_app_page({parent: wrapper, title: __(title), single_column: true});
-        appPage.main.empty();
-        const host = document.createElement("section");
-        host.className = "admin-workspace admin-workspace--tool";
-        appPage.main.append(host);
-        return host;
-    };
-    const failure = (host, error) => {
+    let controller;
+    function resetPage(page) {
+        ["clear_primary_action", "clear_secondary_action", "clear_menu", "clear_actions", "clear_actions_menu"].forEach((name) => page[name]?.());
+    }
+    function navigation(active) {
+        const root = document.createElement("nav");
+        root.className = "hero-unified-navigation";
+        root.setAttribute("aria-label", __("HERO Integration sections"));
+        Object.entries(SECTION_NAMES).forEach(([section, label]) => {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "btn btn-default btn-sm";
+            button.textContent = __(label);
+            button.toggleAttribute("data-active", section === active);
+            button.addEventListener("click", () => setRoute(section));
+            root.append(button);
+        });
+        return root;
+    }
+    function failure(host, error) {
         host.replaceChildren(Object.assign(document.createElement("p"), {className: "text-danger", textContent: error.message || String(error)}));
-    };
-    const mountTool = async (wrapper, title, tool) => {
-        const host = page(wrapper, title);
+    }
+    async function render(section, context) {
+        if (!controller) return;
+        const {page, shell, content} = controller;
+        resetPage(page);
+        shell.replaceChildren(navigation(section), content);
+        content.replaceChildren();
+        const sectionPage = Object.create(page);
+        sectionPage.main = $(content);
         try {
             await ensureAssets();
-            const toolHost = document.createElement("div");
-            toolHost.className = "admin-hero-tool-host";
-            host.append(toolHost);
-            const workspace = new window.hero_workspace_tools.Workspace(toolHost, {tool, operationKind: "query"});
-            await workspace.show(true);
-            return workspace;
+            if (section === "overview") await window.hero_integration_overview.mount(content);
+            else if (section === "settings") await window.hero_integration_settings_ui.mount(content);
+            else if (section === "mapping") window.hero_integration_mapping_editor.mount(sectionPage, context);
+            else if (section === "migration") window.hero_integration_migration.mount(sectionPage);
+            else {
+                const tool = section === "graph" ? "graph" : section === "services" ? "services" : "analyzer";
+                const toolHost = document.createElement("div");
+                toolHost.className = "admin-hero-tool-host";
+                content.append(toolHost);
+                const workspace = new window.hero_workspace_tools.Workspace(toolHost, {tool, operationKind: "query"});
+                await workspace.show(true);
+            }
         } catch (error) {
-            failure(host, error);
-            return null;
+            failure(content, error);
         }
-    };
-    const overview = async (wrapper) => {
-        const host = page(wrapper, "HERO Integration");
-        try {
-            await ensureAssets();
-            await window.hero_integration_overview.mount(host);
-        } catch (error) { failure(host, error); }
-    };
-    const settings = async (wrapper) => {
-        const host = page(wrapper, "HERO Settings");
-        try {
-            await ensureAssets();
-            await window.hero_integration_settings_ui.mount(host);
-        } catch (error) { failure(host, error); }
-    };
+    }
+    function showRoute() {
+        const context = routeOptions();
+        return render(sectionForRoute(context.hero_section), context);
+    }
+    function setRoute(section, params = {}) {
+        const target = sectionForRoute(section);
+        const context = {...routeOptions(), ...params, hero_section: target};
+        frappe.set_route(CANONICAL_PAGE, context);
+        return render(target, context);
+    }
+    function redirectLegacy(section) {
+        return setRoute(section, routeOptions());
+    }
+    async function mount(wrapper) {
+        if (!controller) {
+            const page = frappe.ui.make_app_page({parent: wrapper, title: __("HERO Integration"), single_column: true});
+            page.main.addClass("hero-integration-ui");
+            const shell = document.createElement("section");
+            shell.className = "admin-workspace admin-workspace--tool";
+            const content = document.createElement("div");
+            content.className = "hero-unified-content";
+            page.main.append(shell);
+            controller = {page, shell, content};
+        }
+        await showRoute();
+    }
 
-    window.hero_integration_ui = Object.freeze({
-        overview,
-        settings,
-        analyzer: (wrapper) => mountTool(wrapper, "HERO API Analyzer", "analyzer"),
-        graphViewer: (wrapper) => mountTool(wrapper, "HERO Graph Viewer", "graph"),
-        graphqlServices: (wrapper) => mountTool(wrapper, "HERO GraphQL Services", "services"),
-    });
+    window.hero_integration_ui = Object.freeze({ensureStyles: ensureAssets, mount, showRoute, setRoute, routeOptions, redirectLegacy});
 })();
