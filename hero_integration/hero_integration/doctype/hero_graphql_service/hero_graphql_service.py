@@ -9,7 +9,7 @@ from hero_integration.client.graphql import assert_read_only
 from hero_integration.services.graphql_graph import analyze_snapshot
 
 
-class HEROGraphqlService(Document):
+class HEROGraphQLService(Document):
     def validate(self) -> None:
         frappe.only_for("System Manager")
         assert_read_only(self.query_document)
