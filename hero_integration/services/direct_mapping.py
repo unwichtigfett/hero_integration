@@ -13,6 +13,8 @@ SOURCE_CONTRACTS = {
             "phone_mobile": "string|null", "phone_home": "string|null",
             "company_name": "string|null", "category": "string|null", "type": "string|null",
             "is_contact_person": "boolean|null", "is_deleted": "boolean|null",
+            "address.id": "int|null", "address.street": "string|null", "address.zipcode": "string|null",
+            "address.city": "string|null",
         },
     },
     "HeroProjectMatches": {

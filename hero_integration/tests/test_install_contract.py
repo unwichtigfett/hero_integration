@@ -75,7 +75,7 @@ class _InstallEnvironment:
     def __init__(self, apps, version, doctypes=None, project_notes=True, project_notes_read_only=False):
         self.apps = apps
         self.version = version
-        self.doctypes = doctypes or {"Customer", "Contact", "Contact Email", "Contact Phone", "Project"}
+        self.doctypes = doctypes or {"Customer", "Contact", "Contact Email", "Contact Phone", "Address", "Project"}
         self.custom_fields: dict[tuple[str, str], dict[str, object]] = {}
         self.create_calls: list[tuple[dict[str, list[dict[str, object]]], bool]] = []
         self.project_notes = project_notes

@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest import mock
 
 from hero_integration.client.graphql import HeroClientError, HeroGraphQLClient, validate_endpoint
-from hero_integration.sources.hero import CUSTOMER_QUERY_V1, PAGE_SIZE, PROJECT_QUERY_V1, PROJECT_SELECTED_PATHS, HeroSource
+from hero_integration.sources.hero import CUSTOMER_QUERY_V1, CUSTOMER_SELECTED_PATHS, PAGE_SIZE, PROJECT_QUERY_V1, PROJECT_SELECTED_PATHS, HeroSource
 from hero_integration.tests.mapping_fixture import fixture_plan
 from hero_integration.tests.mock_hero_v1 import (
     AMBIGUOUS_PROJECT,
@@ -37,6 +37,7 @@ CUSTOMER = {
     "type": "synthetic",
     "is_contact_person": False,
     "is_deleted": False,
+    "address": {"id": 8001, "street": "Synthetic Street 1", "zipcode": "77777", "city": "Synthetic City"},
 }
 PROJECT = {
     "id": 201,
@@ -160,7 +161,7 @@ class TestHeroV1MockContract(unittest.TestCase):
 
     def test_matrix_accounts_for_each_selected_path(self):
         selected = {
-            "HeroCustomers": _selected_fields(CUSTOMER_QUERY_V1, "contacts"),
+            "HeroCustomers": set(CUSTOMER_SELECTED_PATHS),
             "HeroProjectMatches": set(PROJECT_SELECTED_PATHS),
         }
         matrix = {}
@@ -174,10 +175,10 @@ class TestHeroV1MockContract(unittest.TestCase):
             },
         }
         self.assertEqual(matrix, expected)
-        self.assertEqual(sum(map(len, matrix.values())), 26)
-        self.assertEqual(sum(row["status"] == "NATIVE_MAPPED" for row in MATRIX["fields"]), 14)
+        self.assertEqual(sum(map(len, matrix.values())), 30)
+        self.assertEqual(sum(row["status"] == "NATIVE_MAPPED" for row in MATRIX["fields"]), 17)
         self.assertEqual(sum(row["status"] == "CUSTOM_FIELD_MAPPED" for row in MATRIX["fields"]), 10)
-        self.assertEqual(sum(row["status"] == "HERO_DOCTYPE_MAPPED" for row in MATRIX["fields"]), 2)
+        self.assertEqual(sum(row["status"] == "HERO_DOCTYPE_MAPPED" for row in MATRIX["fields"]), 3)
         self.assertTrue(all(not row["exclusion_reason"] for row in MATRIX["fields"]))
 
     def test_deterministic_dataset_covers_pagination_and_negative_cases(self):
