@@ -7,14 +7,18 @@
     const API = "hero_integration.api";
     const CANONICAL_PAGE = "hero-integration";
     const SECTION_NAMES = Object.freeze({
-        overview: "Overview / Connection",
+        overview: "Übersicht",
+        api: "API & Schema",
+        mapping: "Mapping",
+        synchronization: "Synchronisation",
+        settings: "Einstellungen",
+    });
+    const API_TOOLS = Object.freeze({
         analyzer: "API Analyzer",
         graph: "Graph Viewer",
         services: "GraphQL Services",
-        mapping: "ERPNext Mapping",
-        migration: "Migration / Synchronisation",
-        settings: "Settings",
     });
+    const LEGACY_SECTION_TO_TOOL = Object.freeze({analyzer: "analyzer", graph: "graph", services: "services"});
     const ASSETS = [
         "/assets/hero_integration/css/hero_tools.css",
         "/assets/hero_integration/css/hero_adapter.css",
@@ -70,23 +74,28 @@
         const params = new URLSearchParams(location.search);
         return Object.assign({}, frappe.route_options || {}, Object.fromEntries(params.entries()));
     }
-    function sectionForRoute(route = "") {
-        return SECTION_NAMES[route] ? route : "overview";
+    function routeTarget(section = "", tool = "") {
+        if (LEGACY_SECTION_TO_TOOL[section]) return {section: "api", tool: LEGACY_SECTION_TO_TOOL[section]};
+        if (section === "migration") return {section: "synchronization", tool: ""};
+        return {section: SECTION_NAMES[section] ? section : "overview", tool: API_TOOLS[tool] ? tool : "analyzer"};
     }
     function routeUrl(section, params = {}) {
-        const query = new URLSearchParams({hero_section: section, ...params});
+        const target = routeTarget(section, params.hero_tool);
+        const query = new URLSearchParams({...params, hero_section: target.section});
+        if (target.section === "api") query.set("hero_tool", target.tool);
+        else query.delete("hero_tool");
         return `/app/${CANONICAL_PAGE}?${query.toString()}`;
     }
 
     window.hero_integration_i18n = Object.freeze({text: (value) => __(value)});
     window.hero_integration_shell = Object.freeze({
-        href: (_page, params = {}) => routeUrl(params.tool === "graph" ? "graph" : params.tool === "services" ? "services" : "analyzer"),
+        href: (_page, params = {}) => routeUrl("api", {hero_tool: params.tool}),
         mapping: () => routeUrl("mapping"),
         navigationLink: (anchor) => anchor,
     });
     window.hero_integration_platform = Object.freeze({
         boot: {csrf_token: frappe.csrf_token || ""},
-        url: (section) => routeUrl(SECTION_NAMES[section] ? section : "analyzer"),
+        url: (section) => routeUrl(section),
         api: (method, args = {}) => ["workspace_settings_get", "workspace_settings_save", "workspace_mutation_execution_set"].includes(method) ? request(method, args) : rpc(method, args),
         loadAce: async () => {
             if (!window.ace) await frappe.ui.form.ControlCode.prototype.load_lib.call({});
@@ -113,6 +122,21 @@
         });
         return root;
     }
+    function apiNavigation(active) {
+        const root = document.createElement("nav");
+        root.className = "hero-unified-api-navigation";
+        root.setAttribute("aria-label", __("API & Schema tools"));
+        Object.entries(API_TOOLS).forEach(([tool, label]) => {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "btn btn-default btn-sm";
+            button.textContent = __(label);
+            button.toggleAttribute("data-active", tool === active);
+            button.addEventListener("click", () => setRoute("api", {hero_tool: tool}));
+            root.append(button);
+        });
+        return root;
+    }
     function failure(host, error) {
         host.replaceChildren(Object.assign(document.createElement("p"), {className: "text-danger", textContent: error.message || String(error)}));
     }
@@ -129,9 +153,10 @@
             if (section === "overview") await window.hero_integration_overview.mount(content);
             else if (section === "settings") await window.hero_integration_settings_ui.mount(content);
             else if (section === "mapping") window.hero_integration_mapping_editor.mount(sectionPage, context);
-            else if (section === "migration") window.hero_integration_migration.mount(sectionPage);
+            else if (section === "synchronization") window.hero_integration_migration.mount(sectionPage);
             else {
-                const tool = section === "graph" ? "graph" : section === "services" ? "services" : "analyzer";
+                const tool = routeTarget(section, context.hero_tool).tool;
+                content.append(apiNavigation(tool));
                 const toolHost = document.createElement("div");
                 toolHost.className = "admin-hero-tool-host";
                 content.append(toolHost);
@@ -144,13 +169,16 @@
     }
     function showRoute() {
         const context = routeOptions();
-        return render(sectionForRoute(context.hero_section), context);
+        const target = routeTarget(context.hero_section, context.hero_tool);
+        return render(target.section, {...context, hero_section: target.section, hero_tool: target.tool});
     }
     function setRoute(section, params = {}) {
-        const target = sectionForRoute(section);
-        const context = {...routeOptions(), ...params, hero_section: target};
+        const target = routeTarget(section, params.hero_tool);
+        const context = {...routeOptions(), ...params, hero_section: target.section};
+        if (target.section === "api") context.hero_tool = target.tool;
+        else delete context.hero_tool;
         frappe.set_route(CANONICAL_PAGE, context);
-        return render(target, context);
+        return render(target.section, context);
     }
     async function mount(wrapper) {
         if (!controller) {
