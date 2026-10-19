@@ -83,8 +83,8 @@ is shared by the tool and overview. The extra observed name is not omitted.
 | `get_analyzer_service_draft`, `save_analyzer_service` | LEGACY_PROCESS_ONLY | visible Analyzer save control disabled; no inferred query contract is created |
 | `list_candidates`, `mark_candidate`, `remove_candidate` | LEGACY_PROCESS_ONLY | visible native Mapping Editor hand-off; no parallel candidate persistence |
 
-The source workspace still displays Query and Mutation modes. Mutation mode is
-disabled in the native host, and every server-side stored service is validated
+The source workspace still displays Query and Mutation modes. Mutation drafts
+remain local and schema-only; every server-side stored service is validated
 with the existing read-only GraphQL guard.
 
 ## Complete stored schema source
