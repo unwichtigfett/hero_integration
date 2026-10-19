@@ -63,7 +63,7 @@
             toolLink("API Analyzer", "connections/hero/api-analyzer"),
             toolLink("Graph Viewer", "connections/hero/graph-viewer"),
             toolLink("GraphQL Services", "connections/hero/graphql-services"),
-            toolLink("Variable Mapping", "connections/hero/variable-mapping"),
+            toolLink("Mapping Editor", "connections/hero/mapping"),
             toolLink("Settings", "connections/hero/settings")
         );
 

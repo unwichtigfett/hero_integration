@@ -95,7 +95,7 @@
     });
     window.hero_integration_platform = Object.freeze({
         boot: {csrf_token: frappe.csrf_token || ""},
-        url: (route) => routeUrl(route.includes("graph-viewer") ? "graph" : route.includes("graphql-services") ? "services" : route.includes("variable-mapping") ? "mapping" : route.includes("settings") ? "settings" : "analyzer", route.endsWith("/mutation") ? {operation_kind: "mutation"} : {}),
+        url: (route) => routeUrl(route.includes("graph-viewer") ? "graph" : route.includes("graphql-services") ? "services" : route.includes("mapping") ? "mapping" : route.includes("settings") ? "settings" : "analyzer", route.endsWith("/mutation") ? {operation_kind: "mutation"} : {}),
         api: (method, args = {}) => method === "workspace_settings_get" || method === "workspace_settings_save" ? request(method, args) : rpc(method, args),
         loadAce: async () => {
             if (!window.ace) await frappe.ui.form.ControlCode.prototype.load_lib.call({});
