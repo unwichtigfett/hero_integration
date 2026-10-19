@@ -35,6 +35,10 @@ class Result:
     target_name: str = ""
 
 
+class CustomerAddressError(ValueError):
+    pass
+
+
 def execute_run(run_name: str) -> None:
     run = frappe.get_doc("HERO Integration Run", run_name)
     frappe.set_user(run.owner)
@@ -188,6 +192,7 @@ def _migrate_customer(record: dict[str, object], run) -> Result:
         plan = active_mapping_plan("HeroCustomers")
         source_id = plan.source_identity(record)
         values = plan.values(record)
+        address = _customer_primary_address(record)
     except MappingPlanError as error:
         return Result("BLOCKED_RECORD", str(error))
     if plan.source_deleted(record):
@@ -199,7 +204,9 @@ def _migrate_customer(record: dict[str, object], run) -> Result:
         return Result("BLOCKED_RECORD", "Configured customer record name is empty.")
     return _upsert(
         "customer", source_id, record, values, "Customer", "customer_name", plan.mapping_version, run,
-        after_insert=lambda customer: synchronize_home_phone(customer, plan.home_phone(record)),
+        after_insert=lambda customer: _synchronize_customer_relations(
+            customer, plan.home_phone(record), address, _source_instance(record), plan.mapping_version,
+        ),
         target_snapshot=lambda customer: _customer_target_values(customer, values, plan.home_phone(record)),
     )
 
@@ -267,7 +274,7 @@ def _upsert(
     try:
         if after_insert:
             after_insert(target)
-    except HomePhoneConflict as error:
+    except (HomePhoneConflict, CustomerAddressError) as error:
         return Result("CONFLICT", str(error), doctype, target.name)
     snapshot = target_snapshot or (lambda item: _target_values(item, values))
     target_hash = _digest(snapshot(target))
@@ -360,6 +367,66 @@ def _source_instance(record: dict[str, object]) -> str:
 def _is_contact_person(record: dict[str, object]) -> bool:
     """Contact persons have a distinct HERO lifecycle and must not become Customers."""
     return record.get("is_contact_person") is True
+
+
+def _customer_primary_address(record: dict[str, object]) -> dict[str, object] | None:
+    """Validate only the explicitly selected primary Customer.address relation."""
+    value = record.get("address")
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise MappingPlanError("Customer primary address does not match the approved source contract.")
+    source_id = value.get("id")
+    if not isinstance(source_id, int) or isinstance(source_id, bool) or source_id <= 0:
+        raise MappingPlanError("Customer primary address identity is missing or invalid.")
+    fields = {key: value.get(key) for key in ("street", "zipcode", "city")}
+    if not all(isinstance(item, str) and item.strip() for item in fields.values()):
+        raise MappingPlanError("Customer primary address is incomplete.")
+    return {"id": str(source_id), **{key: item.strip() for key, item in fields.items()}}
+
+
+def _synchronize_customer_relations(customer, home_phone, address, source_instance: str, mapping_version: str) -> None:
+    synchronize_home_phone(customer, home_phone)
+    if address is not None:
+        _synchronize_customer_address(customer, address, source_instance, mapping_version)
+
+
+def _synchronize_customer_address(customer, address: dict[str, object], source_instance: str, mapping_version: str) -> None:
+    if not _target_available("Address"):
+        raise CustomerAddressError("Address is not installed on this site.")
+    source_id = str(address["id"])
+    values = {
+        "address_title": customer.name,
+        "address_line1": address["street"],
+        "pincode": address["zipcode"],
+        "city": address["city"],
+    }
+    payload = {"customer": customer.name, **address}
+    existing = _link("customer_address", source_id, source_instance)
+    if existing:
+        if not frappe.db.exists("Address", existing.target_name):
+            _mark_link_conflict(existing, "Stored customer address reference no longer exists.")
+            raise CustomerAddressError("Stored customer address reference no longer exists.")
+        target = frappe.get_doc("Address", existing.target_name)
+        if _digest(_target_values(target, values)) != existing.target_payload_hash:
+            _mark_link_conflict(existing, "Customer address changed outside HERO Integration.")
+            raise CustomerAddressError("Customer address changed outside HERO Integration.")
+        if existing.source_payload_hash != _digest(payload):
+            _mark_link_conflict(existing, "HERO customer address changed. Review is required before an update.")
+            raise CustomerAddressError("HERO customer address changed. Review is required before an update.")
+        return
+    target = frappe.get_doc({
+        "doctype": "Address", **values,
+        "links": [{"link_doctype": "Customer", "link_name": customer.name}],
+    })
+    target.insert()
+    frappe.get_doc({
+        "doctype": "HERO Integration Link", "source_system": "HERO", "source_type": "customer_address",
+        "source_id": source_id, "source_instance": source_instance, "sync_status": "Synchronized",
+        "conflict_detail": "", "last_synced_on": now_datetime(), "target_doctype": "Address",
+        "target_name": target.name, "source_payload_hash": _digest(payload),
+        "target_payload_hash": _digest(_target_values(target, values)), "mapping_version": mapping_version,
+    }).insert()
 
 
 def _bind_source_instance(run, source_instance: str) -> None:
