@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import re
 
+from hero_integration.services.graphql_graph import GraphSnapshotError, normalize_schema
+
 
 _MUTATION = re.compile(r"^\s*mutation(?:\s+[_A-Za-z][_0-9A-Za-z]*)?(?:\s*\([^)]*\))?\s*\{\s*([_A-Za-z][_0-9A-Za-z]*)")
 _OPERATION = re.compile(r"\b(query|mutation|subscription)\b", re.IGNORECASE)
@@ -31,10 +33,11 @@ def validate(schema: dict[str, object], document: str) -> dict[str, object]:
     match = _MUTATION.match(document)
     if not match:
         raise ValueError("A local mutation draft must start with a GraphQL mutation operation.")
-    body = schema.get("__schema") or schema.get("schema") or schema
-    if not isinstance(body, dict):
-        raise ValueError("The saved schema is invalid.")
-    mutation_type = body.get("mutationType") or body.get("mutation_type") or {}
+    try:
+        body = normalize_schema(schema)
+    except GraphSnapshotError as error:
+        raise ValueError("The saved schema is invalid.") from error
+    mutation_type = body.get("mutationType")
     root_name = mutation_type.get("name") if isinstance(mutation_type, dict) else ""
     types = body.get("types") if isinstance(body.get("types"), list) else []
     root = next((item for item in types if isinstance(item, dict) and item.get("name") == root_name), None)

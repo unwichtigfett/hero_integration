@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from hero_integration.services.graphql_graph import analyze_snapshot
+from hero_integration.services.graphql_graph import GraphSnapshotError, analyze_snapshot, normalize_schema
 
 
 class TestGraphqlGraphContract(unittest.TestCase):
@@ -29,3 +29,13 @@ class TestGraphqlGraphContract(unittest.TestCase):
         self.assertEqual(nodes["enum_value:Status.OPEN"]["kind"], "ENUM_VALUE")
         self.assertEqual(nodes["type:Money"]["kind"], "SCALAR")
         self.assertIn({"source": "root:query", "target": "operation:query:customer", "kind": "ROOT_HAS_OPERATION"}, graph.edges)
+
+    def test_public_normalizer_preserves_standard_schema_shape(self):
+        standard = {"__schema": {"queryType": {"name": "Query"}, "mutationType": {"name": "Mutation"}, "types": []}}
+        self.assertIs(normalize_schema(standard), standard["__schema"])
+
+    def test_conflicting_root_declarations_fail_closed(self):
+        with self.assertRaisesRegex(GraphSnapshotError, "conflicting mutation root"):
+            normalize_schema({"schema": {
+                "mutationType": {"name": "Mutation"}, "mutation_type_name": "OtherMutation", "types": [],
+            }})
