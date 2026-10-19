@@ -51,10 +51,13 @@
         if (method === "get_context") return request("workspace_context", {snapshot_name});
         if (method === "get_schema") return request("workspace_schema", {snapshot_name, search: args.search || "", kind: args.kind || "", start: args.start || 0, page_size: args.page_size || 50});
         if (method === "get_graph") return request("workspace_graph", {snapshot_name, start: args.start || 0, page_size: args.page_size || 200, node_id: args.node_id || ""});
+        if (method === "list_services" && args.operation_kind === "mutation") return {rows: [], has_more: false, total: 0};
+        if (["save_query", "validate_saved_query", "delete_query", "get_query"].includes(method) && args.operation_kind === "mutation") throw new Error("Mutation drafts are local-only and cannot be stored or executed.");
         if (method === "list_services") return request("workspace_service_list", {snapshot_name, operation_kind: args.operation_kind || "query", start: args.start || 0, page_size: args.page_size || 50});
         if (method === "get_query") return request("workspace_service_detail", {query_id: args.query_id});
         if (method === "save_query") return request("workspace_service_save", {snapshot_name, query_id: args.query_id || "", expected_revision: args.expected_revision || 0, payload_json: JSON.stringify({...args.payload, operation_kind: args.operation_kind || "query"})});
         if (method === "validate_saved_query") return request("workspace_service_validate", {snapshot_name, query_id: args.query_id || "", expected_revision: args.expected_revision || 0});
+        if (method === "preview_query" && args.operation_kind === "mutation") return request("workspace_mutation_draft_validate", {snapshot_name, payload_json: JSON.stringify(args.payload)});
         if (method === "preview_query") return request("workspace_service_validate", {snapshot_name, payload_json: JSON.stringify({...args.payload, operation_kind: args.operation_kind || "query"})});
         if (method === "delete_query") return request("workspace_service_delete", {query_id: args.query_id, expected_revision: args.expected_revision || 0});
         throw new Error("This historic action has no native compatibility mapping.");
@@ -91,7 +94,7 @@
     });
     window.hero_integration_platform = Object.freeze({
         boot: {csrf_token: frappe.csrf_token || ""},
-        url: (route) => routeUrl(route.includes("graph-viewer") ? "graph" : route.includes("graphql-services") ? "services" : route.includes("variable-mapping") ? "mapping" : route.includes("settings") ? "settings" : "analyzer"),
+        url: (route) => routeUrl(route.includes("graph-viewer") ? "graph" : route.includes("graphql-services") ? "services" : route.includes("variable-mapping") ? "mapping" : route.includes("settings") ? "settings" : "analyzer", route.endsWith("/mutation") ? {operation_kind: "mutation"} : {}),
         api: (method, args = {}) => method === "workspace_settings_get" || method === "workspace_settings_save" ? request(method, args) : rpc(method, args),
         loadAce: async () => {
             if (!window.ace) await frappe.ui.form.ControlCode.prototype.load_lib.call({});
@@ -140,7 +143,7 @@
                 const toolHost = document.createElement("div");
                 toolHost.className = "admin-hero-tool-host";
                 content.append(toolHost);
-                const workspace = new window.hero_workspace_tools.Workspace(toolHost, {tool, operationKind: "query"});
+                const workspace = new window.hero_workspace_tools.Workspace(toolHost, {tool, operationKind: context.operation_kind || "query"});
                 await workspace.show(true);
             }
         } catch (error) {

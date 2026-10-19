@@ -54,6 +54,16 @@ class TestHeroDeskUiContract(unittest.TestCase):
                 self.assertIn(contract, source)
         self.assertNotIn("limited to 90 filtered nodes", source)
 
+    def test_mutation_drafts_remain_local_and_execution_stays_disabled(self):
+        source = "\n".join((WORKSPACE_JS.read_text(), TOOLS_JS.read_text()))
+        self.assertIn("workspace_mutation_draft_validate", source)
+        self.assertIn("Mutation drafts are local-only", source)
+        self.assertIn("Remote execution is disabled", source)
+        api_source = (PACKAGE_ROOT / "api.py").read_text()
+        execution = api_source.split("def execute_graphql_service", 1)[1].split("class _FrappePickerMetadata", 1)[0]
+        self.assertIn("HERO service execution is disabled", execution)
+        self.assertNotIn("HeroGraphQLClient", execution)
+
     def test_graph_viewer_keeps_snapshot_selection_separate_from_performance_overview(self):
         source = TOOLS_JS.read_text()
         for contract in (
@@ -87,6 +97,8 @@ class TestHeroDeskUiContract(unittest.TestCase):
         self.assertIn("adopt_mapping_package", source)
         self.assertIn("frappe.confirm", source)
         self.assertIn("pendingSourcePath", source)
+        self.assertIn("mapping_target_catalog", source)
+        self.assertIn("target_doctype", source)
 
     def test_styles_are_packaged_with_the_app(self):
         self.assertTrue(WORKSPACE_CSS.is_file())

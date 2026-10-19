@@ -708,7 +708,6 @@
             for(const [kind,label] of [['query','Query'],['mutation','Mutation']]) {
                 const link=$('a','btn btn-default',label);link.href=this.serviceUrl(kind);
                 if(kind===this.serviceKind)link.setAttribute('aria-current','page');
-                if(kind==='mutation'){link.setAttribute('aria-disabled','true');link.title='HERO mutations are disabled by the native security boundary.';link.addEventListener('click',event=>event.preventDefault());}
                 link.addEventListener('click',e=>{if(this.busy||!this.confirmReplace())e.preventDefault();});views.append(link);
             }
             this.editorHost=$('div','ht-editor');this.variables=$('textarea','form-control ht-variables');this.variables.value='{}';this.queryOutput=$('pre','ht-data');this.queryOutput.setAttribute('aria-live','polite');this.queryStatus=$('p','ht-query-status');this.queryStatus.setAttribute('role','status');
@@ -783,9 +782,9 @@
             if(this.analyzerServiceForm)this.analyzerServiceForm.save.disabled=!analyzerAllowed||this.analyzerServiceForm.saved;
             if(this.queryProvenance)this.queryProvenance.textContent='Provenance='+(this.query?.provenance||this.draftProvenance||'GraphQL-Services');
             if(this.serviceHint)this.serviceHint.textContent=this.serviceKind==='mutation'
-                ? 'Gespeicherte Mutations schreiben Daten auf HERO. Speichern und Prüfen bleiben unabhängig vom Mutationsschalter möglich. '+(this.context?.mutations_enabled?'Mutationen aktiviert. Jede Ausführung benötigt eine Bestätigung.':'Mutationen deaktiviert: Ausführung gesperrt.')
+                ? 'Mutation drafts are validated only against the saved schema. Storage and HERO execution remain disabled.'
                 : 'Gespeicherte Queries lesen Daten aus HERO. Ergebnisse werden nicht automatisch gespeichert.';
-this.queryStatus.textContent=this.query?`${this.serviceLabel()} ${this.query.query_id} · Revision ${this.query.revision}${this.dirty?' · Unsaved changes':''}`:'New unsaved draft';const allowed=!!this.context?.can_write&&!this.context.needs_binding_update&&!this.busy;for(const b of [this.newButton,this.copyButton,this.saveButton])b.disabled=!allowed;this.validateButton.disabled=!allowed||!this.schema;this.executeButton.disabled=true;this.executeButton.title='Remote execution is disabled in the native workspace.';this.deleteButton.disabled=!allowed||!this.query;this.bindButton.disabled=!this.context?.can_write||this.busy;}
+this.queryStatus.textContent=this.query?`${this.serviceLabel()} ${this.query.query_id} · Revision ${this.query.revision}${this.dirty?' · Unsaved changes':''}`:'New unsaved draft';const allowed=!!this.context?.can_write&&!this.context.needs_binding_update&&!this.busy;for(const b of [this.newButton,this.copyButton])b.disabled=!allowed;this.saveButton.disabled=!allowed||this.serviceKind==='mutation';this.saveButton.title=this.serviceKind==='mutation'?'Mutation drafts are local-only.':' ';this.validateButton.disabled=!allowed||!this.schema;this.executeButton.disabled=true;this.executeButton.title='Remote execution is disabled in the native workspace.';this.deleteButton.disabled=!allowed||!this.query||this.serviceKind==='mutation';this.bindButton.disabled=!this.context?.can_write||this.busy;}
         destroy(){
             this.cancelGraph?.();
             this.focusDialog?.hide?.();

@@ -10,6 +10,8 @@ from hero_integration.services.direct_mapping import (
     SOURCE_CONTRACTS,
     SYSTEM_FIELDS,
 )
+from hero_integration.services.frappe_mapping_catalog import fields as catalog_fields
+from hero_integration.services.frappe_mapping_catalog import types_compatible
 
 
 @dataclass(frozen=True)
@@ -25,6 +27,12 @@ class PickerField:
     operation_name: str = ""
     return_type: str = ""
     mapping_type: str = ""
+    app_name: str = ""
+    target_doctype: str = ""
+    is_custom: bool = False
+    required: bool = False
+    select_options: tuple[str, ...] = ()
+    activation_allowed: bool = True
 
 
 # These roots are part of the versioned queries in sources/hero.py.  The
@@ -60,10 +68,22 @@ def source_fields(operation: str, schema: dict[str, object], search: str = "") -
     return result
 
 
-def target_fields(operation: str, metadata, search: str = "") -> list[PickerField]:
+def target_fields(
+    operation: str, metadata, search: str = "", app_name: str = "", target_doctype: str = "",
+) -> list[PickerField]:
     contract = SOURCE_CONTRACTS.get(operation)
     if not contract:
         return []
+    if hasattr(metadata, "doctypes"):
+        return [
+            PickerField(
+                item.path, item.label, item.fieldtype, item.nullable, item.relation, item.selectable, item.reason,
+                mapping_type=item.fieldtype, app_name=item.app_name, target_doctype=item.doctype,
+                is_custom=item.is_custom, required=item.required, select_options=item.select_options,
+                activation_allowed=item.activation_allowed,
+            )
+            for item in catalog_fields(metadata, app_name, target_doctype, search)
+        ]
     doctype = contract["target_doctype"]
     needle = search.strip().lower()
     result = []
@@ -87,19 +107,23 @@ def target_fields(operation: str, metadata, search: str = "") -> list[PickerFiel
         else:
             reason = "Protected, technical, or unsupported target field."
         relation = str(field.options or "") if field.fieldtype in {"Link", "Table"} else ""
-        result.append(PickerField(field.fieldname, label, field.fieldtype, False, relation, selectable, reason, mapping_type=field.fieldtype))
+        result.append(PickerField(field.fieldname, label, field.fieldtype, False, relation, selectable, reason, mapping_type=field.fieldtype, target_doctype=doctype))
     return result
 
 
-def suggest_from_source(operation: str, source_path: str, schema: dict[str, object], metadata) -> list[dict[str, object]]:
+def suggest_from_source(
+    operation: str, source_path: str, schema: dict[str, object], metadata, target_doctype: str = "",
+) -> list[dict[str, object]]:
     source = next((item for item in source_fields(operation, schema) if item.path == source_path), None)
     if not source or not source.selectable:
         return []
-    return _rank(source, target_fields(operation, metadata))
+    return _rank(source, target_fields(operation, metadata, target_doctype=target_doctype))
 
 
-def suggest_from_target(operation: str, target_path: str, schema: dict[str, object], metadata) -> list[dict[str, object]]:
-    target = next((item for item in target_fields(operation, metadata) if item.path == target_path), None)
+def suggest_from_target(
+    operation: str, target_path: str, schema: dict[str, object], metadata, target_doctype: str = "",
+) -> list[dict[str, object]]:
+    target = next((item for item in target_fields(operation, metadata, target_doctype=target_doctype) if item.path == target_path), None)
     if not target or not target.selectable:
         return []
     candidates = []
@@ -113,28 +137,41 @@ def _rank(source: PickerField, targets: list[PickerField]) -> list[dict[str, obj
     result = []
     source_words = set(source.path.replace("_", " ").split())
     for target in targets:
-        if not target.selectable or not _types_compatible(source.mapping_type, target.fieldtype):
+        if not target.selectable or not types_compatible(source.mapping_type, target.fieldtype):
             continue
         target_words = set((target.path + " " + target.label).lower().replace("_", " ").split())
         overlap = len(source_words & target_words)
         score = 100 if source.path == target.path else 20 + overlap * 10
+        if target.is_custom:
+            score += 5
+        if target.required:
+            score -= 10
         result.append({
             "source_path": source.path,
             "source_type": source.mapping_type,
             "target_field": target.path,
+            "target_doctype": target.target_doctype,
+            "target_app": target.app_name,
             "score": score,
-            "reason": "Type-compatible name and label match.",
+            "confidence": "high" if score >= 70 else "medium" if score >= 40 else "low",
+            "reason": _suggestion_reason(source, target),
             "requires_approval": True,
+            "draft_only": not target.activation_allowed,
         })
     return sorted(result, key=lambda item: (-item["score"], item["target_field"]))
 
 
-def _types_compatible(source_type: str, target_type: str) -> bool:
-    if source_type.startswith("string"):
-        return target_type in {"Data", "Small Text", "Date", "Datetime"}
-    if source_type.startswith("int"):
-        return target_type in {"Int", "Float", "Data"}
-    return source_type.startswith("boolean") and target_type == "Check"
+def _suggestion_reason(source: PickerField, target: PickerField) -> str:
+    parts = ["Type-compatible name and label match."]
+    if target.relation:
+        parts.append(f"Relation: {target.relation}.")
+    if target.select_options:
+        parts.append("Select values require validation before activation.")
+    if target.required:
+        parts.append("Required target field; target creation needs an app-owned contract.")
+    if not target.activation_allowed:
+        parts.append("Draft only for this non-canonical app target.")
+    return " ".join(parts)
 
 
 def _schema_only_fields(

@@ -362,6 +362,24 @@ def workspace_service_validate(snapshot_name: str, payload_json: str = "", query
 
 
 @frappe.whitelist()
+def workspace_mutation_draft_validate(snapshot_name: str, payload_json: str) -> dict[str, object]:
+    """Validate a mutation draft against stored introspection only; never persist or execute it."""
+    frappe.only_for("System Manager")
+    payload = _workspace_payload(payload_json)
+    snapshot, schema = _validated_snapshot(snapshot_name)
+    from hero_integration.services.mutation_draft import validate
+
+    detail = validate(schema, payload["query"])
+    return {
+        "valid": True,
+        "can_execute": False,
+        "schema_fingerprint": snapshot.schema_fingerprint,
+        "mutation": detail,
+        "reason": "Mutation draft is validated only against the saved schema; storage and HERO execution are disabled.",
+    }
+
+
+@frappe.whitelist()
 def workspace_service_delete(query_id: str, expected_revision: int = 0) -> dict[str, str]:
     frappe.only_for("System Manager")
     service = frappe.get_doc("HERO GraphQL Service", query_id)
@@ -443,30 +461,44 @@ def mapping_source_picker(snapshot_name: str, operation: str, search: str = "") 
 
 
 @frappe.whitelist()
-def mapping_target_picker(operation: str, search: str = "") -> list[dict[str, object]]:
+def mapping_target_catalog(app_name: str = "", search: str = "") -> dict[str, object]:
+    """Discover installed-app targets without granting an external-app write path."""
     frappe.only_for("System Manager")
-    from hero_integration.services.mapping_suggestions import target_fields
+    from hero_integration.services.frappe_mapping_catalog import catalog
 
-    return [item.__dict__ for item in target_fields(operation, _FrappePickerMetadata(), search)]
+    return catalog(_FrappePickerMetadata(), app_name, search)
 
 
 @frappe.whitelist()
-def mapping_suggestions(snapshot_name: str, operation: str, source_path: str = "", target_field: str = "") -> list[dict[str, object]]:
+def mapping_target_picker(
+    operation: str, search: str = "", app_name: str = "", target_doctype: str = "",
+) -> list[dict[str, object]]:
+    frappe.only_for("System Manager")
+    from hero_integration.services.mapping_suggestions import target_fields
+
+    return [item.__dict__ for item in target_fields(operation, _FrappePickerMetadata(), search, app_name, target_doctype)]
+
+
+@frappe.whitelist()
+def mapping_suggestions(
+    snapshot_name: str, operation: str, source_path: str = "", target_field: str = "", target_doctype: str = "",
+) -> list[dict[str, object]]:
     frappe.only_for("System Manager")
     _, schema = _validated_snapshot(snapshot_name)
     from hero_integration.services.mapping_suggestions import suggest_from_source, suggest_from_target
 
     metadata = _FrappePickerMetadata()
     if source_path:
-        return suggest_from_source(operation, source_path, schema, metadata)
+        return suggest_from_source(operation, source_path, schema, metadata, target_doctype=target_doctype)
     if target_field:
-        return suggest_from_target(operation, target_field, schema, metadata)
+        return suggest_from_target(operation, target_field, schema, metadata, target_doctype=target_doctype)
     frappe.throw("Choose a source path or a target field.")
 
 
 @frappe.whitelist()
 def preview_mapping_candidate(
     snapshot_name: str, operation: str, source_path: str, target_field: str, source_record_json: str,
+    target_doctype: str = "",
 ) -> dict[str, object]:
     """Preview one suggested draft mapping without persisting a mapping or a document."""
     frappe.only_for("System Manager")
@@ -477,22 +509,25 @@ def preview_mapping_candidate(
         frappe.throw(f"Source record must be JSON: {error.msg}")
     if not isinstance(record, dict):
         frappe.throw("Source record must be a JSON object.")
-    from hero_integration.services.direct_mapping import MappingSpec, SOURCE_CONTRACTS, transformed_value, validate_spec
+    from hero_integration.services.direct_mapping import MappingSpec, SOURCE_CONTRACTS, transformed_value
+    from hero_integration.services.frappe_mapping_catalog import validate_draft_target
 
     contract = SOURCE_CONTRACTS.get(operation)
     if not contract or source_path not in contract["paths"]:
         frappe.throw("Source path is not selected by the approved HERO operation.")
-    frappe.has_permission(contract["target_doctype"], "write", throw=True)
-    spec = MappingSpec(operation, source_path, contract["target_doctype"], target_field, contract["paths"][source_path])
-    validate_spec(spec, _FrappeMetadata())
+    target_doctype = target_doctype or contract["target_doctype"]
+    spec = MappingSpec(operation, source_path, target_doctype, target_field, contract["paths"][source_path])
+    target = validate_draft_target(operation, spec.source_type, target_doctype, target_field, _FrappePickerMetadata())
     value = transformed_value(spec, record.get(source_path))
     return {
         "operation": operation,
         "source_path": source_path,
         "target_field": target_field,
+        "target_doctype": target_doctype,
+        "target_app": target.app_name,
         "values": {target_field: value} if value not in (None, "") else {},
         "writes": False,
-        "activation": "Draft only; explicit review and activation are required.",
+        "activation": "Draft only; explicit review is required. Non-canonical app targets cannot be activated by this app.",
     }
 
 
@@ -588,33 +623,38 @@ def resume_mapping_adoption(adoption_name: str) -> dict[str, object]:
 
 @frappe.whitelist()
 def execute_graphql_service(service_name: str, variables_json: str = "{}") -> dict[str, object]:
-    """Execute one validated saved query through the existing read-only client."""
+    """Retained compatibility endpoint; remote HERO execution is disabled."""
     frappe.only_for("System Manager")
-    service = frappe.get_doc("HERO GraphQL Service", service_name)
-    if service.status != "Validated":
-        frappe.throw("Only validated GraphQL services may execute.")
-    snapshot = frappe.get_doc("HERO GraphQL Schema Snapshot", service.schema_snapshot)
-    if snapshot.analysis_status != "Validated" or snapshot.schema_fingerprint != service.schema_fingerprint:
-        frappe.throw("The service schema fingerprint is stale.")
-    try:
-        variables = json.loads(variables_json)
-    except json.JSONDecodeError as error:
-        frappe.throw(f"Variables must be JSON: {error.msg}")
-    if not isinstance(variables, dict):
-        frappe.throw("Variables must be a JSON object.")
-    from hero_integration.client.graphql import HeroGraphQLClient
-    from hero_integration.client.settings import get_configuration
-
-    config = get_configuration()
-    client = HeroGraphQLClient(
-        config.endpoint,
-        lambda: config.api_token,
-        config.timeout_seconds,
-    )
-    return client.query(service.query_document, variables)
+    frappe.throw("HERO service execution is disabled in this workspace.")
 
 
 class _FrappePickerMetadata:
+    def doctypes(self):
+        from frappe.modules.utils import get_module_app
+
+        installed = set(frappe.get_installed_apps())
+        rows = frappe.get_all(
+            "DocType",
+            fields=["name", "module", "istable", "issingle", "is_virtual", "custom"],
+            order_by="module asc, name asc",
+        )
+        result = []
+        for row in rows:
+            item = dict(row)
+            module = str(item.get("module") or "")
+            try:
+                app_name = get_module_app(module) if module else ""
+            except Exception:
+                app_name = "Custom" if item.get("custom") else ""
+            if app_name and app_name not in installed and app_name != "Custom":
+                continue
+            item["app_name"] = app_name or ("Custom" if item.get("custom") else "")
+            result.append(item)
+        return result
+
+    def can_write(self, doctype: str) -> bool:
+        return bool(frappe.has_permission(doctype, "write"))
+
     def fields(self, doctype: str):
         frappe.has_permission(doctype, "write", throw=True)
         return frappe.get_meta(doctype).fields
