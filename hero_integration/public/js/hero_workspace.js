@@ -44,6 +44,9 @@
     const snapshotName = (args) => args.snapshot_name || args.connection_id || "";
 
     async function rpc(method, args = {}) {
+        if (method === "execute_service") {
+            throw new Error("HERO_MUTATION_EXECUTION_DISABLED");
+        }
         if (unsupported.has(method)) {
             throw new Error("This historic action is intentionally unavailable in the native workspace. Use the ERPNext Mapping Editor or saved read-only service definitions.");
         }
@@ -51,8 +54,6 @@
         if (method === "get_context") return request("workspace_context", {snapshot_name});
         if (method === "get_schema") return request("workspace_schema", {snapshot_name, search: args.search || "", kind: args.kind || "", start: args.start || 0, page_size: args.page_size || 50});
         if (method === "get_graph") return request("workspace_graph", {snapshot_name, start: args.start || 0, page_size: args.page_size || 200, node_id: args.node_id || ""});
-        if (method === "list_services" && args.operation_kind === "mutation") return {rows: [], has_more: false, total: 0};
-        if (["save_query", "validate_saved_query", "delete_query", "get_query"].includes(method) && args.operation_kind === "mutation") throw new Error("Mutation drafts are local-only and cannot be stored or executed.");
         if (method === "list_services") return request("workspace_service_list", {snapshot_name, operation_kind: args.operation_kind || "query", start: args.start || 0, page_size: args.page_size || 50});
         if (method === "get_query") return request("workspace_service_detail", {query_id: args.query_id});
         if (method === "save_query") return request("workspace_service_save", {snapshot_name, query_id: args.query_id || "", expected_revision: args.expected_revision || 0, payload_json: JSON.stringify({...args.payload, operation_kind: args.operation_kind || "query"})});
