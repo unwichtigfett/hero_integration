@@ -31,6 +31,12 @@ def _project(index: int) -> dict[str, object]:
         "customer_id": customer_id,
         "project_id": None if index % 5 == 0 else 3000 + index,
         "project_title": f"Synthetic Project {index}",
+        "project_nr": f"{index:04d}",
+        "project_type": "PV",
+        "customer": {"title": "Herr", "full_name": f"Synthetic Person {index}"},
+        "address": {
+            "full_address": f"Synthetic Street {index}, 77777 Synthetic City",
+        },
         "display_id": "" if index % 6 == 0 else f"SYN-P-{identifier}",
         "created": f"2026-10-{(index % 28) + 1:02d}T10:00:00+00:00",
         "modified": None if index % 7 == 0 else f"2026-10-{(index % 28) + 1:02d}T11:00:00+00:00",

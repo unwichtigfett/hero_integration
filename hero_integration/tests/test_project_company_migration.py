@@ -9,6 +9,20 @@ from types import SimpleNamespace
 from hero_integration.tests.mock_hero_v1 import AMBIGUOUS_PROJECT, CUSTOMERS, PROJECTS, UPDATED_CUSTOMER
 from hero_integration.tests.mapping_fixture import fixture_plan
 
+
+def _project_title_inputs(**overrides):
+    values = {
+        "project_nr": "1111",
+        "project_type": {"code": "PV"},
+        "customer": {"title": "Herr", "full_name": "Max Mustermann"},
+        "address": {
+            "formatted_address": "", "street": "Musterstraße", "house_number": "10",
+            "postal_code": "77777", "city": "Musterstadt",
+        },
+    }
+    values.update(overrides)
+    return values
+
 class TestProjectCompanyMigration(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -49,7 +63,7 @@ class TestProjectCompanyMigration(unittest.TestCase):
         self.migration.active_mapping_plan = fixture_plan
 
     def test_confirmed_company_creates_project_with_customer_and_stable_link(self):
-        record = {"id": 201, "customer_id": 101, "project_title": "Synthetic HERO Project"}
+        record = _project_title_inputs(id=201, customer_id=101, project_title="Synthetic HERO Project")
 
         first = self.migration._migrate_project(record, SimpleNamespace(mode="Execute"))
         second = self.migration._migrate_project(record, SimpleNamespace(mode="Execute"))
@@ -61,10 +75,10 @@ class TestProjectCompanyMigration(unittest.TestCase):
             self.frappe.projects[0],
             {
                 "name": "PROJ-0001",
-                "project_name": "Synthetic HERO Project",
+                "project_name": "PV-1111 | Photovoltaik, Herr Max Mustermann, Musterstraße 10, 77777 Musterstadt",
                 "customer": "Synthetic Customer",
                 "company": "Executing Company",
-                "custom_hero_source_id": "201",
+                "custom_hero_source_id": "default:201",
             },
         )
         self.assertEqual(self.frappe.links[("project", "201")].target_name, "PROJ-0001")
@@ -98,11 +112,11 @@ class TestProjectCompanyMigration(unittest.TestCase):
             "phone_home": "+49 556 401", "company_name": "", "category": "Synthetic",
             "type": "Prospect", "is_deleted": False,
         }
-        project_record = {
+        project_record = _project_title_inputs(**{
             "id": 501, "customer_id": 401, "project_id": 601, "project_title": "Synthetic Roof",
             "display_id": "P-501", "created": "2026-10-18T10:00:00+00:00",
             "modified": "2026-10-18T11:00:00+00:00",
-        }
+        })
 
         self.assertEqual(self.migration._migrate_customer(customer_record, SimpleNamespace(mode="Execute")).code, "CREATED")
         self.assertEqual(self.migration._migrate_project(project_record, SimpleNamespace(mode="Execute")).code, "CREATED")
@@ -113,7 +127,7 @@ class TestProjectCompanyMigration(unittest.TestCase):
         self.assertEqual(customer["custom_hero_customer_number"], "C-401")
         self.assertEqual(customer["custom_hero_customer_category"], "Synthetic")
         self.assertEqual(customer["custom_hero_customer_type"], "Prospect")
-        self.assertEqual(project["custom_hero_source_id"], "501")
+        self.assertEqual(project["custom_hero_source_id"], "default:501")
         self.assertEqual(project["custom_hero_related_project_id"], "601")
         self.assertEqual(project["custom_hero_display_id"], "P-501")
         self.assertEqual(project["custom_hero_source_created"], "2026-10-18T10:00:00+00:00")
@@ -178,7 +192,7 @@ class TestProjectCompanyMigration(unittest.TestCase):
         self.frappe.settings.erpnext_company = ""
 
         result = self.migration._migrate_project(
-            {"id": 202, "customer_id": 101, "project_title": "Blocked Project"},
+            _project_title_inputs(id=202, customer_id=101, project_title="Blocked Project"),
             SimpleNamespace(mode="Execute"),
         )
 
@@ -192,7 +206,7 @@ class TestProjectCompanyMigration(unittest.TestCase):
         )
 
         result = self.migration._migrate_project(
-            {"id": 203, "customer_id": 101, "project_title": "Blocked Reference"},
+            _project_title_inputs(id=203, customer_id=101, project_title="Blocked Reference"),
             SimpleNamespace(mode="Execute"),
         )
 
@@ -206,13 +220,42 @@ class TestProjectCompanyMigration(unittest.TestCase):
         self.assertFalse(self.frappe.projects)
         self.assertNotIn(("project", str(AMBIGUOUS_PROJECT["id"])), self.frappe.links)
 
+    def test_same_project_match_id_from_distinct_source_instances_creates_distinct_projects(self):
+        self.frappe.links[("customer", "101", "one")] = SimpleNamespace(
+            target_name="Synthetic Customer One", target_doctype="Customer"
+        )
+        self.frappe.links[("customer", "101", "two")] = SimpleNamespace(
+            target_name="Synthetic Customer Two", target_doctype="Customer"
+        )
+        first = _project_title_inputs(id=777, customer_id=101, project_nr="0001", _hero_source_instance="one")
+        second = _project_title_inputs(id=777, customer_id=101, project_nr="0002", _hero_source_instance="two")
+
+        self.assertEqual(self.migration._migrate_project(first, SimpleNamespace(mode="Execute")).code, "CREATED")
+        self.assertEqual(self.migration._migrate_project(second, SimpleNamespace(mode="Execute")).code, "CREATED")
+
+        self.assertEqual(len(self.frappe.projects), 2)
+        self.assertIn(("project", "777", "one"), self.frappe.links)
+        self.assertIn(("project", "777", "two"), self.frappe.links)
+
+    def test_changed_title_contract_creates_a_conflict_and_never_overwrites_locally_edited_title(self):
+        record = _project_title_inputs(id=778, customer_id=101, project_nr="0001")
+        self.assertEqual(self.migration._migrate_project(record, SimpleNamespace(mode="Execute")).code, "CREATED")
+        original = self.frappe.projects[0]["project_name"]
+
+        result = self.migration._migrate_project(
+            _project_title_inputs(id=778, customer_id=101, project_nr="0002"), SimpleNamespace(mode="Execute")
+        )
+
+        self.assertEqual(result.code, "CONFLICT")
+        self.assertEqual(self.frappe.projects[0]["project_name"], original)
+
     def test_missing_active_mapping_blocks_target_mutation(self):
         self.migration.active_mapping_plan = lambda operation: (_ for _ in ()).throw(
             self.migration.MappingPlanError("No active mapping definitions exist for this operation.")
         )
 
         customer = self.migration._migrate_customer({"id": 301, "full_name": "Synthetic Ada"}, SimpleNamespace(mode="Execute"))
-        project = self.migration._migrate_project({"id": 201, "customer_id": 101, "project_title": "Synthetic Project"}, SimpleNamespace(mode="Execute"))
+        project = self.migration._migrate_project(_project_title_inputs(id=201, customer_id=101, project_title="Synthetic Project"), SimpleNamespace(mode="Execute"))
 
         self.assertEqual((customer.code, project.code), ("BLOCKED_RECORD", "BLOCKED_RECORD"))
         self.assertFalse(self.frappe.customers)
@@ -269,7 +312,10 @@ class _FakeFrappe:
     def get_meta(self, doctype):
         if doctype == "Company":
             return SimpleNamespace(has_field=lambda fieldname: fieldname == "disabled")
-        return SimpleNamespace(has_field=lambda fieldname: fieldname in self.schema_fields[doctype])
+        return SimpleNamespace(
+            has_field=lambda fieldname: fieldname in self.schema_fields[doctype],
+            get_field=lambda fieldname: SimpleNamespace(length=140) if fieldname == "project_name" else None,
+        )
 
     def get_single(self, doctype):
         if doctype != "HERO Integration Settings":
@@ -294,8 +340,8 @@ class _FakeFrappe:
             return _LinkDocument(self, values)
         raise AssertionError(f"unexpected document creation: {values}")
 
-    def link(self, source_type, source_id):
-        return self.links.get((source_type, source_id))
+    def link(self, source_type, source_id, source_instance="default"):
+        return self.links.get((source_type, source_id, source_instance)) or self.links.get((source_type, source_id))
 
 
 class _FakeDatabase:
@@ -356,7 +402,10 @@ class _LinkDocument:
         self.values = values
 
     def insert(self):
-        self.frappe_api.links[(self.values["source_type"], self.values["source_id"])] = SimpleNamespace(
+        key = (self.values["source_type"], self.values["source_id"])
+        if self.values.get("source_instance", "default") != "default":
+            key = (*key, self.values["source_instance"])
+        self.frappe_api.links[key] = SimpleNamespace(
             target_doctype=self.values["target_doctype"],
             target_name=self.values["target_name"],
             source_payload_hash=self.values["source_payload_hash"],

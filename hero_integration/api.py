@@ -137,6 +137,24 @@ def graphql_service_list() -> list[dict[str, object]]:
 
 
 @frappe.whitelist()
+def graphql_service_detail(service_name: str) -> dict[str, object]:
+    """Read one saved definition; this endpoint never executes GraphQL."""
+    frappe.only_for("System Manager")
+    service = frappe.get_doc("HERO GraphQL Service", service_name)
+    return {
+        "name": service.name,
+        "service_name": service.service_name,
+        "operation_name": service.operation_name,
+        "query_document": service.query_document,
+        "schema_snapshot": service.schema_snapshot,
+        "schema_fingerprint": service.schema_fingerprint,
+        "service_revision": service.service_revision,
+        "status": service.status,
+        "validation_summary": service.validation_summary,
+    }
+
+
+@frappe.whitelist()
 def graph_view(snapshot_name: str) -> dict[str, object]:
     """Return a stored schema graph without contacting HERO."""
     frappe.only_for("System Manager")

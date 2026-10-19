@@ -49,7 +49,7 @@ make identity visible on native records; they do not replace that link.
 
 The test-only mapping fixture at
 [`hero_mapping_fixture_v1.json`](hero_integration/tests/fixtures/hero_mapping_fixture_v1.json)
-accounts for all 19 selected paths. It is not installed or activated by the
+accounts for all 24 selected paths. It is not installed or activated by the
 app.
 
 ## Direct adapter configuration

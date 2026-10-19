@@ -66,12 +66,16 @@ class MappingPlan:
         record: dict[str, object],
         customer_link: Callable[[object], str] | None = None,
         confirmed_company: Callable[[], str] | None = None,
+        project_title: Callable[[dict[str, object]], str] | None = None,
     ) -> dict[str, object]:
         values: dict[str, object] = {}
         for definition in self.definitions:
             value = record.get(definition.source_path)
             if definition.purpose in {PURPOSE_FIELD, PURPOSE_RECORD_NAME, PURPOSE_CUSTOMER_TYPE, PURPOSE_CUSTOMER_CONTACT, PURPOSE_SOURCE_IDENTITY}:
-                transformed = transformed_value(definition, value)
+                if definition.purpose == PURPOSE_RECORD_NAME and self.operation == "HeroProjectMatches":
+                    transformed = project_title(record) if project_title is not None else transformed_value(definition, value)
+                else:
+                    transformed = transformed_value(definition, value)
                 if transformed is None or transformed == "":
                     continue
                 if definition.purpose == PURPOSE_RECORD_NAME and definition.target_field in values:

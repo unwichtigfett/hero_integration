@@ -1,6 +1,6 @@
 # Mapping matrix
 
-The two fixed read-only HERO operations select 19 source paths. The app ships
+The two fixed read-only HERO operations select 24 source paths. The app ships
 no active or Draft field mapping definitions for those paths.
 
 The isolated test fixture is
@@ -13,7 +13,7 @@ An imported production mapping must use these protected bindings where needed:
 | Operation | Required explicit bindings |
 | --- | --- |
 | HeroCustomers | Source Identity, Record Name, Customer Type, Lifecycle Flag |
-| HeroProjectMatches | Source Identity, Record Name, Customer Relation, Confirmed Company |
+| HeroProjectMatches | Source Identity, Record Name, Customer Relation, Confirmed Company; the Record Name is the validated native Project title contract |
 
 Regular site-specific mappings can write only writable Custom Fields. A package
 can declare required `custom_hero_` Custom Fields and `HERO ` Custom DocTypes.
