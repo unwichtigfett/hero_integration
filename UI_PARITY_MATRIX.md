@@ -36,6 +36,30 @@ bookmarks resolve to the corresponding section. Technical DocTypes remain
 available to their System Manager permission checks and direct records, but are
 not linked from the normal HERO workspace navigation.
 
+## Runtime Frappe target catalog
+
+The Mapping section discovers installed apps and their DocTypes from the active
+site at request time. It then exposes App → DocType → Field choices from Frappe
+metadata, including standard and Custom Fields. Single, virtual, child-table,
+read-only, unsupported, Link-without-resolver, and permission-denied targets
+remain visible with a reason and cannot be selected. Select options and
+required-field constraints remain visible to reviewers.
+
+Customer and Project remain the only canonical, activatable migration targets.
+Any field of another installed app can become a validated **Draft proposal**,
+but the app does not activate it or use direct DocType writes. An explicit
+app-owned integration is required before such a proposal can acquire a runtime
+write path. This preserves third-party application boundaries while retaining
+the mapping JSON and confirmed schema-adoption contracts.
+
+## Mutation drafts
+
+The Analyzer and Graph Viewer retain schema mutation nodes, input relations,
+and return types. GraphQL Services now permits a Mutation draft to be edited
+and locally checked against the selected saved schema. These drafts are neither
+stored as services nor executed; remote execution remains disabled in the UI
+and native RPC facade.
+
 The CSS/DOM source port has not been visually inspected in a browser in this
 step. Visual parity is therefore a manual step, not a claimed result.
 
@@ -54,7 +78,7 @@ is shared by the tool and overview. The extra observed name is not omitted.
 | `save_query`, `validate_saved_query`, `preview_query`, `delete_query` | SAFE_LOCAL_SERVICE_MANAGEMENT | permission-checked local read-only service definitions |
 | `get_settings` | SAFE_READ | redacted native settings read |
 | `save_settings` | SAFE_LOCAL_SERVICE_MANAGEMENT | native DocType validation; token is never returned |
-| `execute_service` | UNSUPPORTED_HERO_MUTATION | visible Execute control disabled; no remote execution endpoint is mapped |
+| `execute_service` | UNSUPPORTED_HERO_MUTATION | visible Execute control disabled; `execute_graphql_service` compatibility RPC also rejects every remote execution |
 | `refresh_schema`, `synchronize_connection` | LEGACY_PROCESS_ONLY | visible overview actions disabled; they require old binding/transport state |
 | `get_analyzer_service_draft`, `save_analyzer_service` | LEGACY_PROCESS_ONLY | visible Analyzer save control disabled; no inferred query contract is created |
 | `list_candidates`, `mark_candidate`, `remove_candidate` | LEGACY_PROCESS_ONLY | visible native Mapping Editor hand-off; no parallel candidate persistence |
