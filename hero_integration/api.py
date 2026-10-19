@@ -227,7 +227,7 @@ def workspace_settings_save(enabled: int | bool, api_url: str, api_token: str = 
 @frappe.whitelist()
 def workspace_schema(snapshot_name: str, search: str = "", kind: str = "", start: int = 0, page_size: int = 50) -> dict[str, object]:
     frappe.only_for("System Manager")
-    _, schema = _validated_snapshot(snapshot_name)
+    snapshot, schema = _validated_snapshot(snapshot_name)
     from hero_integration.services.workspace_compat import schema_projection
 
     projection = schema_projection(schema, search=search, kind=kind)
@@ -243,7 +243,7 @@ def workspace_schema(snapshot_name: str, search: str = "", kind: str = "", start
 @frappe.whitelist()
 def workspace_graph(snapshot_name: str, start: int = 0, page_size: int = 200, node_id: str = "") -> dict[str, object]:
     frappe.only_for("System Manager")
-    _, schema = _validated_snapshot(snapshot_name)
+    snapshot, schema = _validated_snapshot(snapshot_name)
     from hero_integration.services.workspace_compat import graph_projection, node_projection
 
     if node_id:
