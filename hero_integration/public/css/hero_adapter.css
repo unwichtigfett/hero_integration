@@ -23,6 +23,19 @@
     background: transparent;
 }
 
+.hero-unified-navigation {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 0 0 16px;
+}
+
+.hero-unified-navigation [data-active] {
+    background: var(--primary, #2490ef);
+    border-color: var(--primary, #2490ef);
+    color: #fff;
+}
+
 .admin-hero-tool-host {
     min-width: 0;
 }

@@ -10,6 +10,8 @@ PAGES = PACKAGE_ROOT / "hero_integration" / "page"
 WORKSPACE_JS = PACKAGE_ROOT / "public" / "js" / "hero_workspace.js"
 WORKSPACE_CSS = PACKAGE_ROOT / "public" / "css" / "hero_workspace.css"
 TOOLS_JS = PACKAGE_ROOT / "public" / "js" / "hero_tools.js"
+MAPPING_EDITOR_JS = PACKAGE_ROOT / "public" / "js" / "hero_mapping_editor.js"
+MIGRATION_JS = PACKAGE_ROOT / "public" / "js" / "hero_migration.js"
 ADAPTER_CSS = PACKAGE_ROOT / "public" / "css" / "hero_adapter.css"
 PARITY_MATRIX = PACKAGE_ROOT.parent / "UI_PARITY_MATRIX.md"
 
@@ -29,10 +31,13 @@ class TestHeroDeskUiContract(unittest.TestCase):
                 self.assertEqual(metadata["module"], "HERO Integration")
                 self.assertEqual(metadata["roles"], [{"role": "System Manager"}])
 
-    def test_workspace_uses_stored_state_and_native_routes(self):
+    def test_workspace_uses_stored_state_and_one_canonical_route(self):
         source = WORKSPACE_JS.read_text()
         for route in ("hero-api-analyzer", "hero-graph-viewer", "hero-graphql-services", "hero-adapter-tools", "hero-settings"):
             self.assertIn(route, source)
+        self.assertIn('CANONICAL_PAGE = "hero-integration"', source)
+        self.assertIn("redirectLegacy", source)
+        self.assertIn("hero-unified-navigation", source)
         for endpoint in ("workspace_context", "workspace_schema", "workspace_graph", "workspace_service_save"):
             self.assertIn(endpoint, source)
         self.assertIn("hero-adapter-tools", source)
@@ -78,7 +83,7 @@ class TestHeroDeskUiContract(unittest.TestCase):
             self.assertNotIn(forbidden, source.lower())
 
     def test_mapping_editor_retains_one_confirmed_bulk_adoption(self):
-        source = (PAGES / "hero_adapter_tools" / "hero_adapter_tools.js").read_text()
+        source = MAPPING_EDITOR_JS.read_text()
         self.assertIn("adopt_mapping_package", source)
         self.assertIn("frappe.confirm", source)
         self.assertIn("pendingSourcePath", source)
@@ -87,6 +92,8 @@ class TestHeroDeskUiContract(unittest.TestCase):
         self.assertTrue(WORKSPACE_CSS.is_file())
         for asset in ("hero_tools.css", "hero_adapter.css", "hero_overview.css", "hero_settings.css"):
             self.assertTrue((PACKAGE_ROOT / "public" / "css" / asset).is_file())
+        self.assertTrue(MAPPING_EDITOR_JS.is_file())
+        self.assertTrue(MIGRATION_JS.is_file())
         pyproject = PACKAGE_ROOT.parent / "pyproject.toml"
         self.assertIn('"**/*.css"', pyproject.read_text())
 
@@ -96,3 +103,18 @@ class TestHeroDeskUiContract(unittest.TestCase):
         self.assertIn("IMPLEMENTED_SOURCE_TESTED", matrix)
         self.assertIn("LEGACY_PROCESS_ONLY", matrix)
         self.assertIn("manual step", matrix)
+
+    def test_legacy_pages_only_redirect_into_the_canonical_workspace(self):
+        expected = {
+            "hero_adapter_tools": "mapping",
+            "hero_api_analyzer": "analyzer",
+            "hero_graph_viewer": "graph",
+            "hero_graphql_services": "services",
+            "hero_migration_center": "migration",
+            "hero_settings": "settings",
+        }
+        for directory, section in expected.items():
+            source = (PAGES / directory / f"{directory}.js").read_text()
+            with self.subTest(directory=directory):
+                self.assertIn(f'redirectLegacy("{section}")', source)
+                self.assertNotIn("make_app_page", source)
