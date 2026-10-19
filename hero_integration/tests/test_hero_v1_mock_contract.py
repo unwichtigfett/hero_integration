@@ -35,6 +35,7 @@ CUSTOMER = {
     "company_name": "",
     "category": "synthetic",
     "type": "synthetic",
+    "is_contact_person": False,
     "is_deleted": False,
 }
 PROJECT = {
@@ -44,6 +45,7 @@ PROJECT = {
     "project_title": " Synthetic Project ",
     "project_nr": "0001",
     "project_type": "PV",
+    "partner_notes": "Synthetic partner note",
     "customer": {"title": "Herr", "full_name": "Synthetic Person"},
     "address": {"full_address": "Synthetic Street 1, 77777 Synthetic City"},
     "display_id": "PR-201",
@@ -172,10 +174,10 @@ class TestHeroV1MockContract(unittest.TestCase):
             },
         }
         self.assertEqual(matrix, expected)
-        self.assertEqual(sum(map(len, matrix.values())), 24)
+        self.assertEqual(sum(map(len, matrix.values())), 26)
         self.assertEqual(sum(row["status"] == "NATIVE_MAPPED" for row in MATRIX["fields"]), 14)
-        self.assertEqual(sum(row["status"] == "CUSTOM_FIELD_MAPPED" for row in MATRIX["fields"]), 9)
-        self.assertEqual(sum(row["status"] == "HERO_DOCTYPE_MAPPED" for row in MATRIX["fields"]), 1)
+        self.assertEqual(sum(row["status"] == "CUSTOM_FIELD_MAPPED" for row in MATRIX["fields"]), 10)
+        self.assertEqual(sum(row["status"] == "HERO_DOCTYPE_MAPPED" for row in MATRIX["fields"]), 2)
         self.assertTrue(all(not row["exclusion_reason"] for row in MATRIX["fields"]))
 
     def test_deterministic_dataset_covers_pagination_and_negative_cases(self):

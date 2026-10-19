@@ -167,3 +167,9 @@ def _require_erpnext_schema() -> None:
     missing = [doctype for doctype in _REQUIRED_ERPNext_DOCTYPES if not frappe.db.exists("DocType", doctype)]
     if missing:
         frappe.throw(f"ERPNext schema is incomplete: {', '.join(missing)}.")
+    from hero_integration.integrations.erpnext.project_notes import NativeProjectNotesError, require_native_project_notes
+
+    try:
+        require_native_project_notes(frappe.get_meta("Project"))
+    except NativeProjectNotesError as error:
+        frappe.throw(str(error))
