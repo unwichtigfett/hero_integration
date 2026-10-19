@@ -21,6 +21,9 @@ def _customer(index: int) -> dict[str, object]:
         "type": "synthetic-type",
         "is_contact_person": False,
         "is_deleted": index == 25,
+        "address": None if index % 6 == 0 else {
+            "id": 8000 + index, "street": f"Synthetic Street {index}", "zipcode": "77777", "city": "Synthetic City",
+        },
     }
 
 

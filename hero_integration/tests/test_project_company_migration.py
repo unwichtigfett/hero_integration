@@ -34,6 +34,7 @@ class TestProjectCompanyMigration(unittest.TestCase):
         cls._synchronize_home_phone = cls.migration.synchronize_home_phone
         cls._home_phone_for_customer = cls.migration.home_phone_for_customer
         cls._active_mapping_plan = cls.migration.active_mapping_plan
+        cls._synchronize_customer_relations = cls.migration._synchronize_customer_relations
 
     @classmethod
     def tearDownClass(cls):
@@ -62,6 +63,7 @@ class TestProjectCompanyMigration(unittest.TestCase):
         self.migration.synchronize_home_phone = lambda customer, phone: None
         self.migration.home_phone_for_customer = lambda customer: None
         self.migration.active_mapping_plan = fixture_plan
+        self.migration._synchronize_customer_relations = lambda *args: None
 
     def test_confirmed_company_creates_project_with_customer_and_stable_link(self):
         record = _project_title_inputs(id=201, customer_id=101, project_title="Synthetic HERO Project")
@@ -197,6 +199,16 @@ class TestProjectCompanyMigration(unittest.TestCase):
 
         self.assertEqual(result.code, "SKIPPED_CONTACT_PERSON")
         self.assertFalse(self.frappe.customers)
+
+    def test_customer_primary_address_accepts_only_the_proven_relation_shape(self):
+        self.assertEqual(
+            self.migration._customer_primary_address(
+                {"address": {"id": 801, "street": "Synthetic Street 1", "zipcode": "77777", "city": "Synthetic City"}}
+            ),
+            {"id": "801", "street": "Synthetic Street 1", "zipcode": "77777", "city": "Synthetic City"},
+        )
+        with self.assertRaises(self.migration.MappingPlanError):
+            self.migration._customer_primary_address({"address": {"id": 801, "street": "", "zipcode": "77777", "city": "Synthetic City"}})
 
     def test_project_action_always_runs_the_customer_phase_first_and_stops_at_its_gate(self):
         events = []

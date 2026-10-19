@@ -92,6 +92,7 @@ _REQUIRED_ERPNext_DOCTYPES = (
     "Contact",
     "Contact Email",
     "Contact Phone",
+    "Address",
     "Project",
 )
 

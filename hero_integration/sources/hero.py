@@ -11,6 +11,7 @@ CUSTOMER_QUERY_V1 = """
 query HeroCustomers($first: Int!, $offset: Int!, $orderBy: String!, $showDeleted: Boolean!) {
   contacts(first: $first, offset: $offset, orderBy: $orderBy, show_deleted: $showDeleted) {
     id nr first_name last_name full_name email phone_mobile phone_home company_name category type is_contact_person is_deleted
+    address { id street zipcode city }
   }
 }
 """
@@ -25,6 +26,11 @@ query HeroProjectMatches($first: Int!, $offset: Int!, $orderBy: String!) {
 }
 """
 PAGE_SIZE = 100
+CUSTOMER_SELECTED_PATHS = (
+    "id", "nr", "first_name", "last_name", "full_name", "email", "phone_mobile", "phone_home",
+    "company_name", "category", "type", "is_contact_person", "is_deleted",
+    "address.id", "address.street", "address.zipcode", "address.city",
+)
 PROJECT_SELECTED_PATHS = (
     "id", "customer_id", "project_id", "project_title", "project_nr", "project_type", "partner_notes",
     "customer.title", "customer.full_name", "address.full_address", "display_id", "created", "modified",
