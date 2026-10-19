@@ -106,6 +106,42 @@ class TestDirectFrappeAdapter(unittest.TestCase):
         self.assertFalse(schema_only.selectable)
         self.assertEqual(schema_only.graphql_path, "contacts.unselected")
 
+    def test_historic_partner_query_contacts_list_resolves_every_customer_contract_path(self):
+        fields = source_fields("HeroCustomers", _historic_partner_customer_schema())
+        selected = [field for field in fields if field.selectable]
+
+        self.assertEqual(
+            [field.path for field in selected],
+            [
+                "id", "nr", "first_name", "last_name", "full_name", "email", "phone_mobile", "phone_home",
+                "company_name", "category", "type", "is_contact_person", "is_deleted",
+                "address.id", "address.street", "address.zipcode", "address.city",
+            ],
+        )
+        self.assertEqual(
+            (next(field for field in selected if field.path == "address.city").graphql_path,
+             next(field for field in selected if field.path == "address.city").return_type),
+            ("contacts.address.city", "Customer"),
+        )
+
+    def test_historic_partner_query_reverse_suggestions_remain_separate_from_semantic_filtering(self):
+        self.metadata.extra = [
+            SimpleNamespace(fieldname="custom_hero_schema_value", label="HERO Schema Value", fieldtype="Data", read_only=0, options="", is_custom_field=1),
+        ]
+
+        matches = suggest_from_target("HeroCustomers", "custom_hero_schema_value", _historic_partner_customer_schema(), self.metadata)
+
+        self.assertIn("full_name", {item["source_path"] for item in matches})
+        self.assertTrue(all(item["source_graphql_path"].startswith("contacts.") for item in matches))
+
+    def test_historic_partner_query_keeps_protected_customer_name_without_a_synthetic_suggestion(self):
+        self.metadata.extra = [
+            SimpleNamespace(fieldname="customer_name", label="Customer Name", fieldtype="Data", read_only=0, options="", is_custom_field=0),
+        ]
+
+        self.assertTrue(any(field.selectable for field in source_fields("HeroCustomers", _historic_partner_customer_schema())))
+        self.assertEqual(suggest_from_target("HeroCustomers", "customer_name", _historic_partner_customer_schema(), self.metadata), [])
+
     def test_bidirectional_suggestions_filter_protected_and_incompatible_fields(self):
         schema = _customer_schema()
         self.metadata.extra = [
@@ -246,3 +282,33 @@ def _customer_schema(contact_fields=None):
             {"name": "parent", "type": {"kind": "OBJECT", "name": "Contact"}},
         ]},
     ]}}
+
+
+def _historic_partner_customer_schema():
+    customer_scalar_fields = [
+        ("id", "Int"), ("nr", "String"), ("first_name", "String"), ("last_name", "String"),
+        ("full_name", "String"), ("email", "String"), ("phone_mobile", "String"), ("phone_home", "String"),
+        ("company_name", "String"), ("category", "String"), ("type", "String"),
+        ("is_contact_person", "Boolean"), ("is_deleted", "Boolean"),
+    ]
+    return {"schema": {
+        "query_type_name": "PartnerQuery",
+        "mutation_type_name": "PartnerMutation",
+        "types": [
+            {"kind": "OBJECT", "name": "PartnerQuery", "fields": [{
+                "name": "contacts",
+                "type_ref": {"kind": "LIST", "name": None, "of_type": {"kind": "OBJECT", "name": "Customer", "of_type": None}},
+            }]},
+            {"kind": "OBJECT", "name": "PartnerMutation", "fields": []},
+            {"kind": "OBJECT", "name": "Customer", "fields": [
+                *[{"name": name, "type_ref": {"kind": "SCALAR", "name": kind, "of_type": None}} for name, kind in customer_scalar_fields],
+                {"name": "address", "type_ref": {"kind": "OBJECT", "name": "Address", "of_type": None}},
+            ]},
+            {"kind": "OBJECT", "name": "Address", "fields": [
+                {"name": "id", "type_ref": {"kind": "SCALAR", "name": "Int", "of_type": None}},
+                {"name": "street", "type_ref": {"kind": "SCALAR", "name": "String", "of_type": None}},
+                {"name": "zipcode", "type_ref": {"kind": "SCALAR", "name": "String", "of_type": None}},
+                {"name": "city", "type_ref": {"kind": "SCALAR", "name": "String", "of_type": None}},
+            ]},
+        ],
+    }}

@@ -12,6 +12,7 @@ from hero_integration.services.direct_mapping import (
 )
 from hero_integration.services.frappe_mapping_catalog import fields as catalog_fields
 from hero_integration.services.frappe_mapping_catalog import types_compatible
+from hero_integration.services.graphql_graph import normalize_schema
 
 
 @dataclass(frozen=True)
@@ -50,6 +51,7 @@ def source_fields(operation: str, schema: dict[str, object], search: str = "") -
     contract = SOURCE_CONTRACTS.get(operation)
     if not contract:
         return []
+    schema = normalize_schema(schema)
     needle = search.strip().lower()
     result = []
     root = OPERATION_ROOTS[operation]
@@ -234,10 +236,11 @@ def _graphql_contract_fields(
     schema: dict[str, object], root: str, selected_paths: dict[str, str],
 ) -> tuple[str, dict[str, tuple[str, bool, str, str]]]:
     """Resolve bounded, query-only selected source paths from saved introspection."""
-    schema = _schema_body(schema)
+    schema = normalize_schema(schema)
     types = schema.get("types", []) if isinstance(schema.get("types"), list) else []
     by_name = {item.get("name"): item for item in types if isinstance(item, dict) and isinstance(item.get("name"), str)}
-    query = by_name.get("Query")
+    query_name = _operation_root_name(schema, "queryType", "Query")
+    query = by_name.get(query_name)
     if not isinstance(query, dict):
         return "", {}
     root_field = next((field for field in query.get("fields", []) if isinstance(field, dict) and field.get("name") == root), None)
@@ -251,6 +254,14 @@ def _graphql_contract_fields(
         for path in selected_paths
         if (details := _resolve_selected_path(by_name, return_type, root, path)) is not None
     }
+
+
+def _operation_root_name(schema: dict[str, object], key: str, fallback: str) -> str:
+    """Use the declared query root, while retaining standard minimal-fixture support."""
+    root = schema.get(key)
+    if isinstance(root, dict) and isinstance(root.get("name"), str) and root["name"]:
+        return root["name"]
+    return fallback
 
 
 def _resolve_selected_path(
