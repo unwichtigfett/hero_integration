@@ -172,6 +172,202 @@ def graph_view(snapshot_name: str) -> dict[str, object]:
     }
 
 
+# The following endpoints are an explicit, finite compatibility boundary for
+# the preserved workspace client.  They never proxy to another app or execute
+# a stored GraphQL document.  Their input and output shapes intentionally keep
+# the workspace usable with a saved Frappe snapshot only.
+@frappe.whitelist()
+def workspace_context(snapshot_name: str = "") -> dict[str, object]:
+    frappe.only_for("System Manager")
+    snapshots = schema_snapshot_list()
+    selected = next((item for item in snapshots if item["name"] == snapshot_name), None) or (snapshots[0] if snapshots else None)
+    return {
+        "connection_id": selected["name"] if selected else "",
+        "binding_generation": 0,
+        "schema_fingerprint": selected["schema_fingerprint"] if selected else "",
+        "enabled": bool(selected),
+        "can_write": bool(frappe.has_permission("HERO GraphQL Service", "write")),
+        "needs_binding_update": False,
+        "mutations_enabled": False,
+        "execution_enabled": False,
+        "binding_refresh_available": False,
+        "schema_refresh_available": False,
+        "selected_snapshot": selected["name"] if selected else "",
+    }
+
+
+@frappe.whitelist()
+def workspace_settings_get() -> dict[str, object]:
+    """Return editable local settings while never returning the stored token."""
+    frappe.only_for("System Manager")
+    settings = frappe.get_single("HERO Integration Settings")
+    return {
+        "enabled": bool(settings.hero_api_url),
+        "api_url": settings.hero_api_url or "",
+        "api_token_configured": bool(settings.get_password("hero_api_token")),
+        "timeout_seconds": int(settings.timeout_seconds or 30),
+    }
+
+
+@frappe.whitelist()
+def workspace_settings_save(enabled: int | bool, api_url: str, api_token: str = "", timeout_seconds: int = 30) -> dict[str, object]:
+    """Persist only native integration configuration, with DocType validation."""
+    frappe.only_for("System Manager")
+    if int(timeout_seconds) < 1:
+        frappe.throw("Timeout must be at least one second.")
+    settings = frappe.get_single("HERO Integration Settings")
+    settings.hero_api_url = api_url.strip() if bool(enabled) else ""
+    settings.timeout_seconds = int(timeout_seconds)
+    if api_token:
+        settings.hero_api_token = api_token
+    settings.save()
+    return workspace_settings_get()
+
+
+@frappe.whitelist()
+def workspace_schema(snapshot_name: str, search: str = "", kind: str = "", start: int = 0, page_size: int = 50) -> dict[str, object]:
+    frappe.only_for("System Manager")
+    _, schema = _validated_snapshot(snapshot_name)
+    from hero_integration.services.workspace_compat import schema_projection
+
+    projection = schema_projection(schema, search=search, kind=kind)
+    rows = projection.pop("types")
+    result = _page(projection, rows, start, page_size)
+    result["types"] = result.pop("rows")
+    result["schema_fingerprint"] = result["fingerprint"]
+    result["complete_analysis"] = True
+    result["captured_at"] = snapshot.modified
+    return result
+
+
+@frappe.whitelist()
+def workspace_graph(snapshot_name: str, start: int = 0, page_size: int = 200, node_id: str = "") -> dict[str, object]:
+    frappe.only_for("System Manager")
+    _, schema = _validated_snapshot(snapshot_name)
+    from hero_integration.services.workspace_compat import graph_projection, node_projection
+
+    if node_id:
+        result = node_projection(schema, node_id)
+        result["schema_fingerprint"] = result.pop("fingerprint", snapshot.schema_fingerprint)
+        return result
+    projection = graph_projection(schema)
+    nodes = projection.pop("nodes")
+    result = _page(projection, nodes, start, page_size)
+    result["nodes"] = result.pop("rows")
+    fingerprint = result.pop("fingerprint")
+    result["schema_fingerprint"] = fingerprint
+    result["existing_mappings"] = _existing_mappings(fingerprint)
+    return result
+
+
+@frappe.whitelist()
+def workspace_service_list(snapshot_name: str, operation_kind: str = "query", start: int = 0, page_size: int = 50) -> dict[str, object]:
+    frappe.only_for("System Manager")
+    _assert_query_kind(operation_kind)
+    rows = [
+        _workspace_service(row)
+        for row in frappe.get_all(
+            "HERO GraphQL Service",
+            filters={"schema_snapshot": snapshot_name},
+            fields=["name", "service_name", "operation_name", "query_document", "service_revision", "status", "validation_summary"],
+            order_by="modified desc",
+        )
+    ]
+    return _page({}, rows, start, page_size)
+
+
+@frappe.whitelist()
+def workspace_service_detail(query_id: str) -> dict[str, object]:
+    frappe.only_for("System Manager")
+    return {"query": _workspace_service(frappe.get_doc("HERO GraphQL Service", query_id).as_dict())}
+
+
+@frappe.whitelist()
+def workspace_service_save(snapshot_name: str, payload_json: str, query_id: str = "", expected_revision: int = 0) -> dict[str, object]:
+    frappe.only_for("System Manager")
+    payload = _workspace_payload(payload_json)
+    _assert_query_kind(payload.get("operation_kind", "query"))
+    snapshot, _ = _validated_snapshot(snapshot_name)
+    if query_id:
+        service = frappe.get_doc("HERO GraphQL Service", query_id)
+        if service.schema_snapshot != snapshot.name:
+            frappe.throw("The saved service belongs to another schema snapshot.")
+        if int(service.service_revision or 0) != int(expected_revision or 0):
+            frappe.throw("The saved service has changed; reload it before saving.")
+    else:
+        service = frappe.new_doc("HERO GraphQL Service")
+        service.schema_snapshot = snapshot.name
+    service.service_name = payload["name"]
+    service.operation_name = payload["operation_name"] or payload["name"]
+    service.query_document = payload["query"]
+    service.status = "Draft"
+    service.save()
+    return {"query": _workspace_service(service.as_dict())}
+
+
+@frappe.whitelist()
+def workspace_service_validate(snapshot_name: str, payload_json: str = "", query_id: str = "", expected_revision: int = 0) -> dict[str, object]:
+    frappe.only_for("System Manager")
+    if not query_id:
+        payload = _workspace_payload(payload_json)
+        _assert_query_kind(payload.get("operation_kind", "query"))
+        _validated_snapshot(snapshot_name)
+        from hero_integration.client.graphql import assert_read_only
+
+        assert_read_only(payload["query"])
+        return {"valid": True, "can_execute": False, "reason": "Saved read-only definitions can be validated; remote execution is disabled in this workspace."}
+    service = frappe.get_doc("HERO GraphQL Service", query_id)
+    if service.schema_snapshot != snapshot_name or int(service.service_revision or 0) != int(expected_revision or 0):
+        frappe.throw("The saved service changed or belongs to another schema snapshot.")
+    service.status = "Validated"
+    service.save()
+    return {"valid": True, "can_execute": False, "query": _workspace_service(service.as_dict()), "reason": "Remote execution is disabled in this workspace."}
+
+
+@frappe.whitelist()
+def workspace_service_delete(query_id: str, expected_revision: int = 0) -> dict[str, str]:
+    frappe.only_for("System Manager")
+    service = frappe.get_doc("HERO GraphQL Service", query_id)
+    if int(service.service_revision or 0) != int(expected_revision or 0):
+        frappe.throw("The saved service has changed; reload it before deleting.")
+    frappe.delete_doc("HERO GraphQL Service", query_id)
+    return {"status": "DELETED"}
+
+
+def _page(base: dict[str, object], rows: list[object], start: int | str, page_size: int | str) -> dict[str, object]:
+    offset, limit = max(0, int(start or 0)), min(max(1, int(page_size or 50)), 500)
+    return {**base, "rows": rows[offset:offset + limit], "has_more": offset + limit < len(rows), "total": len(rows)}
+
+
+def _workspace_payload(payload_json: str) -> dict[str, object]:
+    try:
+        payload = json.loads(payload_json)
+    except json.JSONDecodeError as error:
+        frappe.throw(f"Service payload must be JSON: {error.msg}")
+    if not isinstance(payload, dict):
+        frappe.throw("Service payload must be an object.")
+    for field in ("name", "query"):
+        if not isinstance(payload.get(field), str) or not payload[field].strip():
+            frappe.throw(f"Service {field} is required.")
+    if payload.get("operation_name") is not None and not isinstance(payload["operation_name"], str):
+        frappe.throw("Service operation name must be text.")
+    return payload
+
+
+def _workspace_service(service: dict[str, object]) -> dict[str, object]:
+    return {
+        "query_id": service["name"], "name": service["service_name"], "operation_name": service["operation_name"],
+        "query": service["query_document"], "revision": int(service.get("service_revision") or 1),
+        "provenance": "HERO Integration", "service_kind": "query", "status": service.get("status"),
+        "validation_summary": service.get("validation_summary"), "variables": {},
+    }
+
+
+def _assert_query_kind(operation_kind: str) -> None:
+    if operation_kind != "query":
+        frappe.throw("HERO mutations are disabled; only stored read-only query definitions are supported.")
+
+
 @frappe.whitelist()
 def preview_direct_mapping(operation: str, source_record_json: str) -> dict[str, object]:
     """Show an active explicit mapping plan. This endpoint never writes documents."""

@@ -120,7 +120,51 @@ def _schema(snapshot: object) -> dict[str, object]:
     schema = snapshot.get("__schema", snapshot.get("schema", snapshot))
     if not isinstance(schema, dict):
         raise GraphSnapshotError("GraphQL snapshot schema must be an object.")
+    # Historic full snapshots encode the same introspection data with snake-case
+    # member names. Normalize at the read boundary so a complete stored source
+    # can be selected by the viewer without importing its original runtime.
+    if "query_type_name" in schema or "mutation_type_name" in schema:
+        return _normalize_full_snapshot(schema)
     return schema
+
+
+def _normalize_full_snapshot(schema: dict[str, object]) -> dict[str, object]:
+    def type_ref(value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        return {
+            "kind": value.get("kind"), "name": value.get("name"),
+            "ofType": type_ref(value.get("of_type")),
+        }
+
+    def field(value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        result = dict(value)
+        result["type"] = type_ref(result.pop("type_ref", None))
+        result["args"] = [
+            {**argument, "type": type_ref(argument.get("type_ref"))}
+            for argument in result.pop("arguments", []) if isinstance(argument, dict)
+        ]
+        return result
+
+    types = []
+    for raw in schema.get("types", []):
+        if not isinstance(raw, dict):
+            continue
+        item = dict(raw)
+        item["fields"] = [field(value) for value in item.get("fields", [])]
+        item["inputFields"] = [field(value) for value in item.pop("input_fields", [])]
+        item["enumValues"] = item.pop("enum_values", [])
+        item["possibleTypes"] = [type_ref(value) for value in item.pop("possible_types", [])]
+        item["interfaces"] = [type_ref(value) for value in item.pop("interfaces", [])]
+        types.append(item)
+    return {
+        "types": types, "directives": schema.get("directives", []),
+        "queryType": {"name": schema["query_type_name"]} if schema.get("query_type_name") else None,
+        "mutationType": {"name": schema["mutation_type_name"]} if schema.get("mutation_type_name") else None,
+        "subscriptionType": {"name": schema["subscription_type_name"]} if schema.get("subscription_type_name") else None,
+    }
 
 
 def _named_type(value: object) -> str | None:
