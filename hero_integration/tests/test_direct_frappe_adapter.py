@@ -22,6 +22,8 @@ from hero_integration.services.mapping_suggestions import (
 
 
 class TestDirectFrappeAdapter(unittest.TestCase):
+    SNAPSHOT_FIXTURE = "kc2tq33u7j"
+
     def setUp(self):
         self.metadata = _Metadata()
 
@@ -106,7 +108,8 @@ class TestDirectFrappeAdapter(unittest.TestCase):
         self.assertFalse(schema_only.selectable)
         self.assertEqual(schema_only.graphql_path, "contacts.unselected")
 
-    def test_historic_partner_query_contacts_list_resolves_every_customer_contract_path(self):
+    def test_kc2tq33u7j_contacts_list_resolves_all_17_customer_contract_paths(self):
+        self.assertEqual(self.SNAPSHOT_FIXTURE, "kc2tq33u7j")
         fields = source_fields("HeroCustomers", _historic_partner_customer_schema())
         selected = [field for field in fields if field.selectable]
 
@@ -118,6 +121,7 @@ class TestDirectFrappeAdapter(unittest.TestCase):
                 "address.id", "address.street", "address.zipcode", "address.city",
             ],
         )
+        self.assertEqual(len(selected), 17)
         self.assertEqual(
             (next(field for field in selected if field.path == "address.city").graphql_path,
              next(field for field in selected if field.path == "address.city").return_type),

@@ -39,8 +39,9 @@ as part of Cheap or Full migration.
 
 The app stores read-only GraphQL schema snapshots and services. It builds a
 deterministic API Analyzer graph from a saved snapshot without contacting HERO.
-The **ERPNext Mapping** tab in the canonical **HERO Integration** Desk
-workspace opens the graph and supplies searchable source and target pickers. A
+The **Mapping** tab in the canonical **HERO Integration** Desk workspace
+requires an explicit saved, validated schema snapshot before it loads HERO
+source fields, opens the graph, or supplies searchable source and target pickers. A
 source picker exposes only fields selected by the saved read-only operation;
 schema-only fields are visible but disabled. The target picker reads the
 installed site's Frappe metadata, including Custom Fields, and disables system,
