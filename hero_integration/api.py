@@ -204,7 +204,7 @@ def workspace_settings_get() -> dict[str, object]:
     return {
         "enabled": bool(settings.hero_api_url),
         "api_url": settings.hero_api_url or "",
-        "api_token_configured": bool(settings.get_password("hero_api_token")),
+        "api_token_configured": bool(settings.get_password("hero_api_token", raise_exception=False)),
         "timeout_seconds": int(settings.timeout_seconds or 30),
     }
 
