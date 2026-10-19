@@ -10,6 +10,7 @@ PAGES = PACKAGE_ROOT / "hero_integration" / "page"
 WORKSPACE_JS = PACKAGE_ROOT / "public" / "js" / "hero_workspace.js"
 WORKSPACE_CSS = PACKAGE_ROOT / "public" / "css" / "hero_workspace.css"
 TOOLS_JS = PACKAGE_ROOT / "public" / "js" / "hero_tools.js"
+SETTINGS_JS = PACKAGE_ROOT / "public" / "js" / "hero_settings.js"
 MAPPING_EDITOR_JS = PACKAGE_ROOT / "public" / "js" / "hero_mapping_editor.js"
 MIGRATION_JS = PACKAGE_ROOT / "public" / "js" / "hero_migration.js"
 ADAPTER_CSS = PACKAGE_ROOT / "public" / "css" / "hero_adapter.css"
@@ -57,8 +58,24 @@ class TestHeroDeskUiContract(unittest.TestCase):
         self.assertIn("HERO_MUTATION_EXECUTION_DISABLED", source)
         api_source = (PACKAGE_ROOT / "api.py").read_text()
         execution = api_source.split("def execute_graphql_service", 1)[1].split("class _FrappePickerMetadata", 1)[0]
+        self.assertIn("MUTATION_EXECUTION_RELEASED = False", api_source)
+        self.assertIn("_assert_mutation_execution_released()", execution)
         self.assertIn("MUTATION_EXECUTION_DISABLED", execution)
         self.assertNotIn("HeroGraphQLClient", execution)
+
+    def test_canonical_settings_renders_a_backend_controlled_mutation_status(self):
+        source = SETTINGS_JS.read_text()
+        for contract in (
+            "GraphQL Mutations", "workspace_mutation_execution_set", "Allow mutation execution",
+            "System Managers", "Mutation drafts remain available independently",
+            "HERO_MUTATION_EXECUTION_DISABLED",
+        ):
+            with self.subTest(contract=contract):
+                self.assertIn(contract, source)
+        doctype = json.loads((PACKAGE_ROOT / "hero_integration" / "doctype" / "hero_integration_settings" / "hero_integration_settings.json").read_text())
+        toggle = next(field for field in doctype["fields"] if field["fieldname"] == "allow_graphql_mutation_execution")
+        self.assertEqual(toggle["fieldtype"], "Check")
+        self.assertEqual(toggle["default"], "0")
 
     def test_graph_viewer_keeps_snapshot_selection_separate_from_performance_overview(self):
         source = TOOLS_JS.read_text()

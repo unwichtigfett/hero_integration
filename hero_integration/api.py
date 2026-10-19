@@ -8,6 +8,7 @@ import frappe
 ACTIONS = {"Customer Migration", "Project Migration", "Cheap Data Migration", "Full Data Migration", "Sync"}
 TERMINAL_STATES = {"Completed", "Completed With Conflicts", "Failed", "Cancelled", "Blocked"}
 MUTATION_EXECUTION_DISABLED = "HERO_MUTATION_EXECUTION_DISABLED"
+MUTATION_EXECUTION_RELEASED = False
 
 
 @frappe.whitelist()
@@ -250,6 +251,7 @@ def workspace_settings_get() -> dict[str, object]:
         "api_token_configured": token_configured,
         "api_token_status": token_status,
         "timeout_seconds": int(settings.timeout_seconds or 30),
+        **_mutation_execution_state(settings),
     }
 
 
@@ -266,6 +268,52 @@ def workspace_settings_save(enabled: int | bool, api_url: str, api_token: str = 
         settings.hero_api_token = api_token
     settings.save()
     return workspace_settings_get()
+
+
+@frappe.whitelist()
+def workspace_mutation_execution_set(allow_execution: int | bool) -> dict[str, object]:
+    """Persist an administrator request only after the separate release gate allows it."""
+    frappe.only_for("System Manager")
+    requested = _as_bool(allow_execution)
+    if requested and not MUTATION_EXECUTION_RELEASED:
+        frappe.throw(MUTATION_EXECUTION_DISABLED)
+    settings = frappe.get_single("HERO Integration Settings")
+    settings.allow_graphql_mutation_execution = int(requested)
+    settings.save()
+    return _mutation_execution_state(settings)
+
+
+def _mutation_execution_state(settings=None) -> dict[str, object]:
+    """Report requested and effective states without ever treating configuration as release approval."""
+    if settings is None:
+        settings = frappe.get_single("HERO Integration Settings")
+    requested = _as_bool(getattr(settings, "allow_graphql_mutation_execution", 0))
+    enabled = bool(MUTATION_EXECUTION_RELEASED and requested)
+    return {
+        "mutation_execution_requested": requested,
+        "mutation_execution_released": MUTATION_EXECUTION_RELEASED,
+        "mutation_execution_enabled": enabled,
+        "mutation_execution_status": "ENABLED" if enabled else "DISABLED",
+        "mutation_execution_reason": (
+            "GraphQL mutation execution requires a separately security-reviewed release. "
+            "Mutation drafts remain available independently."
+        ),
+    }
+
+
+def _as_bool(value: int | bool | str | None) -> bool:
+    try:
+        return bool(int(value or 0))
+    except (TypeError, ValueError):
+        return False
+
+
+def _assert_mutation_execution_released() -> None:
+    """Single fail-closed gate for direct and workspace execution facades."""
+    if not MUTATION_EXECUTION_RELEASED:
+        frappe.throw(MUTATION_EXECUTION_DISABLED)
+    if not _mutation_execution_state()["mutation_execution_enabled"]:
+        frappe.throw(MUTATION_EXECUTION_DISABLED)
 
 
 @frappe.whitelist()
@@ -683,6 +731,7 @@ def resume_mapping_adoption(adoption_name: str) -> dict[str, object]:
 def execute_graphql_service(service_name: str, variables_json: str = "{}") -> dict[str, object]:
     """Retained compatibility endpoint; remote HERO execution is disabled."""
     frappe.only_for("System Manager")
+    _assert_mutation_execution_released()
     frappe.throw(MUTATION_EXECUTION_DISABLED)
 
 

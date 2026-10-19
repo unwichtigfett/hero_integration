@@ -87,7 +87,7 @@
     window.hero_integration_platform = Object.freeze({
         boot: {csrf_token: frappe.csrf_token || ""},
         url: (section) => routeUrl(SECTION_NAMES[section] ? section : "analyzer"),
-        api: (method, args = {}) => method === "workspace_settings_get" || method === "workspace_settings_save" ? request(method, args) : rpc(method, args),
+        api: (method, args = {}) => ["workspace_settings_get", "workspace_settings_save", "workspace_mutation_execution_set"].includes(method) ? request(method, args) : rpc(method, args),
         loadAce: async () => {
             if (!window.ace) await frappe.ui.form.ControlCode.prototype.load_lib.call({});
         },
