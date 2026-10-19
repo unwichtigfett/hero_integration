@@ -16,6 +16,7 @@ class HeroConfiguration:
     endpoint: HeroEndpoint
     api_token: str = field(repr=False)
     timeout_seconds: int = 30
+    source_instance: str = "default"
 
 
 def get_configuration() -> HeroConfiguration:
@@ -28,4 +29,10 @@ def get_configuration() -> HeroConfiguration:
     token = settings.get_password("hero_api_token", raise_exception=False) or ""
     if not token:
         raise HeroConfigurationError("HERO API token is not configured.")
-    return HeroConfiguration(endpoint=endpoint, api_token=token, timeout_seconds=int(settings.timeout_seconds or 30))
+    source_instance = str(getattr(settings, "hero_source_instance", "default") or "default").strip()
+    if not source_instance:
+        raise HeroConfigurationError("HERO source instance is invalid.")
+    return HeroConfiguration(
+        endpoint=endpoint, api_token=token, timeout_seconds=int(settings.timeout_seconds or 30),
+        source_instance=source_instance,
+    )

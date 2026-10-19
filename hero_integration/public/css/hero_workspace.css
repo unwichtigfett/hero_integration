@@ -24,8 +24,8 @@
 .hero-integration-field-chip, .hero-integration-badge { border: 1px solid var(--border-color, #dfe3e8); border-radius: 999px; display: inline-block; font-size: 12px; padding: 3px 8px; }
 .hero-integration-badge.status-validated, .hero-integration-badge.status-active { border-color: #2d9d78; color: #167253; }
 .hero-integration-badge.status-draft { border-color: #be8a25; color: #8c6100; }
-.hero-integration-graph-controls { display: grid; gap: 10px; grid-template-columns: minmax(0, 1fr) 210px; margin-bottom: 12px; }
-.hero-integration-graph-canvas { background: var(--card-bg, #fff); border: 1px solid var(--border-color, #dfe3e8); border-radius: 8px; min-width: 0; overflow: auto; padding: 10px; }
+.hero-integration-graph-controls { align-items: center; display: grid; gap: 10px; grid-template-columns: minmax(220px, 1fr) repeat(2, minmax(130px, .45fr)) repeat(4, max-content); margin-bottom: 12px; }
+.hero-integration-graph-canvas { background: var(--card-bg, #fff); border: 1px solid var(--border-color, #dfe3e8); border-radius: 8px; min-width: 0; overflow: auto; padding: 10px; touch-action: none; }
 .hero-integration-graph-canvas svg { display: block; min-width: 800px; width: 100%; }
 .hero-integration-graph-edge { stroke: var(--border-color, #b8c2cc); stroke-width: 1.2; }
 .hero-integration-graph-node { cursor: pointer; outline: none; }
@@ -33,8 +33,16 @@
 .hero-integration-graph-node.kind-field rect { fill: color-mix(in srgb, #5c9bc2 10%, var(--card-bg, #fff)); stroke: #5c9bc2; }
 .hero-integration-graph-node.kind-object rect { fill: color-mix(in srgb, #69859a 10%, var(--card-bg, #fff)); stroke: #69859a; }
 .hero-integration-graph-node.kind-scalar rect { fill: color-mix(in srgb, #7a8793 10%, var(--card-bg, #fff)); stroke: #7a8793; }
+.hero-integration-graph-node.kind-query_operation rect, .hero-integration-graph-node.kind-query_root rect { fill: color-mix(in srgb, #2d9d78 10%, var(--card-bg, #fff)); stroke: #2d9d78; }
+.hero-integration-graph-node.kind-mutation_operation rect, .hero-integration-graph-node.kind-mutation_root rect { fill: color-mix(in srgb, #b56a4d 10%, var(--card-bg, #fff)); stroke: #b56a4d; }
+.hero-integration-graph-node.kind-input_object rect, .hero-integration-graph-node.kind-input_field rect, .hero-integration-graph-node.kind-argument rect { fill: color-mix(in srgb, #8c6db4 10%, var(--card-bg, #fff)); stroke: #8c6db4; }
+.hero-integration-graph-node.kind-enum rect, .hero-integration-graph-node.kind-enum_value rect { fill: color-mix(in srgb, #be8a25 10%, var(--card-bg, #fff)); stroke: #be8a25; }
 .hero-integration-graph-node:focus-visible rect, .hero-integration-graph-node:hover rect { stroke-width: 3; }
 .hero-integration-graph-node text { fill: var(--text-color, #24313f); font-size: 11px; pointer-events: none; }
 .hero-integration-graph-node .hero-integration-graph-kind { fill: var(--text-muted, #6c757d); font-size: 9px; }
 .hero-integration-table td, .hero-integration-table th { vertical-align: middle; }
-@media (max-width: 900px) { .hero-integration-summary-grid, .hero-integration-summary-grid.compact { grid-template-columns: 1fr; } .hero-integration-split, .hero-integration-graph-layout { grid-template-columns: 1fr; } .hero-integration-graph-controls { grid-template-columns: 1fr; } }
+.hero-integration-service-query { background: var(--control-bg, #f7f7f7); border-radius: 6px; max-height: 340px; overflow: auto; padding: 12px; white-space: pre-wrap; }
+.hero-integration-detail-list { display: grid; gap: 6px 12px; grid-template-columns: minmax(110px, auto) 1fr; margin: 14px 0; }
+.hero-integration-detail-list dt { color: var(--text-muted, #6c757d); font-weight: 600; }
+.hero-integration-detail-list dd { margin: 0; overflow-wrap: anywhere; }
+@media (max-width: 900px) { .hero-integration-summary-grid, .hero-integration-summary-grid.compact { grid-template-columns: 1fr; } .hero-integration-split, .hero-integration-graph-layout { grid-template-columns: 1fr; } .hero-integration-graph-controls { grid-template-columns: 1fr 1fr; } }

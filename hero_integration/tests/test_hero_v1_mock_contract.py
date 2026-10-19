@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest import mock
 
 from hero_integration.client.graphql import HeroClientError, HeroGraphQLClient, validate_endpoint
-from hero_integration.sources.hero import CUSTOMER_QUERY_V1, PAGE_SIZE, PROJECT_QUERY_V1, HeroSource
+from hero_integration.sources.hero import CUSTOMER_QUERY_V1, PAGE_SIZE, PROJECT_QUERY_V1, PROJECT_SELECTED_PATHS, HeroSource
 from hero_integration.tests.mapping_fixture import fixture_plan
 from hero_integration.tests.mock_hero_v1 import (
     AMBIGUOUS_PROJECT,
@@ -42,6 +42,10 @@ PROJECT = {
     "customer_id": 101,
     "project_id": 301,
     "project_title": " Synthetic Project ",
+    "project_nr": "0001",
+    "project_type": "PV",
+    "customer": {"title": "Herr", "full_name": "Synthetic Person"},
+    "address": {"full_address": "Synthetic Street 1, 77777 Synthetic City"},
     "display_id": "PR-201",
     "created": "2026-10-18T10:00:00+00:00",
     "modified": "2026-10-18T11:00:00+00:00",
@@ -155,7 +159,7 @@ class TestHeroV1MockContract(unittest.TestCase):
     def test_matrix_accounts_for_each_selected_path(self):
         selected = {
             "HeroCustomers": _selected_fields(CUSTOMER_QUERY_V1, "contacts"),
-            "HeroProjectMatches": _selected_fields(PROJECT_QUERY_V1, "project_matches"),
+            "HeroProjectMatches": set(PROJECT_SELECTED_PATHS),
         }
         matrix = {}
         for row in MATRIX["fields"]:
@@ -168,8 +172,8 @@ class TestHeroV1MockContract(unittest.TestCase):
             },
         }
         self.assertEqual(matrix, expected)
-        self.assertEqual(sum(map(len, matrix.values())), 19)
-        self.assertEqual(sum(row["status"] == "NATIVE_MAPPED" for row in MATRIX["fields"]), 9)
+        self.assertEqual(sum(map(len, matrix.values())), 24)
+        self.assertEqual(sum(row["status"] == "NATIVE_MAPPED" for row in MATRIX["fields"]), 14)
         self.assertEqual(sum(row["status"] == "CUSTOM_FIELD_MAPPED" for row in MATRIX["fields"]), 9)
         self.assertEqual(sum(row["status"] == "HERO_DOCTYPE_MAPPED" for row in MATRIX["fields"]), 1)
         self.assertTrue(all(not row["exclusion_reason"] for row in MATRIX["fields"]))
