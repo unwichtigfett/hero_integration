@@ -17,32 +17,25 @@ PARITY_MATRIX = PACKAGE_ROOT.parent / "UI_PARITY_MATRIX.md"
 
 
 class TestHeroDeskUiContract(unittest.TestCase):
-    def test_native_desk_pages_are_system_manager_pages(self):
-        expected = {
-            "hero_integration": "hero-integration",
-            "hero_api_analyzer": "hero-api-analyzer",
-            "hero_graph_viewer": "hero-graph-viewer",
-            "hero_graphql_services": "hero-graphql-services", "hero_settings": "hero-settings",
-        }
-        for directory, page_name in expected.items():
-            with self.subTest(page_name=page_name):
-                metadata = json.loads((PAGES / directory / f"{directory}.json").read_text())
-                self.assertEqual(metadata["page_name"], page_name)
-                self.assertEqual(metadata["module"], "HERO Integration")
-                self.assertEqual(metadata["roles"], [{"role": "System Manager"}])
+    def test_only_the_canonical_desk_page_is_registered(self):
+        definitions = sorted(PAGES.glob("*/*.json"))
+        self.assertEqual(definitions, [PAGES / "hero_integration" / "hero_integration.json"])
+        metadata = json.loads(definitions[0].read_text())
+        self.assertEqual(metadata["page_name"], "hero-integration")
+        self.assertEqual(metadata["module"], "HERO Integration")
+        self.assertEqual(metadata["roles"], [{"role": "System Manager"}])
 
     def test_workspace_uses_stored_state_and_one_canonical_route(self):
         source = WORKSPACE_JS.read_text()
-        for route in ("hero-api-analyzer", "hero-graph-viewer", "hero-graphql-services", "hero-adapter-tools", "hero-settings"):
-            self.assertIn(route, source)
         self.assertIn('CANONICAL_PAGE = "hero-integration"', source)
-        self.assertIn("redirectLegacy", source)
         self.assertIn("hero-unified-navigation", source)
         for endpoint in ("workspace_context", "workspace_schema", "workspace_graph", "workspace_service_save"):
             self.assertIn(endpoint, source)
-        self.assertIn("hero-adapter-tools", source)
         self.assertIn("unsupported", source)
         self.assertNotIn("execute_graphql_service", source)
+        for removed in ("legacyPageSections", "redirectLegacy", "hero-api-analyzer", "hero-graph-viewer", "hero-graphql-services", "hero-adapter-tools", "hero-migration-center", "hero-settings"):
+            with self.subTest(removed=removed):
+                self.assertNotIn(removed, source)
 
     def test_graph_workspace_keeps_native_interactions_in_the_single_workspace_engine(self):
         source = TOOLS_JS.read_text()
@@ -126,17 +119,8 @@ class TestHeroDeskUiContract(unittest.TestCase):
         self.assertIn("LEGACY_PROCESS_ONLY", matrix)
         self.assertIn("manual step", matrix)
 
-    def test_legacy_pages_only_redirect_into_the_canonical_workspace(self):
-        expected = {
-            "hero_adapter_tools": "mapping",
-            "hero_api_analyzer": "analyzer",
-            "hero_graph_viewer": "graph",
-            "hero_graphql_services": "services",
-            "hero_migration_center": "migration",
-            "hero_settings": "settings",
-        }
-        for directory, section in expected.items():
-            source = (PAGES / directory / f"{directory}.js").read_text()
-            with self.subTest(directory=directory):
-                self.assertIn(f'redirectLegacy("{section}")', source)
-                self.assertNotIn("make_app_page", source)
+    def test_workspace_tabs_remain_the_only_navigation_targets(self):
+        source = "\n".join((WORKSPACE_JS.read_text(), MAPPING_EDITOR_JS.read_text()))
+        for section in ("overview", "analyzer", "graph", "services", "mapping", "migration", "settings"):
+            with self.subTest(section=section):
+                self.assertIn(section, source)
