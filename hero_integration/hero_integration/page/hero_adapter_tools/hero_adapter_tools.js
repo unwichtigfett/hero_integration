@@ -1,5 +1,21 @@
+(() => {
+const loadWorkspaceAssets = (callback) => {
+    if (window.hero_integration_ui) {
+        window.hero_integration_ui.ensureStyles();
+        callback();
+        return;
+    }
+    frappe.require("/assets/hero_integration/js/hero_workspace.js", () => {
+        window.hero_integration_ui.ensureStyles();
+        callback();
+    });
+};
+
 frappe.pages["hero-adapter-tools"].on_page_load = function (wrapper) {
+    loadWorkspaceAssets(() => {
     const page = frappe.ui.make_app_page({parent: wrapper, title: __("HERO Mapping Editor"), single_column: true});
+    page.main.addClass("hero-integration-ui");
+    const routeContext = window.hero_integration_ui.routeOptions();
     const snapshot = $("<input class='form-control' placeholder='HERO GraphQL Schema Snapshot'>");
     const operation = $("<select class='form-control'><option value='HeroCustomers'>HeroCustomers</option><option value='HeroProjectMatches'>HeroProjectMatches</option></select>");
     const sourceSearch = $("<input class='form-control' placeholder='Search readable HERO fields'>");
@@ -8,18 +24,20 @@ frappe.pages["hero-adapter-tools"].on_page_load = function (wrapper) {
     const targetList = $("<div class='mt-2'></div>");
     const suggestions = $("<div class='mt-3'></div>");
     const preview = $("<pre class='mt-3'></pre>");
-    const graph = $("<pre class='mt-3'></pre>");
     const importFile = $("<input type='file' accept='application/json,.json' class='form-control-file'>");
     const exchangeResult = $("<div class='mt-2'></div>");
     let selectedSource = null;
     let selectedTarget = null;
     let importPayload = null;
+    let pendingSourcePath = routeContext.source_path || "";
+    if (routeContext.snapshot_name) snapshot.val(routeContext.snapshot_name);
+    if (routeContext.operation === "HeroCustomers" || routeContext.operation === "HeroProjectMatches") operation.val(routeContext.operation);
     page.main.append(
         $("<div class='form-group'><label>GraphQL Schema Snapshot</label></div>").append(snapshot),
         $("<div class='form-group'><label>Read-only HERO operation</label></div>").append(operation),
         $("<hr><h5>HERO source field</h5><p class='text-muted'>Only fields selected by the saved read-only operation can be used.</p>").append(sourceSearch, sourceList),
         $("<hr><h5>ERPNext target field</h5><p class='text-muted'>Protected fields and child relations without a reviewed resolver cannot be selected.</p>").append(targetSearch, targetList),
-        $("<hr><h5>Non-binding suggestions</h5>").append(suggestions, preview, graph),
+        $("<hr><h5>Non-binding suggestions</h5>").append(suggestions, preview),
         $("<hr><h5>Schema and mapping adoption</h5><p class='text-muted'>An upload only fills this checklist. Select changes, then confirm one shared adoption action. It never migrates business data.</p>").append(importFile, exchangeResult),
     );
 
@@ -82,7 +100,15 @@ frappe.pages["hero-adapter-tools"].on_page_load = function (wrapper) {
     const loadSources = () => {
         if (!snapshot.val()) return;
         frappe.call({method: "hero_integration.api.mapping_source_picker", args: {snapshot_name: snapshot.val(), operation: operation.val(), search: sourceSearch.val()}})
-            .then((response) => renderFields(sourceList, response.message || [], selectSource));
+            .then((response) => {
+                const fields = response.message || [];
+                renderFields(sourceList, fields, selectSource);
+                const requested = fields.find((field) => field.path === pendingSourcePath && field.selectable);
+                if (requested) {
+                    pendingSourcePath = "";
+                    selectSource(requested);
+                }
+            });
     };
     const loadTargets = () => frappe.call({method: "hero_integration.api.mapping_target_picker", args: {operation: operation.val(), search: targetSearch.val()}})
         .then((response) => renderFields(targetList, response.message || [], selectTarget));
@@ -164,12 +190,9 @@ frappe.pages["hero-adapter-tools"].on_page_load = function (wrapper) {
         };
         reader.readAsText(file);
     });
-    page.set_primary_action(__("Show Graph"), () => {
-        frappe.call({method: "hero_integration.api.graph_view", args: {snapshot_name: snapshot.val()}}).then((response) => {
-            graph.text(JSON.stringify(response.message, null, 2));
-            loadSources();
-            loadTargets();
-        });
+    page.set_primary_action(__("Open Graph Viewer"), () => {
+        if (!snapshot.val()) return frappe.msgprint(__("Choose a GraphQL Schema Snapshot first."));
+        window.hero_integration_ui.setRoute("hero-graph-viewer", {snapshot_name: snapshot.val(), operation: operation.val()});
     });
     page.add_menu_item(__("Export Mapping JSON"), () => {
         if (!snapshot.val()) return frappe.msgprint(__("Choose a GraphQL Schema Snapshot first."));
@@ -183,6 +206,12 @@ frappe.pages["hero-adapter-tools"].on_page_load = function (wrapper) {
             URL.revokeObjectURL(url);
         });
     });
-    page.add_menu_item(__("GraphQL Services"), () => frappe.set_route("List", "HERO GraphQL Service"));
+    page.add_menu_item(__("GraphQL Services"), () => window.hero_integration_ui.setRoute("hero-graphql-services"));
     page.add_menu_item(__("Review Draft Mappings"), () => frappe.set_route("List", "HERO Frappe Mapping"));
+    if (snapshot.val()) {
+        loadSources();
+        loadTargets();
+    }
+    });
 };
+})();
