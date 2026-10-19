@@ -15,7 +15,7 @@ build-backend = "setuptools.build_meta"
 include = ["hero_integration*"]
 
 [tool.setuptools.package-data]
-hero_integration = ["modules.txt", "**/*.json", "**/*.js"]
+hero_integration = ["modules.txt", "**/*.json", "**/*.js", "**/*.css"]
 
 [tool.bench.frappe-dependencies]
 frappe = ">=16.0.0-dev,<17.0.0"
