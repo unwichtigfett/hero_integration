@@ -10,6 +10,7 @@ PAGES = PACKAGE_ROOT / "hero_integration" / "page"
 WORKSPACE_JS = PACKAGE_ROOT / "public" / "js" / "hero_workspace.js"
 WORKSPACE_CSS = PACKAGE_ROOT / "public" / "css" / "hero_workspace.css"
 TOOLS_JS = PACKAGE_ROOT / "public" / "js" / "hero_tools.js"
+ADAPTER_CSS = PACKAGE_ROOT / "public" / "css" / "hero_adapter.css"
 PARITY_MATRIX = PACKAGE_ROOT.parent / "UI_PARITY_MATRIX.md"
 
 
@@ -47,6 +48,26 @@ class TestHeroDeskUiContract(unittest.TestCase):
             with self.subTest(contract=contract):
                 self.assertIn(contract, source)
         self.assertNotIn("limited to 90 filtered nodes", source)
+
+    def test_graph_viewer_keeps_snapshot_selection_separate_from_performance_overview(self):
+        source = TOOLS_JS.read_text()
+        for contract in (
+            "snapshotPicker", "selected_snapshot_metadata", "Schema Overview",
+            "Open Node Focus", "Klassenkarten verdichten", "graphNeedsOverview",
+        ):
+            with self.subTest(contract=contract):
+                self.assertIn(contract, source)
+        self.assertIn("this.options.snapshot_name", source)
+        self.assertIn("history.replaceState", source)
+        self.assertIn("inspectNode(id,serial=this.sequence,open=false)", source)
+
+    def test_workspace_theme_tokens_are_scoped_to_hero_hosts(self):
+        source = ADAPTER_CSS.read_text()
+        self.assertIn(".admin-hero-tool-host,\n.ht-focus-dialog", source)
+        for token in ("--pc-text:", "--pc-diagramText:", "--pc-diagramBorder:"):
+            with self.subTest(token=token):
+                self.assertIn(token, source)
+        self.assertNotIn(":root", source)
 
     def test_ui_assets_do_not_import_legacy_runtime(self):
         source = "\n".join(path.read_text() for path in [

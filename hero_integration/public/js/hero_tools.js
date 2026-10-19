@@ -189,6 +189,26 @@
         }
         async run(action) {if(this.busy)return;this.busy=true;this.updateActions();this.notice.classList.remove('text-danger');try{this.notice.textContent='Lädt …';await action();if(this.notice.textContent==='Lädt …')this.notice.textContent='';}catch(e){this.notice.textContent=e.message;this.notice.classList.add('text-danger');if(this.tool==='services'){this.validation=null;this.queryOutput.textContent=e.message;}}finally{this.busy=false;this.updateActions();}}
         scope(schema=false) {return {connection_id:this.context.connection_id,binding_generation:this.context.binding_generation,...(schema?{schema_fingerprint:this.schema}: {})};}
+        snapshotLabel(snapshot){const coverage=snapshot.coverage||{},counts=Number.isInteger(coverage.types)?`${coverage.types} types · ${coverage.nodes} nodes`:'no valid graph';return `${snapshot.kind||'Saved snapshot'} · ${snapshot.name} · ${counts}`;}
+        updateSnapshotSelector(coverage){
+            if(!this.snapshotPicker)return;
+            const snapshots=Array.isArray(this.context?.snapshots)?this.context.snapshots:[];
+            this.snapshotPicker.replaceChildren();
+            for(const snapshot of snapshots){const option=$('option','',this.snapshotLabel(snapshot));option.value=snapshot.name;option.disabled=!snapshot.usable;this.snapshotPicker.append(option);}
+            this.snapshotPicker.value=this.context?.connection_id||'';
+            this.snapshotPicker.disabled=!snapshots.some(snapshot=>snapshot.usable);
+            const selected=this.context?.selected_snapshot_metadata,selectedCoverage=coverage||selected?.coverage||{};
+            if(!selected){this.snapshotMeta.textContent='No validated saved GraphQL snapshot is available.';return;}
+            const counts=Number.isInteger(selectedCoverage.types)?`${selectedCoverage.types} types · ${selectedCoverage.nodes} nodes · ${selectedCoverage.edges} relations`:'graph analysis unavailable';
+            this.snapshotMeta.textContent=`${selected.kind} · Snapshot ${selected.name} · ${selected.modified||'date unavailable'} · ${selected.schema_fingerprint} · ${counts}`;
+        }
+        selectSnapshot(name){
+            const snapshot=(this.context?.snapshots||[]).find(item=>item.name===name);
+            if(!snapshot?.usable||name===this.context?.connection_id)return;
+            this.options.snapshot_name=name;
+            const target=new URL(location.href);target.searchParams.set('snapshot',name);target.searchParams.delete('schema');history.replaceState(null,'',target.pathname+target.search+target.hash);
+            this.show(true);
+        }
         async show(force=false) {
             this.host.append(this.root);await this.ready;const serial=++this.sequence;this.cancelGraph();this.focusDialog?.hide();
             const params=new URLSearchParams(location.search), requested=this.options.tool || params.get('tool') || 'analyzer';
@@ -200,15 +220,22 @@
             }
             const oldConnection=this.context?`${this.context.connection_id}:${this.context.binding_generation}`:'';
             const oldScope=this.context ? `${this.context.connection_id}:${this.context.binding_generation}:${this.schema}` : '';
-            const context=await call('get_context');
+            const requestedSnapshot=this.options.snapshot_name||params.get('snapshot')||'';
+            let context=await call('get_context',{snapshot_name:requestedSnapshot});
+            if(!requestedSnapshot&&params.get('schema')){
+                const legacySnapshot=(context.snapshots||[]).find(item=>item.usable&&item.schema_fingerprint===params.get('schema'));
+                if(legacySnapshot)context=await call('get_context',{snapshot_name:legacySnapshot.name});
+            }
             if(serial!==this.sequence)return;this.context=context;
             if(oldConnection!==`${this.context.connection_id}:${this.context.binding_generation}`)this.queryEpoch=(this.queryEpoch||0)+1;
-            this.schema=params.get('schema') || this.context.schema_fingerprint;
+            this.options.snapshot_name=this.context.connection_id||'';
+            this.schema=this.context.schema_fingerprint;
             if(oldScope!==`${this.context.connection_id}:${this.context.binding_generation}:${this.schema}`){
                 this.validation=null;this.graphCache=null;this.graph=null;this.selectedNode=null;this.viewbox=null;
                 this.canvas.replaceChildren();this.canvas._heroScene=null;this.typeDetail.replaceChildren();this.nodeDetail.replaceChildren();this.candidates.replaceChildren();
             }
             this.status.textContent=`Source HERO · Verbindung ${this.context.connection_id || 'not bound'} · Bindung ${this.context.binding_generation} · Schema ${this.schema || 'not available'}`;
+            this.updateSnapshotSelector();
             this.bindButton.hidden=!this.context.needs_binding_update;this.refreshButton.disabled=!this.context.can_write || !this.context.enabled || this.context.needs_binding_update;
             this.tabs.replaceChildren();for(const [key,label] of [['analyzer','API Analyzer'],['graph','Graph Viewer'],['services','GraphQL Services']]) {
                 const link=$('a','pc-shell-link'+(key===this.tool?' is-current':''),label);
@@ -334,20 +361,21 @@
             this.focusScalar.replaceChildren(root);this.focusNotice.textContent=`${detail.node.name} · ${total} direkte Verwendungen · Listenansicht für GraphQL-Basisskalar`;
         }
         buildGraph() {
-            const panel=this.panels.graph,bar=$('div','ht-toolbar');this.graphSearch=input('Name, ID or type');this.graphKind=$('select','form-control');this.relationKind=$('select','form-control');
+            const panel=this.panels.graph,bar=$('div','ht-toolbar');this.snapshotPicker=$('select','form-control');this.snapshotPicker.addEventListener('change',()=>this.selectSnapshot(this.snapshotPicker.value));this.snapshotMeta=$('p','ht-snapshot-meta');this.graphSearch=input('Name, ID or type');this.graphKind=$('select','form-control');this.relationKind=$('select','form-control');
             for(const value of ['','QUERY_OPERATION','MUTATION_OPERATION','SUBSCRIPTION_OPERATION','QUERY_ROOT','MUTATION_ROOT','SUBSCRIPTION_ROOT','OBJECT','INPUT_OBJECT','INTERFACE','UNION','ENUM','ENUM_VALUE','SCALAR','FIELD','ARGUMENT','INPUT_FIELD','DIRECTIVE']){const o=$('option','',value||'All nodes');o.value=value;this.graphKind.append(o);}
             for(const value of ['','RETURNS','HAS_FIELD','HAS_ARGUMENT','ARGUMENT_TYPE','INPUT_TYPE','IMPLEMENTS','POSSIBLE_TYPE','ROOT_TYPE','ROOT_HAS_OPERATION','HAS_INPUT_FIELD','HAS_ENUM_VALUE']){const o=$('option','',value||'All relations');o.value=value;this.relationKind.append(o);}
             const filtered=()=>this.loadGraph(),all=()=>{this.graphSearch.value='';this.graphKind.value='';this.relationKind.value='';this.loadGraph();};
             this.graphSearch.addEventListener('input',()=>{this.cancelGraph();this.graphInfo.textContent='Filter changed. Filtered View loads the current selection.';});
             for(const control of [this.graphKind,this.relationKind])control.addEventListener('change',filtered);
-            bar.append(button('Full Schema',all),field('Graph Search',this.graphSearch),field('Node Class',this.graphKind),field('Relation',this.relationKind),button('Filtered View',filtered),button('Fit',()=>{this.viewbox=null;this.drawGraph();}),button('+',()=>this.zoom(.8)),button('−',()=>this.zoom(1.25)));
+            this.focusButton=button('Open Node Focus',()=>{if(this.selectedNode)this.openFocus(this.selectedNode);});this.focusButton.disabled=true;
+            bar.append(field('Snapshot',this.snapshotPicker),button('Schema Overview',all),field('Graph Search',this.graphSearch),field('Node Class',this.graphKind),field('Relation',this.relationKind),button('Filtered View',filtered),this.focusButton,button('Fit',()=>{this.viewbox=null;this.drawGraph();}),button('+',()=>this.zoom(.8)),button('−',()=>this.zoom(1.25)));
             this.graphInfo=$('p');this.graphInfo.setAttribute('role','status');this.canvas=svg('svg',{'class':'ht-graph',height:650,'aria-label':'HERO API Graph'});
             this.bindGraphNavigation(this.canvas,()=>this.viewbox,box=>{this.viewbox=box;},()=>this.applyViewbox(),factor=>this.zoom(factor));
             this.nodeDetail=$('aside','ht-inspector');this.candidates=$('div','ht-candidates');const side=$('aside','ht-graph-side');side.append(this.nodeDetail,this.candidates);
             const grid=$('div','ht-split');grid.append(this.canvas,side);
             this.labelNotice=$('p','ht-legend ht-label-note');this.labelNotice.setAttribute('aria-live','polite');
             const legend=$('div','ht-legend ht-category-legend');for(const [kind,label] of [['QUERY_OPERATION','Query'],['MUTATION_OPERATION','Mutation'],['INPUT_OBJECT','Eingaben'],['ENUM','Enum'],['OBJECT','Weitere Schematypen']]){const item=$('span','',label);item.dataset.kind=kind;legend.append(item);}
-            panel.append(bar,legend,$('p','ht-legend','Pfeile zeigen Richtung und Beziehungstyp. Ein Klick öffnet den Knotenfokus; jede Vormerkung bleibt ein Vorschlag.'),this.graphInfo,this.labelNotice,grid);
+            panel.append(bar,this.snapshotMeta,legend,$('p','ht-legend','Die Schemaübersicht verdichtet große Graphen zur Performance. Suche oder Klassenfilter öffnen Detailansichten; „Open Node Focus“ öffnet den ausgewählten Knoten.'),this.graphInfo,this.labelNotice,grid);
         }
         bindGraphNavigation(canvas,getBox,setBox,applyBox,zoom){
             canvas.style.touchAction='none';let pan=null;
@@ -432,6 +460,7 @@
                     );
                 }
                 if(!current())return;
+                this.updateSnapshotSelector(full.coverage);
                 const filtered=!!(filter.search||filter.kind||filter.relation),matches=new Set(full.nodes.filter(n=>(!filter.search||[n.node_id,n.name,n.type_ref||''].join(' ').toLocaleLowerCase().includes(filter.search))&&(!filter.kind||n.kind===filter.kind)).map(n=>n.node_id));
                 const allowedEdges=full.edges.filter(e=>!filter.relation||e.kind===filter.relation),ids=new Set(matches);
                 // Explicit semantic boundary: matching nodes plus their immediate partners.
@@ -495,7 +524,7 @@
                 const title=svg('text',{x:card.x+14,y:card.y+28});title.textContent=label;const count=svg('text',{x:card.x+14,y:card.y+55});count.textContent=`${card.count} Knoten`;g.append(title,count);
                 const open=()=>{this.graphSearch.value='';this.graphKind.value=card.kind;this.relationKind.value='';this.loadGraph();};g.addEventListener('click',open);g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();open();}});canvas.append(g);
             }
-            canvas.setAttribute('data-total-nodes',graph.nodes.length);canvas.setAttribute('data-total-edges',graph.edges.length);canvas._heroScene={mode:'overview',box,fitBox,nodes:[...cards.values()].map(card=>({x:card.x,y:card.y,width:card.width,height:card.height})),selected,notice};notice.textContent=`${this.graphFilterActive?'Gefilterte Übersicht':'Schema Overview'} nach Knotenklasse · ${graph.nodes.length} Knoten · ${graph.edges.length} Beziehungen. Knotenklasse wählen, um die vorhandene gefilterte Detailansicht zu öffnen.`;return box;
+            canvas.setAttribute('data-total-nodes',graph.nodes.length);canvas.setAttribute('data-total-edges',graph.edges.length);canvas._heroScene={mode:'overview',box,fitBox,nodes:[...cards.values()].map(card=>({x:card.x,y:card.y,width:card.width,height:card.height})),selected,notice};notice.textContent=`${this.graphFilterActive?'Gefilterte Übersicht':'Schema Overview'}: ${cards.size} Klassenkarten verdichten ${graph.nodes.length} gespeicherte Knoten und ${graph.edges.length} Beziehungen. Dies ist kein unvollständiger Graph; eine Klassenkarte öffnet ihre gefilterte Detailansicht.`;return box;
         }
         renderGraphScene(canvas,graph,selected,box,select,notice,markerId){
             if(canvas===this.canvas&&this.graphNeedsOverview(graph))return this.renderGraphOverview(canvas,graph,selected,box,notice,markerId);
@@ -611,10 +640,10 @@
             form.target.replaceChildren($('p','',result.query.name+' gespeichert · Provenance='+result.query.provenance),link);
             this.notice.textContent='Service gespeichert. Es wurde keine HERO-Operation ausgeführt.';
         }
-        async inspectNode(id,serial=this.sequence,open=true){
+        async inspectNode(id,serial=this.sequence,open=false){
             const scope=this.scope(true),key=this.scopeKey(scope),generation=this.inspectionGeneration=(this.inspectionGeneration||0)+1;
             try {const data=await this.nodeData(id,scope);if(serial!==this.sequence||generation!==this.inspectionGeneration||key!==this.scopeKey())return;
-                this.selectedNode=id;this.detailContents(this.nodeDetail,data,scope,next=>this.inspectNode(next));this.drawGraph();if(open)this.openFocus(id);
+                this.selectedNode=id;this.focusButton.disabled=false;this.detailContents(this.nodeDetail,data,scope,next=>this.inspectNode(next));this.drawGraph();if(open)this.openFocus(id);
             } catch(error){if(serial===this.sequence&&generation===this.inspectionGeneration){this.nodeDetail.replaceChildren($('p','text-danger',error.message));}}
         }
         openFocus(id){

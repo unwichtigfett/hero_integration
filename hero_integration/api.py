@@ -106,6 +106,10 @@ def integration_overview() -> dict[str, object]:
 def schema_snapshot_list() -> list[dict[str, object]]:
     """List saved snapshots without exposing configuration or making network calls."""
     frappe.only_for("System Manager")
+    return _schema_snapshot_rows()
+
+
+def _schema_snapshot_rows() -> list[dict[str, object]]:
     return frappe.get_all(
         "HERO GraphQL Schema Snapshot",
         fields=["name", "schema_fingerprint", "analysis_status", "analysis_detail", "modified"],
@@ -179,8 +183,10 @@ def graph_view(snapshot_name: str) -> dict[str, object]:
 @frappe.whitelist()
 def workspace_context(snapshot_name: str = "") -> dict[str, object]:
     frappe.only_for("System Manager")
-    snapshots = schema_snapshot_list()
-    selected = next((item for item in snapshots if item["name"] == snapshot_name), None) or (snapshots[0] if snapshots else None)
+    snapshots = [_workspace_snapshot_metadata(row) for row in _schema_snapshot_rows()]
+    selected = next((item for item in snapshots if item["name"] == snapshot_name and item["usable"]), None)
+    selected = selected or next((item for item in snapshots if item["usable"] and item["kind"] == "Full schema"), None)
+    selected = selected or next((item for item in snapshots if item["usable"]), None)
     return {
         "connection_id": selected["name"] if selected else "",
         "binding_generation": 0,
@@ -193,7 +199,38 @@ def workspace_context(snapshot_name: str = "") -> dict[str, object]:
         "binding_refresh_available": False,
         "schema_refresh_available": False,
         "selected_snapshot": selected["name"] if selected else "",
+        "selected_snapshot_metadata": selected,
+        "snapshots": snapshots,
     }
+
+
+def _workspace_snapshot_metadata(row: dict[str, object]) -> dict[str, object]:
+    """Expose only selection metadata derived from an already saved snapshot."""
+    item = {
+        "name": row["name"],
+        "schema_fingerprint": row["schema_fingerprint"],
+        "analysis_status": row["analysis_status"],
+        "modified": row["modified"],
+        "usable": False,
+        "coverage": {},
+        "kind": "Unavailable snapshot",
+    }
+    if row["analysis_status"] != "Validated":
+        return item
+    try:
+        snapshot = frappe.get_doc("HERO GraphQL Schema Snapshot", row["name"])
+        from hero_integration.services.workspace_compat import graph_counts
+        from hero_integration.services.graphql_graph import analyze_snapshot
+
+        graph = analyze_snapshot(json.loads(snapshot.snapshot_json))
+    except (TypeError, ValueError):
+        return item
+    if graph.fingerprint != row["schema_fingerprint"]:
+        return item
+    item["usable"] = True
+    item["coverage"] = graph_counts(graph)
+    item["kind"] = "Full schema" if item["coverage"]["types"] >= 100 else "Synthetic/test schema"
+    return item
 
 
 @frappe.whitelist()
