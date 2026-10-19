@@ -31,3 +31,36 @@ class TestMutationDraft(unittest.TestCase):
         self.assertEqual(operation_kind("{ changeCase { id } }"), "query")
         with self.assertRaisesRegex(ValueError, "exactly one"):
             operation_kind("{ changeCase { id } } mutation { changeCase { id } }")
+
+    def test_historic_full_snapshot_uses_the_shared_normalizer(self):
+        historic = {"schema": {
+            "query_type_name": "PartnerQuery", "mutation_type_name": "PartnerMutation",
+            "types": [
+                {"kind": "OBJECT", "name": "PartnerQuery", "fields": []},
+                {"kind": "OBJECT", "name": "PartnerMutation", "fields": [{
+                    "name": "changePartner", "arguments": [],
+                    "type_ref": {"kind": "OBJECT", "name": "Partner", "of_type": None},
+                }]},
+                {"kind": "OBJECT", "name": "Partner", "fields": []},
+            ],
+        }}
+        detail = validate(historic, "mutation Update { changePartner { id } }")
+        self.assertEqual(detail, {"operation": "changePartner", "root": "PartnerMutation", "return_type": "Partner"})
+
+    def test_already_normalized_schema_is_accepted(self):
+        normalized = {"types": SCHEMA["__schema"]["types"], "mutationType": {"name": "Mutation"}}
+        self.assertEqual(validate(normalized, "mutation { changeCase { id } }")["root"], "Mutation")
+
+    def test_missing_null_unknown_and_conflicting_mutation_roots_are_rejected(self):
+        cases = (
+            {"__schema": {"types": SCHEMA["__schema"]["types"]}},
+            {"__schema": {"mutationType": None, "types": SCHEMA["__schema"]["types"]}},
+            {"__schema": {"mutationType": {"name": "Missing"}, "types": SCHEMA["__schema"]["types"]}},
+            {"schema": {
+                "mutationType": {"name": "Mutation"}, "mutation_type_name": "PartnerMutation",
+                "types": SCHEMA["__schema"]["types"],
+            }},
+        )
+        for schema in cases:
+            with self.subTest(schema=schema), self.assertRaisesRegex(ValueError, "saved schema"):
+                validate(schema, "mutation { changeCase { id } }")

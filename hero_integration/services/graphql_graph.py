@@ -20,7 +20,7 @@ class GraphView:
 
 def analyze_snapshot(snapshot: object) -> GraphView:
     """Derive types, operations, arguments and relations only from saved schema JSON."""
-    schema = _schema(snapshot)
+    schema = normalize_schema(snapshot)
     types = schema.get("types")
     if not isinstance(types, list):
         raise GraphSnapshotError("GraphQL schema types must be a list.")
@@ -114,18 +114,39 @@ def _node(node_id: str, kind: str, label: str, **detail: object) -> dict[str, An
     return {"id": node_id, "kind": kind, "label": label, **{key: value for key, value in detail.items() if value not in (None, "")}}
 
 
-def _schema(snapshot: object) -> dict[str, object]:
+def normalize_schema(snapshot: object) -> dict[str, object]:
+    """Return saved standard or historic introspection in the GraphQL schema shape.
+
+    This is deliberately read-only: it neither repairs persisted snapshots nor
+    infers absent operation roots.  Consumers must validate the root and its
+    operations for their own use case.
+    """
     if not isinstance(snapshot, dict):
         raise GraphSnapshotError("GraphQL snapshot must be an object.")
     schema = snapshot.get("__schema", snapshot.get("schema", snapshot))
     if not isinstance(schema, dict):
         raise GraphSnapshotError("GraphQL snapshot schema must be an object.")
+    _assert_consistent_root_declarations(schema)
     # Historic full snapshots encode the same introspection data with snake-case
     # member names. Normalize at the read boundary so a complete stored source
     # can be selected by the viewer without importing its original runtime.
     if "query_type_name" in schema or "mutation_type_name" in schema:
         return _normalize_full_snapshot(schema)
     return schema
+
+
+def _assert_consistent_root_declarations(schema: dict[str, object]) -> None:
+    for standard_key, historic_key, label in (
+        ("queryType", "query_type_name", "query"),
+        ("mutationType", "mutation_type_name", "mutation"),
+        ("subscriptionType", "subscription_type_name", "subscription"),
+    ):
+        if standard_key not in schema or historic_key not in schema:
+            continue
+        standard_name = _named_type(schema[standard_key])
+        historic_name = schema[historic_key] if isinstance(schema[historic_key], str) and schema[historic_key] else None
+        if standard_name != historic_name:
+            raise GraphSnapshotError(f"GraphQL schema has conflicting {label} root declarations.")
 
 
 def _normalize_full_snapshot(schema: dict[str, object]) -> dict[str, object]:
