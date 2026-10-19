@@ -615,7 +615,7 @@ def preview_mapping_candidate(
         frappe.throw(f"Source record must be JSON: {error.msg}")
     if not isinstance(record, dict):
         frappe.throw("Source record must be a JSON object.")
-    from hero_integration.services.direct_mapping import MappingSpec, SOURCE_CONTRACTS, transformed_value
+    from hero_integration.services.direct_mapping import MappingSpec, SOURCE_CONTRACTS, source_value, transformed_value
     from hero_integration.services.frappe_mapping_catalog import validate_draft_target
 
     contract = SOURCE_CONTRACTS.get(operation)
@@ -624,7 +624,7 @@ def preview_mapping_candidate(
     target_doctype = target_doctype or contract["target_doctype"]
     spec = MappingSpec(operation, source_path, target_doctype, target_field, contract["paths"][source_path])
     target = validate_draft_target(operation, spec.source_type, target_doctype, target_field, _FrappePickerMetadata())
-    value = transformed_value(spec, record.get(source_path))
+    value = transformed_value(spec, source_value(record, source_path))
     return {
         "operation": operation,
         "source_path": source_path,

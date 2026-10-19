@@ -11,11 +11,13 @@
         const snapshot = $("<input class='form-control' placeholder='HERO GraphQL Schema Snapshot'>");
         const operation = $("<select class='form-control'><option value='HeroCustomers'>HeroCustomers</option><option value='HeroProjectMatches'>HeroProjectMatches</option></select>");
         const sourceSearch = $("<input class='form-control' placeholder='Name, path, type, or relation'>");
+        const reverseSearch = $("<input class='form-control' placeholder='Filter suggested HERO fields' disabled>");
         const targetSearch = $("<input class='form-control' placeholder='Name, fieldname, type, or description' disabled>");
         const activeSearch = $("<input class='form-control' placeholder='Filter existing mappings'>");
         const targetApp = $("<select class='form-control'><option value=''>Choose an app</option></select>");
         const targetDocType = $("<select class='form-control' disabled><option value=''>Choose a DocType</option></select>");
         const sourceList = $("<div class='hero-mapping-picker-host'></div>"), targetList = $("<div class='hero-mapping-picker-host'></div>");
+        const reverseSuggestions = $("<div class='hero-mapping-reverse-suggestions'></div>");
         const sourceDetails = $("<details class='hero-mapping-field-details'><summary>HERO field details</summary></details>");
         const targetDetails = $("<details class='hero-mapping-field-details'><summary>Frappe field details</summary></details>");
         const sourcePager = $("<div class='hero-mapping-pager'></div>"), targetPager = $("<div class='hero-mapping-pager'></div>");
@@ -25,13 +27,13 @@
         const advanced = $("<details class='hero-mapping-advanced'><summary>Advanced: JSON import and schema provisioning</summary></details>");
         const provisionCustomField = $("<button type='button' class='btn btn-default btn-sm'>Prepare Custom Field provisioning</button>");
         let selectedSource = null, selectedTarget = null, importPayload = null, activeSourceFields = [], pendingSourcePath = routeContext.source_path || "";
-        let sourceStart = 0, targetStart = 0, currentSuggestions = [], suggestionsExpanded = false;
+        let sourceStart = 0, targetStart = 0, currentSuggestions = [], suggestionsExpanded = false, reverseExpanded = false, suggestionDirection = "", suggestionSequence = 0;
         if (routeContext.snapshot_name) snapshot.val(routeContext.snapshot_name);
         if (["HeroCustomers", "HeroProjectMatches"].includes(routeContext.operation)) operation.val(routeContext.operation);
 
         const controls = $("<div class='hero-mapping-controls'></div>").append($("<label></label>").text("GraphQL Schema Snapshot").append(snapshot), $("<label></label>").text("Read-only HERO operation").append(operation));
         const mappingGrid = $("<div class='hero-mapping-grid'></div>").append(
-            $("<section class='hero-mapping-pane'></section>").append($("<h3>HERO source</h3><p class='text-muted'>Search the saved, read-only operation and select one source field.</p>"), sourceSearch, sourceList, sourcePager, sourceDetails),
+            $("<section class='hero-mapping-pane'></section>").append($("<h3>HERO source</h3><p class='text-muted'>Search the saved, read-only operation and select one source field.</p>"), sourceSearch, sourceList, sourcePager, sourceDetails, $("<h4 class='hero-mapping-subheading'>Suggested HERO source fields</h4>"), reverseSearch, reverseSuggestions),
             $("<section class='hero-mapping-pane'></section>").append($("<h3>Frappe target</h3><p class='text-muted'>Choose an installed app, then a DocType, before searching its fields.</p>"), targetApp, targetDocType, targetSearch, targetList, targetPager, targetDetails, $("<p class='text-muted hero-mapping-provision-note'></p>").append("Missing a Custom Field? ", provisionCustomField)),
         );
         advanced.append($("<p class='text-muted'></p>").text("An upload only fills a reviewed checklist. Select changes and confirm one adoption; it never migrates business data."), importFile, exchangeResult);
@@ -81,14 +83,42 @@
         };
         const showPreview = () => {
             if (!snapshot.val() || !selectedSource || !selectedTarget) return;
-            const sourceType = selectedSource.mapping_type || "string|null", record = {[selectedSource.path]: sourceType.startsWith("int") ? 1 : sourceType.startsWith("boolean") ? true : "Synthetic preview value"};
+            const sourceType = selectedSource.mapping_type || "string|null", value = sourceType.startsWith("int") ? 1 : sourceType.startsWith("boolean") ? true : "Synthetic preview value", segments = selectedSource.path.split(".").filter(Boolean), record = {};
+            let nestedRecord = record; segments.forEach((segment, index) => { if (index === segments.length - 1) nestedRecord[segment] = value; else nestedRecord = nestedRecord[segment] = {}; });
             frappe.call({method: "hero_integration.api.preview_mapping_candidate", args: {snapshot_name: snapshot.val(), operation: operation.val(), source_path: selectedSource.path, target_field: selectedTarget.path, target_doctype: selectedTarget.target_doctype || targetDocType.val(), source_record_json: JSON.stringify(record)}}).then((response) => {
                 preview.text(JSON.stringify(response.message, null, 2));
                 page.set_secondary_action(__("Create Draft Mapping"), () => frappe.new_doc("HERO Frappe Mapping", {operation: operation.val(), source_path: selectedSource.path, source_type: selectedSource.mapping_type, target_doctype: selectedTarget.target_doctype || targetDocType.val(), target_field: selectedTarget.path, schema_snapshot: snapshot.val(), status: "Draft"}));
             });
         };
+        const useReverseSuggestion = (match) => {
+            selectedSource = {
+                path: match.source_path, label: match.source_path, fieldtype: match.source_graphql_type,
+                mapping_type: match.source_type, graphql_path: match.source_graphql_path,
+                relation: match.source_relation, return_type: match.source_return_type,
+            };
+            showDetails(sourceDetails, selectedSource); showPreview();
+        };
+        const renderReverseSuggestions = () => {
+            reverseSuggestions.empty();
+            if (!selectedTarget) {
+                reverseSearch.prop("disabled", true);
+                return reverseSuggestions.append($("<p class='text-muted'></p>").text("Choose a Frappe target field to see compatible HERO source fields."));
+            }
+            reverseSearch.prop("disabled", false);
+            if (suggestionDirection !== "target") return reverseSuggestions.append($("<p class='text-muted'></p>").text("Choose the target field again to refresh HERO suggestions."));
+            const needle = reverseSearch.val().trim().toLowerCase(), matches = currentSuggestions.filter((match) => !needle || [match.source_path, match.source_graphql_path, match.source_graphql_type, match.source_type, match.source_relation, match.reason, match.confidence].join(" ").toLowerCase().includes(needle));
+            if (!matches.length) return reverseSuggestions.append($("<p class='text-muted'></p>").text("No compatible HERO source field exists for this target."));
+            const shown = reverseExpanded ? matches : matches.slice(0, 5), list = $("<div class='hero-mapping-suggestion-list'></div>");
+            shown.forEach((match) => {
+                const type = match.source_graphql_type || match.source_type, path = match.source_graphql_path || match.source_path;
+                const relation = match.source_relation ? ` Relation: ${match.source_relation}.` : "";
+                list.append($("<div class='hero-mapping-suggestion'></div>").append($("<strong></strong>").text(`${path} · ${type}`), $("<p class='text-muted mb-1'></p>").text(`Contract path: ${match.source_path}. ${match.reason} Confidence: ${match.confidence}.${relation}`), $("<button type='button' class='btn btn-default btn-sm'>Use HERO field</button>").on("click", () => useReverseSuggestion(match))));
+            });
+            reverseSuggestions.append(list);
+            if (!reverseExpanded && matches.length > shown.length) reverseSuggestions.append($("<button type='button' class='btn btn-default btn-sm'>Show more HERO suggestions</button>").on("click", () => { reverseExpanded = true; renderReverseSuggestions(); }));
+        };
         const renderSuggestions = () => {
-            suggestions.empty(); if (!currentSuggestions.length) return suggestions.append($("<p class='text-muted'></p>").text("No compatible target exists for this selection."));
+            suggestions.empty(); if (!currentSuggestions.length) return suggestions.append($("<p class='text-muted'></p>").text(suggestionDirection === "target" ? "No compatible HERO source field exists for this target." : "No compatible target exists for this selection."));
             const shown = suggestionsExpanded ? currentSuggestions : currentSuggestions.slice(0, 5), table = $("<table class='table table-sm hero-mapping-table'><thead><tr><th>HERO source</th><th>Frappe target</th><th>Reason</th><th>Confidence</th></tr></thead><tbody></tbody></table>");
             shown.forEach((match) => {
                 const review = $("<button type='button' class='btn btn-sm btn-outline-primary'>Review</button>").on("click", () => { selectedSource = selectedSource?.path === match.source_path ? selectedSource : {path: match.source_path, mapping_type: match.source_type}; selectedTarget = {path: match.target_field, target_doctype: match.target_doctype}; showPreview(); });
@@ -96,9 +126,17 @@
             });
             suggestions.append(table); if (!suggestionsExpanded && currentSuggestions.length > shown.length) suggestions.append($("<button type='button' class='btn btn-default btn-sm'>Show more suggestions</button>").on("click", () => { suggestionsExpanded = true; renderSuggestions(); }));
         };
-        const showSuggestions = (args) => { if (snapshot.val()) frappe.call({method: "hero_integration.api.mapping_suggestions", args: Object.assign({snapshot_name: snapshot.val(), operation: operation.val(), target_doctype: targetDocType.val()}, args)}).then((response) => { currentSuggestions = response.message || []; suggestionsExpanded = false; renderSuggestions(); }); };
-        const selectSource = (field) => { selectedSource = field; showSuggestions({source_path: field.path}); showPreview(); };
-        const selectTarget = (field) => { selectedTarget = field; showSuggestions({target_field: field.path, target_doctype: field.target_doctype}); showPreview(); };
+        const resetSuggestions = () => { suggestionSequence += 1; currentSuggestions = []; suggestionDirection = ""; suggestionsExpanded = false; reverseExpanded = false; reverseSearch.val(""); renderSuggestions(); renderReverseSuggestions(); };
+        const showSuggestions = (args, direction) => {
+            if (!snapshot.val()) return resetSuggestions();
+            const request = ++suggestionSequence;
+            frappe.call({method: "hero_integration.api.mapping_suggestions", args: Object.assign({snapshot_name: snapshot.val(), operation: operation.val(), target_doctype: targetDocType.val()}, args)}).then((response) => {
+                if (request !== suggestionSequence) return;
+                currentSuggestions = response.message || []; suggestionDirection = direction; suggestionsExpanded = false; reverseExpanded = false; reverseSearch.val(""); renderSuggestions(); renderReverseSuggestions();
+            });
+        };
+        const selectSource = (field) => { selectedSource = field; showSuggestions({source_path: field.path}, "source"); showPreview(); };
+        const selectTarget = (field) => { selectedTarget = field; showSuggestions({target_field: field.path, target_doctype: field.target_doctype}, "target"); showPreview(); };
         const loadSources = (start = sourceStart) => {
             if (!snapshot.val()) return;
             sourceStart = start; const args = {snapshot_name: snapshot.val(), operation: operation.val()};
@@ -128,16 +166,16 @@
             const groups = {}; checklist.items.forEach((item) => (groups[item.group] ||= []).push(item)); Object.entries(groups).forEach(([group, items]) => { const section = $("<div class='mb-3'></div>").append($("<h6></h6>").text(group)); items.forEach((item) => { const checkbox = $("<input type='checkbox' class='mr-2' data-item-id=''> ").attr("data-item-id", item.id).prop("checked", selected.has(item.id)).prop("disabled", !item.selectable); checkbox.on("change", () => { if (checkbox.prop("checked")) { item.dependencies.filter((dependency) => !selected.has(dependency)).forEach((dependency) => { selected.add(dependency); exchangeResult.find(`input[data-item-id='${dependency}']`).prop("checked", true); }); selected.add(item.id); } else if (checklist.items.some((candidate) => candidate.dependencies.includes(item.id) && selected.has(candidate.id))) { checkbox.prop("checked", true); return frappe.msgprint(__("Deselect dependent entries before removing this requirement.")); } else selected.delete(item.id); update(); }); section.append($("<label class='d-block'></label>").append(checkbox, document.createTextNode(`${item.state}: ${item.label}. ${item.detail}`))); }); exchangeResult.append(section); });
             exchangeResult.append($("<button class='btn btn-primary'>Apply selected adoption</button>").on("click", () => { if (!selected.size) return frappe.msgprint(__("Select at least one valid change.")); frappe.confirm(__("Provision the selected schema and activate selected mappings? This cannot migrate HERO data."), () => frappe.call({method: "hero_integration.api.adopt_mapping_package", args: {snapshot_name: snapshot.val(), payload_json: importPayload, selected_ids_json: JSON.stringify([...selected]), confirmed: true}}).then((result) => exchangeResult.append($("<pre class='mt-2'></pre>").text(JSON.stringify(result.message, null, 2))))); })); update();
         };
-        sourceSearch.on("input", () => loadSources(0)); targetSearch.on("input", () => loadTargets(0)); activeSearch.on("input", renderActiveMappings);
-        targetApp.on("change", () => { selectedTarget = null; targetStart = 0; targetDocType.val(""); targetSearch.val("").prop("disabled", true); clearTargets("Choose a DocType before fields are loaded."); loadTargetCatalog(); });
-        targetDocType.on("change", () => { selectedTarget = null; targetStart = 0; targetSearch.val("").prop("disabled", !targetDocType.val()); loadTargets(0); });
-        operation.on("change", () => { selectedSource = null; selectedTarget = null; sourceStart = 0; targetStart = 0; suggestions.empty(); preview.empty(); loadSources(0); loadTargets(0); });
+        sourceSearch.on("input", () => loadSources(0)); reverseSearch.on("input", renderReverseSuggestions); targetSearch.on("input", () => loadTargets(0)); activeSearch.on("input", renderActiveMappings);
+        targetApp.on("change", () => { selectedTarget = null; targetStart = 0; targetDocType.val(""); targetSearch.val("").prop("disabled", true); resetSuggestions(); clearTargets("Choose a DocType before fields are loaded."); loadTargetCatalog(); });
+        targetDocType.on("change", () => { selectedTarget = null; targetStart = 0; resetSuggestions(); targetSearch.val("").prop("disabled", !targetDocType.val()); loadTargets(0); });
+        operation.on("change", () => { selectedSource = null; selectedTarget = null; sourceStart = 0; targetStart = 0; resetSuggestions(); preview.empty(); loadSources(0); loadTargets(0); });
         provisionCustomField.on("click", () => advanced.prop("open", true).find("summary").trigger("focus"));
         importFile.on("change", (event) => { const file = event.target.files[0]; if (!file || !snapshot.val()) return; const reader = new FileReader(); reader.onload = () => { importPayload = reader.result; frappe.call({method: "hero_integration.api.preview_mapping_package", args: {snapshot_name: snapshot.val(), payload_json: importPayload}}).then((response) => renderChecklist(response.message)); }; reader.readAsText(file); });
         page.set_primary_action(__("Open Graph Viewer"), () => { if (!snapshot.val()) return frappe.msgprint(__("Choose a GraphQL Schema Snapshot first.")); window.hero_integration_ui.setRoute("graph", {snapshot_name: snapshot.val(), operation: operation.val()}); });
         page.add_menu_item(__("Export Mapping JSON"), () => { if (!snapshot.val()) return frappe.msgprint(__("Choose a GraphQL Schema Snapshot first.")); frappe.call({method: "hero_integration.api.export_mapping_json", args: {snapshot_name: snapshot.val()}}).then((response) => { const exported = response.message, url = URL.createObjectURL(new Blob([exported.content], {type: "application/json"})), link = document.createElement("a"); link.href = url; link.download = exported.filename; link.click(); URL.revokeObjectURL(url); }); });
         page.add_menu_item(__("GraphQL Services"), () => window.hero_integration_ui.setRoute("services")); page.add_menu_item(__("Review Draft Mappings"), () => frappe.set_route("List", "HERO Frappe Mapping"));
-        clearTargets("Choose an app and DocType before fields are loaded."); if (snapshot.val()) loadSources(); loadTargetCatalog();
+        clearTargets("Choose an app and DocType before fields are loaded."); renderReverseSuggestions(); if (snapshot.val()) loadSources(); loadTargetCatalog();
     }
 
     window.hero_integration_mapping_editor = Object.freeze({mount});
