@@ -96,12 +96,16 @@ class TestHeroDeskUiContract(unittest.TestCase):
             "mapping_target_catalog", "target_doctype", "hero-mapping-grid",
             "Vorschläge prüfen", "Aktive Mappings", "hero-mapping-statuses",
             "hero-mapping-table", "hero-mapping-advanced", "status: \"Draft\"",
+            "mapping_source_picker_page", "mapping_target_picker_page", "PAGE_SIZE = 50",
+            "hero-mapping-picker", "Show more suggestions", "Prepare Custom Field provisioning",
         ):
             with self.subTest(contract=contract):
                 self.assertIn(contract, source)
         self.assertIn("Promise.all", source)
         self.assertIn("sourceSearch.val()", source)
         self.assertIn("activeSearch.on", source)
+        self.assertIn('if (!targetDocType.val()) return clearTargets', source)
+        self.assertNotIn("hero-mapping-field-list", source)
 
     def test_styles_are_packaged_with_the_app(self):
         self.assertTrue(WORKSPACE_CSS.is_file())

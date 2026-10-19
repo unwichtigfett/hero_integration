@@ -514,6 +514,30 @@ def mapping_target_picker(
 
 
 @frappe.whitelist()
+def mapping_source_picker_page(
+    snapshot_name: str, operation: str, search: str = "", start: int = 0, page_size: int = 50,
+) -> dict[str, object]:
+    """Return at most 50 searchable HERO source fields for the mapping picker."""
+    frappe.only_for("System Manager")
+    _, schema = _validated_snapshot(snapshot_name)
+    from hero_integration.services.mapping_suggestions import picker_page, source_fields
+
+    return picker_page(source_fields(operation, schema, search), start, page_size)
+
+
+@frappe.whitelist()
+def mapping_target_picker_page(
+    operation: str, search: str = "", app_name: str = "", target_doctype: str = "",
+    start: int = 0, page_size: int = 50,
+) -> dict[str, object]:
+    """Return at most 50 fields from the selected Frappe target DocType."""
+    frappe.only_for("System Manager")
+    from hero_integration.services.mapping_suggestions import picker_page, target_fields
+
+    return picker_page(target_fields(operation, _FrappePickerMetadata(), search, app_name, target_doctype), start, page_size)
+
+
+@frappe.whitelist()
 def mapping_suggestions(
     snapshot_name: str, operation: str, source_path: str = "", target_field: str = "", target_doctype: str = "",
 ) -> list[dict[str, object]]:
