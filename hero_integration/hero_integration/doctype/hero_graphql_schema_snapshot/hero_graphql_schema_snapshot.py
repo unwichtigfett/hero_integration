@@ -8,7 +8,7 @@ from frappe.model.document import Document
 from hero_integration.services.graphql_graph import analyze_snapshot
 
 
-class HEROGraphqlSchemaSnapshot(Document):
+class HEROGraphQLSchemaSnapshot(Document):
     def validate(self) -> None:
         frappe.only_for("System Manager")
         try:
