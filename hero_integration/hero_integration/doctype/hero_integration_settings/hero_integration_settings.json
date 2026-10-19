@@ -6,6 +6,7 @@
   {"fieldname": "hero_api_token", "fieldtype": "Password", "label": "HERO API Token"},
   {"fieldname": "hero_source_instance", "fieldtype": "Data", "label": "HERO Source Instance", "default": "default", "description": "Stable source-instance identity used together with ProjectMatch.id. Change only for a separate HERO source."},
   {"fieldname": "timeout_seconds", "fieldtype": "Int", "label": "Timeout Seconds", "default": "30"},
+  {"fieldname": "allow_graphql_mutation_execution", "fieldtype": "Check", "label": "Allow GraphQL Mutation Execution", "default": "0", "description": "Reserved for a separately security-reviewed release. The current release rejects activation and always keeps execution disabled."},
   {"fieldname": "erpnext_company", "fieldtype": "Link", "label": "ERPNext Company for HERO Projects", "options": "Company", "description": "The single executing company for every HERO project. Customers remain separate target records."},
   {"fieldname": "erpnext_company_confirmed", "fieldtype": "Check", "label": "Confirm Company for HERO Projects", "description": "Confirm the selected existing ERPNext Company before HERO project imports can use it."},
   {"fieldname": "scheduled_sync_enabled", "fieldtype": "Check", "label": "Enable Scheduled Sync"},

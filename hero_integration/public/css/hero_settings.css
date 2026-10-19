@@ -30,6 +30,15 @@
     background: var(--admin-surface, var(--pc-surface));
 }
 
+.hero-settings-mutations {
+    margin-top: 20px;
+}
+
+.hero-settings-mutations h3 {
+    margin: 0;
+    color: var(--admin-text, var(--pc-text));
+}
+
 .hero-settings-field {
     display: grid;
     gap: 7px;

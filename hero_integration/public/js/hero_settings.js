@@ -16,6 +16,7 @@
     const platform = window.hero_integration_platform;
     const GET = "workspace_settings_get";
     const SAVE = "workspace_settings_save";
+    const SET_MUTATION_EXECUTION = "workspace_mutation_execution_set";
 
     function node(tag, cls, text) {
         const el = document.createElement(tag);
@@ -74,6 +75,22 @@
         const tokenHelp = node("span", "hero-settings-token-row");
         tokenHelp.append(node("span", "", "Stored credential:"), tokenState);
 
+        const mutationCard = node("section", "hero-settings-card hero-settings-mutations");
+        const mutationEnabled = document.createElement("input");
+        mutationEnabled.type = "checkbox";
+        mutationEnabled.className = "hero-settings-check";
+        const mutationStatus = node("div", "hero-settings-status", "Loading …");
+        mutationStatus.setAttribute("role", "status");
+        const mutationSave = node("button", "hero-settings-button secondary", "Apply mutation setting");
+        mutationSave.type = "button";
+        mutationCard.append(
+            node("h3", "", "GraphQL Mutations"),
+            field("Allow mutation execution", mutationEnabled, "Only System Managers can change this site setting. The current release rejects activation."),
+            node("p", "hero-settings-warning", "Effective security status is controlled by the backend release gate. Mutation drafts remain available independently."),
+            mutationStatus,
+            mutationSave
+        );
+
         const save = node("button", "hero-settings-button primary", "Save Settings");
         save.type = "button";
 
@@ -88,7 +105,7 @@
             save
         );
 
-        root.append(header, card);
+        root.append(header, card, mutationCard);
         workspace.replaceChildren(root);
 
         let destroyed = false;
@@ -100,6 +117,8 @@
             url.disabled = value;
             token.disabled = value;
             timeout.disabled = value;
+            mutationEnabled.disabled = value;
+            mutationSave.disabled = value;
         }
 
         function apply(data) {
@@ -110,6 +129,12 @@
             const configured = data.api_token_status === "CONFIGURED";
             tokenState.textContent = uiText(configured ? "Configured" : data.api_token_status === "CREDENTIAL_ERROR" ? "Credential error" : "Not configured");
             tokenState.dataset.state = configured ? "configured" : data.api_token_status === "CREDENTIAL_ERROR" ? "error" : "missing";
+            applyMutationState(data);
+        }
+
+        function applyMutationState(data) {
+            mutationEnabled.checked = Boolean(data.mutation_execution_requested);
+            mutationStatus.textContent = uiText(`Effective mutation security status: ${data.mutation_execution_status || "DISABLED"}. ${data.mutation_execution_reason || ""}`);
         }
 
         async function load() {
@@ -149,8 +174,27 @@
             }
         }
 
+        async function persistMutationSetting() {
+            busy(true);
+            mutationStatus.textContent = uiText("Saving mutation setting …");
+            try {
+                const data = await platform.api(SET_MUTATION_EXECUTION, {allow_execution: mutationEnabled.checked});
+                if (!destroyed) {
+                    applyMutationState(data);
+                }
+            } catch (error) {
+                if (!destroyed) {
+                    mutationStatus.textContent = uiText("Mutation activation is blocked by HERO_MUTATION_EXECUTION_DISABLED.");
+                    await load();
+                }
+            } finally {
+                if (!destroyed) busy(false);
+            }
+        }
+
         refresh.addEventListener("click", load);
         save.addEventListener("click", persist);
+        mutationSave.addEventListener("click", persistMutationSetting);
         await load();
 
         return {
