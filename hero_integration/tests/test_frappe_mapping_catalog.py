@@ -47,7 +47,15 @@ class TestFrappeMappingCatalog(unittest.TestCase):
             validate_draft_target("HeroCustomers", "string|null", "Denied Record", "subject", self.metadata)
 
     def test_suggestions_cover_a_foreign_app_but_mark_them_draft_only(self):
-        matches = suggest_from_source("HeroCustomers", "category", {"types": []}, self.metadata, "Acme Case")
+        schema = {"__schema": {"types": [
+            {"kind": "OBJECT", "name": "Query", "fields": [
+                {"name": "contacts", "type": {"kind": "LIST", "ofType": {"kind": "OBJECT", "name": "Contact"}}},
+            ]},
+            {"kind": "OBJECT", "name": "Contact", "fields": [
+                {"name": "category", "type": {"kind": "SCALAR", "name": "String"}},
+            ]},
+        ]}}
+        matches = suggest_from_source("HeroCustomers", "category", schema, self.metadata, "Acme Case")
 
         match = next(item for item in matches if item["target_field"] == "custom_hero_category")
         self.assertEqual((match["target_app"], match["target_doctype"]), ("acme_app", "Acme Case"))

@@ -8,6 +8,7 @@ from hero_integration import api
 from hero_integration.services.direct_mapping import (
     DirectMappingError,
     MappingSpec,
+    source_value,
     transformed_value,
     validate_spec,
 )
@@ -31,6 +32,13 @@ class TestDirectFrappeAdapter(unittest.TestCase):
         value = transformed_value(spec, "Synthetic Territory")
 
         self.assertEqual(value, "Synthetic Territory")
+
+    def test_source_value_reads_nested_response_paths_without_a_fallback(self):
+        record = {"address": {"city": "Synthetic City"}}
+
+        self.assertEqual(source_value(record, "address.city"), "Synthetic City")
+        self.assertIsNone(source_value(record, "address.zipcode"))
+        self.assertIsNone(source_value(record, "address.city.value"))
 
     def test_protected_default_and_incompatible_targets_are_rejected(self):
         for spec in (
@@ -99,7 +107,7 @@ class TestDirectFrappeAdapter(unittest.TestCase):
         self.assertEqual(schema_only.graphql_path, "contacts.unselected")
 
     def test_bidirectional_suggestions_filter_protected_and_incompatible_fields(self):
-        schema = {"types": []}
+        schema = _customer_schema()
         self.metadata.extra = [
             SimpleNamespace(fieldname="territory", label="Customer Category", fieldtype="Data", read_only=0, options="", is_custom_field=1),
             SimpleNamespace(fieldname="status", label="Status", fieldtype="Data", read_only=0, options="", is_custom_field=1),
@@ -118,7 +126,64 @@ class TestDirectFrappeAdapter(unittest.TestCase):
         self.assertEqual(forward[0]["target_field"], "territory")
         self.assertNotIn("custom_score", {item["target_field"] for item in forward})
         self.assertEqual(reverse[0]["source_path"], "category")
+        self.assertEqual((reverse[0]["source_graphql_path"], reverse[0]["source_graphql_type"]), ("contacts.category", "String"))
         self.assertTrue(all(item["requires_approval"] for item in forward + reverse))
+
+    def test_reverse_suggestions_explain_nested_query_response_fields_without_following_cycles(self):
+        self.metadata.extra = [
+            SimpleNamespace(fieldname="custom_hero_address_city", label="Address City", fieldtype="Data", read_only=0, options="", is_custom_field=1),
+        ]
+
+        matches = suggest_from_target("HeroCustomers", "custom_hero_address_city", _customer_schema(), self.metadata)
+
+        city = next(item for item in matches if item["source_path"] == "address.city")
+        self.assertEqual((city["source_graphql_path"], city["source_graphql_type"]), ("contacts.address.city", "String"))
+        self.assertEqual(city["source_relation"], "Contact.address → Address")
+        self.assertIn("Type-compatible", city["reason"])
+        self.assertIn(city["confidence"], {"high", "medium", "low"})
+
+    def test_source_picker_excludes_missing_and_mutation_input_paths(self):
+        schema = _customer_schema(contact_fields=[
+            {"name": "category", "type": {"kind": "SCALAR", "name": "String"}},
+        ])
+
+        selected = [field.path for field in source_fields("HeroCustomers", schema) if field.selectable]
+
+        self.assertEqual(selected, ["category"])
+        self.assertNotIn("mutation_category", selected)
+
+    def test_source_picker_keeps_large_schema_suggestions_scoped_to_the_operation_response(self):
+        schema = _customer_schema()
+        schema["__schema"]["types"].extend(
+            {"kind": "OBJECT", "name": f"Unrelated{index}", "fields": [
+                {"name": f"field{field_index}", "type": {"kind": "SCALAR", "name": "String"}}
+                for field_index in range(9)
+            ]}
+            for index in range(300)
+        )
+
+        fields = source_fields("HeroCustomers", schema, "category")
+
+        self.assertEqual([field.path for field in fields], ["category"])
+
+    def test_reverse_suggestion_api_reuses_the_selected_snapshot_and_target_metadata(self):
+        self.metadata.extra = [
+            SimpleNamespace(fieldname="territory", label="Customer Category", fieldtype="Data", read_only=0, options="", is_custom_field=1),
+        ]
+        calls = []
+        snapshot = SimpleNamespace(name="SYNTHETIC")
+        fake_frappe = SimpleNamespace(only_for=calls.append)
+
+        with (
+            patch.object(api, "frappe", fake_frappe),
+            patch.object(api, "_validated_snapshot", return_value=(snapshot, _customer_schema())),
+            patch.object(api, "_FrappePickerMetadata", return_value=self.metadata),
+        ):
+            matches = api.mapping_suggestions("SYNTHETIC", "HeroCustomers", target_field="territory", target_doctype="Customer")
+
+        self.assertEqual(calls, ["System Manager"])
+        self.assertEqual(matches[0]["source_path"], "category")
+        self.assertEqual(matches[0]["source_graphql_path"], "contacts.category")
 
     def test_target_picker_keeps_child_relations_visible_but_unselectable(self):
         self.metadata.extra = [
@@ -159,3 +224,25 @@ class _Metadata:
     @staticmethod
     def value_is_valid(doctype, fieldname, value):
         return (doctype, fieldname, value) == ("Customer", "territory", "Synthetic Territory")
+
+
+def _customer_schema(contact_fields=None):
+    return {"__schema": {"types": [
+        {"kind": "OBJECT", "name": "Query", "fields": [
+            {"name": "contacts", "type": {"kind": "LIST", "ofType": {"kind": "OBJECT", "name": "Contact"}}},
+        ]},
+        {"kind": "OBJECT", "name": "Mutation", "fields": [
+            {"name": "change_contact", "type": {"kind": "OBJECT", "name": "Contact"}},
+        ]},
+        {"kind": "INPUT_OBJECT", "name": "ContactInput", "inputFields": [
+            {"name": "mutation_category", "type": {"kind": "SCALAR", "name": "String"}},
+        ]},
+        {"kind": "OBJECT", "name": "Contact", "fields": contact_fields or [
+            {"name": "category", "type": {"kind": "SCALAR", "name": "String"}},
+            {"name": "address", "type": {"kind": "OBJECT", "name": "Address"}},
+        ]},
+        {"kind": "OBJECT", "name": "Address", "fields": [
+            {"name": "city", "type": {"kind": "SCALAR", "name": "String"}},
+            {"name": "parent", "type": {"kind": "OBJECT", "name": "Contact"}},
+        ]},
+    ]}}

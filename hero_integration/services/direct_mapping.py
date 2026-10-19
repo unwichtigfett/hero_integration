@@ -111,6 +111,16 @@ def transformed_value(spec: MappingSpec, value: object) -> object | None:
     return value
 
 
+def source_value(record: dict[str, object], source_path: str) -> object | None:
+    """Read one approved finite HERO response path without inventing fallbacks."""
+    current: object = record
+    for segment in source_path.split("."):
+        if not isinstance(current, dict):
+            return None
+        current = current.get(segment)
+    return current
+
+
 def _validate_binding(spec: MappingSpec, metadata) -> None:
     if spec.purpose == PURPOSE_FIELD:
         _validate_custom_field(spec, metadata)
