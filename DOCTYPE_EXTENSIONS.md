@@ -62,15 +62,16 @@ writable Custom Field or a protected, explicit native binding. Activation
 checks source type, snapshot, Frappe metadata, target relation, and current
 user write permission. No default mapping is installed.
 
-The **HERO Adapter Tools** page is the normal mapping-entry path. Its source
-picker uses only saved schema snapshots and the two versioned read operations;
-it shows query-root paths, GraphQL type, nullability, and object relation. A
-schema field that is not in an operation selection set remains visible only as
-disabled context. Its target picker calls `frappe.get_meta()` for the approved
-Customer or Project target, including Custom Fields. It excludes technical,
-read-only, protected, standard-mapping, standard-field, and unresolved
-child-DocType fields. Site-specific mappings can only target writable Custom
-Fields; a new native mapping remains an app-review decision.
+The **ERPNext Mapping** tab in the canonical **HERO Integration** workspace is
+the normal mapping-entry path. Its source picker uses only saved schema
+snapshots and the two versioned read operations; it shows query-root paths,
+GraphQL type, nullability, and object relation. A schema field that is not in
+an operation selection set remains visible only as disabled context. Its target
+picker calls `frappe.get_meta()` for the approved Customer or Project target,
+including Custom Fields. It excludes technical, read-only, protected,
+standard-mapping, standard-field, and unresolved child-DocType fields.
+Site-specific mappings can only target writable Custom Fields; a new native
+mapping remains an app-review decision.
 Suggestions are ranked by compatible type plus name/label overlap and remain
 Draft until an administrator explicitly activates the mapping.
 

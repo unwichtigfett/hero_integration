@@ -3,8 +3,8 @@
 The retained workspace, overview, settings and CSS are source-port copies from
 the read-only historic Frappe source. The Desk host is native to this app; no
 old application is imported at runtime. `hero-integration` is the one visible
-HERO Desk workspace. The old Desk URLs are retained as redirects with a
-section deep link, not as independent renderers.
+HERO Desk workspace. The former dedicated Desk URLs are decommissioned; use
+the corresponding tab under `/desk/hero-integration` instead.
 
 | Source file | SHA-256 read from the read-only source |
 | --- | --- |
@@ -29,10 +29,10 @@ section deep link, not as independent renderers.
 
 `hero-integration` opens the preserved Adapter host and contains Overview /
 Connection, API Analyzer, Graph Viewer, GraphQL Services, ERPNext Mapping,
-Migration / Synchronisation, and Settings. `hero-api-analyzer`,
+Migration / Synchronisation, and Settings. The former `hero-api-analyzer`,
 `hero-graph-viewer`, `hero-graphql-services`, `hero-adapter-tools`,
-`hero-migration-center`, and `hero-settings` remain installed only so existing
-bookmarks resolve to the corresponding section. Technical DocTypes remain
+`hero-migration-center`, and `hero-settings` Desk URLs are decommissioned;
+there are no compatibility Page documents for them. Technical DocTypes remain
 available to their System Manager permission checks and direct records, but are
 not linked from the normal HERO workspace navigation.
 
