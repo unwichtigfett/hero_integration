@@ -53,6 +53,9 @@ class TestHeroDeskUiContract(unittest.TestCase):
             with self.subTest(contract=contract):
                 self.assertIn(contract, source)
         self.assertNotIn("limited to 90 filtered nodes", source)
+        for removed in ("appendMark", "candidateRecords", "loadCandidates", "Open Existing Variable Mapping"):
+            with self.subTest(removed=removed):
+                self.assertNotIn(removed, source)
 
     def test_mutation_drafts_remain_local_and_execution_stays_disabled(self):
         source = "\n".join((WORKSPACE_JS.read_text(), TOOLS_JS.read_text()))
@@ -68,13 +71,14 @@ class TestHeroDeskUiContract(unittest.TestCase):
         source = TOOLS_JS.read_text()
         for contract in (
             "snapshotPicker", "selected_snapshot_metadata", "Schema Overview",
-            "Open Node Focus", "Klassenkarten verdichten", "graphNeedsOverview",
+            "Knotenauswahl öffnet den zugehörigen Fokus", "Klassenkarten verdichten", "graphNeedsOverview",
         ):
             with self.subTest(contract=contract):
                 self.assertIn(contract, source)
         self.assertIn("this.options.snapshot_name", source)
         self.assertIn("history.replaceState", source)
-        self.assertIn("inspectNode(id,serial=this.sequence,open=false)", source)
+        self.assertIn("inspectNode(id,serial=this.sequence,open=true)", source)
+        self.assertNotIn("focusButton", source)
 
     def test_workspace_theme_tokens_are_scoped_to_hero_hosts(self):
         source = ADAPTER_CSS.read_text()
@@ -94,11 +98,17 @@ class TestHeroDeskUiContract(unittest.TestCase):
 
     def test_mapping_editor_retains_one_confirmed_bulk_adoption(self):
         source = MAPPING_EDITOR_JS.read_text()
-        self.assertIn("adopt_mapping_package", source)
-        self.assertIn("frappe.confirm", source)
-        self.assertIn("pendingSourcePath", source)
-        self.assertIn("mapping_target_catalog", source)
-        self.assertIn("target_doctype", source)
+        for contract in (
+            "adopt_mapping_package", "frappe.confirm", "pendingSourcePath",
+            "mapping_target_catalog", "target_doctype", "hero-mapping-grid",
+            "Vorschläge prüfen", "Aktive Mappings", "hero-mapping-statuses",
+            "hero-mapping-table", "hero-mapping-advanced", "status: \"Draft\"",
+        ):
+            with self.subTest(contract=contract):
+                self.assertIn(contract, source)
+        self.assertIn("Promise.all", source)
+        self.assertIn("sourceSearch.val()", source)
+        self.assertIn("activeSearch.on", source)
 
     def test_styles_are_packaged_with_the_app(self):
         self.assertTrue(WORKSPACE_CSS.is_file())

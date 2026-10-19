@@ -45,4 +45,24 @@
 .hero-integration-detail-list { display: grid; gap: 6px 12px; grid-template-columns: minmax(110px, auto) 1fr; margin: 14px 0; }
 .hero-integration-detail-list dt { color: var(--text-muted, #6c757d); font-weight: 600; }
 .hero-integration-detail-list dd { margin: 0; overflow-wrap: anywhere; }
+.hero-mapping-controls, .hero-mapping-grid { display: grid; gap: 14px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.hero-mapping-controls { margin-bottom: 16px; }
+.hero-mapping-controls label { display: grid; gap: 6px; font-weight: 600; }
+.hero-mapping-section, .hero-mapping-advanced { border-top: 1px solid var(--border-color, #dfe3e8); margin-top: 20px; padding-top: 16px; }
+.hero-mapping-pane { background: var(--card-bg, #fff); border: 1px solid var(--border-color, #dfe3e8); border-radius: 8px; min-width: 0; padding: 14px; }
+.hero-mapping-pane h3, .hero-mapping-section h3 { margin-top: 0; }
+.hero-mapping-field-list { display: grid; gap: 6px; margin-top: 10px; max-height: 340px; overflow: auto; }
+.hero-mapping-field { display: flex; justify-content: space-between; text-align: left; white-space: normal; width: 100%; }
+.hero-mapping-field-meta { color: var(--text-muted, #6c757d); font-size: 12px; margin-left: 8px; white-space: nowrap; }
+.hero-mapping-table-wrap { overflow-x: auto; }
+.hero-mapping-table { margin-top: 12px; }
+.hero-mapping-table .is-conflict td, .hero-mapping-field.is-conflict { box-shadow: inset 3px 0 #b56a4d; }
+.hero-mapping-statuses { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 10px; }
+.hero-mapping-status { border: 1px solid var(--border-color, #dfe3e8); border-radius: 999px; display: inline-block; font-size: 12px; padding: 3px 8px; }
+.hero-mapping-status.status-active { border-color: #2d9d78; color: #167253; }
+.hero-mapping-status.status-draft { border-color: #be8a25; color: #8c6100; }
+.hero-mapping-status.status-invalid { border-color: #b56a4d; color: #943c23; }
+.hero-mapping-preview { background: var(--control-bg, #f7f7f7); border-radius: 6px; margin: 14px 0 0; max-height: 260px; overflow: auto; padding: 12px; white-space: pre-wrap; }
+.hero-mapping-advanced summary { cursor: pointer; font-weight: 600; }
+@media (max-width: 900px) { .hero-mapping-controls, .hero-mapping-grid { grid-template-columns: 1fr; } }
 @media (max-width: 900px) { .hero-integration-summary-grid, .hero-integration-summary-grid.compact { grid-template-columns: 1fr; } .hero-integration-split, .hero-integration-graph-layout { grid-template-columns: 1fr; } .hero-integration-graph-controls { grid-template-columns: 1fr 1fr; } }

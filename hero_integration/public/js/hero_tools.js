@@ -167,7 +167,7 @@
     }
     class Workspace {
         constructor(host, options = {}) {
-            this.host = host; this.options = options || {}; this.serviceKind = 'query'; this.root = $('section', 'hero-tools'); this.sequence = 0; this.starts = {analyzer:0,graph:0,services:0,candidates:0}; this.viewbox = null;
+            this.host = host; this.options = options || {}; this.serviceKind = 'query'; this.root = $('section', 'hero-tools'); this.sequence = 0; this.starts = {analyzer:0,graph:0,services:0}; this.viewbox = null;
             // Tool-local HERO header removed: connection/schema actions live outside the tool views.
             // Keep the existing state/action objects available for shared logic without rendering a duplicate toolbar.
             this.status = $('p', 'ht-context'); this.status.hidden = true; this.notice = $('div', 'ht-notice'); this.notice.setAttribute('role','status');
@@ -232,7 +232,7 @@
             this.schema=this.context.schema_fingerprint;
             if(oldScope!==`${this.context.connection_id}:${this.context.binding_generation}:${this.schema}`){
                 this.validation=null;this.graphCache=null;this.graph=null;this.selectedNode=null;this.viewbox=null;
-                this.canvas.replaceChildren();this.canvas._heroScene=null;this.typeDetail.replaceChildren();this.nodeDetail.replaceChildren();this.candidates.replaceChildren();
+                this.canvas.replaceChildren();this.canvas._heroScene=null;this.typeDetail.replaceChildren();this.nodeDetail.replaceChildren();
             }
             this.status.textContent=`Source HERO · Verbindung ${this.context.connection_id || 'not bound'} · Bindung ${this.context.binding_generation} · Schema ${this.schema || 'not available'}`;
             this.updateSnapshotSelector();
@@ -250,7 +250,7 @@
         }
         async loadTool(serial=this.sequence) {
             if(this.tool==='analyzer')await this.loadAnalyzer(serial);
-            if(this.tool==='graph'){await this.loadGraph(serial);await this.loadCandidates(serial);}
+            if(this.tool==='graph')await this.loadGraph(serial);
             if(this.tool==='services')await this.loadQueries(serial);
         }
         pager(key, reload) {
@@ -343,7 +343,7 @@
         }
         scalarDetailContents(target,detail,scope){
             const groups=this.scalarUsageRows(detail),total=groups.reduce((sum,group)=>sum+group.rows.length,0);
-            target.replaceChildren($('h3','',detail.node.name),$('p','',detail.node.node_id),$('p','',detail.node.description||''),$('pre','ht-data',JSON.stringify(detail.node,null,2)));this.appendMark(target,detail.node,scope);
+            target.replaceChildren($('h3','',detail.node.name),$('p','',detail.node.node_id),$('p','',detail.node.description||''),$('pre','ht-data',JSON.stringify(detail.node,null,2)));
             target.append($('h4','',`Verwendungen (${total})`));
             for(const group of groups)target.append($('p','ht-scalar-count',`${group.kind} · ${group.direction==='incoming'?'eingehend':'ausgehend'} · ${group.rows.length}`));
         }
@@ -367,15 +367,14 @@
             const filtered=()=>this.loadGraph(),all=()=>{this.graphSearch.value='';this.graphKind.value='';this.relationKind.value='';this.loadGraph();};
             this.graphSearch.addEventListener('input',()=>{this.cancelGraph();this.graphInfo.textContent='Filter changed. Filtered View loads the current selection.';});
             for(const control of [this.graphKind,this.relationKind])control.addEventListener('change',filtered);
-            this.focusButton=button('Open Node Focus',()=>{if(this.selectedNode)this.openFocus(this.selectedNode);});this.focusButton.disabled=true;
-            bar.append(field('Snapshot',this.snapshotPicker),button('Schema Overview',all),field('Graph Search',this.graphSearch),field('Node Class',this.graphKind),field('Relation',this.relationKind),button('Filtered View',filtered),this.focusButton,button('Fit',()=>{this.viewbox=null;this.drawGraph();}),button('+',()=>this.zoom(.8)),button('−',()=>this.zoom(1.25)));
+            bar.append(field('Snapshot',this.snapshotPicker),button('Schema Overview',all),field('Graph Search',this.graphSearch),field('Node Class',this.graphKind),field('Relation',this.relationKind),button('Filtered View',filtered),button('Fit',()=>{this.viewbox=null;this.drawGraph();}),button('+',()=>this.zoom(.8)),button('−',()=>this.zoom(1.25)));
             this.graphInfo=$('p');this.graphInfo.setAttribute('role','status');this.canvas=svg('svg',{'class':'ht-graph',height:650,'aria-label':'HERO API Graph'});
             this.bindGraphNavigation(this.canvas,()=>this.viewbox,box=>{this.viewbox=box;},()=>this.applyViewbox(),factor=>this.zoom(factor));
-            this.nodeDetail=$('aside','ht-inspector');this.candidates=$('div','ht-candidates');const side=$('aside','ht-graph-side');side.append(this.nodeDetail,this.candidates);
+            this.nodeDetail=$('aside','ht-inspector');const side=$('aside','ht-graph-side');side.append(this.nodeDetail);
             const grid=$('div','ht-split');grid.append(this.canvas,side);
             this.labelNotice=$('p','ht-legend ht-label-note');this.labelNotice.setAttribute('aria-live','polite');
             const legend=$('div','ht-legend ht-category-legend');for(const [kind,label] of [['QUERY_OPERATION','Query'],['MUTATION_OPERATION','Mutation'],['INPUT_OBJECT','Eingaben'],['ENUM','Enum'],['OBJECT','Weitere Schematypen']]){const item=$('span','',label);item.dataset.kind=kind;legend.append(item);}
-            panel.append(bar,this.snapshotMeta,legend,$('p','ht-legend','Die Schemaübersicht verdichtet große Graphen zur Performance. Suche oder Klassenfilter öffnen Detailansichten; „Open Node Focus“ öffnet den ausgewählten Knoten.'),this.graphInfo,this.labelNotice,grid);
+            panel.append(bar,this.snapshotMeta,legend,$('p','ht-legend','Die Schemaübersicht verdichtet große Graphen zur Performance. Eine Knotenauswahl öffnet den zugehörigen Fokus; Suche oder Klassenfilter öffnen Detailansichten.'),this.graphInfo,this.labelNotice,grid);
         }
         bindGraphNavigation(canvas,getBox,setBox,applyBox,zoom){
             canvas.style.touchAction='none';let pan=null;
@@ -600,7 +599,7 @@
             return call('get_graph',{...scope,node_id:id});
         }
         detailContents(target,data,scope,navigate){
-            target.replaceChildren($('h3','',data.node.name),$('p','',data.node.node_id),$('p','',data.node.description||''),$('pre','ht-data',JSON.stringify(data.node,null,2)));this.appendMark(target,data.node,scope);
+            target.replaceChildren($('h3','',data.node.name),$('p','',data.node.node_id),$('p','',data.node.description||''),$('pre','ht-data',JSON.stringify(data.node,null,2)));
             if(this.tool==='analyzer')this.appendAnalyzerService(target,data.node,scope);
             for(const [title,edges,key] of [['Incoming',data.incoming,'source_id'],['Outgoing',data.outgoing,'target_id']]){target.append($('h4','',`${title} (${edges.length})`));for(const edge of edges)target.append(button(`${edge.kind}${edge.label?' · '+edge.label:''} · ${edge[key]}`,()=>navigate(edge[key])));}
         }
@@ -640,10 +639,10 @@
             form.target.replaceChildren($('p','',result.query.name+' gespeichert · Provenance='+result.query.provenance),link);
             this.notice.textContent='Service gespeichert. Es wurde keine HERO-Operation ausgeführt.';
         }
-        async inspectNode(id,serial=this.sequence,open=false){
+        async inspectNode(id,serial=this.sequence,open=true){
             const scope=this.scope(true),key=this.scopeKey(scope),generation=this.inspectionGeneration=(this.inspectionGeneration||0)+1;
             try {const data=await this.nodeData(id,scope);if(serial!==this.sequence||generation!==this.inspectionGeneration||key!==this.scopeKey())return;
-                this.selectedNode=id;this.focusButton.disabled=false;this.detailContents(this.nodeDetail,data,scope,next=>this.inspectNode(next));this.drawGraph();if(open)this.openFocus(id);
+                this.selectedNode=id;this.detailContents(this.nodeDetail,data,scope,next=>this.inspectNode(next));this.drawGraph();if(open)this.openFocus(id);
             } catch(error){if(serial===this.sequence&&generation===this.inspectionGeneration){this.nodeDetail.replaceChildren($('p','text-danger',error.message));}}
         }
         openFocus(id){
@@ -671,27 +670,6 @@
         focusNext(id){if(id!==this.focusHistory.at(-1))this.focusHistory.push(id);this.loadFocus(id);}
         drawFocus(){if(this.focusGraph)this.focusViewbox=this.renderGraphScene(this.focusCanvas,this.focusGraph,this.focusNode,this.focusViewbox,id=>this.focusNext(id),this.focusNotice,'hero-focus-arrow');}
         zoomFocus(factor){if(!this.focusViewbox)return;const next=this.boundedZoom(this.focusCanvas,this.focusViewbox,factor);if(next===this.focusViewbox)return;this.focusViewbox=next;this.applyFocusViewbox();}
-        appendMark(target,node,scope){
-            const group=$('div','ht-mark-action'),status=$('p','ht-mark-status');status.setAttribute('role','status');const mark=button('Mark for Mapping',async()=>{
-                if(mark.disabled)return;mark.disabled=true;const key=this.scopeKey(scope);status.textContent='Checking mapping candidate …';
-                try {const rows=await this.candidateRecords(scope);if(key!==this.scopeKey())throw new Error('Kontext geändert. Element erneut auswählen.');const old=rows.find(c=>c.schema_node_id===node.node_id);
-                    const result=await call('mark_candidate',{...scope,node_id:node.node_id,expected_revision:old?.revision||0},true);
-                    status.textContent=`Vorgemerkt · Revision ${result.candidate.revision} · Vorschlag, kein Core-Mapping.`;if(key===this.scopeKey()&&this.tool==='graph'){try{await this.loadCandidates();}catch(error){status.textContent+=' Die Vormerkungsliste konnte nicht aktualisiert werden: '+error.message;}}
-                } catch(error){status.textContent=error.message;}finally{mark.disabled=!this.context?.can_write||key!==this.scopeKey();}
-            });mark.classList.add('ht-mark-primary');
-            // The existing server permits every valid graph node; there is no additional
-            // kind whitelist. Do not invent stricter semantic mapping eligibility here.
-            const validIdentity=[node.node_id.split(':').slice(1).join(':'),node.name].every(v=>v&&!['/','\\','..'].some(s=>v.includes(s)));
-            const reason=!this.context?.can_write?'No write permission for mapping candidates.':this.context.needs_binding_update?'Apply the connection first.':!validIdentity?'This element does not have a valid identity for the mapping-candidate contract.':'Use the native Mapping Editor for reviewed mapping proposals.';
-            mark.disabled=!!reason;status.textContent=reason||'HERO source candidate · does not automatically create or activate a mapping.';group.append(mark,status);target.append(group);
-        }
-        async candidateRecords(scope){return [];}
-        async loadCandidates(serial=this.sequence) {
-            if(serial!==this.sequence||!this.schema)return;const scope=this.scope(true),key=this.scopeKey(scope),rows=await this.candidateRecords(scope);if(serial!==this.sequence||key!==this.scopeKey())return;this.candidateRows=rows;
-            this.candidates.replaceChildren($('h3','','Mapping Candidates'),$('p','','Candidates do not create or activate a mapping.'));
-            this.candidates.append($('p','ht-context','Reviewed mapping proposals are managed in the native Mapping Editor.'));
-            const link=$('a','','Open Existing Variable Mapping');link.href=hero_integration_shell.mapping('mappings','HERO');this.candidates.append(hero_integration_shell.navigationLink(link));
-        }
         serviceLabel() { return this.serviceKind === 'mutation' ? 'Mutation' : 'Query'; }
         serviceScope(schema=false) { return {...this.scope(schema), operation_kind:this.serviceKind}; }
         serviceUrl(kind, queryId='') {
