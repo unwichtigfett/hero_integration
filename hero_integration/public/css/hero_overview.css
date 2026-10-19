@@ -1,0 +1,128 @@
+.hero-overview {
+    width: min(1100px, 100%);
+    margin: 0 auto;
+}
+
+.hero-overview-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 20px;
+    margin-bottom: 20px;
+}
+
+.hero-overview-header h2 {
+    margin: 0 0 6px;
+    color: var(--admin-text, var(--pc-text));
+}
+
+.hero-overview-header p {
+    margin: 0;
+    color: var(--admin-muted, var(--pc-muted));
+}
+
+.hero-overview-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px;
+}
+
+.hero-overview-metric {
+    min-width: 0;
+    padding: 15px;
+    border: 1px solid var(--admin-border, var(--pc-border));
+    border-radius: 9px;
+    background: var(--admin-surface, var(--pc-surface));
+}
+
+.hero-overview-label {
+    margin-bottom: 7px;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    color: var(--admin-muted, var(--pc-muted));
+}
+
+.hero-overview-value {
+    overflow-wrap: anywhere;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--admin-text, var(--pc-text));
+}
+
+.hero-overview-value[data-state="ok"] {
+    color: var(--admin-success, #2e7d32);
+}
+
+.hero-overview-value[data-state="warning"] {
+    color: var(--admin-warning, #a15c00);
+}
+
+.hero-overview-value[data-state="off"] {
+    color: var(--admin-muted, var(--pc-muted));
+}
+
+.hero-overview-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 18px;
+}
+
+.hero-overview-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 18px;
+    padding-top: 18px;
+    border-top: 1px solid var(--admin-border, var(--pc-border));
+}
+
+.hero-overview-link {
+    padding: 7px 10px;
+    border: 1px solid var(--admin-border, var(--pc-border));
+    border-radius: 7px;
+    color: var(--admin-text, var(--pc-text));
+    text-decoration: none;
+}
+
+.hero-overview-link:hover {
+    text-decoration: underline;
+}
+
+.hero-overview-button {
+    min-height: 36px;
+    padding: 8px 14px;
+    border: 1px solid var(--admin-border, var(--pc-border));
+    border-radius: 7px;
+    font: inherit;
+    cursor: pointer;
+}
+
+.hero-overview-button.primary {
+    font-weight: 600;
+}
+
+.hero-overview-button:disabled {
+    cursor: default;
+    opacity: .55;
+}
+
+.hero-overview-status {
+    margin-top: 14px;
+    font-size: 13px;
+    color: var(--admin-muted, var(--pc-muted));
+}
+
+@media (max-width: 680px) {
+    .hero-overview-header {
+        flex-direction: column;
+    }
+    .hero-overview-actions {
+        display: grid;
+    }
+    .hero-overview-button {
+        width: 100%;
+    }
+}
