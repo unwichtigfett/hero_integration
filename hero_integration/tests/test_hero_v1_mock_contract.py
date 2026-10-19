@@ -151,12 +151,15 @@ class TestHeroV1MockContract(unittest.TestCase):
             "last_name": "Lovelace", "email_id": "ada@synthetic.invalid", "mobile_no": "+49 555 101",
             "custom_hero_source_id": "101", "custom_hero_customer_number": "SYN-101",
             "custom_hero_customer_category": "synthetic", "custom_hero_customer_type": "synthetic",
+            "custom_hero_is_contact_person": False,
         })
         self.assertEqual(project_plan.values(PROJECT, lambda value: "CUST-0001", lambda: "Synthetic Company"), {
             "project_name": "Synthetic Project", "customer": "CUST-0001", "company": "Synthetic Company",
             "custom_hero_source_id": "201", "custom_hero_related_project_id": "301",
             "custom_hero_display_id": "PR-201", "custom_hero_source_created": "2026-10-18T10:00:00+00:00",
             "custom_hero_source_modified": "2026-10-18T11:00:00+00:00",
+            "custom_hero_project_number": "0001", "custom_hero_project_type": "PV",
+            "custom_hero_partner_notes": "Synthetic partner note",
         })
 
     def test_matrix_accounts_for_each_selected_path(self):
