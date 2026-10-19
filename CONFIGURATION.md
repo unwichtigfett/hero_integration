@@ -1,5 +1,9 @@
 # Configuration
 
+`HERO Source Instance` is the stable identity namespace paired with every
+`ProjectMatch.id`. Leave the explicit `default` value only for the original
+source; use a distinct confirmed value for a separate HERO source.
+
 Open **HERO Integration Settings** as a System Manager after installation.
 
 1. Enter the HTTPS GraphQL endpoint.

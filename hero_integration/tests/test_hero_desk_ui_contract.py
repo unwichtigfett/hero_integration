@@ -9,6 +9,7 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 PAGES = PACKAGE_ROOT / "hero_integration" / "page"
 WORKSPACE_JS = PACKAGE_ROOT / "public" / "js" / "hero_workspace.js"
 WORKSPACE_CSS = PACKAGE_ROOT / "public" / "css" / "hero_workspace.css"
+PARITY_MATRIX = PACKAGE_ROOT.parent / "UI_PARITY_MATRIX.md"
 
 
 class TestHeroDeskUiContract(unittest.TestCase):
@@ -36,6 +37,16 @@ class TestHeroDeskUiContract(unittest.TestCase):
         self.assertIn("This overview only reads saved Frappe state", source)
         self.assertNotIn("execute_graphql_service", source)
 
+    def test_graph_workspace_keeps_native_interactions_in_the_single_workspace_engine(self):
+        source = WORKSPACE_JS.read_text()
+        for contract in (
+            "Customer focus", "Fit graph", "QUERY_OPERATION", "Open selected field in Mapping Editor",
+            "Search operation, type or field", "stored graph nodes displayed",
+        ):
+            with self.subTest(contract=contract):
+                self.assertIn(contract, source)
+        self.assertNotIn("limited to 90 filtered nodes", source)
+
     def test_ui_assets_do_not_import_legacy_runtime(self):
         source = "\n".join(path.read_text() for path in [WORKSPACE_JS, *PAGES.glob("*/*.js")])
         for forbidden in ("auto_domain", "hero_connector", "process_core_shell", "semantic variable", "state machine"):
@@ -51,3 +62,10 @@ class TestHeroDeskUiContract(unittest.TestCase):
         self.assertTrue(WORKSPACE_CSS.is_file())
         pyproject = PACKAGE_ROOT.parent / "pyproject.toml"
         self.assertIn('"**/*.css"', pyproject.read_text())
+
+    def test_parity_matrix_states_native_boundary_and_evidence(self):
+        matrix = PARITY_MATRIX.read_text()
+        self.assertIn("Legacy UI function", matrix)
+        self.assertIn("IMPLEMENTED_SOURCE_TESTED", matrix)
+        self.assertIn("Process-Core shell", matrix)
+        self.assertIn("manual step", matrix)

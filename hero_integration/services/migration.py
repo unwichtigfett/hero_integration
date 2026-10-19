@@ -17,6 +17,7 @@ from hero_integration.integrations.erpnext.contact import (
 )
 from hero_integration.sources.hero import HeroSource, SourcePage
 from hero_integration.services.mapping_runtime import MappingPlanError, active_mapping_plan
+from hero_integration.services.project_naming import ProjectTitleValidationError, build_project_title
 
 
 CUSTOMER_ACTIONS = {"Customer Migration", "Cheap Data Migration", "Full Data Migration", "Sync"}
@@ -42,7 +43,9 @@ def execute_run(run_name: str) -> None:
     try:
         _require_active_mappings(run.action)
         config = get_configuration()
-        source = HeroSource(HeroGraphQLClient(config.endpoint, lambda: config.api_token, config.timeout_seconds))
+        source = HeroSource(
+            HeroGraphQLClient(config.endpoint, lambda: config.api_token, config.timeout_seconds), config.source_instance,
+        )
         _process_requested_phases(run, source)
         run.reload()
         if run.state == "Running":
@@ -160,7 +163,7 @@ def _migrate_customer(record: dict[str, object], run) -> Result:
     if not values.get("customer_name"):
         return Result("BLOCKED_RECORD", "Configured customer record name is empty.")
     if plan.source_deleted(record):
-        _mark_source_deleted(_link("customer", source_id))
+        _mark_source_deleted(_link("customer", source_id, _source_instance(record)))
         return Result("SKIPPED", "Source customer is deleted. No target deletion occurs.")
     return _upsert(
         "customer", source_id, record, values, "Customer", "customer_name", plan.mapping_version, run,
@@ -175,12 +178,20 @@ def _migrate_project(record: dict[str, object], run) -> Result:
     try:
         plan = active_mapping_plan("HeroProjectMatches")
         source_id = plan.source_identity(record)
-        values = plan.values(record, _customer_name_for_source, _confirmed_company_name)
-    except MappingPlanError as error:
+        source_instance = _source_instance(record)
+        values = plan.values(
+            record, lambda value: _customer_name_for_source(value, source_instance), _confirmed_company_name,
+            _project_title_for_record,
+        )
+        values["custom_hero_source_id"] = f"{source_instance}:{source_id}"
+    except (MappingPlanError, ProjectTitleValidationError) as error:
         return Result("BLOCKED_RECORD", str(error))
     if not values.get("project_name"):
         return Result("BLOCKED_RECORD", "Configured project record name is empty.")
-    return _upsert("project", source_id, record, values, "Project", "project_name", plan.mapping_version, run)
+    return _upsert(
+        "project", source_id, record, values, "Project", "project_name", plan.mapping_version, run,
+        source_instance=source_instance,
+    )
 
 
 def _upsert(
@@ -195,11 +206,12 @@ def _upsert(
     *,
     after_insert=None,
     target_snapshot=None,
+    source_instance: str = "default",
 ) -> Result:
     if not _target_available(doctype):
         return Result("UNAVAILABLE", f"{doctype} is not installed on this site.")
     source_hash = _digest(record)
-    existing = _link(source_type, source_id)
+    existing = _link(source_type, source_id, source_instance)
     if existing:
         if not frappe.db.exists(existing.target_doctype, existing.target_name):
             _mark_link_conflict(existing, "Stored target reference no longer exists.")
@@ -229,7 +241,7 @@ def _upsert(
     target_hash = _digest(snapshot(target))
     frappe.get_doc({
         "doctype": "HERO Integration Link", "source_system": "HERO", "source_type": source_type,
-        "source_id": source_id, "source_instance": "", "sync_status": "Synchronized",
+        "source_id": source_id, "source_instance": source_instance, "sync_status": "Synchronized",
         "conflict_detail": "", "last_synced_on": now_datetime(),
         "target_doctype": doctype, "target_name": target.name, "source_payload_hash": source_hash,
         "target_payload_hash": target_hash, "mapping_version": mapping_version,
@@ -257,8 +269,11 @@ def _target_available(doctype: str) -> bool:
     return bool(frappe.db.exists("DocType", doctype))
 
 
-def _link(source_type: str, source_id: str):
-    name = frappe.db.exists("HERO Integration Link", {"source_type": source_type, "source_id": source_id})
+def _link(source_type: str, source_id: str, source_instance: str = "default"):
+    name = frappe.db.exists(
+        "HERO Integration Link",
+        {"source_type": source_type, "source_id": source_id, "source_instance": source_instance},
+    )
     return frappe.get_doc("HERO Integration Link", name) if name else None
 
 
@@ -297,12 +312,17 @@ def _save_link(link) -> None:
         link.save()
 
 
-def _customer_name_for_source(value: object) -> str:
+def _customer_name_for_source(value: object, source_instance: str = "default") -> str:
     source_id = str(value) if isinstance(value, int) and value > 0 else ""
-    customer_link = _link("customer", source_id)
+    customer_link = _link("customer", source_id, source_instance)
     if not customer_link or customer_link.target_doctype != "Customer":
         raise MappingPlanError("The configured HERO customer relation has no unambiguous ERPNext link.")
     return customer_link.target_name
+
+
+def _source_instance(record: dict[str, object]) -> str:
+    value = record.get("_hero_source_instance")
+    return value.strip() if isinstance(value, str) and value.strip() else "default"
 
 
 def _confirmed_company_name() -> str:
@@ -310,6 +330,15 @@ def _confirmed_company_name() -> str:
     if not company.is_valid:
         raise MappingPlanError(company.reason)
     return company.name
+
+
+def _project_title_for_record(record: dict[str, object]) -> str:
+    """Resolve the ERPNext field limit before constructing a deterministic title."""
+    field = frappe.get_meta("Project").get_field("project_name")
+    limit = getattr(field, "length", None)
+    # Frappe Data fields use 140 when no site-specific explicit length is set.
+    max_length = int(limit) if isinstance(limit, int) and not isinstance(limit, bool) and limit > 0 else 140
+    return build_project_title(record, max_length=max_length)
 
 
 def _mark_sync_success(run) -> None:

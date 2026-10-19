@@ -4,6 +4,7 @@
   {"fieldname": "hero_api_url", "fieldtype": "Data", "label": "HERO GraphQL Endpoint", "options": "URL"},
   {"fieldname": "allowed_hero_hosts", "fieldtype": "Small Text", "label": "Allowed HERO Hosts", "description": "One exact HTTPS hostname per line."},
   {"fieldname": "hero_api_token", "fieldtype": "Password", "label": "HERO API Token"},
+  {"fieldname": "hero_source_instance", "fieldtype": "Data", "label": "HERO Source Instance", "default": "default", "description": "Stable source-instance identity used together with ProjectMatch.id. Change only for a separate HERO source."},
   {"fieldname": "timeout_seconds", "fieldtype": "Int", "label": "Timeout Seconds", "default": "30"},
   {"fieldname": "erpnext_company", "fieldtype": "Link", "label": "ERPNext Company for HERO Projects", "options": "Company", "description": "The single executing company for every HERO project. Customers remain separate target records."},
   {"fieldname": "erpnext_company_confirmed", "fieldtype": "Check", "label": "Confirm Company for HERO Projects", "description": "Confirm the selected existing ERPNext Company before HERO project imports can use it."},

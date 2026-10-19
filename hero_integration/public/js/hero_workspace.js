@@ -157,167 +157,144 @@
     const analyzer = (wrapper) => {
         const {root} = createPage(wrapper, "HERO API Analyzer");
         const content = element("div", "hero-integration-panel");
-        root.append(element("p", "hero-integration-lead", __("Analyze a saved GraphQL snapshot without contacting HERO.")), content);
+        root.append(element("p", "hero-integration-lead", __("Analyze saved GraphQL operations, types, arguments and relations without contacting HERO.")), content);
         const initial = routeOptions();
         addSnapshotPicker(root, async (snapshotName) => {
             content.replaceChildren();
-            if (!snapshotName) {
-                content.append(emptyNotice(__("Create or select a validated snapshot to analyze its saved structure.")));
-                return;
-            }
+            if (!snapshotName) return content.append(emptyNotice(__("Create or select a validated snapshot to analyze its saved structure.")));
             try {
                 const graph = await request("graph_view", {snapshot_name: snapshotName});
-                const types = graph.nodes.filter((node) => node.id.startsWith("type:"));
-                const fieldsByType = new Map();
-                graph.edges.filter((edge) => edge.kind === "HAS_FIELD").forEach((edge) => {
-                    const list = fieldsByType.get(edge.source) || [];
-                    list.push(graph.nodes.find((node) => node.id === edge.target));
-                    fieldsByType.set(edge.source, list.filter(Boolean));
-                });
-                const counts = types.reduce((value, node) => {
-                    value[node.kind] = (value[node.kind] || 0) + 1;
-                    return value;
-                }, {});
-                const summary = element("div", "hero-integration-summary-grid compact");
-                summary.append(
-                    element("article", "hero-integration-card", ""),
-                    element("article", "hero-integration-card", ""),
-                    element("article", "hero-integration-card", ""),
-                );
-                summary.children[0].append(element("h3", "", __("Types")), element("p", "hero-integration-metric", String(types.length)));
-                summary.children[1].append(element("h3", "", __("Fields")), element("p", "hero-integration-metric", String(graph.nodes.filter((node) => node.kind === "FIELD").length)));
-                summary.children[2].append(element("h3", "", __("Fingerprint")), element("p", "hero-integration-fingerprint", graph.fingerprint));
-                const layout = element("div", "hero-integration-split");
+                const details = (node) => {
+                    const relations = graph.edges.filter((edge) => edge.source === node.id || edge.target === node.id);
+                    const rows = [
+                        [__("Kind"), node.kind], [__("GraphQL type"), node.type_ref || node.type_name || "—"],
+                        [__("Nullability"), node.nullable === undefined ? "—" : (node.nullable ? __("Nullable") : __("Required"))],
+                        [__("Relations"), String(relations.length)],
+                    ];
+                    const panel = element("div", "hero-integration-detail");
+                    panel.append(element("h3", "", node.label), statusBadge(node.kind));
+                    if (node.description) panel.append(element("p", "hero-integration-muted", node.description));
+                    const table = element("dl", "hero-integration-detail-list");
+                    rows.forEach(([key, value]) => { table.append(element("dt", "", key), element("dd", "", value)); });
+                    panel.append(table, button("Open in Graph Viewer", () => setRoute("hero-graph-viewer", {snapshot_name: snapshotName, selected_node: node.id}), "btn btn-primary btn-sm"));
+                    return panel;
+                };
+                const categories = ["", "QUERY_OPERATION", "MUTATION_OPERATION", "OBJECT", "INPUT_OBJECT", "INTERFACE", "UNION", "ENUM", "SCALAR", "FIELD", "ARGUMENT", "INPUT_FIELD"];
+                const search = element("input", "form-control");
+                search.placeholder = __("Search operations, types, fields and arguments");
+                const kind = element("select", "form-control");
+                categories.forEach((value) => { const option = element("option", "", value ? value.replaceAll("_", " ") : __("All kinds")); option.value = value; kind.append(option); });
+                const controls = element("div", "hero-integration-graph-controls"); controls.append(search, kind);
                 const list = element("div", "hero-integration-list");
                 const detail = element("div", "hero-integration-detail");
-                const search = element("input", "form-control");
-                search.placeholder = __("Search types and fields");
-                const renderList = () => {
-                    const needle = search.value.trim().toLowerCase();
-                    list.replaceChildren(search);
-                    types.filter((node) => !needle || node.label.toLowerCase().includes(needle) || node.kind.toLowerCase().includes(needle)).forEach((node) => {
-                        const item = button(`${node.label} · ${node.kind} (${fieldsByType.get(node.id)?.length || 0})`, () => {
-                            detail.replaceChildren(
-                                element("h3", "", node.label),
-                                statusBadge(node.kind),
-                                element("p", "hero-integration-muted", `${fieldsByType.get(node.id)?.length || 0} ${__("stored fields")}`),
-                                button("Open in Graph Viewer", () => setRoute("hero-graph-viewer", {snapshot_name: snapshotName, selected_node: node.id}), "btn btn-primary btn-sm"),
-                            );
-                            const fieldList = element("div", "hero-integration-field-list");
-                            (fieldsByType.get(node.id) || []).forEach((field) => fieldList.append(element("span", "hero-integration-field-chip", field.label)));
-                            detail.append(fieldList);
-                        });
-                        list.append(item);
-                    });
-                    if (list.children.length === 1) list.append(emptyNotice(__("No stored type matches this search.")));
+                const show = (node) => {
+                    const panel = details(node);
+                    detail.replaceChildren(...Array.from(panel.childNodes));
                 };
-                search.addEventListener("input", renderList);
-                renderList();
-                detail.append(emptyNotice(__("Select a type to inspect its fields and open its graph context.")));
-                layout.append(list, detail);
-                const categoryText = Object.entries(counts).map(([kind, count]) => `${kind}: ${count}`).join(" · ");
-                content.append(summary, element("p", "hero-integration-muted", categoryText), layout);
-            } catch (error) {
-                errorNotice(content, error);
-            }
+                const render = () => {
+                    const needle = search.value.trim().toLowerCase();
+                    list.replaceChildren();
+                    const rows = graph.nodes.filter((node) => (!kind.value || node.kind === kind.value) && (!needle || `${node.label} ${node.type_name || ""} ${node.kind}`.toLowerCase().includes(needle)));
+                    rows.forEach((node) => list.append(button(`${node.label} · ${node.kind}${node.type_ref ? ` · ${node.type_ref}` : ""}`, () => show(node))));
+                    if (!rows.length) list.append(emptyNotice(__("No stored operation, type or field matches this filter.")));
+                };
+                search.addEventListener("input", render); kind.addEventListener("change", render); render();
+                detail.append(emptyNotice(__("Choose an operation, type or field to inspect its actual saved GraphQL contract.")));
+                const summary = element("div", "hero-integration-summary-grid compact");
+                const operationCount = graph.nodes.filter((node) => node.kind.endsWith("_OPERATION")).length;
+                summary.append(
+                    element("article", "hero-integration-card", `${graph.nodes.filter((node) => node.id.startsWith("type:")).length} ${__("types")}`),
+                    element("article", "hero-integration-card", `${operationCount} ${__("operations")}`),
+                    element("article", "hero-integration-card", shortFingerprint(graph.fingerprint)),
+                );
+                const layout = element("div", "hero-integration-split"); layout.append(list, detail);
+                content.append(summary, controls, layout);
+            } catch (error) { errorNotice(content, error); }
         }, initial.snapshot_name);
     };
 
     const graphViewer = (wrapper) => {
         const {root} = createPage(wrapper, "HERO Graph Viewer");
         const content = element("div", "hero-integration-panel");
-        root.append(element("p", "hero-integration-lead", __("Explore only the validated schema stored in Frappe.")), content);
+        root.append(element("p", "hero-integration-lead", __("Explore the complete validated GraphQL schema stored in Frappe.")), content);
         const options = routeOptions();
         addSnapshotPicker(root, async (snapshotName) => {
             content.replaceChildren();
-            if (!snapshotName) {
-                content.append(emptyNotice(__("Choose a saved snapshot to display its graph.")));
-                return;
-            }
+            if (!snapshotName) return content.append(emptyNotice(__("Choose a saved snapshot to display its graph.")));
             try {
                 const graph = await request("graph_view", {snapshot_name: snapshotName});
-                const controls = element("div", "hero-integration-graph-controls");
-                const search = element("input", "form-control");
-                search.placeholder = __("Filter graph nodes");
-                const operation = element("select", "form-control");
-                ["HeroCustomers", "HeroProjectMatches"].forEach((value) => {
-                    const item = element("option", "", value);
-                    item.value = value;
-                    operation.append(item);
+                const nodeById = new Map(graph.nodes.map((node) => [node.id, node]));
+                const search = element("input", "form-control"); search.placeholder = __("Search operation, type or field");
+                const kind = element("select", "form-control");
+                ["", "QUERY_OPERATION", "MUTATION_OPERATION", "OBJECT", "INPUT_OBJECT", "ENUM", "SCALAR", "FIELD", "ARGUMENT", "INPUT_FIELD"].forEach((value) => {
+                    const item = element("option", "", value ? value.replaceAll("_", " ") : __("All graph nodes")); item.value = value; kind.append(item);
                 });
+                const operation = element("select", "form-control");
+                ["HeroCustomers", "HeroProjectMatches"].forEach((value) => { const item = element("option", "", value); item.value = value; operation.append(item); });
                 operation.value = options.operation || "HeroCustomers";
-                controls.append(search, operation);
+                const focusCustomer = button("Customer focus", () => { search.value = "Customer"; render(); });
+                const zoomOut = button("−", () => { scale = Math.max(.35, scale - .15); applyTransform(); });
+                const zoomIn = button("+", () => { scale = Math.min(2.5, scale + .15); applyTransform(); });
+                const reset = button("Fit graph", () => { scale = 1; pan = {x: 0, y: 0}; applyTransform(); });
+                const controls = element("div", "hero-integration-graph-controls"); controls.append(search, kind, operation, focusCustomer, zoomOut, zoomIn, reset);
                 const canvas = element("div", "hero-integration-graph-canvas");
                 const inspector = element("aside", "hero-integration-graph-inspector");
+                let scale = 1; let pan = {x: 0, y: 0}; let scene;
+                const applyTransform = () => { if (scene) scene.setAttribute("transform", `translate(${pan.x} ${pan.y}) scale(${scale})`); };
+                const showNode = (node) => {
+                    const relations = graph.edges.filter((edge) => edge.source === node.id || edge.target === node.id);
+                    inspector.replaceChildren(element("h3", "", node.label), statusBadge(node.kind));
+                    if (node.description) inspector.append(element("p", "hero-integration-muted", node.description));
+                    inspector.append(element("p", "hero-integration-muted", `${node.type_ref || node.type_name || "—"} · ${relations.length} ${__("relations")}`));
+                    const relationList = element("div", "hero-integration-field-list");
+                    relations.slice(0, 40).forEach((edge) => {
+                        const related = nodeById.get(edge.source === node.id ? edge.target : edge.source);
+                        if (related) relationList.append(button(`${edge.kind}: ${related.label}`, () => showNode(related)));
+                    });
+                    inspector.append(relationList);
+                    if (node.kind === "FIELD" && node.type_name) inspector.append(button("Open selected field in Mapping Editor", () => setRoute("hero-adapter-tools", {
+                        snapshot_name: snapshotName, operation: operation.value, source_path: node.label,
+                    }), "btn btn-primary btn-sm"));
+                };
                 const render = () => {
                     const needle = search.value.trim().toLowerCase();
-                    const visible = graph.nodes.filter((node) => !needle || node.label.toLowerCase().includes(needle) || node.kind.toLowerCase().includes(needle)).slice(0, 90);
+                    const visible = graph.nodes.filter((node) => (!kind.value || node.kind === kind.value) && (!needle || `${node.label} ${node.type_name || ""} ${node.kind}`.toLowerCase().includes(needle)));
                     const ids = new Set(visible.map((node) => node.id));
-                    const rows = Math.max(1, Math.ceil(visible.length / 6));
-                    const width = 960;
-                    const height = Math.max(360, rows * 105);
+                    const width = Math.max(960, Math.ceil(Math.sqrt(Math.max(visible.length, 1))) * 170);
+                    const columns = Math.max(6, Math.floor(width / 160));
+                    const height = Math.max(360, Math.ceil(visible.length / columns) * 104 + 50);
                     const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-                    svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
-                    svg.setAttribute("role", "img");
-                    svg.setAttribute("aria-label", __("Stored GraphQL schema graph"));
-                    const position = new Map(visible.map((node, index) => [node.id, {x: 24 + (index % 6) * 156, y: 24 + Math.floor(index / 6) * 105}]));
+                    svg.setAttribute("viewBox", `0 0 ${width} ${height}`); svg.setAttribute("role", "img"); svg.setAttribute("aria-label", __("Interactive stored GraphQL schema graph"));
+                    scene = document.createElementNS(svg.namespaceURI, "g"); svg.append(scene); applyTransform();
+                    const position = new Map(visible.map((node, index) => [node.id, {x: 24 + (index % columns) * 156, y: 24 + Math.floor(index / columns) * 104}]));
                     graph.edges.filter((edge) => ids.has(edge.source) && ids.has(edge.target)).forEach((edge) => {
-                        const source = position.get(edge.source);
-                        const target = position.get(edge.target);
-                        const line = document.createElementNS(svg.namespaceURI, "line");
-                        line.setAttribute("x1", source.x + 58); line.setAttribute("y1", source.y + 33);
-                        line.setAttribute("x2", target.x + 58); line.setAttribute("y2", target.y + 33);
-                        line.setAttribute("class", "hero-integration-graph-edge");
-                        svg.append(line);
+                        const source = position.get(edge.source); const target = position.get(edge.target);
+                        const line = document.createElementNS(svg.namespaceURI, "line"); line.setAttribute("x1", source.x + 58); line.setAttribute("y1", source.y + 31); line.setAttribute("x2", target.x + 58); line.setAttribute("y2", target.y + 31); line.setAttribute("class", "hero-integration-graph-edge"); scene.append(line);
                     });
-                    const showNode = (node) => {
-                        const related = graph.edges.filter((edge) => edge.source === node.id || edge.target === node.id);
-                        inspector.replaceChildren(
-                            element("h3", "", node.label),
-                            statusBadge(node.kind),
-                            element("p", "hero-integration-muted", `${related.length} ${__("stored relationships")}`),
-                        );
-                        if (node.kind === "FIELD") {
-                            inspector.append(button("Open selected field in Mapping Editor", () => setRoute("hero-adapter-tools", {
-                                snapshot_name: snapshotName,
-                                operation: operation.value,
-                                source_path: node.label,
-                            }), "btn btn-primary btn-sm"));
-                        } else {
-                            inspector.append(emptyNotice(__("Select a field node to hand its source name to the Mapping Editor.")));
-                        }
-                    };
                     visible.forEach((node) => {
-                        const point = position.get(node.id);
-                        const group = document.createElementNS(svg.namespaceURI, "g");
-                        group.setAttribute("class", `hero-integration-graph-node kind-${node.kind.toLowerCase()}`);
-                        group.setAttribute("tabindex", "0");
-                        group.setAttribute("role", "button");
-                        group.setAttribute("aria-label", `${node.label} ${node.kind}`);
-                        const rect = document.createElementNS(svg.namespaceURI, "rect");
-                        rect.setAttribute("x", point.x); rect.setAttribute("y", point.y); rect.setAttribute("width", "116"); rect.setAttribute("height", "66"); rect.setAttribute("rx", "7");
-                        const name = document.createElementNS(svg.namespaceURI, "text");
-                        name.setAttribute("x", point.x + 8); name.setAttribute("y", point.y + 28); name.textContent = node.label.slice(0, 17);
-                        const kind = document.createElementNS(svg.namespaceURI, "text");
-                        kind.setAttribute("x", point.x + 8); kind.setAttribute("y", point.y + 48); kind.setAttribute("class", "hero-integration-graph-kind"); kind.textContent = node.kind;
-                        group.append(rect, name, kind);
-                        group.addEventListener("click", () => showNode(node));
-                        group.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); showNode(node); } });
-                        svg.append(group);
+                        const point = position.get(node.id); const group = document.createElementNS(svg.namespaceURI, "g");
+                        group.setAttribute("class", `hero-integration-graph-node kind-${node.kind.toLowerCase()}`); group.setAttribute("tabindex", "0"); group.setAttribute("role", "button"); group.setAttribute("aria-label", `${node.label} ${node.kind}`);
+                        const rect = document.createElementNS(svg.namespaceURI, "rect"); rect.setAttribute("x", point.x); rect.setAttribute("y", point.y); rect.setAttribute("width", "116"); rect.setAttribute("height", "64"); rect.setAttribute("rx", "7");
+                        const name = document.createElementNS(svg.namespaceURI, "text"); name.setAttribute("x", point.x + 8); name.setAttribute("y", point.y + 27); name.textContent = node.label.slice(0, 18);
+                        const caption = document.createElementNS(svg.namespaceURI, "text"); caption.setAttribute("x", point.x + 8); caption.setAttribute("y", point.y + 47); caption.setAttribute("class", "hero-integration-graph-kind"); caption.textContent = node.type_ref || node.kind;
+                        group.append(rect, name, caption); group.addEventListener("click", () => showNode(node)); group.addEventListener("keydown", (event) => { if (["Enter", " "].includes(event.key)) { event.preventDefault(); showNode(node); } }); scene.append(group);
                     });
-                    canvas.replaceChildren(svg, element("p", "hero-integration-muted", visible.length < graph.nodes.length ? __("Graph display is limited to 90 filtered nodes.") : ""));
-                    const requested = visible.find((node) => node.id === options.selected_node);
-                    if (requested) showNode(requested);
+                    let drag; svg.addEventListener("pointerdown", (event) => { if (event.target.closest(".hero-integration-graph-node")) return; drag = {x: event.clientX, y: event.clientY, pan: {...pan}}; svg.setPointerCapture(event.pointerId); });
+                    svg.addEventListener("pointermove", (event) => { if (!drag) return; pan = {x: drag.pan.x + event.clientX - drag.x, y: drag.pan.y + event.clientY - drag.y}; applyTransform(); });
+                    svg.addEventListener("pointerup", () => { drag = null; }); svg.addEventListener("wheel", (event) => { event.preventDefault(); scale = Math.max(.35, Math.min(2.5, scale * (event.deltaY > 0 ? .9 : 1.1))); applyTransform(); }, {passive: false});
+                    canvas.replaceChildren(svg, element("p", "hero-integration-muted", `${visible.length} / ${graph.nodes.length} ${__("stored graph nodes displayed")}`));
+                    const requested = visible.find((node) => node.id === options.selected_node); if (requested) showNode(requested);
                 };
-                search.addEventListener("input", render);
-                render();
-                inspector.append(emptyNotice(__("Select a node to inspect its saved graph relationships.")));
-                const layout = element("div", "hero-integration-graph-layout");
-                layout.append(canvas, inspector);
+                search.addEventListener("input", render); kind.addEventListener("change", render); render();
+                const builtin = ["Int", "String", "ID", "Boolean", "Float"];
+                const scalarRows = graph.nodes.filter((node) => node.kind === "SCALAR");
+                const scalarList = element("div", "hero-integration-field-list");
+                scalarRows.filter((node) => builtin.includes(node.label)).forEach((node) => scalarList.append(button(node.label, () => showNode(node))));
+                scalarRows.filter((node) => !builtin.includes(node.label)).forEach((node) => scalarList.append(button(node.label, () => showNode(node))));
+                inspector.append(element("h3", "", __("Built-in and custom scalars")), scalarList, emptyNotice(__("Select a graph node to inspect fields, arguments and navigable relations.")));
+                const layout = element("div", "hero-integration-graph-layout"); layout.append(canvas, inspector);
                 content.append(controls, layout, element("p", "hero-integration-fingerprint", `${__("Schema fingerprint")}: ${graph.fingerprint}`));
-            } catch (error) {
-                errorNotice(content, error);
-            }
+            } catch (error) { errorNotice(content, error); }
         }, options.snapshot_name);
     };
 
@@ -341,7 +318,7 @@
             const table = element("table", "table table-bordered hero-integration-table");
             const head = element("thead");
             const headRow = element("tr");
-            ["Service", "Operation", "Snapshot", "Status", "Revision", ""].forEach((label) => headRow.append(element("th", "", __(label))));
+            ["Service", "Operation", "Snapshot", "Status", "Revision", "Validation", ""].forEach((label) => headRow.append(element("th", "", __(label))));
             head.append(headRow);
             const body = element("tbody");
             services.forEach((service) => {
@@ -352,10 +329,25 @@
                     element("td", "", service.schema_snapshot),
                     element("td", "", ""),
                     element("td", "", String(service.service_revision)),
+                    element("td", "hero-integration-muted", service.validation_summary || __("Not validated")),
                 );
                 row.children[3].append(statusBadge(service.status));
                 const actions = element("td");
-                actions.append(button("Open", () => frappe.set_route("Form", "HERO GraphQL Service", service.name)));
+                actions.append(button("Open", async () => {
+                    try {
+                        const detail = await request("graphql_service_detail", {service_name: service.name});
+                        const panel = element("article", "hero-integration-card");
+                        panel.append(
+                            element("h3", "", detail.service_name || detail.name), statusBadge(detail.status),
+                            element("p", "hero-integration-muted", `${__("Revision")}: ${detail.service_revision} · ${detail.schema_snapshot}`),
+                            element("pre", "hero-integration-service-query", detail.query_document || ""),
+                            element("p", "hero-integration-muted", detail.validation_summary || __("Not validated")),
+                            button("Edit definition", () => frappe.set_route("Form", "HERO GraphQL Service", detail.name)),
+                        );
+                        content.querySelector(".hero-integration-service-detail")?.remove();
+                        const detailHost = element("div", "hero-integration-service-detail"); detailHost.append(panel); content.append(detailHost);
+                    } catch (error) { frappe.msgprint(error?.message || __("Saved service could not be loaded.")); }
+                }));
                 row.append(actions);
                 body.append(row);
             });
