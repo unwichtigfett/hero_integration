@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from hero_integration.services.graphql_graph import GraphView, _schema, analyze_snapshot
+from hero_integration.services.graphql_graph import GraphView, analyze_snapshot, normalize_schema
 
 
 BUILTIN_SCALARS = frozenset({"Int", "String", "ID", "Boolean", "Float"})
@@ -16,7 +16,7 @@ BUILTIN_SCALARS = frozenset({"Int", "String", "ID", "Boolean", "Float"})
 
 def schema_projection(snapshot: object, *, search: str = "", kind: str = "") -> dict[str, Any]:
     """Return complete, saved introspection data in the workspace wire shape."""
-    schema = _schema(snapshot)
+    schema = normalize_schema(snapshot)
     graph = analyze_snapshot(snapshot)
     needle = search.strip().lower()
     types = [item for item in schema.get("types", []) if isinstance(item, dict)]
