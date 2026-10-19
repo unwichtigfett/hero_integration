@@ -55,10 +55,11 @@ the mapping JSON and confirmed schema-adoption contracts.
 ## Mutation drafts
 
 The Analyzer and Graph Viewer retain schema mutation nodes, input relations,
-and return types. GraphQL Services now permits a Mutation draft to be edited
-and locally checked against the selected saved schema. These drafts are neither
-stored as services nor executed; remote execution remains disabled in the UI
-and native RPC facade.
+and return types. GraphQL Services permits a Mutation draft to be stored as a
+local `Draft`, reloaded, edited, and checked against the selected saved schema.
+These drafts never contain saved variables or credentials and are never
+activated or executed; every execution facade fails closed with
+`HERO_MUTATION_EXECUTION_DISABLED`.
 
 The CSS/DOM source port has not been visually inspected in a browser in this
 step. Visual parity is therefore a manual step, not a claimed result.
@@ -78,14 +79,14 @@ is shared by the tool and overview. The extra observed name is not omitted.
 | `save_query`, `validate_saved_query`, `preview_query`, `delete_query` | SAFE_LOCAL_SERVICE_MANAGEMENT | permission-checked local read-only service definitions |
 | `get_settings` | SAFE_READ | redacted native settings read |
 | `save_settings` | SAFE_LOCAL_SERVICE_MANAGEMENT | native DocType validation; token is never returned |
-| `execute_service` | UNSUPPORTED_HERO_MUTATION | visible Execute control disabled; `execute_graphql_service` compatibility RPC also rejects every remote execution |
+| `execute_service` | UNSUPPORTED_HERO_MUTATION | visible Execute control disabled; both workspace compatibility and `execute_graphql_service` fail closed with `HERO_MUTATION_EXECUTION_DISABLED` |
 | `refresh_schema`, `synchronize_connection` | LEGACY_PROCESS_ONLY | visible overview actions disabled; they require old binding/transport state |
 | `get_analyzer_service_draft`, `save_analyzer_service` | LEGACY_PROCESS_ONLY | visible Analyzer save control disabled; no inferred query contract is created |
 | `list_candidates`, `mark_candidate`, `remove_candidate` | LEGACY_PROCESS_ONLY | visible native Mapping Editor hand-off; no parallel candidate persistence |
 
 The source workspace still displays Query and Mutation modes. Mutation drafts
-remain local and schema-only; every server-side stored service is validated
-with the existing read-only GraphQL guard.
+remain local and schema-only; they use dedicated saved-schema validation while
+query services remain behind the existing read-only GraphQL guard.
 
 ## Complete stored schema source
 

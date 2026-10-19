@@ -107,8 +107,9 @@
             url.value = data.api_url || "";
             timeout.value = String(data.timeout_seconds || 30);
             token.value = "";
-            tokenState.textContent = uiText(data.api_token_configured ? "Configured" : "Not configured");
-            tokenState.dataset.state = data.api_token_configured ? "configured" : "missing";
+            const configured = data.api_token_status === "CONFIGURED";
+            tokenState.textContent = uiText(configured ? "Configured" : data.api_token_status === "CREDENTIAL_ERROR" ? "Credential error" : "Not configured");
+            tokenState.dataset.state = configured ? "configured" : data.api_token_status === "CREDENTIAL_ERROR" ? "error" : "missing";
         }
 
         async function load() {

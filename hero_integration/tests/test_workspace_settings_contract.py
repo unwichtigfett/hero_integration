@@ -18,13 +18,14 @@ from hero_integration.client import settings as client_settings
 
 
 class _Settings:
-    def __init__(self, token: str | None = None, password_error: Exception | None = None):
+    def __init__(self, token: str | None = None, password_error: Exception | None = None, stored_credential: bool = False):
         self.hero_api_url = "https://hero.synthetic.invalid/graphql"
         self.allowed_hero_hosts = "hero.synthetic.invalid"
         self.hero_source_instance = "default"
         self.timeout_seconds = 30
         self.token = token
         self.password_error = password_error
+        self.stored_credential = stored_credential
         self.password_calls: list[tuple[str, bool]] = []
 
     def get_password(self, fieldname: str, raise_exception: bool = True) -> str | None:
@@ -32,6 +33,11 @@ class _Settings:
         if self.password_error:
             raise self.password_error
         return self.token
+
+    def get(self, fieldname: str) -> str | None:
+        if fieldname != "hero_api_token":
+            raise AssertionError(fieldname)
+        return "********" if self.token or self.stored_credential else None
 
 
 class _FrappeSettingsMock:
@@ -62,6 +68,7 @@ class TestWorkspaceSettingsContract(unittest.TestCase):
         result, frappe_mock = self._call(_Settings())
 
         self.assertEqual(result["api_token_configured"], False)
+        self.assertEqual(result["api_token_status"], "NOT_CONFIGURED")
         self.assertEqual(frappe_mock.settings.password_calls, [("hero_api_token", False)])
         self.assertEqual(frappe_mock.permission_calls, ["System Manager"])
         self.assertEqual(frappe_mock.get_single_calls, ["HERO Integration Settings"])
@@ -71,6 +78,7 @@ class TestWorkspaceSettingsContract(unittest.TestCase):
         result, _ = self._call(_Settings(token=token))
 
         self.assertEqual(result["api_token_configured"], True)
+        self.assertEqual(result["api_token_status"], "CONFIGURED")
         self.assertNotIn("hero_api_token", result)
         self.assertNotIn(token, json.dumps(result))
 
@@ -89,6 +97,12 @@ class TestWorkspaceSettingsContract(unittest.TestCase):
             self._call(settings)
 
         self.assertEqual(settings.password_calls, [("hero_api_token", False)])
+
+    def test_undecryptable_stored_credential_is_not_reported_as_configured(self):
+        result, _ = self._call(_Settings(stored_credential=True))
+
+        self.assertEqual(result["api_token_configured"], False)
+        self.assertEqual(result["api_token_status"], "CREDENTIAL_ERROR")
 
     def test_missing_token_blocks_transport_configuration(self):
         frappe_mock = _FrappeSettingsMock(_Settings())

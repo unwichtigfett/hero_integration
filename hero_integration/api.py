@@ -7,6 +7,7 @@ import frappe
 
 ACTIONS = {"Customer Migration", "Project Migration", "Cheap Data Migration", "Full Data Migration", "Sync"}
 TERMINAL_STATES = {"Completed", "Completed With Conflicts", "Failed", "Cancelled", "Blocked"}
+MUTATION_EXECUTION_DISABLED = "HERO_MUTATION_EXECUTION_DISABLED"
 
 
 @frappe.whitelist()
@@ -238,10 +239,16 @@ def workspace_settings_get() -> dict[str, object]:
     """Return editable local settings while never returning the stored token."""
     frappe.only_for("System Manager")
     settings = frappe.get_single("HERO Integration Settings")
+    token_configured = bool(settings.get_password("hero_api_token", raise_exception=False))
+    stored_credential = settings.get("hero_api_token")
+    token_status = "CONFIGURED" if token_configured else (
+        "CREDENTIAL_ERROR" if stored_credential else "NOT_CONFIGURED"
+    )
     return {
         "enabled": bool(settings.hero_api_url),
         "api_url": settings.hero_api_url or "",
-        "api_token_configured": bool(settings.get_password("hero_api_token", raise_exception=False)),
+        "api_token_configured": token_configured,
+        "api_token_status": token_status,
         "timeout_seconds": int(settings.timeout_seconds or 30),
     }
 
@@ -300,7 +307,7 @@ def workspace_graph(snapshot_name: str, start: int = 0, page_size: int = 200, no
 @frappe.whitelist()
 def workspace_service_list(snapshot_name: str, operation_kind: str = "query", start: int = 0, page_size: int = 50) -> dict[str, object]:
     frappe.only_for("System Manager")
-    _assert_query_kind(operation_kind)
+    _assert_service_kind(operation_kind)
     rows = [
         _workspace_service(row)
         for row in frappe.get_all(
@@ -310,7 +317,7 @@ def workspace_service_list(snapshot_name: str, operation_kind: str = "query", st
             order_by="modified desc",
         )
     ]
-    return _page({}, rows, start, page_size)
+    return _page({}, [row for row in rows if row["service_kind"] == operation_kind], start, page_size)
 
 
 @frappe.whitelist()
@@ -323,8 +330,15 @@ def workspace_service_detail(query_id: str) -> dict[str, object]:
 def workspace_service_save(snapshot_name: str, payload_json: str, query_id: str = "", expected_revision: int = 0) -> dict[str, object]:
     frappe.only_for("System Manager")
     payload = _workspace_payload(payload_json)
-    _assert_query_kind(payload.get("operation_kind", "query"))
-    snapshot, _ = _validated_snapshot(snapshot_name)
+    kind = str(payload.get("operation_kind", "query"))
+    _assert_service_kind(kind)
+    snapshot, schema = _validated_snapshot(snapshot_name)
+    from hero_integration.services.mutation_draft import operation_kind as document_kind, validate as validate_mutation_draft
+
+    if document_kind(payload["query"]) != kind:
+        frappe.throw("The declared GraphQL service kind does not match the document.")
+    if kind == "mutation":
+        validate_mutation_draft(schema, payload["query"])
     if query_id:
         service = frappe.get_doc("HERO GraphQL Service", query_id)
         if service.schema_snapshot != snapshot.name:
@@ -347,8 +361,17 @@ def workspace_service_validate(snapshot_name: str, payload_json: str = "", query
     frappe.only_for("System Manager")
     if not query_id:
         payload = _workspace_payload(payload_json)
-        _assert_query_kind(payload.get("operation_kind", "query"))
-        _validated_snapshot(snapshot_name)
+        kind = str(payload.get("operation_kind", "query"))
+        _assert_service_kind(kind)
+        _snapshot, schema = _validated_snapshot(snapshot_name)
+        if kind == "mutation":
+            from hero_integration.services.mutation_draft import validate as validate_mutation_draft
+
+            detail = validate_mutation_draft(schema, payload["query"])
+            return {
+                "valid": True, "can_execute": False, "mutation": detail,
+                "reason": "Mutation drafts are local-only; HERO mutation execution is disabled.",
+            }
         from hero_integration.client.graphql import assert_read_only
 
         assert_read_only(payload["query"])
@@ -356,6 +379,15 @@ def workspace_service_validate(snapshot_name: str, payload_json: str = "", query
     service = frappe.get_doc("HERO GraphQL Service", query_id)
     if service.schema_snapshot != snapshot_name or int(service.service_revision or 0) != int(expected_revision or 0):
         frappe.throw("The saved service changed or belongs to another schema snapshot.")
+    from hero_integration.services.mutation_draft import operation_kind as document_kind, validate as validate_mutation_draft
+
+    if document_kind(service.query_document) == "mutation":
+        _snapshot, schema = _validated_snapshot(snapshot_name)
+        detail = validate_mutation_draft(schema, service.query_document)
+        return {
+            "valid": True, "can_execute": False, "mutation": detail, "query": _workspace_service(service.as_dict()),
+            "reason": "Mutation drafts are local-only; HERO mutation execution is disabled.",
+        }
     service.status = "Validated"
     service.save()
     return {"valid": True, "can_execute": False, "query": _workspace_service(service.as_dict()), "reason": "Remote execution is disabled in this workspace."}
@@ -375,7 +407,7 @@ def workspace_mutation_draft_validate(snapshot_name: str, payload_json: str) -> 
         "can_execute": False,
         "schema_fingerprint": snapshot.schema_fingerprint,
         "mutation": detail,
-        "reason": "Mutation draft is validated only against the saved schema; storage and HERO execution are disabled.",
+        "reason": "Mutation draft is validated only against the saved schema; HERO mutation execution is disabled.",
     }
 
 
@@ -410,17 +442,19 @@ def _workspace_payload(payload_json: str) -> dict[str, object]:
 
 
 def _workspace_service(service: dict[str, object]) -> dict[str, object]:
+    from hero_integration.services.mutation_draft import operation_kind
+
     return {
         "query_id": service["name"], "name": service["service_name"], "operation_name": service["operation_name"],
         "query": service["query_document"], "revision": int(service.get("service_revision") or 1),
-        "provenance": "HERO Integration", "service_kind": "query", "status": service.get("status"),
+        "provenance": "HERO Integration", "service_kind": operation_kind(service["query_document"]), "status": service.get("status"),
         "validation_summary": service.get("validation_summary"), "variables": {},
     }
 
 
-def _assert_query_kind(operation_kind: str) -> None:
-    if operation_kind != "query":
-        frappe.throw("HERO mutations are disabled; only stored read-only query definitions are supported.")
+def _assert_service_kind(operation_kind: str) -> None:
+    if operation_kind not in {"query", "mutation"}:
+        frappe.throw("Only GraphQL query and local-only mutation draft definitions are supported.")
 
 
 @frappe.whitelist()
@@ -625,7 +659,7 @@ def resume_mapping_adoption(adoption_name: str) -> dict[str, object]:
 def execute_graphql_service(service_name: str, variables_json: str = "{}") -> dict[str, object]:
     """Retained compatibility endpoint; remote HERO execution is disabled."""
     frappe.only_for("System Manager")
-    frappe.throw("HERO service execution is disabled in this workspace.")
+    frappe.throw(MUTATION_EXECUTION_DISABLED)
 
 
 class _FrappePickerMetadata:
