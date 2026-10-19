@@ -51,7 +51,7 @@ class TestMappingExchange(unittest.TestCase):
         exported = json.loads(mapping_exchange.export_json("SYNTHETIC"))
 
         self.assertEqual(preview["counts"]["New"], len(fixture_payload()["mappings"]))
-        self.assertEqual(imported, {"created": 21, "changed": 0, "unchanged": 0, "status": "DRAFT_ONLY"})
+        self.assertEqual(imported, {"created": 32, "changed": 0, "unchanged": 0, "status": "DRAFT_ONLY"})
         self.assertEqual({row["status"] for row in self.frappe.rows.values()}, {"Draft"})
         self.assertEqual(_normalized(exported), _normalized(fixture_payload(FINGERPRINT)))
         export_text = json.dumps(exported).lower()
@@ -63,8 +63,8 @@ class TestMappingExchange(unittest.TestCase):
 
         repeated = mapping_exchange.import_json("SYNTHETIC", payload)
 
-        self.assertEqual(repeated, {"created": 0, "changed": 0, "unchanged": 21, "status": "DRAFT_ONLY"})
-        self.assertEqual(self.frappe.count(), 21)
+        self.assertEqual(repeated, {"created": 0, "changed": 0, "unchanged": 32, "status": "DRAFT_ONLY"})
+        self.assertEqual(self.frappe.count(), 32)
 
     def test_imported_fixture_requires_activation_before_runtime_uses_it(self):
         payload = json.dumps(fixture_payload(FINGERPRINT))
