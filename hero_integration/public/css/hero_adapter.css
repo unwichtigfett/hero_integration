@@ -1,0 +1,150 @@
+.admin-workspace.admin-workspace--tool {
+    padding: 0;
+    border: 0;
+    background: transparent;
+}
+
+.admin-hero-tool-host {
+    min-width: 0;
+}
+
+.admin-hero-tool-host > .hero-tools {
+    padding: 0;
+}
+
+/*
+ * The Administrator hierarchy owns navigation.
+ * HERO's former internal Desk navigation remains available
+ * for legacy Desk use but is hidden inside this frontend.
+ */
+.admin-hero-tool-host > .hero-tools > .pc-shell-nav {
+    display: none !important;
+}
+
+.admin-hero-tool-host .btn,
+.admin-compat-modal .btn {
+    appearance: none;
+    min-height: 34px;
+    border: 1px solid var(--pc-controlBorder);
+    border-radius: 6px;
+    padding: 6px 10px;
+    background: var(--pc-surface);
+    color: var(--pc-text);
+    cursor: pointer;
+}
+
+.admin-hero-tool-host .btn:hover:not(:disabled),
+.admin-compat-modal .btn:hover:not(:disabled) {
+    background: var(--pc-surfaceHover);
+}
+
+.admin-hero-tool-host .btn:disabled,
+.admin-compat-modal .btn:disabled {
+    opacity: 0.55;
+    cursor: default;
+}
+
+.admin-hero-tool-host .form-control {
+    width: 100%;
+    min-height: 34px;
+    border: 1px solid var(--pc-controlBorder);
+    border-radius: 6px;
+    padding: 6px 8px;
+    background: var(--pc-surface);
+    color: var(--pc-text);
+}
+
+.admin-hero-tool-host .text-danger {
+    color: var(--pc-dangerText);
+}
+
+html.admin-modal-open {
+    overflow: hidden;
+}
+
+.admin-compat-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    background: rgb(0 0 0 / 55%);
+}
+
+.admin-compat-modal[hidden] {
+    display: none !important;
+}
+
+.admin-compat-modal .modal-dialog {
+    width: min(1720px, calc(100vw - 32px));
+    max-height: calc(100vh - 32px);
+    margin: 0;
+}
+
+.admin-compat-modal .modal-content {
+    display: flex;
+    flex-direction: column;
+    max-height: calc(100vh - 32px);
+    overflow: hidden;
+    border: 1px solid var(--pc-border);
+    border-radius: 10px;
+    background: var(--pc-surface);
+    color: var(--pc-text);
+    box-shadow: 0 24px 80px rgb(0 0 0 / 35%);
+}
+
+.admin-compat-modal-header,
+.admin-compat-modal-footer {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+}
+
+.admin-compat-modal-header {
+    justify-content: space-between;
+    border-bottom: 1px solid var(--pc-border);
+}
+
+.admin-compat-modal-header h2 {
+    margin: 0;
+    font-size: 16px;
+}
+
+.admin-compat-modal-footer {
+    justify-content: flex-end;
+    border-top: 1px solid var(--pc-border);
+}
+
+.admin-compat-modal-close {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: var(--pc-text);
+    font-size: 26px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.admin-compat-modal .modal-body {
+    min-height: 0;
+    overflow: auto;
+    padding: 16px;
+}
+
+@media (max-width: 900px) {
+    .admin-compat-modal {
+        padding: 8px;
+    }
+
+    .admin-compat-modal .modal-dialog {
+        width: calc(100vw - 16px);
+        max-height: calc(100vh - 16px);
+    }
+
+    .admin-compat-modal .modal-content {
+        max-height: calc(100vh - 16px);
+    }
+}

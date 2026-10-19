@@ -1,0 +1,118 @@
+.hero-settings {
+    width: min(860px, 100%);
+    margin: 0 auto;
+}
+
+.hero-settings-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 20px;
+    margin-bottom: 20px;
+}
+
+.hero-settings-header h2 {
+    margin: 0 0 6px;
+    color: var(--admin-text, var(--pc-text));
+}
+
+.hero-settings-header p {
+    margin: 0;
+    color: var(--admin-muted, var(--pc-muted));
+}
+
+.hero-settings-card {
+    display: grid;
+    gap: 18px;
+    padding: 22px;
+    border: 1px solid var(--admin-border, var(--pc-border));
+    border-radius: 10px;
+    background: var(--admin-surface, var(--pc-surface));
+}
+
+.hero-settings-field {
+    display: grid;
+    gap: 7px;
+}
+
+.hero-settings-label {
+    font-weight: 600;
+    color: var(--admin-text, var(--pc-text));
+}
+
+.hero-settings-help,
+.hero-settings-token-row,
+.hero-settings-warning,
+.hero-settings-status {
+    font-size: 13px;
+    color: var(--admin-muted, var(--pc-muted));
+}
+
+.hero-settings-input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 9px 11px;
+    border: 1px solid var(--admin-border, var(--pc-border));
+    border-radius: 7px;
+    background: var(--admin-input, var(--pc-surface));
+    color: var(--admin-text, var(--pc-text));
+    font: inherit;
+}
+
+.hero-settings-check {
+    width: 18px;
+    height: 18px;
+}
+
+.hero-settings-token-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.hero-settings-token-state {
+    font-weight: 600;
+}
+
+.hero-settings-token-state[data-state="configured"] {
+    color: var(--admin-success, #2e7d32);
+}
+
+.hero-settings-token-state[data-state="missing"] {
+    color: var(--admin-warning, #a15c00);
+}
+
+.hero-settings-warning {
+    margin: 0;
+    padding: 10px 12px;
+    border-left: 3px solid var(--admin-warning, #a15c00);
+}
+
+.hero-settings-button {
+    min-height: 36px;
+    padding: 8px 14px;
+    border-radius: 7px;
+    border: 1px solid var(--admin-border, var(--pc-border));
+    font: inherit;
+    cursor: pointer;
+}
+
+.hero-settings-button.primary {
+    justify-self: start;
+    font-weight: 600;
+}
+
+.hero-settings-button:disabled,
+.hero-settings-input:disabled {
+    cursor: default;
+    opacity: .6;
+}
+
+@media (max-width: 680px) {
+    .hero-settings-header {
+        flex-direction: column;
+    }
+    .hero-settings-button {
+        width: 100%;
+    }
+}
