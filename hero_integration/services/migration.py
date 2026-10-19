@@ -23,6 +23,8 @@ from hero_integration.services.project_naming import ProjectTitleValidationError
 CUSTOMER_ACTIONS = {"Customer Migration", "Cheap Data Migration", "Full Data Migration", "Sync"}
 PROJECT_ACTIONS = {"Project Migration", "Cheap Data Migration", "Full Data Migration", "Sync"}
 TERMINAL_STATES = {"Completed", "Completed With Conflicts", "Failed", "Cancelled", "Blocked"}
+PHASES = ("customer", "project")
+PHASE_BLOCKING_RESULTS = {"BLOCKED_RECORD", "CONFLICT", "SKIPPED_AMBIGUOUS", "UNAVAILABLE"}
 
 
 @dataclass(frozen=True)
@@ -55,6 +57,7 @@ def execute_run(run_name: str) -> None:
             _mark_sync_success(run)
     except MappingPlanError as error:
         run.reload()
+        _mark_running_phase_failed(run)
         run.state = "Blocked"
         run.error_message = str(error)
         run.finished_on = now_datetime()
@@ -67,6 +70,7 @@ def execute_run(run_name: str) -> None:
         run.save()
     except Exception:
         run.reload()
+        _mark_running_phase_failed(run)
         run.state = "Failed"
         run.error_message = "Migration failed. See Error Log for the redacted server exception."
         run.finished_on = now_datetime()
@@ -104,13 +108,19 @@ def _release_run(run_name: str) -> None:
 
 
 def _process_requested_phases(run, source: HeroSource) -> None:
-    phases = []
-    if run.action in CUSTOMER_ACTIONS:
-        phases.append(("customer", source.customers))
+    # A project run is never allowed to bypass its own complete Customer pass.
+    # This is intentionally stricter than a mere lookup during project creation:
+    # the gate belongs to the same run and source instance, and survives retries.
+    _bind_source_instance(run, source.source_instance)
+    needs_customer_phase = run.action in CUSTOMER_ACTIONS or run.action in PROJECT_ACTIONS
+    if needs_customer_phase and not _process_phase(run, "customer", source.customers):
+        return
     if run.action in PROJECT_ACTIONS:
-        phases.append(("project", source.projects))
-    for phase, reader in phases:
-        _process_phase(run, phase, reader)
+        if not _customer_phase_completed(run, source.source_instance):
+            _block_run(run, "Project phase requires a completed Customer phase for this source instance and run.")
+            return
+        if not _process_phase(run, "project", source.projects):
+            return
     if run.action == "Full Data Migration":
         _record_result(
             run,
@@ -122,7 +132,9 @@ def _process_requested_phases(run, source: HeroSource) -> None:
 
 def _require_active_mappings(action: str) -> None:
     operations = []
-    if action in CUSTOMER_ACTIONS:
+    # Project imports deliberately require the Customer plan as well, because
+    # they first execute the complete Customer phase of this run.
+    if action in CUSTOMER_ACTIONS or action in PROJECT_ACTIONS:
         operations.append("HeroCustomers")
     if action in PROJECT_ACTIONS:
         operations.append("HeroProjectMatches")
@@ -130,21 +142,39 @@ def _require_active_mappings(action: str) -> None:
         active_mapping_plan(operation)
 
 
-def _process_phase(run, phase: str, reader) -> None:
+def _process_phase(run, phase: str, reader) -> bool:
+    if _phase_state(run, phase) == "Completed":
+        return True
+    _set_phase_state(run, phase, "Running")
     offset = int(run.resume_offset or 0) if run.resume_phase == phase else 0
+    record_index = int(run.resume_record_index or 0) if run.resume_phase == phase else 0
     while True:
         _cancel_if_requested(run)
         page: SourcePage = reader(offset)
-        for record in page.records:
+        for index, record in enumerate(page.records):
+            if index < record_index:
+                continue
             _cancel_if_requested(run)
             result = _migrate_customer(record, run) if phase == "customer" else _migrate_project(record, run)
             _record_result(run, phase, record, result)
+            _record_phase_result(run, phase, result)
+            run.resume_phase = phase
+            run.resume_offset = offset
+            run.resume_record_index = index + 1
+            run.save()
         run.resume_phase = phase
         run.resume_offset = page.next_offset or 0
+        run.resume_record_index = 0
         run.save()
         if page.next_offset is None:
-            return
+            if _phase_has_blockers(run, phase):
+                _set_phase_state(run, phase, "Blocked")
+                _block_run(run, f"Customer phase contains unresolved records; Project phase was not started." if phase == "customer" else f"Project phase contains unresolved records.")
+                return False
+            _set_phase_state(run, phase, "Completed")
+            return True
         offset = page.next_offset
+        record_index = 0
 
 
 def _cancel_if_requested(run) -> None:
@@ -160,11 +190,13 @@ def _migrate_customer(record: dict[str, object], run) -> Result:
         values = plan.values(record)
     except MappingPlanError as error:
         return Result("BLOCKED_RECORD", str(error))
-    if not values.get("customer_name"):
-        return Result("BLOCKED_RECORD", "Configured customer record name is empty.")
     if plan.source_deleted(record):
         _mark_source_deleted(_link("customer", source_id, _source_instance(record)))
-        return Result("SKIPPED", "Source customer is deleted. No target deletion occurs.")
+        return Result("SKIPPED_SOURCE_DELETED", "Source customer is deleted. No target deletion occurs.")
+    if _is_contact_person(record):
+        return Result("SKIPPED_CONTACT_PERSON", "Source contact person is not created as an ERPNext Customer.")
+    if not values.get("customer_name"):
+        return Result("BLOCKED_RECORD", "Configured customer record name is empty.")
     return _upsert(
         "customer", source_id, record, values, "Customer", "customer_name", plan.mapping_version, run,
         after_insert=lambda customer: synchronize_home_phone(customer, plan.home_phone(record)),
@@ -259,7 +291,7 @@ def _record_result(run, source_type: str, record: dict[str, object], result: Res
     run.processed = int(run.processed or 0) + 1
     if result.code == "CREATED":
         run.created_records = int(run.created_records or 0) + 1
-    elif result.code in {"CONFLICT", "SKIPPED_AMBIGUOUS", "BLOCKED_RECORD"}:
+    elif result.code in {"CONFLICT", "SKIPPED_AMBIGUOUS", "BLOCKED_RECORD", "UNAVAILABLE"}:
         run.conflict_records = int(run.conflict_records or 0) + 1
     else:
         run.skipped_records = int(run.skipped_records or 0) + 1
@@ -323,6 +355,67 @@ def _customer_name_for_source(value: object, source_instance: str = "default") -
 def _source_instance(record: dict[str, object]) -> str:
     value = record.get("_hero_source_instance")
     return value.strip() if isinstance(value, str) and value.strip() else "default"
+
+
+def _is_contact_person(record: dict[str, object]) -> bool:
+    """Contact persons have a distinct HERO lifecycle and must not become Customers."""
+    return record.get("is_contact_person") is True
+
+
+def _bind_source_instance(run, source_instance: str) -> None:
+    instance = source_instance.strip() if isinstance(source_instance, str) and source_instance.strip() else "default"
+    current = getattr(run, "source_instance", "") or ""
+    if current and current != instance:
+        _block_run(run, "A resumed migration run cannot change its HERO source instance.")
+        raise MappingPlanError("Migration source instance does not match the persisted run.")
+    if not current:
+        run.source_instance = instance
+        run.save()
+
+
+def _phase_state(run, phase: str) -> str:
+    return str(getattr(run, f"{phase}_phase_state", "") or "Queued")
+
+
+def _set_phase_state(run, phase: str, state: str) -> None:
+    setattr(run, f"{phase}_phase_state", state)
+    run.save()
+
+
+def _record_phase_result(run, phase: str, result: Result) -> None:
+    prefix = f"{phase}_phase"
+    setattr(run, f"{prefix}_processed", int(getattr(run, f"{prefix}_processed", 0) or 0) + 1)
+    if result.code == "CREATED":
+        field = f"{prefix}_created"
+    elif result.code in PHASE_BLOCKING_RESULTS:
+        field = f"{prefix}_blocked"
+    else:
+        field = f"{prefix}_skipped"
+    setattr(run, field, int(getattr(run, field, 0) or 0) + 1)
+
+
+def _phase_has_blockers(run, phase: str) -> bool:
+    return bool(int(getattr(run, f"{phase}_phase_blocked", 0) or 0))
+
+
+def _customer_phase_completed(run, source_instance: str) -> bool:
+    return (
+        _phase_state(run, "customer") == "Completed"
+        and (getattr(run, "source_instance", "") or "default") == source_instance
+    )
+
+
+def _block_run(run, detail: str) -> None:
+    run.state = "Blocked"
+    run.error_message = detail
+    run.finished_on = now_datetime()
+    run.save()
+
+
+def _mark_running_phase_failed(run) -> None:
+    for phase in PHASES:
+        if _phase_state(run, phase) == "Running":
+            setattr(run, f"{phase}_phase_state", "Failed")
 
 
 def _confirmed_company_name() -> str:

@@ -19,6 +19,7 @@ def _customer(index: int) -> dict[str, object]:
         "company_name": f"Synthetic Company {index}" if is_company else "",
         "category": None if index % 4 == 0 else "synthetic-category",
         "type": "synthetic-type",
+        "is_contact_person": False,
         "is_deleted": index == 25,
     }
 
@@ -33,6 +34,7 @@ def _project(index: int) -> dict[str, object]:
         "project_title": f"Synthetic Project {index}",
         "project_nr": f"{index:04d}",
         "project_type": "PV",
+        "partner_notes": None,
         "customer": {"title": "Herr", "full_name": f"Synthetic Person {index}"},
         "address": {
             "full_address": f"Synthetic Street {index}, 77777 Synthetic City",
