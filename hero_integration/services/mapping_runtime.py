@@ -17,6 +17,7 @@ from hero_integration.services.direct_mapping import (
     PURPOSE_LIFECYCLE_FLAG,
     PURPOSE_RECORD_NAME,
     PURPOSE_SOURCE_IDENTITY,
+    source_value,
     transformed_value,
 )
 
@@ -56,7 +57,7 @@ class MappingPlan:
 
     def source_identity(self, record: dict[str, object]) -> str:
         definition = self._one(PURPOSE_SOURCE_IDENTITY)
-        value = transformed_value(definition, record.get(definition.source_path))
+        value = transformed_value(definition, source_value(record, definition.source_path))
         if not isinstance(value, str) or not value:
             raise MappingPlanError("Source identity is missing or invalid.")
         return value
@@ -70,7 +71,7 @@ class MappingPlan:
     ) -> dict[str, object]:
         values: dict[str, object] = {}
         for definition in self.definitions:
-            value = record.get(definition.source_path)
+            value = source_value(record, definition.source_path)
             if definition.purpose in {PURPOSE_FIELD, PURPOSE_RECORD_NAME, PURPOSE_CUSTOMER_TYPE, PURPOSE_CUSTOMER_CONTACT, PURPOSE_SOURCE_IDENTITY}:
                 if definition.purpose == PURPOSE_RECORD_NAME and self.operation == "HeroProjectMatches":
                     transformed = project_title(record) if project_title is not None else transformed_value(definition, value)
@@ -93,13 +94,13 @@ class MappingPlan:
 
     def source_deleted(self, record: dict[str, object]) -> bool:
         definitions = self._with_purpose(PURPOSE_LIFECYCLE_FLAG)
-        return any(record.get(definition.source_path) is True for definition in definitions)
+        return any(source_value(record, definition.source_path) is True for definition in definitions)
 
     def home_phone(self, record: dict[str, object]) -> str | None:
         definitions = self._with_purpose(PURPOSE_CUSTOMER_HOME_PHONE)
         if not definitions:
             return None
-        value = transformed_value(definitions[0], record.get(definitions[0].source_path))
+        value = transformed_value(definitions[0], source_value(record, definitions[0].source_path))
         return value if isinstance(value, str) else None
 
     def _one(self, purpose: str) -> MappingSpec:

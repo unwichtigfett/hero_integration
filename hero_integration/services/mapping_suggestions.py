@@ -43,6 +43,7 @@ OPERATION_ROOTS = {
     "HeroCustomers": "contacts",
     "HeroProjectMatches": "project_matches",
 }
+MAX_SOURCE_RELATION_DEPTH = 4
 
 
 def source_fields(operation: str, schema: dict[str, object], search: str = "") -> list[PickerField]:
@@ -52,14 +53,17 @@ def source_fields(operation: str, schema: dict[str, object], search: str = "") -
     needle = search.strip().lower()
     result = []
     root = OPERATION_ROOTS[operation]
-    return_type, graphql_fields = _graphql_return_fields(schema, root)
+    return_type, graphql_fields = _graphql_contract_fields(schema, root, contract["paths"])
     for path, source_type in contract["paths"].items():
         label = path.replace("_", " ").title()
-        graphql_type, nullable, relation = graphql_fields.get(path, (source_type, "null" in source_type, ""))
+        details = graphql_fields.get(path)
+        if details is None:
+            continue
+        graphql_type, nullable, relation, graphql_path = details
         field = PickerField(
             path, label, graphql_type, nullable, relation, True,
             "Selected by the versioned read-only import operation.",
-            f"{root}.{path}", operation, return_type, source_type,
+            graphql_path, operation, return_type, source_type,
         )
         if not needle or _matches(field, needle):
             result.append(field)
@@ -164,6 +168,10 @@ def _rank(source: PickerField, targets: list[PickerField]) -> list[dict[str, obj
         result.append({
             "source_path": source.path,
             "source_type": source.mapping_type,
+            "source_graphql_path": source.graphql_path,
+            "source_graphql_type": source.fieldtype,
+            "source_return_type": source.return_type,
+            "source_relation": source.relation,
             "target_field": target.path,
             "target_doctype": target.target_doctype,
             "target_app": target.app_name,
@@ -211,7 +219,8 @@ def _schema_only_fields(
         for field in graphql_type.get("fields", []) if isinstance(graphql_type.get("fields"), list) else []:
             if not isinstance(field, dict) or not isinstance(field.get("name"), str) or field["name"] in selected:
                 continue
-            type_name, nullable, relation = _type_details(field.get("type"))
+            type_name, nullable, kind = _type_details(field.get("type"))
+            relation = type_name if kind in {"OBJECT", "INTERFACE", "UNION"} else ""
             result.append(PickerField(
                 field["name"], field["name"].replace("_", " ").title(), type_name, nullable,
                 relation, False,
@@ -221,8 +230,10 @@ def _schema_only_fields(
     return result
 
 
-def _graphql_return_fields(schema: dict[str, object], root: str) -> tuple[str, dict[str, tuple[str, bool, str]]]:
-    """Read the current operation return type and scalar details from introspection."""
+def _graphql_contract_fields(
+    schema: dict[str, object], root: str, selected_paths: dict[str, str],
+) -> tuple[str, dict[str, tuple[str, bool, str, str]]]:
+    """Resolve bounded, query-only selected source paths from saved introspection."""
     schema = _schema_body(schema)
     types = schema.get("types", []) if isinstance(schema.get("types"), list) else []
     by_name = {item.get("name"): item for item in types if isinstance(item, dict) and isinstance(item.get("name"), str)}
@@ -232,15 +243,47 @@ def _graphql_return_fields(schema: dict[str, object], root: str) -> tuple[str, d
     root_field = next((field for field in query.get("fields", []) if isinstance(field, dict) and field.get("name") == root), None)
     if not isinstance(root_field, dict):
         return "", {}
-    return_type, _, _ = _type_details(root_field.get("type"))
-    returned = by_name.get(return_type)
-    if not isinstance(returned, dict):
+    return_type, _, return_kind = _type_details(root_field.get("type"))
+    if return_kind not in {"OBJECT", "INTERFACE", "UNION"} or return_type not in by_name:
         return return_type, {}
-    details = {}
-    for field in returned.get("fields", []):
-        if isinstance(field, dict) and isinstance(field.get("name"), str):
-            details[field["name"]] = _type_details(field.get("type"))
-    return return_type, details
+    return return_type, {
+        path: details
+        for path in selected_paths
+        if (details := _resolve_selected_path(by_name, return_type, root, path)) is not None
+    }
+
+
+def _resolve_selected_path(
+    types: dict[object, dict[str, object]], root_type: str, root: str, path: str,
+) -> tuple[str, bool, str, str] | None:
+    """Resolve one finite response path without entering mutation inputs or cycles."""
+    segments = tuple(segment for segment in path.split(".") if segment)
+    if not segments or len(segments) > MAX_SOURCE_RELATION_DEPTH:
+        return None
+    current_type = root_type
+    visited = {root_type}
+    relations = []
+    for index, segment in enumerate(segments):
+        current = types.get(current_type)
+        if not isinstance(current, dict):
+            return None
+        field = next(
+            (item for item in current.get("fields", []) if isinstance(item, dict) and item.get("name") == segment),
+            None,
+        )
+        if not isinstance(field, dict):
+            return None
+        type_name, nullable, kind = _type_details(field.get("type"))
+        if index == len(segments) - 1:
+            if kind in {"OBJECT", "INTERFACE", "UNION", "INPUT_OBJECT"}:
+                return None
+            return type_name, nullable, " / ".join(relations), f"{root}.{path}"
+        if kind not in {"OBJECT", "INTERFACE", "UNION"} or type_name in visited:
+            return None
+        relations.append(f"{current_type}.{segment} → {type_name}")
+        visited.add(type_name)
+        current_type = type_name
+    return None
 
 
 def _schema_body(schema: dict[str, object]) -> dict[str, object]:
@@ -256,5 +299,5 @@ def _type_details(type_ref: object) -> tuple[str, bool, str]:
     while isinstance(current, dict) and current.get("ofType"):
         current = current["ofType"]
     name = str(current.get("name") or current.get("kind") or "unverified") if isinstance(current, dict) else "unverified"
-    relation = name if isinstance(current, dict) and current.get("kind") in {"OBJECT", "INTERFACE", "UNION"} else ""
-    return name, not non_null, relation
+    kind = str(current.get("kind") or "") if isinstance(current, dict) else ""
+    return name, not non_null, kind

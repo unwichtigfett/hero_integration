@@ -152,6 +152,8 @@ class TestHeroV1MockContract(unittest.TestCase):
             "custom_hero_source_id": "101", "custom_hero_customer_number": "SYN-101",
             "custom_hero_customer_category": "synthetic", "custom_hero_customer_type": "synthetic",
             "custom_hero_is_contact_person": False,
+            "custom_hero_address_id": "8001", "custom_hero_address_street": "Synthetic Street 1",
+            "custom_hero_address_zipcode": "77777", "custom_hero_address_city": "Synthetic City",
         })
         self.assertEqual(project_plan.values(PROJECT, lambda value: "CUST-0001", lambda: "Synthetic Company"), {
             "project_name": "Synthetic Project", "customer": "CUST-0001", "company": "Synthetic Company",
@@ -160,6 +162,8 @@ class TestHeroV1MockContract(unittest.TestCase):
             "custom_hero_source_modified": "2026-10-18T11:00:00+00:00",
             "custom_hero_project_number": "0001", "custom_hero_project_type": "PV",
             "custom_hero_partner_notes": "Synthetic partner note",
+            "custom_hero_customer_title": "Herr", "custom_hero_customer_full_name": "Synthetic Person",
+            "custom_hero_address_full_address": "Synthetic Street 1, 77777 Synthetic City",
         })
 
     def test_matrix_accounts_for_each_selected_path(self):

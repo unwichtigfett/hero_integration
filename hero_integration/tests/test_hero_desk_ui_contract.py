@@ -115,12 +115,15 @@ class TestHeroDeskUiContract(unittest.TestCase):
             "hero-mapping-table", "hero-mapping-advanced", "status: \"Draft\"",
             "mapping_source_picker_page", "mapping_target_picker_page", "PAGE_SIZE = 50",
             "hero-mapping-picker", "Show more suggestions", "Prepare Custom Field provisioning",
+            "mapping_suggestions", "Suggested HERO source fields", "hero-mapping-reverse-suggestions",
+            "Use HERO field", "Show more HERO suggestions",
         ):
             with self.subTest(contract=contract):
                 self.assertIn(contract, source)
         self.assertIn("Promise.all", source)
         self.assertIn("sourceSearch.val()", source)
         self.assertIn("activeSearch.on", source)
+        self.assertIn("reverseSearch.on", source)
         self.assertIn('if (!targetDocType.val()) return clearTargets', source)
         self.assertNotIn("hero-mapping-field-list", source)
 
