@@ -27,9 +27,12 @@ the corresponding tab under `/desk/hero-integration` instead.
 
 ## Unified Desk navigation
 
-`hero-integration` opens the preserved Adapter host and contains Overview /
-Connection, API Analyzer, Graph Viewer, GraphQL Services, ERPNext Mapping,
-Migration / Synchronisation, and Settings. The former `hero-api-analyzer`,
+`hero-integration` opens the preserved Adapter host and contains exactly the five
+main tabs Übersicht, API & Schema, Mapping, Synchronisation, and Einstellungen.
+API & Schema retains API Analyzer, Graph Viewer, and GraphQL Services as internal
+tabs. Historic `hero_section=analyzer|graph|services` links are translated to
+`hero_section=api&hero_tool=<tool>`. Mapping requires an explicit saved,
+validated snapshot selection; it does not default to the newest snapshot. The former `hero-api-analyzer`,
 `hero-graph-viewer`, `hero-graphql-services`, `hero-adapter-tools`,
 `hero-migration-center`, and `hero-settings` Desk URLs are decommissioned;
 there are no compatibility Page documents for them. Technical DocTypes remain

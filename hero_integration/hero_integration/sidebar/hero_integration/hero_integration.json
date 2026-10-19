@@ -1,0 +1,16 @@
+{
+ "app": "hero_integration",
+ "doctype": "Sidebar",
+ "items": [
+  {
+   "label": "HERO Integration",
+   "link_to": "hero-integration",
+   "link_type": "Page",
+   "type": "Link"
+  }
+ ],
+ "module": "HERO Integration",
+ "name": "HERO Integration",
+ "standard": 1,
+ "title": "HERO Integration"
+}

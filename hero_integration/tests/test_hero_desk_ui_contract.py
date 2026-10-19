@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import unittest
 from pathlib import Path
 
@@ -15,6 +16,7 @@ MAPPING_EDITOR_JS = PACKAGE_ROOT / "public" / "js" / "hero_mapping_editor.js"
 MIGRATION_JS = PACKAGE_ROOT / "public" / "js" / "hero_migration.js"
 ADAPTER_CSS = PACKAGE_ROOT / "public" / "css" / "hero_adapter.css"
 PARITY_MATRIX = PACKAGE_ROOT.parent / "UI_PARITY_MATRIX.md"
+SIDEBAR_JSON = PACKAGE_ROOT / "hero_integration" / "sidebar" / "hero_integration" / "hero_integration.json"
 
 
 class TestHeroDeskUiContract(unittest.TestCase):
@@ -37,6 +39,18 @@ class TestHeroDeskUiContract(unittest.TestCase):
         for removed in ("legacyPageSections", "redirectLegacy", "hero-api-analyzer", "hero-graph-viewer", "hero-graphql-services", "hero-adapter-tools", "hero-migration-center", "hero-settings"):
             with self.subTest(removed=removed):
                 self.assertNotIn(removed, source)
+
+    def test_module_sidebar_contains_only_the_canonical_page(self):
+        sidebar = json.loads(SIDEBAR_JSON.read_text())
+
+        self.assertEqual(sidebar["doctype"], "Sidebar")
+        self.assertEqual(sidebar["app"], "hero_integration")
+        self.assertEqual(sidebar["module"], "HERO Integration")
+        self.assertEqual(sidebar["title"], "HERO Integration")
+        self.assertEqual(sidebar["standard"], 1)
+        self.assertEqual(sidebar["items"], [{
+            "label": "HERO Integration", "link_to": "hero-integration", "link_type": "Page", "type": "Link",
+        }])
 
     def test_graph_workspace_keeps_native_interactions_in_the_single_workspace_engine(self):
         source = TOOLS_JS.read_text()
@@ -127,6 +141,19 @@ class TestHeroDeskUiContract(unittest.TestCase):
         self.assertIn('if (!targetDocType.val()) return clearTargets', source)
         self.assertNotIn("hero-mapping-field-list", source)
 
+    def test_mapping_editor_requires_an_explicit_validated_snapshot_before_source_loading(self):
+        source = MAPPING_EDITOR_JS.read_text()
+        for contract in (
+            "schema_snapshot_list", "Choose a saved GraphQL Schema Snapshot", "hero-mapping-snapshot-metadata",
+            "schema_fingerprint", "analysis_status", "analysis_detail", "hasValidSnapshot",
+            "invalidateSnapshotState", "sourceLoadSequence", "mapping_source_picker_page", "mapping_suggestions",
+        ):
+            with self.subTest(contract=contract):
+                self.assertIn(contract, source)
+        self.assertIn('if (requestedSnapshotName && snapshots.has(requestedSnapshotName)) snapshot.val(requestedSnapshotName)', source)
+        self.assertNotIn("snapshot.val(rows[0]", source)
+        self.assertNotIn("snapshot.val(snapshots", source)
+
     def test_styles_are_packaged_with_the_app(self):
         self.assertTrue(WORKSPACE_CSS.is_file())
         for asset in ("hero_tools.css", "hero_adapter.css", "hero_overview.css", "hero_settings.css"):
@@ -144,7 +171,18 @@ class TestHeroDeskUiContract(unittest.TestCase):
         self.assertIn("manual step", matrix)
 
     def test_workspace_tabs_remain_the_only_navigation_targets(self):
-        source = "\n".join((WORKSPACE_JS.read_text(), MAPPING_EDITOR_JS.read_text()))
-        for section in ("overview", "analyzer", "graph", "services", "mapping", "migration", "settings"):
-            with self.subTest(section=section):
-                self.assertIn(section, source)
+        source = WORKSPACE_JS.read_text()
+        sections = re.search(r"const SECTION_NAMES = Object\.freeze\(\{(?P<body>.*?)\n    \}\);", source, re.DOTALL)
+        tools = re.search(r"const API_TOOLS = Object\.freeze\(\{(?P<body>.*?)\n    \}\);", source, re.DOTALL)
+
+        self.assertIsNotNone(sections)
+        self.assertIsNotNone(tools)
+        self.assertEqual(re.findall(r"^\s*(\w+):", sections.group("body"), re.MULTILINE), [
+            "overview", "api", "mapping", "synchronization", "settings",
+        ])
+        self.assertEqual(re.findall(r"^\s*(\w+):", tools.group("body"), re.MULTILINE), [
+            "analyzer", "graph", "services",
+        ])
+        self.assertIn("LEGACY_SECTION_TO_TOOL", source)
+        self.assertIn('section === "migration"', source)
+        self.assertIn("apiNavigation", source)
