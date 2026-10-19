@@ -2,7 +2,9 @@
 
 The retained workspace, overview, settings and CSS are source-port copies from
 the read-only historic Frappe source. The Desk host is native to this app; no
-old application is imported at runtime.
+old application is imported at runtime. `hero-integration` is the one visible
+HERO Desk workspace. The old Desk URLs are retained as redirects with a
+section deep link, not as independent renderers.
 
 | Source file | SHA-256 read from the read-only source |
 | --- | --- |
@@ -18,10 +20,21 @@ old application is imported at runtime.
 | --- | --- | --- | --- |
 | `hero_tools.js` `Workspace`, graph cache and renderer | `public/js/hero_tools.js` with only its finite RPC call seam replaced | `test_hero_desk_ui_contract.py` asset and interaction checks | IMPLEMENTED_SOURCE_TESTED |
 | `hero_tools.css` graph, analyzer, inspector and service editor | `public/css/hero_tools.css` | packaged-assets check | IMPLEMENTED_SOURCE_TESTED |
-| `hero_adapter.js` Desk embedding, modal and route shell | native `public/js/hero_workspace.js` Frappe host and compatibility facade | route/adapter check | IMPLEMENTED_SOURCE_TESTED |
+| `hero_adapter.js` Desk embedding, modal and route shell | native `public/js/hero_workspace.js` single Frappe host and compatibility facade | route/adapter check | IMPLEMENTED_SOURCE_TESTED |
 | `hero_adapter.css` host, controls and modal styles | `public/css/hero_adapter.css` | packaged-assets check | IMPLEMENTED_SOURCE_TESTED |
 | `hero_overview.js/css` cards, actions and navigation | `public/js/hero_overview.js`, `public/css/hero_overview.css` | native-platform adapter check | IMPLEMENTED_SOURCE_TESTED |
-| `hero_settings.js/css` masked credential form | `public/js/hero_settings.js`, `public/css/hero_settings.css`, `hero-settings` Page | token-redaction and native settings API check | IMPLEMENTED_SOURCE_TESTED |
+| `hero_settings.js/css` masked credential form | `public/js/hero_settings.js`, `public/css/hero_settings.css`, central Settings section | token-redaction and native settings API check | IMPLEMENTED_SOURCE_TESTED |
+
+## Unified Desk navigation
+
+`hero-integration` opens the preserved Adapter host and contains Overview /
+Connection, API Analyzer, Graph Viewer, GraphQL Services, ERPNext Mapping,
+Migration / Synchronisation, and Settings. `hero-api-analyzer`,
+`hero-graph-viewer`, `hero-graphql-services`, `hero-adapter-tools`,
+`hero-migration-center`, and `hero-settings` remain installed only so existing
+bookmarks resolve to the corresponding section. Technical DocTypes remain
+available to their System Manager permission checks and direct records, but are
+not linked from the normal HERO workspace navigation.
 
 The CSS/DOM source port has not been visually inspected in a browser in this
 step. Visual parity is therefore a manual step, not a claimed result.
