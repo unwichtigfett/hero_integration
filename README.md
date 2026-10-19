@@ -39,14 +39,14 @@ as part of Cheap or Full migration.
 
 The app stores read-only GraphQL schema snapshots and services. It builds a
 deterministic API Analyzer graph from a saved snapshot without contacting HERO.
-The **HERO Adapter Tools** Desk page opens the graph and supplies searchable
-source and target pickers. A source picker exposes only fields selected by the
-saved read-only operation; schema-only fields are visible but disabled. The
-target picker reads the installed site's Frappe metadata, including Custom
-Fields, and disables system, identity, Company, status, standard-mapping,
-standard-field, and unresolved child-record fields. Site-specific direct
-mappings can only write a writable Custom Field. Suggestions are bidirectional
-and non-binding.
+The **ERPNext Mapping** tab in the canonical **HERO Integration** Desk
+workspace opens the graph and supplies searchable source and target pickers. A
+source picker exposes only fields selected by the saved read-only operation;
+schema-only fields are visible but disabled. The target picker reads the
+installed site's Frappe metadata, including Custom Fields, and disables system,
+identity, Company, status, standard-mapping, standard-field, and unresolved
+child-record fields. Site-specific direct mappings can only write a writable
+Custom Field. Suggestions are bidirectional and non-binding.
 They can create a Draft mapping only; an administrator must explicitly validate
 and activate it. Custom direct mappings only target writable fields on the
 approved Customer or Project DocType. Frappe validates metadata, types,
