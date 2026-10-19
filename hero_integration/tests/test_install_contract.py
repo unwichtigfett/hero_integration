@@ -58,20 +58,35 @@ class TestInstallContract(unittest.TestCase):
             environment.call(install.after_migrate)
         self.assertEqual(len(environment.create_calls), 1)
 
+    def test_native_project_notes_must_exist_and_remain_editable(self):
+        environment = _InstallEnvironment(apps=["frappe", "erpnext"], version="16.35.0", project_notes=False)
+        install = environment.load()
+
+        with self.assertRaisesRegex(RuntimeError, "Project.notes is required"):
+            environment.call(install.before_install)
+
+        locked = _InstallEnvironment(apps=["frappe", "erpnext"], version="16.35.0", project_notes=True, project_notes_read_only=True)
+        install = locked.load()
+        with self.assertRaisesRegex(RuntimeError, "Project.notes must remain editable"):
+            locked.call(install.before_install)
+
 
 class _InstallEnvironment:
-    def __init__(self, apps, version, doctypes=None):
+    def __init__(self, apps, version, doctypes=None, project_notes=True, project_notes_read_only=False):
         self.apps = apps
         self.version = version
         self.doctypes = doctypes or {"Customer", "Contact", "Contact Email", "Contact Phone", "Project"}
         self.custom_fields: dict[tuple[str, str], dict[str, object]] = {}
         self.create_calls: list[tuple[dict[str, list[dict[str, object]]], bool]] = []
+        self.project_notes = project_notes
+        self.project_notes_read_only = project_notes_read_only
 
     def load(self):
         frappe_module = types.ModuleType("frappe")
         frappe_module.get_installed_apps = lambda: self.apps
         frappe_module.db = types.SimpleNamespace(exists=self.exists)
         frappe_module.get_doc = self.get_doc
+        frappe_module.get_meta = self.get_meta
         frappe_module.throw = lambda message: (_ for _ in ()).throw(RuntimeError(message))
         erpnext_module = types.ModuleType("erpnext")
         erpnext_module.__version__ = self.version
@@ -105,6 +120,12 @@ class _InstallEnvironment:
         if doctype != "Custom Field" or ":" not in name:
             raise AssertionError(f"unexpected document lookup: {doctype}, {name}")
         return SimpleNamespace(get=self.custom_fields[tuple(name.split(":", 1))].get)
+
+    def get_meta(self, doctype):
+        if doctype != "Project":
+            raise AssertionError(f"unexpected metadata lookup: {doctype}")
+        field = SimpleNamespace(read_only=self.project_notes_read_only) if self.project_notes else None
+        return SimpleNamespace(get_field=lambda fieldname: field if fieldname == "notes" else None)
 
     def create_custom_fields(self, fields, update):
         copied = {doctype: [dict(row) for row in rows] for doctype, rows in fields.items()}

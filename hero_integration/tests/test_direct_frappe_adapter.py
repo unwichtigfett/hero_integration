@@ -38,9 +38,22 @@ class TestDirectFrappeAdapter(unittest.TestCase):
             MappingSpec("HeroProjectMatches", "project_title", "Project", "company", "string"),
             MappingSpec("HeroCustomers", "category", "Project", "territory", "string|null"),
             MappingSpec("HeroCustomers", "category", "Customer", "territory_link", "string|null"),
+            MappingSpec("HeroProjectMatches", "partner_notes", "Project", "notes", "string|null"),
+            MappingSpec("HeroProjectMatches", "partner_notes", "Project", "custom_other_notes", "string|null"),
         ):
             with self.assertRaises(DirectMappingError):
                 validate_spec(spec, self.metadata)
+
+    def test_partner_notes_require_an_explicit_custom_field_mapping(self):
+        self.metadata.extra = [
+            SimpleNamespace(fieldname="custom_hero_partner_notes", label="HERO Partner Notes", fieldtype="Small Text", read_only=0, options="", is_custom_field=1),
+        ]
+        spec = MappingSpec(
+            "HeroProjectMatches", "partner_notes", "Project", "custom_hero_partner_notes", "string|null",
+            transformation="Trim",
+        )
+
+        validate_spec(spec, self.metadata)
 
     def test_graph_view_is_deterministic_for_a_synthetic_snapshot(self):
         snapshot = {"__schema": {"types": [
@@ -138,6 +151,9 @@ class _Metadata:
             return SimpleNamespace(fieldtype="Data", read_only=0, options="", is_custom_field=1)
         if (doctype, fieldname) == ("Customer", "territory_link"):
             return SimpleNamespace(fieldtype="Link", read_only=0, options="Territory", is_custom_field=1)
+        for field in self.extra:
+            if field.fieldname == fieldname:
+                return field
         return None
 
     @staticmethod

@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 from hero_integration.tests.mock_hero_v1 import AMBIGUOUS_PROJECT, CUSTOMERS, PROJECTS, UPDATED_CUSTOMER
 from hero_integration.tests.mapping_fixture import fixture_plan
+from hero_integration.sources.hero import SourcePage
 
 
 def _project_title_inputs(**overrides):
@@ -184,9 +185,76 @@ class TestProjectCompanyMigration(unittest.TestCase):
             {**record, "is_deleted": True}, SimpleNamespace(mode="Execute")
         )
 
-        self.assertEqual(result.code, "SKIPPED")
+        self.assertEqual(result.code, "SKIPPED_SOURCE_DELETED")
         self.assertEqual(len(self.frappe.customers), 1)
         self.assertEqual(self.frappe.links[("customer", "301")].sync_status, "Source Deleted")
+
+    def test_contact_person_is_recorded_without_creating_a_customer_duplicate(self):
+        result = self.migration._migrate_customer(
+            {"id": 302, "full_name": "Synthetic Contact", "is_contact_person": True},
+            SimpleNamespace(mode="Execute"),
+        )
+
+        self.assertEqual(result.code, "SKIPPED_CONTACT_PERSON")
+        self.assertFalse(self.frappe.customers)
+
+    def test_project_action_always_runs_the_customer_phase_first_and_stops_at_its_gate(self):
+        events = []
+        run = SimpleNamespace(action="Project Migration", source_instance="", save=lambda: None)
+        source = SimpleNamespace(source_instance="synthetic", customers=object(), projects=object())
+        original = self.migration._process_phase
+        try:
+            self.migration._process_phase = lambda item, phase, reader: events.append(phase) or phase == "customer"
+            self.migration._process_requested_phases(run, source)
+        finally:
+            self.migration._process_phase = original
+
+        self.assertEqual(events, ["customer"])
+
+    def test_project_action_starts_projects_only_after_a_completed_customer_phase(self):
+        events = []
+        run = SimpleNamespace(
+            action="Project Migration", source_instance="", customer_phase_state="Queued", state="Running",
+            save=lambda: None,
+        )
+        source = SimpleNamespace(source_instance="synthetic", customers=object(), projects=object())
+        original = self.migration._process_phase
+        try:
+            def phase(item, name, reader):
+                events.append(name)
+                if name == "customer":
+                    item.customer_phase_state = "Completed"
+                return True
+            self.migration._process_phase = phase
+            self.migration._process_requested_phases(run, source)
+        finally:
+            self.migration._process_phase = original
+
+        self.assertEqual(events, ["customer", "project"])
+
+    def test_customer_phase_paginates_to_completion_and_persists_a_resume_checkpoint(self):
+        run = SimpleNamespace(
+            customer_phase_state="Queued", customer_phase_processed=0, customer_phase_created=0,
+            customer_phase_skipped=0, customer_phase_blocked=0, resume_phase="", resume_offset=0,
+            resume_record_index=0, state="Running", save=lambda: None, reload=lambda: None,
+        )
+        pages = {
+            0: SourcePage(({"id": 1}, {"id": 2}), 2),
+            2: SourcePage(({"id": 3},), None),
+        }
+        calls, recorded = [], []
+        original_migrate, original_record = self.migration._migrate_customer, self.migration._record_result
+        try:
+            self.migration._migrate_customer = lambda record, item: self.migration.Result("CREATED", "synthetic")
+            self.migration._record_result = lambda item, phase, record, result: recorded.append(record["id"])
+            self.assertTrue(self.migration._process_phase(run, "customer", lambda offset: calls.append(offset) or pages[offset]))
+        finally:
+            self.migration._migrate_customer, self.migration._record_result = original_migrate, original_record
+
+        self.assertEqual((calls, recorded), ([0, 2], [1, 2, 3]))
+        self.assertEqual(run.customer_phase_state, "Completed")
+        self.assertEqual((run.customer_phase_processed, run.customer_phase_created), (3, 3))
+        self.assertEqual((run.resume_phase, run.resume_offset, run.resume_record_index), ("customer", 0, 0))
 
     def test_missing_or_invalid_company_blocks_before_project_insert(self):
         self.frappe.settings.erpnext_company = ""
@@ -274,7 +342,7 @@ class TestProjectCompanyMigration(unittest.TestCase):
         updated = self.migration._migrate_customer(UPDATED_CUSTOMER, SimpleNamespace(mode="Execute"))
 
         self.assertEqual(sum(result.code == "CREATED" for result in customers), 24)
-        self.assertEqual(sum(result.code == "SKIPPED" for result in customers), 1)
+        self.assertEqual(sum(result.code == "SKIPPED_SOURCE_DELETED" for result in customers), 1)
         self.assertEqual(sum(result.code == "CREATED" for result in projects), 40)
         self.assertTrue(all(result.code == "SKIPPED" for result in repeated))
         self.assertEqual(updated.code, "CONFLICT")

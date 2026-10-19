@@ -430,7 +430,8 @@ def _require_active_mappings(action: str) -> None:
     from hero_integration.services.mapping_runtime import MappingPlanError, active_mapping_plan
 
     operations = []
-    if action in {"Customer Migration", "Cheap Data Migration", "Full Data Migration", "Sync"}:
+    # Every project import first performs the Customer phase in the same run.
+    if action in {"Customer Migration", "Project Migration", "Cheap Data Migration", "Full Data Migration", "Sync"}:
         operations.append("HeroCustomers")
     if action in {"Project Migration", "Cheap Data Migration", "Full Data Migration", "Sync"}:
         operations.append("HeroProjectMatches")

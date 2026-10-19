@@ -12,14 +12,16 @@ SOURCE_CONTRACTS = {
             "last_name": "string|null", "full_name": "string|null", "email": "string|null",
             "phone_mobile": "string|null", "phone_home": "string|null",
             "company_name": "string|null", "category": "string|null", "type": "string|null",
-            "is_deleted": "boolean|null",
+            "is_contact_person": "boolean|null", "is_deleted": "boolean|null",
         },
     },
     "HeroProjectMatches": {
         "target_doctype": "Project",
         "paths": {
             "id": "int", "customer_id": "int|null", "project_id": "int|null",
-            "project_title": "string", "display_id": "string|null", "created": "string|null",
+            "project_title": "string", "project_nr": "string", "project_type": "string|null",
+            "partner_notes": "string|null", "customer.title": "string", "customer.full_name": "string",
+            "address.full_address": "string|null", "display_id": "string|null", "created": "string|null",
             "modified": "string|null",
         },
     },
@@ -55,7 +57,7 @@ ALLOWED_TARGET_TYPES = {"Data", "Small Text", "Int", "Float", "Check", "Date", "
 SYSTEM_FIELDS = {"name", "owner", "creation", "modified", "modified_by", "docstatus", "idx"}
 PROTECTED_FIELDS = {
     "Customer": {"name", "customer_name", "customer_type", "customer_primary_contact", "disabled", "status"},
-    "Project": {"name", "project_name", "customer", "company", "status", "docstatus"},
+    "Project": {"name", "project_name", "customer", "company", "status", "docstatus", "notes"},
 }
 RESERVED_TARGET_FIELDS = {
     "Customer": {"custom_hero_source_id", "first_name", "last_name", "email_id", "mobile_no"},
@@ -146,6 +148,12 @@ def _validate_custom_field(spec: MappingSpec, metadata) -> None:
     contract = SOURCE_CONTRACTS[spec.operation]
     if spec.target_doctype != contract["target_doctype"]:
         raise DirectMappingError("A field mapping may only write its operation target DocType.")
+    if spec.source_path == "partner_notes" and (
+        spec.target_doctype != "Project"
+        or spec.target_field != "custom_hero_partner_notes"
+        or spec.transformation != TRANSFORM_TRIM
+    ):
+        raise DirectMappingError("HERO partner notes may only map explicitly to Project.custom_hero_partner_notes.")
     protected = SYSTEM_FIELDS | PROTECTED_FIELDS[spec.target_doctype] | RESERVED_TARGET_FIELDS[spec.target_doctype]
     if spec.target_field in protected:
         raise DirectMappingError("Identity, Company, status, and standard bindings are protected.")
