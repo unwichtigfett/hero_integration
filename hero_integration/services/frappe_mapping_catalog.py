@@ -36,6 +36,7 @@ class CatalogField:
     required: bool
     select_options: tuple[str, ...]
     activation_allowed: bool
+    description: str = ""
 
 
 CANONICAL_TARGETS = frozenset({"Customer", "Project"})
@@ -82,7 +83,9 @@ def fields(metadata, app_name: str = "", doctype: str = "", search: str = "") ->
         for field in metadata.fields(target.doctype):
             fieldname = str(getattr(field, "fieldname", "") or "")
             label = str(getattr(field, "label", "") or fieldname)
-            if not fieldname or (needle and needle not in f"{fieldname} {label}".lower()):
+            fieldtype = str(getattr(field, "fieldtype", "") or "")
+            description = str(getattr(field, "description", "") or "")
+            if not fieldname or (needle and needle not in f"{fieldname} {label} {fieldtype} {description}".lower()):
                 continue
             result.append(_field(target, field, metadata))
     return sorted(result, key=lambda item: (item.app_name.lower(), item.doctype.lower(), item.path.lower()))
@@ -159,4 +162,5 @@ def _field(target: CatalogDocType, field, metadata) -> CatalogField:
         target.app_name, target.doctype, fieldname, str(getattr(field, "label", "") or fieldname), fieldtype,
         not bool(getattr(field, "reqd", 0)), relation, selectable, reason, bool(getattr(field, "is_custom_field", False)),
         bool(getattr(field, "reqd", 0)), options, target.doctype in CANONICAL_TARGETS,
+        str(getattr(field, "description", "") or ""),
     )

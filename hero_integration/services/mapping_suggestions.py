@@ -33,6 +33,7 @@ class PickerField:
     required: bool = False
     select_options: tuple[str, ...] = ()
     activation_allowed: bool = True
+    description: str = ""
 
 
 # These roots are part of the versioned queries in sources/hero.py.  The
@@ -54,16 +55,16 @@ def source_fields(operation: str, schema: dict[str, object], search: str = "") -
     return_type, graphql_fields = _graphql_return_fields(schema, root)
     for path, source_type in contract["paths"].items():
         label = path.replace("_", " ").title()
-        if needle and needle not in path.lower() and needle not in label.lower():
-            continue
         graphql_type, nullable, relation = graphql_fields.get(path, (source_type, "null" in source_type, ""))
-        result.append(PickerField(
+        field = PickerField(
             path, label, graphql_type, nullable, relation, True,
             "Selected by the versioned read-only import operation.",
             f"{root}.{path}", operation, return_type, source_type,
-        ))
+        )
+        if not needle or _matches(field, needle):
+            result.append(field)
     for field in _schema_only_fields(schema, contract["paths"], return_type, root):
-        if not needle or needle in field.path.lower() or needle in field.label.lower():
+        if not needle or _matches(field, needle):
             result.append(field)
     return result
 
@@ -80,7 +81,7 @@ def target_fields(
                 item.path, item.label, item.fieldtype, item.nullable, item.relation, item.selectable, item.reason,
                 mapping_type=item.fieldtype, app_name=item.app_name, target_doctype=item.doctype,
                 is_custom=item.is_custom, required=item.required, select_options=item.select_options,
-                activation_allowed=item.activation_allowed,
+                activation_allowed=item.activation_allowed, description=item.description,
             )
             for item in catalog_fields(metadata, app_name, target_doctype, search)
         ]
@@ -109,6 +110,20 @@ def target_fields(
         relation = str(field.options or "") if field.fieldtype in {"Link", "Table"} else ""
         result.append(PickerField(field.fieldname, label, field.fieldtype, False, relation, selectable, reason, mapping_type=field.fieldtype, target_doctype=doctype))
     return result
+
+
+def picker_page(fields: list[PickerField], start: int = 0, page_size: int = 50) -> dict[str, object]:
+    """Bound a picker response without discarding its searchable result set."""
+    start = max(0, int(start))
+    page_size = min(50, max(1, int(page_size)))
+    items = fields[start:start + page_size]
+    return {
+        "items": [item.__dict__ for item in items],
+        "start": start,
+        "page_size": page_size,
+        "total": len(fields),
+        "has_more": start + len(items) < len(fields),
+    }
 
 
 def suggest_from_source(
@@ -159,6 +174,13 @@ def _rank(source: PickerField, targets: list[PickerField]) -> list[dict[str, obj
             "draft_only": not target.activation_allowed,
         })
     return sorted(result, key=lambda item: (-item["score"], item["target_field"]))
+
+
+def _matches(field: PickerField, needle: str) -> bool:
+    return needle in " ".join((
+        field.path, field.label, field.fieldtype, field.relation, field.graphql_path,
+        field.return_type, field.mapping_type, field.description,
+    )).lower()
 
 
 def _suggestion_reason(source: PickerField, target: PickerField) -> str:

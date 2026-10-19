@@ -54,6 +54,15 @@
 .hero-mapping-field-list { display: grid; gap: 6px; margin-top: 10px; max-height: 340px; overflow: auto; }
 .hero-mapping-field { display: flex; justify-content: space-between; text-align: left; white-space: normal; width: 100%; }
 .hero-mapping-field-meta { color: var(--text-muted, #6c757d); font-size: 12px; margin-left: 8px; white-space: nowrap; }
+.hero-integration-ui .hero-mapping-picker-host { margin-top: 10px; }
+.hero-integration-ui .hero-mapping-picker { min-height: 180px; }
+.hero-integration-ui .hero-mapping-field-details { margin-top: 10px; }
+.hero-integration-ui .hero-mapping-field-details summary { cursor: pointer; font-weight: 600; }
+.hero-integration-ui .hero-mapping-detail-list { display: grid; gap: 4px 12px; grid-template-columns: minmax(100px, auto) 1fr; margin: 10px 0 0; }
+.hero-integration-ui .hero-mapping-detail-list dt { color: var(--text-muted, #6c757d); font-weight: 600; }
+.hero-integration-ui .hero-mapping-detail-list dd { margin: 0; overflow-wrap: anywhere; }
+.hero-integration-ui .hero-mapping-pager { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.hero-integration-ui .hero-mapping-provision-note { margin: 12px 0 0; }
 .hero-mapping-table-wrap { overflow-x: auto; }
 .hero-mapping-table { margin-top: 12px; }
 .hero-mapping-table .is-conflict td, .hero-mapping-field.is-conflict { box-shadow: inset 3px 0 #b56a4d; }

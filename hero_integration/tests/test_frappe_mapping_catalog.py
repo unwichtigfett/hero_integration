@@ -4,6 +4,7 @@ import unittest
 from types import SimpleNamespace
 
 from hero_integration.services.frappe_mapping_catalog import catalog, fields, validate_draft_target
+from hero_integration.services.mapping_suggestions import PickerField, picker_page
 from hero_integration.services.mapping_suggestions import suggest_from_source
 
 
@@ -53,6 +54,27 @@ class TestFrappeMappingCatalog(unittest.TestCase):
         self.assertTrue(match["draft_only"])
         self.assertIn(match["confidence"], {"high", "medium", "low"})
 
+    def test_field_search_includes_type_and_description_within_the_selected_doctype(self):
+        self.metadata._fields["Acme Case"].append(_field(
+            "custom_reference", "Reference", "Data", is_custom_field=1, description="External partner key",
+        ))
+
+        results = fields(self.metadata, app_name="acme_app", doctype="Acme Case", search="partner")
+
+        self.assertEqual([item.path for item in results], ["custom_reference"])
+        self.assertEqual(fields(self.metadata, app_name="acme_app", doctype="Acme Case", search="Data")[0].doctype, "Acme Case")
+
+    def test_picker_page_caps_visible_results_at_fifty_and_keeps_more_results_reachable(self):
+        many = [PickerField(f"custom_field_{index}", f"Field {index}", "Data", True, "", True, "Draft") for index in range(123)]
+
+        first = picker_page(many, start=0, page_size=999)
+        second = picker_page(many, start=50, page_size=50)
+        last = picker_page(many, start=100, page_size=50)
+
+        self.assertEqual((len(first["items"]), first["total"], first["has_more"]), (50, 123, True))
+        self.assertEqual((second["items"][0]["path"], len(second["items"])), ("custom_field_50", 50))
+        self.assertEqual((last["items"][-1]["path"], last["has_more"]), ("custom_field_122", False))
+
 
 class _Metadata:
     _doctypes = (
@@ -63,6 +85,16 @@ class _Metadata:
         {"name": "Denied Record", "module": "Acme", "app_name": "acme_app"},
     )
 
+    def __init__(self):
+        self._fields = {
+            "Acme Case": [
+                _field("subject", "Subject", "Data"),
+                _field("custom_hero_category", "HERO Category", "Data", is_custom_field=1),
+                _field("customer", "Customer", "Link", options="Customer"),
+                _field("items", "Items", "Table", options="Acme Row"),
+            ],
+        }
+
     def doctypes(self):
         return self._doctypes
 
@@ -70,19 +102,13 @@ class _Metadata:
     def can_write(doctype):
         return doctype != "Denied Record"
 
-    @staticmethod
-    def fields(doctype):
-        if doctype == "Acme Case":
-            return [
-                _field("subject", "Subject", "Data"),
-                _field("custom_hero_category", "HERO Category", "Data", is_custom_field=1),
-                _field("customer", "Customer", "Link", options="Customer"),
-                _field("items", "Items", "Table", options="Acme Row"),
-            ]
+    def fields(self, doctype):
+        if doctype in self._fields:
+            return self._fields[doctype]
         return [_field("subject", "Subject", "Data")]
 
 
 def _field(fieldname, label, fieldtype, **kwargs):
-    values = {"fieldname": fieldname, "label": label, "fieldtype": fieldtype, "read_only": 0, "reqd": 0, "options": "", "is_custom_field": 0}
+    values = {"fieldname": fieldname, "label": label, "fieldtype": fieldtype, "read_only": 0, "reqd": 0, "options": "", "is_custom_field": 0, "description": ""}
     values.update(kwargs)
     return SimpleNamespace(**values)
