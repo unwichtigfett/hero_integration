@@ -1,3 +1,22 @@
+.admin-hero-tool-host,
+.ht-focus-dialog {
+    --pc-canvas: var(--bg-color, #f4f7fb);
+    --pc-surface: var(--card-bg, #ffffff);
+    --pc-surfaceRaised: var(--control-bg, #f4f7fb);
+    --pc-surfaceHover: #eaf1f8;
+    --pc-border: var(--border-color, #d9e2ee);
+    --pc-controlBorder: var(--border-color, #75859a);
+    --pc-text: var(--text-color, #142437);
+    --pc-textSecondary: var(--text-muted, #526271);
+    --pc-dangerText: #b42318;
+    --pc-primary: var(--primary, #2490ef);
+    --pc-primaryHover: #1679c7;
+    --pc-onPrimary: #ffffff;
+    --pc-focus: #2490ef;
+    --pc-diagramText: var(--text-color, #142437);
+    --pc-diagramBorder: #486278;
+}
+
 .admin-workspace.admin-workspace--tool {
     padding: 0;
     border: 0;
@@ -10,6 +29,18 @@
 
 .admin-hero-tool-host > .hero-tools {
     padding: 0;
+}
+
+.admin-hero-tool-host .ht-snapshot-meta {
+    color: var(--pc-textSecondary);
+    font-size: 12px;
+    margin: 0 0 12px;
+    overflow-wrap: anywhere;
+}
+
+.ht-focus-dialog .modal-dialog {
+    max-width: min(1180px, calc(100vw - 48px));
+    width: min(1180px, calc(100vw - 48px));
 }
 
 /*
