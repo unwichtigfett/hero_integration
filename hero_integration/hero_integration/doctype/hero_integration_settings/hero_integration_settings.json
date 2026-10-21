@@ -10,6 +10,11 @@
   {"fieldname": "erpnext_company", "fieldtype": "Link", "label": "ERPNext Company for HERO Projects", "options": "Company", "description": "The single executing company for every HERO project. Customers remain separate target records."},
   {"fieldname": "erpnext_company_confirmed", "fieldtype": "Check", "label": "Confirm Company for HERO Projects", "description": "Confirm the selected existing ERPNext Company before HERO project imports can use it."},
   {"fieldname": "scheduled_sync_enabled", "fieldtype": "Check", "label": "Enable Scheduled Sync"},
+  {"fieldname": "polling_mode", "fieldtype": "Select", "label": "Polling Mode", "options": "OFF\nMONITOR\nAUTO_SYNC", "default": "OFF", "description": "OFF never contacts HERO automatically. MONITOR reads and records only metadata. AUTO_SYNC requires active idempotent mappings."},
+  {"fieldname": "polling_interval_minutes", "fieldtype": "Int", "label": "Polling Interval Minutes", "default": "60"}, {"fieldname": "polling_timezone", "fieldtype": "Data", "label": "Polling Timezone", "default": "UTC"},
+  {"fieldname": "polling_execution_window", "fieldtype": "Data", "label": "Polling Execution Window", "description": "Optional local-time window; empty means no additional window."}, {"fieldname": "polling_page_size", "fieldtype": "Int", "label": "Polling Page Size", "default": "100"},
+  {"fieldname": "polling_allow_backfill", "fieldtype": "Check", "label": "Allow Backfill", "default": "0"}, {"fieldname": "polling_full_inventory", "fieldtype": "Check", "label": "Allow Full Inventory", "default": "0"},
+  {"fieldname": "polling_retry_limit", "fieldtype": "Int", "label": "Polling Retry Limit", "default": "0"}, {"fieldname": "polling_rate_limit", "fieldtype": "Int", "label": "Polling Rate Limit", "default": "30"}, {"fieldname": "polling_concurrency", "fieldtype": "Int", "label": "Polling Concurrency", "default": "1"},
   {"fieldname": "last_successful_sync", "fieldtype": "Datetime", "label": "Last Successful Sync", "read_only": 1},
   {"fieldname": "sync_status", "fieldtype": "Data", "label": "Sync Status", "read_only": 1},
   {"fieldname": "sync_error", "fieldtype": "Small Text", "label": "Sync Error", "read_only": 1}
