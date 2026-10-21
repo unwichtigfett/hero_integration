@@ -1,23 +1,23 @@
 .hero-integration-ui .hero-overview {
-    --hero-overview-card-surface: #edf5ff;
-    --hero-overview-card-border: #426482;
-    --hero-overview-card-label: #30475e;
+    --hero-overview-card-surface: #f0f1f2;
+    --hero-overview-card-border: #65717d;
+    --hero-overview-card-label: #4d5964;
     width: min(1100px, 100%);
     margin: 0 auto;
 }
 
 @media (prefers-color-scheme: dark) {
     .hero-integration-ui .hero-overview {
-        --hero-overview-card-surface: #1e3044;
-        --hero-overview-card-border: #9ab6d4;
-        --hero-overview-card-label: #c3d2e3;
+        --hero-overview-card-surface: #272d33;
+        --hero-overview-card-border: #aab3bb;
+        --hero-overview-card-label: #d0d5da;
     }
 }
 
 :is(html[data-theme="dark"], body[data-theme="dark"], .theme-dark) .hero-integration-ui .hero-overview {
-    --hero-overview-card-surface: #1e3044;
-    --hero-overview-card-border: #9ab6d4;
-    --hero-overview-card-label: #c3d2e3;
+    --hero-overview-card-surface: #272d33;
+    --hero-overview-card-border: #aab3bb;
+    --hero-overview-card-label: #d0d5da;
 }
 
 .hero-overview-header {
