@@ -14,13 +14,16 @@
     function mount(page) {
         page.main.empty().addClass("hero-integration-ui");
         const root = $("<section class='hero-migration-center'></section>"), state = $("<div class='hero-migration-state' aria-live='polite'></div>"), runs = $("<div class='hero-migration-runs'></div>"), events = $("<div class='hero-migration-events'></div>"), refresh = $("<button type='button' class='btn btn-default'>Refresh stored status</button>");
-        root.append($("<h2>HERO Migration / Synchronization</h2><p class='text-muted'>Preview never writes business or link status. Execute is separately confirmed and enforced server-side for System Managers only.</p>"), refresh, state, $("<h3>Manual actions</h3>"));
+        const intro = $("<section class='hero-migration-panel hero-migration-intro'></section>").append($("<h2>HERO Migration / Synchronization</h2><p class='text-muted'>Preview never writes business or link status. Execute is separately confirmed and enforced server-side for System Managers only.</p>"), refresh);
+        const actions = $("<section class='hero-migration-panel'></section>").append($("<h3>Manual actions</h3>"), $("<div class='hero-migration-actions'></div>"));
+        const actionGrid = actions.find(".hero-migration-actions");
+        root.append(intro, actions, $("<section class='hero-migration-panel hero-migration-status'></section>").append($("<h3>Current run status</h3>"), state), $("<section class='hero-migration-panel'></section>").append($("<h3>Runs, progress, conflicts, cancellation and resume</h3>"), runs), $("<section class='hero-migration-panel'></section>").append($("<h3>Polling and error history</h3>"), events));
         ACTIONS.forEach(([action, description]) => {
             const preview = $("<button type='button' class='btn btn-default'>Preview</button>").on("click", () => start(action, 1));
             const execute = $("<button type='button' class='btn btn-primary'>Execute</button>").on("click", () => confirmStart(action));
-            root.append($("<article class='hero-migration-action'></article>").append($("<h4></h4>").text(action), $("<p class='text-muted'></p>").text(description), preview, document.createTextNode(" "), execute));
+            actionGrid.append($("<article class='hero-migration-action'></article>").append($("<h4></h4>").text(action), $("<p class='text-muted'></p>").text(description), $("<div class='hero-migration-action-buttons'></div>").append(preview, execute)));
         });
-        root.append($("<h3>Runs, progress, conflicts, cancellation and resume</h3>"), runs, $("<h3>Polling and error history</h3>"), events); page.main.append(root);
+        page.main.append(root);
         function confirmStart(action) { frappe.confirm(`Execute ${action}? This queues exactly one background run after server-side System Manager and active-mapping gates succeed.`, () => start(action, 0)); }
         function start(action, dryRun) { frappe.call({method: "hero_integration.api.start_migration", args: {action, dry_run: dryRun}}).then((response) => { if (response.message.run) { state.text(`${action} ${dryRun ? "preview" : "execution"} queued as ${response.message.run}.`); load(); } else state.text(response.message.detail || response.message.status || "No run was queued."); }).catch((error) => state.text(error.message || "The server blocked this action before it could run.")); }
         function renderRuns(rows) {

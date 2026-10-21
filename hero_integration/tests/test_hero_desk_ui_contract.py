@@ -34,6 +34,8 @@ class TestHeroDeskUiContract(unittest.TestCase):
         source = WORKSPACE_JS.read_text()
         self.assertIn('CANONICAL_PAGE = "hero-integration"', source)
         self.assertIn("hero-unified-navigation", source)
+        self.assertIn("hero_workspace.css", source)
+        self.assertIn("ASSET_RELEASE", source)
         for endpoint in ("workspace_context", "workspace_schema", "workspace_graph", "workspace_service_save"):
             self.assertIn(endpoint, source)
         self.assertIn("unsupported", source)
@@ -142,6 +144,7 @@ class TestHeroDeskUiContract(unittest.TestCase):
         self.assertIn("reverseSearch.on", source)
         self.assertIn('if (!targetDocType.val()) return clearTargets', source)
         self.assertNotIn("hero-mapping-field-list", source)
+        self.assertNotIn("Zuordnen", source)
 
     def test_mapping_editor_requires_an_explicit_validated_snapshot_before_source_loading(self):
         source = MAPPING_EDITOR_JS.read_text()
@@ -248,7 +251,30 @@ class TestHeroDeskUiContract(unittest.TestCase):
             with self.subTest(contract=contract):
                 self.assertIn(contract, adapter)
         self.assertIn("var(--hero-field-bg", settings_css)
+        self.assertIn("hero-settings-section", settings_css)
+        self.assertIn("display: list-item", settings_css)
         self.assertIn(".ht-editor .ace_scroller", tools_css)
+        self.assertIn("border:2px solid var(--pc-border)", tools_css)
+
+    def test_remaining_workspaces_use_scoped_grouping_surfaces(self):
+        mapping = MAPPING_EDITOR_JS.read_text()
+        migration = MIGRATION_JS.read_text()
+        workspace_css = WORKSPACE_CSS.read_text()
+        settings = SETTINGS_JS.read_text()
+
+        for contract in (
+            "hero-unified-content", "hero-unified-api-navigation",
+            "hero-mapping-section", "hero-migration-panel", "hero-migration-actions",
+            "hero-migration-action-buttons",
+        ):
+            with self.subTest(contract=contract):
+                self.assertIn(contract, workspace_css)
+        for contract in ("HERO Connection", "Sources", "ERPNext Company", "hero-settings-section"):
+            with self.subTest(contract=contract):
+                self.assertIn(contract, settings)
+        self.assertIn("hero-migration-panel", migration)
+        self.assertIn("hero-migration-actions", migration)
+        self.assertIn("Map fields", mapping)
 
     def test_hero_owned_ui_strings_are_not_routed_through_frappe_translation(self):
         sources = [WORKSPACE_JS, TOOLS_JS, SETTINGS_JS, MAPPING_EDITOR_JS, MIGRATION_JS]
