@@ -130,7 +130,8 @@
         const mutationSave = node("button", "hero-settings-button secondary", "Apply mutation setting");
         mutationSave.type = "button";
         mutationCard.append(
-            node("h3", "", "GraphQL Mutations"),
+            node("h3", "", "Mutation Security"),
+            node("p", "hero-settings-help", "GraphQL Mutations remain disabled until the server-side security gates are satisfied."),
             field("Allow mutation execution", mutationEnabled, "Only System Managers can change this global gate. It is OFF by default."),
             node("p", "hero-settings-warning", "An enabled global gate does not execute anything by itself: each mutation needs a compatible snapshot, an active per-operation contract, validated variables, preview, and explicit confirmation."),
             mutationStatus,
@@ -164,20 +165,29 @@
         pollingDetails.append(pollingSummary, pollingContent);
         pollingCard.append(pollingDetails);
 
-        card.append(
+        const connection = node("fieldset", "hero-settings-section");
+        connection.append(
+            node("legend", "", "HERO Connection"),
             field("Enabled", enabled, "Enable or disable local HERO Integration configuration."),
             field("API URL", url, "HTTPS GraphQL endpoint used by the connector."),
-            field("Allowed HERO hosts", allowedHosts, "One exact HTTPS hostname per line; the endpoint host must be present."),
-            field("HERO source instance", sourceInstance, "Stable identity for this external source."),
             field("API Token", token, "The current token is never returned to the browser. An empty field keeps it unchanged."),
             tokenHelp,
             field("Timeout (seconds)", timeout, "Maximum duration of a HERO API request."),
-            field("ERPNext Company", company, "Existing ERPNext Company used for HERO projects."),
-            field("Confirm ERPNext Company", companyConfirmed, "A company change clears this confirmation server-side."),
-            node("p", "hero-settings-warning", "Changing the API URL or token rotates the HERO binding generation and clears the current schema binding."),
-            status,
-            save
+            node("p", "hero-settings-warning", "Changing the API URL or token rotates the HERO binding generation and clears the current schema binding.")
         );
+        const sources = node("fieldset", "hero-settings-section");
+        sources.append(
+            node("legend", "", "Sources"),
+            field("Allowed HERO hosts", allowedHosts, "One exact HTTPS hostname per line; the endpoint host must be present."),
+            field("HERO source instance", sourceInstance, "Stable identity for this external source.")
+        );
+        const companySection = node("fieldset", "hero-settings-section");
+        companySection.append(
+            node("legend", "", "ERPNext Company"),
+            field("ERPNext Company", company, "Existing ERPNext Company used for HERO projects."),
+            field("Confirm ERPNext Company", companyConfirmed, "A company change clears this confirmation server-side.")
+        );
+        card.append(connection, sources, companySection, status, save);
 
         root.append(header, card, pollingCard, mutationCard);
         workspace.replaceChildren(root);
