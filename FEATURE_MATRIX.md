@@ -4,8 +4,8 @@
 | --- | --- | --- |
 | ERPNext v16 prerequisite | Implemented and offline-tested | A pre-install guard rejects a missing, non-v16, or incomplete ERPNext before HERO writes; it never auto-installs ERPNext. |
 | HERO Custom Fields | Implemented and offline-tested | Create-only, conflict-safe installer creates four Customer and five Project HERO fields. |
-| HERO Customer read | Implemented and mock-tested | Fixed `HeroCustomers` query; no runtime field selection. |
-| HERO Project Match read | Implemented and mock-tested | Fixed `HeroProjectMatches` query includes only validated title inputs; no runtime field selection. |
+| HERO Customer read | Limited V1 contract | Fixed `HeroCustomers` query; saved editable query contracts are not yet executed by the reader. |
+| HERO Project Match read | Limited V1 contract | Fixed `HeroProjectMatches` query includes only validated title inputs; saved editable query contracts are not yet executed by the reader. |
 | ERPNext Project title | Implemented and mock-tested | Server-side `PV-<number> | Photovoltaik, <salutation> <customer>, <project address>` generation blocks incomplete or unknown data and never overwrites a conflict. |
 | Mapping installation state | Implemented and offline-tested | Fresh installation and repeated migrate create no mapping definitions. |
 | Mapping package import and export | Implemented and offline-tested | Deterministic versioned packages validate a GraphQL fingerprint, schema, metadata, permissions, types, relations, and conflicts. Upload has no writes. |
