@@ -1,8 +1,8 @@
 {
  "doctype": "DocType", "name": "HERO Integration Settings", "module": "HERO Integration", "issingle": 1,
  "fields": [
-  {"fieldname": "hero_api_url", "fieldtype": "Data", "label": "HERO GraphQL Endpoint", "options": "URL"},
-  {"fieldname": "allowed_hero_hosts", "fieldtype": "Small Text", "label": "Allowed HERO Hosts", "description": "One exact HTTPS hostname per line."},
+  {"fieldname": "hero_api_url", "fieldtype": "Data", "label": "HERO GraphQL Endpoint", "options": "URL", "default": "https://login.hero-software.de/api/external/v7/graphql"},
+  {"fieldname": "allowed_hero_hosts", "fieldtype": "Small Text", "label": "Allowed HERO Hosts", "description": "One exact HTTPS hostname per line.", "default": "login.hero-software.de"},
   {"fieldname": "hero_api_token", "fieldtype": "Password", "label": "HERO API Token"},
   {"fieldname": "hero_source_instance", "fieldtype": "Data", "label": "HERO Source Instance", "default": "default", "description": "Stable source-instance identity used together with ProjectMatch.id. Change only for a separate HERO source."},
   {"fieldname": "timeout_seconds", "fieldtype": "Int", "label": "Timeout Seconds", "default": "30"},
