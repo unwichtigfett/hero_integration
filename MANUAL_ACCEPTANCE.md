@@ -93,3 +93,14 @@ authorized read-only HERO step.
 10. Upload a package with a foreign field collision or a missing relation.
     Confirm that it is blocked and leaves mappings inactive.
 
+## RC16 final manual protocol
+
+Use the deployed published revision only. Before opening the Desk, confirm
+**Polling = OFF**, **Mutation Execution = DISABLED**, and **Allow deletion =
+OFF**. Authenticate as a System Manager and perform the existing light/dark,
+narrow-width, route-history and settings checks. Then verify one synthetic
+mapped Frappe field change produces a technical observation without an outbound
+HERO action, and a bilateral change produces one Link conflict and an internal
+administrator notification without overwriting the target. Do not enter a
+HERO credential or enable MONITOR/AUTO_SYNC as part of this RC16 UI check.
+
