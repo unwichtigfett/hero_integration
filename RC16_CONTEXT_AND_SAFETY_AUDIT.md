@@ -152,3 +152,26 @@ was created, and no fallback SQLite proof was substituted for the required
 MariaDB-compatible evidence. Fresh installation, RC15 upgrade and deployment
 therefore remain **NOT_STARTED** pending a scoped database bootstrap
 prerequisite.
+
+## Fresh-install completion — 2026-10-22
+
+The prerequisite above was resolved using the already documented, legitimate
+isolated MariaDB root socket at `/srv/hero-native/mariadb/run/mariadb.sock`.
+It created only `hero_rc16_fresh_20261022t120000z` and its equally named,
+database-scoped site user. Bench then ran as `hero-native` with
+`bench new-site --no-setup-db`, installed ERPNext and HERO Integration, and
+ran `migrate` twice. The fresh site is
+`hero-rc16-fresh-20261022t120000z.localhost`; it reports Frappe 16.52.0,
+ERPNext 16.52.0, HERO Integration `d24a70d…`, 13 HERO DocTypes, zero HERO
+Frappe Mappings, and all safety gates OFF. Its `site_config.json` is mode 600;
+the own Redis cache/queue processes were stopped after the run.
+
+## Remaining functional RC16 gap
+
+This candidate does **not** yet execute a saved editable GraphQL query source
+contract. `HERO GraphQL Service` can be saved and validated, but
+`sources/hero.py::HeroSource` still executes only `CUSTOMER_QUERY_V1` and
+`PROJECT_QUERY_V1`; `mapping_runtime.active_mapping_plan()` likewise accepts
+only the two fixed operations. The mapping picker therefore cannot make an
+arbitrary selected operation or response field an import-reader input. This is
+separate from PA-001 through PA-006 and remains open.
