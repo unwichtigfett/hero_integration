@@ -113,6 +113,10 @@ def _claim_run(run) -> bool:
         run.state = "Running"
         run.started_on = run.started_on or now_datetime()
         run.save()
+        # Persist the reservation before another connection may inspect it or
+        # this worker starts any source I/O.  Releasing the advisory lock
+        # before that commit can otherwise expose an in-flight row version.
+        frappe.db.commit()
         return True
     finally:
         _release_active_run_lock()
