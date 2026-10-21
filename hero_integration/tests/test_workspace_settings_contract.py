@@ -144,6 +144,24 @@ class TestWorkspaceSettingsContract(unittest.TestCase):
         self.assertEqual(settings.save_calls, 1)
         self.assertTrue(result["mutation_execution_enabled"])
 
+    def test_admin_can_persist_validated_polling_controls_without_starting_work(self):
+        settings = _Settings()
+        frappe_mock = _FrappeSettingsMock(settings)
+        with patch.object(api, "frappe", frappe_mock):
+            result = api.workspace_settings_save(
+                True, settings.hero_api_url, polling_mode="MONITOR", polling_data_sources="HeroCustomers\nHeroProjectMatches",
+                polling_filters_json='{"HeroCustomers":{"showDeleted":false}}', polling_bootstrap=True,
+                polling_page_size=50, polling_pagination_strategy="OFFSET", polling_allow_backfill=False,
+                polling_full_inventory=False, polling_reconciliation=True, polling_retry_limit=2,
+                polling_retry_backoff_seconds=30, polling_timeout_seconds=45, polling_rate_limit=20,
+                polling_concurrency=1, polling_notifications=True,
+            )
+        self.assertEqual(settings.polling_filters_json, '{"HeroCustomers": {"showDeleted": false}}')
+        self.assertEqual(settings.polling_page_size, 50)
+        self.assertEqual(settings.polling_concurrency, 1)
+        self.assertTrue(result["polling"]["reconciliation"])
+        self.assertTrue(result["polling"]["notifications"])
+
     def test_non_admin_cannot_change_the_mutation_setting(self):
         settings = _Settings()
         frappe_mock = _FrappeSettingsMock(settings, PermissionError("denied"))

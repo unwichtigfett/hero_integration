@@ -94,6 +94,35 @@ def integration_overview() -> dict[str, object]:
         state: frappe.db.count("HERO Frappe Mapping", {"status": state})
         for state in ("Draft", "Active", "Disabled", "Rejected")
     }
+
+
+@frappe.whitelist()
+def workspace_sync_status() -> dict[str, object]:
+    """Return stored run and polling state; this endpoint never contacts HERO."""
+    frappe.only_for("System Manager")
+    settings = frappe.get_single("HERO Integration Settings")
+    state = frappe.get_single("HERO Integration Sync State")
+    from hero_integration.services.polling import runtime_plan
+
+    return {
+        "polling": runtime_plan(settings),
+        "last_successful_sync": getattr(settings, "last_successful_sync", None),
+        "sync_status": getattr(settings, "sync_status", "") or "Not started",
+        "sync_error": getattr(settings, "sync_error", "") or "",
+        "watermarks": {
+            "customer": getattr(state, "customer_watermark", "") or "",
+            "project": getattr(state, "project_watermark", "") or "",
+            "status": getattr(state, "watermark_status", "") or "Not established",
+        },
+        "runs": frappe.get_all(
+            "HERO Integration Run", fields=["name", "action", "mode", "state", "processed", "created_records", "conflict_records", "error_message", "modified"],
+            order_by="modified desc", limit_page_length=10,
+        ),
+        "events": frappe.get_all(
+            "HERO Polling Event", fields=["name", "mode", "status", "customer_records", "project_records", "detail", "modified"],
+            order_by="modified desc", limit_page_length=10,
+        ),
+    }
     return {
         "connection": {
             "endpoint_configured": bool(settings.hero_api_url),
@@ -355,11 +384,20 @@ def workspace_settings_get() -> dict[str, object]:
             "interval_minutes": int(getattr(settings, "polling_interval_minutes", 60) or 60),
             "timezone": getattr(settings, "polling_timezone", "UTC") or "UTC",
             "execution_window": getattr(settings, "polling_execution_window", "") or "",
+            "data_sources": _polling_lines(getattr(settings, "polling_data_sources", "")),
+            "filters": _polling_filters(getattr(settings, "polling_filters_json", "{}")),
+            "bootstrap": bool(getattr(settings, "polling_bootstrap", 0)),
+            "page_size": int(getattr(settings, "polling_page_size", 100) or 100),
+            "pagination_strategy": getattr(settings, "polling_pagination_strategy", "OFFSET") or "OFFSET",
             "allow_backfill": bool(getattr(settings, "polling_allow_backfill", 0)),
             "full_inventory": bool(getattr(settings, "polling_full_inventory", 0)),
+            "reconciliation": bool(getattr(settings, "polling_reconciliation", 0)),
             "retry_limit": int(getattr(settings, "polling_retry_limit", 0) or 0),
+            "retry_backoff_seconds": int(getattr(settings, "polling_retry_backoff_seconds", 30) or 30),
+            "timeout_seconds": int(getattr(settings, "polling_timeout_seconds", settings.timeout_seconds) or settings.timeout_seconds),
             "rate_limit": int(getattr(settings, "polling_rate_limit", 30) or 30),
             "concurrency": int(getattr(settings, "polling_concurrency", 1) or 1),
+            "notifications": bool(getattr(settings, "polling_notifications", 0)),
         },
         **_mutation_execution_state(settings),
     }
@@ -371,6 +409,14 @@ def workspace_settings_save(
     allowed_hero_hosts: str | None = None, hero_source_instance: str | None = None,
     erpnext_company: str | None = None, erpnext_company_confirmed: int | bool | None = None,
     polling_mode: str | None = None, polling_interval_minutes: int | None = None,
+    polling_timezone: str | None = None, polling_execution_window: str | None = None,
+    polling_data_sources: str | None = None, polling_filters_json: str | None = None,
+    polling_bootstrap: int | bool | None = None, polling_page_size: int | None = None,
+    polling_pagination_strategy: str | None = None, polling_allow_backfill: int | bool | None = None,
+    polling_full_inventory: int | bool | None = None, polling_reconciliation: int | bool | None = None,
+    polling_retry_limit: int | None = None, polling_retry_backoff_seconds: int | None = None,
+    polling_timeout_seconds: int | None = None, polling_rate_limit: int | None = None,
+    polling_concurrency: int | None = None, polling_notifications: int | bool | None = None,
 ) -> dict[str, object]:
     """Persist only native integration configuration, with DocType validation."""
     frappe.only_for("System Manager")
@@ -396,10 +442,83 @@ def workspace_settings_save(
         if not 1 <= int(polling_interval_minutes) <= 24 * 60:
             frappe.throw("Polling interval must be between 1 and 1440 minutes.")
         settings.polling_interval_minutes = int(polling_interval_minutes)
+    _save_polling_configuration(
+        settings,
+        timezone=polling_timezone, execution_window=polling_execution_window, data_sources=polling_data_sources,
+        filters_json=polling_filters_json, bootstrap=polling_bootstrap, page_size=polling_page_size,
+        pagination_strategy=polling_pagination_strategy, allow_backfill=polling_allow_backfill,
+        full_inventory=polling_full_inventory, reconciliation=polling_reconciliation, retry_limit=polling_retry_limit,
+        retry_backoff_seconds=polling_retry_backoff_seconds, timeout_seconds=polling_timeout_seconds,
+        rate_limit=polling_rate_limit, concurrency=polling_concurrency, notifications=polling_notifications,
+    )
     if api_token:
         settings.hero_api_token = api_token
     settings.save()
     return workspace_settings_get()
+
+
+def _polling_lines(value: object) -> list[str]:
+    return [line.strip() for line in str(value or "").splitlines() if line.strip()]
+
+
+def _polling_filters(value: object) -> dict[str, object]:
+    try:
+        parsed = json.loads(value or "{}")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _bounded_int(value: int | str, label: str, minimum: int, maximum: int) -> int:
+    try:
+        result = int(value)
+    except (TypeError, ValueError):
+        frappe.throw(f"{label} must be an integer.")
+    if not minimum <= result <= maximum:
+        frappe.throw(f"{label} must be between {minimum} and {maximum}.")
+    return result
+
+
+def _save_polling_configuration(settings, **values: object) -> None:
+    """Validate optional persisted polling controls without scheduling any work."""
+    scalar_fields = {
+        "timezone": "polling_timezone", "execution_window": "polling_execution_window",
+        "data_sources": "polling_data_sources", "pagination_strategy": "polling_pagination_strategy",
+    }
+    for input_name, fieldname in scalar_fields.items():
+        value = values[input_name]
+        if value is not None:
+            setattr(settings, fieldname, str(value).strip())
+    if values["data_sources"] is not None and not _polling_lines(values["data_sources"]):
+        frappe.throw("At least one polling data source is required.")
+    if values["filters_json"] is not None:
+        try:
+            parsed = json.loads(str(values["filters_json"] or "{}"))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            frappe.throw("Polling filters must be a JSON object.")
+        if not isinstance(parsed, dict):
+            frappe.throw("Polling filters must be a JSON object.")
+        settings.polling_filters_json = json.dumps(parsed, ensure_ascii=False, sort_keys=True)
+    if values["pagination_strategy"] is not None and settings.polling_pagination_strategy not in {"OFFSET", "CURSOR"}:
+        frappe.throw("Polling pagination strategy must be OFFSET or CURSOR.")
+    numeric = {
+        "page_size": ("polling_page_size", "Polling page size", 1, 1000),
+        "retry_limit": ("polling_retry_limit", "Polling retry limit", 0, 10),
+        "retry_backoff_seconds": ("polling_retry_backoff_seconds", "Polling retry backoff", 0, 3600),
+        "timeout_seconds": ("polling_timeout_seconds", "Polling timeout", 1, 600),
+        "rate_limit": ("polling_rate_limit", "Polling rate limit", 1, 10000),
+        "concurrency": ("polling_concurrency", "Polling concurrency", 1, 10),
+    }
+    for input_name, (fieldname, label, minimum, maximum) in numeric.items():
+        if values[input_name] is not None:
+            setattr(settings, fieldname, _bounded_int(values[input_name], label, minimum, maximum))
+    for input_name, fieldname in {
+        "bootstrap": "polling_bootstrap", "allow_backfill": "polling_allow_backfill",
+        "full_inventory": "polling_full_inventory", "reconciliation": "polling_reconciliation",
+        "notifications": "polling_notifications",
+    }.items():
+        if values[input_name] is not None:
+            setattr(settings, fieldname, int(_as_bool(values[input_name])))
 
 
 @frappe.whitelist()
