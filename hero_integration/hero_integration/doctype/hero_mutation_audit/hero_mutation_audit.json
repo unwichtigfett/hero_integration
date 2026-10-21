@@ -1,0 +1,8 @@
+{
+ "doctype":"DocType", "name":"HERO Mutation Audit", "module":"HERO Integration", "autoname":"format:HERO-MUT-AUD-{#####}", "track_changes":1,
+ "fields":[
+  {"fieldname":"correlation_id","label":"Correlation ID","fieldtype":"Data","reqd":1,"unique":1,"read_only":1,"in_list_view":1}, {"fieldname":"user","label":"User","fieldtype":"Link","options":"User","read_only":1}, {"fieldname":"site","label":"Site","fieldtype":"Data","read_only":1},
+  {"fieldname":"operation_name","label":"Operation","fieldtype":"Data","read_only":1}, {"fieldname":"schema_fingerprint","label":"Schema Fingerprint","fieldtype":"Data","read_only":1}, {"fieldname":"mapping_revision","label":"Mapping Revision","fieldtype":"Int","read_only":1},
+  {"fieldname":"request_fingerprint","label":"Request Fingerprint","fieldtype":"Data","read_only":1}, {"fieldname":"status","label":"Status","fieldtype":"Select","options":"Approved\nSucceeded\nFailed\nTimeout","read_only":1,"in_list_view":1}, {"fieldname":"detail","label":"Redacted Detail","fieldtype":"Small Text","read_only":1}
+ ], "permissions":[{"role":"System Manager","read":1,"write":0,"create":0,"delete":0}], "modified":"2026-10-21 00:00:00.000000"
+}
