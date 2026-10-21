@@ -14,14 +14,14 @@
     function mount(page) {
         page.main.empty().addClass("hero-integration-ui");
         const root = $("<section class='hero-migration-center'></section>"), state = $("<div class='hero-migration-state' aria-live='polite'></div>"), runs = $("<div class='hero-migration-runs'></div>"), events = $("<div class='hero-migration-events'></div>"), refresh = $("<button type='button' class='btn btn-default'>Refresh stored status</button>");
-        root.append($("<h2>HERO Migration / Synchronisation</h2><p class='text-muted'>Preview never writes business or link status. Execute is separately confirmed and enforced server-side for System Managers only.</p>"), refresh, state, $("<h3>Manual actions</h3>"));
+        root.append($("<h2>HERO Migration / Synchronization</h2><p class='text-muted'>Preview never writes business or link status. Execute is separately confirmed and enforced server-side for System Managers only.</p>"), refresh, state, $("<h3>Manual actions</h3>"));
         ACTIONS.forEach(([action, description]) => {
             const preview = $("<button type='button' class='btn btn-default'>Preview</button>").on("click", () => start(action, 1));
             const execute = $("<button type='button' class='btn btn-primary'>Execute</button>").on("click", () => confirmStart(action));
             root.append($("<article class='hero-migration-action'></article>").append($("<h4></h4>").text(action), $("<p class='text-muted'></p>").text(description), preview, document.createTextNode(" "), execute));
         });
         root.append($("<h3>Runs, progress, conflicts, cancellation and resume</h3>"), runs, $("<h3>Polling and error history</h3>"), events); page.main.append(root);
-        function confirmStart(action) { frappe.confirm(__("Execute {0}? This queues exactly one background run after server-side System Manager and active-mapping gates succeed.", [action]), () => start(action, 0)); }
+        function confirmStart(action) { frappe.confirm(`Execute ${action}? This queues exactly one background run after server-side System Manager and active-mapping gates succeed.`, () => start(action, 0)); }
         function start(action, dryRun) { frappe.call({method: "hero_integration.api.start_migration", args: {action, dry_run: dryRun}}).then((response) => { if (response.message.run) { state.text(`${action} ${dryRun ? "preview" : "execution"} queued as ${response.message.run}.`); load(); } else state.text(response.message.detail || response.message.status || "No run was queued."); }).catch((error) => state.text(error.message || "The server blocked this action before it could run.")); }
         function renderRuns(rows) {
             runs.empty(); if (!rows.length) return runs.append($("<p class='text-muted'></p>").text("No stored runs yet."));
@@ -42,7 +42,7 @@
             const list = $("<ul></ul>"); rows.forEach((row) => list.append($("<li></li>").text(`${row.modified}: ${row.mode} ${row.status} — ${row.detail || ""}`))); events.append(list);
         }
         function load() { state.text("Loading stored status …"); return frappe.call({method: "hero_integration.api.workspace_sync_status"}).then((response) => { const data = response.message || {}; state.text(`Status: ${data.sync_status || "Not started"}. Last success: ${data.last_successful_sync || "never"}. Watermarks: ${data.watermarks?.status || "Not established"}.`); renderRuns(data.runs || []); renderEvents(data); }).catch((error) => state.text(error.message || "Stored status could not be loaded.")); }
-        refresh.on("click", load); ACTIONS.forEach(([action]) => page.add_menu_item(__(action + " Preview"), () => start(action, 1))); load();
+        refresh.on("click", load); ACTIONS.forEach(([action]) => page.add_menu_item(action + " Preview", () => start(action, 1))); load();
     }
 
     window.hero_integration_migration = Object.freeze({mount});
