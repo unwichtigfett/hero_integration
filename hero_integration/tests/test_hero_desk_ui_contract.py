@@ -36,6 +36,8 @@ class TestHeroDeskUiContract(unittest.TestCase):
         self.assertIn("hero-unified-navigation", source)
         self.assertIn("hero_workspace.css", source)
         self.assertIn("ASSET_RELEASE", source)
+        self.assertIn("const loadScript = (path) => frappe.require(path);", source)
+        self.assertNotIn("frappe.require(assetUrl(path)", source)
         for endpoint in ("workspace_context", "workspace_schema", "workspace_graph", "workspace_service_save"):
             self.assertIn(endpoint, source)
         self.assertIn("unsupported", source)
