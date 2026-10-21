@@ -72,6 +72,22 @@
         });
         const pollingInterval = document.createElement("input");
         pollingInterval.type = "number"; pollingInterval.min = "1"; pollingInterval.max = "1440"; pollingInterval.className = "hero-settings-input";
+        const pollingTimezone = document.createElement("input"); pollingTimezone.className = "hero-settings-input";
+        const pollingWindow = document.createElement("input"); pollingWindow.className = "hero-settings-input"; pollingWindow.placeholder = "HH:MM-HH:MM";
+        const pollingSources = document.createElement("textarea"); pollingSources.className = "hero-settings-input"; pollingSources.rows = 3;
+        const pollingFilters = document.createElement("textarea"); pollingFilters.className = "hero-settings-input"; pollingFilters.rows = 4; pollingFilters.spellcheck = false;
+        const pollingBootstrap = document.createElement("input"); pollingBootstrap.type = "checkbox"; pollingBootstrap.className = "hero-settings-check";
+        const pollingPageSize = document.createElement("input"); pollingPageSize.type = "number"; pollingPageSize.min = "1"; pollingPageSize.max = "1000"; pollingPageSize.className = "hero-settings-input";
+        const pollingPagination = document.createElement("select"); pollingPagination.className = "hero-settings-input"; ["OFFSET", "CURSOR"].forEach(value => { const option = document.createElement("option"); option.value = value; option.textContent = value; pollingPagination.append(option); });
+        const pollingBackfill = document.createElement("input"); pollingBackfill.type = "checkbox"; pollingBackfill.className = "hero-settings-check";
+        const pollingInventory = document.createElement("input"); pollingInventory.type = "checkbox"; pollingInventory.className = "hero-settings-check";
+        const pollingReconciliation = document.createElement("input"); pollingReconciliation.type = "checkbox"; pollingReconciliation.className = "hero-settings-check";
+        const pollingRetryLimit = document.createElement("input"); pollingRetryLimit.type = "number"; pollingRetryLimit.min = "0"; pollingRetryLimit.max = "10"; pollingRetryLimit.className = "hero-settings-input";
+        const pollingBackoff = document.createElement("input"); pollingBackoff.type = "number"; pollingBackoff.min = "0"; pollingBackoff.max = "3600"; pollingBackoff.className = "hero-settings-input";
+        const pollingTimeout = document.createElement("input"); pollingTimeout.type = "number"; pollingTimeout.min = "1"; pollingTimeout.max = "600"; pollingTimeout.className = "hero-settings-input";
+        const pollingRate = document.createElement("input"); pollingRate.type = "number"; pollingRate.min = "1"; pollingRate.className = "hero-settings-input";
+        const pollingConcurrency = document.createElement("input"); pollingConcurrency.type = "number"; pollingConcurrency.min = "1"; pollingConcurrency.max = "10"; pollingConcurrency.className = "hero-settings-input";
+        const pollingNotifications = document.createElement("input"); pollingNotifications.type = "checkbox"; pollingNotifications.className = "hero-settings-check";
 
         const token = document.createElement("input");
         token.type = "password";
@@ -111,6 +127,17 @@
 
         const save = node("button", "hero-settings-button primary", "Save Settings");
         save.type = "button";
+        const pollingCard = node("section", "hero-settings-card hero-settings-polling");
+        pollingCard.append(
+            node("h3", "", "Polling controls"),
+            field("Polling mode", pollingMode, "OFF never contacts HERO automatically. MONITOR records internal run metadata only; AUTO_SYNC requires active idempotent mappings."),
+            field("Polling interval (minutes)", pollingInterval, "1–1440 minutes; the Frappe scheduler evaluates cadence server-side."),
+            field("Timezone", pollingTimezone), field("Execution window", pollingWindow, "Optional local time window in HH:MM-HH:MM."),
+            field("Validated snapshot data sources", pollingSources, "One Query-root operation per line. Empty input is rejected."), field("Operation filters JSON", pollingFilters, "JSON object only; this stores no secrets and does not contact HERO."),
+            field("Allow bootstrap", pollingBootstrap), field("Page size", pollingPageSize), field("Pagination strategy", pollingPagination, "Cursor watermarks are advanced only after complete successful processing. Offset pagination does not invent watermarks."),
+            field("Allow backfill", pollingBackfill), field("Allow full inventory", pollingInventory), field("Allow reconciliation", pollingReconciliation, "Reconciliation reports discrepancies and never auto-deletes ERPNext records."),
+            field("Retry limit", pollingRetryLimit), field("Retry backoff seconds", pollingBackoff), field("Polling timeout seconds", pollingTimeout), field("Rate limit", pollingRate), field("Concurrency", pollingConcurrency), field("Notifications", pollingNotifications)
+        );
 
         card.append(
             field("Enabled", enabled, "Enable or disable local HERO Integration configuration."),
@@ -122,14 +149,12 @@
             field("Timeout (seconds)", timeout, "Maximum duration of a HERO API request."),
             field("ERPNext Company", company, "Existing ERPNext Company used for HERO projects."),
             field("Confirm ERPNext Company", companyConfirmed, "A company change clears this confirmation server-side."),
-            field("Polling mode", pollingMode, "OFF never contacts HERO automatically. MONITOR never writes business data."),
-            field("Polling interval (minutes)", pollingInterval, "1–1440 minutes; scheduler cadence is evaluated server-side."),
             node("p", "hero-settings-warning", "Changing the API URL or token rotates the HERO binding generation and clears the current schema binding."),
             status,
             save
         );
 
-        root.append(header, card, mutationCard);
+        root.append(header, card, pollingCard, mutationCard);
         workspace.replaceChildren(root);
 
         let destroyed = false;
@@ -147,6 +172,7 @@
             companyConfirmed.disabled = value;
             pollingMode.disabled = value;
             pollingInterval.disabled = value;
+            [pollingTimezone, pollingWindow, pollingSources, pollingFilters, pollingBootstrap, pollingPageSize, pollingPagination, pollingBackfill, pollingInventory, pollingReconciliation, pollingRetryLimit, pollingBackoff, pollingTimeout, pollingRate, pollingConcurrency, pollingNotifications].forEach((control) => { control.disabled = value; });
             mutationEnabled.disabled = value;
             mutationSave.disabled = value;
         }
@@ -161,6 +187,22 @@
             companyConfirmed.checked = Boolean(data.erpnext_company_confirmed);
             pollingMode.value = data.polling?.mode || "OFF";
             pollingInterval.value = String(data.polling?.interval_minutes || 60);
+            pollingTimezone.value = data.polling?.timezone || "UTC";
+            pollingWindow.value = data.polling?.execution_window || "";
+            pollingSources.value = (data.polling?.data_sources || []).join("\n");
+            pollingFilters.value = JSON.stringify(data.polling?.filters || {}, null, 2);
+            pollingBootstrap.checked = Boolean(data.polling?.bootstrap);
+            pollingPageSize.value = String(data.polling?.page_size || 100);
+            pollingPagination.value = data.polling?.pagination_strategy || "OFFSET";
+            pollingBackfill.checked = Boolean(data.polling?.allow_backfill);
+            pollingInventory.checked = Boolean(data.polling?.full_inventory);
+            pollingReconciliation.checked = Boolean(data.polling?.reconciliation);
+            pollingRetryLimit.value = String(data.polling?.retry_limit || 0);
+            pollingBackoff.value = String(data.polling?.retry_backoff_seconds || 30);
+            pollingTimeout.value = String(data.polling?.timeout_seconds || data.timeout_seconds || 30);
+            pollingRate.value = String(data.polling?.rate_limit || 30);
+            pollingConcurrency.value = String(data.polling?.concurrency || 1);
+            pollingNotifications.checked = Boolean(data.polling?.notifications);
             token.value = "";
             const configured = data.api_token_status === "CONFIGURED";
             tokenState.textContent = uiText(configured ? "Configured" : data.api_token_status === "CREDENTIAL_ERROR" ? "Credential error" : "Not configured");
@@ -203,7 +245,13 @@
                     erpnext_company: company.value.trim(),
                     erpnext_company_confirmed: companyConfirmed.checked,
                     polling_mode: pollingMode.value,
-                    polling_interval_minutes: Number(pollingInterval.value)
+                    polling_interval_minutes: Number(pollingInterval.value),
+                    polling_timezone: pollingTimezone.value.trim(), polling_execution_window: pollingWindow.value.trim(),
+                    polling_data_sources: pollingSources.value.trim(), polling_filters_json: pollingFilters.value.trim(), polling_bootstrap: pollingBootstrap.checked,
+                    polling_page_size: Number(pollingPageSize.value), polling_pagination_strategy: pollingPagination.value,
+                    polling_allow_backfill: pollingBackfill.checked, polling_full_inventory: pollingInventory.checked, polling_reconciliation: pollingReconciliation.checked,
+                    polling_retry_limit: Number(pollingRetryLimit.value), polling_retry_backoff_seconds: Number(pollingBackoff.value), polling_timeout_seconds: Number(pollingTimeout.value),
+                    polling_rate_limit: Number(pollingRate.value), polling_concurrency: Number(pollingConcurrency.value), polling_notifications: pollingNotifications.checked
                 }, {write: true});
                 if (!destroyed) {
                     apply(data);
