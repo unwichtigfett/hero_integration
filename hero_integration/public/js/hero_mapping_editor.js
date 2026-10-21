@@ -17,6 +17,9 @@
         const activeSearch = $("<input class='form-control' placeholder='Filter existing mappings'>");
         const targetApp = $("<select class='form-control'><option value=''>Choose an app</option></select>");
         const targetDocType = $("<select class='form-control' disabled><option value=''>Choose a DocType</option></select>");
+        const targetCatalogStatus = $("<div class='text-muted hero-mapping-catalog-status' aria-live='polite'></div>");
+        const retryTargetCatalog = $("<button type='button' class='btn btn-default btn-sm' hidden>Retry app catalog</button>");
+        const retrySnapshots = $("<button type='button' class='btn btn-default btn-sm' hidden>Retry saved snapshots</button>");
         const sourceList = $("<div class='hero-mapping-picker-host'></div>"), targetList = $("<div class='hero-mapping-picker-host'></div>");
         const reverseSuggestions = $("<div class='hero-mapping-reverse-suggestions'></div>");
         const sourceDetails = $("<details class='hero-mapping-field-details'><summary>HERO field details</summary></details>");
@@ -27,7 +30,8 @@
         const dynamicKind = $("<select class='form-control'><option value='QUERY'>Query mapping</option><option value='MUTATION'>Mutation mapping</option></select>");
         const dynamicOperation = $("<select class='form-control' disabled><option value=''>Choose a snapshot operation</option></select>");
         const dynamicArguments = $("<div class='text-muted hero-mapping-operation-arguments'></div>");
-        const dynamicJson = $("<textarea class='form-control' rows='8' spellcheck='false'></textarea>");
+        const dynamicFieldPath = $("<input class='form-control' placeholder='Select an operation, then enter an output or input path'>"), dynamicTransformation = $("<select class='form-control'><option value='Identity'>Identity</option><option value='Trim'>Trim text</option><option value='String'>Convert to text</option><option value='Number'>Convert to number</option></select>"), dynamicAdminValue = $("<input class='form-control' placeholder='Optional explicit admin value'>"), dynamicPreview = $("<pre class='hero-mapping-preview' aria-live='polite'></pre>");
+        const dynamicJson = $("<textarea class='form-control' rows='8' spellcheck='false'></textarea>"), dynamicAdvanced = $("<details class='hero-mapping-advanced'><summary>Advanced: mapping contract JSON</summary><p class='text-muted'>Optional expert override. The visual fields remain the normal workflow.</p></details>");
         const dynamicReason = $("<input class='form-control' placeholder='Why this mapping is compatible'>"), dynamicConfidence = $("<input class='form-control' type='number' min='0' max='1' step='0.01' value='0.5'>");
         const dynamicStatus = $("<div class='hero-mapping-statuses' aria-live='polite'></div>"), dynamicRows = $("<div class='hero-mapping-table-wrap'></div>");
         const saveDynamicDraft = $("<button type='button' class='btn btn-default'>Save Draft</button>"), activateDynamic = $("<button type='button' class='btn btn-warning'>Activate reviewed mapping</button>");
@@ -35,15 +39,15 @@
         const advanced = $("<details class='hero-mapping-advanced'><summary>Advanced: JSON import and schema provisioning</summary></details>");
         const provisionCustomField = $("<button type='button' class='btn btn-default btn-sm'>Prepare Custom Field provisioning</button>");
         let selectedSource = null, selectedTarget = null, importPayload = null, activeSourceFields = [], pendingSourcePath = routeContext.source_path || "";
-        let sourceStart = 0, targetStart = 0, currentSuggestions = [], suggestionsExpanded = false, reverseExpanded = false, suggestionDirection = "", suggestionSequence = 0, sourceLoadSequence = 0;
+        let sourceStart = 0, targetStart = 0, currentSuggestions = [], suggestionsExpanded = false, reverseExpanded = false, suggestionDirection = "", suggestionSequence = 0, sourceLoadSequence = 0, targetCatalogSequence = 0;
         const requestedSnapshotName = routeContext.snapshot_name || "";
         const snapshots = new Map();
         if (["HeroCustomers", "HeroProjectMatches"].includes(routeContext.operation)) operation.val(routeContext.operation);
 
-        const controls = $("<div class='hero-mapping-controls'></div>").append($("<label></label>").text("GraphQL Schema Snapshot").append(snapshot, snapshotMetadata), $("<label></label>").text("Read-only HERO operation").append(operation));
+        const controls = $("<div class='hero-mapping-controls'></div>").append($("<label></label>").text("GraphQL Schema Snapshot").append(snapshot, snapshotMetadata, retrySnapshots), $("<label></label>").text("Read-only HERO operation").append(operation));
         const mappingGrid = $("<div class='hero-mapping-grid'></div>").append(
             $("<section class='hero-mapping-pane'></section>").append($("<h3>HERO source</h3><p class='text-muted'>Search the saved, read-only operation and select one source field.</p>"), sourceSearch, sourceList, sourcePager, sourceDetails, $("<h4 class='hero-mapping-subheading'>Suggested HERO source fields</h4>"), reverseSearch, reverseSuggestions),
-            $("<section class='hero-mapping-pane'></section>").append($("<h3>Frappe target</h3><p class='text-muted'>Choose an installed app, then a DocType, before searching its fields.</p>"), targetApp, targetDocType, targetSearch, targetList, targetPager, targetDetails, $("<p class='text-muted hero-mapping-provision-note'></p>").append("Missing a Custom Field? ", provisionCustomField)),
+            $("<section class='hero-mapping-pane'></section>").append($("<h3>Frappe target</h3><p class='text-muted'>Choose an installed app, then a DocType, before searching its fields. This catalog is available even when no HERO schema snapshot has been saved yet.</p>"), targetApp, targetCatalogStatus, retryTargetCatalog, targetDocType, targetSearch, targetList, targetPager, targetDetails, $("<p class='text-muted hero-mapping-provision-note'></p>").append("Missing a Custom Field? ", provisionCustomField)),
         );
         advanced.append($("<p class='text-muted'></p>").text("An upload only fills a reviewed checklist. Select changes and confirm one adoption; it never migrates business data."), importFile, exchangeResult);
         page.main.append(
@@ -52,10 +56,10 @@
             $("<section class='hero-mapping-section'></section>").append($("<h3>Vorschläge prüfen</h3><p class='text-muted'>The strongest compatible proposals are shown first; reviewing one only prepares a Draft.</p>"), suggestions),
             $("<section class='hero-mapping-section'></section>").append($("<h3>Aktive Mappings</h3>"), statusSummary, activeSearch, activeMappings), advanced,
             $("<section class='hero-mapping-section hero-mapping-dynamic'></section>").append(
-                $("<h3>Query- und Mutations-Mapping</h3><p class='text-muted'>These schema-bound contracts are separate from the established Customer and Project mappings. Every save begins as Draft; activation is an explicit System Manager decision.</p>"),
-                $("<div class='hero-mapping-controls'></div>").append($("<label></label>").text("Contract type").append(dynamicKind), $("<label></label>").text("Snapshot operation").append(dynamicOperation), dynamicArguments),
-                $("<label></label>").text("Mapping contract JSON").append(dynamicJson), $("<label></label>").text("Suggestion rationale").append(dynamicReason), $("<label></label>").text("Confidence 0–1").append(dynamicConfidence),
-                $("<div class='mt-2'></div>").append(saveDynamicDraft, document.createTextNode(" "), activateDynamic), dynamicStatus, $("<h4>Saved dynamic contracts</h4>"), dynamicRows,
+                $("<h3>Query- und Mutations-Mapping</h3><p class='text-muted'>Use the visual selector above for the Frappe App, DocType, and field. Query contracts map HERO output to that field; mutation contracts map the selected Frappe field or an explicit administrator value to a mutation input. Every save begins as Draft.</p>"),
+                $("<div class='hero-mapping-controls'></div>").append($("<label></label>").text("Contract type").append(dynamicKind), $("<label></label>").text("Snapshot operation").append(dynamicOperation), $("<label></label>").text("HERO output or mutation input path").append(dynamicFieldPath), dynamicArguments),
+                $("<div class='hero-mapping-controls'></div>").append($("<label></label>").text("Transformation").append(dynamicTransformation), $("<label></label>").text("Explicit administrator value (optional)").append(dynamicAdminValue), $("<label></label>").text("Suggestion rationale").append(dynamicReason), $("<label></label>").text("Confidence 0–1").append(dynamicConfidence)), dynamicPreview,
+                $("<div class='mt-2'></div>").append(saveDynamicDraft, document.createTextNode(" "), activateDynamic), dynamicStatus, $("<h4>Saved dynamic contracts</h4>"), dynamicRows, dynamicAdvanced.append(dynamicJson),
             ),
         );
 
@@ -100,6 +104,25 @@
         const hasValidSnapshot = () => selectedSnapshot()?.analysis_status === "Validated";
         let dynamicOperations = [];
         const dynamicDirection = () => dynamicKind.val() === "MUTATION" ? "FRAPPE_TO_MUTATION" : "QUERY_TO_FRAPPE";
+        const visualDynamicMapping = () => {
+            if (!targetApp.val() || !targetDocType.val() || !selectedTarget?.path) return null;
+            const path = dynamicFieldPath.val().trim();
+            if (!path) return null;
+            const mapping = {
+                operation: dynamicOperation.val(), direction: dynamicDirection(),
+                bindings: [{
+                    hero_path: path,
+                    frappe: {app: targetApp.val(), doctype: targetDocType.val(), field: selectedTarget.path},
+                    transformation: dynamicTransformation.val(),
+                }],
+            };
+            if (dynamicAdminValue.val().trim()) mapping.bindings[0].administrator_value = dynamicAdminValue.val().trim();
+            return mapping;
+        };
+        const renderDynamicPreview = () => {
+            const mapping = visualDynamicMapping();
+            dynamicPreview.text(mapping ? JSON.stringify({writes: false, status: "Draft preview", mapping}, null, 2) : "Choose a Frappe App, DocType, field, snapshot operation, and HERO output/input path to preview a Draft.");
+        };
         const renderDynamicMappings = (rows) => {
             dynamicRows.empty();
             if (!rows.length) return dynamicRows.append($("<p class='text-muted'></p>").text("No dynamic mapping contracts are stored for this snapshot and type."));
@@ -117,7 +140,8 @@
             if (!selected) return;
             const args = (selected.arguments || []).map((argument) => `${argument.name}: ${argument.type}${argument.required ? " (required)" : ""}`).join(", ");
             dynamicArguments.text(`Return: ${selected.return_type || "unknown"}. Arguments: ${args || "none"}. Input objects, lists, enums, nullability, and scalars are validated server-side when the contract is used.`);
-            if (!dynamicJson.val().trim()) dynamicJson.val(JSON.stringify({operation: selected.operation_name, arguments: {}, bindings: []}, null, 2));
+            if (!dynamicFieldPath.val().trim() && dynamicKind.val() === "MUTATION" && selected.arguments?.length) dynamicFieldPath.val(selected.arguments[0].name);
+            renderDynamicPreview();
         };
         const loadDynamicOperations = () => {
             dynamicOperations = []; dynamicOperation.empty().append($("<option value=''></option>").text("Choose a snapshot operation")).prop("disabled", !hasValidSnapshot()); dynamicArguments.empty();
@@ -131,8 +155,9 @@
         };
         const saveDynamic = (activate) => {
             if (!hasValidSnapshot() || !dynamicOperation.val()) return frappe.msgprint(__("Choose a validated snapshot operation first."));
-            let mapping; try { mapping = JSON.parse(dynamicJson.val()); } catch (_) { return frappe.msgprint(__("Mapping contract JSON must be a JSON object.")); }
-            if (!mapping || Array.isArray(mapping) || typeof mapping !== "object") return frappe.msgprint(__("Mapping contract JSON must be a JSON object."));
+            let mapping = visualDynamicMapping();
+            if (dynamicJson.val().trim()) { try { mapping = JSON.parse(dynamicJson.val()); } catch (_) { return frappe.msgprint(__("Advanced mapping contract JSON must be a JSON object.")); } }
+            if (!mapping || Array.isArray(mapping) || typeof mapping !== "object") return frappe.msgprint(__("Choose visual mapping fields or provide an advanced mapping JSON object."));
             const submit = () => frappe.call({method: "hero_integration.api.graphql_mapping_save", args: {snapshot_name: snapshot.val(), operation_kind: dynamicKind.val(), operation_name: dynamicOperation.val(), direction: dynamicDirection(), mapping_json: JSON.stringify(mapping), activate, suggestion_reason: dynamicReason.val().trim(), confidence: Number(dynamicConfidence.val())}}).then((response) => {
                 dynamicStatus.text(`${response.message.status} mapping ${response.message.name}, revision ${response.message.revision}.`); loadDynamicMappings();
             });
@@ -205,7 +230,7 @@
             });
         };
         const selectSource = (field) => { selectedSource = field; showSuggestions({source_path: field.path}, "source"); showPreview(); };
-        const selectTarget = (field) => { selectedTarget = field; showSuggestions({target_field: field.path, target_doctype: field.target_doctype}, "target"); showPreview(); };
+        const selectTarget = (field) => { selectedTarget = field; showSuggestions({target_field: field.path, target_doctype: field.target_doctype}, "target"); showPreview(); renderDynamicPreview(); };
         const loadSources = (start = sourceStart) => {
             if (!hasValidSnapshot()) return;
             const snapshotName = snapshot.val(), request = ++sourceLoadSequence;
@@ -225,12 +250,21 @@
                 const result = response.message || {items: [], total: 0}; renderPicker(targetList, result, selectTarget, targetDetails, "Frappe field", () => targetDocType.val()); renderPager(targetPager, result, loadTargets);
             });
         };
-        const loadTargetCatalog = () => frappe.call({method: "hero_integration.api.mapping_target_catalog", args: {app_name: targetApp.val()}}).then((response) => {
-            const catalog = response.message || {apps: [], doctypes: []}, selectedApp = targetApp.val(), selectedDocType = targetDocType.val();
-            targetApp.empty().append($("<option value=''></option>").text("Choose an app")); (catalog.apps || []).forEach((app) => targetApp.append($("<option></option>").val(app).text(app))); targetApp.val(selectedApp);
-            targetDocType.empty().append($("<option value=''></option>").text("Choose a DocType")).prop("disabled", !selectedApp); targetSearch.prop("disabled", !selectedDocType);
-            (catalog.doctypes || []).forEach((item) => targetDocType.append($("<option></option>").val(item.doctype).text(`${item.app_name || "Custom"} / ${item.doctype}`).prop("disabled", !item.selectable).attr("title", item.reason))); targetDocType.val(selectedDocType);
-        });
+        const loadTargetCatalog = () => {
+            const request = ++targetCatalogSequence, selectedApp = targetApp.val(), selectedDocType = targetDocType.val();
+            targetCatalogStatus.text("Loading installed Frappe apps …"); retryTargetCatalog.prop("hidden", true); targetApp.prop("disabled", true);
+            return frappe.call({method: "hero_integration.api.mapping_target_catalog", args: {app_name: selectedApp}}).then((response) => {
+                if (request !== targetCatalogSequence) return;
+                const catalog = response.message || {apps: [], doctypes: []};
+                targetApp.empty().append($("<option value=''></option>").text("Choose an app")); (catalog.apps || []).forEach((app) => targetApp.append($("<option></option>").val(app).text(app))); targetApp.val(selectedApp).prop("disabled", false);
+                targetDocType.empty().append($("<option value=''></option>").text("Choose a DocType")).prop("disabled", !selectedApp); targetSearch.prop("disabled", !selectedDocType);
+                (catalog.doctypes || []).forEach((item) => targetDocType.append($("<option></option>").val(item.doctype).text(`${item.app_name || "Custom"} / ${item.doctype}`).prop("disabled", !item.selectable).attr("title", item.reason))); targetDocType.val(selectedDocType);
+                targetCatalogStatus.text(catalog.apps?.length ? `${catalog.apps.length} installed apps available.` : "No installed Frappe apps were returned.");
+            }).catch((error) => {
+                if (request !== targetCatalogSequence) return;
+                targetApp.prop("disabled", false); targetCatalogStatus.text(`Installed Frappe apps could not be loaded: ${error?.message || "request failed"}.`); retryTargetCatalog.prop("hidden", false);
+            });
+        };
         const renderChecklist = (checklist) => {
             exchangeResult.empty(); const selected = new Set(checklist.items.filter((item) => item.selectable).map((item) => item.id)), summary = $("<p class='text-muted'></p>"), update = () => summary.text(`${selected.size} selected. ${checklist.counts.Conflict || 0} conflicts and ${checklist.counts.Invalid || 0} invalid entries remain excluded.`);
             const controls = $("<div class='mb-2'></div>"), all = $("<button class='btn btn-sm btn-default mr-2'>Select all valid</button>"), none = $("<button class='btn btn-sm btn-default mr-2'>Clear selection</button>"); all.on("click", () => { checklist.items.filter((item) => item.selectable).forEach((item) => selected.add(item.id)); exchangeResult.find("input[data-item-id]").prop("checked", true); update(); }); none.on("click", () => { selected.clear(); exchangeResult.find("input[data-item-id]").prop("checked", false); update(); }); exchangeResult.append(controls.append(all, none, summary));
@@ -242,28 +276,34 @@
             sourceLoadSequence += 1; selectedSource = null; selectedTarget = null; importPayload = null; activeSourceFields = []; sourceStart = 0; pendingSourcePath = "";
             resetSuggestions(); preview.empty(); sourceSearch.prop("disabled", !hasValidSnapshot()); importFile.prop("disabled", !hasValidSnapshot()); sourceList.empty().append($("<p class='text-muted'></p>").text(hasValidSnapshot() ? "Loading HERO fields…" : "Choose a validated snapshot before loading HERO fields.")); sourcePager.empty();
             sourceDetails.empty().append($("<summary>HERO field details</summary>")); targetDetails.empty().append($("<summary>Frappe field details</summary>")); exchangeResult.empty(); importFile.val("");
-            dynamicJson.val(""); dynamicReason.val(""); loadDynamicOperations();
+            dynamicJson.val(""); dynamicFieldPath.val(""); dynamicAdminValue.val(""); dynamicReason.val(""); renderDynamicPreview(); loadDynamicOperations();
         };
-        const loadSnapshotList = () => frappe.call({method: "hero_integration.api.schema_snapshot_list"}).then((response) => {
+        const loadSnapshotList = () => {
+            retrySnapshots.prop("hidden", true);
+            return frappe.call({method: "hero_integration.api.schema_snapshot_list"}).then((response) => {
             const rows = response.message || [];
             snapshots.clear(); snapshot.empty().append($("<option value=''></option>").text("Choose a saved GraphQL Schema Snapshot"));
             rows.forEach((row) => { snapshots.set(row.name, row); snapshot.append($("<option></option>").val(row.name).text(`${row.name} · ${row.analysis_status || "Unavailable"}`)); });
             if (requestedSnapshotName && snapshots.has(requestedSnapshotName)) snapshot.val(requestedSnapshotName);
             snapshot.prop("disabled", !rows.length); showSnapshotMetadata(); invalidateSnapshotState(); if (hasValidSnapshot()) loadSources(0);
-        }).catch(() => { snapshot.prop("disabled", true); snapshotMetadata.text("Saved snapshots could not be loaded. HERO source fields and suggestions remain unavailable."); });
+            if (!rows.length) snapshotMetadata.text("No saved schema snapshot yet. Create an explicit, validated snapshot before selecting HERO operations; Frappe targets remain available.");
+            }).catch((error) => { snapshot.prop("disabled", true); snapshotMetadata.text(`Saved snapshots could not be loaded: ${error?.message || "request failed"}. HERO source fields remain unavailable.`); retrySnapshots.prop("hidden", false); });
+        };
         targetApp.on("change", () => { selectedTarget = null; targetStart = 0; targetDocType.val(""); targetSearch.val("").prop("disabled", true); resetSuggestions(); clearTargets("Choose a DocType before fields are loaded."); loadTargetCatalog(); });
         targetDocType.on("change", () => { selectedTarget = null; targetStart = 0; resetSuggestions(); targetSearch.val("").prop("disabled", !targetDocType.val()); loadTargets(0); });
         operation.on("change", () => { selectedSource = null; selectedTarget = null; sourceStart = 0; targetStart = 0; resetSuggestions(); preview.empty(); loadSources(0); loadTargets(0); });
-        dynamicKind.on("change", () => { dynamicJson.val(""); loadDynamicOperations(); });
+        dynamicKind.on("change", () => { dynamicJson.val(""); dynamicFieldPath.val(""); loadDynamicOperations(); renderDynamicPreview(); });
         dynamicOperation.on("change", showDynamicOperation);
+        dynamicFieldPath.on("input", renderDynamicPreview); dynamicTransformation.on("change", renderDynamicPreview); dynamicAdminValue.on("input", renderDynamicPreview);
         saveDynamicDraft.on("click", () => saveDynamic(false)); activateDynamic.on("click", () => saveDynamic(true));
         snapshot.on("change", () => { showSnapshotMetadata(); invalidateSnapshotState(); if (hasValidSnapshot()) loadSources(0); });
+        retryTargetCatalog.on("click", loadTargetCatalog); retrySnapshots.on("click", loadSnapshotList);
         provisionCustomField.on("click", () => advanced.prop("open", true).find("summary").trigger("focus"));
         importFile.on("change", (event) => { const file = event.target.files[0]; if (!file || !hasValidSnapshot()) return; const reader = new FileReader(); reader.onload = () => { importPayload = reader.result; frappe.call({method: "hero_integration.api.preview_mapping_package", args: {snapshot_name: snapshot.val(), payload_json: importPayload}}).then((response) => renderChecklist(response.message)); }; reader.readAsText(file); });
         page.set_primary_action(__("Open Graph Viewer"), () => { if (!hasValidSnapshot()) return frappe.msgprint(__("Choose a validated GraphQL Schema Snapshot first.")); window.hero_integration_ui.setRoute("graph", {snapshot_name: snapshot.val(), operation: operation.val()}); });
         page.add_menu_item(__("Export Mapping JSON"), () => { if (!hasValidSnapshot()) return frappe.msgprint(__("Choose a validated GraphQL Schema Snapshot first.")); frappe.call({method: "hero_integration.api.export_mapping_json", args: {snapshot_name: snapshot.val()}}).then((response) => { const exported = response.message, url = URL.createObjectURL(new Blob([exported.content], {type: "application/json"})), link = document.createElement("a"); link.href = url; link.download = exported.filename; link.click(); URL.revokeObjectURL(url); }); });
         page.add_menu_item(__("GraphQL Services"), () => window.hero_integration_ui.setRoute("services")); page.add_menu_item(__("Review Draft Mappings"), () => frappe.set_route("List", "HERO Frappe Mapping"));
-        clearTargets("Choose an app and DocType before fields are loaded."); renderReverseSuggestions(); showSnapshotMetadata(); loadSnapshotList(); loadTargetCatalog();
+        clearTargets("Choose an app and DocType before fields are loaded."); renderReverseSuggestions(); showSnapshotMetadata(); renderDynamicPreview(); loadSnapshotList(); loadTargetCatalog();
     }
 
     window.hero_integration_mapping_editor = Object.freeze({mount});

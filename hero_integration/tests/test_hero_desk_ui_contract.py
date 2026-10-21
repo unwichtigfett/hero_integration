@@ -182,6 +182,22 @@ class TestHeroDeskUiContract(unittest.TestCase):
             with self.subTest(contract=contract):
                 self.assertIn(contract, migration)
 
+    def test_native_page_rpc_and_visual_mapping_failures_are_not_routed_to_legacy_or_rendered_as_objects(self):
+        workspace = WORKSPACE_JS.read_text()
+        mapping = MAPPING_EDITOR_JS.read_text()
+        for contract in (
+            "nativeMethods", '"workspace_context"', '"integration_overview"', "errorMessage(error)",
+            "HERO workspace request failed",
+        ):
+            with self.subTest(contract=contract):
+                self.assertIn(contract, workspace)
+        for contract in (
+            "Retry app catalog", "Retry saved snapshots", "targetCatalogSequence", "visualDynamicMapping",
+            "HERO output or mutation input path", "Advanced: mapping contract JSON", "renderDynamicPreview",
+        ):
+            with self.subTest(contract=contract):
+                self.assertIn(contract, mapping)
+
     def test_styles_are_packaged_with_the_app(self):
         self.assertTrue(WORKSPACE_CSS.is_file())
         for asset in ("hero_tools.css", "hero_adapter.css", "hero_overview.css", "hero_settings.css"):
