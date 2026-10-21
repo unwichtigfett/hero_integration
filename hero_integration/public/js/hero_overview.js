@@ -40,6 +40,28 @@
         return link;
     }
 
+    function localConfigurationAccess(context) {
+        if (typeof context?.can_write !== "boolean") return ["Unavailable", "warning"];
+        return context.can_write ? ["Allowed", "ok"] : ["Read only", "off"];
+    }
+
+    function mutationExecutionStatus(savedSettings) {
+        switch (savedSettings?.mutation_execution_status) {
+            case "DISABLED": return ["Disabled", "off"];
+            case "ENABLED": return ["Enabled", "ok"];
+            default: return ["Unavailable", "warning"];
+        }
+    }
+
+    function automaticSynchronizationStatus(savedSettings) {
+        switch (savedSettings?.polling?.mode) {
+            case "OFF": return ["Disabled", "off"];
+            case "MONITOR": return ["Monitor only", "warning"];
+            case "AUTO_SYNC": return ["Enabled", "ok"];
+            default: return ["Unavailable", "warning"];
+        }
+    }
+
     async function mount(workspace) {
         const root = el("section", "hero-overview");
         const header = el("div", "hero-overview-header");
@@ -87,6 +109,9 @@
         function render() {
             const c = context || {};
             const s = settings || {};
+            const [localAccess, localAccessState] = localConfigurationAccess(context);
+            const [mutationExecution, mutationExecutionState] = mutationExecutionStatus(settings);
+            const [automaticSynchronization, automaticSynchronizationState] = automaticSynchronizationStatus(settings);
             grid.replaceChildren(
                 metric("Connector", s.enabled ? "Enabled" : "Disabled", s.enabled ? "ok" : "off"),
                 metric("API Endpoint", s.api_url || "Not configured"),
@@ -96,7 +121,9 @@
                 metric("Binding Generation", String(c.binding_generation || 0)),
                 metric("Binding", c.needs_binding_update ? "Update required" : (c.connection_id ? "Current" : "Not bound"), c.needs_binding_update ? "warning" : "ok"),
                 metric("Schema", c.schema_fingerprint || "Not available"),
-                metric("Write Access", c.can_write ? "Allowed" : "Read only", c.can_write ? "ok" : "off")
+                metric("Local Configuration Access", localAccess, localAccessState),
+                metric("HERO Mutation Execution", mutationExecution, mutationExecutionState),
+                metric("Automatic Synchronization", automaticSynchronization, automaticSynchronizationState)
             );
             sync.disabled = !c.can_write || !c.needs_binding_update || !c.binding_refresh_available;
             schema.disabled = !c.can_write || !c.enabled || c.needs_binding_update || !c.connection_id || !c.schema_refresh_available;

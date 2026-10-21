@@ -46,8 +46,6 @@
 .hero-settings-polling-summary {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 12px;
     padding: 22px;
     cursor: pointer;
     color: var(--admin-text, var(--pc-text));
@@ -60,12 +58,6 @@
 
 .hero-settings-polling-title {
     font-weight: 600;
-}
-
-.hero-settings-polling-status {
-    color: var(--admin-muted, var(--pc-muted));
-    font-size: 13px;
-    text-align: right;
 }
 
 .hero-settings-polling-content {
@@ -121,11 +113,28 @@
     width: 100%;
     box-sizing: border-box;
     padding: 9px 11px;
-    border: 1px solid var(--admin-border, var(--pc-border));
+    border: 2px solid var(--hero-field-border, var(--admin-border, var(--pc-border)));
     border-radius: 7px;
-    background: var(--admin-input, var(--pc-surface));
+    background: var(--hero-field-bg, var(--admin-input, var(--pc-surface)));
     color: var(--admin-text, var(--pc-text));
     font: inherit;
+}
+
+.hero-settings-input:focus-visible {
+    border-color: var(--pc-focus, var(--primary, #2490ef));
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--pc-focus, var(--primary, #2490ef)) 35%, transparent);
+    outline: 0;
+}
+
+.hero-settings-input:is([readonly], [aria-readonly="true"]) {
+    background: var(--hero-field-readonly-bg, var(--admin-surface, var(--pc-surface)));
+    border-style: dashed;
+}
+
+.hero-settings-input:is(.is-invalid, [aria-invalid="true"]),
+.has-error .hero-settings-input {
+    border-color: var(--hero-field-error, #b42318);
+    box-shadow: 0 0 0 1px var(--hero-field-error, #b42318);
 }
 
 .hero-settings-check {
@@ -174,7 +183,13 @@
 .hero-settings-button:disabled,
 .hero-settings-input:disabled {
     cursor: default;
-    opacity: .6;
+    opacity: 1;
+}
+
+.hero-settings-input:disabled {
+    background: var(--hero-field-disabled-bg, var(--admin-surface, var(--pc-surface)));
+    color: var(--admin-muted, var(--pc-muted));
+    border-color: color-mix(in srgb, var(--hero-field-border, var(--admin-border, var(--pc-border))) 58%, var(--admin-surface, var(--pc-surface)));
 }
 
 @media (max-width: 680px) {
@@ -183,12 +198,5 @@
     }
     .hero-settings-button {
         width: 100%;
-    }
-    .hero-settings-polling-summary {
-        align-items: flex-start;
-        flex-direction: column;
-    }
-    .hero-settings-polling-status {
-        text-align: left;
     }
 }

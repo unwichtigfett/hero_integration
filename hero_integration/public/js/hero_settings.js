@@ -144,9 +144,7 @@
         pollingDetails.className = "hero-settings-polling-details";
         const pollingSummary = node("summary", "hero-settings-polling-summary");
         const pollingSummaryTitle = node("span", "hero-settings-polling-title", "Polling Settings");
-        const pollingSummaryStatus = node("span", "hero-settings-polling-status", "Loading polling settings …");
-        pollingSummaryStatus.setAttribute("aria-live", "polite");
-        pollingSummary.append(pollingSummaryTitle, pollingSummaryStatus);
+        pollingSummary.append(pollingSummaryTitle);
         const pollingContent = node("div", "hero-settings-polling-content");
         pollingContent.append(
             pollingGroup("Cadence and scope",
@@ -230,8 +228,6 @@
             pollingRate.value = String(data.polling?.rate_limit || 30);
             pollingConcurrency.value = String(data.polling?.concurrency || 1);
             pollingNotifications.checked = Boolean(data.polling?.notifications);
-            const sources = data.polling?.data_sources || [];
-            pollingSummaryStatus.textContent = `Mode: ${pollingMode.value} · Every ${pollingInterval.value} min · ${sources.length ? `${sources.length} source${sources.length === 1 ? "" : "s"} configured` : "No sources configured"}`;
             token.value = "";
             const configured = data.api_token_status === "CONFIGURED";
             tokenState.textContent = uiText(configured ? "Configured" : data.api_token_status === "CREDENTIAL_ERROR" ? "Credential error" : "Not configured");
