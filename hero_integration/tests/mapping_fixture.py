@@ -19,6 +19,10 @@ def fixture_payload(schema_fingerprint: str = "synthetic-schema-v1") -> dict[str
     payload["schema"] = {"custom_doctypes": [], "custom_fields": [], "relations": []}
     for mapping in payload["mappings"]:
         mapping.setdefault("schema_dependencies", [])
+        # The archived V1 package used coarse 10/20/100 bands. Test data is
+        # deliberately normalised to the RC16 0..10 contract; the production
+        # patch only converts the unambiguous former default 100.
+        mapping["priority"] = {10: 0, 20: 1, 100: 5}[mapping["priority"]]
     payload["schema_fingerprint"] = schema_fingerprint
     return payload
 

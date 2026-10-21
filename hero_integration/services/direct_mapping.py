@@ -81,7 +81,7 @@ class MappingSpec:
     purpose: str = PURPOSE_FIELD
     transformation: str = TRANSFORM_IDENTITY
     relation: str = ""
-    priority: int = 100
+    priority: int = 5
     definition_id: str = ""
 
 
@@ -93,6 +93,8 @@ def validate_spec(spec: MappingSpec, metadata) -> None:
         raise DirectMappingError("Source type does not match the approved HERO contract.")
     if spec.purpose not in PURPOSES or spec.transformation not in TRANSFORMATIONS:
         raise DirectMappingError("Mapping purpose or transformation is not supported.")
+    if isinstance(spec.priority, bool) or not isinstance(spec.priority, int) or not 0 <= spec.priority <= 10:
+        raise DirectMappingError("Mapping priority must be an integer from 0 through 10.")
     ensure_write = getattr(metadata, "ensure_write", None)
     if ensure_write:
         ensure_write(spec.target_doctype)

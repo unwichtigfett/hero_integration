@@ -36,7 +36,7 @@ def package():
             ],
         },
         "mappings": [
-            {"definition_id": "customer-schema-value", "operation": "HeroCustomers", "source_path": "category", "source_type": "string|null", "target_doctype": "Customer", "target_field": "custom_hero_schema_value", "purpose": "Field", "transformation": "Trim", "relation": "", "priority": 100, "schema_dependencies": ["field:customer-schema-value"], "mapping_revision": 1},
+            {"definition_id": "customer-schema-value", "operation": "HeroCustomers", "source_path": "category", "source_type": "string|null", "target_doctype": "Customer", "target_field": "custom_hero_schema_value", "purpose": "Field", "transformation": "Trim", "relation": "", "priority": 5, "schema_dependencies": ["field:customer-schema-value"], "mapping_revision": 1},
         ],
     }
 

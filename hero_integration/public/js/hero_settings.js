@@ -77,6 +77,12 @@
         const companyConfirmed = document.createElement("input");
         companyConfirmed.type = "checkbox";
         companyConfirmed.className = "hero-settings-check";
+        const allowDeletion = document.createElement("input");
+        allowDeletion.type = "checkbox";
+        allowDeletion.className = "hero-settings-check";
+        const adminRecipients = document.createElement("textarea");
+        adminRecipients.className = "hero-settings-input";
+        adminRecipients.rows = 2;
         const pollingMode = document.createElement("select");
         pollingMode.className = "hero-settings-input";
         ["OFF", "MONITOR", "AUTO_SYNC"].forEach(value => {
@@ -149,7 +155,7 @@
         const pollingContent = node("div", "hero-settings-polling-content");
         pollingContent.append(
             pollingGroup("Cadence and scope",
-                field("Polling mode", pollingMode, "OFF never contacts HERO automatically. MONITOR records internal run metadata only; AUTO_SYNC requires active idempotent mappings."),
+                field("Polling mode", pollingMode, "OFF never contacts HERO automatically. MONITOR records internal run metadata only; AUTO_SYNC requires active approved HERO-to-Frappe mappings."),
                 field("Polling interval (minutes)", pollingInterval, "1–1440 minutes; the Frappe scheduler evaluates cadence server-side."),
                 field("Timezone", pollingTimezone), field("Execution window", pollingWindow, "Optional local time window in HH:MM-HH:MM.")),
             pollingGroup("Data sources",
@@ -187,7 +193,13 @@
             field("ERPNext Company", company, "Existing ERPNext Company used for HERO projects."),
             field("Confirm ERPNext Company", companyConfirmed, "A company change clears this confirmation server-side.")
         );
-        card.append(connection, sources, companySection, status, save);
+        const securitySection = node("fieldset", "hero-settings-section");
+        securitySection.append(
+            node("legend", "", "Safety and conflict notifications"),
+            field("Allow deletion", allowDeletion, "OFF blocks every HERO Integration deletion route on the server. Turning it on is only a necessary prerequisite."),
+            field("Administrator notification recipients", adminRecipients, "One enabled System Manager user ID per line. Empty notifies enabled System Managers."),
+        );
+        card.append(connection, sources, companySection, securitySection, status, save);
 
         root.append(header, card, pollingCard, mutationCard);
         workspace.replaceChildren(root);
@@ -205,6 +217,8 @@
             sourceInstance.disabled = value;
             company.disabled = value;
             companyConfirmed.disabled = value;
+            allowDeletion.disabled = value;
+            adminRecipients.disabled = value;
             pollingMode.disabled = value;
             pollingInterval.disabled = value;
             [pollingTimezone, pollingWindow, pollingSources, pollingFilters, pollingBootstrap, pollingPageSize, pollingPagination, pollingBackfill, pollingInventory, pollingReconciliation, pollingRetryLimit, pollingBackoff, pollingTimeout, pollingRate, pollingConcurrency, pollingNotifications].forEach((control) => { control.disabled = value; });
@@ -220,6 +234,8 @@
             sourceInstance.value = data.hero_source_instance || "default";
             company.value = data.erpnext_company || "";
             companyConfirmed.checked = Boolean(data.erpnext_company_confirmed);
+            allowDeletion.checked = Boolean(data.allow_deletion);
+            adminRecipients.value = data.admin_notification_recipients || "";
             pollingMode.value = data.polling?.mode || "OFF";
             pollingInterval.value = String(data.polling?.interval_minutes || 60);
             pollingTimezone.value = data.polling?.timezone || "UTC";
@@ -283,6 +299,7 @@
                     hero_source_instance: sourceInstance.value.trim(),
                     erpnext_company: company.value.trim(),
                     erpnext_company_confirmed: companyConfirmed.checked,
+                    allow_deletion: allowDeletion.checked, admin_notification_recipients: adminRecipients.value.trim(),
                     polling_mode: pollingMode.value,
                     polling_interval_minutes: Number(pollingInterval.value),
                     polling_timezone: pollingTimezone.value.trim(), polling_execution_window: pollingWindow.value.trim(),
