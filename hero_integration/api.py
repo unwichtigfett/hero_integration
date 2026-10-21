@@ -516,13 +516,13 @@ def _save_polling_configuration(settings, **values: object) -> None:
         if not isinstance(parsed, dict):
             frappe.throw("Polling filters must be a JSON object.")
         settings.polling_filters_json = json.dumps(parsed, ensure_ascii=False, sort_keys=True)
-    if values["pagination_strategy"] is not None and settings.polling_pagination_strategy not in {"OFFSET", "CURSOR"}:
-        frappe.throw("Polling pagination strategy must be OFFSET or CURSOR.")
+    if values["pagination_strategy"] is not None and settings.polling_pagination_strategy != "OFFSET":
+        frappe.throw("Polling pagination strategy must be OFFSET for the approved HERO V1 reader.")
     numeric = {
         "page_size": ("polling_page_size", "Polling page size", 1, 1000),
         "retry_limit": ("polling_retry_limit", "Polling retry limit", 0, 3),
         "retry_backoff_seconds": ("polling_retry_backoff_seconds", "Polling retry backoff", 0, 3600),
-        "timeout_seconds": ("polling_timeout_seconds", "Polling timeout", 1, 600),
+        "timeout_seconds": ("polling_timeout_seconds", "Polling timeout", 1, 120),
         "rate_limit": ("polling_rate_limit", "Polling rate limit", 1, 10000),
         "concurrency": ("polling_concurrency", "Polling concurrency", 1, 1),
     }

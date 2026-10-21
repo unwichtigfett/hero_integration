@@ -10,7 +10,7 @@ try:
     import frappe  # noqa: F401
 except ModuleNotFoundError:
     frappe = types.ModuleType("frappe")
-    frappe.whitelist = lambda: lambda function: function
+    frappe.whitelist = lambda **kwargs: lambda function: function
     sys.modules["frappe"] = frappe
 
 from hero_integration import api
@@ -161,6 +161,15 @@ class TestWorkspaceSettingsContract(unittest.TestCase):
         self.assertEqual(settings.polling_concurrency, 1)
         self.assertTrue(result["polling"]["reconciliation"])
         self.assertTrue(result["polling"]["notifications"])
+
+    def test_polling_rejects_controls_the_approved_reader_cannot_execute(self):
+        settings = _Settings()
+        frappe_mock = _FrappeSettingsMock(settings)
+        with patch.object(api, "frappe", frappe_mock):
+            with self.assertRaisesRegex(ValueError, "OFFSET"):
+                api.workspace_settings_save(True, settings.hero_api_url, polling_pagination_strategy="CURSOR")
+            with self.assertRaisesRegex(ValueError, "between 1 and 120"):
+                api.workspace_settings_save(True, settings.hero_api_url, polling_timeout_seconds=121)
 
     def test_non_admin_cannot_change_the_mutation_setting(self):
         settings = _Settings()
