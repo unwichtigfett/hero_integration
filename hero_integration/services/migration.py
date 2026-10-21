@@ -133,22 +133,28 @@ def _release_run(run_name: str) -> None:
 def _locked_active_run() -> str:
     """Return the slot value while holding its transaction-local row lock."""
     doctype, field = "HERO Integration Sync State", "active_run"
-    frappe.db.sql(
-        "INSERT IGNORE INTO `tabSingles` (`doctype`, `field`, `value`) VALUES (%s, %s, '')",
-        (doctype, field),
-    )
     rows = frappe.db.sql(
         "SELECT `value` FROM `tabSingles` WHERE `doctype` = %s AND `field` = %s FOR UPDATE",
         (doctype, field),
         as_dict=True,
     )
+    if not rows:
+        # The connection-scoped lock in ``_claim_run`` serializes this
+        # first-use insert.  Avoid INSERT IGNORE here: MariaDB can otherwise
+        # report a stale-record error to the losing transaction even after the
+        # winner committed its reservation.
+        frappe.db.sql(
+            "INSERT INTO `tabSingles` (`doctype`, `field`, `value`) VALUES (%s, %s, '')",
+            (doctype, field),
+        )
+        return ""
     return str(rows[0].value or "") if rows else ""
 
 
 def _acquire_active_run_lock() -> bool:
     """Serialize first-use upserts before taking the durable row lock.
 
-    MariaDB can deadlock two concurrent ``INSERT IGNORE`` calls for a missing
+    MariaDB can deadlock concurrent first-use creation of a missing
     ``tabSingles`` row.  The named lock is connection-scoped and only guards
     row creation/claim setup; the row lock remains the durable transaction
     boundary for the executing run.
