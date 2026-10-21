@@ -1,4 +1,5 @@
 .admin-hero-tool-host,
+.admin-compat-modal,
 .ht-focus-dialog,
 .hero-integration-ui {
     --pc-canvas: var(--bg-color, #f4f5f6);
@@ -7,44 +8,38 @@
     --pc-surfaceHover: #e6e8ea;
     --pc-border: var(--border-color, #c7cdd3);
     --pc-controlBorder: var(--border-color, #65717d);
-    --pc-text: var(--text-color, #26313b);
-    --pc-textSecondary: var(--text-muted, #4d5964);
-    --pc-dangerText: #b42318;
+    /* HERO text is intentionally monochrome; borders and surfaces carry state. */
+    --hero-text: #000000;
+    --pc-text: var(--hero-text);
+    --pc-textSecondary: var(--hero-text);
+    --pc-dangerText: var(--hero-text);
     --pc-primary: var(--primary, #2490ef);
     --pc-primaryHover: #1679c7;
-    --pc-onPrimary: #ffffff;
     --pc-focus: #2490ef;
-    --pc-diagramText: var(--text-color, #26313b);
+    --pc-diagramText: var(--hero-text);
     --pc-diagramBorder: #697680;
     /* Keep editable HERO controls distinct from their card in every theme. */
     --hero-field-bg: #f4f5f6;
     --hero-field-border: #65717d;
     --hero-field-readonly-bg: #e7e9eb;
     --hero-field-disabled-bg: #dfe3e6;
-    --hero-field-placeholder: #4d5964;
+    --hero-field-placeholder: var(--hero-text);
     --hero-field-error: #b42318;
+    color: var(--pc-text);
 }
 
-@media (prefers-color-scheme: dark) {
-    .admin-hero-tool-host,
-    .ht-focus-dialog,
-    .hero-integration-ui {
-        --hero-field-bg: #30363d;
-        --hero-field-border: #aab3bb;
-        --hero-field-readonly-bg: #272d33;
-        --hero-field-disabled-bg: #20252a;
-        --hero-field-placeholder: #d0d5da;
-    }
-}
-
-:is(html[data-theme="dark"], body[data-theme="dark"], .theme-dark) .admin-hero-tool-host,
-:is(html[data-theme="dark"], body[data-theme="dark"], .theme-dark) .ht-focus-dialog,
-:is(html[data-theme="dark"], body[data-theme="dark"], .theme-dark) .hero-integration-ui {
+:is(html[data-theme="dark"], body[data-theme="dark"], .theme-dark) :is(.admin-hero-tool-host, .admin-compat-modal, .ht-focus-dialog, .hero-integration-ui) {
+    --hero-text: #ffffff;
     --hero-field-bg: #30363d;
     --hero-field-border: #aab3bb;
     --hero-field-readonly-bg: #272d33;
     --hero-field-disabled-bg: #20252a;
-    --hero-field-placeholder: #d0d5da;
+    --hero-field-placeholder: var(--hero-text);
+}
+
+/* Frappe applies data-theme during automatic-mode changes; no OS-only override. */
+:is(html[data-theme="light"], body[data-theme="light"], .theme-light) :is(.admin-hero-tool-host, .admin-compat-modal, .ht-focus-dialog, .hero-integration-ui) {
+    --hero-text: #000000;
 }
 
 .admin-workspace.admin-workspace--tool {
@@ -61,9 +56,9 @@
 }
 
 .hero-unified-navigation [data-active] {
-    background: var(--primary, #2490ef);
-    border-color: var(--primary, #2490ef);
-    color: #fff;
+    background: var(--pc-surfaceHover);
+    border-color: var(--pc-focus);
+    color: var(--pc-text);
 }
 
 .admin-hero-tool-host {
@@ -96,7 +91,8 @@
 }
 
 .admin-hero-tool-host .btn,
-.admin-compat-modal .btn {
+.admin-compat-modal .btn,
+.hero-integration-ui .btn {
     appearance: none;
     min-height: 34px;
     border: 1px solid var(--pc-controlBorder);
@@ -108,17 +104,21 @@
 }
 
 .admin-hero-tool-host .btn:hover:not(:disabled),
-.admin-compat-modal .btn:hover:not(:disabled) {
+.admin-compat-modal .btn:hover:not(:disabled),
+.hero-integration-ui .btn:hover:not(:disabled) {
     background: var(--pc-surfaceHover);
 }
 
 .admin-hero-tool-host .btn:disabled,
-.admin-compat-modal .btn:disabled {
+.admin-compat-modal .btn:disabled,
+.hero-integration-ui .btn:disabled {
     opacity: 0.55;
     cursor: default;
 }
 
 .admin-hero-tool-host .form-control,
+.admin-compat-modal .form-control,
+.ht-focus-dialog .form-control,
 .hero-integration-ui .form-control {
     width: 100%;
     min-height: 34px;
@@ -131,7 +131,8 @@
 }
 
 .admin-hero-tool-host :is(.form-control, .hero-settings-input, .ht-editor),
-.ht-focus-dialog :is(.form-control, .hero-settings-input, .ht-editor),
+.admin-compat-modal :is(input:not([type="button"]):not([type="checkbox"]):not([type="file"]):not([type="hidden"]):not([type="image"]):not([type="radio"]):not([type="reset"]):not([type="submit"]), select, textarea, .form-control, .hero-settings-input, .ht-editor),
+.ht-focus-dialog :is(input:not([type="button"]):not([type="checkbox"]):not([type="file"]):not([type="hidden"]):not([type="image"]):not([type="radio"]):not([type="reset"]):not([type="submit"]), select, textarea, .form-control, .hero-settings-input, .ht-editor),
 .hero-integration-ui :is(input:not([type="button"]):not([type="checkbox"]):not([type="file"]):not([type="hidden"]):not([type="image"]):not([type="radio"]):not([type="reset"]):not([type="submit"]), select, textarea, .form-control, .hero-settings-input, .ht-editor) {
     background-color: var(--hero-field-bg) !important;
     border: 2px solid var(--hero-field-border) !important;
@@ -140,6 +141,7 @@
 }
 
 .admin-hero-tool-host :is(input, textarea, .form-control, .hero-settings-input)::placeholder,
+.admin-compat-modal :is(input, textarea, .form-control, .hero-settings-input)::placeholder,
 .ht-focus-dialog :is(input, textarea, .form-control, .hero-settings-input)::placeholder,
 .hero-integration-ui :is(input, textarea, .form-control, .hero-settings-input)::placeholder {
     color: var(--hero-field-placeholder) !important;
@@ -147,6 +149,7 @@
 }
 
 .admin-hero-tool-host :is(.form-control, .hero-settings-input, .ht-editor):focus-visible,
+.admin-compat-modal :is(.form-control, .hero-settings-input, .ht-editor):focus-visible,
 .ht-focus-dialog :is(.form-control, .hero-settings-input, .ht-editor):focus-visible,
 .hero-integration-ui :is(input, select, textarea, .form-control, .hero-settings-input, .ht-editor):focus-visible {
     border-color: var(--pc-focus) !important;
@@ -155,6 +158,7 @@
 }
 
 .admin-hero-tool-host :is(.form-control, .hero-settings-input, .ht-editor):is([readonly], [aria-readonly="true"]),
+.admin-compat-modal :is(.form-control, .hero-settings-input, .ht-editor):is([readonly], [aria-readonly="true"]),
 .ht-focus-dialog :is(.form-control, .hero-settings-input, .ht-editor):is([readonly], [aria-readonly="true"]),
 .hero-integration-ui :is(input, select, textarea, .form-control, .hero-settings-input, .ht-editor):is([readonly], [aria-readonly="true"]) {
     background-color: var(--hero-field-readonly-bg) !important;
@@ -162,6 +166,7 @@
 }
 
 .admin-hero-tool-host :is(.form-control, .hero-settings-input, .ht-editor):disabled,
+.admin-compat-modal :is(.form-control, .hero-settings-input, .ht-editor):disabled,
 .ht-focus-dialog :is(.form-control, .hero-settings-input, .ht-editor):disabled,
 .hero-integration-ui :is(input, select, textarea, .form-control, .hero-settings-input, .ht-editor):disabled {
     background-color: var(--hero-field-disabled-bg) !important;
@@ -172,6 +177,8 @@
 
 .admin-hero-tool-host :is(.form-control, .hero-settings-input, .ht-editor):is(.is-invalid, [aria-invalid="true"]),
 .admin-hero-tool-host .has-error :is(.form-control, .hero-settings-input, .ht-editor),
+.admin-compat-modal :is(.form-control, .hero-settings-input, .ht-editor):is(.is-invalid, [aria-invalid="true"]),
+.admin-compat-modal .has-error :is(.form-control, .hero-settings-input, .ht-editor),
 .ht-focus-dialog :is(.form-control, .hero-settings-input, .ht-editor):is(.is-invalid, [aria-invalid="true"]),
 .hero-integration-ui :is(input, select, textarea, .form-control, .hero-settings-input, .ht-editor):is(.is-invalid, [aria-invalid="true"]),
 .hero-integration-ui .has-error :is(input, select, textarea, .form-control, .hero-settings-input, .ht-editor) {
@@ -180,7 +187,16 @@
 }
 
 .admin-hero-tool-host .text-danger {
-    color: var(--pc-dangerText);
+    color: var(--pc-dangerText) !important;
+}
+
+:is(.admin-hero-tool-host, .admin-compat-modal, .ht-focus-dialog, .hero-integration-ui) a {
+    color: var(--pc-text);
+}
+
+:is(.admin-hero-tool-host, .admin-compat-modal, .ht-focus-dialog, .hero-integration-ui) option {
+    background-color: var(--hero-field-bg);
+    color: var(--pc-text);
 }
 
 html.admin-modal-open {

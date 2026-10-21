@@ -15,6 +15,7 @@
 .ht-query-editor {flex:1;min-width:280px;overflow:auto;}
 .ht-editor {height:360px;resize:vertical;overflow:auto;border:2px solid var(--hero-field-border)!important;border-radius:6px;margin:8px 0;background-color:var(--hero-field-bg)!important;color:var(--pc-text);box-shadow:inset 0 0 0 1px var(--hero-field-border);}
 .ht-editor .ace_scroller,.ht-editor .ace_gutter,.ht-editor .ace_content {background-color:var(--hero-field-bg)!important;color:var(--pc-text)!important;}
+.ht-editor .ace_text-layer span,.ht-editor .ace_gutter-cell,.ht-editor .ace_placeholder {color:var(--pc-text)!important;}
 .ht-editor.ace_focus {border-color:var(--pc-focus)!important;box-shadow:inset 0 0 0 1px var(--pc-focus),0 0 0 3px color-mix(in srgb,var(--pc-focus) 55%,transparent)!important;}
 .ht-variables {min-height:110px;font-family:monospace;resize:vertical;}
 .ht-data {white-space:pre-wrap;overflow-wrap:anywhere;background:var(--pc-surfaceRaised);color:var(--pc-text);padding:12px;max-height:560px;overflow:auto;}
@@ -63,8 +64,8 @@
 @media(max-width:900px){.ht-split{flex-direction:column;}.ht-list,.ht-inspector,.ht-graph-side,.ht-split > .ht-inspector{width:100%;max-width:100%;resize:none;min-width:0;}.ht-graph{width:100%;min-width:0;flex:none;}.ht-toolbar{align-items:stretch;}.ht-query-editor{min-width:0;}}
 /* Shared Analyzer/Graph suggestion action; no mapping activation implied. */
 .ht-mark-action {margin:12px 0;padding:10px;border:1px solid var(--pc-border);border-radius:6px;background:var(--pc-surfaceRaised);}
-.ht-mark-action .ht-mark-primary {background:var(--pc-primary);border-color:var(--pc-primary);color:var(--pc-onPrimary);font-weight:650;padding:9px 12px;white-space:normal;}
-.ht-mark-action .ht-mark-primary:hover:not(:disabled) {background:var(--pc-primaryHover);}
+.ht-mark-action .ht-mark-primary {background:var(--pc-surface);border-color:var(--pc-focus);color:var(--pc-text);font-weight:650;padding:9px 12px;white-space:normal;}
+.ht-mark-action .ht-mark-primary:hover:not(:disabled) {background:var(--pc-surfaceHover);}
 .ht-mark-action .ht-mark-primary:focus-visible {outline:3px solid var(--pc-focus);outline-offset:3px;}
 .ht-mark-action .ht-mark-primary:disabled {opacity:.65;cursor:not-allowed;}
 .ht-mark-status {font-size:12px;overflow-wrap:anywhere;margin:8px 0 0;}
