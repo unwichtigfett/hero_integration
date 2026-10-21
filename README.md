@@ -41,6 +41,7 @@ as part of Cheap or Full migration.
 - [Portability report](PORTABILITY_REPORT.md)
 - [DocType extensions](DOCTYPE_EXTENSIONS.md)
 - [Mapping matrix](MAPPING_MATRIX.md)
+- [RC16 technical evidence](RC16_CONTEXT_AND_SAFETY_AUDIT.md)
 
 ## Adapter tools
 
@@ -83,3 +84,13 @@ other application data. The durable, paginated `integration_events.list_outputs`
 projection exposes only technical result metadata, source identity, target
 reference, correlation/origin, action and changed field names; it never exposes
 credentials or source payload values.
+
+## RC16 operational boundary
+
+The reviewed RC16 candidate keeps polling, GraphQL mutation execution and
+deletion disabled by default. Its fixed V1 source contract supports only the
+validated `HeroCustomers` and `HeroProjectMatches` OFFSET readers; the active
+mapping/resolver configuration determines which approved target fields execute.
+MONITOR records mapped field observations and bilateral conflicts, but never
+prepares a reverse HERO write. Browser acceptance and any live HERO step remain
+separate, explicitly authorized checks.
