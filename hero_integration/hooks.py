@@ -33,7 +33,7 @@ _HERO_OWNED_DOCTYPES = (
     "HERO Polling Event",
 )
 doc_events = {
-    doctype: {"before_delete": "hero_integration.services.guards.assert_app_document_deletion_allowed"}
+    doctype: {"on_trash": "hero_integration.services.guards.assert_app_document_deletion_allowed"}
     for doctype in _HERO_OWNED_DOCTYPES
 }
 
