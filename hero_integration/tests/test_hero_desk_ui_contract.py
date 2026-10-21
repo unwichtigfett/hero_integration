@@ -11,6 +11,7 @@ PAGES = PACKAGE_ROOT / "hero_integration" / "page"
 WORKSPACE_JS = PACKAGE_ROOT / "public" / "js" / "hero_workspace.js"
 WORKSPACE_CSS = PACKAGE_ROOT / "public" / "css" / "hero_workspace.css"
 TOOLS_JS = PACKAGE_ROOT / "public" / "js" / "hero_tools.js"
+OVERVIEW_JS = PACKAGE_ROOT / "public" / "js" / "hero_overview.js"
 SETTINGS_JS = PACKAGE_ROOT / "public" / "js" / "hero_settings.js"
 MAPPING_EDITOR_JS = PACKAGE_ROOT / "public" / "js" / "hero_mapping_editor.js"
 MIGRATION_JS = PACKAGE_ROOT / "public" / "js" / "hero_migration.js"
@@ -198,9 +199,39 @@ class TestHeroDeskUiContract(unittest.TestCase):
 
         self.assertIn('document.createElement("details")', source)
         self.assertIn('node("summary", "hero-settings-polling-summary")', source)
-        self.assertIn("Mode: ${pollingMode.value}", source)
+        self.assertIn("pollingSummary.append(pollingSummaryTitle)", source)
+        self.assertNotIn("pollingSummaryStatus", source)
+        self.assertNotIn("hero-settings-polling-status", source)
+        self.assertNotIn("pollingDetails.open", source)
         self.assertNotIn("pollingDetails.addEventListener", source)
         self.assertIn("Could not load HERO settings.", source)
+
+    def test_overview_separates_local_access_from_backend_mutation_and_polling_status(self):
+        source = OVERVIEW_JS.read_text()
+
+        for contract in (
+            "Local Configuration Access", "HERO Mutation Execution", "Automatic Synchronization",
+            "mutation_execution_status", "savedSettings?.polling?.mode", 'case "DISABLED"',
+            '["Unavailable", "warning"]',
+        ):
+            with self.subTest(contract=contract):
+                self.assertIn(contract, source)
+        self.assertNotIn('metric("Write Access"', source)
+
+    def test_hero_control_contrast_is_scoped_and_stateful(self):
+        adapter = ADAPTER_CSS.read_text()
+        settings_css = (PACKAGE_ROOT / "public" / "css" / "hero_settings.css").read_text()
+        tools_css = (PACKAGE_ROOT / "public" / "css" / "hero_tools.css").read_text()
+
+        for contract in (
+            "--hero-field-bg", "--hero-field-border", "--hero-field-readonly-bg",
+            "--hero-field-disabled-bg", "--hero-field-error", "@media (prefers-color-scheme: dark)",
+            ".admin-hero-tool-host .form-control", ":focus-visible", "[aria-invalid=\"true\"]",
+        ):
+            with self.subTest(contract=contract):
+                self.assertIn(contract, adapter)
+        self.assertIn("var(--hero-field-bg", settings_css)
+        self.assertIn(".ht-editor .ace_scroller", tools_css)
 
     def test_hero_owned_ui_strings_are_not_routed_through_frappe_translation(self):
         sources = [WORKSPACE_JS, TOOLS_JS, SETTINGS_JS, MAPPING_EDITOR_JS, MIGRATION_JS]
