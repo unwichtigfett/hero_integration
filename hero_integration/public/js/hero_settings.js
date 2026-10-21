@@ -32,6 +32,18 @@
         return wrap;
     }
 
+    function errorMessage(error) {
+        return typeof error?.message === "string" && error.message
+            ? error.message
+            : "The server did not provide additional details.";
+    }
+
+    function pollingGroup(title, ...fields) {
+        const group = node("fieldset", "hero-settings-polling-group");
+        group.append(node("legend", "", title), ...fields);
+        return group;
+    }
+
     async function mount(workspace) {
         const root = node("section", "hero-settings");
         const header = node("div", "hero-settings-header");
@@ -128,16 +140,31 @@
         const save = node("button", "hero-settings-button primary", "Save Settings");
         save.type = "button";
         const pollingCard = node("section", "hero-settings-card hero-settings-polling");
-        pollingCard.append(
-            node("h3", "", "Polling controls"),
-            field("Polling mode", pollingMode, "OFF never contacts HERO automatically. MONITOR records internal run metadata only; AUTO_SYNC requires active idempotent mappings."),
-            field("Polling interval (minutes)", pollingInterval, "1–1440 minutes; the Frappe scheduler evaluates cadence server-side."),
-            field("Timezone", pollingTimezone), field("Execution window", pollingWindow, "Optional local time window in HH:MM-HH:MM."),
-            field("Validated snapshot data sources", pollingSources, "One Query-root operation per line. Empty input is rejected."), field("Operation filters JSON", pollingFilters, "JSON object only; this stores no secrets and does not contact HERO."),
-            field("Allow bootstrap", pollingBootstrap), field("Page size", pollingPageSize), field("Pagination strategy", pollingPagination, "Cursor watermarks are advanced only after complete successful processing. Offset pagination does not invent watermarks."),
-            field("Allow backfill", pollingBackfill), field("Allow full inventory", pollingInventory), field("Allow reconciliation", pollingReconciliation, "Reconciliation reports discrepancies and never auto-deletes ERPNext records."),
-            field("Retry limit", pollingRetryLimit), field("Retry backoff seconds", pollingBackoff), field("Polling timeout seconds", pollingTimeout), field("Rate limit", pollingRate), field("Concurrency", pollingConcurrency), field("Notifications", pollingNotifications)
+        const pollingDetails = document.createElement("details");
+        pollingDetails.className = "hero-settings-polling-details";
+        const pollingSummary = node("summary", "hero-settings-polling-summary");
+        const pollingSummaryTitle = node("span", "hero-settings-polling-title", "Polling Settings");
+        const pollingSummaryStatus = node("span", "hero-settings-polling-status", "Loading polling settings …");
+        pollingSummaryStatus.setAttribute("aria-live", "polite");
+        pollingSummary.append(pollingSummaryTitle, pollingSummaryStatus);
+        const pollingContent = node("div", "hero-settings-polling-content");
+        pollingContent.append(
+            pollingGroup("Cadence and scope",
+                field("Polling mode", pollingMode, "OFF never contacts HERO automatically. MONITOR records internal run metadata only; AUTO_SYNC requires active idempotent mappings."),
+                field("Polling interval (minutes)", pollingInterval, "1–1440 minutes; the Frappe scheduler evaluates cadence server-side."),
+                field("Timezone", pollingTimezone), field("Execution window", pollingWindow, "Optional local time window in HH:MM-HH:MM.")),
+            pollingGroup("Data sources",
+                field("Validated snapshot data sources", pollingSources, "One Query-root operation per line. Empty input is rejected."),
+                field("Operation filters JSON", pollingFilters, "JSON object only; this stores no secrets and does not contact HERO."),
+                field("Allow bootstrap", pollingBootstrap)),
+            pollingGroup("Processing",
+                field("Page size", pollingPageSize), field("Pagination strategy", pollingPagination, "Cursor watermarks are advanced only after complete successful processing. Offset pagination does not invent watermarks."),
+                field("Allow backfill", pollingBackfill), field("Allow full inventory", pollingInventory), field("Allow reconciliation", pollingReconciliation, "Reconciliation reports discrepancies and never auto-deletes ERPNext records.")),
+            pollingGroup("Reliability and notifications",
+                field("Retry limit", pollingRetryLimit), field("Retry backoff seconds", pollingBackoff), field("Polling timeout seconds", pollingTimeout), field("Rate limit", pollingRate), field("Concurrency", pollingConcurrency), field("Notifications", pollingNotifications))
         );
+        pollingDetails.append(pollingSummary, pollingContent);
+        pollingCard.append(pollingDetails);
 
         card.append(
             field("Enabled", enabled, "Enable or disable local HERO Integration configuration."),
@@ -203,6 +230,8 @@
             pollingRate.value = String(data.polling?.rate_limit || 30);
             pollingConcurrency.value = String(data.polling?.concurrency || 1);
             pollingNotifications.checked = Boolean(data.polling?.notifications);
+            const sources = data.polling?.data_sources || [];
+            pollingSummaryStatus.textContent = `Mode: ${pollingMode.value} · Every ${pollingInterval.value} min · ${sources.length ? `${sources.length} source${sources.length === 1 ? "" : "s"} configured` : "No sources configured"}`;
             token.value = "";
             const configured = data.api_token_status === "CONFIGURED";
             tokenState.textContent = uiText(configured ? "Configured" : data.api_token_status === "CREDENTIAL_ERROR" ? "Credential error" : "Not configured");
@@ -223,9 +252,13 @@
                 if (!destroyed) {
                     apply(data);
                     status.textContent = uiText("Settings loaded.");
+                    status.dataset.state = "success";
                 }
             } catch (error) {
-                if (!destroyed) status.textContent = uiText("Failed to load HERO settings.");
+                if (!destroyed) {
+                    status.textContent = `Could not load HERO settings. ${errorMessage(error)}`;
+                    status.dataset.state = "error";
+                }
             } finally {
                 if (!destroyed) busy(false);
             }
@@ -256,9 +289,13 @@
                 if (!destroyed) {
                     apply(data);
                     status.textContent = uiText("Settings saved.");
+                    status.dataset.state = "success";
                 }
             } catch (error) {
-                if (!destroyed) status.textContent = uiText("Failed to save HERO settings.");
+                if (!destroyed) {
+                    status.textContent = `Could not save HERO settings. ${errorMessage(error)}`;
+                    status.dataset.state = "error";
+                }
             } finally {
                 if (!destroyed) busy(false);
             }
