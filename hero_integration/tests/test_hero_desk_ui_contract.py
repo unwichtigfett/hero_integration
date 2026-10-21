@@ -12,6 +12,7 @@ WORKSPACE_JS = PACKAGE_ROOT / "public" / "js" / "hero_workspace.js"
 WORKSPACE_CSS = PACKAGE_ROOT / "public" / "css" / "hero_workspace.css"
 TOOLS_JS = PACKAGE_ROOT / "public" / "js" / "hero_tools.js"
 OVERVIEW_JS = PACKAGE_ROOT / "public" / "js" / "hero_overview.js"
+OVERVIEW_CSS = PACKAGE_ROOT / "public" / "css" / "hero_overview.css"
 SETTINGS_JS = PACKAGE_ROOT / "public" / "js" / "hero_settings.js"
 MAPPING_EDITOR_JS = PACKAGE_ROOT / "public" / "js" / "hero_mapping_editor.js"
 MIGRATION_JS = PACKAGE_ROOT / "public" / "js" / "hero_migration.js"
@@ -217,6 +218,20 @@ class TestHeroDeskUiContract(unittest.TestCase):
             with self.subTest(contract=contract):
                 self.assertIn(contract, source)
         self.assertNotIn('metric("Write Access"', source)
+
+    def test_overview_metrics_are_scoped_bordered_status_cards_in_both_themes(self):
+        source = OVERVIEW_CSS.read_text()
+
+        for contract in (
+            ".hero-integration-ui .hero-overview", "--hero-overview-card-surface",
+            "--hero-overview-card-border", "#edf5ff", "#426482", "#1e3044",
+            "#9ab6d4", "@media (prefers-color-scheme: dark)",
+            "repeat(auto-fit, minmax(min(100%, 220px), 1fr))",
+            "border: 2px solid var(--hero-overview-card-border) !important",
+            "background-color: var(--hero-overview-card-surface) !important",
+        ):
+            with self.subTest(contract=contract):
+                self.assertIn(contract, source)
 
     def test_hero_control_contrast_is_scoped_and_stateful(self):
         adapter = ADAPTER_CSS.read_text()
