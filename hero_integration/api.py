@@ -12,9 +12,18 @@ MUTATION_EXECUTION_RELEASED = False
 
 
 @frappe.whitelist()
-def start_migration(action: str, dry_run: int | bool = 1, scheduled: bool = False) -> dict[str, str]:
-    if not scheduled:
-        frappe.only_for("System Manager")
+def start_migration(action: str, dry_run: int | bool = 1) -> dict[str, str]:
+    """Queue a manually requested migration; this RPC is always administrative."""
+    frappe.only_for("System Manager")
+    return _start_migration(action=action, dry_run=dry_run, scheduled=False)
+
+
+def start_scheduled_sync() -> dict[str, str]:
+    """Internal scheduler entrypoint.  It is deliberately not whitelisted."""
+    return _start_migration(action="Sync", dry_run=0, scheduled=True)
+
+
+def _start_migration(action: str, dry_run: int | bool, scheduled: bool) -> dict[str, str]:
     if action not in ACTIONS:
         frappe.throw("Unsupported HERO migration action.")
     _require_active_mappings(action)
