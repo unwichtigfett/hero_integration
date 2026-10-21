@@ -63,7 +63,7 @@ def _spec(document) -> MappingSpec:
         purpose=document.purpose,
         transformation=document.transformation,
         relation=document.relation or "",
-        priority=int(document.priority or 100),
+        priority=int(document.priority if document.priority is not None else 5),
         definition_id=document.definition_id,
     )
 

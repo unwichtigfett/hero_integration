@@ -36,3 +36,19 @@ The three similarly named stores are intentionally not interchangeable.
 
 Examples in automated tests use synthetic schemas and values only. They are not a
 HERO snapshot or a license to use any discovered live operation.
+
+## RC16 priority and comparison rules
+
+Priority is an integer from **0** (first) through **10** (last), default **5**.
+It orders otherwise independent mappings only; it never replaces dependency,
+relationship or conflict validation. The upgrade patch maps the unambiguous
+former default `100` to `5`. Other historic out-of-range values are disabled
+with a review message rather than silently reordered.
+
+`HERO Integration Link` stores protected per-field value hashes for the last
+successful comparison and separately records the latest observed hashes. A
+HERO-only change can update its approved target field through Frappe Document
+validation. If both sides changed the same mapped field, the target is not
+overwritten: the Link records a conflict and configured System Managers receive
+one durable internal notification per unchanged evidence set. A Preview writes
+neither target, link, conflict nor observation state.

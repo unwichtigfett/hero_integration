@@ -18,8 +18,11 @@ and Project DocTypes before adding the HERO schema. Helpdesk remains optional.
 - Controlled HERO mutation execution only after the global site gate,
   active contract, validated preview, exact confirmation and server-side
   System Manager recheck. Polling never invokes a HERO mutation.
-- Preview and execute modes, result records, source-to-target bindings,
-  idempotent repeats, conflict detection, retry, and scheduled one-way sync.
+- Preview and execute modes, durable versioned result records, source-to-target
+  bindings, local duplicate/concurrency protection, field-level conflict
+  detection, and scheduled one-way sync. HERO does not provide an
+  idempotency/exactly-once guarantee; an ambiguous remote mutation is audited
+  as unknown and is never retried automatically.
 - Customer and Project creation after an explicit Company confirmation.
 - Create-only, conflict-safe Customer and Project Custom Fields for source IDs,
   display values, raw source attributes, and external timestamps; native Contact
@@ -73,3 +76,10 @@ Hosts**. Redirects and endpoint credentials are rejected. A GraphQL mutation
 is rejected unless its separate gated contract is valid. The token is a Frappe
 `Password` value; it is not returned to Desk, written to a log, or passed as a
 queue argument.
+
+`Allow deletion` is a separate default-OFF server-side gate for all
+HERO-owned-document deletion routes. It does not grant deletion of ERPNext or
+other application data. The durable, paginated `integration_events.list_outputs`
+projection exposes only technical result metadata, source identity, target
+reference, correlation/origin, action and changed field names; it never exposes
+credentials or source payload values.

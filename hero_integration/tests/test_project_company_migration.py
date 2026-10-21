@@ -64,6 +64,7 @@ class TestProjectCompanyMigration(unittest.TestCase):
         self.migration.home_phone_for_customer = lambda customer: None
         self.migration.active_mapping_plan = fixture_plan
         self.migration._synchronize_customer_relations = lambda *args: None
+        self.migration.notify_conflict_once = lambda *args, **kwargs: False
 
     def test_confirmed_company_creates_project_with_customer_and_stable_link(self):
         record = _project_title_inputs(id=201, customer_id=101, project_title="Synthetic HERO Project")
@@ -150,7 +151,7 @@ class TestProjectCompanyMigration(unittest.TestCase):
         self.assertEqual(result.code, "CREATED")
         self.assertEqual(self.frappe.customers[0]["custom_hero_customer_category"], "Synthetic Territory")
 
-    def test_customer_contact_change_conflicts_without_overwrite(self):
+    def test_hero_only_customer_contact_change_updates_through_native_validation(self):
         record = {"id": 301, "full_name": "Synthetic Ada", "email": "ada@synthetic.invalid"}
         self.migration._migrate_customer(record, SimpleNamespace(mode="Execute"))
 
@@ -158,9 +159,36 @@ class TestProjectCompanyMigration(unittest.TestCase):
             {**record, "email": "changed@synthetic.invalid"}, SimpleNamespace(mode="Execute")
         )
 
+        self.assertEqual(result.code, "UPDATED")
+        self.assertEqual(self.frappe.customers[0]["email_id"], "changed@synthetic.invalid")
+        self.assertEqual(self.frappe.links[("customer", "301")].sync_status, "Synchronized")
+
+    def test_same_field_changed_on_both_sides_conflicts_without_overwrite(self):
+        record = {"id": 301, "full_name": "Synthetic Ada", "email": "ada@synthetic.invalid"}
+        self.migration._migrate_customer(record, SimpleNamespace(mode="Execute"))
+        self.frappe.customers[0]["email_id"] = "local@synthetic.invalid"
+
+        result = self.migration._migrate_customer(
+            {**record, "email": "remote@synthetic.invalid"}, SimpleNamespace(mode="Execute")
+        )
+
         self.assertEqual(result.code, "CONFLICT")
+        self.assertEqual(self.frappe.customers[0]["email_id"], "local@synthetic.invalid")
+        self.assertIn("email_id", self.frappe.links[("customer", "301")].conflict_detail)
+
+    def test_preview_existing_change_does_not_write_link_or_target_state(self):
+        record = {"id": 301, "full_name": "Synthetic Ada", "email": "ada@synthetic.invalid"}
+        self.migration._migrate_customer(record, SimpleNamespace(mode="Execute"))
+        link = self.frappe.links[("customer", "301")]
+        before = (link.sync_status, link.conflict_detail, link.source_payload_hash, link.target_payload_hash)
+
+        result = self.migration._migrate_customer(
+            {**record, "email": "preview@synthetic.invalid"}, SimpleNamespace(mode="Preview")
+        )
+
+        self.assertEqual(result.code, "PREVIEW_OK")
         self.assertEqual(self.frappe.customers[0]["email_id"], "ada@synthetic.invalid")
-        self.assertEqual(self.frappe.links[("customer", "301")].sync_status, "Conflict")
+        self.assertEqual((link.sync_status, link.conflict_detail, link.source_payload_hash, link.target_payload_hash), before)
 
     def test_v1_customer_link_requires_review_before_v2_contact_enrichment(self):
         record = {"id": 301, "full_name": "Synthetic Ada", "email": "ada@synthetic.invalid"}
@@ -320,7 +348,7 @@ class TestProjectCompanyMigration(unittest.TestCase):
         self.assertIn(("project", "777", "one"), self.frappe.links)
         self.assertIn(("project", "777", "two"), self.frappe.links)
 
-    def test_changed_title_contract_creates_a_conflict_and_never_overwrites_locally_edited_title(self):
+    def test_changed_title_contract_updates_when_the_target_field_is_unchanged(self):
         record = _project_title_inputs(id=778, customer_id=101, project_nr="0001")
         self.assertEqual(self.migration._migrate_project(record, SimpleNamespace(mode="Execute")).code, "CREATED")
         original = self.frappe.projects[0]["project_name"]
@@ -329,8 +357,8 @@ class TestProjectCompanyMigration(unittest.TestCase):
             _project_title_inputs(id=778, customer_id=101, project_nr="0002"), SimpleNamespace(mode="Execute")
         )
 
-        self.assertEqual(result.code, "CONFLICT")
-        self.assertEqual(self.frappe.projects[0]["project_name"], original)
+        self.assertEqual(result.code, "UPDATED")
+        self.assertNotEqual(self.frappe.projects[0]["project_name"], original)
 
     def test_missing_active_mapping_blocks_target_mutation(self):
         self.migration.active_mapping_plan = lambda operation: (_ for _ in ()).throw(
@@ -360,10 +388,10 @@ class TestProjectCompanyMigration(unittest.TestCase):
         self.assertEqual(sum(result.code == "SKIPPED_SOURCE_DELETED" for result in customers), 1)
         self.assertEqual(sum(result.code == "CREATED" for result in projects), 40)
         self.assertTrue(all(result.code == "SKIPPED" for result in repeated))
-        self.assertEqual(updated.code, "CONFLICT")
+        self.assertEqual(updated.code, "UPDATED")
         self.assertEqual(len(self.frappe.customers), 24)
         self.assertEqual(len(self.frappe.projects), 40)
-        self.assertEqual(self.frappe.customers[0]["email_id"], "person1@synthetic.invalid")
+        self.assertEqual(self.frappe.customers[0]["email_id"], "person1-updated@synthetic.invalid")
         self.assertTrue(all(project["company"] == "Executing Company" for project in self.frappe.projects))
         self.assertTrue(all(project["customer"].startswith("CUST-") for project in self.frappe.projects))
 
@@ -469,6 +497,12 @@ class _TargetDocument:
     def get(self, fieldname):
         return self.values.get(fieldname)
 
+    def set(self, fieldname, value):
+        self.values[fieldname] = value
+
+    def save(self):
+        return None
+
 
 class _ExistingDocument:
     def __init__(self, name, projects):
@@ -477,6 +511,12 @@ class _ExistingDocument:
 
     def get(self, fieldname):
         return self.values.get(fieldname)
+
+    def set(self, fieldname, value):
+        self.values[fieldname] = value
+
+    def save(self):
+        return None
 
 
 class _LinkDocument:
@@ -488,13 +528,4 @@ class _LinkDocument:
         key = (self.values["source_type"], self.values["source_id"])
         if self.values.get("source_instance", "default") != "default":
             key = (*key, self.values["source_instance"])
-        self.frappe_api.links[key] = SimpleNamespace(
-            target_doctype=self.values["target_doctype"],
-            target_name=self.values["target_name"],
-            source_payload_hash=self.values["source_payload_hash"],
-            target_payload_hash=self.values["target_payload_hash"],
-            mapping_version=self.values["mapping_version"],
-            source_system=self.values["source_system"],
-            sync_status=self.values["sync_status"],
-            conflict_detail=self.values["conflict_detail"],
-        )
+        self.frappe_api.links[key] = SimpleNamespace(**self.values)

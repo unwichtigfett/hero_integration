@@ -1,1 +1,1 @@
-# No data patches are required for the initial portable release.
+hero_integration.patches.v0_1.normalize_mapping_priorities

@@ -16,5 +16,26 @@ scheduler_events = {
     "hourly": ["hero_integration.tasks.run_scheduled_sync"],
 }
 
+# The gate intentionally covers only HERO-owned documents. It cannot block a
+# user from deleting arbitrary ERPNext records, but it does cover every native
+# app RPC, background path and direct DocType deletion route.
+_HERO_OWNED_DOCTYPES = (
+    "HERO Frappe Mapping",
+    "HERO GraphQL Mapping",
+    "HERO GraphQL Schema Snapshot",
+    "HERO GraphQL Service",
+    "HERO Integration Link",
+    "HERO Integration Record",
+    "HERO Integration Run",
+    "HERO Mapping Adoption",
+    "HERO Mutation Audit",
+    "HERO Mutation Contract",
+    "HERO Polling Event",
+)
+doc_events = {
+    doctype: {"before_delete": "hero_integration.services.guards.assert_app_document_deletion_allowed"}
+    for doctype in _HERO_OWNED_DOCTYPES
+}
+
 # This app ships DocTypes as source and has no site-specific fixtures.
 fixtures = []
