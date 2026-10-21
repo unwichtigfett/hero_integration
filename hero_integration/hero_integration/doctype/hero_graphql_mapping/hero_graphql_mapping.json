@@ -1,0 +1,10 @@
+{
+ "doctype":"DocType", "name":"HERO GraphQL Mapping", "module":"HERO Integration", "autoname":"format:HERO-GQL-MAP-{#####}", "track_changes":1,
+ "fields":[
+  {"fieldname":"schema_snapshot","label":"Schema Snapshot","fieldtype":"Link","options":"HERO GraphQL Schema Snapshot","reqd":1,"in_list_view":1}, {"fieldname":"schema_fingerprint","label":"Schema Fingerprint","fieldtype":"Data","reqd":1,"read_only":1},
+  {"fieldname":"source_instance","label":"Source Instance","fieldtype":"Data","read_only":1}, {"fieldname":"operation_kind","label":"Operation Kind","fieldtype":"Select","options":"QUERY\nMUTATION","reqd":1,"in_list_view":1}, {"fieldname":"operation_name","label":"Operation","fieldtype":"Data","reqd":1,"in_list_view":1},
+  {"fieldname":"direction","label":"Direction","fieldtype":"Select","options":"QUERY_TO_FRAPPE\nFRAPPE_TO_MUTATION","reqd":1}, {"fieldname":"mapping_json","label":"Mapping JSON","fieldtype":"Code","options":"JSON","reqd":1},
+  {"fieldname":"status","label":"Status","fieldtype":"Select","options":"Draft\nActive\nDisabled","default":"Draft","reqd":1,"in_list_view":1}, {"fieldname":"mapping_revision","label":"Revision","fieldtype":"Int","default":"1","read_only":1},
+  {"fieldname":"suggestion_reason","label":"Suggestion Reason","fieldtype":"Small Text","read_only":1}, {"fieldname":"confidence","label":"Confidence","fieldtype":"Float","read_only":1}
+ ], "permissions":[{"role":"System Manager","read":1,"write":1,"create":1,"delete":1}], "modified":"2026-10-21 00:00:00.000000"
+}
