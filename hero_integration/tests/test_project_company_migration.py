@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import importlib
 import sys
 import types
@@ -372,6 +373,21 @@ class TestProjectCompanyMigration(unittest.TestCase):
         self.assertFalse(self.frappe.customers)
         self.assertFalse(self.frappe.projects)
 
+    def test_relation_conflict_rolls_back_the_new_target_and_link(self):
+        def failing_relation(_target):
+            raise self.migration.CustomerAddressError("Synthetic relation conflict")
+
+        result = self.migration._upsert(
+            "customer", "rollback-1", {"id": 1},
+            {"customer_name": "Rollback Customer", "customer_type": "Individual"},
+            "Customer", "customer_name", "test-mapping", SimpleNamespace(mode="Execute"),
+            after_insert=failing_relation,
+        )
+
+        self.assertEqual(result.code, "CONFLICT")
+        self.assertFalse(self.frappe.customers)
+        self.assertIsNone(self.frappe.link("customer", "rollback-1"))
+
     def test_dataset_transfer_maps_relations_and_detects_repeats_and_updates(self):
         customers = [
             self.migration._migrate_customer(record, SimpleNamespace(mode="Execute")) for record in CUSTOMERS
@@ -458,6 +474,16 @@ class _FakeFrappe:
 class _FakeDatabase:
     def __init__(self, frappe_api):
         self.frappe_api = frappe_api
+        self.savepoints = {}
+
+    def savepoint(self, name):
+        self.savepoints[name] = copy.deepcopy((self.frappe_api.customers, self.frappe_api.projects, self.frappe_api.links))
+
+    def rollback(self, *, save_point=None):
+        customers, projects, links = self.savepoints[save_point]
+        self.frappe_api.customers = customers
+        self.frappe_api.projects = projects
+        self.frappe_api.links = links
 
     def exists(self, doctype, filters):
         if doctype == "DocType":

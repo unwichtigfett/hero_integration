@@ -10,9 +10,10 @@ import frappe
 ACTIONS = {"Customer Migration", "Project Migration", "Cheap Data Migration", "Full Data Migration", "Sync"}
 TERMINAL_STATES = {"Completed", "Completed With Conflicts", "Failed", "Cancelled", "Blocked"}
 MUTATION_EXECUTION_DISABLED = "HERO_MUTATION_EXECUTION_DISABLED"
+ACTIVE_MUTATION_RESERVATION = "active"
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def start_migration(action: str, dry_run: int | bool = 1) -> dict[str, str]:
     """Queue a manually requested migration; this RPC is always administrative."""
     frappe.only_for("System Manager")
@@ -44,7 +45,7 @@ def _start_migration(action: str, dry_run: int | bool, scheduled: bool) -> dict[
     return {"status": "QUEUED", "run": run.name}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def cancel_run(run_name: str) -> dict[str, str]:
     frappe.only_for("System Manager")
     run = frappe.get_doc("HERO Integration Run", run_name)
@@ -54,7 +55,7 @@ def cancel_run(run_name: str) -> dict[str, str]:
     return {"status": run.state, "run": run.name}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def resume_run(run_name: str) -> dict[str, str]:
     frappe.only_for("System Manager")
     run = frappe.get_doc("HERO Integration Run", run_name)
@@ -148,7 +149,7 @@ def schema_snapshot_list() -> list[dict[str, object]]:
     return _schema_snapshot_rows()
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def workspace_schema_refresh(connection_id: str = "", binding_generation: int | str = 0) -> dict[str, object]:
     """Capture a new complete, validated live HERO schema snapshot.
 
@@ -403,7 +404,7 @@ def workspace_settings_get() -> dict[str, object]:
     }
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def workspace_settings_save(
     enabled: int | bool, api_url: str, api_token: str = "", timeout_seconds: int = 30,
     allowed_hero_hosts: str | None = None, hero_source_instance: str | None = None,
@@ -519,11 +520,11 @@ def _save_polling_configuration(settings, **values: object) -> None:
         frappe.throw("Polling pagination strategy must be OFFSET or CURSOR.")
     numeric = {
         "page_size": ("polling_page_size", "Polling page size", 1, 1000),
-        "retry_limit": ("polling_retry_limit", "Polling retry limit", 0, 10),
+        "retry_limit": ("polling_retry_limit", "Polling retry limit", 0, 3),
         "retry_backoff_seconds": ("polling_retry_backoff_seconds", "Polling retry backoff", 0, 3600),
         "timeout_seconds": ("polling_timeout_seconds", "Polling timeout", 1, 600),
         "rate_limit": ("polling_rate_limit", "Polling rate limit", 1, 10000),
-        "concurrency": ("polling_concurrency", "Polling concurrency", 1, 10),
+        "concurrency": ("polling_concurrency", "Polling concurrency", 1, 1),
     }
     for input_name, (fieldname, label, minimum, maximum) in numeric.items():
         if values[input_name] is not None:
@@ -537,7 +538,7 @@ def _save_polling_configuration(settings, **values: object) -> None:
             setattr(settings, fieldname, int(_as_bool(values[input_name])))
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def workspace_mutation_execution_set(allow_execution: int | bool) -> dict[str, object]:
     """Persist the global System Manager execution switch; it remains OFF by default."""
     frappe.only_for("System Manager")
@@ -622,7 +623,7 @@ def graphql_mapping_list(snapshot_name: str, operation_kind: str = "") -> list[d
     )
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def graphql_mapping_save(
     snapshot_name: str, operation_kind: str, operation_name: str, direction: str, mapping_json: str,
     mapping_name: str = "", activate: int | bool = 0, suggestion_reason: str = "", confidence: float = 0,
@@ -694,7 +695,7 @@ def workspace_service_detail(query_id: str) -> dict[str, object]:
     return {"query": _workspace_service(frappe.get_doc("HERO GraphQL Service", query_id).as_dict())}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def workspace_service_save(snapshot_name: str, payload_json: str, query_id: str = "", expected_revision: int = 0) -> dict[str, object]:
     frappe.only_for("System Manager")
     payload = _workspace_payload(payload_json)
@@ -724,7 +725,7 @@ def workspace_service_save(snapshot_name: str, payload_json: str, query_id: str 
     return {"query": _workspace_service(service.as_dict())}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def workspace_service_validate(snapshot_name: str, payload_json: str = "", query_id: str = "", expected_revision: int = 0) -> dict[str, object]:
     frappe.only_for("System Manager")
     if not query_id:
@@ -779,7 +780,7 @@ def workspace_mutation_draft_validate(snapshot_name: str, payload_json: str) -> 
     }
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def workspace_service_delete(query_id: str, expected_revision: int = 0) -> dict[str, str]:
     frappe.only_for("System Manager")
     service = frappe.get_doc("HERO GraphQL Service", query_id)
@@ -1012,7 +1013,7 @@ def preview_mapping_package(snapshot_name: str, payload_json: str) -> dict[str, 
         frappe.throw(str(error))
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def adopt_mapping_package(
     snapshot_name: str, payload_json: str, selected_ids_json: str, confirmed: bool = False,
 ) -> dict[str, object]:
@@ -1036,7 +1037,7 @@ def adopt_mapping_package(
         frappe.throw(str(error))
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def resume_mapping_adoption(adoption_name: str) -> dict[str, object]:
     """Retry the exact checked package from a failed adoption record."""
     frappe.only_for("System Manager")
@@ -1066,7 +1067,7 @@ def workspace_mutation_preview(contract_name: str, variables_json: str) -> dict[
     }
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def workspace_mutation_contract_save(
     service_name: str, mapping_json: str, contract_name: str = "", activate: int | bool = 0,
 ) -> dict[str, object]:
@@ -1095,7 +1096,7 @@ def workspace_mutation_contract_save(
     }
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def execute_graphql_service(
     service_name: str, variables_json: str = "{}", confirmation_fingerprint: str = "", confirmed: int | bool = 0,
 ) -> dict[str, object]:
@@ -1107,16 +1108,12 @@ def execute_graphql_service(
         frappe.throw("The mutation contract is not active.")
     if confirmed not in (True, 1, "1", "true", "True") or confirmation_fingerprint != request_fingerprint:
         frappe.throw("Explicit confirmation for this exact mutation preview is required.")
-    if frappe.db.exists("HERO Mutation Audit", {"status": "Approved"}):
-        frappe.throw("Another HERO mutation is currently in progress.")
-    correlation_id = uuid4().hex
-    audit = frappe.get_doc({
-        "doctype": "HERO Mutation Audit", "correlation_id": correlation_id, "user": frappe.session.user,
-        "site": frappe.local.site, "operation_name": service.operation_name,
-        "schema_fingerprint": snapshot.schema_fingerprint, "mapping_revision": int(contract.contract_revision or 1),
-        "request_fingerprint": request_fingerprint, "status": "Approved", "detail": "Explicit System Manager confirmation recorded; variables are intentionally not retained.",
-    })
-    audit.insert(ignore_permissions=True)
+    audit = _reserve_mutation(
+        operation_name=service.operation_name,
+        schema_fingerprint=snapshot.schema_fingerprint,
+        mapping_revision=int(contract.contract_revision or 1),
+        request_fingerprint=request_fingerprint,
+    )
     try:
         from hero_integration.client.graphql_mutation import HeroMutationClient
         from hero_integration.client.settings import get_configuration
@@ -1126,14 +1123,47 @@ def execute_graphql_service(
             service.query_document, variables
         )
     except Exception as error:
-        audit.status = "Timeout" if error.__class__.__name__ in {"TimeoutError", "URLError"} else "Failed"
-        audit.detail = "HERO mutation did not complete. No automatic retry was performed; inspect the remote effect before another explicit submission."
-        audit.save(ignore_permissions=True)
+        _finalize_mutation(
+            audit,
+            "Timeout" if error.__class__.__name__ in {"TimeoutError", "URLError"} else "Failed",
+            "HERO mutation did not complete. No automatic retry was performed; inspect the remote effect before another explicit submission.",
+        )
         frappe.throw("HERO mutation failed safely; no automatic retry was performed.")
-    audit.status = "Succeeded"
-    audit.detail = "HERO mutation transport completed; remote response data is intentionally not persisted."
+    _finalize_mutation(audit, "Succeeded", "HERO mutation transport completed; remote response data is intentionally not persisted.")
+    return {"status": "SUCCEEDED", "correlation_id": audit.correlation_id, "operation": service.operation_name}
+
+
+def _reserve_mutation(*, operation_name: str, schema_fingerprint: str, mapping_revision: int, request_fingerprint: str):
+    """Durably reserve the one outbound mutation slot before contacting HERO.
+
+    A unique ``reservation_key`` lets MariaDB serialize competing confirmations
+    without relying on a stale read of a previous audit row.  The commit is
+    intentional: an external request must never occur before its recovery
+    record is visible to another request.
+    """
+    correlation_id = uuid4().hex
+    audit = frappe.get_doc({
+        "doctype": "HERO Mutation Audit", "correlation_id": correlation_id, "user": frappe.session.user,
+        "site": frappe.local.site, "operation_name": operation_name, "schema_fingerprint": schema_fingerprint,
+        "mapping_revision": mapping_revision, "request_fingerprint": request_fingerprint,
+        "reservation_key": ACTIVE_MUTATION_RESERVATION, "status": "Approved",
+        "detail": "Explicit System Manager confirmation recorded; variables are intentionally not retained.",
+    })
+    try:
+        audit.insert(ignore_permissions=True)
+    except frappe.DuplicateEntryError:
+        frappe.throw("Another HERO mutation is currently in progress.")
+    frappe.db.commit()
+    return audit
+
+
+def _finalize_mutation(audit, status: str, detail: str) -> None:
+    """Release a completed reservation without erasing its audit provenance."""
+    audit.status = status
+    audit.detail = detail
+    audit.reservation_key = audit.correlation_id
     audit.save(ignore_permissions=True)
-    return {"status": "SUCCEEDED", "correlation_id": correlation_id, "operation": service.operation_name}
+    frappe.db.commit()
 
 
 def _validated_mutation_request(contract_name: str, variables_json: str):

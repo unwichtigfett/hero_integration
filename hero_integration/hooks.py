@@ -27,6 +27,8 @@ _HERO_OWNED_DOCTYPES = (
     "HERO Integration Link",
     "HERO Integration Record",
     "HERO Integration Run",
+    "HERO Integration Settings",
+    "HERO Integration Sync State",
     "HERO Mapping Adoption",
     "HERO Mutation Audit",
     "HERO Mutation Contract",
@@ -36,6 +38,10 @@ doc_events = {
     doctype: {"on_trash": "hero_integration.services.guards.assert_app_document_deletion_allowed"}
     for doctype in _HERO_OWNED_DOCTYPES
 }
+# Target DocTypes are intentionally not hard-coded.  The observer only acts
+# when an app-owned Integration Link identifies this document as a mapped
+# target; it never starts polling, queues work, or sends a HERO request.
+doc_events["*"] = {"on_update": "hero_integration.services.change_detection.observe_frappe_target_change"}
 
 # This app ships DocTypes as source and has no site-specific fixtures.
 fixtures = []

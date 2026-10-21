@@ -90,17 +90,25 @@ def execute_run(run_name: str) -> None:
 
 
 def _claim_run(run) -> bool:
-    state = frappe.get_single("HERO Integration Sync State")
-    if state.active_run and state.active_run != run.name:
-        active = frappe.get_doc("HERO Integration Run", state.active_run)
-        if active.state not in TERMINAL_STATES:
+    """Claim the Single-state slot under the database row lock.
+
+    Queue job IDs are unique only per run, so they cannot serialize two
+    independently requested runs.  The ``tabSingles`` row is the one durable
+    shared slot and is locked before either worker observes or replaces it.
+    """
+    active_run = _locked_active_run()
+    if active_run and active_run != run.name:
+        active_state = frappe.db.get_value("HERO Integration Run", active_run, "state")
+        if active_state not in TERMINAL_STATES:
             run.state = "Blocked"
-            run.error_message = f"Another HERO run is active: {active.name}."
+            run.error_message = f"Another HERO run is active: {active_run}."
             run.finished_on = now_datetime()
             run.save()
             return False
-    state.active_run = run.name
-    state.save()
+    frappe.db.sql(
+        "UPDATE `tabSingles` SET `value` = %s WHERE `doctype` = %s AND `field` = %s",
+        (run.name, "HERO Integration Sync State", "active_run"),
+    )
     run.state = "Running"
     run.started_on = run.started_on or now_datetime()
     run.save()
@@ -108,10 +116,26 @@ def _claim_run(run) -> bool:
 
 
 def _release_run(run_name: str) -> None:
-    state = frappe.get_single("HERO Integration Sync State")
-    if state.active_run == run_name:
-        state.active_run = ""
-        state.save()
+    # Do not clear a slot acquired by a later worker after this run finished.
+    frappe.db.sql(
+        "UPDATE `tabSingles` SET `value` = '' WHERE `doctype` = %s AND `field` = %s AND `value` = %s",
+        ("HERO Integration Sync State", "active_run", run_name),
+    )
+
+
+def _locked_active_run() -> str:
+    """Return the slot value while holding its transaction-local row lock."""
+    doctype, field = "HERO Integration Sync State", "active_run"
+    frappe.db.sql(
+        "INSERT IGNORE INTO `tabSingles` (`doctype`, `field`, `value`) VALUES (%s, %s, '')",
+        (doctype, field),
+    )
+    rows = frappe.db.sql(
+        "SELECT `value` FROM `tabSingles` WHERE `doctype` = %s AND `field` = %s FOR UPDATE",
+        (doctype, field),
+        as_dict=True,
+    )
+    return str(rows[0].value or "") if rows else ""
 
 
 def _process_requested_phases(run, source: HeroSource) -> None:
@@ -236,6 +260,64 @@ def _migrate_project(record: dict[str, object], run) -> Result:
     )
 
 
+def observe_monitor_record(operation: str, record: dict[str, object]) -> Result | None:
+    """Compare one configured source record without mutating an ERPNext target.
+
+    MONITOR reuses the active mapping plan and Link field baselines. A source
+    change alone is technical output; a same-field change on both sides uses
+    the established durable conflict and administrator-notification path.
+    """
+    try:
+        if operation == "HeroCustomers":
+            plan = active_mapping_plan(operation)
+            source_id = plan.source_identity(record)
+            values = plan.values(record)
+            source_type, doctype = "customer", "Customer"
+            snapshot = lambda target: _customer_target_values(target, values, plan.home_phone(record))
+        elif operation == "HeroProjectMatches":
+            plan = active_mapping_plan(operation)
+            source_id = plan.source_identity(record)
+            values = plan.values(
+                record,
+                lambda value: _customer_name_for_source(value, _source_instance(record)),
+                _confirmed_company_name,
+                _project_title_for_record,
+            )
+            values["custom_hero_source_id"] = f"{_source_instance(record)}:{source_id}"
+            source_type, doctype = "project", "Project"
+            snapshot = lambda target: _target_values(target, values)
+        else:
+            return None
+    except (MappingPlanError, ProjectTitleValidationError) as error:
+        return Result("BLOCKED_RECORD", str(error))
+    link = _link(source_type, source_id, _source_instance(record))
+    if not link or not frappe.db.exists(link.target_doctype, link.target_name):
+        return None
+    target = frappe.get_doc(link.target_doctype, link.target_name)
+    prior_source = decode_hashes(getattr(link, "source_field_hashes", ""))
+    prior_target = decode_hashes(getattr(link, "target_field_hashes", ""))
+    if prior_source is None or prior_target is None:
+        return Result("OBSERVED", "Linked record has no field-level baseline; MONITOR made no write.", doctype, target.name)
+    source_hashes = field_hashes(values)
+    target_values = snapshot(target)
+    target_hashes = field_hashes(target_values)
+    source_changed = changed_fields(prior_source, source_hashes)
+    target_changed = changed_fields(prior_target, target_hashes)
+    same_fields = source_changed & target_changed
+    if same_fields:
+        detail = f"Field conflict requires review: {', '.join(sorted(same_fields))}."
+        notify_conflict_once(link, same_fields, detail)
+        _mark_link_conflict(link, detail)
+        return Result("CONFLICT", detail, doctype, target.name)
+    if source_changed:
+        _observe_link(link, _digest(record), _digest(target_values))
+        return Result("OBSERVED", "HERO field change observed by MONITOR; no ERPNext write was prepared.", doctype, target.name)
+    if target_changed:
+        _observe_link(link, _digest(record), _digest(target_values))
+        return Result("OBSERVED", "Frappe field change observed by MONITOR; no HERO action was prepared.", doctype, target.name)
+    return None
+
+
 def _upsert(
     source_type,
     source_id,
@@ -312,23 +394,29 @@ def _upsert(
         return Result("SKIPPED_AMBIGUOUS", f"Existing {doctype} has no stable HERO link.", doctype, duplicate)
     if run.mode == "Preview":
         return Result("PREVIEW_OK", "A new target record would be created.", doctype)
-    target = frappe.get_doc({"doctype": doctype, **values})
-    target.insert()
+    # A target, its required relation(s), and the provenance link are one
+    # integration unit.  A handled relation conflict must not leave the newly
+    # inserted ERPNext document behind for a later run to mistake as manual.
+    savepoint = "hero_upsert_relation"
+    frappe.db.savepoint(savepoint)
     try:
+        target = frappe.get_doc({"doctype": doctype, **values})
+        target.insert()
         if after_insert:
             after_insert(target)
+        snapshot = target_snapshot or (lambda item: _target_values(item, values))
+        target_hash = _digest(snapshot(target))
+        frappe.get_doc({
+            "doctype": "HERO Integration Link", "source_system": "HERO", "source_type": source_type,
+            "source_id": source_id, "source_instance": source_instance, "sync_status": "Synchronized",
+            "conflict_detail": "", "last_synced_on": now_datetime(),
+            "target_doctype": doctype, "target_name": target.name, "source_payload_hash": source_hash,
+            "target_payload_hash": target_hash, "source_field_hashes": encode_hashes(field_hashes(values)),
+            "target_field_hashes": encode_hashes(field_hashes(snapshot(target))), "mapping_version": mapping_version,
+        }).insert()
     except (HomePhoneConflict, CustomerAddressError) as error:
-        return Result("CONFLICT", str(error), doctype, target.name)
-    snapshot = target_snapshot or (lambda item: _target_values(item, values))
-    target_hash = _digest(snapshot(target))
-    frappe.get_doc({
-        "doctype": "HERO Integration Link", "source_system": "HERO", "source_type": source_type,
-        "source_id": source_id, "source_instance": source_instance, "sync_status": "Synchronized",
-        "conflict_detail": "", "last_synced_on": now_datetime(),
-        "target_doctype": doctype, "target_name": target.name, "source_payload_hash": source_hash,
-        "target_payload_hash": target_hash, "source_field_hashes": encode_hashes(field_hashes(values)),
-        "target_field_hashes": encode_hashes(field_hashes(snapshot(target))), "mapping_version": mapping_version,
-    }).insert()
+        frappe.db.rollback(save_point=savepoint)
+        return Result("CONFLICT", str(error), doctype)
     return Result("CREATED", "Target created through native Frappe validation.", doctype, target.name)
 
 
