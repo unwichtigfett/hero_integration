@@ -19,10 +19,10 @@
         services: "GraphQL Services",
     });
     const LEGACY_SECTION_TO_TOOL = Object.freeze({analyzer: "analyzer", graph: "graph", services: "services"});
-    // These files are loaded after the Desk page has started, so they do not
-    // receive Frappe's normal bundle fingerprint. Keep a single, explicit
-    // release token to prevent a browser's long-lived static-asset cache from
-    // presenting an older HERO workspace after a deployment.
+    // Styles are inserted directly after the Desk page has started, so they
+    // need an explicit release token. JavaScript must stay query-free when it
+    // enters frappe.require(): Frappe owns the version parameter and uses the
+    // original extension to select its script loader.
     const ASSET_RELEASE = "20261021.13";
     const ASSETS = [
         "/assets/hero_integration/css/hero_tools.css",
@@ -91,7 +91,7 @@
         link.rel = "stylesheet"; link.href = assetUrl(path); link.dataset.heroAsset = path; link.onload = resolve; link.onerror = reject;
         document.head.append(link);
     });
-    const loadScript = (path) => new Promise((resolve) => frappe.require(assetUrl(path), resolve));
+    const loadScript = (path) => frappe.require(path);
     let assets;
     const ensureAssets = () => assets ||= Promise.all(ASSETS.map((path) => path.endsWith(".css") ? loadStyle(path) : loadScript(path)));
 
