@@ -82,6 +82,9 @@ class TestProjectCompanyMigration(unittest.TestCase):
                 "customer": "Synthetic Customer",
                 "company": "Executing Company",
                 "custom_hero_source_id": "default:201",
+                "custom_hero_project_number": "1111",
+                "custom_hero_customer_title": "Herr",
+                "custom_hero_customer_full_name": "Max Mustermann",
             },
         )
         self.assertEqual(self.frappe.links[("project", "201")].target_name, "PROJ-0001")
