@@ -12,13 +12,14 @@ try:
     import frappe  # noqa: F401
 except ModuleNotFoundError:
     frappe = types.ModuleType("frappe")
-    frappe.whitelist = lambda: lambda function: function
+    frappe.whitelist = lambda *args, **kwargs: lambda function: function
     sys.modules["frappe"] = frappe
 
 
 class TestSchedulerContract(unittest.TestCase):
     def test_disabled_scheduler_does_not_start_a_sync(self):
         frappe_module = types.ModuleType("frappe")
+        frappe_module.whitelist = lambda *args, **kwargs: lambda function: function
         calls: list[str] = []
         def get_single(doctype):
             calls.append(doctype)
@@ -59,6 +60,7 @@ class TestSchedulerContract(unittest.TestCase):
 
     def test_scheduler_uses_the_internal_entrypoint_only(self):
         frappe_module = types.ModuleType("frappe")
+        frappe_module.whitelist = lambda *args, **kwargs: lambda function: function
         frappe_module.get_single = lambda _doctype: SimpleNamespace(scheduled_sync_enabled=1)
         frappe_module.utils = SimpleNamespace(now_datetime=lambda: datetime(2026, 10, 21, 10, 0))
         previous = sys.modules.get("frappe")

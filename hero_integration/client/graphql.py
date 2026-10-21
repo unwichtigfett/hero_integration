@@ -47,7 +47,14 @@ def assert_read_only(document: str) -> None:
 
 
 class HeroGraphQLClient:
-    def __init__(self, endpoint: HeroEndpoint, token_provider: Callable[[], str], timeout: int = 30, max_retries: int = 2):
+    def __init__(
+        self,
+        endpoint: HeroEndpoint,
+        token_provider: Callable[[], str],
+        timeout: int = 30,
+        max_retries: int = 2,
+        retry_backoff_seconds: int = 1,
+    ):
         if not isinstance(timeout, int) or isinstance(timeout, bool) or not 1 <= timeout <= 120:
             raise HeroClientError("HERO timeout must be between 1 and 120 seconds.")
         self.endpoint = endpoint
@@ -56,6 +63,9 @@ class HeroGraphQLClient:
         if not isinstance(max_retries, int) or isinstance(max_retries, bool) or not 0 <= max_retries <= 3:
             raise HeroClientError("HERO retry count must be between 0 and 3.")
         self.max_retries = max_retries
+        if not isinstance(retry_backoff_seconds, int) or isinstance(retry_backoff_seconds, bool) or not 0 <= retry_backoff_seconds <= 3600:
+            raise HeroClientError("HERO retry backoff must be between 0 and 3600 seconds.")
+        self.retry_backoff_seconds = retry_backoff_seconds
 
     def query(self, document: str, variables: Mapping[str, object]) -> dict[str, object]:
         assert_read_only(document)
@@ -108,5 +118,5 @@ class HeroGraphQLClient:
                 raise HeroClientError("HERO response is invalid.") from exc
             if not retryable or attempt == self.max_retries:
                 raise HeroClientError("HERO request failed.") from None
-            time.sleep(2**attempt)
+            time.sleep(self.retry_backoff_seconds * (2**attempt))
         raise HeroClientError("HERO request failed.")

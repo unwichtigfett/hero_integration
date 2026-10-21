@@ -34,12 +34,17 @@ class TestDeletionHook(IntegrationTestCase):
         self.assertTrue(
             all(
                 events == {"on_trash": _HANDLER}
-                for events in hero_integration.hooks.doc_events.values()
+                for doctype, events in hero_integration.hooks.doc_events.items()
+                if doctype != "*"
             )
         )
         self.assertEqual(
             set(hero_integration.hooks.doc_events),
-            set(hero_integration.hooks._HERO_OWNED_DOCTYPES),
+            {*hero_integration.hooks._HERO_OWNED_DOCTYPES, "*"},
+        )
+        self.assertEqual(
+            hero_integration.hooks.doc_events["*"]["on_update"],
+            "hero_integration.services.change_detection.observe_frappe_target_change",
         )
 
     def test_delete_doc_dispatches_to_the_disabled_deletion_guard(self) -> None:
