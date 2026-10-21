@@ -146,8 +146,6 @@ class TestRC16NativeSafety(IntegrationTestCase):
         values = {
             "customer_name": self.token,
             "customer_type": "Individual",
-            "customer_group": "All Customer Groups",
-            "territory": "All Territories",
         }
         result = _upsert(
             "customer",
@@ -172,8 +170,6 @@ class TestRC16NativeSafety(IntegrationTestCase):
                 "doctype": "Customer",
                 "customer_name": self.token,
                 "customer_type": "Individual",
-                "customer_group": "All Customer Groups",
-                "territory": "All Territories",
             }
         ).insert(ignore_permissions=True)
         baseline = encode(field_hashes({"customer_name": self.token}))
