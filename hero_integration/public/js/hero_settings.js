@@ -55,6 +55,24 @@
         url.placeholder = uiText("https://…/graphql");
         url.autocomplete = "off";
 
+        const allowedHosts = document.createElement("textarea");
+        allowedHosts.className = "hero-settings-input";
+        allowedHosts.rows = 2;
+        const sourceInstance = document.createElement("input");
+        sourceInstance.className = "hero-settings-input";
+        const company = document.createElement("input");
+        company.className = "hero-settings-input";
+        const companyConfirmed = document.createElement("input");
+        companyConfirmed.type = "checkbox";
+        companyConfirmed.className = "hero-settings-check";
+        const pollingMode = document.createElement("select");
+        pollingMode.className = "hero-settings-input";
+        ["OFF", "MONITOR", "AUTO_SYNC"].forEach(value => {
+            const option = document.createElement("option"); option.value = value; option.textContent = value; pollingMode.append(option);
+        });
+        const pollingInterval = document.createElement("input");
+        pollingInterval.type = "number"; pollingInterval.min = "1"; pollingInterval.max = "1440"; pollingInterval.className = "hero-settings-input";
+
         const token = document.createElement("input");
         token.type = "password";
         token.className = "hero-settings-input";
@@ -97,9 +115,15 @@
         card.append(
             field("Enabled", enabled, "Enable or disable local HERO Integration configuration."),
             field("API URL", url, "HTTPS GraphQL endpoint used by the connector."),
+            field("Allowed HERO hosts", allowedHosts, "One exact HTTPS hostname per line; the endpoint host must be present."),
+            field("HERO source instance", sourceInstance, "Stable identity for this external source."),
             field("API Token", token, "The current token is never returned to the browser. An empty field keeps it unchanged."),
             tokenHelp,
             field("Timeout (seconds)", timeout, "Maximum duration of a HERO API request."),
+            field("ERPNext Company", company, "Existing ERPNext Company used for HERO projects."),
+            field("Confirm ERPNext Company", companyConfirmed, "A company change clears this confirmation server-side."),
+            field("Polling mode", pollingMode, "OFF never contacts HERO automatically. MONITOR never writes business data."),
+            field("Polling interval (minutes)", pollingInterval, "1–1440 minutes; scheduler cadence is evaluated server-side."),
             node("p", "hero-settings-warning", "Changing the API URL or token rotates the HERO binding generation and clears the current schema binding."),
             status,
             save
@@ -117,6 +141,12 @@
             url.disabled = value;
             token.disabled = value;
             timeout.disabled = value;
+            allowedHosts.disabled = value;
+            sourceInstance.disabled = value;
+            company.disabled = value;
+            companyConfirmed.disabled = value;
+            pollingMode.disabled = value;
+            pollingInterval.disabled = value;
             mutationEnabled.disabled = value;
             mutationSave.disabled = value;
         }
@@ -125,6 +155,12 @@
             enabled.checked = Boolean(data.enabled);
             url.value = data.api_url || "";
             timeout.value = String(data.timeout_seconds || 30);
+            allowedHosts.value = data.allowed_hero_hosts || "";
+            sourceInstance.value = data.hero_source_instance || "default";
+            company.value = data.erpnext_company || "";
+            companyConfirmed.checked = Boolean(data.erpnext_company_confirmed);
+            pollingMode.value = data.polling?.mode || "OFF";
+            pollingInterval.value = String(data.polling?.interval_minutes || 60);
             token.value = "";
             const configured = data.api_token_status === "CONFIGURED";
             tokenState.textContent = uiText(configured ? "Configured" : data.api_token_status === "CREDENTIAL_ERROR" ? "Credential error" : "Not configured");
@@ -161,7 +197,13 @@
                     enabled: enabled.checked,
                     api_url: url.value.trim(),
                     api_token: token.value,
-                    timeout_seconds: Number(timeout.value)
+                    timeout_seconds: Number(timeout.value),
+                    allowed_hero_hosts: allowedHosts.value.trim(),
+                    hero_source_instance: sourceInstance.value.trim(),
+                    erpnext_company: company.value.trim(),
+                    erpnext_company_confirmed: companyConfirmed.checked,
+                    polling_mode: pollingMode.value,
+                    polling_interval_minutes: Number(pollingInterval.value)
                 }, {write: true});
                 if (!destroyed) {
                     apply(data);
