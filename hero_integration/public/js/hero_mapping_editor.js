@@ -52,7 +52,7 @@
         advanced.append($("<p class='text-muted'></p>").text("An upload only fills a reviewed checklist. Select changes and confirm one adoption; it never migrates business data."), importFile, exchangeResult);
         page.main.append(
             $("<h2>HERO Mapping Editor</h2><p class='text-muted'>Mappings are reviewed proposals. Creating a Draft never activates it.</p>"), controls,
-            $("<section class='hero-mapping-section'></section>").append($("<h3>Zuordnen</h3>"), mappingGrid, preview),
+            $("<section class='hero-mapping-section'></section>").append($("<h3>Map fields</h3>"), mappingGrid, preview),
             $("<section class='hero-mapping-section'></section>").append($("<h3>Review Suggestions</h3><p class='text-muted'>The strongest compatible proposals are shown first; reviewing one only prepares a Draft.</p>"), suggestions),
             $("<section class='hero-mapping-section'></section>").append($("<h3>Active Mappings</h3>"), statusSummary, activeSearch, activeMappings), advanced,
             $("<section class='hero-mapping-section hero-mapping-dynamic'></section>").append(

@@ -30,6 +30,26 @@
     background: var(--admin-surface, var(--pc-surface));
 }
 
+.hero-settings-section {
+    display: grid;
+    gap: 14px;
+    min-width: 0;
+    margin: 0;
+    padding: 16px;
+    border: 2px solid var(--hero-field-border, var(--admin-border, var(--pc-border)));
+    border-radius: 8px;
+    background: var(--pc-surfaceRaised, var(--admin-surface, var(--pc-surface)));
+}
+
+.hero-settings-section legend {
+    width: auto;
+    margin: 0;
+    padding: 0 6px;
+    color: var(--admin-text, var(--pc-text));
+    font-size: 14px;
+    font-weight: 600;
+}
+
 .hero-settings-mutations {
     margin-top: 20px;
 }
@@ -44,8 +64,8 @@
 }
 
 .hero-settings-polling-summary {
-    display: flex;
-    align-items: center;
+    display: list-item;
+    list-style-position: inside;
     padding: 22px;
     cursor: pointer;
     color: var(--admin-text, var(--pc-text));
