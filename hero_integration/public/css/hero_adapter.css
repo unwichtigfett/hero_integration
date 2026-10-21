@@ -1,5 +1,6 @@
 .admin-hero-tool-host,
-.ht-focus-dialog {
+.ht-focus-dialog,
+.hero-integration-ui {
     --pc-canvas: var(--bg-color, #f4f7fb);
     --pc-surface: var(--card-bg, #ffffff);
     --pc-surfaceRaised: var(--control-bg, #f4f7fb);
@@ -16,29 +17,34 @@
     --pc-diagramText: var(--text-color, #142437);
     --pc-diagramBorder: #486278;
     /* Keep editable HERO controls distinct from their card in every theme. */
-    --hero-field-bg: color-mix(in srgb, var(--pc-surface) 72%, var(--pc-primary));
-    --hero-field-border: color-mix(in srgb, var(--pc-text) 48%, var(--pc-primary));
-    --hero-field-readonly-bg: color-mix(in srgb, var(--pc-surface) 84%, var(--pc-canvas));
-    --hero-field-disabled-bg: color-mix(in srgb, var(--pc-surface) 68%, var(--pc-canvas));
+    --hero-field-bg: #edf5ff;
+    --hero-field-border: #426482;
+    --hero-field-readonly-bg: #e3edf8;
+    --hero-field-disabled-bg: #dbe7f3;
+    --hero-field-placeholder: #506b85;
     --hero-field-error: #b42318;
 }
 
 @media (prefers-color-scheme: dark) {
     .admin-hero-tool-host,
-    .ht-focus-dialog {
-        --hero-field-bg: color-mix(in srgb, var(--pc-surface) 72%, var(--pc-primary));
-        --hero-field-border: color-mix(in srgb, var(--pc-text) 62%, var(--pc-primary));
-        --hero-field-readonly-bg: color-mix(in srgb, var(--pc-surface) 88%, var(--pc-canvas));
-        --hero-field-disabled-bg: color-mix(in srgb, var(--pc-surface) 72%, var(--pc-canvas));
+    .ht-focus-dialog,
+    .hero-integration-ui {
+        --hero-field-bg: #26394f;
+        --hero-field-border: #9ab6d4;
+        --hero-field-readonly-bg: #1e2d3e;
+        --hero-field-disabled-bg: #182433;
+        --hero-field-placeholder: #c3d2e3;
     }
 }
 
 :is(html[data-theme="dark"], body[data-theme="dark"], .theme-dark) .admin-hero-tool-host,
-:is(html[data-theme="dark"], body[data-theme="dark"], .theme-dark) .ht-focus-dialog {
-    --hero-field-bg: color-mix(in srgb, var(--pc-surface) 72%, var(--pc-primary));
-    --hero-field-border: color-mix(in srgb, var(--pc-text) 62%, var(--pc-primary));
-    --hero-field-readonly-bg: color-mix(in srgb, var(--pc-surface) 88%, var(--pc-canvas));
-    --hero-field-disabled-bg: color-mix(in srgb, var(--pc-surface) 72%, var(--pc-canvas));
+:is(html[data-theme="dark"], body[data-theme="dark"], .theme-dark) .ht-focus-dialog,
+:is(html[data-theme="dark"], body[data-theme="dark"], .theme-dark) .hero-integration-ui {
+    --hero-field-bg: #26394f;
+    --hero-field-border: #9ab6d4;
+    --hero-field-readonly-bg: #1e2d3e;
+    --hero-field-disabled-bg: #182433;
+    --hero-field-placeholder: #c3d2e3;
 }
 
 .admin-workspace.admin-workspace--tool {
@@ -112,49 +118,65 @@
     cursor: default;
 }
 
-.admin-hero-tool-host .form-control {
+.admin-hero-tool-host .form-control,
+.hero-integration-ui .form-control {
     width: 100%;
     min-height: 34px;
-    border: 2px solid var(--hero-field-border);
+    border: 2px solid var(--hero-field-border) !important;
     border-radius: 6px;
     padding: 6px 8px;
-    background: var(--hero-field-bg);
-    color: var(--pc-text);
+    background-color: var(--hero-field-bg) !important;
+    color: var(--pc-text) !important;
+    box-shadow: inset 0 0 0 1px var(--hero-field-border);
 }
 
 .admin-hero-tool-host :is(.form-control, .hero-settings-input, .ht-editor),
-.ht-focus-dialog :is(.form-control, .hero-settings-input, .ht-editor) {
-    background: var(--hero-field-bg);
-    border-color: var(--hero-field-border);
-    color: var(--pc-text);
+.ht-focus-dialog :is(.form-control, .hero-settings-input, .ht-editor),
+.hero-integration-ui :is(input:not([type="button"]):not([type="checkbox"]):not([type="file"]):not([type="hidden"]):not([type="image"]):not([type="radio"]):not([type="reset"]):not([type="submit"]), select, textarea, .form-control, .hero-settings-input, .ht-editor) {
+    background-color: var(--hero-field-bg) !important;
+    border: 2px solid var(--hero-field-border) !important;
+    color: var(--pc-text) !important;
+    box-shadow: inset 0 0 0 1px var(--hero-field-border);
+}
+
+.admin-hero-tool-host :is(input, textarea, .form-control, .hero-settings-input)::placeholder,
+.ht-focus-dialog :is(input, textarea, .form-control, .hero-settings-input)::placeholder,
+.hero-integration-ui :is(input, textarea, .form-control, .hero-settings-input)::placeholder {
+    color: var(--hero-field-placeholder) !important;
+    opacity: 1;
 }
 
 .admin-hero-tool-host :is(.form-control, .hero-settings-input, .ht-editor):focus-visible,
-.ht-focus-dialog :is(.form-control, .hero-settings-input, .ht-editor):focus-visible {
-    border-color: var(--pc-focus);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--pc-focus) 35%, transparent);
+.ht-focus-dialog :is(.form-control, .hero-settings-input, .ht-editor):focus-visible,
+.hero-integration-ui :is(input, select, textarea, .form-control, .hero-settings-input, .ht-editor):focus-visible {
+    border-color: var(--pc-focus) !important;
+    box-shadow: inset 0 0 0 1px var(--pc-focus), 0 0 0 3px color-mix(in srgb, var(--pc-focus) 55%, transparent) !important;
     outline: 0;
 }
 
 .admin-hero-tool-host :is(.form-control, .hero-settings-input, .ht-editor):is([readonly], [aria-readonly="true"]),
-.ht-focus-dialog :is(.form-control, .hero-settings-input, .ht-editor):is([readonly], [aria-readonly="true"]) {
-    background: var(--hero-field-readonly-bg);
-    border-style: dashed;
+.ht-focus-dialog :is(.form-control, .hero-settings-input, .ht-editor):is([readonly], [aria-readonly="true"]),
+.hero-integration-ui :is(input, select, textarea, .form-control, .hero-settings-input, .ht-editor):is([readonly], [aria-readonly="true"]) {
+    background-color: var(--hero-field-readonly-bg) !important;
+    border-style: dashed !important;
 }
 
 .admin-hero-tool-host :is(.form-control, .hero-settings-input, .ht-editor):disabled,
-.ht-focus-dialog :is(.form-control, .hero-settings-input, .ht-editor):disabled {
-    background: var(--hero-field-disabled-bg);
-    border-color: color-mix(in srgb, var(--hero-field-border) 58%, var(--pc-surface));
-    color: var(--pc-textSecondary);
+.ht-focus-dialog :is(.form-control, .hero-settings-input, .ht-editor):disabled,
+.hero-integration-ui :is(input, select, textarea, .form-control, .hero-settings-input, .ht-editor):disabled {
+    background-color: var(--hero-field-disabled-bg) !important;
+    border-color: var(--hero-field-border) !important;
+    color: var(--pc-textSecondary) !important;
     opacity: 1;
 }
 
 .admin-hero-tool-host :is(.form-control, .hero-settings-input, .ht-editor):is(.is-invalid, [aria-invalid="true"]),
 .admin-hero-tool-host .has-error :is(.form-control, .hero-settings-input, .ht-editor),
-.ht-focus-dialog :is(.form-control, .hero-settings-input, .ht-editor):is(.is-invalid, [aria-invalid="true"]) {
-    border-color: var(--hero-field-error);
-    box-shadow: 0 0 0 1px var(--hero-field-error);
+.ht-focus-dialog :is(.form-control, .hero-settings-input, .ht-editor):is(.is-invalid, [aria-invalid="true"]),
+.hero-integration-ui :is(input, select, textarea, .form-control, .hero-settings-input, .ht-editor):is(.is-invalid, [aria-invalid="true"]),
+.hero-integration-ui .has-error :is(input, select, textarea, .form-control, .hero-settings-input, .ht-editor) {
+    border-color: var(--hero-field-error) !important;
+    box-shadow: inset 0 0 0 1px var(--hero-field-error), 0 0 0 1px var(--hero-field-error) !important;
 }
 
 .admin-hero-tool-host .text-danger {
