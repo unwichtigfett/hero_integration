@@ -8,7 +8,10 @@ def run_scheduled_sync() -> None:
     from hero_integration.services.polling import effective_mode, runtime_plan, scheduler_due
 
     mode = effective_mode(settings)
-    last_success = settings.last_successful_sync
+    # Older existing sites do not necessarily carry the later status field.
+    # Missing history means no successful poll is known yet, not an exception
+    # that could accidentally bypass the scheduler gate.
+    last_success = getattr(settings, "last_successful_sync", None)
     if mode == "OFF" or not scheduler_due(settings, frappe.utils.now_datetime(), last_success):
         return
     if mode == "MONITOR":
