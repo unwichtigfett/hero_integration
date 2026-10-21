@@ -102,7 +102,7 @@ class TestMappingExchange(unittest.TestCase):
         mapping_exchange.import_json("SYNTHETIC", json.dumps(payload))
         self.frappe.rows["customer-number"]["status"] = "Active"
         changed = fixture_payload(FINGERPRINT)
-        next(item for item in changed["mappings"] if item["definition_id"] == "customer-number")["priority"] = 77
+        next(item for item in changed["mappings"] if item["definition_id"] == "customer-number")["priority"] = 6
 
         preview = mapping_exchange.preview_import("SYNTHETIC", json.dumps(changed))
 
@@ -110,7 +110,18 @@ class TestMappingExchange(unittest.TestCase):
         self.assertEqual(item["state"], "Conflict")
         with self.assertRaisesRegex(mapping_exchange.MappingExchangeError, "conflicts"):
             mapping_exchange.import_json("SYNTHETIC", json.dumps(changed))
-        self.assertEqual(self.frappe.rows["customer-number"]["priority"], 100)
+        self.assertEqual(self.frappe.rows["customer-number"]["priority"], 5)
+
+    def test_out_of_range_priority_is_rejected_before_draft_write(self):
+        payload = fixture_payload(FINGERPRINT)
+        next(item for item in payload["mappings"] if item["definition_id"] == "customer-number")["priority"] = 11
+
+        preview = mapping_exchange.preview_import("SYNTHETIC", json.dumps(payload))
+
+        self.assertEqual(next(item for item in preview["items"] if item["definition_id"] == "customer-number")["state"], "Invalid")
+        with self.assertRaisesRegex(mapping_exchange.MappingExchangeError, "conflicts or invalid"):
+            mapping_exchange.import_json("SYNTHETIC", json.dumps(payload))
+        self.assertEqual(self.frappe.count(), 0)
 
     def test_duplicate_import_target_is_reported_before_any_draft_is_written(self):
         duplicate = fixture_payload(FINGERPRINT)

@@ -24,14 +24,22 @@ synthetic data. Do not configure a production HERO endpoint or token.
    Contact Phone rows; Project customer and company links; Custom Field values;
    and one canonical **HERO Integration Link** per created target.
 7. Repeat the same data. Confirm that it is skipped without duplicate targets.
-   Change a source payload and then a target payload separately. Confirm that
-   both become conflicts and neither target is overwritten. Verify that a
-   shared Contact is not changed by a home-phone import.
+   Change one mapped HERO field only and confirm that the approved target field
+   updates through native Frappe validation. Then change that same mapped field
+   on both sides since the common comparison state. Confirm that the Link is a
+   conflict, the target is not overwritten and one configured System Manager
+   receives an internal notification. Repeat an unchanged poll and confirm no
+   notification flood. Run the equivalent Preview and confirm that target, Link
+   status and observed hashes remain unchanged. Verify that a shared Contact is
+   not changed by a home-phone import.
 8. Enable scheduled sync. Trigger its scheduler entry once, then repeat while a
    run is active. Confirm that only one run is queued and the token never
    appears in job arguments, run fields, or logs.
 9. Verify that attachment migration, ticket migration, and reverse sync are
-   reported as unavailable.
+   reported as unavailable. Keep **Allow deletion** OFF and attempt a normal
+   HERO-owned service or mapping delete: the server must refuse it. In a
+   synthetic isolated test only, enable the gate for one owned record, then
+   return it to OFF. This never authorizes ERPNext record deletion.
 
 Record the exact app Git revision, Frappe and ERPNext revisions, test-site name,
 and test results. This repository preparation does not include native VPS
@@ -49,8 +57,8 @@ for the separately approved read-only step.
 | **Mapping** → **Query Mapping** or **Mutation Mapping** | Pick the same explicit snapshot, then one query or mutation operation and typed paths. | Persists the dynamic `HERO GraphQL Mapping.mapping_json` object and fingerprint. Query mappings never become the classic package; mutation mappings also need a separate `HERO Mutation Contract`. | An absent/changed snapshot or invalid path stays Draft/blocked. See `test_schema_operations.py`, `test_workspace_snapshot_binding.py` and `test_workspace_mutation_draft_contract.py`. |
 | **Overview** | No endpoint or credential is needed. | Shows only stored, redacted connection, snapshot, service, mapping and run status. It never contacts HERO. | A missing local value renders as an empty/not-started state, not an inferred remote status. See `api.py:integration_overview` and `test_workspace_overview_contract.py`. |
 | **API & Schema** → **API Analyzer**, **Graph Viewer**, **GraphQL Services** | Analyzer/viewer require a saved snapshot; Services additionally receives Query or Mutation from its canonical route. | Analyzer/viewer remain local projections. A Service draft is bound to source identity and fingerprint; switching Query/Mutation, deep links and browser history must retain that route context. | No implicit "latest" snapshot and no route fallback to Overview. See `hero_workspace.js`, `test_hero_desk_ui_contract.py` and `test_graphql_graph_contract.py`. |
-| **Synchronization** | Keep polling OFF for local review. MONITOR/AUTO_SYNC need a separately approved source, active mappings and confirmed Company. | OFF makes no automatic request; MONITOR records observation only; AUTO_SYNC permits only approved idempotent Frappe upserts. No mode executes a HERO mutation. | Invalid windows, sources, paging, limits or stale mappings fail closed. See `polling.py`, `tasks.py`, `migration.py`, `test_polling_contract.py` and `test_scheduler_contract.py`. |
-| **Settings** | System Manager; credentials only for the explicit live read-only gate. | Saves allowed endpoint/host, Company and polling configuration. The native **Polling Settings** accordion is initially closed and opening it changes nothing. Mutation activation is a separate global request, still insufficient without a per-operation contract, preview fingerprint and confirmation. | Server permission and validation failures are displayed without secret values. Asset failures show an English error boundary. See `hero_settings.js`, `hero_workspace.js`, `test_workspace_settings_contract.py` and `test_hero_workspace_loader.mjs`. |
+| **Synchronization** | Keep polling OFF for local review. MONITOR/AUTO_SYNC need a separately approved source, active mappings and confirmed Company. | OFF makes no automatic request; MONITOR records observation only; AUTO_SYNC permits approved HERO-to-Frappe writes only. No mode executes a HERO mutation and no HERO exactly-once claim is made. | Invalid windows, sources, paging, limits or stale mappings fail closed. See `polling.py`, `tasks.py`, `migration.py`, `test_polling_contract.py` and `test_scheduler_contract.py`. |
+| **Settings** | System Manager; credentials only for the explicit live read-only gate. | Saves allowed endpoint/host, Company, polling, conflict recipients and default-OFF **Allow deletion**. The native **Polling Settings** accordion is initially closed and opening it changes nothing. Mutation activation is a separate global request, still insufficient without a per-operation contract, preview fingerprint and confirmation. | Server permission and validation failures are displayed without secret values. Asset failures show an English error boundary. See `hero_settings.js`, `hero_workspace.js`, `test_workspace_settings_contract.py` and `test_hero_workspace_loader.mjs`. |
 
 ## RC 15 manual acceptance protocol
 
@@ -64,7 +72,7 @@ authorized read-only HERO step.
 3. **Settings and visual states.** In light/dark and a narrow window, check neutral grey cards, visible field borders/labels, readonly/disabled/error states, and status colours. Polling starts closed and its summary shows only **Polling Settings** and the native chevron; opening/closing changes no setting. A failed asset load must show an English error rather than a blank page or endless loading state.
 4. **Live read-only HERO introspection — separate approval.** Enter the credential only in Settings, confirm the exact HTTPS host, run one explicit schema refresh, and review its source identity, fingerprint, diff and operation counts. Do not treat a synthetic test snapshot as this proof.
 5. **MONITOR — separate approval.** Select permitted sources and enable MONITOR. Verify stored observation events only: no Customer, Project, Link or other business writes. Return to OFF and confirm new automatic ingress is blocked.
-6. **Controlled AUTO_SYNC — separate approval.** Use a designated reversible Frappe target with approved active mappings. Verify Customer-first, idempotence, conflicts, pagination/resume and no automatic deletions. Do not use this step for any HERO mutation.
+6. **Controlled AUTO_SYNC — separate approval.** Use a designated reversible Frappe target with approved active mappings. Verify Customer-first, local repeat protection, conflicts, pagination/resume and no automatic deletions. Do not use this step for any HERO mutation.
 7. **Helpdesk — separate approval.** Verify the actually installed compatible Helpdesk version and the frozen contract; otherwise record it as blocked, not supported by implication.
 8. **Mutations — later, per operation.** For one operation, verify the exact active contract, type-valid input, preview fingerprint and explicit confirmation. There is no retry after an ambiguous remote outcome. The 15 real ProjectMatches remain three separately authorized Customer-first batches of five.
 ## Mapping import and export

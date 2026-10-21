@@ -16,10 +16,12 @@ No development-machine path is required.
    bench --site <site-name> install-app erpnext
    ```
 
-3. Add the reviewed HERO Integration release branch from its Git URL.
+3. Add the reviewed HERO Integration candidate from the published development
+   branch. RC16 is published only on `release/v1-rc`; do not substitute the
+   default branch. Record the exact resolved commit after `bench get-app`.
 
    ```bash
-   bench get-app <git-url> --branch version-16
+   bench get-app https://github.com/unwichtigfett/hero_integration.git --branch release/v1-rc
    ```
 
 4. Install HERO Integration on that ERPNext site. Its pre-install check aborts

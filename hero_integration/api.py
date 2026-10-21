@@ -374,6 +374,8 @@ def workspace_settings_get() -> dict[str, object]:
         "hero_source_instance": getattr(settings, "hero_source_instance", "default") or "default",
         "erpnext_company": getattr(settings, "erpnext_company", "") or "",
         "erpnext_company_confirmed": bool(getattr(settings, "erpnext_company_confirmed", 0)),
+        "allow_deletion": bool(getattr(settings, "allow_deletion", 0)),
+        "admin_notification_recipients": getattr(settings, "admin_notification_recipients", "") or "",
         "api_token_configured": token_configured,
         "api_token_status": token_status,
         "timeout_seconds": int(settings.timeout_seconds or 30),
@@ -415,6 +417,7 @@ def workspace_settings_save(
     polling_retry_limit: int | None = None, polling_retry_backoff_seconds: int | None = None,
     polling_timeout_seconds: int | None = None, polling_rate_limit: int | None = None,
     polling_concurrency: int | None = None, polling_notifications: int | bool | None = None,
+    allow_deletion: int | bool | None = None, admin_notification_recipients: str | None = None,
 ) -> dict[str, object]:
     """Persist only native integration configuration, with DocType validation."""
     frappe.only_for("System Manager")
@@ -431,6 +434,11 @@ def workspace_settings_save(
         settings.erpnext_company = erpnext_company.strip()
     if erpnext_company_confirmed is not None:
         settings.erpnext_company_confirmed = int(_as_bool(erpnext_company_confirmed))
+    if allow_deletion is not None:
+        settings.allow_deletion = int(_as_bool(allow_deletion))
+    if admin_notification_recipients is not None:
+        recipients = _validated_admin_recipients(admin_notification_recipients)
+        settings.admin_notification_recipients = "\n".join(recipients)
     if polling_mode is not None:
         mode = polling_mode.upper().strip()
         if mode not in {"OFF", "MONITOR", "AUTO_SYNC"}:
@@ -457,6 +465,16 @@ def workspace_settings_save(
 
 def _polling_lines(value: object) -> list[str]:
     return [line.strip() for line in str(value or "").splitlines() if line.strip()]
+
+
+def _validated_admin_recipients(value: str) -> list[str]:
+    recipients = sorted(set(_polling_lines(value)))
+    for user in recipients:
+        if not frappe.db.get_value("User", user, "enabled") or not frappe.db.exists(
+            "Has Role", {"parent": user, "parenttype": "User", "role": "System Manager"}
+        ):
+            frappe.throw(f"Conflict notification recipient is not an enabled System Manager: {user}")
+    return recipients
 
 
 def _polling_filters(value: object) -> dict[str, object]:
@@ -767,6 +785,9 @@ def workspace_service_delete(query_id: str, expected_revision: int = 0) -> dict[
     service = frappe.get_doc("HERO GraphQL Service", query_id)
     if int(service.service_revision or 0) != int(expected_revision or 0):
         frappe.throw("The saved service has changed; reload it before deleting.")
+    from hero_integration.services.guards import assert_deletion_allowed
+
+    assert_deletion_allowed(action="GraphQL service deletion")
     frappe.delete_doc("HERO GraphQL Service", query_id)
     return {"status": "DELETED"}
 

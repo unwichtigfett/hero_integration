@@ -8,7 +8,7 @@
         ["Project Migration", "Requires confirmed ERPNext Company and approved project mappings. Preview is side-effect free."],
         ["Cheap Data Migration", "Runs the bounded lightweight contract. Execute stays blocked unless active mappings permit it."],
         ["Full Data Migration", "Runs all approved migration phases. It never implicitly enables polling or GraphQL mutations."],
-        ["Sync", "Uses approved idempotent mappings only. Polling never invokes a HERO GraphQL mutation."],
+        ["Sync", "Uses approved HERO-to-Frappe mappings only. Polling never invokes a HERO GraphQL mutation."],
     ];
 
     function mount(page) {

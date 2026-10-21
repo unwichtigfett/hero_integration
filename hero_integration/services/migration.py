@@ -16,6 +16,9 @@ from hero_integration.integrations.erpnext.contact import (
     synchronize_home_phone,
 )
 from hero_integration.sources.hero import HeroSource, SourcePage
+from hero_integration.services.change_detection import changed_fields, decode as decode_hashes, encode as encode_hashes, field_hashes
+from hero_integration.services.conflict_notifications import notify_conflict_once
+from hero_integration.services.integration_events import record_output
 from hero_integration.services.mapping_runtime import MappingPlanError, active_mapping_plan
 from hero_integration.services.project_naming import ProjectTitleValidationError, build_project_title
 
@@ -257,12 +260,52 @@ def _upsert(
             return Result("CONFLICT", "Stored target reference no longer exists.")
         target = frappe.get_doc(existing.target_doctype, existing.target_name)
         snapshot = target_snapshot or (lambda item: _target_values(item, values))
-        if _digest(snapshot(target)) != existing.target_payload_hash:
-            _mark_link_conflict(existing, "Target changed outside HERO Integration.")
-            return Result("CONFLICT", "Target changed outside HERO Integration.", doctype, target.name)
-        if existing.source_payload_hash != source_hash:
-            _mark_link_conflict(existing, "HERO source changed. Review is required before an update.")
-            return Result("CONFLICT", "HERO source changed. Review is required before an update.", doctype, target.name)
+        target_values = snapshot(target)
+        source_field_hashes = field_hashes(values)
+        target_field_hashes = field_hashes(target_values)
+        prior_source = decode_hashes(getattr(existing, "source_field_hashes", ""))
+        prior_target = decode_hashes(getattr(existing, "target_field_hashes", ""))
+        # RC15 links have whole-payload hashes only.  They remain fail-closed
+        # until an administrator establishes a fresh, field-level baseline.
+        if prior_source is None or prior_target is None:
+            if run.mode == "Preview":
+                return Result("PREVIEW_OK", "Existing legacy link requires a reviewed field-level baseline.", doctype, target.name)
+            _observe_link(existing, source_hash, _digest(target_values))
+            if _digest(target_values) != existing.target_payload_hash:
+                _mark_link_conflict(existing, "Target changed outside HERO Integration; legacy link has no field baseline.")
+                return Result("CONFLICT", "Target changed outside HERO Integration; legacy link has no field baseline.", doctype, target.name)
+            if existing.source_payload_hash != source_hash:
+                _mark_link_conflict(existing, "HERO source changed; legacy link has no field baseline.")
+                return Result("CONFLICT", "HERO source changed; legacy link has no field baseline.", doctype, target.name)
+            return Result("SKIPPED", "Record is already synchronized.", doctype, target.name)
+        changed_source = changed_fields(prior_source, source_field_hashes)
+        changed_target = changed_fields(prior_target, target_field_hashes)
+        same_field_changes = changed_source & changed_target
+        if same_field_changes:
+            detail = f"Field conflict requires review: {', '.join(sorted(same_field_changes))}."
+            if run.mode != "Preview":
+                notify_conflict_once(existing, same_field_changes, detail)
+                _mark_link_conflict(existing, detail)
+            return Result("CONFLICT", detail, doctype, target.name)
+        if run.mode == "Preview":
+            if changed_source:
+                return Result("PREVIEW_OK", "Existing target would receive non-conflicting HERO field changes.", doctype, target.name)
+            return Result("PREVIEW_OK", "Existing target would remain unchanged; local changes are observed only.", doctype, target.name)
+        _observe_link(existing, source_hash, _digest(target_values))
+        if changed_source:
+            for field in changed_source:
+                if field in values:
+                    target.set(field, values[field])
+            target.save()
+            target_values = snapshot(target)
+            target_field_hashes = field_hashes(target_values)
+            _update_link_baseline(existing, source_hash, _digest(target_values), source_field_hashes, target_field_hashes, mapping_version)
+            return Result("UPDATED", "Non-conflicting HERO field changes were applied through native Frappe validation.", doctype, target.name)
+        # A local-only change is observed but never becomes an outbound HERO
+        # mutation.  Keep it as the target baseline for a later comparison.
+        if changed_target:
+            _update_link_baseline(existing, source_hash, _digest(target_values), source_field_hashes, target_field_hashes, mapping_version)
+            return Result("OBSERVED", "Local field change observed; no outbound HERO mutation was prepared.", doctype, target.name)
         return Result("SKIPPED", "Record is already synchronized.", doctype, target.name)
     duplicate = frappe.db.exists(doctype, {name_field: values[name_field]})
     if duplicate:
@@ -283,18 +326,19 @@ def _upsert(
         "source_id": source_id, "source_instance": source_instance, "sync_status": "Synchronized",
         "conflict_detail": "", "last_synced_on": now_datetime(),
         "target_doctype": doctype, "target_name": target.name, "source_payload_hash": source_hash,
-        "target_payload_hash": target_hash, "mapping_version": mapping_version,
+        "target_payload_hash": target_hash, "source_field_hashes": encode_hashes(field_hashes(values)),
+        "target_field_hashes": encode_hashes(field_hashes(snapshot(target))), "mapping_version": mapping_version,
     }).insert()
     return Result("CREATED", "Target created through native Frappe validation.", doctype, target.name)
 
 
 def _record_result(run, source_type: str, record: dict[str, object], result: Result) -> None:
     source_id = str(record.get("id")) if isinstance(record.get("id"), int) else "unknown"
-    frappe.get_doc({
-        "doctype": "HERO Integration Record", "run": run.name, "source_type": source_type,
-        "source_id": source_id, "result": result.code, "detail": result.detail,
-        "target_doctype": result.target_doctype, "target_name": result.target_name,
-    }).insert()
+    record_output(
+        run=run.name, source_type=source_type, source_id=source_id, result=result.code,
+        action="preview" if run.mode == "Preview" else "hero_to_frappe",
+        detail=result.detail, target_doctype=result.target_doctype, target_name=result.target_name,
+    )
     run.processed = int(run.processed or 0) + 1
     if result.code == "CREATED":
         run.created_records = int(run.created_records or 0) + 1
@@ -343,6 +387,27 @@ def _mark_source_deleted(link) -> None:
 def _mark_link_conflict(link, detail: str) -> None:
     link.sync_status = "Conflict"
     link.conflict_detail = detail
+    _save_link(link)
+
+
+def _observe_link(link, source_hash: str, target_hash: str) -> None:
+    """Keep observation separate from the last successfully compared baseline."""
+
+    link.observed_source_hash = source_hash
+    link.observed_target_hash = target_hash
+    link.last_observed_on = now_datetime()
+    _save_link(link)
+
+
+def _update_link_baseline(link, source_hash, target_hash, source_fields, target_fields, mapping_version) -> None:
+    link.source_payload_hash = source_hash
+    link.target_payload_hash = target_hash
+    link.source_field_hashes = encode_hashes(source_fields)
+    link.target_field_hashes = encode_hashes(target_fields)
+    link.mapping_version = mapping_version
+    link.sync_status = "Synchronized"
+    link.conflict_detail = ""
+    link.last_synced_on = now_datetime()
     _save_link(link)
 
 
@@ -425,7 +490,10 @@ def _synchronize_customer_address(customer, address: dict[str, object], source_i
         "source_id": source_id, "source_instance": source_instance, "sync_status": "Synchronized",
         "conflict_detail": "", "last_synced_on": now_datetime(), "target_doctype": "Address",
         "target_name": target.name, "source_payload_hash": _digest(payload),
-        "target_payload_hash": _digest(_target_values(target, values)), "mapping_version": mapping_version,
+        "target_payload_hash": _digest(_target_values(target, values)),
+        "source_field_hashes": encode_hashes(field_hashes(values)),
+        "target_field_hashes": encode_hashes(field_hashes(_target_values(target, values))),
+        "mapping_version": mapping_version,
     }).insert()
 
 

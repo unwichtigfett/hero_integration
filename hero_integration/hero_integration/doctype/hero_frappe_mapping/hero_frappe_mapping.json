@@ -7,7 +7,7 @@
   {"fieldname":"target_doctype","label":"Target DocType","fieldtype":"Data","reqd":1,"in_list_view":1}, {"fieldname":"target_field","label":"Target Field","fieldtype":"Data","reqd":1,"in_list_view":1},
   {"fieldname":"purpose","label":"Mapping Purpose","fieldtype":"Select","options":"Field\nSource Identity\nRecord Name\nCustomer Type\nCustomer Primary Contact\nCustomer Home Phone\nLifecycle Flag\nCustomer Relation\nConfirmed Company","default":"Field","reqd":1,"in_list_view":1},
   {"fieldname":"transformation","label":"Transformation","fieldtype":"Select","options":"Identity\nTrim\nPositive Int To Text\nCustomer Type From Company Name\nHERO Customer Link\nConfirmed ERPNext Company","default":"Identity","reqd":1},
-  {"fieldname":"relation","label":"Relationship","fieldtype":"Data"}, {"fieldname":"priority","label":"Priority","fieldtype":"Int","default":"100"},
+  {"fieldname":"relation","label":"Relationship","fieldtype":"Data"}, {"fieldname":"priority","label":"Priority (0 first, 10 last)","fieldtype":"Int","default":"5","description":"Whole number from 0 through 10. Priority never replaces dependency or conflict checks."},
   {"fieldname":"schema_dependencies","label":"Schema Dependencies","fieldtype":"Small Text","default":"[]","read_only":1},
   {"fieldname":"schema_manifest","label":"Schema Manifest","fieldtype":"Code","options":"JSON","read_only":1,"hidden":1},
   {"fieldname":"schema_snapshot","label":"HERO Schema Snapshot","fieldtype":"Link","options":"HERO GraphQL Schema Snapshot","reqd":1},

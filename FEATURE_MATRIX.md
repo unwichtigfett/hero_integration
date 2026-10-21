@@ -17,7 +17,11 @@
 | Mapping field pickers and suggestions | Implemented and offline-tested | Saved operation selection sets and the installed site's Frappe metadata drive searchable bidirectional suggestions. Schema-only, protected, stale, incompatible, and unresolved child-relation candidates cannot be activated. |
 | GraphQL service management | Implemented and offline-tested | Read-only services bind to a validated schema fingerprint. Mutations and subscriptions are rejected. |
 | Custom direct mappings | Implemented and offline-tested | Active mappings use Frappe metadata and Document APIs. Protected and standard fields cannot be overridden. |
-| Preview, idempotency, conflicts, retry | Implemented and mock-tested | Preview does not write targets; changed source or target becomes a conflict. |
+| Preview and comparison state | Implemented and mock-tested | Preview does not write target, Link, conflict or observation state. Links retain separate successful and observed protected field-hash state. |
+| Field conflict handling | Implemented and mock-tested | A HERO-only mapped field change can update through Frappe validation. A same-field change on both sides creates a durable Link conflict and an internal System-Manager notification; no overwrite occurs. |
+| External mutation outcome | Implemented and offline-tested | Local duplicate/concurrency protection exists, but no HERO idempotency or exactly-once claim is made. Ambiguous results are audited and never retried automatically. |
+| Central deletion gate | Implemented and source-tested | Default-OFF `Allow deletion` protects HERO-owned direct DocType deletion and app RPC paths; it does not grant foreign ERPNext deletions. |
+| Durable general output | Implemented and source-tested | Existing `HERO Integration Record` is extended as a versioned, paginated, System-Manager-only technical output projection; no general event broker or Core consumer is required. |
 | Manual and scheduled sync | Implemented and mock-tested | One-way HERO to Frappe; hourly hook is disabled until configured. |
 | ERPNext persistence | Limited | Native v16 persistence and Custom Field acceptance are pending on a fresh owned VPS. |
 | Helpdesk profile | Limited | Detected only when ERPNext and Helpdesk are installed; ERPNext owns Customer mirroring. |
@@ -36,3 +40,13 @@
 | RL-19–20 | One page/sidebar, five English tabs, canonical GraphQL Services route, explicit loader error state, scoped neutral cards | Desk, Node loader and Python UI-contract tests | Authenticated browser check in light/dark and narrow view. |
 | RL-21–23 | Gates and test fixtures exist; no live HERO or 15-ProjectMatch run is claimed | source and focused tests only | User-authorized live read, MONITOR, AUTO_SYNC, Helpdesk and 5+5+5 ProjectMatch gates. |
 | RL-24 | This matrix, mapping guide and manual protocol are maintained for the RC | repository documentation | v1.0.0 documentation/tag remain intentionally deferred. |
+
+## RC16 delta matrix
+
+| Requirement | Existing implementation reused | RC16 delta | Evidence / remaining gate |
+| --- | --- | --- | --- |
+| Generic technical output | `HERO Integration Record` | Version, action, origin, correlation, observation time and redacted field-name projection; paginated System-Manager API | `services/integration_events.py`; Bench/Fresh-install evidence remains required. |
+| Priority 0–10 | Existing classic mapping runtime and package | Default 5, strict validation, `0` retained, lossless 100→5 patch; ambiguous historic values disabled | `direct_mapping.py`, `normalize_mapping_priorities.py`, mapping tests. |
+| Change detection/conflict | Existing Link hashes and migration path | Successful and observed values separated; field-hash overlap detects bilateral same-field conflict; preview stays no-write | `change_detection.py`, `migration.py`, migration tests. |
+| Admin conflict signal | Existing internal Frappe platform | Configurable recipients with enabled System-Manager fallback; durable Notification Log when evidence changes | `conflict_notifications.py`; delivery needs isolated Bench verification. |
+| Deletion gate | Existing Settings and app-owned DocTypes | Default-OFF central hook plus service RPC recheck | `guards.py`, `hooks.py`, `api.py`; full direct/queued route inventory test remains required. |
