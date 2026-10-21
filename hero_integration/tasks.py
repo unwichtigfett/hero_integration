@@ -7,6 +7,6 @@ def run_scheduled_sync() -> None:
     settings = frappe.get_single("HERO Integration Settings")
     if not settings.scheduled_sync_enabled:
         return
-    from hero_integration.api import start_migration
+    from hero_integration.api import start_scheduled_sync
 
-    start_migration(action="Sync", dry_run=0, scheduled=True)
+    start_scheduled_sync()

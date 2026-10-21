@@ -8,6 +8,8 @@ from hero_integration.integrations.erpnext.company import confirmed_project_comp
 
 class HEROIntegrationSettings(Document):
     def validate(self):
+        if self.has_value_changed("erpnext_company"):
+            self.erpnext_company_confirmed = 0
         if self.hero_api_url:
             hosts = {line.strip().lower() for line in (self.allowed_hero_hosts or "").splitlines() if line.strip()}
             try:
