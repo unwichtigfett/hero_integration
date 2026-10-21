@@ -85,8 +85,8 @@
         mutationSave.type = "button";
         mutationCard.append(
             node("h3", "", "GraphQL Mutations"),
-            field("Allow mutation execution", mutationEnabled, "Only System Managers can change this site setting. The current release rejects activation."),
-            node("p", "hero-settings-warning", "Effective security status is controlled by the backend release gate. Mutation drafts remain available independently."),
+            field("Allow mutation execution", mutationEnabled, "Only System Managers can change this global gate. It is OFF by default."),
+            node("p", "hero-settings-warning", "An enabled global gate does not execute anything by itself: each mutation needs a compatible snapshot, an active per-operation contract, validated variables, preview, and explicit confirmation."),
             mutationStatus,
             mutationSave
         );
@@ -184,7 +184,7 @@
                 }
             } catch (error) {
                 if (!destroyed) {
-                    mutationStatus.textContent = uiText("Mutation activation is blocked by HERO_MUTATION_EXECUTION_DISABLED.");
+                    mutationStatus.textContent = uiText("Mutation setting was not saved. The global gate remains fail-closed until the server accepts it.");
                     await load();
                 }
             } finally {

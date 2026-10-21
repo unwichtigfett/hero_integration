@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+from uuid import uuid4
 
 import frappe
 
@@ -8,7 +10,6 @@ import frappe
 ACTIONS = {"Customer Migration", "Project Migration", "Cheap Data Migration", "Full Data Migration", "Sync"}
 TERMINAL_STATES = {"Completed", "Completed With Conflicts", "Failed", "Cancelled", "Blocked"}
 MUTATION_EXECUTION_DISABLED = "HERO_MUTATION_EXECUTION_DISABLED"
-MUTATION_EXECUTION_RELEASED = False
 
 
 @frappe.whitelist()
@@ -366,11 +367,9 @@ def workspace_settings_save(enabled: int | bool, api_url: str, api_token: str = 
 
 @frappe.whitelist()
 def workspace_mutation_execution_set(allow_execution: int | bool) -> dict[str, object]:
-    """Persist an administrator request only after the separate release gate allows it."""
+    """Persist the global System Manager execution switch; it remains OFF by default."""
     frappe.only_for("System Manager")
     requested = _as_bool(allow_execution)
-    if requested and not MUTATION_EXECUTION_RELEASED:
-        frappe.throw(MUTATION_EXECUTION_DISABLED)
     settings = frappe.get_single("HERO Integration Settings")
     settings.allow_graphql_mutation_execution = int(requested)
     settings.save()
@@ -378,19 +377,19 @@ def workspace_mutation_execution_set(allow_execution: int | bool) -> dict[str, o
 
 
 def _mutation_execution_state(settings=None) -> dict[str, object]:
-    """Report requested and effective states without ever treating configuration as release approval."""
+    """Report the global gate; individual contracts and confirmations still apply."""
     if settings is None:
         settings = frappe.get_single("HERO Integration Settings")
     requested = _as_bool(getattr(settings, "allow_graphql_mutation_execution", 0))
-    enabled = bool(MUTATION_EXECUTION_RELEASED and requested)
+    enabled = requested
     return {
         "mutation_execution_requested": requested,
-        "mutation_execution_released": MUTATION_EXECUTION_RELEASED,
+        "mutation_execution_released": True,
         "mutation_execution_enabled": enabled,
         "mutation_execution_status": "ENABLED" if enabled else "DISABLED",
         "mutation_execution_reason": (
-            "GraphQL mutation execution requires a separately security-reviewed release. "
-            "Mutation drafts remain available independently."
+            "Execution is OFF until a System Manager enables it. Each mutation also requires an active schema-bound "
+            "contract, validated variables, an exact preview fingerprint, and a fresh explicit confirmation."
         ),
     }
 
@@ -403,9 +402,7 @@ def _as_bool(value: int | bool | str | None) -> bool:
 
 
 def _assert_mutation_execution_released() -> None:
-    """Single fail-closed gate for direct and workspace execution facades."""
-    if not MUTATION_EXECUTION_RELEASED:
-        frappe.throw(MUTATION_EXECUTION_DISABLED)
+    """Single fail-closed global gate for direct and workspace execution facades."""
     if not _mutation_execution_state()["mutation_execution_enabled"]:
         frappe.throw(MUTATION_EXECUTION_DISABLED)
 
@@ -822,11 +819,122 @@ def resume_mapping_adoption(adoption_name: str) -> dict[str, object]:
 
 
 @frappe.whitelist()
-def execute_graphql_service(service_name: str, variables_json: str = "{}") -> dict[str, object]:
-    """Retained compatibility endpoint; remote HERO execution is disabled."""
+def workspace_mutation_preview(contract_name: str, variables_json: str) -> dict[str, object]:
+    """Return a redacted, exact-effect preview.  It never contacts HERO or writes state."""
+    frappe.only_for("System Manager")
+    contract, service, snapshot, variables, request_fingerprint = _validated_mutation_request(contract_name, variables_json)
+    return {
+        "can_execute": bool(_mutation_execution_state()["mutation_execution_enabled"] and contract.status == "Active"),
+        "operation": service.operation_name,
+        "schema_fingerprint": snapshot.schema_fingerprint,
+        "mapping_revision": int(contract.contract_revision or 1),
+        "request_fingerprint": request_fingerprint,
+        "effect_summary": "One explicitly approved HERO mutation will be sent once; no automatic retry is performed.",
+        "variables_validated": sorted(variables),
+    }
+
+
+@frappe.whitelist()
+def workspace_mutation_contract_save(
+    service_name: str, mapping_json: str, contract_name: str = "", activate: int | bool = 0,
+) -> dict[str, object]:
+    """Create or revise a per-operation draft contract; activation is explicit."""
+    frappe.only_for("System Manager")
+    service = frappe.get_doc("HERO GraphQL Service", service_name)
+    snapshot = frappe.get_doc("HERO GraphQL Schema Snapshot", service.schema_snapshot)
+    if snapshot.analysis_status != "Validated" or snapshot.execution_contract_status == "Blocked":
+        frappe.throw("A compatible validated schema snapshot is required.")
+    try:
+        mapping = json.loads(mapping_json)
+        if not isinstance(mapping, dict) or mapping.get("mode") not in {"ADMIN_INPUT", "VALIDATED_RESOLVER"}:
+            raise ValueError
+    except (TypeError, ValueError, json.JSONDecodeError):
+        frappe.throw("Mutation mapping must be an object with mode ADMIN_INPUT or VALIDATED_RESOLVER.")
+    contract = frappe.get_doc("HERO Mutation Contract", contract_name) if contract_name else frappe.new_doc("HERO Mutation Contract")
+    if contract_name and contract.graphql_service != service.name:
+        frappe.throw("The mutation contract belongs to another GraphQL service.")
+    contract.graphql_service = service.name
+    contract.mapping_json = json.dumps(mapping, ensure_ascii=False, sort_keys=True)
+    contract.status = "Active" if activate in (True, 1, "1", "true", "True") else "Draft"
+    contract.save()
+    return {
+        "contract_name": contract.name, "status": contract.status, "operation": contract.operation_name,
+        "schema_fingerprint": contract.schema_fingerprint, "revision": int(contract.contract_revision or 1),
+    }
+
+
+@frappe.whitelist()
+def execute_graphql_service(
+    service_name: str, variables_json: str = "{}", confirmation_fingerprint: str = "", confirmed: int | bool = 0,
+) -> dict[str, object]:
+    """Execute exactly one contract-bound mutation after all server-side gates pass."""
     frappe.only_for("System Manager")
     _assert_mutation_execution_released()
-    frappe.throw(MUTATION_EXECUTION_DISABLED)
+    contract, service, snapshot, variables, request_fingerprint = _validated_mutation_request(service_name, variables_json)
+    if contract.status != "Active":
+        frappe.throw("The mutation contract is not active.")
+    if confirmed not in (True, 1, "1", "true", "True") or confirmation_fingerprint != request_fingerprint:
+        frappe.throw("Explicit confirmation for this exact mutation preview is required.")
+    if frappe.db.exists("HERO Mutation Audit", {"status": "Approved"}):
+        frappe.throw("Another HERO mutation is currently in progress.")
+    correlation_id = uuid4().hex
+    audit = frappe.get_doc({
+        "doctype": "HERO Mutation Audit", "correlation_id": correlation_id, "user": frappe.session.user,
+        "site": frappe.local.site, "operation_name": service.operation_name,
+        "schema_fingerprint": snapshot.schema_fingerprint, "mapping_revision": int(contract.contract_revision or 1),
+        "request_fingerprint": request_fingerprint, "status": "Approved", "detail": "Explicit System Manager confirmation recorded; variables are intentionally not retained.",
+    })
+    audit.insert(ignore_permissions=True)
+    try:
+        from hero_integration.client.graphql_mutation import HeroMutationClient
+        from hero_integration.client.settings import get_configuration
+
+        configuration = get_configuration()
+        HeroMutationClient(configuration.endpoint, lambda: configuration.api_token, configuration.timeout_seconds).execute_once(
+            service.query_document, variables
+        )
+    except Exception as error:
+        audit.status = "Timeout" if error.__class__.__name__ in {"TimeoutError", "URLError"} else "Failed"
+        audit.detail = "HERO mutation did not complete. No automatic retry was performed; inspect the remote effect before another explicit submission."
+        audit.save(ignore_permissions=True)
+        frappe.throw("HERO mutation failed safely; no automatic retry was performed.")
+    audit.status = "Succeeded"
+    audit.detail = "HERO mutation transport completed; remote response data is intentionally not persisted."
+    audit.save(ignore_permissions=True)
+    return {"status": "SUCCEEDED", "correlation_id": correlation_id, "operation": service.operation_name}
+
+
+def _validated_mutation_request(contract_name: str, variables_json: str):
+    try:
+        variables = json.loads(variables_json)
+    except json.JSONDecodeError:
+        frappe.throw("Mutation variables must be a JSON object.")
+    contract = frappe.get_doc("HERO Mutation Contract", contract_name)
+    service = frappe.get_doc("HERO GraphQL Service", contract.graphql_service)
+    snapshot = frappe.get_doc("HERO GraphQL Schema Snapshot", contract.schema_snapshot)
+    if service.schema_snapshot != snapshot.name or service.schema_fingerprint != snapshot.schema_fingerprint:
+        frappe.throw("The mutation service no longer matches its schema snapshot.")
+    if snapshot.analysis_status != "Validated" or snapshot.execution_contract_status == "Blocked":
+        frappe.throw("The mutation schema snapshot is not executable.")
+    if contract.schema_fingerprint != snapshot.schema_fingerprint:
+        frappe.throw("The mutation contract no longer matches its schema snapshot.")
+    try:
+        mapping = json.loads(contract.mapping_json)
+        if not isinstance(mapping, dict) or mapping.get("mode") not in {"ADMIN_INPUT", "VALIDATED_RESOLVER"}:
+            raise ValueError
+        from hero_integration.services.graphql_contract import parse_mutation, validate_mutation
+
+        parsed = parse_mutation(service.query_document)
+        if parsed.fingerprint != contract.contract_fingerprint or parsed.root_field != contract.operation_name:
+            frappe.throw("The saved mutation document differs from its approved contract.")
+        values = validate_mutation(json.loads(snapshot.snapshot_json), parsed, variables)
+    except ValueError:
+        frappe.throw("The mutation contract or variables are invalid.")
+    canonical = json.dumps(
+        {"contract": contract.contract_fingerprint, "revision": int(contract.contract_revision or 1), "variables": values},
+        ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+    )
+    return contract, service, snapshot, values, hashlib.sha256(canonical.encode()).hexdigest()
 
 
 class _FrappePickerMetadata:
