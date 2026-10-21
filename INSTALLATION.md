@@ -73,3 +73,7 @@ and export of the approved mapping package. Fetch the published
 `release/v1-rc` revision, run `bench --site <site-name> migrate` twice, then
 verify that the mapping count and imported mapping revisions remain unchanged.
 Do not use a local working tree as fresh-install or upgrade evidence.
+
+The target needs a scoped, functional database-bootstrap path for `bench
+new-site`; do not substitute a fallback database engine for a MariaDB/ERPNext
+upgrade proof merely because local root authentication is unavailable.
