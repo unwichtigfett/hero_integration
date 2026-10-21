@@ -59,6 +59,19 @@ class HeroGraphQLClient:
 
     def query(self, document: str, variables: Mapping[str, object]) -> dict[str, object]:
         assert_read_only(document)
+        return self._post(document, variables)
+
+    def introspect(self, document: str) -> dict[str, object]:
+        """Execute the fixed read-only introspection document.
+
+        Introspection uses the same HTTPS-only, allowlisted, no-redirect
+        transport as queries, but its caller must still validate the complete
+        response before persistence.
+        """
+        assert_read_only(document)
+        return {"data": self._post(document, {})}
+
+    def _post(self, document: str, variables: Mapping[str, object]) -> dict[str, object]:
         token = self.token_provider()
         if not isinstance(token, str) or not token.strip() or any(ord(char) < 32 for char in token):
             raise HeroClientError("HERO API token is missing or invalid.")
