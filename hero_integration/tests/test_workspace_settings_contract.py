@@ -115,6 +115,23 @@ class TestWorkspaceSettingsContract(unittest.TestCase):
         self.assertEqual(settings.save_calls, 1)
         self.assertFalse(result["mutation_execution_enabled"])
 
+    def test_admin_can_save_allowed_host_source_company_and_fail_closed_polling(self):
+        settings = _Settings()
+        frappe_mock = _FrappeSettingsMock(settings)
+        with patch.object(api, "frappe", frappe_mock):
+            result = api.workspace_settings_save(
+                True, "https://hero.synthetic.invalid/graphql", allowed_hero_hosts="hero.synthetic.invalid",
+                hero_source_instance="synthetic", erpnext_company="Synthetic Company",
+                erpnext_company_confirmed=False, polling_mode="OFF", polling_interval_minutes=15,
+            )
+        self.assertEqual(settings.allowed_hero_hosts, "hero.synthetic.invalid")
+        self.assertEqual(settings.hero_source_instance, "synthetic")
+        self.assertEqual(settings.erpnext_company, "Synthetic Company")
+        self.assertEqual(settings.erpnext_company_confirmed, 0)
+        self.assertEqual(settings.polling_mode, "OFF")
+        self.assertEqual(settings.polling_interval_minutes, 15)
+        self.assertEqual(result["polling"]["mode"], "OFF")
+
     def test_admin_can_enable_the_global_gate_but_not_bypass_per_operation_gates(self):
         settings = _Settings()
         frappe_mock = _FrappeSettingsMock(settings)

@@ -343,15 +343,35 @@ def workspace_settings_get() -> dict[str, object]:
     return {
         "enabled": bool(settings.hero_api_url),
         "api_url": settings.hero_api_url or "",
+        "allowed_hero_hosts": getattr(settings, "allowed_hero_hosts", "") or "",
+        "hero_source_instance": getattr(settings, "hero_source_instance", "default") or "default",
+        "erpnext_company": getattr(settings, "erpnext_company", "") or "",
+        "erpnext_company_confirmed": bool(getattr(settings, "erpnext_company_confirmed", 0)),
         "api_token_configured": token_configured,
         "api_token_status": token_status,
         "timeout_seconds": int(settings.timeout_seconds or 30),
+        "polling": {
+            "mode": getattr(settings, "polling_mode", "OFF") or "OFF",
+            "interval_minutes": int(getattr(settings, "polling_interval_minutes", 60) or 60),
+            "timezone": getattr(settings, "polling_timezone", "UTC") or "UTC",
+            "execution_window": getattr(settings, "polling_execution_window", "") or "",
+            "allow_backfill": bool(getattr(settings, "polling_allow_backfill", 0)),
+            "full_inventory": bool(getattr(settings, "polling_full_inventory", 0)),
+            "retry_limit": int(getattr(settings, "polling_retry_limit", 0) or 0),
+            "rate_limit": int(getattr(settings, "polling_rate_limit", 30) or 30),
+            "concurrency": int(getattr(settings, "polling_concurrency", 1) or 1),
+        },
         **_mutation_execution_state(settings),
     }
 
 
 @frappe.whitelist()
-def workspace_settings_save(enabled: int | bool, api_url: str, api_token: str = "", timeout_seconds: int = 30) -> dict[str, object]:
+def workspace_settings_save(
+    enabled: int | bool, api_url: str, api_token: str = "", timeout_seconds: int = 30,
+    allowed_hero_hosts: str | None = None, hero_source_instance: str | None = None,
+    erpnext_company: str | None = None, erpnext_company_confirmed: int | bool | None = None,
+    polling_mode: str | None = None, polling_interval_minutes: int | None = None,
+) -> dict[str, object]:
     """Persist only native integration configuration, with DocType validation."""
     frappe.only_for("System Manager")
     if int(timeout_seconds) < 1:
@@ -359,6 +379,23 @@ def workspace_settings_save(enabled: int | bool, api_url: str, api_token: str = 
     settings = frappe.get_single("HERO Integration Settings")
     settings.hero_api_url = api_url.strip() if bool(enabled) else ""
     settings.timeout_seconds = int(timeout_seconds)
+    if allowed_hero_hosts is not None:
+        settings.allowed_hero_hosts = allowed_hero_hosts.strip()
+    if hero_source_instance is not None:
+        settings.hero_source_instance = hero_source_instance.strip()
+    if erpnext_company is not None:
+        settings.erpnext_company = erpnext_company.strip()
+    if erpnext_company_confirmed is not None:
+        settings.erpnext_company_confirmed = int(_as_bool(erpnext_company_confirmed))
+    if polling_mode is not None:
+        mode = polling_mode.upper().strip()
+        if mode not in {"OFF", "MONITOR", "AUTO_SYNC"}:
+            frappe.throw("Polling mode must be OFF, MONITOR, or AUTO_SYNC.")
+        settings.polling_mode = mode
+    if polling_interval_minutes is not None:
+        if not 1 <= int(polling_interval_minutes) <= 24 * 60:
+            frappe.throw("Polling interval must be between 1 and 1440 minutes.")
+        settings.polling_interval_minutes = int(polling_interval_minutes)
     if api_token:
         settings.hero_api_token = api_token
     settings.save()
