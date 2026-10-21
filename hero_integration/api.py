@@ -120,10 +120,94 @@ def schema_snapshot_list() -> list[dict[str, object]]:
     return _schema_snapshot_rows()
 
 
+@frappe.whitelist()
+def workspace_schema_refresh(connection_id: str = "", binding_generation: int | str = 0) -> dict[str, object]:
+    """Capture a new complete, validated live HERO schema snapshot.
+
+    This is intentionally an explicit System Manager action.  Opening a page,
+    loading settings, or generating mapping suggestions never invokes it.
+    """
+    frappe.only_for("System Manager")
+    del binding_generation  # preserved compatibility parameter; no hidden binding state exists.
+    from hero_integration.client.graphql import HeroClientError, HeroGraphQLClient
+    from hero_integration.client.settings import HeroConfigurationError, get_configuration
+    from hero_integration.services.introspection import (
+        INTROSPECTION_QUERY,
+        IntrospectionError,
+        canonical_schema,
+        captured_at_utc,
+        endpoint_fingerprint,
+        structural_diff,
+    )
+
+    try:
+        configuration = get_configuration()
+        endpoint_hash = endpoint_fingerprint(configuration.endpoint.url, configuration.source_instance)
+        if connection_id and connection_id not in {endpoint_hash, configuration.source_instance}:
+            frappe.throw("The selected schema connection does not match current HERO settings.")
+        client = HeroGraphQLClient(
+            configuration.endpoint,
+            token_provider=lambda: configuration.api_token,
+            timeout=configuration.timeout_seconds,
+            max_retries=1,
+        )
+        schema = canonical_schema(client.introspect(INTROSPECTION_QUERY))
+    except (HeroClientError, HeroConfigurationError, IntrospectionError, ValueError) as error:
+        frappe.throw(f"HERO schema refresh failed safely: {error}")
+
+    schema_json = {"__schema": schema}
+    from hero_integration.services.graphql_graph import analyze_snapshot
+
+    fingerprint = analyze_snapshot(schema_json).fingerprint
+    existing = frappe.get_all(
+        "HERO GraphQL Schema Snapshot",
+        filters={"schema_fingerprint": fingerprint},
+        fields=["name", "schema_fingerprint", "execution_contract_status"],
+        limit_page_length=1,
+    )
+    if existing:
+        row = existing[0]
+        return {
+            "status": "UNCHANGED",
+            "snapshot_name": row["name"],
+            "schema_fingerprint": row["schema_fingerprint"],
+            "execution_contract_status": row.get("execution_contract_status") or "Compatible",
+        }
+
+    previous_rows = frappe.get_all(
+        "HERO GraphQL Schema Snapshot",
+        filters={"source_instance": configuration.source_instance, "endpoint_fingerprint": endpoint_hash},
+        fields=["name"], order_by="modified desc", limit_page_length=1,
+    )
+    previous = frappe.get_doc("HERO GraphQL Schema Snapshot", previous_rows[0]["name"]) if previous_rows else None
+    diff = structural_diff(json.loads(previous.snapshot_json) if previous else None, schema)
+    snapshot = frappe.get_doc({
+        "doctype": "HERO GraphQL Schema Snapshot",
+        "snapshot_json": json.dumps(schema_json, ensure_ascii=False, sort_keys=True),
+        "source_instance": configuration.source_instance,
+        "endpoint_fingerprint": endpoint_hash,
+        "schema_version": 1,
+        "captured_at": captured_at_utc(),
+        "structural_diff_json": json.dumps(diff, ensure_ascii=False, sort_keys=True),
+        "execution_contract_status": "Blocked" if diff["breaking"] else "Compatible",
+    })
+    snapshot.insert()
+    return {
+        "status": "CAPTURED",
+        "snapshot_name": snapshot.name,
+        "schema_fingerprint": snapshot.schema_fingerprint,
+        "execution_contract_status": snapshot.execution_contract_status,
+        "structural_diff": diff,
+    }
+
+
 def _schema_snapshot_rows() -> list[dict[str, object]]:
     return frappe.get_all(
         "HERO GraphQL Schema Snapshot",
-        fields=["name", "schema_fingerprint", "analysis_status", "analysis_detail", "modified"],
+        fields=[
+            "name", "schema_fingerprint", "analysis_status", "analysis_detail", "modified",
+            "source_instance", "endpoint_fingerprint", "captured_at", "execution_contract_status",
+        ],
         order_by="modified desc",
         limit_page_length=100,
     )
@@ -196,8 +280,6 @@ def workspace_context(snapshot_name: str = "") -> dict[str, object]:
     frappe.only_for("System Manager")
     snapshots = [_workspace_snapshot_metadata(row) for row in _schema_snapshot_rows()]
     selected = next((item for item in snapshots if item["name"] == snapshot_name and item["usable"]), None)
-    selected = selected or next((item for item in snapshots if item["usable"] and item["kind"] == "Full schema"), None)
-    selected = selected or next((item for item in snapshots if item["usable"]), None)
     return {
         "connection_id": selected["name"] if selected else "",
         "binding_generation": 0,
@@ -208,7 +290,7 @@ def workspace_context(snapshot_name: str = "") -> dict[str, object]:
         "mutations_enabled": False,
         "execution_enabled": False,
         "binding_refresh_available": False,
-        "schema_refresh_available": False,
+        "schema_refresh_available": True,
         "selected_snapshot": selected["name"] if selected else "",
         "selected_snapshot_metadata": selected,
         "snapshots": snapshots,
@@ -225,6 +307,9 @@ def _workspace_snapshot_metadata(row: dict[str, object]) -> dict[str, object]:
         "usable": False,
         "coverage": {},
         "kind": "Unavailable snapshot",
+        "source_instance": row.get("source_instance") or "",
+        "captured_at": row.get("captured_at") or row.get("modified") or "",
+        "execution_contract_status": row.get("execution_contract_status") or "Compatible",
     }
     if row["analysis_status"] != "Validated":
         return item
@@ -357,7 +442,7 @@ def workspace_graph(snapshot_name: str, start: int = 0, page_size: int = 200, no
     result["nodes"] = result.pop("rows")
     fingerprint = result.pop("fingerprint")
     result["schema_fingerprint"] = fingerprint
-    result["existing_mappings"] = _existing_mappings(fingerprint)
+    result["existing_mappings"] = _existing_mappings(snapshot.schema_fingerprint)
     return result
 
 

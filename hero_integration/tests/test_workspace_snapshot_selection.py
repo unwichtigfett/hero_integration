@@ -85,7 +85,8 @@ class TestWorkspaceSnapshotSelection(unittest.TestCase):
         self.assertEqual(context["selected_snapshot"], "FULL")
         self.assertEqual(context["selected_snapshot_metadata"]["coverage"]["types"], 300)
         self.assertEqual(context["selected_snapshot_metadata"]["kind"], "Full schema")
-        self.assertEqual(default_context["connection_id"], "FULL")
+        self.assertEqual(default_context["connection_id"], "")
+        self.assertEqual(default_context["selected_snapshot"], "")
         self.assertEqual(
             [(item["name"], item["kind"], item["coverage"]["types"]) for item in context["snapshots"]],
             [("SYNTHETIC", "Synthetic/test schema", 3), ("FULL", "Full schema", 300)],
