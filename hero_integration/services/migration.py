@@ -118,6 +118,16 @@ def _claim_run(run) -> bool:
         # before that commit can otherwise expose an in-flight row version.
         frappe.db.commit()
         return True
+    except frappe.QueryDeadlockError:
+        # MariaDB can still surface a stale-row conflict to a connection that
+        # lost the first-use race.  It has not obtained a reservation; roll
+        # back that transaction and persist a normal blocked outcome rather
+        # than letting a worker fail or retry against an unknown state.
+        frappe.db.rollback()
+        run.reload()
+        _block_run(run, "Another connection is establishing the HERO run reservation; run was not started.")
+        frappe.db.commit()
+        return False
     finally:
         _release_active_run_lock()
 
