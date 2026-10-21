@@ -226,7 +226,9 @@ class TestHeroDeskUiContract(unittest.TestCase):
         for contract in (
             "--hero-field-bg", "--hero-field-border", "--hero-field-readonly-bg",
             "--hero-field-disabled-bg", "--hero-field-error", "@media (prefers-color-scheme: dark)",
-            ".admin-hero-tool-host .form-control", ":focus-visible", "[aria-invalid=\"true\"]",
+            ".admin-hero-tool-host .form-control", ".hero-integration-ui .form-control",
+            ".hero-integration-ui :is(input", "#26394f", "#9ab6d4", ":focus-visible",
+            "[aria-invalid=\"true\"]",
         ):
             with self.subTest(contract=contract):
                 self.assertIn(contract, adapter)
