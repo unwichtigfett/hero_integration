@@ -154,6 +154,34 @@ class TestHeroDeskUiContract(unittest.TestCase):
         self.assertNotIn("snapshot.val(rows[0]", source)
         self.assertNotIn("snapshot.val(snapshots", source)
 
+    def test_dynamic_query_and_mutation_contracts_stay_separate_and_draft_first(self):
+        source = MAPPING_EDITOR_JS.read_text()
+        for contract in (
+            "Query- und Mutations-Mapping", "schema_operation_catalog", "graphql_mapping_list",
+            "graphql_mapping_save", "QUERY_TO_FRAPPE", "FRAPPE_TO_MUTATION", "Save Draft",
+            "Activate reviewed mapping", "dynamicDirection", "dynamicOperations", "frappe.confirm",
+        ):
+            with self.subTest(contract=contract):
+                self.assertIn(contract, source)
+        self.assertIn("saveDynamic(false)", source)
+        self.assertNotIn("snapshot.val(rows[0]", source)
+
+    def test_polling_and_synchronization_controls_are_visible_without_a_new_page(self):
+        settings = SETTINGS_JS.read_text()
+        migration = MIGRATION_JS.read_text()
+        for contract in (
+            "Polling controls", "polling_data_sources", "polling_filters_json", "polling_pagination_strategy",
+            "polling_reconciliation", "polling_retry_backoff_seconds", "polling_notifications", "AUTO_SYNC",
+        ):
+            with self.subTest(contract=contract):
+                self.assertIn(contract, settings)
+        for contract in (
+            "workspace_sync_status", "Preview never writes business or link status", "Cancel", "Resume",
+            "Customer Migration", "Project Migration", "Cheap Data Migration", "Full Data Migration", "Sync",
+        ):
+            with self.subTest(contract=contract):
+                self.assertIn(contract, migration)
+
     def test_styles_are_packaged_with_the_app(self):
         self.assertTrue(WORKSPACE_CSS.is_file())
         for asset in ("hero_tools.css", "hero_adapter.css", "hero_overview.css", "hero_settings.css"):
