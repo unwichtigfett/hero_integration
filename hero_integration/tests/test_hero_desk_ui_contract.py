@@ -112,11 +112,30 @@ class TestHeroDeskUiContract(unittest.TestCase):
 
     def test_workspace_theme_tokens_are_scoped_to_hero_hosts(self):
         source = ADAPTER_CSS.read_text()
-        self.assertIn(".admin-hero-tool-host,\n.ht-focus-dialog", source)
-        for token in ("--pc-text:", "--pc-diagramText:", "--pc-diagramBorder:"):
+        self.assertIn(".admin-hero-tool-host,\n.admin-compat-modal", source)
+        for token in ("--hero-text: #000000", "--pc-text:", "--pc-diagramText:", "--pc-diagramBorder:"):
             with self.subTest(token=token):
                 self.assertIn(token, source)
         self.assertNotIn(":root", source)
+
+    def test_hero_text_uses_frappe_theme_attributes_not_os_preference(self):
+        adapter = ADAPTER_CSS.read_text()
+        overview = OVERVIEW_CSS.read_text()
+        settings = (PACKAGE_ROOT / "public" / "css" / "hero_settings.css").read_text()
+        tools = (PACKAGE_ROOT / "public" / "css" / "hero_tools.css").read_text()
+
+        self.assertIn('html[data-theme="dark"]', adapter)
+        self.assertIn("--hero-text: #ffffff", adapter)
+        self.assertIn('html[data-theme="light"]', adapter)
+        self.assertNotIn("prefers-color-scheme", adapter)
+        self.assertNotIn("prefers-color-scheme", overview)
+        for source in (overview, settings, tools):
+            with self.subTest(source=source):
+                self.assertIn("var(--pc-text)", source)
+        self.assertIn(".ht-editor .ace_text-layer span", tools)
+        self.assertIn(".admin-compat-modal", adapter)
+        self.assertIn(".hero-integration-ui .btn", adapter)
+        self.assertIn(".hero-integration-ui) a", adapter)
 
     def test_ui_assets_do_not_import_legacy_runtime(self):
         source = "\n".join(path.read_text() for path in [
@@ -230,7 +249,7 @@ class TestHeroDeskUiContract(unittest.TestCase):
         for contract in (
             ".hero-integration-ui .hero-overview", "--hero-overview-card-surface",
             "--hero-overview-card-border", "#f0f1f2", "#65717d", "#272d33",
-            "#aab3bb", "@media (prefers-color-scheme: dark)",
+            "#aab3bb", 'html[data-theme="dark"]', "--hero-overview-card-label: var(--pc-text)",
             "repeat(auto-fit, minmax(min(100%, 220px), 1fr))",
             "border: 2px solid var(--hero-overview-card-border) !important",
             "background-color: var(--hero-overview-card-surface) !important",
@@ -245,8 +264,8 @@ class TestHeroDeskUiContract(unittest.TestCase):
 
         for contract in (
             "--hero-field-bg", "--hero-field-border", "--hero-field-readonly-bg",
-            "--hero-field-disabled-bg", "--hero-field-error", "@media (prefers-color-scheme: dark)",
-            ".admin-hero-tool-host .form-control", ".hero-integration-ui .form-control",
+            "--hero-field-disabled-bg", "--hero-field-error", "--hero-text: #ffffff",
+            ".admin-hero-tool-host .form-control", ".admin-compat-modal .form-control", ".hero-integration-ui .form-control",
             ".hero-integration-ui :is(input", "#30363d", "#aab3bb", ":focus-visible",
             "[aria-invalid=\"true\"]",
         ):

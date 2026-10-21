@@ -1,6 +1,7 @@
 .hero-settings {
     width: min(860px, 100%);
     margin: 0 auto;
+    color: var(--pc-text);
 }
 
 .hero-settings-header {
@@ -13,12 +14,12 @@
 
 .hero-settings-header h2 {
     margin: 0 0 6px;
-    color: var(--admin-text, var(--pc-text));
+    color: var(--pc-text);
 }
 
 .hero-settings-header p {
     margin: 0;
-    color: var(--admin-muted, var(--pc-muted));
+    color: var(--pc-text);
 }
 
 .hero-settings-card {
@@ -45,7 +46,7 @@
     width: auto;
     margin: 0;
     padding: 0 6px;
-    color: var(--admin-text, var(--pc-text));
+    color: var(--pc-text);
     font-size: 14px;
     font-weight: 600;
 }
@@ -68,7 +69,7 @@
     list-style-position: inside;
     padding: 22px;
     cursor: pointer;
-    color: var(--admin-text, var(--pc-text));
+    color: var(--pc-text);
 }
 
 .hero-settings-polling-summary:focus-visible {
@@ -101,14 +102,14 @@
     width: auto;
     margin: 0;
     padding: 0 6px;
-    color: var(--admin-text, var(--pc-text));
+    color: var(--pc-text);
     font-size: 14px;
     font-weight: 600;
 }
 
 .hero-settings-mutations h3 {
     margin: 0;
-    color: var(--admin-text, var(--pc-text));
+    color: var(--pc-text);
 }
 
 .hero-settings-field {
@@ -118,7 +119,7 @@
 
 .hero-settings-label {
     font-weight: 600;
-    color: var(--admin-text, var(--pc-text));
+    color: var(--pc-text);
 }
 
 .hero-settings-help,
@@ -126,7 +127,7 @@
 .hero-settings-warning,
 .hero-settings-status {
     font-size: 13px;
-    color: var(--admin-muted, var(--pc-muted));
+    color: var(--pc-text);
 }
 
 .hero-settings-input {
@@ -136,7 +137,7 @@
     border: 2px solid var(--hero-field-border, var(--admin-border, var(--pc-border)));
     border-radius: 7px;
     background: var(--hero-field-bg, var(--admin-input, var(--pc-surface)));
-    color: var(--admin-text, var(--pc-text));
+    color: var(--pc-text);
     font: inherit;
 }
 
@@ -173,11 +174,15 @@
 }
 
 .hero-settings-token-state[data-state="configured"] {
-    color: var(--admin-success, #2e7d32);
+    color: var(--pc-text);
+    text-decoration: underline 2px var(--admin-success, #2e7d32);
+    text-underline-offset: 3px;
 }
 
 .hero-settings-token-state[data-state="missing"] {
-    color: var(--admin-warning, #a15c00);
+    color: var(--pc-text);
+    text-decoration: underline 2px var(--admin-warning, #a15c00);
+    text-underline-offset: 3px;
 }
 
 .hero-settings-warning {
@@ -191,6 +196,8 @@
     padding: 8px 14px;
     border-radius: 7px;
     border: 1px solid var(--admin-border, var(--pc-border));
+    background: var(--pc-surface);
+    color: var(--pc-text);
     font: inherit;
     cursor: pointer;
 }
@@ -208,7 +215,7 @@
 
 .hero-settings-input:disabled {
     background: var(--hero-field-disabled-bg, var(--admin-surface, var(--pc-surface)));
-    color: var(--admin-muted, var(--pc-muted));
+    color: var(--pc-text);
     border-color: color-mix(in srgb, var(--hero-field-border, var(--admin-border, var(--pc-border))) 58%, var(--admin-surface, var(--pc-surface)));
 }
 
