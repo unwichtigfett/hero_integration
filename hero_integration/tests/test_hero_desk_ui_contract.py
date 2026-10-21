@@ -95,7 +95,7 @@ class TestHeroDeskUiContract(unittest.TestCase):
         source = TOOLS_JS.read_text()
         for contract in (
             "snapshotPicker", "selected_snapshot_metadata", "Schema Overview",
-            "Knotenauswahl öffnet den zugehörigen Fokus", "Klassenkarten verdichten", "graphNeedsOverview",
+            "Select a node to open its focus view", "class cards condense", "graphNeedsOverview",
         ):
             with self.subTest(contract=contract):
                 self.assertIn(contract, source)
@@ -125,7 +125,7 @@ class TestHeroDeskUiContract(unittest.TestCase):
         for contract in (
             "adopt_mapping_package", "frappe.confirm", "pendingSourcePath",
             "mapping_target_catalog", "target_doctype", "hero-mapping-grid",
-            "Vorschläge prüfen", "Aktive Mappings", "hero-mapping-statuses",
+            "Review Suggestions", "Active Mappings", "hero-mapping-statuses",
             "hero-mapping-table", "hero-mapping-advanced", "status: \"Draft\"",
             "mapping_source_picker_page", "mapping_target_picker_page", "PAGE_SIZE = 50",
             "hero-mapping-picker", "Show more suggestions", "Prepare Custom Field provisioning",
@@ -157,7 +157,7 @@ class TestHeroDeskUiContract(unittest.TestCase):
     def test_dynamic_query_and_mutation_contracts_stay_separate_and_draft_first(self):
         source = MAPPING_EDITOR_JS.read_text()
         for contract in (
-            "Query- und Mutations-Mapping", "schema_operation_catalog", "graphql_mapping_list",
+            "Query and Mutation Mapping", "schema_operation_catalog", "graphql_mapping_list",
             "graphql_mapping_save", "QUERY_TO_FRAPPE", "FRAPPE_TO_MUTATION", "Save Draft",
             "Activate reviewed mapping", "dynamicDirection", "dynamicOperations", "frappe.confirm",
         ):
@@ -170,7 +170,7 @@ class TestHeroDeskUiContract(unittest.TestCase):
         settings = SETTINGS_JS.read_text()
         migration = MIGRATION_JS.read_text()
         for contract in (
-            "Polling controls", "polling_data_sources", "polling_filters_json", "polling_pagination_strategy",
+            "Polling Settings", "hero-settings-polling-details", "polling_data_sources", "polling_filters_json", "polling_pagination_strategy",
             "polling_reconciliation", "polling_retry_backoff_seconds", "polling_notifications", "AUTO_SYNC",
         ):
             with self.subTest(contract=contract):
@@ -181,6 +181,32 @@ class TestHeroDeskUiContract(unittest.TestCase):
         ):
             with self.subTest(contract=contract):
                 self.assertIn(contract, migration)
+
+    def test_graphql_services_use_the_canonical_api_route_and_operation_kind(self):
+        workspace = WORKSPACE_JS.read_text()
+        tools = TOOLS_JS.read_text()
+
+        self.assertIn("operationKind: context.operation_kind || \"query\"", workspace)
+        self.assertIn("controller.workspace?.destroy?.()", workspace)
+        self.assertIn("platform.url('api',{hero_tool:'services',operation_kind:kind,query:queryId||null})", tools)
+        self.assertIn("ui.setRoute('api',{hero_tool:'services',operation_kind:kind,query:queryId||null})", tools)
+        self.assertNotIn("connections/hero/graphql-services/", tools)
+        self.assertNotIn("location.assign(this.serviceUrl", tools)
+
+    def test_settings_polling_is_a_closed_native_accordion_without_side_effect_handlers(self):
+        source = SETTINGS_JS.read_text()
+
+        self.assertIn('document.createElement("details")', source)
+        self.assertIn('node("summary", "hero-settings-polling-summary")', source)
+        self.assertIn("Mode: ${pollingMode.value}", source)
+        self.assertNotIn("pollingDetails.addEventListener", source)
+        self.assertIn("Could not load HERO settings.", source)
+
+    def test_hero_owned_ui_strings_are_not_routed_through_frappe_translation(self):
+        sources = [WORKSPACE_JS, TOOLS_JS, SETTINGS_JS, MAPPING_EDITOR_JS, MIGRATION_JS]
+        for source_path in sources:
+            with self.subTest(source=source_path.name):
+                self.assertNotIn("__(", source_path.read_text())
 
     def test_native_page_rpc_and_visual_mapping_failures_are_not_routed_to_legacy_or_rendered_as_objects(self):
         workspace = WORKSPACE_JS.read_text()

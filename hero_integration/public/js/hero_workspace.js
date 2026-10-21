@@ -7,11 +7,11 @@
     const API = "hero_integration.api";
     const CANONICAL_PAGE = "hero-integration";
     const SECTION_NAMES = Object.freeze({
-        overview: "Übersicht",
+        overview: "Overview",
         api: "API & Schema",
         mapping: "Mapping",
-        synchronization: "Synchronisation",
-        settings: "Einstellungen",
+        synchronization: "Synchronization",
+        settings: "Settings",
     });
     const API_TOOLS = Object.freeze({
         analyzer: "API Analyzer",
@@ -99,13 +99,19 @@
     }
     function routeUrl(section, params = {}) {
         const target = routeTarget(section, params.hero_tool);
-        const query = new URLSearchParams({...params, hero_section: target.section});
+        const query = new URLSearchParams();
+        Object.entries(params).forEach(([key, value]) => {
+            if (value !== undefined && value !== null && value !== "") query.set(key, String(value));
+        });
+        query.set("hero_section", target.section);
         if (target.section === "api") query.set("hero_tool", target.tool);
         else query.delete("hero_tool");
         return `/app/${CANONICAL_PAGE}?${query.toString()}`;
     }
 
-    window.hero_integration_i18n = Object.freeze({text: (value) => __(value)});
+    // HERO Integration owns these strings. Keep them English even when Desk is
+    // running with another Frappe locale.
+    window.hero_integration_i18n = Object.freeze({text: (value) => String(value)});
     window.hero_integration_shell = Object.freeze({
         href: (_page, params = {}) => routeUrl("api", {hero_tool: params.tool}),
         mapping: () => routeUrl("mapping"),
@@ -113,7 +119,7 @@
     });
     window.hero_integration_platform = Object.freeze({
         boot: {csrf_token: frappe.csrf_token || ""},
-        url: (section) => routeUrl(section),
+        url: (section, params = {}) => routeUrl(section, params),
         // Native page modules use their actual whitelisted method names.  Only
         // preserved analyzer/graph/service aliases go through the legacy mapper.
         api: (method, args = {}) => nativeMethods.has(method) ? request(method, args) : rpc(method, args),
@@ -130,12 +136,12 @@
     function navigation(active) {
         const root = document.createElement("nav");
         root.className = "hero-unified-navigation";
-        root.setAttribute("aria-label", __("HERO Integration sections"));
+        root.setAttribute("aria-label", "HERO Integration sections");
         Object.entries(SECTION_NAMES).forEach(([section, label]) => {
             const button = document.createElement("button");
             button.type = "button";
             button.className = "btn btn-default btn-sm";
-            button.textContent = __(label);
+            button.textContent = label;
             button.toggleAttribute("data-active", section === active);
             button.addEventListener("click", () => setRoute(section));
             root.append(button);
@@ -145,12 +151,12 @@
     function apiNavigation(active) {
         const root = document.createElement("nav");
         root.className = "hero-unified-api-navigation";
-        root.setAttribute("aria-label", __("API & Schema tools"));
+        root.setAttribute("aria-label", "API & Schema tools");
         Object.entries(API_TOOLS).forEach(([tool, label]) => {
             const button = document.createElement("button");
             button.type = "button";
             button.className = "btn btn-default btn-sm";
-            button.textContent = __(label);
+            button.textContent = label;
             button.toggleAttribute("data-active", tool === active);
             button.addEventListener("click", () => setRoute("api", {hero_tool: tool}));
             root.append(button);
@@ -164,6 +170,8 @@
         if (!controller) return;
         const {page, shell, content} = controller;
         resetPage(page);
+        controller.workspace?.destroy?.();
+        controller.workspace = null;
         shell.replaceChildren(navigation(section), content);
         content.replaceChildren();
         const sectionPage = Object.create(page);
@@ -181,6 +189,7 @@
                 toolHost.className = "admin-hero-tool-host";
                 content.append(toolHost);
                 const workspace = new window.hero_workspace_tools.Workspace(toolHost, {tool, operationKind: context.operation_kind || "query"});
+                controller.workspace = workspace;
                 await workspace.show(true);
             }
         } catch (error) {
@@ -194,7 +203,12 @@
     }
     function setRoute(section, params = {}) {
         const target = routeTarget(section, params.hero_tool);
-        const context = {...routeOptions(), ...params, hero_section: target.section};
+        const context = {...routeOptions()};
+        Object.entries(params).forEach(([key, value]) => {
+            if (value === null || value === "") delete context[key];
+            else context[key] = value;
+        });
+        context.hero_section = target.section;
         if (target.section === "api") context.hero_tool = target.tool;
         else delete context.hero_tool;
         frappe.set_route(CANONICAL_PAGE, context);
@@ -202,7 +216,7 @@
     }
     async function mount(wrapper) {
         if (!controller) {
-            const page = frappe.ui.make_app_page({parent: wrapper, title: __("HERO Integration"), single_column: true});
+            const page = frappe.ui.make_app_page({parent: wrapper, title: "HERO Integration", single_column: true});
             page.main.addClass("hero-integration-ui");
             const shell = document.createElement("section");
             shell.className = "admin-workspace admin-workspace--tool";
