@@ -134,3 +134,21 @@ Focused remote modules passed: `test_rc16_native_safety`, `test_deletion_hook`,
 Publication, GitHub-only fresh installation, RC15 upgrade proof, deployment,
 and authenticated browser acceptance are deliberately not claimed by this
 section.
+
+## GitHub fresh-install attempt — 2026-10-22
+
+`bench` 5.31.0 was located under the isolated `hero-native` toolchain and
+used from an owned RC16 workspace. A first initialisation exposed a Bench port
+scan bug in a pre-existing sibling configuration; no global configuration was
+changed. A nested isolated retry then correctly selected Python 3.14.8,
+cloned Frappe v16 and ERPNext v16, and used `bench get-app` with
+`https://github.com/unwichtigfett/hero_integration.git --branch release/v1-rc`.
+The cloned HERO app resolved to `c99e5353851d19f20215b2d38f4cc70898a1e6f1`.
+
+The proof stopped before `bench new-site`/`install-app`: neither `hero-native`
+nor the SSH system root can authenticate to the local MariaDB root socket.
+No database password or existing credential was inspected, no database/site
+was created, and no fallback SQLite proof was substituted for the required
+MariaDB-compatible evidence. Fresh installation, RC15 upgrade and deployment
+therefore remain **NOT_STARTED** pending a scoped database bootstrap
+prerequisite.
