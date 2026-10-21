@@ -14,24 +14,27 @@ ACTIVE_MUTATION_RESERVATION = "active"
 
 
 @frappe.whitelist(methods=["POST"])
-def start_migration(action: str, dry_run: int | bool = 1) -> dict[str, str]:
+def start_migration(action: str, dry_run: int | bool = 1, graphql_service: str = "") -> dict[str, str]:
     """Queue a manually requested migration; this RPC is always administrative."""
     frappe.only_for("System Manager")
-    return _start_migration(action=action, dry_run=dry_run, scheduled=False)
+    return _start_migration(action=action, dry_run=dry_run, scheduled=False, graphql_service=graphql_service)
 
 
 def start_scheduled_sync() -> dict[str, str]:
     """Internal scheduler entrypoint.  It is deliberately not whitelisted."""
-    return _start_migration(action="Sync", dry_run=0, scheduled=True)
+    return _start_migration(action="Sync", dry_run=0, scheduled=True, graphql_service="")
 
 
-def _start_migration(action: str, dry_run: int | bool, scheduled: bool) -> dict[str, str]:
+def _start_migration(action: str, dry_run: int | bool, scheduled: bool, graphql_service: str) -> dict[str, str]:
     if action not in ACTIONS:
         frappe.throw("Unsupported HERO migration action.")
+    if not graphql_service:
+        frappe.throw("An explicitly approved GraphQL service is required for a new migration run.")
+    service, mapping = _approved_read_service(graphql_service)
     _require_active_mappings(action)
     if scheduled and _has_active_run():
         return {"status": "SKIPPED_ACTIVE_RUN"}
-    run = frappe.get_doc({"doctype": "HERO Integration Run", "action": action, "mode": "Preview" if int(dry_run) else "Execute"})
+    run = frappe.get_doc({"doctype": "HERO Integration Run", "action": action, "mode": "Preview" if int(dry_run) else "Execute", "graphql_service": service.name, "service_revision": service.service_revision, "graphql_mapping": mapping.name, "mapping_revision": mapping.mapping_revision})
     run.insert()
     frappe.enqueue(
         "hero_integration.services.migration.execute_run",
@@ -43,6 +46,36 @@ def _start_migration(action: str, dry_run: int | bool, scheduled: bool) -> dict[
         run_name=run.name,
     )
     return {"status": "QUEUED", "run": run.name}
+
+
+def _approved_read_service(service_name: str):
+    from hero_integration.services.read_contract import ReadContractError, from_documents
+    service = frappe.get_doc("HERO GraphQL Service", service_name)
+    mapping = frappe.get_doc("HERO GraphQL Mapping", service.read_mapping)
+    snapshot = frappe.get_doc("HERO GraphQL Schema Snapshot", service.schema_snapshot)
+    try:
+        from_documents(service, mapping, snapshot)
+    except (ReadContractError, ValueError) as error:
+        frappe.throw(str(error))
+    return service, mapping
+
+
+@frappe.whitelist(methods=["POST"])
+def approve_read_service(query_id: str, mapping_name: str, expected_service_revision: int, expected_mapping_revision: int) -> dict[str, object]:
+    """Explicitly approve one saved read contract; it never queues a job."""
+    frappe.only_for("System Manager")
+    service = frappe.get_doc("HERO GraphQL Service", query_id)
+    mapping = frappe.get_doc("HERO GraphQL Mapping", mapping_name)
+    if int(service.service_revision or 0) != int(expected_service_revision or 0) or int(mapping.mapping_revision or 0) != int(expected_mapping_revision or 0):
+        frappe.throw("The service or mapping changed; reload it before approval.")
+    if service.schema_snapshot != mapping.schema_snapshot or service.status != "Validated" or mapping.status != "Active":
+        frappe.throw("Only a validated service and active mapping on the same snapshot can be approved.")
+    service.read_mapping = mapping.name
+    service.execution_status = "Approved"
+    service.approved_service_revision = service.service_revision
+    service.approved_mapping_revision = mapping.mapping_revision
+    service.save()
+    return {"status": service.execution_status, "service_revision": service.service_revision, "mapping_revision": mapping.mapping_revision}
 
 
 @frappe.whitelist(methods=["POST"])

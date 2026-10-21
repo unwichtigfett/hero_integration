@@ -30,10 +30,11 @@ class MappingPlanError(ValueError):
 class MappingPlan:
     operation: str
     definitions: tuple[MappingSpec, ...]
+    target_operation: str = ""
 
     @property
     def target_doctype(self) -> str:
-        return "Customer" if self.operation == "HeroCustomers" else "Project"
+        return "Customer" if (self.target_operation or self.operation) == "HeroCustomers" else "Project"
 
     @property
     def mapping_version(self) -> str:
@@ -49,7 +50,7 @@ class MappingPlan:
             "HeroProjectMatches": {
                 PURPOSE_SOURCE_IDENTITY, PURPOSE_RECORD_NAME, PURPOSE_CUSTOMER_RELATION, PURPOSE_CONFIRMED_COMPANY,
             },
-        }[self.operation]
+        }[self.target_operation or self.operation]
         present = {definition.purpose for definition in self.definitions}
         missing = sorted(required - present)
         if missing:
@@ -73,7 +74,7 @@ class MappingPlan:
         for definition in self.definitions:
             value = source_value(record, definition.source_path)
             if definition.purpose in {PURPOSE_FIELD, PURPOSE_RECORD_NAME, PURPOSE_CUSTOMER_TYPE, PURPOSE_CUSTOMER_CONTACT, PURPOSE_SOURCE_IDENTITY}:
-                if definition.purpose == PURPOSE_RECORD_NAME and self.operation == "HeroProjectMatches":
+                if definition.purpose == PURPOSE_RECORD_NAME and (self.target_operation or self.operation) == "HeroProjectMatches":
                     transformed = project_title(record) if project_title is not None else transformed_value(definition, value)
                 else:
                     transformed = transformed_value(definition, value)
@@ -113,25 +114,33 @@ class MappingPlan:
         return tuple(definition for definition in self.definitions if definition.purpose == purpose)
 
 
-def plan_from_definitions(operation: str, definitions: list[MappingSpec] | tuple[MappingSpec, ...]) -> MappingPlan:
-    selected = tuple(sorted((item for item in definitions if item.operation == operation), key=lambda item: (item.priority, item.definition_id, item.source_path)))
+def plan_from_definitions(operation: str, definitions: list[MappingSpec] | tuple[MappingSpec, ...], *, target_operation: str = "") -> MappingPlan:
+    target_operation = target_operation or operation
+    if target_operation not in {"HeroCustomers", "HeroProjectMatches"}:
+        raise MappingPlanError("The selected target adapter is not supported.")
+    selected = tuple(sorted((item for item in definitions if item.operation == target_operation), key=lambda item: (item.priority, item.definition_id, item.source_path)))
     if not selected:
         raise MappingPlanError("No active mapping definitions exist for this operation.")
-    plan = MappingPlan(operation, selected)
+    plan = MappingPlan(operation, selected, target_operation)
     plan.require_complete()
     return plan
 
 
-def active_mapping_plan(operation: str) -> MappingPlan:
+def active_mapping_plan(operation: str, *, definition_ids: tuple[str, ...] = (), target_operation: str = "") -> MappingPlan:
     import frappe
 
     rows = frappe.get_all(
         "HERO Frappe Mapping",
-        filters={"operation": operation, "status": "Active"},
+        filters={"operation": target_operation or operation, "status": "Active"},
         fields=[
             "operation", "source_path", "source_type", "target_doctype", "target_field", "purpose",
             "transformation", "relation", "priority", "definition_id",
         ],
         order_by="priority asc, creation asc",
     )
-    return plan_from_definitions(operation, [MappingSpec(**row) for row in rows])
+    if definition_ids:
+        expected = set(definition_ids)
+        rows = [row for row in rows if row["definition_id"] in expected]
+        if {row["definition_id"] for row in rows} != expected:
+            raise MappingPlanError("The selected active mapping definitions are unavailable or changed.")
+    return plan_from_definitions(operation, [MappingSpec(**row) for row in rows], target_operation=target_operation)

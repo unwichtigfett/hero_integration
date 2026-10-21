@@ -42,5 +42,13 @@ run. The registered hourly job is one-way from HERO to Frappe. It skips when a
 run is active and persists the active-run guard in **HERO Integration Sync
 State**.
 
+For a read run, select a validated **HERO GraphQL Service** and one active
+**HERO GraphQL Mapping** from the same validated snapshot. The mapping must
+explicitly name its canonical target operation, response-list path, external
+identity path, allowed variables, bounded page size and active mapping
+definition IDs. Use the separate approval action for the exact service and
+mapping revisions; saving or validating alone never queues work. A later query,
+snapshot or mapping revision invalidates that approval before a run can start.
+
 Attachments, Helpdesk tickets, and reverse synchronization are unavailable.
 The app does not infer a source contract or a target mapping for them.
