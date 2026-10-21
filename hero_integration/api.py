@@ -474,6 +474,50 @@ def schema_operation_catalog(snapshot_name: str, operation_kind: str = "QUERY") 
 
 
 @frappe.whitelist()
+def graphql_mapping_list(snapshot_name: str, operation_kind: str = "") -> list[dict[str, object]]:
+    """List dynamic mappings for one explicit snapshot; no implicit activation."""
+    frappe.only_for("System Manager")
+    filters = {"schema_snapshot": snapshot_name}
+    if operation_kind:
+        filters["operation_kind"] = operation_kind.upper()
+    return frappe.get_all(
+        "HERO GraphQL Mapping", filters=filters,
+        fields=["name", "operation_kind", "operation_name", "direction", "status", "mapping_revision", "confidence", "suggestion_reason"],
+        order_by="modified desc",
+    )
+
+
+@frappe.whitelist()
+def graphql_mapping_save(
+    snapshot_name: str, operation_kind: str, operation_name: str, direction: str, mapping_json: str,
+    mapping_name: str = "", activate: int | bool = 0, suggestion_reason: str = "", confidence: float = 0,
+) -> dict[str, object]:
+    """Persist a dynamic mapping as Draft unless a System Manager explicitly activates it."""
+    frappe.only_for("System Manager")
+    try:
+        parsed = json.loads(mapping_json)
+        if not isinstance(parsed, dict):
+            raise ValueError
+    except (ValueError, TypeError, json.JSONDecodeError):
+        frappe.throw("GraphQL mapping JSON must be an object.")
+    if direction not in {"QUERY_TO_FRAPPE", "FRAPPE_TO_MUTATION"}:
+        frappe.throw("Unsupported GraphQL mapping direction.")
+    item = frappe.get_doc("HERO GraphQL Mapping", mapping_name) if mapping_name else frappe.new_doc("HERO GraphQL Mapping")
+    if mapping_name and item.schema_snapshot != snapshot_name:
+        frappe.throw("The GraphQL mapping belongs to another schema snapshot.")
+    item.schema_snapshot = snapshot_name
+    item.operation_kind = operation_kind.upper()
+    item.operation_name = operation_name
+    item.direction = direction
+    item.mapping_json = json.dumps(parsed, ensure_ascii=False, sort_keys=True)
+    item.suggestion_reason = suggestion_reason[:1000]
+    item.confidence = max(0, min(float(confidence or 0), 1))
+    item.status = "Active" if activate in (True, 1, "1", "true", "True") else "Draft"
+    item.save()
+    return {"name": item.name, "status": item.status, "revision": int(item.mapping_revision or 1), "schema_fingerprint": item.schema_fingerprint}
+
+
+@frappe.whitelist()
 def workspace_graph(snapshot_name: str, start: int = 0, page_size: int = 200, node_id: str = "") -> dict[str, object]:
     frappe.only_for("System Manager")
     snapshot, schema = _validated_snapshot(snapshot_name)
