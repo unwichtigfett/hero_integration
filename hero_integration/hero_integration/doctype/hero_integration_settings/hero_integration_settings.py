@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import frappe
 from frappe.model.document import Document
 
 from hero_integration.client.graphql import HeroClientError, validate_endpoint
@@ -8,6 +9,7 @@ from hero_integration.integrations.erpnext.company import confirmed_project_comp
 
 class HEROIntegrationSettings(Document):
     def validate(self):
+        frappe.only_for("System Manager")
         if self.has_value_changed("erpnext_company"):
             self.erpnext_company_confirmed = 0
         if self.hero_api_url:
