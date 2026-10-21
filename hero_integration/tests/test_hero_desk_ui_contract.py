@@ -65,24 +65,24 @@ class TestHeroDeskUiContract(unittest.TestCase):
             with self.subTest(removed=removed):
                 self.assertNotIn(removed, source)
 
-    def test_mutation_drafts_remain_local_and_execution_stays_disabled(self):
+    def test_mutation_execution_requires_separate_server_side_contract_and_confirmation(self):
         source = "\n".join((WORKSPACE_JS.read_text(), TOOLS_JS.read_text()))
         self.assertIn("workspace_mutation_draft_validate", source)
         self.assertIn("Mutation drafts are local-only", source)
         self.assertIn("HERO_MUTATION_EXECUTION_DISABLED", source)
         api_source = (PACKAGE_ROOT / "api.py").read_text()
         execution = api_source.split("def execute_graphql_service", 1)[1].split("class _FrappePickerMetadata", 1)[0]
-        self.assertIn("MUTATION_EXECUTION_RELEASED = False", api_source)
         self.assertIn("_assert_mutation_execution_released()", execution)
-        self.assertIn("MUTATION_EXECUTION_DISABLED", execution)
-        self.assertNotIn("HeroGraphQLClient", execution)
+        self.assertIn("confirmation_fingerprint", execution)
+        self.assertIn("HERO Mutation Audit", execution)
+        self.assertIn("HeroMutationClient", execution)
 
     def test_canonical_settings_renders_a_backend_controlled_mutation_status(self):
         source = SETTINGS_JS.read_text()
         for contract in (
             "GraphQL Mutations", "workspace_mutation_execution_set", "Allow mutation execution",
-            "System Managers", "Mutation drafts remain available independently",
-            "HERO_MUTATION_EXECUTION_DISABLED",
+            "System Managers", "active per-operation contract",
+            "global gate",
         ):
             with self.subTest(contract=contract):
                 self.assertIn(contract, source)

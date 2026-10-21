@@ -139,8 +139,9 @@ class TestWorkspaceMutationDraftContract(unittest.TestCase):
         self.assertIsNone(self.frappe.service)
 
     def test_every_available_mutation_execute_facade_fails_closed(self):
-        with self.assertRaisesRegex(ValueError, api.MUTATION_EXECUTION_DISABLED):
-            api.execute_graphql_service("HERO-GQL-00001")
+        with patch.object(api, "_assert_mutation_execution_released", side_effect=ValueError(api.MUTATION_EXECUTION_DISABLED)):
+            with self.assertRaisesRegex(ValueError, api.MUTATION_EXECUTION_DISABLED):
+                api.execute_graphql_service("HERO-GQL-00001")
 
     def test_missing_permission_is_denied_before_draft_persistence(self):
         blocked = _FrappeMock(permission_error=PermissionError("denied"))

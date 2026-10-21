@@ -1,0 +1,10 @@
+{
+ "doctype":"DocType", "name":"HERO Mutation Contract", "module":"HERO Integration", "autoname":"format:HERO-MUT-{#####}", "track_changes":1,
+ "fields":[
+  {"fieldname":"graphql_service","label":"GraphQL Service","fieldtype":"Link","options":"HERO GraphQL Service","reqd":1,"in_list_view":1},
+  {"fieldname":"schema_snapshot","label":"Schema Snapshot","fieldtype":"Link","options":"HERO GraphQL Schema Snapshot","reqd":1,"read_only":1}, {"fieldname":"schema_fingerprint","label":"Schema Fingerprint","fieldtype":"Data","reqd":1,"read_only":1},
+  {"fieldname":"operation_name","label":"Mutation Operation","fieldtype":"Data","reqd":1,"read_only":1}, {"fieldname":"mapping_json","label":"Validated Input Mapping","fieldtype":"Code","options":"JSON","reqd":1},
+  {"fieldname":"contract_fingerprint","label":"Contract Fingerprint","fieldtype":"Data","reqd":1,"read_only":1}, {"fieldname":"contract_revision","label":"Contract Revision","fieldtype":"Int","default":"1","read_only":1},
+  {"fieldname":"status","label":"Status","fieldtype":"Select","options":"Draft\nActive\nDisabled","default":"Draft","reqd":1,"in_list_view":1}, {"fieldname":"validation_summary","label":"Validation Summary","fieldtype":"Small Text","read_only":1}
+ ], "permissions":[{"role":"System Manager","read":1,"write":1,"create":1,"delete":1}], "modified":"2026-10-21 00:00:00.000000"
+}

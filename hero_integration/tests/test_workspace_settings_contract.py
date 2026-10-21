@@ -91,16 +91,17 @@ class TestWorkspaceSettingsContract(unittest.TestCase):
         result, _ = self._call(_Settings())
 
         self.assertFalse(result["mutation_execution_requested"])
-        self.assertFalse(result["mutation_execution_released"])
+        self.assertTrue(result["mutation_execution_released"])
         self.assertFalse(result["mutation_execution_enabled"])
         self.assertEqual(result["mutation_execution_status"], "DISABLED")
 
-    def test_manipulated_mutation_setting_remains_disabled_before_release(self):
+    def test_enabled_global_setting_still_reports_that_per_operation_gates_apply(self):
         result, _ = self._call(_Settings(allow_graphql_mutation_execution=1))
 
         self.assertTrue(result["mutation_execution_requested"])
-        self.assertFalse(result["mutation_execution_enabled"])
-        self.assertEqual(result["mutation_execution_status"], "DISABLED")
+        self.assertTrue(result["mutation_execution_enabled"])
+        self.assertEqual(result["mutation_execution_status"], "ENABLED")
+        self.assertIn("active schema-bound contract", result["mutation_execution_reason"])
 
     def test_admin_can_persist_a_safe_off_mutation_request(self):
         settings = _Settings(allow_graphql_mutation_execution=1)
@@ -114,16 +115,17 @@ class TestWorkspaceSettingsContract(unittest.TestCase):
         self.assertEqual(settings.save_calls, 1)
         self.assertFalse(result["mutation_execution_enabled"])
 
-    def test_admin_activation_request_is_rejected_before_settings_write(self):
+    def test_admin_can_enable_the_global_gate_but_not_bypass_per_operation_gates(self):
         settings = _Settings()
         frappe_mock = _FrappeSettingsMock(settings)
 
-        with patch.object(api, "frappe", frappe_mock), self.assertRaisesRegex(ValueError, api.MUTATION_EXECUTION_DISABLED):
-            api.workspace_mutation_execution_set(True)
+        with patch.object(api, "frappe", frappe_mock):
+            result = api.workspace_mutation_execution_set(True)
 
         self.assertEqual(frappe_mock.permission_calls, ["System Manager"])
-        self.assertEqual(frappe_mock.get_single_calls, [])
-        self.assertEqual(settings.save_calls, 0)
+        self.assertEqual(frappe_mock.get_single_calls, ["HERO Integration Settings"])
+        self.assertEqual(settings.save_calls, 1)
+        self.assertTrue(result["mutation_execution_enabled"])
 
     def test_non_admin_cannot_change_the_mutation_setting(self):
         settings = _Settings()
