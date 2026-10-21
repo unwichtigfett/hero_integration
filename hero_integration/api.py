@@ -461,6 +461,19 @@ def workspace_schema(snapshot_name: str, search: str = "", kind: str = "", start
 
 
 @frappe.whitelist()
+def schema_operation_catalog(snapshot_name: str, operation_kind: str = "QUERY") -> list[dict[str, object]]:
+    """List every operation advertised by the explicitly selected saved schema."""
+    frappe.only_for("System Manager")
+    _, schema = _validated_snapshot(snapshot_name)
+    from hero_integration.services.schema_operations import SchemaOperationError, catalog
+
+    try:
+        return catalog(schema, operation_kind)
+    except SchemaOperationError as error:
+        frappe.throw(str(error))
+
+
+@frappe.whitelist()
 def workspace_graph(snapshot_name: str, start: int = 0, page_size: int = 200, node_id: str = "") -> dict[str, object]:
     frappe.only_for("System Manager")
     snapshot, schema = _validated_snapshot(snapshot_name)
