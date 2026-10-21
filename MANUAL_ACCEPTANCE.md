@@ -37,6 +37,21 @@ Record the exact app Git revision, Frappe and ERPNext revisions, test-site name,
 and test results. This repository preparation does not include native VPS
 acceptance; that acceptance remains pending.
 
+## RC 15 ChatGPT operating guide
+
+Use this guide in the listed order. It describes the released UI; it does not
+grant a live HERO action. Credential entry is only permitted in **Settings**
+for the separately approved read-only step.
+
+| UI path and function | Prerequisite and input | Effect and boundary | Error state and source evidence |
+| --- | --- | --- | --- |
+| **Mapping** → **Map fields** | Select an explicit, validated snapshot and a source operation; choose only an allowed target field. | Creates or edits the classic `HERO Frappe Mapping` draft. Save, activation, import/export, preview and data transfer remain separate actions. Its exact `hero-frappe-mapping-package-v2` format is in [MAPPING_MATRIX.md](MAPPING_MATRIX.md). | Missing, stale, protected or incompatible fields remain blocked with a reason. See `test_direct_frappe_adapter.py`, `test_mapping_exchange.py` and `test_frappe_mapping_catalog.py`. |
+| **Mapping** → **Query Mapping** or **Mutation Mapping** | Pick the same explicit snapshot, then one query or mutation operation and typed paths. | Persists the dynamic `HERO GraphQL Mapping.mapping_json` object and fingerprint. Query mappings never become the classic package; mutation mappings also need a separate `HERO Mutation Contract`. | An absent/changed snapshot or invalid path stays Draft/blocked. See `test_schema_operations.py`, `test_workspace_snapshot_binding.py` and `test_workspace_mutation_draft_contract.py`. |
+| **Overview** | No endpoint or credential is needed. | Shows only stored, redacted connection, snapshot, service, mapping and run status. It never contacts HERO. | A missing local value renders as an empty/not-started state, not an inferred remote status. See `api.py:integration_overview` and `test_workspace_overview_contract.py`. |
+| **API & Schema** → **API Analyzer**, **Graph Viewer**, **GraphQL Services** | Analyzer/viewer require a saved snapshot; Services additionally receives Query or Mutation from its canonical route. | Analyzer/viewer remain local projections. A Service draft is bound to source identity and fingerprint; switching Query/Mutation, deep links and browser history must retain that route context. | No implicit "latest" snapshot and no route fallback to Overview. See `hero_workspace.js`, `test_hero_desk_ui_contract.py` and `test_graphql_graph_contract.py`. |
+| **Synchronization** | Keep polling OFF for local review. MONITOR/AUTO_SYNC need a separately approved source, active mappings and confirmed Company. | OFF makes no automatic request; MONITOR records observation only; AUTO_SYNC permits only approved idempotent Frappe upserts. No mode executes a HERO mutation. | Invalid windows, sources, paging, limits or stale mappings fail closed. See `polling.py`, `tasks.py`, `migration.py`, `test_polling_contract.py` and `test_scheduler_contract.py`. |
+| **Settings** | System Manager; credentials only for the explicit live read-only gate. | Saves allowed endpoint/host, Company and polling configuration. The native **Polling Settings** accordion is initially closed and opening it changes nothing. Mutation activation is a separate global request, still insufficient without a per-operation contract, preview fingerprint and confirmation. | Server permission and validation failures are displayed without secret values. Asset failures show an English error boundary. See `hero_settings.js`, `hero_workspace.js`, `test_workspace_settings_contract.py` and `test_hero_workspace_loader.mjs`. |
+
 ## RC 15 manual acceptance protocol
 
 Use `http://hero-native-cli-fresh.localhost:18010/app/hero-integration` as a
