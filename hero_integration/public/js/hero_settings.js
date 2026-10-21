@@ -100,11 +100,11 @@
         const pollingBackfill = document.createElement("input"); pollingBackfill.type = "checkbox"; pollingBackfill.className = "hero-settings-check";
         const pollingInventory = document.createElement("input"); pollingInventory.type = "checkbox"; pollingInventory.className = "hero-settings-check";
         const pollingReconciliation = document.createElement("input"); pollingReconciliation.type = "checkbox"; pollingReconciliation.className = "hero-settings-check";
-        const pollingRetryLimit = document.createElement("input"); pollingRetryLimit.type = "number"; pollingRetryLimit.min = "0"; pollingRetryLimit.max = "10"; pollingRetryLimit.className = "hero-settings-input";
+        const pollingRetryLimit = document.createElement("input"); pollingRetryLimit.type = "number"; pollingRetryLimit.min = "0"; pollingRetryLimit.max = "3"; pollingRetryLimit.className = "hero-settings-input";
         const pollingBackoff = document.createElement("input"); pollingBackoff.type = "number"; pollingBackoff.min = "0"; pollingBackoff.max = "3600"; pollingBackoff.className = "hero-settings-input";
-        const pollingTimeout = document.createElement("input"); pollingTimeout.type = "number"; pollingTimeout.min = "1"; pollingTimeout.max = "600"; pollingTimeout.className = "hero-settings-input";
+        const pollingTimeout = document.createElement("input"); pollingTimeout.type = "number"; pollingTimeout.min = "1"; pollingTimeout.max = "120"; pollingTimeout.className = "hero-settings-input";
         const pollingRate = document.createElement("input"); pollingRate.type = "number"; pollingRate.min = "1"; pollingRate.className = "hero-settings-input";
-        const pollingConcurrency = document.createElement("input"); pollingConcurrency.type = "number"; pollingConcurrency.min = "1"; pollingConcurrency.max = "10"; pollingConcurrency.className = "hero-settings-input";
+        const pollingConcurrency = document.createElement("input"); pollingConcurrency.type = "number"; pollingConcurrency.min = "1"; pollingConcurrency.max = "1"; pollingConcurrency.value = "1"; pollingConcurrency.className = "hero-settings-input";
         const pollingNotifications = document.createElement("input"); pollingNotifications.type = "checkbox"; pollingNotifications.className = "hero-settings-check";
 
         const token = document.createElement("input");
@@ -166,7 +166,7 @@
                 field("Page size", pollingPageSize), field("Pagination strategy", pollingPagination, "Cursor watermarks are advanced only after complete successful processing. Offset pagination does not invent watermarks."),
                 field("Allow backfill", pollingBackfill), field("Allow full inventory", pollingInventory), field("Allow reconciliation", pollingReconciliation, "Reconciliation reports discrepancies and never auto-deletes ERPNext records.")),
             pollingGroup("Reliability and notifications",
-                field("Retry limit", pollingRetryLimit), field("Retry backoff seconds", pollingBackoff), field("Polling timeout seconds", pollingTimeout), field("Rate limit", pollingRate), field("Concurrency", pollingConcurrency), field("Notifications", pollingNotifications))
+                field("Retry limit", pollingRetryLimit), field("Retry backoff seconds", pollingBackoff), field("Polling timeout seconds", pollingTimeout), field("Rate limit", pollingRate), field("Concurrency", pollingConcurrency, "The approved V1 source reader is intentionally single-worker."), field("Notifications", pollingNotifications))
         );
         pollingDetails.append(pollingSummary, pollingContent);
         pollingCard.append(pollingDetails);
