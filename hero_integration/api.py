@@ -94,6 +94,24 @@ def integration_overview() -> dict[str, object]:
         state: frappe.db.count("HERO Frappe Mapping", {"status": state})
         for state in ("Draft", "Active", "Disabled", "Rejected")
     }
+    return {
+        "connection": {
+            "endpoint_configured": bool(settings.hero_api_url),
+            "allowed_host_count": len([host for host in (settings.allowed_hero_hosts or "").splitlines() if host.strip()]),
+            "scheduled_sync_enabled": bool(settings.scheduled_sync_enabled),
+            "sync_status": settings.sync_status or "Not started",
+            "last_successful_sync": settings.last_successful_sync,
+        },
+        "snapshot_count": frappe.db.count("HERO GraphQL Schema Snapshot"),
+        "service_count": frappe.db.count("HERO GraphQL Service"),
+        "mapping_counts": mapping_counts,
+        "latest_run": frappe.get_all(
+            "HERO Integration Run",
+            fields=["name", "action", "state", "modified"],
+            order_by="modified desc",
+            limit_page_length=1,
+        ),
+    }
 
 
 @frappe.whitelist()
@@ -123,26 +141,6 @@ def workspace_sync_status() -> dict[str, object]:
             order_by="modified desc", limit_page_length=10,
         ),
     }
-    return {
-        "connection": {
-            "endpoint_configured": bool(settings.hero_api_url),
-            "allowed_host_count": len([host for host in (settings.allowed_hero_hosts or "").splitlines() if host.strip()]),
-            "scheduled_sync_enabled": bool(settings.scheduled_sync_enabled),
-            "sync_status": settings.sync_status or "Not started",
-            "last_successful_sync": settings.last_successful_sync,
-        },
-        "snapshot_count": frappe.db.count("HERO GraphQL Schema Snapshot"),
-        "service_count": frappe.db.count("HERO GraphQL Service"),
-        "mapping_counts": mapping_counts,
-        "latest_run": frappe.get_all(
-            "HERO Integration Run",
-            fields=["name", "action", "state", "modified"],
-            order_by="modified desc",
-            limit_page_length=1,
-        ),
-    }
-
-
 @frappe.whitelist()
 def schema_snapshot_list() -> list[dict[str, object]]:
     """List saved snapshots without exposing configuration or making network calls."""

@@ -4,6 +4,7 @@ import importlib
 import sys
 import types
 import unittest
+from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -24,6 +25,7 @@ class TestSchedulerContract(unittest.TestCase):
             return SimpleNamespace(scheduled_sync_enabled=0)
 
         frappe_module.get_single = get_single
+        frappe_module.utils = SimpleNamespace(now_datetime=lambda: datetime(2026, 10, 21, 10, 0))
         previous = sys.modules.get("frappe")
         sys.modules.pop("hero_integration.tasks", None)
         sys.modules["frappe"] = frappe_module
@@ -58,6 +60,7 @@ class TestSchedulerContract(unittest.TestCase):
     def test_scheduler_uses_the_internal_entrypoint_only(self):
         frappe_module = types.ModuleType("frappe")
         frappe_module.get_single = lambda _doctype: SimpleNamespace(scheduled_sync_enabled=1)
+        frappe_module.utils = SimpleNamespace(now_datetime=lambda: datetime(2026, 10, 21, 10, 0))
         previous = sys.modules.get("frappe")
         sys.modules.pop("hero_integration.tasks", None)
         sys.modules["frappe"] = frappe_module

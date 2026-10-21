@@ -23,7 +23,7 @@
     // need an explicit release token. JavaScript must stay query-free when it
     // enters frappe.require(): Frappe owns the version parameter and uses the
     // original extension to select its script loader.
-    const ASSET_RELEASE = "20261021.13";
+    const ASSET_RELEASE = "20261021.14";
     const ASSETS = [
         "/assets/hero_integration/css/hero_tools.css",
         "/assets/hero_integration/css/hero_adapter.css",
@@ -36,6 +36,13 @@
         "/assets/hero_integration/js/hero_mapping_editor.js",
         "/assets/hero_integration/js/hero_migration.js",
     ];
+    const REQUIRED_ASSET_GLOBALS = Object.freeze([
+        ["hero_tools.js", "hero_workspace_tools"],
+        ["hero_overview.js", "hero_integration_overview"],
+        ["hero_settings.js", "hero_integration_settings_ui"],
+        ["hero_mapping_editor.js", "hero_integration_mapping_editor"],
+        ["hero_migration.js", "hero_integration_migration"],
+    ]);
     const unsupported = new Set([
         "synchronize_connection", "refresh_schema", "list_candidates", "mark_candidate",
         "remove_candidate", "execute_service", "get_analyzer_service_draft", "save_analyzer_service",
@@ -88,12 +95,25 @@
     const loadStyle = (path) => new Promise((resolve, reject) => {
         if (document.querySelector(`link[data-hero-asset="${path}"]`)) return resolve();
         const link = document.createElement("link");
-        link.rel = "stylesheet"; link.href = assetUrl(path); link.dataset.heroAsset = path; link.onload = resolve; link.onerror = reject;
+        link.rel = "stylesheet"; link.href = assetUrl(path); link.dataset.heroAsset = path; link.onload = resolve;
+        link.onerror = () => reject(new Error(`HERO interface stylesheet could not be loaded: ${path}`));
         document.head.append(link);
     });
+    // Frappe owns script URL versioning. Its compatibility loader resolves even
+    // after an onerror, so verify the public module contract afterwards instead
+    // of appending a second script tag or adding a manual JavaScript query string.
     const loadScript = (path) => frappe.require(path);
+    const assertLoadedAssets = () => {
+        const missing = REQUIRED_ASSET_GLOBALS
+            .filter(([, globalName]) => !window[globalName])
+            .map(([asset]) => asset);
+        if (missing.length) {
+            throw new Error(`HERO interface assets could not be loaded: ${missing.join(", ")}. Reload the page and contact an administrator if the problem persists.`);
+        }
+    };
     let assets;
-    const ensureAssets = () => assets ||= Promise.all(ASSETS.map((path) => path.endsWith(".css") ? loadStyle(path) : loadScript(path)));
+    const ensureAssets = () => assets ||= Promise.all(ASSETS.map((path) => path.endsWith(".css") ? loadStyle(path) : loadScript(path)))
+        .then(() => assertLoadedAssets());
 
     function routeOptions() {
         const params = new URLSearchParams(location.search);

@@ -229,8 +229,8 @@ class TestHeroDeskUiContract(unittest.TestCase):
 
         for contract in (
             ".hero-integration-ui .hero-overview", "--hero-overview-card-surface",
-            "--hero-overview-card-border", "#edf5ff", "#426482", "#1e3044",
-            "#9ab6d4", "@media (prefers-color-scheme: dark)",
+            "--hero-overview-card-border", "#f0f1f2", "#65717d", "#272d33",
+            "#aab3bb", "@media (prefers-color-scheme: dark)",
             "repeat(auto-fit, minmax(min(100%, 220px), 1fr))",
             "border: 2px solid var(--hero-overview-card-border) !important",
             "background-color: var(--hero-overview-card-surface) !important",
@@ -247,7 +247,7 @@ class TestHeroDeskUiContract(unittest.TestCase):
             "--hero-field-bg", "--hero-field-border", "--hero-field-readonly-bg",
             "--hero-field-disabled-bg", "--hero-field-error", "@media (prefers-color-scheme: dark)",
             ".admin-hero-tool-host .form-control", ".hero-integration-ui .form-control",
-            ".hero-integration-ui :is(input", "#26394f", "#9ab6d4", ":focus-visible",
+            ".hero-integration-ui :is(input", "#30363d", "#aab3bb", ":focus-visible",
             "[aria-invalid=\"true\"]",
         ):
             with self.subTest(contract=contract):
@@ -289,7 +289,8 @@ class TestHeroDeskUiContract(unittest.TestCase):
         mapping = MAPPING_EDITOR_JS.read_text()
         for contract in (
             "nativeMethods", '"workspace_context"', '"integration_overview"', "errorMessage(error)",
-            "HERO workspace request failed",
+            "HERO workspace request failed", "HERO interface assets could not be loaded",
+            "REQUIRED_ASSET_GLOBALS", "assertLoadedAssets",
         ):
             with self.subTest(contract=contract):
                 self.assertIn(contract, workspace)

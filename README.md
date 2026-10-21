@@ -1,8 +1,9 @@
 # HERO Integration
 
-HERO Integration is a portable Frappe v16 app for approved, read-only HERO
-GraphQL data. It requires an already installed ERPNext v16 site and creates
-native Customer and Project records. It has no runtime dependency on
+HERO Integration is a portable Frappe v16 app for approved HERO GraphQL data.
+Queries and polling stay read-only toward HERO; controlled mutations use a
+separate, default-OFF, per-operation path. It requires an already installed
+ERPNext v16 site and creates native Customer and Project records. It has no runtime dependency on
 `auto_domain`, `hero_connector`, DTS, Helpdesk, a daemon, or a local filesystem
 layout.
 
@@ -12,8 +13,11 @@ and Project DocTypes before adding the HERO schema. Helpdesk remains optional.
 
 ## Supported scope
 
-- Read-only HERO Customer and Project Match operations with fixed, versioned
-  selection sets.
+- Explicit saved-schema query and mutation operation catalogs, with dynamic
+  mapping drafts bound to a source identity and fingerprint.
+- Controlled HERO mutation execution only after the global site gate,
+  active contract, validated preview, exact confirmation and server-side
+  System Manager recheck. Polling never invokes a HERO mutation.
 - Preview and execute modes, result records, source-to-target bindings,
   idempotent repeats, conflict detection, retry, and scheduled one-way sync.
 - Customer and Project creation after an explicit Company confirmation.
@@ -65,6 +69,7 @@ the target checks pass. It never starts a migration.
 ## Security model
 
 The endpoint must be HTTPS and its exact hostname must appear in **Allowed HERO
-Hosts**. Redirects, endpoint credentials, GraphQL mutations, and subscriptions
-are rejected. The token is a Frappe `Password` value, read only by a worker; it
-is not returned to Desk, written to a log, or passed as a queue argument.
+Hosts**. Redirects and endpoint credentials are rejected. A GraphQL mutation
+is rejected unless its separate gated contract is valid. The token is a Frappe
+`Password` value; it is not returned to Desk, written to a log, or passed as a
+queue argument.
