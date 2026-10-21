@@ -15,7 +15,7 @@ from hero_integration.integrations.erpnext.contact import (
     home_phone_for_customer,
     synchronize_home_phone,
 )
-from hero_integration.sources.hero import HeroSource, SourcePage
+from hero_integration.sources.hero import GraphQLServiceSource, HeroSource, SourcePage
 from hero_integration.services.change_detection import changed_fields, decode as decode_hashes, encode as encode_hashes, field_hashes
 from hero_integration.services.conflict_notifications import notify_conflict_once
 from hero_integration.services.integration_events import record_output
@@ -52,9 +52,7 @@ def execute_run(run_name: str) -> None:
     try:
         _require_active_mappings(run.action)
         config = get_configuration()
-        source = HeroSource(
-            HeroGraphQLClient(config.endpoint, lambda: config.api_token, config.timeout_seconds), config.source_instance,
-        )
+        source = _source_for_run(run, config)
         _process_requested_phases(run, source)
         run.reload()
         if run.state == "Running":
@@ -87,6 +85,23 @@ def execute_run(run_name: str) -> None:
         raise
     finally:
         _release_run(run.name)
+
+
+def _source_for_run(run, config):
+    """Bind every newly queued run to its approved immutable read revisions."""
+    if not getattr(run, "graphql_service", ""):
+        # Historical runs keep their recorded legacy behavior; new API calls
+        # never create this form.
+        return HeroSource(HeroGraphQLClient(config.endpoint, lambda: config.api_token, config.timeout_seconds), config.source_instance)
+    from hero_integration.services.read_contract import ReadContractError, from_documents
+
+    service = frappe.get_doc("HERO GraphQL Service", run.graphql_service)
+    mapping = frappe.get_doc("HERO GraphQL Mapping", run.graphql_mapping)
+    snapshot = frappe.get_doc("HERO GraphQL Schema Snapshot", service.schema_snapshot)
+    contract = from_documents(service, mapping, snapshot)
+    if int(run.service_revision or 0) != contract.service_revision or int(run.mapping_revision or 0) != contract.mapping_revision:
+        raise MappingPlanError("The queued run no longer matches its approved service or mapping revision.")
+    return GraphQLServiceSource(HeroGraphQLClient(config.endpoint, lambda: config.api_token, config.timeout_seconds), service, contract, getattr(snapshot, "source_instance", "") or config.source_instance)
 
 
 def _claim_run(run) -> bool:

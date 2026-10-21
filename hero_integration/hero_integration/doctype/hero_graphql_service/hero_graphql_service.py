@@ -18,8 +18,13 @@ class HEROGraphQLService(Document):
         if analyze_snapshot(json.loads(snapshot.snapshot_json)).fingerprint != snapshot.schema_fingerprint:
             frappe.throw("The selected GraphQL schema snapshot is stale.")
         self.schema_fingerprint = snapshot.schema_fingerprint
+        contract_fields = ("query_document", "schema_snapshot", "operation_name")
         if not self.is_new() and self.has_value_changed("query_document"):
             self.service_revision = int(self.service_revision or 0) + 1
+        if not self.is_new() and any(self.has_value_changed(field) for field in contract_fields):
+            self.execution_status = "Pending Approval"
+            self.approved_service_revision = 0
+            self.approved_mapping_revision = 0
         if operation_kind(self.query_document) == "mutation":
             detail = validate_mutation_draft(json.loads(snapshot.snapshot_json), self.query_document)
             # A mutation is local-only metadata.  Never preserve or derive an

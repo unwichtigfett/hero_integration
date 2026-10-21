@@ -5,6 +5,7 @@ from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 
 from hero_integration.client.graphql import HeroGraphQLClient
+from hero_integration.services.read_contract import ReadContract, ReadContractError, value_at
 
 
 CUSTOMER_QUERY_V1 = """
@@ -86,3 +87,32 @@ class HeroSource:
             for row in records
         )
         return SourcePage(annotated, offset + len(records) if len(records) == self.page_size else None)
+
+
+class GraphQLServiceSource:
+    """Read one approved saved service without creating a second mapper."""
+    def __init__(self, client: HeroGraphQLClient, service, contract: ReadContract, source_instance: str):
+        self.client, self.service, self.contract = client, service, contract
+        self.source_instance = source_instance.strip() or "default"
+
+    def customers(self, offset: int = 0) -> SourcePage:
+        return self._page(offset, "HeroCustomers")
+
+    def projects(self, offset: int = 0) -> SourcePage:
+        return self._page(offset, "HeroProjectMatches")
+
+    def _page(self, offset: int, operation: str) -> SourcePage:
+        if operation != self.contract.target_operation:
+            return SourcePage((), None)
+        variables = dict(self.contract.variables)
+        for name, value in tuple(variables.items()):
+            if value == "$offset": variables[name] = offset
+            elif value == "$page_size": variables[name] = self.contract.page_size
+        data = self.client.query(self.service.query_document, variables)
+        records = value_at(data, self.contract.records_path)
+        if not isinstance(records, list) or not all(isinstance(row, dict) for row in records):
+            raise ReadContractError("The selected result path is not a list of objects.")
+        for row in records:
+            value_at(row, self.contract.identity_path)
+        annotated = tuple({**row, "_hero_source_instance": self.source_instance} for row in records)
+        return SourcePage(annotated, offset + len(records) if len(records) == self.contract.page_size else None)

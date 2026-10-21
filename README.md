@@ -88,9 +88,13 @@ credentials or source payload values.
 ## RC16 operational boundary
 
 The reviewed RC16 candidate keeps polling, GraphQL mutation execution and
-deletion disabled by default. Its fixed V1 source contract supports only the
-validated `HeroCustomers` and `HeroProjectMatches` OFFSET readers; the active
-mapping/resolver configuration determines which approved target fields execute.
+deletion disabled by default. A read run requires a selected validated GraphQL
+service, its selected snapshot, an active read mapping, explicit approval of
+both exact revisions, and active canonical mapping definitions. The read
+mapping records the response list, external identity, allowed variables and
+bounded OFFSET page size; it reuses the existing Customer or Project adapter
+and never enables an arbitrary database write. Changing either approved
+revision makes the contract ineligible until it is explicitly approved again.
 MONITOR records mapped field observations and bilateral conflicts, but never
 prepares a reverse HERO write. Browser acceptance and any live HERO step remain
 separate, explicitly authorized checks.
