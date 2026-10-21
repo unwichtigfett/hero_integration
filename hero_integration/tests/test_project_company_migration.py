@@ -29,6 +29,10 @@ class TestProjectCompanyMigration(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.frappe = _FakeFrappe()
+        cls._original_modules = {
+            name: sys.modules.get(name)
+            for name in ("hero_integration.services.migration", "frappe.utils", "frappe")
+        }
         cls._install_fake_frappe()
         cls.migration = importlib.import_module("hero_integration.services.migration")
         cls._confirmed_project_company = cls.migration.confirmed_project_company
@@ -39,9 +43,11 @@ class TestProjectCompanyMigration(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
-        sys.modules.pop("hero_integration.services.migration", None)
-        sys.modules.pop("frappe.utils", None)
-        sys.modules.pop("frappe", None)
+        for name, original in cls._original_modules.items():
+            if original is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = original
 
     @classmethod
     def _install_fake_frappe(cls):
