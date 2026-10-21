@@ -96,23 +96,26 @@ def _claim_run(run) -> bool:
     independently requested runs.  The ``tabSingles`` row is the one durable
     shared slot and is locked before either worker observes or replaces it.
     """
-    active_run = _locked_active_run()
-    if active_run and active_run != run.name:
-        active_state = frappe.db.get_value("HERO Integration Run", active_run, "state")
-        if active_state not in TERMINAL_STATES:
-            run.state = "Blocked"
-            run.error_message = f"Another HERO run is active: {active_run}."
-            run.finished_on = now_datetime()
-            run.save()
-            return False
-    frappe.db.sql(
-        "UPDATE `tabSingles` SET `value` = %s WHERE `doctype` = %s AND `field` = %s",
-        (run.name, "HERO Integration Sync State", "active_run"),
-    )
-    run.state = "Running"
-    run.started_on = run.started_on or now_datetime()
-    run.save()
-    return True
+    if not _acquire_active_run_lock():
+        _block_run(run, "Could not acquire the HERO run reservation lock.")
+        return False
+    try:
+        active_run = _locked_active_run()
+        if active_run and active_run != run.name:
+            active_state = frappe.db.get_value("HERO Integration Run", active_run, "state")
+            if active_state not in TERMINAL_STATES:
+                _block_run(run, f"Another HERO run is active: {active_run}.")
+                return False
+        frappe.db.sql(
+            "UPDATE `tabSingles` SET `value` = %s WHERE `doctype` = %s AND `field` = %s",
+            (run.name, "HERO Integration Sync State", "active_run"),
+        )
+        run.state = "Running"
+        run.started_on = run.started_on or now_datetime()
+        run.save()
+        return True
+    finally:
+        _release_active_run_lock()
 
 
 def _release_run(run_name: str) -> None:
@@ -136,6 +139,22 @@ def _locked_active_run() -> str:
         as_dict=True,
     )
     return str(rows[0].value or "") if rows else ""
+
+
+def _acquire_active_run_lock() -> bool:
+    """Serialize first-use upserts before taking the durable row lock.
+
+    MariaDB can deadlock two concurrent ``INSERT IGNORE`` calls for a missing
+    ``tabSingles`` row.  The named lock is connection-scoped and only guards
+    row creation/claim setup; the row lock remains the durable transaction
+    boundary for the executing run.
+    """
+    rows = frappe.db.sql("SELECT GET_LOCK(%s, %s) AS acquired", ("hero_integration:active_run", 10), as_dict=True)
+    return bool(rows and int(rows[0].acquired or 0) == 1)
+
+
+def _release_active_run_lock() -> None:
+    frappe.db.sql("SELECT RELEASE_LOCK(%s)", ("hero_integration:active_run",))
 
 
 def _process_requested_phases(run, source: HeroSource) -> None:
