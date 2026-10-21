@@ -24,6 +24,14 @@ No development-machine path is required.
    bench get-app https://github.com/unwichtigfett/hero_integration.git --branch release/v1-rc
    ```
 
+   Before continuing, verify that this is the Bench CLI in the target user's
+   intended toolchain, not a similarly named shell alias:
+
+   ```bash
+   bench --version
+   bench version
+   ```
+
 4. Install HERO Integration on that ERPNext site. Its pre-install check aborts
    before HERO schema writes if ERPNext is missing, is not v16, or lacks
    Customer, Contact, Contact Email, Contact Phone, or Project.
@@ -57,3 +65,11 @@ same create-only, conflict-safe path. No Customize Form step is required.
 See [DOCTYPE_EXTENSIONS.md](DOCTYPE_EXTENSIONS.md) for the exact schema.
 Do not copy this app from another bench as a release substitute. The future
 acceptance source is the reviewed Git revision used by `bench get-app`.
+
+## RC16 upgrade check
+
+For an upgrade copy, first record the pre-upgrade app revision, mapping count,
+and export of the approved mapping package. Fetch the published
+`release/v1-rc` revision, run `bench --site <site-name> migrate` twice, then
+verify that the mapping count and imported mapping revisions remain unchanged.
+Do not use a local working tree as fresh-install or upgrade evidence.

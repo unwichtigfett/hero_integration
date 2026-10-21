@@ -20,11 +20,11 @@
 | Preview and comparison state | Implemented and mock-tested | Preview does not write target, Link, conflict or observation state. Links retain separate successful and observed protected field-hash state. |
 | Field conflict handling | Implemented and mock-tested | A HERO-only mapped field change can update through Frappe validation. A same-field change on both sides creates a durable Link conflict and an internal System-Manager notification; no overwrite occurs. |
 | External mutation outcome | Implemented and offline-tested | Local duplicate/concurrency protection exists, but no HERO idempotency or exactly-once claim is made. Ambiguous results are audited and never retried automatically. |
-| Central deletion gate | Implemented and source-tested | Default-OFF `Allow deletion` protects HERO-owned direct DocType deletion and app RPC paths; it does not grant foreign ERPNext deletions. |
+| Central deletion gate | Implemented and isolated-native-tested | Default-OFF `Allow deletion` is registered on Frappe `on_trash` for every HERO-owned DocType and rechecked by the service RPC; it does not grant foreign ERPNext deletions. |
 | Durable general output | Implemented and source-tested | Existing `HERO Integration Record` is extended as a versioned, paginated, System-Manager-only technical output projection; no general event broker or Core consumer is required. |
-| Manual and scheduled sync | Implemented and mock-tested | One-way HERO to Frappe; hourly hook is disabled until configured. |
+| Manual and scheduled sync | Implemented and isolated-native-tested | One-way HERO to Frappe; durable run reservation admits one concurrent worker and records the loser as Blocked. |
 | ERPNext persistence | Limited | Native v16 persistence and Custom Field acceptance are pending on a fresh owned VPS. |
-| Helpdesk profile | Limited | Detected only when ERPNext and Helpdesk are installed; ERPNext owns Customer mirroring. |
+| Helpdesk profile | Limited, isolated checked | The profile reports missing Helpdesk and disabled ticket migration without implying compatibility; ERPNext owns Customer mirroring. |
 | Attachments | Not available | No approved HERO attachment query contract. |
 | Helpdesk tickets | Not available | No approved HERO ticket source or target write contract. |
 | Reverse sync | Not available | No approved write contract. |
@@ -47,6 +47,6 @@
 | --- | --- | --- | --- |
 | Generic technical output | `HERO Integration Record` | Version, action, origin, correlation, observation time and redacted field-name projection; paginated System-Manager API | `services/integration_events.py`; Bench/Fresh-install evidence remains required. |
 | Priority 0–10 | Existing classic mapping runtime and package | Default 5, strict validation, `0` retained, lossless 100→5 patch; ambiguous historic values disabled | `direct_mapping.py`, `normalize_mapping_priorities.py`, mapping tests. |
-| Change detection/conflict | Existing Link hashes and migration path | Successful and observed values separated; field-hash overlap detects bilateral same-field conflict; preview stays no-write | `change_detection.py`, `migration.py`, migration tests. |
+| Change detection/conflict | Existing Link hashes and migration path | Successful and observed values separated; field-hash overlap detects bilateral same-field conflict; Frappe `on_update` writes a technical observation only; preview stays no-write | `change_detection.py`, `migration.py`, isolated native and migration tests. |
 | Admin conflict signal | Existing internal Frappe platform | Configurable recipients with enabled System-Manager fallback; durable Notification Log when evidence changes | `conflict_notifications.py`; delivery needs isolated Bench verification. |
-| Deletion gate | Existing Settings and app-owned DocTypes | Default-OFF central hook plus service RPC recheck | `guards.py`, `hooks.py`, `api.py`; full direct/queued route inventory test remains required. |
+| Deletion gate | Existing Settings and app-owned DocTypes | Default-OFF `on_trash` hook plus service RPC recheck | isolated `frappe.delete_doc()` regression; user browser acceptance remains required. |
