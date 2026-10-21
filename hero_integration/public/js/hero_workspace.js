@@ -35,8 +35,26 @@
         "remove_candidate", "execute_service", "get_analyzer_service_draft", "save_analyzer_service",
     ]);
 
+    const nativeMethods = new Set([
+        "integration_overview", "workspace_context", "workspace_settings_get", "workspace_settings_save",
+        "workspace_mutation_execution_set", "workspace_sync_status",
+    ]);
+    const errorMessage = (error) => {
+        if (typeof error === "string") return error;
+        if (typeof error?.message === "string" && error.message) return error.message;
+        try {
+            const messages = JSON.parse(error?._server_messages || "[]");
+            const first = messages.map((item) => typeof item === "string" ? JSON.parse(item) : item).find(Boolean);
+            if (first?.message) return first.message;
+        } catch (_) { /* Frappe may return a non-JSON message. */ }
+        if (typeof error?.exc_type === "string") return `Server rejected the request (${error.exc_type}).`;
+        return "HERO workspace request failed. Retry the action or check the server log.";
+    };
     const request = (method, args = {}) =>
-        frappe.call({method: `${API}.${method}`, args}).then((response) => response.message);
+        frappe.call({method: `${API}.${method}`, args}).then((response) => {
+            if (response?.exc) throw new Error(Array.isArray(response.exc) ? response.exc.join("\n") : String(response.exc));
+            return response?.message;
+        }).catch((error) => { throw new Error(errorMessage(error)); });
     const snapshotName = (args) => args.snapshot_name || args.connection_id || "";
 
     async function rpc(method, args = {}) {
@@ -96,7 +114,9 @@
     window.hero_integration_platform = Object.freeze({
         boot: {csrf_token: frappe.csrf_token || ""},
         url: (section) => routeUrl(section),
-        api: (method, args = {}) => ["workspace_settings_get", "workspace_settings_save", "workspace_mutation_execution_set"].includes(method) ? request(method, args) : rpc(method, args),
+        // Native page modules use their actual whitelisted method names.  Only
+        // preserved analyzer/graph/service aliases go through the legacy mapper.
+        api: (method, args = {}) => nativeMethods.has(method) ? request(method, args) : rpc(method, args),
         loadAce: async () => {
             if (!window.ace) await frappe.ui.form.ControlCode.prototype.load_lib.call({});
         },
@@ -138,7 +158,7 @@
         return root;
     }
     function failure(host, error) {
-        host.replaceChildren(Object.assign(document.createElement("p"), {className: "text-danger", textContent: error.message || String(error)}));
+        host.replaceChildren(Object.assign(document.createElement("p"), {className: "text-danger", textContent: errorMessage(error)}));
     }
     async function render(section, context) {
         if (!controller) return;
