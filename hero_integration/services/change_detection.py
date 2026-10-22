@@ -54,6 +54,13 @@ def observe_frappe_target_change(doc, method=None) -> None:
     import frappe
     from frappe.utils import now_datetime
 
+    # During install/migrate, DocType metadata can be written before the
+    # corresponding database columns exist.  This global on_update hook runs
+    # for those technical writes as well, so it must return before querying
+    # the Link fields introduced by the same synchronization.
+    if frappe.flags.in_migrate:
+        return
+
     links = frappe.get_all(
         "HERO Integration Link",
         filters={"target_doctype": doc.doctype, "target_name": doc.name},

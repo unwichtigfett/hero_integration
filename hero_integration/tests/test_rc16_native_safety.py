@@ -3,13 +3,14 @@ from __future__ import annotations
 from queue import Queue
 from threading import Barrier, Thread
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import frappe
 from frappe.handler import is_valid_http_method
 from frappe.tests import IntegrationTestCase
 
 from hero_integration import api
-from hero_integration.services.change_detection import encode, field_hashes
+from hero_integration.services.change_detection import encode, field_hashes, observe_frappe_target_change
 from hero_integration.services.migration import CustomerAddressError, _claim_run, _release_run, _upsert
 
 
@@ -193,6 +194,8 @@ class TestRC16NativeSafety(IntegrationTestCase):
         customer.save(ignore_permissions=True)
         link.reload()
         self.assertTrue(link.observed_target_hash)
+        self.assertEqual(link.source_field_hashes, baseline)
+        self.assertEqual(link.target_field_hashes, baseline)
         self.assertTrue(
             frappe.db.exists(
                 "HERO Integration Record",
@@ -203,3 +206,25 @@ class TestRC16NativeSafety(IntegrationTestCase):
                 },
             )
         )
+
+    def test_change_observer_does_not_query_link_fields_during_migration(self) -> None:
+        """The migration guard runs before any Link query can need new columns."""
+
+        previous = frappe.flags.in_migrate
+        frappe.flags.in_migrate = True
+        self.addCleanup(setattr, frappe.flags, "in_migrate", previous)
+        with patch.object(
+            frappe, "get_all", side_effect=AssertionError("Link query must not run during migration")
+        ) as get_all:
+            observe_frappe_target_change(SimpleNamespace(doctype="Customer", name=self.token))
+        get_all.assert_not_called()
+
+    def test_change_observer_propagates_normal_query_errors_outside_migration(self) -> None:
+        """Only the framework migration phase is a no-op boundary."""
+
+        previous = frappe.flags.in_migrate
+        frappe.flags.in_migrate = False
+        self.addCleanup(setattr, frappe.flags, "in_migrate", previous)
+        with patch.object(frappe, "get_all", side_effect=RuntimeError("synthetic query failure")):
+            with self.assertRaisesRegex(RuntimeError, "synthetic query failure"):
+                observe_frappe_target_change(SimpleNamespace(doctype="Customer", name=self.token))
