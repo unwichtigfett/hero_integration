@@ -143,8 +143,15 @@ class TestMappingExchange(unittest.TestCase):
         for item in fixture_payload()["mappings"]:
             paths[item["operation"]].add(item["source_path"])
         from hero_integration.services.projection_contracts import CONTRACTS, STATUS_PATHS
+        # Country is consumed only by the native Address relation adapter, not
+        # by a writable Frappe Mapping definition.  The fixture intentionally
+        # represents persisted mapping definitions, so this closed adapter
+        # input is excluded from its definition coverage check.
+        native_relation_paths = {"HeroCustomers": {"address.country.code"}}
         legacy = {operation: set(contract['paths']) for operation, contract in SOURCE_CONTRACTS.items() if operation not in CONTRACTS}
         legacy['HeroProjectMatches'] -= set(STATUS_PATHS)
+        for operation, excluded in native_relation_paths.items():
+            legacy[operation] -= excluded
         self.assertEqual({op: selected for op, selected in paths.items() if op not in CONTRACTS}, legacy)
 
 

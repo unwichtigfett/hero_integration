@@ -140,6 +140,14 @@ class MappingPlan:
         value = transformed_value(definitions[0], source_value(record, definitions[0].source_path))
         return value if isinstance(value, str) else None
 
+    def customer_contact_values(self, values: dict[str, object]) -> dict[str, object]:
+        """Expose only the explicit Customer Primary Contact bindings."""
+        return {
+            definition.target_field: values[definition.target_field]
+            for definition in self._with_purpose(PURPOSE_CUSTOMER_CONTACT)
+            if definition.target_field in values
+        }
+
     def _one(self, purpose: str) -> MappingSpec:
         matches = self._with_purpose(purpose)
         if len(matches) != 1:

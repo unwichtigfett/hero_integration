@@ -13,6 +13,8 @@ from hero_integration.integrations.erpnext.company import confirmed_project_comp
 from hero_integration.integrations.erpnext.contact import (
     HomePhoneConflict,
     home_phone_for_customer,
+    primary_contact_values,
+    synchronize_primary_contact,
     synchronize_home_phone,
 )
 from hero_integration.sources.hero import GraphQLServiceSource, HeroSource, SourcePage
@@ -358,6 +360,7 @@ def _migrate_customer(record: dict[str, object], run) -> Result:
         plan = _mapping_plan_for_run(run, "HeroCustomers")
         source_id = plan.source_identity(record)
         values = plan.values(record)
+        contact_values = plan.customer_contact_values(values)
         address = _customer_primary_address(record)
     except MappingPlanError as error:
         return Result("BLOCKED_RECORD", str(error))
@@ -374,9 +377,12 @@ def _migrate_customer(record: dict[str, object], run) -> Result:
     return _upsert(
         "customer", source_id, record, values, "Customer", "customer_name", plan.mapping_version, run,
         after_insert=lambda customer: _synchronize_customer_relations(
-            customer, plan.home_phone(record), address, _source_instance(record), plan.mapping_version,
+            customer, contact_values, plan.home_phone(record), address, _source_instance(record), plan.mapping_version,
         ),
-        target_snapshot=lambda customer: _customer_target_values(customer, values, plan.home_phone(record)),
+        after_update=lambda customer: _synchronize_customer_relations(
+            customer, contact_values, plan.home_phone(record), address, _source_instance(record), plan.mapping_version,
+        ),
+        target_snapshot=lambda customer: _customer_target_values(customer, values, contact_values, plan.home_phone(record)),
         source_instance=_source_instance(record),
     )
 
@@ -422,6 +428,17 @@ def _migrate_projection(record, run, plan) -> Result:
             if run.mode != 'Preview':
                 _mark_source_deleted(_link(contract['source_type'], source_id, instance))
             return Result('SKIPPED_SOURCE_DELETED', 'Source deletion is observed; no target deletion occurs.')
+        # An existing Event whose privacy or outbound settings changed must be
+        # held before resolving the saved native options.  This makes Preview
+        # fail closed even when it is invoked with a minimal test/run context,
+        # and guarantees the protected target is never updated.
+        existing = _link(contract['source_type'], source_id, instance) if contract.get('native_kind') == 'event' else None
+        if existing:
+            if existing.target_doctype != 'Event':
+                return Result('CONFLICT', 'Stored calendar binding is not a native Event.')
+            target = _native_lookup('Event', existing.target_name)
+            if target.get('event_type') != 'Private' or any(target.get(f) for f in ('event_participants', 'send_reminder', 'sync_with_google_calendar', 'add_video_conferencing')):
+                return Result('CONFLICT', 'Event sharing or outbound settings changed; native calendar update requires review.')
         native_values, defaults = {}, {}
         if contract.get('native_kind') or contract.get('native_bindings'):
             from hero_integration.services.native_projections import values as native_resolve, creation_defaults
@@ -437,14 +454,6 @@ def _migrate_projection(record, run, plan) -> Result:
         values['custom_hero_source_instance'] = instance
     except (ValueError, MappingPlanError) as error:
         return Result('BLOCKED_RECORD', str(error))
-    # History and checklist content stays in admin-only, non-submittable HERO DocTypes.
-    existing = _link(contract['source_type'], source_id, instance) if contract.get('native_kind') == 'event' else None
-    if existing:
-        if existing.target_doctype != 'Event':
-            return Result('CONFLICT', 'Stored calendar binding is not a native Event.')
-        target = _native_lookup('Event', existing.target_name)
-        if target.get('event_type') != 'Private' or any(target.get(f) for f in ('event_participants', 'send_reminder', 'sync_with_google_calendar', 'add_video_conferencing')):
-            return Result('CONFLICT', 'Event sharing or outbound settings changed; native calendar update requires review.')
     return _upsert(contract['source_type'], source_id, record, values, contract['target_doctype'],
                    'item_code' if contract['target_doctype'] == 'Item' else 'custom_hero_key', plan.mapping_version, run, source_instance=instance,
                    target_snapshot=lambda target: _projection_target_values(target, values, contract), creation_values=defaults)
@@ -587,6 +596,7 @@ def _upsert(
     run,
     *,
     after_insert=None,
+    after_update=None,
     target_snapshot=None,
     source_instance: str = "default",
     creation_values: dict | None = None,
@@ -637,10 +647,18 @@ def _upsert(
             return Result("PREVIEW_OK", "Existing target would remain unchanged; local changes are observed only.", doctype, target.name)
         _observe_link(existing, source_hash, _digest(target_values))
         if changed_source:
-            for field in changed_source:
-                if field in values:
-                    target.set(field, values[field])
-            target.save()
+            savepoint = "hero_upsert_update"
+            frappe.db.savepoint(savepoint)
+            try:
+                for field in changed_source:
+                    if field in values:
+                        target.set(field, values[field])
+                target.save()
+                if after_update:
+                    after_update(target)
+            except (HomePhoneConflict, CustomerAddressError) as error:
+                frappe.db.rollback(save_point=savepoint)
+                return Result("CONFLICT", str(error), doctype, target.name)
             target_values = snapshot(target)
             target_field_hashes = field_hashes(target_values)
             _update_link_baseline(existing, source_hash, _digest(target_values), source_field_hashes, target_field_hashes, mapping_version)
@@ -719,8 +737,17 @@ def _target_values(target, values: dict[str, object]) -> dict[str, object]:
     return {field: target.get(field) for field in values}
 
 
-def _customer_target_values(target, values: dict[str, object], home_phone: str | None) -> dict[str, object]:
+def _customer_target_values(target, values: dict[str, object], contact_values: dict[str, object], home_phone: str | None) -> dict[str, object]:
     snapshot = _target_values(target, values)
+    # Existing rows created before Contact persistence (or a relationship that
+    # cannot safely be read) retain the Customer-field snapshot for conflict
+    # detection.  A missing native value is not evidence that a user changed
+    # the visible Customer projection to ``None``.
+    snapshot.update({
+        field: value
+        for field, value in primary_contact_values(target, set(contact_values)).items()
+        if value is not None
+    })
     if home_phone:
         snapshot["hero_phone_home"] = home_phone_for_customer(target)
     return snapshot
@@ -802,7 +829,8 @@ def _customer_primary_address(record: dict[str, object]) -> dict[str, object] | 
     return {"id": str(source_id), **{key: item.strip() for key, item in fields.items()}, **({'country_code': country_code} if country_code is not None else {})}
 
 
-def _synchronize_customer_relations(customer, home_phone, address, source_instance: str, mapping_version: str) -> None:
+def _synchronize_customer_relations(customer, contact_values, home_phone, address, source_instance: str, mapping_version: str) -> None:
+    synchronize_primary_contact(customer, contact_values)
     synchronize_home_phone(customer, home_phone)
     if address is not None:
         _synchronize_customer_address(customer, address, source_instance, mapping_version)
