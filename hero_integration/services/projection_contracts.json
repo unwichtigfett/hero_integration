@@ -1,0 +1,379 @@
+{
+  "HeroCalendarEvents": {
+    "root": "calendar_events",
+    "type": "CalendarEvent",
+    "target_doctype": "Event",
+    "category": "CALENDAR",
+    "paths": {
+      "category_id": "int|null",
+      "project_match_id": "int|null",
+      "title": "string|null",
+      "description": "string|null",
+      "start": "string|null",
+      "end": "string|null",
+      "all_day": "boolean|null",
+      "deleted": "boolean|null",
+      "color": "string|null",
+      "is_done": "boolean|null",
+      "is_recurring": "boolean|null",
+      "provider": "string|null",
+      "id": "int",
+      "modified": "string|null",
+      "created": "string|null",
+      "type": "string|null",
+      "localized_type": "string|null",
+      "full_address": "string|null",
+      "partner_id": "int|null",
+      "readonly": "boolean|null",
+      "resources": "json|null",
+      "partners": "json|null"
+    },
+    "bindings": {
+      "category_id": {
+        "field": "custom_hero_category_id",
+        "fieldtype": "Data",
+        "options": "",
+        "transformation": "Scalar Text",
+        "purpose": "Field"
+      },
+      "project_match_id": {
+        "field": "custom_hero_project_match_id",
+        "fieldtype": "Data",
+        "options": "",
+        "transformation": "Scalar Text",
+        "purpose": "Field"
+      },
+      "title": {
+        "field": "subject",
+        "fieldtype": "Small Text",
+        "options": "",
+        "transformation": "Native Adapter",
+        "purpose": "Native Binding"
+      },
+      "description": {
+        "field": "description",
+        "fieldtype": "Text Editor",
+        "options": "",
+        "transformation": "Native Adapter",
+        "purpose": "Native Binding"
+      },
+      "start": {
+        "field": "starts_on",
+        "fieldtype": "Datetime",
+        "options": "",
+        "transformation": "Native Adapter",
+        "purpose": "Native Binding"
+      },
+      "end": {
+        "field": "ends_on",
+        "fieldtype": "Datetime",
+        "options": "",
+        "transformation": "Native Adapter",
+        "purpose": "Native Binding"
+      },
+      "all_day": {
+        "field": "all_day",
+        "fieldtype": "Check",
+        "options": "",
+        "transformation": "Native Adapter",
+        "purpose": "Native Binding"
+      },
+      "deleted": {
+        "field": "custom_hero_deleted",
+        "fieldtype": "Data",
+        "options": "",
+        "transformation": "Scalar Text",
+        "purpose": "Field"
+      },
+      "color": {
+        "field": "custom_hero_color",
+        "fieldtype": "Small Text",
+        "options": "",
+        "transformation": "Identity",
+        "purpose": "Field"
+      },
+      "is_done": {
+        "field": "custom_hero_is_done",
+        "fieldtype": "Data",
+        "options": "",
+        "transformation": "Scalar Text",
+        "purpose": "Field"
+      },
+      "is_recurring": {
+        "field": "custom_hero_is_recurring",
+        "fieldtype": "Data",
+        "options": "",
+        "transformation": "Scalar Text",
+        "purpose": "Field"
+      },
+      "provider": {
+        "field": "custom_hero_provider",
+        "fieldtype": "Small Text",
+        "options": "",
+        "transformation": "Identity",
+        "purpose": "Field"
+      },
+      "id": {
+        "field": "custom_hero_source_id",
+        "fieldtype": "Data",
+        "options": "",
+        "transformation": "Positive Int To Text",
+        "purpose": "Source Identity"
+      },
+      "modified": {
+        "field": "custom_hero_modified",
+        "fieldtype": "Data",
+        "options": "",
+        "transformation": "Identity",
+        "purpose": "Field"
+      },
+      "created": {
+        "field": "custom_hero_created",
+        "fieldtype": "Data",
+        "options": "",
+        "transformation": "Identity",
+        "purpose": "Field"
+      },
+      "type": {
+        "field": "custom_hero_type",
+        "fieldtype": "Small Text",
+        "options": "",
+        "transformation": "Identity",
+        "purpose": "Field"
+      },
+      "localized_type": {
+        "field": "custom_hero_localized_type",
+        "fieldtype": "Small Text",
+        "options": "",
+        "transformation": "Identity",
+        "purpose": "Field"
+      },
+      "full_address": {
+        "field": "location",
+        "fieldtype": "Data",
+        "options": "",
+        "transformation": "Native Adapter",
+        "purpose": "Native Binding"
+      },
+      "partner_id": {
+        "field": "custom_hero_partner_id",
+        "fieldtype": "Data",
+        "options": "",
+        "transformation": "Scalar Text",
+        "purpose": "Field"
+      },
+      "readonly": {
+        "field": "custom_hero_readonly",
+        "fieldtype": "Data",
+        "options": "",
+        "transformation": "Scalar Text",
+        "purpose": "Field"
+      },
+      "resources": {
+        "field": "custom_hero_resources",
+        "fieldtype": "Table",
+        "options": "HERO Event Resource",
+        "transformation": "Native Adapter",
+        "purpose": "Native Binding",
+        "reference_type": "CompanyResource",
+        "selection": [
+          "id",
+          "name",
+          "type",
+          "type_id"
+        ],
+        "member_types": {
+          "id": "int|null",
+          "type_id": "int|null",
+          "name": "string|null",
+          "type": "string|null"
+        }
+      },
+      "partners": {
+        "field": "custom_hero_partners",
+        "fieldtype": "Table",
+        "options": "HERO Event Partner",
+        "transformation": "Native Adapter",
+        "purpose": "Native Binding",
+        "reference_type": "Partner",
+        "selection": [
+          "id",
+          "full_name"
+        ],
+        "member_types": {
+          "full_name": "string|null",
+          "id": "int|null"
+        }
+      }
+    },
+    "project_path": "project_match_id",
+    "source_type": "CalendarEvent",
+    "selection": [
+      "category_id",
+      "project_match_id",
+      "title",
+      "description",
+      "start",
+      "end",
+      "all_day",
+      "deleted",
+      "color",
+      "is_done",
+      "is_recurring",
+      "provider",
+      "id",
+      "modified",
+      "created",
+      "type",
+      "localized_type",
+      "full_address",
+      "partner_id",
+      "readonly",
+      "resources { id name type type_id }",
+      "partners { id full_name }"
+    ],
+    "fingerprint": "fee37bfa55a02f7a4d09b6b902e6600a835c992c8fe6644c358f5e511e025201",
+    "native_kind": "event",
+    "native_bindings": {
+      "custom_hero_original_start": {
+        "source_path": "start",
+        "fieldtype": "Data",
+        "options": "",
+        "dependency": "field:Event:custom_hero_original_start"
+      },
+      "custom_hero_original_end": {
+        "source_path": "end",
+        "fieldtype": "Data",
+        "options": "",
+        "dependency": "field:Event:custom_hero_original_end"
+      }
+    }
+  },
+  "HeroTasks": {
+    "root": "tasks",
+    "type": "Task",
+    "target_doctype": "HERO External Task",
+    "category": "TASK",
+    "paths": {
+      "author_user_id": "int|null",
+      "company_id": "int|null",
+      "target_user_id": "int|null",
+      "title": "string|null",
+      "comment": "string|null",
+      "target_project_match_id": "int|null",
+      "due_date": "string|null",
+      "done_date": "string|null",
+      "created": "string|null",
+      "modified": "string|null",
+      "start": "string|null",
+      "end": "string|null",
+      "is_deleted": "boolean|null",
+      "id": "int"
+    },
+    "bindings": {
+      "author_user_id": {
+        "field": "custom_hero_author_user_id",
+        "fieldtype": "Data",
+        "transformation": "Scalar Text",
+        "purpose": "Field"
+      },
+      "company_id": {
+        "field": "custom_hero_company_id",
+        "fieldtype": "Data",
+        "transformation": "Scalar Text",
+        "purpose": "Field"
+      },
+      "target_user_id": {
+        "field": "custom_hero_target_user_id",
+        "fieldtype": "Data",
+        "transformation": "Scalar Text",
+        "purpose": "Field"
+      },
+      "title": {
+        "field": "custom_hero_title",
+        "fieldtype": "Small Text",
+        "transformation": "Identity",
+        "purpose": "Field"
+      },
+      "comment": {
+        "field": "custom_hero_comment",
+        "fieldtype": "Small Text",
+        "transformation": "Identity",
+        "purpose": "Field"
+      },
+      "target_project_match_id": {
+        "field": "custom_hero_target_project_match_id",
+        "fieldtype": "Data",
+        "transformation": "Scalar Text",
+        "purpose": "Field"
+      },
+      "due_date": {
+        "field": "custom_hero_due_date",
+        "fieldtype": "Data",
+        "transformation": "Identity",
+        "purpose": "Field"
+      },
+      "done_date": {
+        "field": "custom_hero_done_date",
+        "fieldtype": "Data",
+        "transformation": "Identity",
+        "purpose": "Field"
+      },
+      "created": {
+        "field": "custom_hero_created",
+        "fieldtype": "Data",
+        "transformation": "Identity",
+        "purpose": "Field"
+      },
+      "modified": {
+        "field": "custom_hero_modified",
+        "fieldtype": "Data",
+        "transformation": "Identity",
+        "purpose": "Field"
+      },
+      "start": {
+        "field": "custom_hero_start",
+        "fieldtype": "Data",
+        "transformation": "Identity",
+        "purpose": "Field"
+      },
+      "end": {
+        "field": "custom_hero_end",
+        "fieldtype": "Data",
+        "transformation": "Identity",
+        "purpose": "Field"
+      },
+      "is_deleted": {
+        "field": "custom_hero_is_deleted",
+        "fieldtype": "Data",
+        "transformation": "Scalar Text",
+        "purpose": "Field"
+      },
+      "id": {
+        "field": "custom_hero_source_id",
+        "fieldtype": "Data",
+        "transformation": "Positive Int To Text",
+        "purpose": "Source Identity"
+      }
+    },
+    "project_path": "target_project_match_id",
+    "source_type": "Task",
+    "selection": [
+      "author_user_id",
+      "company_id",
+      "target_user_id",
+      "title",
+      "comment",
+      "target_project_match_id",
+      "due_date",
+      "done_date",
+      "created",
+      "modified",
+      "start",
+      "end",
+      "is_deleted",
+      "id"
+    ],
+    "fingerprint": "fee37bfa55a02f7a4d09b6b902e6600a835c992c8fe6644c358f5e511e025201"
+  }
+}

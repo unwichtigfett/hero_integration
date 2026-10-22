@@ -4,13 +4,15 @@
     if (window.hero_integration_mapping_editor) return;
 
     const PAGE_SIZE = 50;
+    const READ_OPERATIONS = ["HeroCustomers", "HeroProjectMatches", "HeroCalendarEvents", "HeroTasks"];
     const statusClass = (status) => ["active", "draft"].includes(String(status || "").toLowerCase()) ? String(status).toLowerCase() : "invalid";
 
     function mount(page, routeContext = {}) {
         page.main.empty().addClass("hero-integration-ui");
         const snapshot = $("<select class='form-control' disabled><option value=''>Choose a saved GraphQL Schema Snapshot</option></select>");
         const snapshotMetadata = $("<div class='text-muted hero-mapping-snapshot-metadata' aria-live='polite'></div>");
-        const operation = $("<select class='form-control'><option value='HeroCustomers'>HeroCustomers</option><option value='HeroProjectMatches'>HeroProjectMatches</option></select>");
+        const operation = $("<select class='form-control'></select>");
+        READ_OPERATIONS.forEach((name) => operation.append($("<option></option>").val(name).text(name)));
         const sourceSearch = $("<input class='form-control' placeholder='Name, path, type, or relation'>");
         const reverseSearch = $("<input class='form-control' placeholder='Filter suggested HERO fields' disabled>");
         const targetSearch = $("<input class='form-control' placeholder='Name, fieldname, type, or description' disabled>");
@@ -40,9 +42,9 @@
         const provisionCustomField = $("<button type='button' class='btn btn-default btn-sm'>Prepare Custom Field provisioning</button>");
         let selectedSource = null, selectedTarget = null, importPayload = null, activeSourceFields = [], pendingSourcePath = routeContext.source_path || "";
         let sourceStart = 0, targetStart = 0, currentSuggestions = [], suggestionsExpanded = false, reverseExpanded = false, suggestionDirection = "", suggestionSequence = 0, sourceLoadSequence = 0, targetCatalogSequence = 0;
-        const requestedSnapshotName = routeContext.snapshot_name || "";
+        const requestedSnapshotName = routeContext.snapshot_name || routeContext.snapshot || "";
         const snapshots = new Map();
-        if (["HeroCustomers", "HeroProjectMatches"].includes(routeContext.operation)) operation.val(routeContext.operation);
+        if (READ_OPERATIONS.includes(routeContext.operation)) operation.val(routeContext.operation);
 
         const controls = $("<div class='hero-mapping-controls'></div>").append($("<label></label>").text("GraphQL Schema Snapshot").append(snapshot, snapshotMetadata, retrySnapshots), $("<label></label>").text("Read-only HERO operation").append(operation));
         const mappingGrid = $("<div class='hero-mapping-grid'></div>").append(
@@ -300,9 +302,9 @@
         retryTargetCatalog.on("click", loadTargetCatalog); retrySnapshots.on("click", loadSnapshotList);
         provisionCustomField.on("click", () => advanced.prop("open", true).find("summary").trigger("focus"));
         importFile.on("change", (event) => { const file = event.target.files[0]; if (!file || !hasValidSnapshot()) return; const reader = new FileReader(); reader.onload = () => { importPayload = reader.result; frappe.call({method: "hero_integration.api.preview_mapping_package", args: {snapshot_name: snapshot.val(), payload_json: importPayload}}).then((response) => renderChecklist(response.message)); }; reader.readAsText(file); });
-        page.set_primary_action("Open Graph Viewer", () => { if (!hasValidSnapshot()) return frappe.msgprint("Choose a validated GraphQL Schema Snapshot first."); window.hero_integration_ui.setRoute("graph", {snapshot_name: snapshot.val(), operation: operation.val()}); });
+        page.set_primary_action("Open Graph Viewer", () => { if (!hasValidSnapshot()) return frappe.msgprint("Choose a validated GraphQL Schema Snapshot first."); window.hero_integration_ui.setRoute("api", {hero_tool: "graph", snapshot: snapshot.val()}); });
         page.add_menu_item("Export Mapping JSON", () => { if (!hasValidSnapshot()) return frappe.msgprint("Choose a validated GraphQL Schema Snapshot first."); frappe.call({method: "hero_integration.api.export_mapping_json", args: {snapshot_name: snapshot.val()}}).then((response) => { const exported = response.message, url = URL.createObjectURL(new Blob([exported.content], {type: "application/json"})), link = document.createElement("a"); link.href = url; link.download = exported.filename; link.click(); URL.revokeObjectURL(url); }); });
-        page.add_menu_item("GraphQL Services", () => window.hero_integration_ui.setRoute("services")); page.add_menu_item("Review Draft Mappings", () => frappe.set_route("List", "HERO Frappe Mapping"));
+        page.add_menu_item("GraphQL Services", () => window.hero_integration_ui.setRoute("api", {hero_tool: "services", snapshot: snapshot.val()})); page.add_menu_item("Review Draft Mappings", () => frappe.set_route("List", "HERO Frappe Mapping"));
         clearTargets("Choose an app and DocType before fields are loaded."); renderReverseSuggestions(); showSnapshotMetadata(); renderDynamicPreview(); loadSnapshotList(); loadTargetCatalog();
     }
 

@@ -36,11 +36,13 @@ class TestMappingExchange(unittest.TestCase):
             enqueue=lambda *args, **kwargs: calls.append(("enqueue", args, kwargs)),
             throw=lambda message: (_ for _ in ()).throw(ValueError(message)),
         )
+        service = SimpleNamespace(name="SERVICE", service_revision=1)
+        mapping = SimpleNamespace(name="MAPPING", mapping_revision=1)
         with patch.object(api, "frappe", fake_api_frappe), patch.object(
-            api, "_require_active_mappings", side_effect=ValueError("No active mapping definitions exist.")
-        ):
+            api, "_approved_read_service", return_value=(service, mapping)
+        ), patch.object(api, "_require_selected_mappings", side_effect=ValueError("No active mapping definitions exist.")):
             with self.assertRaisesRegex(ValueError, "No active mapping"):
-                api.start_migration("Customer Migration")
+                api.start_migration("Customer Migration", graphql_service=service.name)
         self.assertEqual(calls, [("only_for", "System Manager")])
 
     def test_export_import_export_is_structurally_equivalent_and_draft_only(self):
@@ -140,7 +142,10 @@ class TestMappingExchange(unittest.TestCase):
         paths = {operation: set() for operation in SOURCE_CONTRACTS}
         for item in fixture_payload()["mappings"]:
             paths[item["operation"]].add(item["source_path"])
-        self.assertEqual(paths, {operation: set(contract["paths"]) for operation, contract in SOURCE_CONTRACTS.items()})
+        from hero_integration.services.projection_contracts import CONTRACTS, STATUS_PATHS
+        legacy = {operation: set(contract['paths']) for operation, contract in SOURCE_CONTRACTS.items() if operation not in CONTRACTS}
+        legacy['HeroProjectMatches'] -= set(STATUS_PATHS)
+        self.assertEqual({op: selected for op, selected in paths.items() if op not in CONTRACTS}, legacy)
 
 
 class _FakeFrappe:
