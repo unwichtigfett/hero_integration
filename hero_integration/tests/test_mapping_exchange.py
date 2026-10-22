@@ -36,11 +36,13 @@ class TestMappingExchange(unittest.TestCase):
             enqueue=lambda *args, **kwargs: calls.append(("enqueue", args, kwargs)),
             throw=lambda message: (_ for _ in ()).throw(ValueError(message)),
         )
+        service = SimpleNamespace(name="SERVICE", service_revision=1)
+        mapping = SimpleNamespace(name="MAPPING", mapping_revision=1)
         with patch.object(api, "frappe", fake_api_frappe), patch.object(
-            api, "_require_active_mappings", side_effect=ValueError("No active mapping definitions exist.")
-        ):
+            api, "_approved_read_service", return_value=(service, mapping)
+        ), patch.object(api, "_require_selected_mappings", side_effect=ValueError("No active mapping definitions exist.")):
             with self.assertRaisesRegex(ValueError, "No active mapping"):
-                api.start_migration("Customer Migration")
+                api.start_migration("Customer Migration", graphql_service=service.name)
         self.assertEqual(calls, [("only_for", "System Manager")])
 
     def test_export_import_export_is_structurally_equivalent_and_draft_only(self):

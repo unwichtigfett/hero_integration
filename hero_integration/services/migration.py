@@ -50,7 +50,7 @@ def execute_run(run_name: str) -> None:
     if not _claim_run(run):
         return
     try:
-        _require_active_mappings(run.action)
+        validate_run_mappings(run)
         config = get_configuration()
         source = _source_for_run(run, config)
         _process_requested_phases(run, source)
@@ -215,16 +215,43 @@ def _process_requested_phases(run, source: HeroSource) -> None:
         )
 
 
-def _require_active_mappings(action: str) -> None:
+def validate_run_mappings(run) -> None:
+    """Validate every target phase against the contract frozen on ``run``."""
     operations = []
     # Project imports deliberately require the Customer plan as well, because
     # they first execute the complete Customer phase of this run.
-    if action in CUSTOMER_ACTIONS or action in PROJECT_ACTIONS:
+    if run.action in CUSTOMER_ACTIONS or run.action in PROJECT_ACTIONS:
         operations.append("HeroCustomers")
-    if action in PROJECT_ACTIONS:
+    if run.action in PROJECT_ACTIONS:
         operations.append("HeroProjectMatches")
     for operation in operations:
-        active_mapping_plan(operation)
+        _mapping_plan_for_run(run, operation)
+
+
+def _mapping_plan_for_run(run, target_operation: str):
+    """Resolve exactly the mapping definitions frozen onto this queued run."""
+    if not getattr(run, "graphql_mapping", ""):
+        return active_mapping_plan(target_operation)
+    from hero_integration.services.read_contract import ReadContractError, from_documents
+
+    service = frappe.get_doc("HERO GraphQL Service", run.graphql_service)
+    mapping = frappe.get_doc("HERO GraphQL Mapping", run.graphql_mapping)
+    snapshot = frappe.get_doc("HERO GraphQL Schema Snapshot", service.schema_snapshot)
+    try:
+        contract = from_documents(service, mapping, snapshot)
+    except ReadContractError as error:
+        raise MappingPlanError(str(error)) from error
+    if int(getattr(run, "service_revision", 0) or 0) != contract.service_revision:
+        raise MappingPlanError("The queued run no longer matches its approved service revision.")
+    if int(getattr(run, "mapping_revision", 0) or 0) != contract.mapping_revision:
+        raise MappingPlanError("The queued run no longer matches its approved mapping revision.")
+    if contract.target_operation != target_operation:
+        raise MappingPlanError("The selected read mapping does not provide the required target operation.")
+    return active_mapping_plan(
+        service.operation_name,
+        definition_ids=contract.definition_ids,
+        target_operation=contract.target_operation,
+    )
 
 
 def _process_phase(run, phase: str, reader) -> bool:
@@ -270,7 +297,7 @@ def _cancel_if_requested(run) -> None:
 
 def _migrate_customer(record: dict[str, object], run) -> Result:
     try:
-        plan = active_mapping_plan("HeroCustomers")
+        plan = _mapping_plan_for_run(run, "HeroCustomers")
         source_id = plan.source_identity(record)
         values = plan.values(record)
         address = _customer_primary_address(record)
@@ -289,6 +316,7 @@ def _migrate_customer(record: dict[str, object], run) -> Result:
             customer, plan.home_phone(record), address, _source_instance(record), plan.mapping_version,
         ),
         target_snapshot=lambda customer: _customer_target_values(customer, values, plan.home_phone(record)),
+        source_instance=_source_instance(record),
     )
 
 
@@ -296,7 +324,7 @@ def _migrate_project(record: dict[str, object], run) -> Result:
     if not _target_available("Project"):
         return Result("UNAVAILABLE", "Project is not installed on this site.")
     try:
-        plan = active_mapping_plan("HeroProjectMatches")
+        plan = _mapping_plan_for_run(run, "HeroProjectMatches")
         source_id = plan.source_identity(record)
         source_instance = _source_instance(record)
         values = plan.values(
