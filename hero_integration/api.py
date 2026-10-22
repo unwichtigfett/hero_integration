@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from types import SimpleNamespace
 from uuid import uuid4
 
 import frappe
@@ -31,7 +32,7 @@ def _start_migration(action: str, dry_run: int | bool, scheduled: bool, graphql_
     if not graphql_service:
         frappe.throw("An explicitly approved GraphQL service is required for a new migration run.")
     service, mapping = _approved_read_service(graphql_service)
-    _require_active_mappings(action)
+    _require_selected_mappings(action, service, mapping)
     if scheduled and _has_active_run():
         return {"status": "SKIPPED_ACTIVE_RUN"}
     run = frappe.get_doc({"doctype": "HERO Integration Run", "action": action, "mode": "Preview" if int(dry_run) else "Execute", "graphql_service": service.name, "service_revision": service.service_revision, "graphql_mapping": mapping.name, "mapping_revision": mapping.mapping_revision})
@@ -94,7 +95,9 @@ def resume_run(run_name: str) -> dict[str, str]:
     run = frappe.get_doc("HERO Integration Run", run_name)
     if run.state not in {"Failed", "Cancelled", "Blocked"}:
         frappe.throw("Only failed, cancelled, or blocked runs can resume.")
-    _require_active_mappings(run.action)
+    from hero_integration.services.migration import validate_run_mappings
+
+    validate_run_mappings(run)
     run.state = "Queued"
     run.error_message = ""
     run.save()
@@ -1303,17 +1306,20 @@ def _has_active_run() -> bool:
     return frappe.get_value("HERO Integration Run", state.active_run, "state") not in TERMINAL_STATES
 
 
-def _require_active_mappings(action: str) -> None:
-    from hero_integration.services.mapping_runtime import MappingPlanError, active_mapping_plan
+def _require_selected_mappings(action: str, service, mapping) -> None:
+    """Preflight the exact mapping definitions a newly queued run will freeze."""
+    from hero_integration.services.mapping_runtime import MappingPlanError
+    from hero_integration.services.migration import validate_run_mappings
 
-    operations = []
-    # Every project import first performs the Customer phase in the same run.
-    if action in {"Customer Migration", "Project Migration", "Cheap Data Migration", "Full Data Migration", "Sync"}:
-        operations.append("HeroCustomers")
-    if action in {"Project Migration", "Cheap Data Migration", "Full Data Migration", "Sync"}:
-        operations.append("HeroProjectMatches")
     try:
-        for operation in operations:
-            active_mapping_plan(operation)
+        validate_run_mappings(
+            SimpleNamespace(
+                action=action,
+                graphql_service=service.name,
+                service_revision=service.service_revision,
+                graphql_mapping=mapping.name,
+                mapping_revision=mapping.mapping_revision,
+            )
+        )
     except MappingPlanError as error:
         frappe.throw(str(error))
