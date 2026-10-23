@@ -56,7 +56,7 @@ def preview_import(snapshot_name: str, payload_json: str) -> dict[str, object]:
     return preview_import_from_package(payload, snapshot.schema_fingerprint)
 
 
-def preview_import_from_package(payload: dict[str, object], fingerprint: str | None = None) -> dict[str, object]:
+def preview_import_from_package(payload: dict[str, object], fingerprint: str | None = None, metadata=None) -> dict[str, object]:
     """Preview a package already checked against a selected snapshot."""
     existing = {
         row.definition_id: row
@@ -73,7 +73,7 @@ def preview_import_from_package(payload: dict[str, object], fingerprint: str | N
         for row in existing.values() if row.status == "Active"
     }
     for item in payload["mappings"]:
-        result = _preview_item(item, existing, seen)
+        result = _preview_item(item, existing, seen, metadata)
         _mark_target_conflict(item, result, claimed_targets, active_targets)
         rows.append(result)
     counts = {status: sum(row["state"] == status for row in rows) for status in ("New", "Unchanged", "Changed", "Conflict", "Invalid")}
@@ -134,14 +134,14 @@ def import_json(snapshot_name: str, payload_json: str) -> dict[str, object]:
         raise
 
 
-def _preview_item(item: dict[str, object], existing: dict[str, object], seen: set[str]) -> dict[str, object]:
+def _preview_item(item: dict[str, object], existing: dict[str, object], seen: set[str], metadata=None) -> dict[str, object]:
     definition_id = str(item.get("definition_id") or "")
     if not definition_id or definition_id in seen:
         return {"definition_id": definition_id, "state": "Invalid", "detail": "Definition ID is missing or duplicated."}
     seen.add(definition_id)
     try:
         spec = MappingSpec(**{key: item[key] for key in asdict(MappingSpec("", "", "", "", "")).keys()})
-        validate_spec(spec, _FrappeMetadata())
+        validate_spec(spec, metadata or _FrappeMetadata())
     except (KeyError, TypeError, ValueError) as error:
         return {"definition_id": definition_id, "state": "Invalid", "detail": str(error)}
     local = existing.get(definition_id)

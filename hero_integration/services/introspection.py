@@ -44,8 +44,44 @@ query HeroIntegrationIntrospection {
     }
   }
 }
-fragment TypeRef on __Type { kind name ofType { kind name ofType { kind name ofType { kind name ofType { kind name ofType { kind name ofType { kind name } } } } } } } }
+fragment TypeRef on __Type {
+  kind
+  name
+  ofType {
+    kind
+    name
+    ofType {
+      kind
+      name
+      ofType {
+        kind
+        name
+        ofType {
+          kind
+          name
+          ofType {
+            kind
+            name
+            ofType {
+              kind
+              name
+              ofType {
+                kind
+                name
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
 """.strip()
+
+# Older GraphQL servers expose the same schema but predate the optional
+# __Directive.isRepeatable field.  Keep the primary query complete and use
+# this exact read-only compatibility form only after a GraphQL rejection.
+COMPATIBILITY_INTROSPECTION_QUERY = INTROSPECTION_QUERY.replace(" locations isRepeatable", " locations")
 
 
 def canonical_schema(payload: object) -> dict[str, object]:
@@ -115,7 +151,7 @@ def structural_diff(previous: object | None, current: dict[str, object]) -> dict
 
 
 def captured_at_utc() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _validate_complete_schema(schema: dict[str, object]) -> None:

@@ -19,4 +19,5 @@ jobs:
           python-version: "3.14"
       - run: python -m pip install --upgrade pip build
       - run: python -m compileall -q hero_integration
+      - run: python -m unittest hero_integration.tests.test_portable_release
       - run: python -m build

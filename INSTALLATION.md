@@ -19,7 +19,7 @@ No development-machine path is required.
 3. Add the reviewed HERO Integration release branch from its Git URL.
 
    ```bash
-   bench get-app https://github.com/unwichtigfett/hero_integration --branch version-16
+   bench get-app https://github.com/unwichtigfett/hero_integration --branch release/v1-rc
    ```
 
 4. Install HERO Integration on that ERPNext site. Its pre-install check aborts
@@ -31,9 +31,9 @@ No development-machine path is required.
    ```
 
 The app installs its DocTypes and HERO Custom Fields, but it installs exactly
-zero `HERO-Frappe Mapping` documents. Repeated `bench --site https://github.com/unwichtigfett/hero_integration
-migrate` calls keep the mapping count at zero until a System Manager imports or
-creates mapping definitions.
+zero `HERO-Frappe Mapping` documents. Repeated `bench --site <site-name>
+migrate` calls keep the mapping count at zero until a System Manager imports
+or creates mapping definitions.
 
 The Mapping Editor can later preview a reviewed schema-and-mapping package.
 Uploading a package creates nothing. A System Manager must select and confirm

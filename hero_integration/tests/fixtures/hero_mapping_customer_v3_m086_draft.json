@@ -1,0 +1,40 @@
+{
+  "format_version": "hero-frappe-mapping-package-v2",
+  "schema_fingerprint": "fee37bfa55a02f7a4d09b6b902e6600a835c992c8fe6644c358f5e511e025201",
+  "schema": {
+    "custom_doctypes": [],
+    "custom_fields": [
+      {
+        "id": "field:customer-company-legal-form",
+        "doctype": "Customer",
+        "fieldname": "custom_hero_company_legal_form",
+        "label": "HERO Company Legal Form",
+        "fieldtype": "Data",
+        "options": "",
+        "insert_after": "custom_hero_customer_type",
+        "reqd": 0,
+        "unique": 0,
+        "read_only": 1
+      }
+    ],
+    "relations": []
+  },
+  "mappings": [
+    {
+      "definition_id": "customer-company-legal-form",
+      "operation": "HeroCustomers",
+      "source_path": "company_legal_form",
+      "source_type": "string|null",
+      "target_doctype": "Customer",
+      "target_field": "custom_hero_company_legal_form",
+      "purpose": "Field",
+      "transformation": "Trim",
+      "relation": "",
+      "priority": 5,
+      "schema_dependencies": [
+        "field:customer-company-legal-form"
+      ],
+      "mapping_revision": 1
+    }
+  ]
+}

@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from dataclasses import asdict
 import json
+import re
+from types import SimpleNamespace
 
 import frappe
 
@@ -13,6 +15,7 @@ from hero_integration.services.direct_mapping import MappingSpec, validate_spec
 OWNED_DOCTYPE_PREFIX = "HERO "
 OWNED_FIELD_PREFIX = "custom_hero_"
 FIELD_TYPES = {"Data", "Small Text", "Int", "Float", "Check", "Date", "Datetime", "Link", "Table"}
+FIELD_TYPES.add('JSON')
 SCHEMA_STATES = ("New", "Unchanged", "Changed", "Conflict", "Invalid")
 
 
@@ -58,7 +61,7 @@ def adopt_package(
         relation["field_id"] for relation in definitions["relations"] if relation["id"] in selected
     }
     savepoint = "hero_mapping_adoption"
-    frappe.db.savepoint(savepoint)
+    mapping_savepoint = False
     try:
         for definition in _ordered_doctypes(definitions, selected):
             if _doctype_is_new(definition):
@@ -72,9 +75,14 @@ def adopt_package(
             if relation["id"] in selected:
                 _provision_relation(relation, relation_fields, created)
         _validate_selected_relations(definitions, selected)
+        # MariaDB DDL may commit and invalidate earlier savepoints. All mapping
+        # activation belongs to a fresh DML transaction after provisioning.
+        frappe.db.savepoint(savepoint)
+        mapping_savepoint = True
         _activate_selected_mappings(snapshot_name, package, selected, created)
     except Exception:
-        frappe.db.rollback(save_point=savepoint)
+        if mapping_savepoint:
+            frappe.db.rollback(save_point=savepoint)
         raise
     return {
         "status": "COMPLETED",
@@ -97,6 +105,8 @@ def _definitions(schema: object) -> dict[str, list[dict[str, object]]]:
         _claim_id(definition, ids)
         if not _owned_doctype(definition["name"]) or not isinstance(definition["is_child"], bool):
             raise SchemaProvisioningError("Custom DocTypes must use the HERO prefix and a boolean child flag.")
+        if definition['name'] in proposed_names:
+            raise SchemaProvisioningError('Duplicate Custom DocType name.')
         proposed_names.add(str(definition["name"]))
         if definition["is_child"]:
             child_names.add(str(definition["name"]))
@@ -105,8 +115,10 @@ def _definitions(schema: object) -> dict[str, list[dict[str, object]]]:
         for field in definition["fields"]:
             _validate_field(field, ids, fields, custom_doctype=str(definition["name"]))
     for definition in result["custom_fields"]:
-        _require_keys(definition, {"id", "doctype", "fieldname", "label", "fieldtype", "options", "insert_after"}, "custom field")
-        _validate_field({key: definition[key] for key in ("id", "fieldname", "label", "fieldtype", "options")}, ids, fields, custom_doctype=None)
+        required = {"id", "doctype", "fieldname", "label", "fieldtype", "options", "insert_after"}
+        if not isinstance(definition, dict) or not required <= set(definition) or set(definition) - required - {'reqd', 'unique', 'read_only'}:
+            raise SchemaProvisioningError('Custom field has an unknown or missing field.')
+        _validate_field({key: definition[key] for key in ("id", "fieldname", "label", "fieldtype", "options", 'reqd', 'unique', 'read_only') if key in definition}, ids, fields, custom_doctype=None)
         if not _owned_field(definition["fieldname"]):
             raise SchemaProvisioningError("Custom Fields must use the custom_hero_ prefix.")
     for relation in result["relations"]:
@@ -117,12 +129,28 @@ def _definitions(schema: object) -> dict[str, list[dict[str, object]]]:
             raise SchemaProvisioningError("A relation must reference a declared Link or Table field.")
         if field["fieldname"] != relation["fieldname"] or field["fieldtype"] != relation["relation_type"] or field["options"] != relation["target_doctype"]:
             raise SchemaProvisioningError("Relation type and target must match its declared field.")
+        owner = next((doc['name'] for doc in result['custom_doctypes'] if any(f['id'] == relation['field_id'] for f in doc['fields'])), None)
+        owner = owner or next((f['doctype'] for f in result['custom_fields'] if f['id'] == relation['field_id']), None)
+        if owner != relation['doctype']:
+            raise SchemaProvisioningError('Relation owner must match its declared field owner.')
         if not isinstance(relation["dependencies"], list) or not all(isinstance(value, str) for value in relation["dependencies"]):
             raise SchemaProvisioningError("Relation dependencies must be a list of checklist IDs.")
         if relation["relation_type"] == "Table" and str(relation["target_doctype"]) not in child_names:
             raise SchemaProvisioningError("Table relations require a declared HERO child DocType.")
         if relation["relation_type"] == "Link" and not _doctype_exists(str(relation["target_doctype"])) and str(relation["target_doctype"]) not in proposed_names:
             raise SchemaProvisioningError("Link relations require an installed or declared target DocType.")
+    declared_locations = [(doc['name'], f['fieldname']) for doc in result['custom_doctypes'] for f in doc['fields']]
+    declared_locations.extend((f['doctype'], f['fieldname']) for f in result['custom_fields'])
+    if len(declared_locations) != len(set(declared_locations)):
+        raise SchemaProvisioningError('Duplicate schema target field.')
+    relation_ids = [r['field_id'] for r in result['relations']]
+    if len(relation_ids) != len(set(relation_ids)):
+        raise SchemaProvisioningError('A field must not have duplicate relation definitions.')
+    if any(f['fieldtype'] in {'Link', 'Table'} and fid not in relation_ids for fid, f in fields.items()):
+        raise SchemaProvisioningError('Every Link or Table field requires an explicit relation.')
+    checklist_ids = {d['id'] for group in result.values() for d in group}
+    if any(dep not in checklist_ids for r in result['relations'] for dep in r['dependencies']):
+        raise SchemaProvisioningError('Unknown relation dependency.')
     return result
 
 
@@ -138,6 +166,12 @@ def _schema_items(definitions: dict[str, list[dict[str, object]]]) -> list[dict[
         items.append(_item(definition, "New Custom Fields", state, deps, f"{definition['doctype']}.{definition['fieldname']}"))
     for definition in definitions["relations"]:
         state = "Unchanged" if _relation_exists(definition) else "New"
+        try:
+            field = frappe.get_meta(definition['doctype']).get_field(definition['fieldname'])
+        except Exception:
+            field = None
+        if field and state == 'New':
+            state = 'Conflict'
         deps = list(definition["dependencies"])
         items.append(_item(definition, "Relations / Link Fields", state, deps, f"{definition['relation_type']} → {definition['target_doctype']}"))
     return items
@@ -145,16 +179,18 @@ def _schema_items(definitions: dict[str, list[dict[str, object]]]) -> list[dict[
 
 def _mapping_items(package: dict[str, object], definitions: dict[str, list[dict[str, object]]], items: list[dict[str, object]]) -> list[dict[str, object]]:
     existing = {item["id"]: item for item in items}
-    mapping_preview = mapping_exchange.preview_import_from_package(package)
+    mapping_preview = mapping_exchange.preview_import_from_package(package, metadata=_PlannedMetadata(definitions))
     result = []
     for row, mapping in zip(mapping_preview["items"], package["mappings"], strict=True):
         dependencies = list(mapping["schema_dependencies"])
         unknown = [value for value in dependencies if value not in existing]
         state = "Invalid" if unknown else row["state"]
         detail = "Unknown schema dependency." if unknown else row["detail"]
-        if state == "Invalid" and _declares_target(definitions, mapping):
-            state = "New"
-            detail = "Target Custom Field will be provisioned before this mapping activates."
+        declared = _target_dependency(definitions, mapping)
+        if declared and declared not in dependencies:
+            state, detail = 'Invalid', 'Declared mapping target requires its schema dependency.'
+        if any(existing.get(dep, {}).get('state') in {'Invalid', 'Conflict'} for dep in dependencies):
+            state, detail = 'Conflict', 'A required schema definition conflicts with the target.'
         group = "Changed Field Mappings" if state == "Changed" else "New Field Mappings"
         result.append({
             "id": f"mapping:{mapping['definition_id']}", "kind": "mapping", "group": group,
@@ -170,6 +206,16 @@ def _declares_target(definitions, mapping):
         field["doctype"] == mapping["target_doctype"] and field["fieldname"] == mapping["target_field"]
         for field in definitions["custom_fields"]
     )
+
+
+def _target_dependency(definitions, mapping):
+    for field in definitions['custom_fields']:
+        if field['doctype'] == mapping['target_doctype'] and field['fieldname'] == mapping['target_field']:
+            return field['id']
+    for definition in definitions['custom_doctypes']:
+        if definition['name'] == mapping['target_doctype'] and any(f['fieldname'] == mapping['target_field'] for f in definition['fields']):
+            return definition['id']
+    return None
 
 
 def _item(definition, group, state, dependencies, label):
@@ -194,6 +240,7 @@ def _validate_selection(items, selected):
 
 
 def _require_schema_permissions(definitions, selected):
+    new_doctypes = {d['name'] for d in definitions['custom_doctypes'] if d['id'] in selected and _doctype_is_new(d)}
     for definition in definitions["custom_doctypes"]:
         if definition["id"] in selected:
             frappe.has_permission("DocType", "create", throw=True)
@@ -204,7 +251,8 @@ def _require_schema_permissions(definitions, selected):
     for relation in definitions["relations"]:
         if relation["id"] in selected:
             frappe.has_permission("Custom Field", "create", throw=True)
-            frappe.has_permission(relation["doctype"], "write", throw=True)
+            if relation['doctype'] not in new_doctypes:
+                frappe.has_permission(relation["doctype"], "write", throw=True)
 
 
 def _validate_selected_relations(definitions, selected):
@@ -254,6 +302,8 @@ def _activate_selected_mappings(snapshot_name, package, selected, created):
             "schema_manifest": mapping_exchange._canonical_json(package["schema"]), "status": "Draft",
         })
         local = _mapping_by_definition(mapping["definition_id"])
+        if local and mapping_exchange._definition_hash(mapping_exchange._exportable(local)) == mapping_exchange._definition_hash(mapping):
+            continue
         document = frappe.get_doc("HERO Frappe Mapping", local.name) if local else frappe.get_doc(values)
         if local:
             if local.status == "Active":
@@ -270,19 +320,20 @@ def _activate_selected_mappings(snapshot_name, package, selected, created):
 
 
 def _mapping_by_definition(definition_id):
-    rows = frappe.get_all("HERO Frappe Mapping", filters={"definition_id": definition_id}, fields=["name", "status"])
+    rows = frappe.get_all("HERO Frappe Mapping", filters={"definition_id": definition_id}, fields=["name", "status", *mapping_exchange.EXPORTED_FIELDS])
     return rows[0] if rows else None
 
 
 def _create_custom_doctype(definition, selected_relation_fields):
     fields = [
-        {key: field[key] for key in ("fieldname", "label", "fieldtype", "options")}
+        {key: field[key] for key in ("fieldname", "label", "fieldtype", "options", 'reqd', 'unique') if key in field}
         for field in definition["fields"]
         if field["fieldtype"] not in {"Link", "Table"} or field["id"] in selected_relation_fields
     ]
     frappe.get_doc({
         "doctype": "DocType", "name": definition["name"], "module": "HERO Integration", "custom": 1,
         "istable": int(definition["is_child"]), "fields": fields,
+        'permissions': [] if definition['is_child'] else [{'role': 'System Manager', 'read': 1, 'write': 1, 'create': 1}],
     }).insert()
 
 
@@ -291,6 +342,7 @@ def _create_custom_field(definition):
         "doctype": "Custom Field", "dt": definition["doctype"], "fieldname": definition["fieldname"],
         "label": definition["label"], "fieldtype": definition["fieldtype"], "options": definition["options"],
         "insert_after": definition["insert_after"],
+        **{flag: definition[flag] for flag in ('reqd', 'unique', 'read_only') if flag in definition},
     }).insert()
 
 
@@ -323,13 +375,18 @@ def _doctype_state(definition, relation_field_ids):
         return "Conflict"
     if bool(getattr(document, "istable", 0)) != bool(definition["is_child"]):
         return "Conflict"
+    permissions = getattr(document, 'permissions', None)
+    if not definition['is_child'] and permissions is not None and any(getattr(p, 'role', '') != 'System Manager' for p in permissions):
+        return 'Conflict'
     metadata = frappe.get_meta(definition["name"])
     for field in definition["fields"]:
         if field["id"] in relation_field_ids:
             continue
         local = metadata.get_field(field["fieldname"])
-        if not local or local.fieldtype != field["fieldtype"] or local.options != field["options"]:
+        if not local or local.fieldtype != field["fieldtype"] or (local.options or '') != field["options"]:
             return "Conflict"
+        if any(int(getattr(local, flag, 0) or 0) != field[flag] for flag in ('reqd', 'unique') if flag in field):
+            return 'Conflict'
     return "Unchanged"
 
 
@@ -343,11 +400,13 @@ def _custom_field_is_new(definition):
 
 
 def _custom_field_state(definition):
-    rows = frappe.get_all("Custom Field", filters={"dt": definition["doctype"], "fieldname": definition["fieldname"]}, fields=["fieldtype", "options", "label"])
+    rows = frappe.get_all("Custom Field", filters={"dt": definition["doctype"], "fieldname": definition["fieldname"]}, fields=["fieldtype", "options", "label", 'reqd', 'unique', 'read_only'])
     if not rows:
         return "Conflict"
     row = rows[0]
-    return "Unchanged" if all(row.get(key, "") == definition[key] for key in ("fieldtype", "options", "label")) else "Conflict"
+    if any(int(row.get(flag) or 0) != definition[flag] for flag in ('reqd', 'unique', 'read_only') if flag in definition):
+        return 'Conflict'
+    return "Unchanged" if all((row.get(key) or '') == definition[key] for key in ("fieldtype", "options", "label")) else "Conflict"
 
 
 def _relation_exists(relation):
@@ -373,7 +432,12 @@ def _owned_field(value):
 
 def _validate_field(field, ids, fields, custom_doctype):
     expected = {"id", "fieldname", "label", "fieldtype", "options"}
-    _require_keys(field, expected, "field")
+    if not isinstance(field, dict) or not expected <= set(field) or set(field) - expected - {'reqd', 'unique', 'read_only'}:
+        raise SchemaProvisioningError('field has an unknown or missing field.')
+    if any(type(field[flag]) is not int or field[flag] not in (0, 1) for flag in ('reqd', 'unique', 'read_only') if flag in field):
+        raise SchemaProvisioningError('Field constraints must be 0 or 1.')
+    if not re.fullmatch(r'custom_hero_[a-z][a-z0-9_]*', str(field['fieldname'])) or len(field['fieldname']) > 64:
+        raise SchemaProvisioningError('Schema field name is invalid.')
     _claim_id(field, ids)
     if not _owned_field(field["fieldname"]) or field["fieldtype"] not in FIELD_TYPES or not isinstance(field["options"], str):
         raise SchemaProvisioningError("Schema fields must use the custom_hero_ prefix and a supported type.")
@@ -400,3 +464,28 @@ class _FrappeMetadata:
 
     def field(self, doctype, fieldname):
         return frappe.get_meta(doctype).get_field(fieldname)
+
+
+class _PlannedMetadata(_FrappeMetadata):
+    """Validate missing targets against declarations without bypassing other rules."""
+    def __init__(self, definitions):
+        self.proposed = {d['name']: d for d in definitions['custom_doctypes'] if _doctype_is_new(d)}
+        self.fields = {(d['name'], f['fieldname']): f for d in definitions['custom_doctypes'] for f in d['fields']}
+        self.fields.update({(f['doctype'], f['fieldname']): f for f in definitions['custom_fields']})
+
+    def ensure_write(self, doctype):
+        if doctype in self.proposed:
+            frappe.has_permission('DocType', 'create', throw=True)
+        else:
+            super().ensure_write(doctype)
+
+    def field(self, doctype, fieldname):
+        if doctype not in self.proposed:
+            field = super().field(doctype, fieldname)
+            if field is not None:
+                return field
+        field = self.fields.get((doctype, fieldname))
+        if not field:
+            return None
+        values = {key: value for key, value in field.items() if key not in {'doctype', 'read_only'}}
+        return SimpleNamespace(**values, read_only=int(field.get('read_only', 0)), is_custom_field=True)

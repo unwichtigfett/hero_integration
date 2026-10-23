@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from hero_integration.client.graphql import assert_read_only
+from hero_integration.services.projection_contracts import CONTRACTS as PROJECTIONS, approved_query
 
 
 class ReadContractError(ValueError):
@@ -51,7 +52,7 @@ def from_documents(service, mapping, snapshot) -> ReadContract:
     target = config.get("target_operation")
     records_path, identity_path = config.get("records_path"), config.get("identity_path")
     definition_ids, variables, page_size = config.get("mapping_definition_ids"), config.get("variables", {}), config.get("page_size", 100)
-    if target not in {"HeroCustomers", "HeroProjectMatches"}:
+    if target not in {"HeroCustomers", "HeroProjectMatches", *PROJECTIONS}:
         raise ReadContractError("The selected target adapter is not supported.")
     if not isinstance(records_path, str) or not records_path or not isinstance(identity_path, str) or not identity_path:
         raise ReadContractError("The selected read mapping requires record and external identity paths.")
@@ -59,6 +60,60 @@ def from_documents(service, mapping, snapshot) -> ReadContract:
         raise ReadContractError("The selected read mapping requires explicit active mapping definitions.")
     if not isinstance(variables, Mapping) or not isinstance(page_size, int) or isinstance(page_size, bool) or not 1 <= page_size <= 1000:
         raise ReadContractError("The selected variables or page size are invalid.")
+    if target in PROJECTIONS:
+        contract = PROJECTIONS[target]
+        from hero_integration.services.native_projections import validate_options
+        validate_options(contract, config.get('native_options'))
+        if snapshot.schema_fingerprint != contract['fingerprint']:
+            raise ReadContractError('Projection requires its reviewed schema fingerprint.')
+        if service.query_document.strip() != approved_query(target).strip():
+            raise ReadContractError('Projection requires the exact reviewed read-only query.')
+        if records_path != contract['root'] or identity_path != 'id' or dict(variables) != {'first': '$page_size', 'offset': '$offset'}:
+            raise ReadContractError('Projection pagination, root or identity path is invalid.')
+    elif target in {"HeroCustomers", "HeroProjectMatches"}:
+        # The two native adapters also have closed read contracts.  Do not let
+        # a saved service silently omit a field required by its active plan.
+        from hero_integration.sources.hero import (
+            CUSTOMER_CONTRACT_V1,
+            CUSTOMER_CONTRACT_V2,
+            CUSTOMER_CONTRACT_V3,
+            PROJECT_QUERY_V1,
+            customer_query,
+        )
+
+        customer_contract_version = str(config.get("customer_contract_version", CUSTOMER_CONTRACT_V1))
+        if target == "HeroCustomers":
+            try:
+                expected_query = customer_query(customer_contract_version)
+            except ValueError as error:
+                raise ReadContractError("Customer read-contract version is not supported.") from error
+            line2_definition = "customer-primary-address-line2"
+            legal_form_definition = "customer-company-legal-form"
+            if customer_contract_version == CUSTOMER_CONTRACT_V3:
+                if line2_definition not in definition_ids or legal_form_definition not in definition_ids:
+                    raise ReadContractError("Customer V3 requires the selected primary-address line_2 and company legal-form bindings.")
+            elif customer_contract_version == CUSTOMER_CONTRACT_V2:
+                if line2_definition not in definition_ids:
+                    raise ReadContractError("Customer V2 requires the selected primary-address line_2 binding.")
+                if legal_form_definition in definition_ids:
+                    raise ReadContractError("Customer V2 cannot select the company legal-form binding.")
+            elif line2_definition in definition_ids or legal_form_definition in definition_ids:
+                raise ReadContractError("Customer V1 cannot select V2 or V3 bindings.")
+        else:
+            expected_query = PROJECT_QUERY_V1
+        expected_variables = (
+            {"first": "$page_size", "offset": "$offset", "orderBy": "id", "showDeleted": True}
+            if target == "HeroCustomers"
+            else {"first": "$page_size", "offset": "$offset", "orderBy": "id"}
+        )
+        expected_root = "contacts" if target == "HeroCustomers" else "project_matches"
+        if (
+            service.query_document.strip() != expected_query.strip()
+            or records_path != expected_root
+            or identity_path != "id"
+            or dict(variables) != expected_variables
+        ):
+            raise ReadContractError("Native adapter requires its exact reviewed read-only query and variables.")
     return ReadContract(service.name, int(service.service_revision), mapping.name, int(mapping.mapping_revision), target, records_path, identity_path, tuple(definition_ids), dict(variables), page_size)
 
 

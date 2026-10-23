@@ -142,7 +142,16 @@ class TestMappingExchange(unittest.TestCase):
         paths = {operation: set() for operation in SOURCE_CONTRACTS}
         for item in fixture_payload()["mappings"]:
             paths[item["operation"]].add(item["source_path"])
-        self.assertEqual(paths, {operation: set(contract["paths"]) for operation, contract in SOURCE_CONTRACTS.items()})
+        from hero_integration.services.projection_contracts import CONTRACTS, STATUS_PATHS
+        # Country is consumed by the native Address relation adapter.  The
+        # fixture represents the approved V1 Customer contract, so it also
+        # intentionally omits separately selected V2 and V3 draft bindings.
+        native_relation_paths = {"HeroCustomers": {"address.country.code", "address.line_2", "company_legal_form"}}
+        legacy = {operation: set(contract['paths']) for operation, contract in SOURCE_CONTRACTS.items() if operation not in CONTRACTS}
+        legacy['HeroProjectMatches'] -= set(STATUS_PATHS)
+        for operation, excluded in native_relation_paths.items():
+            legacy[operation] -= excluded
+        self.assertEqual({op: selected for op, selected in paths.items() if op not in CONTRACTS}, legacy)
 
 
 class _FakeFrappe:
