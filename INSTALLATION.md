@@ -16,20 +16,10 @@ No development-machine path is required.
    bench --site <site-name> install-app erpnext
    ```
 
-3. Add the reviewed HERO Integration candidate from the published development
-   branch. RC16 is published only on `release/v1-rc`; do not substitute the
-   default branch. Record the exact resolved commit after `bench get-app`.
+3. Add the reviewed HERO Integration release branch from its Git URL.
 
    ```bash
-   bench get-app https://github.com/unwichtigfett/hero_integration.git --branch release/v1-rc
-   ```
-
-   Before continuing, verify that this is the Bench CLI in the target user's
-   intended toolchain, not a similarly named shell alias:
-
-   ```bash
-   bench --version
-   bench version
+   bench get-app https://github.com/unwichtigfett/hero_integration --branch version-16
    ```
 
 4. Install HERO Integration on that ERPNext site. Its pre-install check aborts
@@ -41,7 +31,7 @@ No development-machine path is required.
    ```
 
 The app installs its DocTypes and HERO Custom Fields, but it installs exactly
-zero `HERO Frappe Mapping` documents. Repeated `bench --site <site-name>
+zero `HERO-Frappe Mapping` documents. Repeated `bench --site https://github.com/unwichtigfett/hero_integration
 migrate` calls keep the mapping count at zero until a System Manager imports or
 creates mapping definitions.
 
@@ -62,18 +52,4 @@ upload.
 `bench install-app` creates the app's DocTypes and idempotently creates nine
 HERO Custom Fields on Customer and Project. A later `bench migrate` uses the
 same create-only, conflict-safe path. No Customize Form step is required.
-See [DOCTYPE_EXTENSIONS.md](DOCTYPE_EXTENSIONS.md) for the exact schema.
-Do not copy this app from another bench as a release substitute. The future
-acceptance source is the reviewed Git revision used by `bench get-app`.
-
-## RC16 upgrade check
-
-For an upgrade copy, first record the pre-upgrade app revision, mapping count,
-and export of the approved mapping package. Fetch the published
-`release/v1-rc` revision, run `bench --site <site-name> migrate` twice, then
-verify that the mapping count and imported mapping revisions remain unchanged.
-Do not use a local working tree as fresh-install or upgrade evidence.
-
-The target needs a scoped, functional database-bootstrap path for `bench
-new-site`; do not substitute a fallback database engine for a MariaDB/ERPNext
-upgrade proof merely because local root authentication is unavailable.
+Do not copy this app from another bench as a release substitute.

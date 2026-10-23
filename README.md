@@ -1,103 +1,50 @@
 # HERO Integration
 
-HERO Integration is a portable Frappe v16 app for approved HERO GraphQL data.
-Queries and polling stay read-only toward HERO; controlled mutations use a
-separate, default-OFF, per-operation path. It requires an already installed
-ERPNext v16 site and creates native Customer and Project records. It has no runtime dependency on
-`auto_domain`, `hero_connector`, DTS, Helpdesk, a daemon, or a local filesystem
-layout.
-
-Installation does not contact HERO. ERPNext v16 must already be installed; the
-pre-install guard verifies its Customer, Contact, Contact Email, Contact Phone,
-and Project DocTypes before adding the HERO schema. Helpdesk remains optional.
+HERO Integration is a Frappe v16 app for managing HERO-GraphQL data. Requires installed ERPNext v16 site. Creates native Customer and Project records.
+Installation does not contact HERO.
+The pre-install guard verifies erpNext Customer, Contact, Contact Email,
+Contact Phone and Project DocTypes before adding the HERO schema.
+Helpdesk is optional.
 
 ## Supported scope
 
-- Explicit saved-schema query and mutation operation catalogs, with dynamic
-  mapping drafts bound to a source identity and fingerprint.
-- Controlled HERO mutation execution only after the global site gate,
-  active contract, validated preview, exact confirmation and server-side
-  System Manager recheck. Polling never invokes a HERO mutation.
-- Preview and execute modes, durable versioned result records, source-to-target
-  bindings, local duplicate/concurrency protection, field-level conflict
-  detection, and scheduled one-way sync. HERO does not provide an
-  idempotency/exactly-once guarantee; an ambiguous remote mutation is audited
-  as unknown and is never retried automatically.
-- Customer and Project creation after an explicit Company confirmation.
-- Create-only, conflict-safe Customer and Project Custom Fields for source IDs,
-  display values, raw source attributes, and external timestamps; native Contact
-  Email and Phone persistence where ERPNext provides a matching field.
-
-The app does not migrate attachments or Helpdesk tickets and has no reverse
-sync. Those functions are visibly reported as unavailable rather than claimed
-as part of Cheap or Full migration.
+- HERO Customer, Project Match, Calendar Events and Task operations with fixed,
+  versioned selection sets.
+- Preview and execute mode, result records, source-to-target bindings,
+  idempotent repeats, conflict detection, retry policy, and scheduled sync.
+- Dataflow after an explicit Company confirmation.
+- Data transmission is defined by linear variable-mappings.
 
 ## Documentation
 
 - [Installation](INSTALLATION.md)
-- [Configuration](CONFIGURATION.md)
-- [Manual acceptance](MANUAL_ACCEPTANCE.md)
-- [Feature matrix](FEATURE_MATRIX.md)
-- [Portability report](PORTABILITY_REPORT.md)
-- [DocType extensions](DOCTYPE_EXTENSIONS.md)
-- [Mapping matrix](MAPPING_MATRIX.md)
-- [RC16 technical evidence](RC16_CONTEXT_AND_SAFETY_AUDIT.md)
+- [Configuration](docs/CONFIGURATION.md)
+- [Manual acceptance](docs/MANUAL_ACCEPTANCE.md)
+- [Feature matrix](docs/FEATURE_MATRIX.md)
+- [Portability report](docs/PORTABILITY_REPORT.md)
+- [DocType extensions](docs/DOCTYPE_EXTENSIONS.md)
+- [Mapping matrix](docs/MAPPING_MATRIX.md)
+- [Desk workspace](docs/UI.md)
 
 ## Adapter tools
 
-The app stores read-only GraphQL schema snapshots and services. It builds a
-deterministic API Analyzer graph from a saved snapshot without contacting HERO.
-The **Mapping** tab in the canonical **HERO Integration** Desk workspace
-requires an explicit saved, validated schema snapshot before it loads HERO
-source fields, opens the graph, or supplies searchable source and target pickers. A
-source picker exposes only fields selected by the saved read-only operation;
-schema-only fields are visible but disabled. The target picker reads the
-installed site's Frappe metadata, including Custom Fields, and disables system,
-identity, Company, status, standard-mapping, standard-field, and unresolved
-child-record fields. Site-specific direct mappings can only write a writable
-Custom Field. Suggestions are bidirectional and non-binding.
-They can create a Draft mapping only; an administrator must explicitly validate
-and activate it. Custom direct mappings only target writable fields on the
-approved Customer or Project DocType. Frappe validates metadata, types,
-relations, permissions, snapshot fingerprints, and mapping revision before
-activation.
+App stores GraphQL schema snapshots, versioned services and cyclic polling. Deterministic API Analyzer graph from saved snapshot without contacting HERO.
+**Mapping** tab in **HERO Integration** Desk workspace requires an explicit saved, validated schema snapshot before loading source fields, opens the graph, or supplies searchable source and target pickers.
+Schema-only fields are visible but disabled.
+Target picker reads the installed site's Frappe metadata, including Custom Fields, identity, Company, status, standard-mapping, standard-fields, and unresolved child-record fields.
+Suggestions are bidirectional, non-binding and can only create a Draft mapping. An administrator must explicitly validate and activate it.
+Custom direct mappings only target writable fields on approved DocTypeS.
+Frappe validates metadata, types, relations, permissions, snapshot fingerprints, and mapping revision pre-activation.
 
 Fresh installations contain no mapping definitions. The Mapping Editor exports
-deterministic, versioned packages and previews an uploaded package against the
-selected schema fingerprint. An upload changes nothing. The editor shows one
-checklist for HERO-owned Custom DocTypes, Custom Fields, relations, and
-mappings. A System Manager selects entries and confirms one adoption action.
-The action provisions schema first and activates selected mappings only after
-the target checks pass. It never starts a migration.
+deterministic, versioned packages. The editor shows a checklist for HERO-owned Custom DocTypes, Custom Fields, relations, and mappings after import.
+A System Manager selects entries and confirms adoption action, once.
+Action provisions schema first and activates selected mappings only after
+checks pass. It never triggers a migration by itself.
 
 ## Security model
 
-The endpoint must be HTTPS and its exact hostname must appear in **Allowed HERO
-Hosts**. Redirects and endpoint credentials are rejected. A GraphQL mutation
-is rejected unless its separate gated contract is valid. The token is a Frappe
-`Password` value; it is not returned to Desk, written to a log, or passed as a
-queue argument.
-
-`Allow deletion` is a separate default-OFF server-side gate for all
-HERO-owned-document deletion routes. It does not grant deletion of ERPNext or
-other application data. The durable, paginated `integration_events.list_outputs`
-projection exposes only technical result metadata, source identity, target
-reference, correlation/origin, action and changed field names; it never exposes
-credentials or source payload values.
-
-## RC16 operational boundary
-
-The reviewed RC16 candidate keeps polling, GraphQL mutation execution and
-deletion disabled by default. A read run requires a selected validated GraphQL
-service, its selected snapshot, an active read mapping, explicit approval of
-both exact revisions, and the read mapping's explicit active canonical mapping
-definition IDs. The read mapping records the response list, external identity,
-allowed variables and bounded OFFSET page size; the queued run preserves those
-service and mapping revisions and reuses the existing Customer or Project
-adapter. The selected source instance is carried into the existing provenance
-link, so a renamed service cannot create a second identity. It never enables an
-arbitrary database write. Changing either approved revision makes the contract
-ineligible until it is explicitly approved again.
-MONITOR records mapped field observations and bilateral conflicts, but never
-prepares a reverse HERO write. Browser acceptance and any live HERO step remain
-separate, explicitly authorized checks.
+ - Endpoint must be HTTPS.
+ - Exact hostname must appear in **Allowed HERO Hosts**.
+ - API token is a Frappe `Password` value, read only by a worker, it
+   is not returned to Desk, written to a log or passed as queue argument.
