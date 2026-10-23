@@ -9,6 +9,8 @@ from hero_integration.services.mapping_runtime import plan_from_definitions
 
 
 FIXTURE_PATH = Path(__file__).with_name("fixtures") / "hero_mapping_fixture_v1.json"
+FOUR_DOMAIN_CONTRACT_FIXTURE_PATH = Path(__file__).with_name("fixtures") / "hero_mapping_4domains_contract_v2.json"
+CUSTOMER_V3_LEGAL_FORM_DRAFT_PATH = Path(__file__).with_name("fixtures") / "hero_mapping_customer_v3_m086_draft.json"
 
 
 def fixture_payload(schema_fingerprint: str = "synthetic-schema-v1") -> dict[str, object]:
@@ -33,3 +35,13 @@ def fixture_plan(operation: str):
         for item in fixture_payload()["mappings"]
     ]
     return plan_from_definitions(operation, definitions)
+
+
+def four_domain_contract_payload() -> dict[str, object]:
+    """Return the reviewed four-domain package without installing or activating it."""
+    return json.loads(FOUR_DOMAIN_CONTRACT_FIXTURE_PATH.read_text())
+
+
+def customer_v3_legal_form_draft() -> dict[str, object]:
+    """Return the separately gated M-086 draft package without adopting it."""
+    return json.loads(CUSTOMER_V3_LEGAL_FORM_DRAFT_PATH.read_text())

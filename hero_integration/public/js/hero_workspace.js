@@ -44,13 +44,13 @@
         ["hero_migration.js", "hero_integration_migration"],
     ]);
     const unsupported = new Set([
-        "synchronize_connection", "refresh_schema", "list_candidates", "mark_candidate",
+        "synchronize_connection", "list_candidates", "mark_candidate",
         "remove_candidate", "execute_service", "get_analyzer_service_draft", "save_analyzer_service",
     ]);
 
     const nativeMethods = new Set([
         "integration_overview", "workspace_context", "workspace_settings_get", "workspace_settings_save",
-        "workspace_mutation_execution_set", "workspace_sync_status",
+        "workspace_mutation_execution_set", "workspace_sync_status", "workspace_schema_refresh",
     ]);
     const errorMessage = (error) => {
         if (typeof error === "string") return error;
@@ -78,6 +78,10 @@
             throw new Error("This historic action is intentionally unavailable in the native workspace. Use the ERPNext Mapping Editor or saved read-only service definitions.");
         }
         const snapshot_name = snapshotName(args);
+        // The API tools still invoke this established workspace action.  It is
+        // now backed by the server-side snapshot workflow rather than a legacy
+        // connection binding.
+        if (method === "refresh_schema") return request("workspace_schema_refresh");
         if (method === "get_context") return request("workspace_context", {snapshot_name});
         if (method === "get_schema") return request("workspace_schema", {snapshot_name, search: args.search || "", kind: args.kind || "", start: args.start || 0, page_size: args.page_size || 50});
         if (method === "get_graph") return request("workspace_graph", {snapshot_name, start: args.start || 0, page_size: args.page_size || 200, node_id: args.node_id || ""});

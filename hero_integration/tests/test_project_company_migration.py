@@ -33,6 +33,9 @@ class TestProjectCompanyMigration(unittest.TestCase):
             name: sys.modules.get(name)
             for name in ("hero_integration.services.migration", "frappe.utils", "frappe")
         }
+        # Ensure test-order independence when another suite imported migration
+        # with Frappe's process-global proxy before this fake is installed.
+        sys.modules.pop("hero_integration.services.migration", None)
         cls._install_fake_frappe()
         cls.migration = importlib.import_module("hero_integration.services.migration")
         cls._confirmed_project_company = cls.migration.confirmed_project_company

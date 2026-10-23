@@ -34,9 +34,17 @@
         return card;
     }
 
-    function toolLink(label, route) {
+    function errorMessage(error) {
+        return typeof error?.message === "string" && error.message
+            ? error.message
+            : "Please check the saved HERO settings and try again.";
+    }
+
+    function toolLink(label, route, params = {}) {
         const link = el("a", "hero-overview-link", label);
-        link.href = platform.url(route);
+        link.dataset.heroRoute = route;
+        link.dataset.heroParams = JSON.stringify(params);
+        link.href = platform.url(route, params);
         return link;
     }
 
@@ -62,6 +70,23 @@
         }
     }
 
+    function schemaRefreshAvailable(context, savedSettings) {
+        return Boolean(
+            context?.can_write &&
+            context?.schema_refresh_available &&
+            savedSettings?.enabled &&
+            savedSettings?.api_token_configured
+        );
+    }
+
+    function refreshResultMessage(result) {
+        const snapshot = result?.snapshot_name || "saved snapshot";
+        const types = Number.isInteger(result?.type_count) ? " (" + result.type_count + " types)" : "";
+        return result?.status === "UNCHANGED"
+            ? "Schema is unchanged: " + snapshot + types + "."
+            : "Schema refresh succeeded: " + snapshot + types + ".";
+    }
+
     async function mount(workspace) {
         const root = el("section", "hero-overview");
         const header = el("div", "hero-overview-header");
@@ -82,11 +107,11 @@
 
         const links = el("div", "hero-overview-links");
         links.append(
-            toolLink("API Analyzer", "connections/hero/api-analyzer"),
-            toolLink("Graph Viewer", "connections/hero/graph-viewer"),
-            toolLink("GraphQL Services", "connections/hero/graphql-services"),
-            toolLink("Mapping Editor", "connections/hero/mapping"),
-            toolLink("Settings", "connections/hero/settings")
+            toolLink("API Analyzer", "api", {hero_tool: "analyzer"}),
+            toolLink("Graph Viewer", "api", {hero_tool: "graph"}),
+            toolLink("GraphQL Services", "api", {hero_tool: "services"}),
+            toolLink("Mapping Editor", "mapping"),
+            toolLink("Settings", "settings")
         );
 
         const status = el("div", "hero-overview-status", "Loading …");
@@ -102,8 +127,7 @@
         function busy(value) {
             reload.disabled = value;
             sync.disabled = value || !context?.can_write;
-            schema.disabled = value || !context?.can_write || !context?.enabled ||
-                context?.needs_binding_update || !context?.connection_id || !context?.schema_refresh_available;
+            schema.disabled = value || !schemaRefreshAvailable(context, settings);
         }
 
         function render() {
@@ -126,16 +150,21 @@
                 metric("Automatic Synchronization", automaticSynchronization, automaticSynchronizationState)
             );
             sync.disabled = !c.can_write || !c.needs_binding_update || !c.binding_refresh_available;
-            schema.disabled = !c.can_write || !c.enabled || c.needs_binding_update || !c.connection_id || !c.schema_refresh_available;
+            schema.disabled = !schemaRefreshAvailable(c, s);
+            links.querySelectorAll("a[data-hero-route]").forEach((link) => {
+                const params = JSON.parse(link.dataset.heroParams || "{}");
+                if (c.selected_snapshot) params.snapshot = c.selected_snapshot;
+                link.href = platform.url(link.dataset.heroRoute, params);
+            });
         }
 
-        async function load() {
+        async function load(snapshotName = context?.selected_snapshot || "") {
             busy(true);
             status.textContent = uiText("Loading …");
             try {
                 settings = await platform.api(SETTINGS);
                 try {
-                    context = await platform.api(CONTEXT);
+                    context = await platform.api(CONTEXT, snapshotName ? {snapshot_name: snapshotName} : {});
                     status.textContent = uiText("HERO status is current.");
                 } catch (_) {
                     context = null;
@@ -163,17 +192,20 @@
         }
 
         async function refreshSchema() {
-            if (!context?.connection_id) return;
+            if (!schemaRefreshAvailable(context, settings)) return;
             busy(true);
             status.textContent = uiText("Refreshing schema …");
             try {
-                await platform.api(REFRESH, {
-                    connection_id: context.connection_id,
-                    binding_generation: context.binding_generation
-                }, {write: true});
-                await load();
-            } catch (_) {
-                status.textContent = uiText("Failed to refresh HERO schema.");
+                const result = await platform.api(REFRESH, {}, {write: true});
+                if (result.snapshot_name) {
+                    const target = new URL(location.href);
+                    target.searchParams.set("snapshot", result.snapshot_name);
+                    history.replaceState(null, "", target.pathname + target.search + target.hash);
+                }
+                await load(result.snapshot_name);
+                if (!destroyed) status.textContent = uiText(refreshResultMessage(result));
+            } catch (error) {
+                status.textContent = uiText("Failed to refresh HERO schema.") + " " + errorMessage(error);
                 busy(false);
             }
         }
@@ -181,7 +213,7 @@
         reload.addEventListener("click", load);
         sync.addEventListener("click", synchronize);
         schema.addEventListener("click", refreshSchema);
-        await load();
+        await load(new URLSearchParams(location.search).get("snapshot") || "");
 
         return {destroy() { destroyed = true; root.remove(); }};
     }

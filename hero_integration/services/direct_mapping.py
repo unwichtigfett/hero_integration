@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
+from hero_integration.services.projection_contracts import CONTRACTS as PROJECTIONS, STATUS_PATHS, validate_projection_spec
 
 
 SOURCE_CONTRACTS = {
@@ -12,9 +14,10 @@ SOURCE_CONTRACTS = {
             "last_name": "string|null", "full_name": "string|null", "email": "string|null",
             "phone_mobile": "string|null", "phone_home": "string|null",
             "company_name": "string|null", "category": "string|null", "type": "string|null",
+            "company_legal_form": "string|null",
             "is_contact_person": "boolean|null", "is_deleted": "boolean|null",
             "address.id": "int|null", "address.street": "string|null", "address.zipcode": "string|null",
-            "address.city": "string|null",
+            "address.city": "string|null", "address.line_2": "string|null", "address.country.code": "string|null",
         },
     },
     "HeroProjectMatches": {
@@ -28,6 +31,8 @@ SOURCE_CONTRACTS = {
         },
     },
 }
+SOURCE_CONTRACTS.update({name: {'target_doctype': value['target_doctype'], 'paths': value['paths']} for name, value in PROJECTIONS.items()})
+SOURCE_CONTRACTS['HeroProjectMatches']['paths'].update(STATUS_PATHS)
 
 PURPOSE_FIELD = "Field"
 PURPOSE_SOURCE_IDENTITY = "Source Identity"
@@ -38,11 +43,15 @@ PURPOSE_CUSTOMER_HOME_PHONE = "Customer Home Phone"
 PURPOSE_LIFECYCLE_FLAG = "Lifecycle Flag"
 PURPOSE_CUSTOMER_RELATION = "Customer Relation"
 PURPOSE_CONFIRMED_COMPANY = "Confirmed Company"
+PURPOSE_NATIVE_BINDING = "Native Binding"
+RELATION_CUSTOMER_PRIMARY_ADDRESS = "Customer Primary Address"
 PURPOSES = {
     PURPOSE_FIELD, PURPOSE_SOURCE_IDENTITY, PURPOSE_RECORD_NAME, PURPOSE_CUSTOMER_TYPE,
     PURPOSE_CUSTOMER_CONTACT, PURPOSE_CUSTOMER_HOME_PHONE, PURPOSE_LIFECYCLE_FLAG,
     PURPOSE_CUSTOMER_RELATION, PURPOSE_CONFIRMED_COMPANY,
 }
+PURPOSES.add('Project Relation')
+PURPOSES.add(PURPOSE_NATIVE_BINDING)
 
 TRANSFORM_IDENTITY = "Identity"
 TRANSFORM_TRIM = "Trim"
@@ -54,6 +63,8 @@ TRANSFORMATIONS = {
     TRANSFORM_IDENTITY, TRANSFORM_TRIM, TRANSFORM_POSITIVE_INT_TO_TEXT,
     TRANSFORM_CUSTOMER_TYPE, TRANSFORM_HERO_CUSTOMER_LINK, TRANSFORM_CONFIRMED_COMPANY,
 }
+TRANSFORMATIONS.update({'JSON Value', 'Scalar Text', 'HERO Project Link'})
+TRANSFORMATIONS.update({'Native Adapter', 'Nonempty String ID'})
 
 ALLOWED_TARGET_TYPES = {"Data", "Small Text", "Int", "Float", "Check", "Date", "Datetime", "Link"}
 SYSTEM_FIELDS = {"name", "owner", "creation", "modified", "modified_by", "docstatus", "idx"}
@@ -98,6 +109,9 @@ def validate_spec(spec: MappingSpec, metadata) -> None:
     ensure_write = getattr(metadata, "ensure_write", None)
     if ensure_write:
         ensure_write(spec.target_doctype)
+    if spec.operation in PROJECTIONS:
+        validate_projection_spec(spec, metadata)
+        return
     _validate_binding(spec, metadata)
 
 
@@ -107,7 +121,17 @@ def transformed_value(spec: MappingSpec, value: object) -> object | None:
     if spec.transformation == TRANSFORM_TRIM:
         return value.strip() if isinstance(value, str) and value.strip() else None
     if spec.transformation == TRANSFORM_POSITIVE_INT_TO_TEXT:
-        return str(value) if isinstance(value, int) and value > 0 else None
+        return str(value) if isinstance(value, int) and not isinstance(value, bool) and value > 0 else None
+    if spec.transformation == 'Nonempty String ID':
+        return value if isinstance(value, str) and value == value.strip() and 0 < len(value) <= 140 and all(ord(c) >= 32 for c in value) else None
+    if spec.transformation == 'JSON Value':
+        return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':'), allow_nan=False)
+    if spec.transformation == 'Scalar Text':
+        if value is None:
+            return None
+        if not isinstance(value, (int, float, bool)):
+            raise DirectMappingError('Scalar Text requires a numeric or boolean value.')
+        return json.dumps(value, allow_nan=False)
     if spec.transformation == TRANSFORM_CUSTOMER_TYPE:
         return "Company" if isinstance(value, str) and value.strip() else "Individual"
     return value
@@ -128,11 +152,11 @@ def _validate_binding(spec: MappingSpec, metadata) -> None:
         _validate_custom_field(spec, metadata)
         return
     if spec.purpose == PURPOSE_SOURCE_IDENTITY:
-        _require(spec, "id", "int", spec.target_doctype, "custom_hero_source_id", TRANSFORM_POSITIVE_INT_TO_TEXT)
+        _require(spec, "id", "int", SOURCE_CONTRACTS[spec.operation]['target_doctype'], "custom_hero_source_id", TRANSFORM_POSITIVE_INT_TO_TEXT)
         return
     if spec.purpose == PURPOSE_RECORD_NAME:
         target = "customer_name" if spec.operation == "HeroCustomers" else "project_name"
-        _require(spec, target_doctype=spec.target_doctype, target_field=target, transformation=TRANSFORM_TRIM)
+        _require(spec, target_doctype=SOURCE_CONTRACTS[spec.operation]['target_doctype'], target_field=target, transformation=TRANSFORM_TRIM)
         return
     if spec.purpose == PURPOSE_CUSTOMER_TYPE:
         _require(spec, "company_name", "string|null", "Customer", "customer_type", TRANSFORM_CUSTOMER_TYPE)
@@ -155,6 +179,14 @@ def _validate_binding(spec: MappingSpec, metadata) -> None:
     if spec.purpose == PURPOSE_CONFIRMED_COMPANY:
         _require(spec, target_doctype="Project", target_field="company", transformation=TRANSFORM_CONFIRMED_COMPANY, relation="Confirmed ERPNext Company")
         return
+    if spec.purpose == PURPOSE_NATIVE_BINDING:
+        if spec.operation != "HeroCustomers":
+            raise DirectMappingError("Native bindings outside reviewed projections are not supported.")
+        _require(
+            spec, "address.line_2", "string|null", "Address", "address_line2", TRANSFORM_TRIM,
+            RELATION_CUSTOMER_PRIMARY_ADDRESS,
+        )
+        return
     raise DirectMappingError("Mapping purpose is not supported.")
 
 
@@ -172,7 +204,20 @@ def _validate_custom_field(spec: MappingSpec, metadata) -> None:
     if spec.target_field in protected:
         raise DirectMappingError("Identity, Company, status, and standard bindings are protected.")
     field = metadata.field(spec.target_doctype, spec.target_field)
-    if field is None or field.fieldtype not in ALLOWED_TARGET_TYPES or field.read_only:
+    native = {
+        ('HeroCustomers', 'nr', 'custom_hero_customer_number', 'Trim'),
+        ('HeroCustomers', 'category', 'custom_hero_customer_category', 'Trim'),
+        ('HeroCustomers', 'type', 'custom_hero_customer_type', 'Trim'),
+        ('HeroCustomers', 'company_legal_form', 'custom_hero_company_legal_form', 'Trim'),
+        ('HeroProjectMatches', 'project_id', 'custom_hero_related_project_id', 'Positive Int To Text'),
+        ('HeroProjectMatches', 'display_id', 'custom_hero_display_id', 'Trim'),
+        ('HeroProjectMatches', 'created', 'custom_hero_source_created', 'Trim'),
+        ('HeroProjectMatches', 'modified', 'custom_hero_source_modified', 'Trim'),
+    }
+    is_native = (spec.operation, spec.source_path, spec.target_field, spec.transformation) in native
+    if is_native and (field is None or field.fieldtype != 'Data'):
+        raise DirectMappingError('Native HERO observation field has an incompatible type.')
+    if field is None or field.fieldtype not in ALLOWED_TARGET_TYPES or (field.read_only and not is_native):
         raise DirectMappingError("Target field is not a writable supported Frappe field.")
     if not getattr(field, "is_custom_field", False):
         raise DirectMappingError("A site-specific mapping may only write a Custom Field.")

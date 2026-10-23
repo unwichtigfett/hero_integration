@@ -1,0 +1,1731 @@
+{
+  "format_version": "hero-frappe-mapping-package-v2",
+  "mappings": [
+    {
+      "definition_id": "HeroCalendarEvents:all_day",
+      "mapping_revision": 1,
+      "operation": "HeroCalendarEvents",
+      "priority": 5,
+      "purpose": "Native Binding",
+      "relation": "",
+      "schema_dependencies": [],
+      "source_path": "all_day",
+      "source_type": "boolean|null",
+      "target_doctype": "Event",
+      "target_field": "all_day",
+      "transformation": "Native Adapter"
+    },
+    {
+      "definition_id": "HeroCalendarEvents:custom_hero_category_id",
+      "mapping_revision": 1,
+      "operation": "HeroCalendarEvents",
+      "priority": 5,
+      "purpose": "Field",
+      "relation": "",
+      "schema_dependencies": [
+        "field:Event:custom_hero_category_id"
+      ],
+      "source_path": "category_id",
+      "source_type": "int|null",
+      "target_doctype": "Event",
+      "target_field": "custom_hero_category_id",
+      "transformation": "Scalar Text"
+    },
+    {
+      "definition_id": "HeroCalendarEvents:custom_hero_color",
+      "mapping_revision": 1,
+      "operation": "HeroCalendarEvents",
+      "priority": 5,
+      "purpose": "Field",
+      "relation": "",
+      "schema_dependencies": [
+        "field:Event:custom_hero_color"
+      ],
+      "source_path": "color",
+      "source_type": "string|null",
+      "target_doctype": "Event",
+      "target_field": "custom_hero_color",
+      "transformation": "Identity"
+    },
+    {
+      "definition_id": "HeroCalendarEvents:custom_hero_created",
+      "mapping_revision": 1,
+      "operation": "HeroCalendarEvents",
+      "priority": 5,
+      "purpose": "Field",
+      "relation": "",
+      "schema_dependencies": [
+        "field:Event:custom_hero_created"
+      ],
+      "source_path": "created",
+      "source_type": "string|null",
+      "target_doctype": "Event",
+      "target_field": "custom_hero_created",
+      "transformation": "Identity"
+    },
+    {
+      "definition_id": "HeroCalendarEvents:custom_hero_deleted",
+      "mapping_revision": 1,
+      "operation": "HeroCalendarEvents",
+      "priority": 5,
+      "purpose": "Field",
+      "relation": "",
+      "schema_dependencies": [
+        "field:Event:custom_hero_deleted"
+      ],
+      "source_path": "deleted",
+      "source_type": "boolean|null",
+      "target_doctype": "Event",
+      "target_field": "custom_hero_deleted",
+      "transformation": "Scalar Text"
+    },
+    {
+      "definition_id": "HeroCalendarEvents:custom_hero_is_done",
+      "mapping_revision": 1,
+      "operation": "HeroCalendarEvents",
+      "priority": 5,
+      "purpose": "Field",
+      "relation": "",
+      "schema_dependencies": [
+        "field:Event:custom_hero_is_done"
+      ],
+      "source_path": "is_done",
+      "source_type": "boolean|null",
+      "target_doctype": "Event",
+      "target_field": "custom_hero_is_done",
+      "transformation": "Scalar Text"
+    },
+    {
+      "definition_id": "HeroCalendarEvents:custom_hero_is_recurring",
+      "mapping_revision": 1,
+      "operation": "HeroCalendarEvents",
+      "priority": 5,
+      "purpose": "Field",
+      "relation": "",
+      "schema_dependencies": [
+        "field:Event:custom_hero_is_recurring"
+      ],
+      "source_path": "is_recurring",
+      "source_type": "boolean|null",
+      "target_doctype": "Event",
+      "target_field": "custom_hero_is_recurring",
+      "transformation": "Scalar Text"
+    },
+    {
+      "definition_id": "HeroCalendarEvents:custom_hero_localized_type",
+      "mapping_revision": 1,
+      "operation": "HeroCalendarEvents",
+      "priority": 5,
+      "purpose": "Field",
+      "relation": "",
+      "schema_dependencies": [
+        "field:Event:custom_hero_localized_type"
+      ],
+      "source_path": "localized_type",
+      "source_type": "string|null",
+      "target_doctype": "Event",
+      "target_field": "custom_hero_localized_type",
+      "transformation": "Identity"
+    },
+    {
+      "definition_id": "HeroCalendarEvents:custom_hero_modified",
+      "mapping_revision": 1,
+      "operation": "HeroCalendarEvents",
+      "priority": 5,
+      "purpose": "Field",
+      "relation": "",
+      "schema_dependencies": [
+        "field:Event:custom_hero_modified"
+      ],
+      "source_path": "modified",
+      "source_type": "string|null",
+      "target_doctype": "Event",
+      "target_field": "custom_hero_modified",
+      "transformation": "Identity"
+    },
+    {
+      "definition_id": "HeroCalendarEvents:custom_hero_original_end",
+      "mapping_revision": 1,
+      "operation": "HeroCalendarEvents",
+      "priority": 5,
+      "purpose": "Native Binding",
+      "relation": "",
+      "schema_dependencies": [
+        "field:Event:custom_hero_original_end"
+      ],
+      "source_path": "end",
+      "source_type": "string|null",
+      "target_doctype": "Event",
+      "target_field": "custom_hero_original_end",
+      "transformation": "Native Adapter"
+    },
+    {
+      "definition_id": "HeroCalendarEvents:custom_hero_original_start",
+      "mapping_revision": 1,
+      "operation": "HeroCalendarEvents",
+      "priority": 5,
+      "purpose": "Native Binding",
+      "relation": "",
+      "schema_dependencies": [
+        "field:Event:custom_hero_original_start"
+      ],
+      "source_path": "start",
+      "source_type": "string|null",
+      "target_doctype": "Event",
+      "target_field": "custom_hero_original_start",
+      "transformation": "Native Adapter"
+    },
+    {
+      "definition_id": "HeroCalendarEvents:custom_hero_partner_id",
+      "mapping_revision": 1,
+      "operation": "HeroCalendarEvents",
+      "priority": 5,
+      "purpose": "Field",
+      "relation": "",
+      "schema_dependencies": [
+        "field:Event:custom_hero_partner_id"
+      ],
+      "source_path": "partner_id",
+      "source_type": "int|null",
+      "target_doctype": "Event",
+      "target_field": "custom_hero_partner_id",
+      "transformation": "Scalar Text"
+    },
+    {
+      "definition_id": "HeroCalendarEvents:custom_hero_partners",
+      "mapping_revision": 1,
+      "operation": "HeroCalendarEvents",
+      "priority": 5,
+      "purpose": "Native Binding",
+      "relation": "",
+      "schema_dependencies": [
+        "field:Event:custom_hero_partners",
+        "doctype:HERO Event Partner",
+        "relation:Event:HERO Event Partner"
+      ],
+      "source_path": "partners",
+      "source_type": "json|null",
+      "target_doctype": "Event",
+      "target_field": "custom_hero_partners",
+      "transformation": "Native Adapter"
+    },
+    {
+      "definition_id": "HeroCalendarEvents:custom_hero_project",
+      "mapping_revision": 1,
+      "operation": "HeroCalendarEvents",
+      "priority": 5,
+      "purpose": "Project Relation",
+      "relation": "HERO Project Link",
+      "schema_dependencies": [
+        "field:Event:custom_hero_project",
+        "relation:Event:Project"
+      ],
+      "source_path": "project_match_id",
+      "source_type": "int|null",
+      "target_doctype": "Event",
+      "target_field": "custom_hero_project",
+      "transformation": "HERO Project Link"
+    },
+    {
+      "definition_id": "HeroCalendarEvents:custom_hero_project_match_id",
+      "mapping_revision": 1,
+      "operation": "HeroCalendarEvents",
+      "priority": 5,
+      "purpose": "Field",
+      "relation": "",
+      "schema_dependencies": [
+        "field:Event:custom_hero_project_match_id"
+      ],
+      "source_path": "project_match_id",
+      "source_type": "int|null",
+      "target_doctype": "Event",
+      "target_field": "custom_hero_project_match_id",
+      "transformation": "Scalar Text"
+    },
+    {
+      "definition_id": "HeroCalendarEvents:custom_hero_provider",
+      "mapping_revision": 1,
+      "operation": "HeroCalendarEvents",
+      "priority": 5,
+      "purpose": "Field",
+      "relation": "",
+      "schema_dependencies": [
+        "field:Event:custom_hero_provider"
+      ],
+      "source_path": "provider",
+      "source_type": "string|null",
+      "target_doctype": "Event",
+      "target_field": "custom_hero_provider",
+      "transformation": "Identity"
+    },
+    {
+      "definition_id": "HeroCalendarEvents:custom_hero_readonly",
+      "mapping_revision": 1,
+      "operation": "HeroCalendarEvents",
+      "priority": 5,
+      "purpose": "Field",
+      "relation": "",
+      "schema_dependencies": [
+        "field:Event:custom_hero_readonly"
+      ],
+      "source_path": "readonly",
+      "source_type": "boolean|null",
+      "target_doctype": "Event",
+      "target_field": "custom_hero_readonly",
+      "transformation": "Scalar Text"
+    },
+    {
+      "definition_id": "HeroCalendarEvents:custom_hero_resources",
+      "mapping_revision": 1,
+      "operation": "HeroCalendarEvents",
+      "priority": 5,
+      "purpose": "Native Binding",
+      "relation": "",
+      "schema_dependencies": [
+        "field:Event:custom_hero_resources",
+        "doctype:HERO Event Resource",
+        "relation:Event:HERO Event Resource"
+      ],
+      "source_path": "resources",
+      "source_type": "json|null",
+      "target_doctype": "Event",
+      "target_field": "custom_hero_resources",
+      "transformation": "Native Adapter"
+    },
+    {
+      "definition_id": "HeroCalendarEvents:custom_hero_source_id",
+      "mapping_revision": 1,
+      "operation": "HeroCalendarEvents",
+      "priority": 5,
+      "purpose": "Source Identity",
+      "relation": "",
+      "schema_dependencies": [
+        "field:Event:custom_hero_source_id",
+        "field:Event:custom_hero_key",
+        "field:Event:custom_hero_source_instance"
+      ],
+      "source_path": "id",
+      "source_type": "int",
+      "target_doctype": "Event",
+      "target_field": "custom_hero_source_id",
+      "transformation": "Positive Int To Text"
+    },
+    {
+      "definition_id": "HeroCalendarEvents:custom_hero_type",
+      "mapping_revision": 1,
+      "operation": "HeroCalendarEvents",
+      "priority": 5,
+      "purpose": "Field",
+      "relation": "",
+      "schema_dependencies": [
+        "field:Event:custom_hero_type"
+      ],
+      "source_path": "type",
+      "source_type": "string|null",
+      "target_doctype": "Event",
+      "target_field": "custom_hero_type",
+      "transformation": "Identity"
+    },
+    {
+      "definition_id": "HeroCalendarEvents:description",
+      "mapping_revision": 1,
+      "operation": "HeroCalendarEvents",
+      "priority": 5,
+      "purpose": "Native Binding",
+      "relation": "",
+      "schema_dependencies": [],
+      "source_path": "description",
+      "source_type": "string|null",
+      "target_doctype": "Event",
+      "target_field": "description",
+      "transformation": "Native Adapter"
+    },
+    {
+      "definition_id": "HeroCalendarEvents:ends_on",
+      "mapping_revision": 1,
+      "operation": "HeroCalendarEvents",
+      "priority": 5,
+      "purpose": "Native Binding",
+      "relation": "",
+      "schema_dependencies": [],
+      "source_path": "end",
+      "source_type": "string|null",
+      "target_doctype": "Event",
+      "target_field": "ends_on",
+      "transformation": "Native Adapter"
+    },
+    {
+      "definition_id": "HeroCalendarEvents:location",
+      "mapping_revision": 1,
+      "operation": "HeroCalendarEvents",
+      "priority": 5,
+      "purpose": "Native Binding",
+      "relation": "",
+      "schema_dependencies": [],
+      "source_path": "full_address",
+      "source_type": "string|null",
+      "target_doctype": "Event",
+      "target_field": "location",
+      "transformation": "Native Adapter"
+    },
+    {
+      "definition_id": "HeroCalendarEvents:starts_on",
+      "mapping_revision": 1,
+      "operation": "HeroCalendarEvents",
+      "priority": 5,
+      "purpose": "Native Binding",
+      "relation": "",
+      "schema_dependencies": [],
+      "source_path": "start",
+      "source_type": "string|null",
+      "target_doctype": "Event",
+      "target_field": "starts_on",
+      "transformation": "Native Adapter"
+    },
+    {
+      "definition_id": "HeroCalendarEvents:subject",
+      "mapping_revision": 1,
+      "operation": "HeroCalendarEvents",
+      "priority": 5,
+      "purpose": "Native Binding",
+      "relation": "",
+      "schema_dependencies": [],
+      "source_path": "title",
+      "source_type": "string|null",
+      "target_doctype": "Event",
+      "target_field": "subject",
+      "transformation": "Native Adapter"
+    },
+    {
+      "definition_id": "customer-company-name",
+      "mapping_revision": 1,
+      "operation": "HeroCustomers",
+      "priority": 0,
+      "purpose": "Record Name",
+      "relation": "",
+      "schema_dependencies": [],
+      "source_path": "company_name",
+      "source_type": "string|null",
+      "target_doctype": "Customer",
+      "target_field": "customer_name",
+      "transformation": "Trim"
+    },
+    {
+      "definition_id": "customer-source-id",
+      "mapping_revision": 1,
+      "operation": "HeroCustomers",
+      "priority": 0,
+      "purpose": "Source Identity",
+      "relation": "",
+      "schema_dependencies": [],
+      "source_path": "id",
+      "source_type": "int",
+      "target_doctype": "Customer",
+      "target_field": "custom_hero_source_id",
+      "transformation": "Positive Int To Text"
+    },
+    {
+      "definition_id": "customer-type",
+      "mapping_revision": 1,
+      "operation": "HeroCustomers",
+      "priority": 0,
+      "purpose": "Customer Type",
+      "relation": "",
+      "schema_dependencies": [],
+      "source_path": "company_name",
+      "source_type": "string|null",
+      "target_doctype": "Customer",
+      "target_field": "customer_type",
+      "transformation": "Customer Type From Company Name"
+    },
+    {
+      "definition_id": "customer-full-name",
+      "mapping_revision": 1,
+      "operation": "HeroCustomers",
+      "priority": 1,
+      "purpose": "Record Name",
+      "relation": "",
+      "schema_dependencies": [],
+      "source_path": "full_name",
+      "source_type": "string|null",
+      "target_doctype": "Customer",
+      "target_field": "customer_name",
+      "transformation": "Trim"
+    },
+    {
+      "definition_id": "customer-category",
+      "mapping_revision": 1,
+      "operation": "HeroCustomers",
+      "priority": 5,
+      "purpose": "Field",
+      "relation": "",
+      "schema_dependencies": [],
+      "source_path": "category",
+      "source_type": "string|null",
+      "target_doctype": "Customer",
+      "target_field": "custom_hero_customer_category",
+      "transformation": "Trim"
+    },
+    {
+      "definition_id": "customer-contact-person",
+      "mapping_revision": 1,
+      "operation": "HeroCustomers",
+      "priority": 5,
+      "purpose": "Field",
+      "relation": "",
+      "schema_dependencies": [
+        "field:Customer:custom_hero_is_contact_person"
+      ],
+      "source_path": "is_contact_person",
+      "source_type": "boolean|null",
+      "target_doctype": "Customer",
+      "target_field": "custom_hero_is_contact_person",
+      "transformation": "Identity"
+    },
+    {
+      "definition_id": "customer-deleted",
+      "mapping_revision": 1,
+      "operation": "HeroCustomers",
+      "priority": 5,
+      "purpose": "Lifecycle Flag",
+      "relation": "",
+      "schema_dependencies": [],
+      "source_path": "is_deleted",
+      "source_type": "boolean|null",
+      "target_doctype": "HERO Integration Link",
+      "target_field": "sync_status",
+      "transformation": "Identity"
+    },
+    {
+      "definition_id": "customer-email",
+      "mapping_revision": 1,
+      "operation": "HeroCustomers",
+      "priority": 5,
+      "purpose": "Customer Primary Contact",
+      "relation": "",
+      "schema_dependencies": [],
+      "source_path": "email",
+      "source_type": "string|null",
+      "target_doctype": "Customer",
+      "target_field": "email_id",
+      "transformation": "Trim"
+    },
+    {
+      "definition_id": "customer-first-name",
+      "mapping_revision": 1,
+      "operation": "HeroCustomers",
+      "priority": 5,
+      "purpose": "Customer Primary Contact",
+      "relation": "",
+      "schema_dependencies": [],
+      "source_path": "first_name",
+      "source_type": "string|null",
+      "target_doctype": "Customer",
+      "target_field": "first_name",
+      "transformation": "Trim"
+    },
+    {
+      "definition_id": "customer-home-phone",
+      "mapping_revision": 1,
+      "operation": "HeroCustomers",
+      "priority": 5,
+      "purpose": "Customer Home Phone",
+      "relation": "Customer Primary Contact",
+      "schema_dependencies": [],
+      "source_path": "phone_home",
+      "source_type": "string|null",
+      "target_doctype": "Contact Phone",
+      "target_field": "phone",
+      "transformation": "Trim"
+    },
+    {
+      "definition_id": "customer-last-name",
+      "mapping_revision": 1,
+      "operation": "HeroCustomers",
+      "priority": 5,
+      "purpose": "Customer Primary Contact",
+      "relation": "",
+      "schema_dependencies": [],
+      "source_path": "last_name",
+      "source_type": "string|null",
+      "target_doctype": "Customer",
+      "target_field": "last_name",
+      "transformation": "Trim"
+    },
+    {
+      "definition_id": "customer-mobile",
+      "mapping_revision": 1,
+      "operation": "HeroCustomers",
+      "priority": 5,
+      "purpose": "Customer Primary Contact",
+      "relation": "",
+      "schema_dependencies": [],
+      "source_path": "phone_mobile",
+      "source_type": "string|null",
+      "target_doctype": "Customer",
+      "target_field": "mobile_no",
+      "transformation": "Trim"
+    },
+    {
+      "definition_id": "customer-number",
+      "mapping_revision": 1,
+      "operation": "HeroCustomers",
+      "priority": 5,
+      "purpose": "Field",
+      "relation": "",
+      "schema_dependencies": [],
+      "source_path": "nr",
+      "source_type": "string|null",
+      "target_doctype": "Customer",
+      "target_field": "custom_hero_customer_number",
+      "transformation": "Trim"
+    },
+    {
+      "definition_id": "customer-primary-address-line2",
+      "mapping_revision": 2,
+      "operation": "HeroCustomers",
+      "priority": 5,
+      "purpose": "Native Binding",
+      "relation": "Customer Primary Address",
+      "schema_dependencies": [],
+      "source_path": "address.line_2",
+      "source_type": "string|null",
+      "target_doctype": "Address",
+      "target_field": "address_line2",
+      "transformation": "Trim"
+    },
+    {
+      "definition_id": "customer-source-type",
+      "mapping_revision": 1,
+      "operation": "HeroCustomers",
+      "priority": 5,
+      "purpose": "Field",
+      "relation": "",
+      "schema_dependencies": [],
+      "source_path": "type",
+      "source_type": "string|null",
+      "target_doctype": "Customer",
+      "target_field": "custom_hero_customer_type",
+      "transformation": "Trim"
+    },
+    {
+      "definition_id": "project-customer",
+      "mapping_revision": 1,
+      "operation": "HeroProjectMatches",
+      "priority": 0,
+      "purpose": "Customer Relation",
+      "relation": "HERO Customer Link",
+      "schema_dependencies": [],
+      "source_path": "customer_id",
+      "source_type": "int|null",
+      "target_doctype": "Project",
+      "target_field": "customer",
+      "transformation": "HERO Customer Link"
+    },
+    {
+      "definition_id": "project-name",
+      "mapping_revision": 1,
+      "operation": "HeroProjectMatches",
+      "priority": 0,
+      "purpose": "Record Name",
+      "relation": "",
+      "schema_dependencies": [],
+      "source_path": "project_title",
+      "source_type": "string",
+      "target_doctype": "Project",
+      "target_field": "project_name",
+      "transformation": "Trim"
+    },
+    {
+      "definition_id": "project-source-id",
+      "mapping_revision": 1,
+      "operation": "HeroProjectMatches",
+      "priority": 0,
+      "purpose": "Source Identity",
+      "relation": "",
+      "schema_dependencies": [],
+      "source_path": "id",
+      "source_type": "int",
+      "target_doctype": "Project",
+      "target_field": "custom_hero_source_id",
+      "transformation": "Positive Int To Text"
+    },
+    {
+      "definition_id": "project-company",
+      "mapping_revision": 1,
+      "operation": "HeroProjectMatches",
+      "priority": 1,
+      "purpose": "Confirmed Company",
+      "relation": "Confirmed ERPNext Company",
+      "schema_dependencies": [],
+      "source_path": "customer_id",
+      "source_type": "int|null",
+      "target_doctype": "Project",
+      "target_field": "company",
+      "transformation": "Confirmed ERPNext Company"
+    },
+    {
+      "definition_id": "HeroProjectMatches:custom_hero_observed_status_created",
+      "mapping_revision": 1,
+      "operation": "HeroProjectMatches",
+      "priority": 5,
+      "purpose": "Field",
+      "relation": "",
+      "schema_dependencies": [
+        "field:Project:custom_hero_observed_status_created"
+      ],
+      "source_path": "current_project_match_status.created",
+      "source_type": "string|null",
+      "target_doctype": "Project",
+      "target_field": "custom_hero_observed_status_created",
+      "transformation": "Identity"
+    },
+    {
+      "definition_id": "HeroProjectMatches:custom_hero_observed_status_id",
+      "mapping_revision": 1,
+      "operation": "HeroProjectMatches",
+      "priority": 5,
+      "purpose": "Field",
+      "relation": "",
+      "schema_dependencies": [
+        "field:Project:custom_hero_observed_status_id"
+      ],
+      "source_path": "current_project_match_status.id",
+      "source_type": "int|null",
+      "target_doctype": "Project",
+      "target_field": "custom_hero_observed_status_id",
+      "transformation": "Scalar Text"
+    },
+    {
+      "definition_id": "HeroProjectMatches:custom_hero_observed_status_modified",
+      "mapping_revision": 1,
+      "operation": "HeroProjectMatches",
+      "priority": 5,
+      "purpose": "Field",
+      "relation": "",
+      "schema_dependencies": [
+        "field:Project:custom_hero_observed_status_modified"
+      ],
+      "source_path": "current_project_match_status.modified",
+      "source_type": "string|null",
+      "target_doctype": "Project",
+      "target_field": "custom_hero_observed_status_modified",
+      "transformation": "Identity"
+    },
+    {
+      "definition_id": "HeroProjectMatches:custom_hero_observed_status_name",
+      "mapping_revision": 1,
+      "operation": "HeroProjectMatches",
+      "priority": 5,
+      "purpose": "Field",
+      "relation": "",
+      "schema_dependencies": [
+        "field:Project:custom_hero_observed_status_name"
+      ],
+      "source_path": "current_project_match_status.name",
+      "source_type": "string|null",
+      "target_doctype": "Project",
+      "target_field": "custom_hero_observed_status_name",
+      "transformation": "Identity"
+    },
+    {
+      "definition_id": "HeroProjectMatches:custom_hero_observed_status_short_name",
+      "mapping_revision": 1,
+      "operation": "HeroProjectMatches",
+      "priority": 5,
+      "purpose": "Field",
+      "relation": "",
+      "schema_dependencies": [
+        "field:Project:custom_hero_observed_status_short_name"
+      ],
+      "source_path": "current_project_match_status.short_name",
+      "source_type": "string|null",
+      "target_doctype": "Project",
+      "target_field": "custom_hero_observed_status_short_name",
+      "transformation": "Identity"
+    },
+    {
+      "definition_id": "HeroProjectMatches:custom_hero_observed_status_status_code",
+      "mapping_revision": 1,
+      "operation": "HeroProjectMatches",
+      "priority": 5,
+      "purpose": "Field",
+      "relation": "",
+      "schema_dependencies": [
+        "field:Project:custom_hero_observed_status_status_code"
+      ],
+      "source_path": "current_project_match_status.status_code",
+      "source_type": "int|null",
+      "target_doctype": "Project",
+      "target_field": "custom_hero_observed_status_status_code",
+      "transformation": "Scalar Text"
+    },
+    {
+      "definition_id": "HeroProjectMatches:custom_hero_observed_status_step_id",
+      "mapping_revision": 1,
+      "operation": "HeroProjectMatches",
+      "priority": 5,
+      "purpose": "Field",
+      "relation": "",
+      "schema_dependencies": [
+        "field:Project:custom_hero_observed_status_step_id"
+      ],
+      "source_path": "current_project_match_status.step_id",
+      "source_type": "int|null",
+      "target_doctype": "Project",
+      "target_field": "custom_hero_observed_status_step_id",
+      "transformation": "Scalar Text"
+    },
+    {
+      "definition_id": "project-address-full-address",
+      "mapping_revision": 1,
+      "operation": "HeroProjectMatches",
+      "priority": 5,
+      "purpose": "Field",
+      "relation": "",
+      "schema_dependencies": [
+        "field:Project:custom_hero_address_full_address"
+      ],
+      "source_path": "address.full_address",
+      "source_type": "string|null",
+      "target_doctype": "Project",
+      "target_field": "custom_hero_address_full_address",
+      "transformation": "Trim"
+    },
+    {
+      "definition_id": "project-created",
+      "mapping_revision": 1,
+      "operation": "HeroProjectMatches",
+      "priority": 5,
+      "purpose": "Field",
+      "relation": "",
+      "schema_dependencies": [],
+      "source_path": "created",
+      "source_type": "string|null",
+      "target_doctype": "Project",
+      "target_field": "custom_hero_source_created",
+      "transformation": "Trim"
+    },
+    {
+      "definition_id": "project-customer-full-name",
+      "mapping_revision": 1,
+      "operation": "HeroProjectMatches",
+      "priority": 5,
+      "purpose": "Field",
+      "relation": "",
+      "schema_dependencies": [
+        "field:Project:custom_hero_customer_full_name"
+      ],
+      "source_path": "customer.full_name",
+      "source_type": "string",
+      "target_doctype": "Project",
+      "target_field": "custom_hero_customer_full_name",
+      "transformation": "Trim"
+    },
+    {
+      "definition_id": "project-customer-title",
+      "mapping_revision": 1,
+      "operation": "HeroProjectMatches",
+      "priority": 5,
+      "purpose": "Field",
+      "relation": "",
+      "schema_dependencies": [
+        "field:Project:custom_hero_customer_title"
+      ],
+      "source_path": "customer.title",
+      "source_type": "string",
+      "target_doctype": "Project",
+      "target_field": "custom_hero_customer_title",
+      "transformation": "Trim"
+    },
+    {
+      "definition_id": "project-display-id",
+      "mapping_revision": 1,
+      "operation": "HeroProjectMatches",
+      "priority": 5,
+      "purpose": "Field",
+      "relation": "",
+      "schema_dependencies": [],
+      "source_path": "display_id",
+      "source_type": "string|null",
+      "target_doctype": "Project",
+      "target_field": "custom_hero_display_id",
+      "transformation": "Trim"
+    },
+    {
+      "definition_id": "project-modified",
+      "mapping_revision": 1,
+      "operation": "HeroProjectMatches",
+      "priority": 5,
+      "purpose": "Field",
+      "relation": "",
+      "schema_dependencies": [],
+      "source_path": "modified",
+      "source_type": "string|null",
+      "target_doctype": "Project",
+      "target_field": "custom_hero_source_modified",
+      "transformation": "Trim"
+    },
+    {
+      "definition_id": "project-number",
+      "mapping_revision": 1,
+      "operation": "HeroProjectMatches",
+      "priority": 5,
+      "purpose": "Field",
+      "relation": "",
+      "schema_dependencies": [
+        "field:Project:custom_hero_project_number"
+      ],
+      "source_path": "project_nr",
+      "source_type": "string",
+      "target_doctype": "Project",
+      "target_field": "custom_hero_project_number",
+      "transformation": "Trim"
+    },
+    {
+      "definition_id": "project-partner-notes",
+      "mapping_revision": 1,
+      "operation": "HeroProjectMatches",
+      "priority": 5,
+      "purpose": "Field",
+      "relation": "",
+      "schema_dependencies": [
+        "field:Project:custom_hero_partner_notes"
+      ],
+      "source_path": "partner_notes",
+      "source_type": "string|null",
+      "target_doctype": "Project",
+      "target_field": "custom_hero_partner_notes",
+      "transformation": "Trim"
+    },
+    {
+      "definition_id": "project-related-id",
+      "mapping_revision": 1,
+      "operation": "HeroProjectMatches",
+      "priority": 5,
+      "purpose": "Field",
+      "relation": "",
+      "schema_dependencies": [],
+      "source_path": "project_id",
+      "source_type": "int|null",
+      "target_doctype": "Project",
+      "target_field": "custom_hero_related_project_id",
+      "transformation": "Positive Int To Text"
+    },
+    {
+      "definition_id": "project-source-type",
+      "mapping_revision": 1,
+      "operation": "HeroProjectMatches",
+      "priority": 5,
+      "purpose": "Field",
+      "relation": "",
+      "schema_dependencies": [
+        "field:Project:custom_hero_project_type"
+      ],
+      "source_path": "project_type",
+      "source_type": "string|null",
+      "target_doctype": "Project",
+      "target_field": "custom_hero_project_type",
+      "transformation": "Trim"
+    },
+    {
+      "definition_id": "HeroTasks:custom_hero_author_user_id",
+      "mapping_revision": 1,
+      "operation": "HeroTasks",
+      "priority": 5,
+      "purpose": "Field",
+      "relation": "",
+      "schema_dependencies": [
+        "doctype:HERO External Task"
+      ],
+      "source_path": "author_user_id",
+      "source_type": "int|null",
+      "target_doctype": "HERO External Task",
+      "target_field": "custom_hero_author_user_id",
+      "transformation": "Scalar Text"
+    },
+    {
+      "definition_id": "HeroTasks:custom_hero_comment",
+      "mapping_revision": 1,
+      "operation": "HeroTasks",
+      "priority": 5,
+      "purpose": "Field",
+      "relation": "",
+      "schema_dependencies": [
+        "doctype:HERO External Task"
+      ],
+      "source_path": "comment",
+      "source_type": "string|null",
+      "target_doctype": "HERO External Task",
+      "target_field": "custom_hero_comment",
+      "transformation": "Identity"
+    },
+    {
+      "definition_id": "HeroTasks:custom_hero_company_id",
+      "mapping_revision": 1,
+      "operation": "HeroTasks",
+      "priority": 5,
+      "purpose": "Field",
+      "relation": "",
+      "schema_dependencies": [
+        "doctype:HERO External Task"
+      ],
+      "source_path": "company_id",
+      "source_type": "int|null",
+      "target_doctype": "HERO External Task",
+      "target_field": "custom_hero_company_id",
+      "transformation": "Scalar Text"
+    },
+    {
+      "definition_id": "HeroTasks:custom_hero_created",
+      "mapping_revision": 1,
+      "operation": "HeroTasks",
+      "priority": 5,
+      "purpose": "Field",
+      "relation": "",
+      "schema_dependencies": [
+        "doctype:HERO External Task"
+      ],
+      "source_path": "created",
+      "source_type": "string|null",
+      "target_doctype": "HERO External Task",
+      "target_field": "custom_hero_created",
+      "transformation": "Identity"
+    },
+    {
+      "definition_id": "HeroTasks:custom_hero_done_date",
+      "mapping_revision": 1,
+      "operation": "HeroTasks",
+      "priority": 5,
+      "purpose": "Field",
+      "relation": "",
+      "schema_dependencies": [
+        "doctype:HERO External Task"
+      ],
+      "source_path": "done_date",
+      "source_type": "string|null",
+      "target_doctype": "HERO External Task",
+      "target_field": "custom_hero_done_date",
+      "transformation": "Identity"
+    },
+    {
+      "definition_id": "HeroTasks:custom_hero_due_date",
+      "mapping_revision": 1,
+      "operation": "HeroTasks",
+      "priority": 5,
+      "purpose": "Field",
+      "relation": "",
+      "schema_dependencies": [
+        "doctype:HERO External Task"
+      ],
+      "source_path": "due_date",
+      "source_type": "string|null",
+      "target_doctype": "HERO External Task",
+      "target_field": "custom_hero_due_date",
+      "transformation": "Identity"
+    },
+    {
+      "definition_id": "HeroTasks:custom_hero_end",
+      "mapping_revision": 1,
+      "operation": "HeroTasks",
+      "priority": 5,
+      "purpose": "Field",
+      "relation": "",
+      "schema_dependencies": [
+        "doctype:HERO External Task"
+      ],
+      "source_path": "end",
+      "source_type": "string|null",
+      "target_doctype": "HERO External Task",
+      "target_field": "custom_hero_end",
+      "transformation": "Identity"
+    },
+    {
+      "definition_id": "HeroTasks:custom_hero_is_deleted",
+      "mapping_revision": 1,
+      "operation": "HeroTasks",
+      "priority": 5,
+      "purpose": "Field",
+      "relation": "",
+      "schema_dependencies": [
+        "doctype:HERO External Task"
+      ],
+      "source_path": "is_deleted",
+      "source_type": "boolean|null",
+      "target_doctype": "HERO External Task",
+      "target_field": "custom_hero_is_deleted",
+      "transformation": "Scalar Text"
+    },
+    {
+      "definition_id": "HeroTasks:custom_hero_modified",
+      "mapping_revision": 1,
+      "operation": "HeroTasks",
+      "priority": 5,
+      "purpose": "Field",
+      "relation": "",
+      "schema_dependencies": [
+        "doctype:HERO External Task"
+      ],
+      "source_path": "modified",
+      "source_type": "string|null",
+      "target_doctype": "HERO External Task",
+      "target_field": "custom_hero_modified",
+      "transformation": "Identity"
+    },
+    {
+      "definition_id": "HeroTasks:custom_hero_project",
+      "mapping_revision": 1,
+      "operation": "HeroTasks",
+      "priority": 5,
+      "purpose": "Project Relation",
+      "relation": "HERO Project Link",
+      "schema_dependencies": [
+        "doctype:HERO External Task",
+        "relation:HERO External Task:Project"
+      ],
+      "source_path": "target_project_match_id",
+      "source_type": "int|null",
+      "target_doctype": "HERO External Task",
+      "target_field": "custom_hero_project",
+      "transformation": "HERO Project Link"
+    },
+    {
+      "definition_id": "HeroTasks:custom_hero_source_id",
+      "mapping_revision": 1,
+      "operation": "HeroTasks",
+      "priority": 5,
+      "purpose": "Source Identity",
+      "relation": "",
+      "schema_dependencies": [
+        "doctype:HERO External Task"
+      ],
+      "source_path": "id",
+      "source_type": "int",
+      "target_doctype": "HERO External Task",
+      "target_field": "custom_hero_source_id",
+      "transformation": "Positive Int To Text"
+    },
+    {
+      "definition_id": "HeroTasks:custom_hero_start",
+      "mapping_revision": 1,
+      "operation": "HeroTasks",
+      "priority": 5,
+      "purpose": "Field",
+      "relation": "",
+      "schema_dependencies": [
+        "doctype:HERO External Task"
+      ],
+      "source_path": "start",
+      "source_type": "string|null",
+      "target_doctype": "HERO External Task",
+      "target_field": "custom_hero_start",
+      "transformation": "Identity"
+    },
+    {
+      "definition_id": "HeroTasks:custom_hero_target_project_match_id",
+      "mapping_revision": 1,
+      "operation": "HeroTasks",
+      "priority": 5,
+      "purpose": "Field",
+      "relation": "",
+      "schema_dependencies": [
+        "doctype:HERO External Task"
+      ],
+      "source_path": "target_project_match_id",
+      "source_type": "int|null",
+      "target_doctype": "HERO External Task",
+      "target_field": "custom_hero_target_project_match_id",
+      "transformation": "Scalar Text"
+    },
+    {
+      "definition_id": "HeroTasks:custom_hero_target_user_id",
+      "mapping_revision": 1,
+      "operation": "HeroTasks",
+      "priority": 5,
+      "purpose": "Field",
+      "relation": "",
+      "schema_dependencies": [
+        "doctype:HERO External Task"
+      ],
+      "source_path": "target_user_id",
+      "source_type": "int|null",
+      "target_doctype": "HERO External Task",
+      "target_field": "custom_hero_target_user_id",
+      "transformation": "Scalar Text"
+    },
+    {
+      "definition_id": "HeroTasks:custom_hero_title",
+      "mapping_revision": 1,
+      "operation": "HeroTasks",
+      "priority": 5,
+      "purpose": "Field",
+      "relation": "",
+      "schema_dependencies": [
+        "doctype:HERO External Task"
+      ],
+      "source_path": "title",
+      "source_type": "string|null",
+      "target_doctype": "HERO External Task",
+      "target_field": "custom_hero_title",
+      "transformation": "Identity"
+    }
+  ],
+  "schema": {
+    "custom_doctypes": [
+      {
+        "fields": [
+          {
+            "fieldname": "custom_hero_source_id",
+            "fieldtype": "Data",
+            "id": "field:HERO Event Resource:custom_hero_source_id",
+            "label": "HERO Source ID",
+            "options": "",
+            "reqd": 1
+          },
+          {
+            "fieldname": "custom_hero_resource_name",
+            "fieldtype": "Data",
+            "id": "field:HERO Event Resource:custom_hero_resource_name",
+            "label": "HERO Resource Name",
+            "options": ""
+          },
+          {
+            "fieldname": "custom_hero_resource_type",
+            "fieldtype": "Data",
+            "id": "field:HERO Event Resource:custom_hero_resource_type",
+            "label": "HERO Resource Type",
+            "options": ""
+          },
+          {
+            "fieldname": "custom_hero_type_id",
+            "fieldtype": "Data",
+            "id": "field:HERO Event Resource:custom_hero_type_id",
+            "label": "HERO Type ID",
+            "options": ""
+          }
+        ],
+        "id": "doctype:HERO Event Resource",
+        "is_child": true,
+        "label": "HERO Event Resource",
+        "name": "HERO Event Resource"
+      },
+      {
+        "fields": [
+          {
+            "fieldname": "custom_hero_source_id",
+            "fieldtype": "Data",
+            "id": "field:HERO Event Partner:custom_hero_source_id",
+            "label": "HERO Source ID",
+            "options": "",
+            "reqd": 1
+          },
+          {
+            "fieldname": "custom_hero_partner_name",
+            "fieldtype": "Data",
+            "id": "field:HERO Event Partner:custom_hero_partner_name",
+            "label": "HERO Partner Name",
+            "options": ""
+          }
+        ],
+        "id": "doctype:HERO Event Partner",
+        "is_child": true,
+        "label": "HERO Event Partner",
+        "name": "HERO Event Partner"
+      },
+      {
+        "fields": [
+          {
+            "fieldname": "custom_hero_key",
+            "fieldtype": "Data",
+            "id": "field:HERO External Task:custom_hero_key",
+            "label": "HERO Source Key",
+            "options": "",
+            "reqd": 1,
+            "unique": 1
+          },
+          {
+            "fieldname": "custom_hero_source_instance",
+            "fieldtype": "Data",
+            "id": "field:HERO External Task:custom_hero_source_instance",
+            "label": "HERO Source Instance",
+            "options": "",
+            "reqd": 1
+          },
+          {
+            "fieldname": "custom_hero_author_user_id",
+            "fieldtype": "Data",
+            "id": "field:HERO External Task:custom_hero_author_user_id",
+            "label": "HERO Author User Id",
+            "options": ""
+          },
+          {
+            "fieldname": "custom_hero_company_id",
+            "fieldtype": "Data",
+            "id": "field:HERO External Task:custom_hero_company_id",
+            "label": "HERO Company Id",
+            "options": ""
+          },
+          {
+            "fieldname": "custom_hero_target_user_id",
+            "fieldtype": "Data",
+            "id": "field:HERO External Task:custom_hero_target_user_id",
+            "label": "HERO Target User Id",
+            "options": ""
+          },
+          {
+            "fieldname": "custom_hero_title",
+            "fieldtype": "Small Text",
+            "id": "field:HERO External Task:custom_hero_title",
+            "label": "HERO Title",
+            "options": ""
+          },
+          {
+            "fieldname": "custom_hero_comment",
+            "fieldtype": "Small Text",
+            "id": "field:HERO External Task:custom_hero_comment",
+            "label": "HERO Comment",
+            "options": ""
+          },
+          {
+            "fieldname": "custom_hero_target_project_match_id",
+            "fieldtype": "Data",
+            "id": "field:HERO External Task:custom_hero_target_project_match_id",
+            "label": "HERO Target Project Match Id",
+            "options": ""
+          },
+          {
+            "fieldname": "custom_hero_due_date",
+            "fieldtype": "Data",
+            "id": "field:HERO External Task:custom_hero_due_date",
+            "label": "HERO Due Date",
+            "options": ""
+          },
+          {
+            "fieldname": "custom_hero_done_date",
+            "fieldtype": "Data",
+            "id": "field:HERO External Task:custom_hero_done_date",
+            "label": "HERO Done Date",
+            "options": ""
+          },
+          {
+            "fieldname": "custom_hero_created",
+            "fieldtype": "Data",
+            "id": "field:HERO External Task:custom_hero_created",
+            "label": "HERO Created",
+            "options": ""
+          },
+          {
+            "fieldname": "custom_hero_modified",
+            "fieldtype": "Data",
+            "id": "field:HERO External Task:custom_hero_modified",
+            "label": "HERO Modified",
+            "options": ""
+          },
+          {
+            "fieldname": "custom_hero_start",
+            "fieldtype": "Data",
+            "id": "field:HERO External Task:custom_hero_start",
+            "label": "HERO Start",
+            "options": ""
+          },
+          {
+            "fieldname": "custom_hero_end",
+            "fieldtype": "Data",
+            "id": "field:HERO External Task:custom_hero_end",
+            "label": "HERO End",
+            "options": ""
+          },
+          {
+            "fieldname": "custom_hero_is_deleted",
+            "fieldtype": "Data",
+            "id": "field:HERO External Task:custom_hero_is_deleted",
+            "label": "HERO Is Deleted",
+            "options": ""
+          },
+          {
+            "fieldname": "custom_hero_source_id",
+            "fieldtype": "Data",
+            "id": "field:HERO External Task:custom_hero_source_id",
+            "label": "HERO Source Id",
+            "options": "",
+            "reqd": 1
+          },
+          {
+            "fieldname": "custom_hero_project",
+            "fieldtype": "Link",
+            "id": "field:HERO External Task:custom_hero_project",
+            "label": "HERO Project",
+            "options": "Project"
+          }
+        ],
+        "id": "doctype:HERO External Task",
+        "is_child": false,
+        "label": "HERO External Task",
+        "name": "HERO External Task"
+      }
+    ],
+    "custom_fields": [
+      {
+        "doctype": "Customer",
+        "fieldname": "custom_hero_is_contact_person",
+        "fieldtype": "Check",
+        "id": "field:Customer:custom_hero_is_contact_person",
+        "insert_after": "custom_hero_customer_type",
+        "label": "HERO Is Contact Person",
+        "options": ""
+      },
+      {
+        "doctype": "Project",
+        "fieldname": "custom_hero_project_number",
+        "fieldtype": "Small Text",
+        "id": "field:Project:custom_hero_project_number",
+        "insert_after": "notes",
+        "label": "HERO Project Number",
+        "options": ""
+      },
+      {
+        "doctype": "Project",
+        "fieldname": "custom_hero_project_type",
+        "fieldtype": "Small Text",
+        "id": "field:Project:custom_hero_project_type",
+        "insert_after": "notes",
+        "label": "HERO Project Type",
+        "options": ""
+      },
+      {
+        "doctype": "Project",
+        "fieldname": "custom_hero_partner_notes",
+        "fieldtype": "Small Text",
+        "id": "field:Project:custom_hero_partner_notes",
+        "insert_after": "notes",
+        "label": "HERO Partner Notes",
+        "options": ""
+      },
+      {
+        "doctype": "Project",
+        "fieldname": "custom_hero_customer_title",
+        "fieldtype": "Small Text",
+        "id": "field:Project:custom_hero_customer_title",
+        "insert_after": "notes",
+        "label": "HERO Customer Title",
+        "options": ""
+      },
+      {
+        "doctype": "Project",
+        "fieldname": "custom_hero_customer_full_name",
+        "fieldtype": "Small Text",
+        "id": "field:Project:custom_hero_customer_full_name",
+        "insert_after": "notes",
+        "label": "HERO Customer Full Name",
+        "options": ""
+      },
+      {
+        "doctype": "Project",
+        "fieldname": "custom_hero_address_full_address",
+        "fieldtype": "Small Text",
+        "id": "field:Project:custom_hero_address_full_address",
+        "insert_after": "notes",
+        "label": "HERO Address Full Address",
+        "options": ""
+      },
+      {
+        "doctype": "Project",
+        "fieldname": "custom_hero_observed_status_id",
+        "fieldtype": "Data",
+        "id": "field:Project:custom_hero_observed_status_id",
+        "insert_after": "notes",
+        "label": "HERO Observed Status Id",
+        "options": ""
+      },
+      {
+        "doctype": "Project",
+        "fieldname": "custom_hero_observed_status_status_code",
+        "fieldtype": "Data",
+        "id": "field:Project:custom_hero_observed_status_status_code",
+        "insert_after": "notes",
+        "label": "HERO Observed Status Status Code",
+        "options": ""
+      },
+      {
+        "doctype": "Project",
+        "fieldname": "custom_hero_observed_status_name",
+        "fieldtype": "Small Text",
+        "id": "field:Project:custom_hero_observed_status_name",
+        "insert_after": "notes",
+        "label": "HERO Observed Status Name",
+        "options": ""
+      },
+      {
+        "doctype": "Project",
+        "fieldname": "custom_hero_observed_status_short_name",
+        "fieldtype": "Small Text",
+        "id": "field:Project:custom_hero_observed_status_short_name",
+        "insert_after": "notes",
+        "label": "HERO Observed Status Short Name",
+        "options": ""
+      },
+      {
+        "doctype": "Project",
+        "fieldname": "custom_hero_observed_status_created",
+        "fieldtype": "Small Text",
+        "id": "field:Project:custom_hero_observed_status_created",
+        "insert_after": "notes",
+        "label": "HERO Observed Status Created",
+        "options": ""
+      },
+      {
+        "doctype": "Project",
+        "fieldname": "custom_hero_observed_status_modified",
+        "fieldtype": "Small Text",
+        "id": "field:Project:custom_hero_observed_status_modified",
+        "insert_after": "notes",
+        "label": "HERO Observed Status Modified",
+        "options": ""
+      },
+      {
+        "doctype": "Project",
+        "fieldname": "custom_hero_observed_status_step_id",
+        "fieldtype": "Data",
+        "id": "field:Project:custom_hero_observed_status_step_id",
+        "insert_after": "notes",
+        "label": "HERO Observed Status Step Id",
+        "options": ""
+      },
+      {
+        "doctype": "Event",
+        "fieldname": "custom_hero_category_id",
+        "fieldtype": "Data",
+        "id": "field:Event:custom_hero_category_id",
+        "insert_after": "description",
+        "label": "HERO Category Id",
+        "options": ""
+      },
+      {
+        "doctype": "Event",
+        "fieldname": "custom_hero_project_match_id",
+        "fieldtype": "Data",
+        "id": "field:Event:custom_hero_project_match_id",
+        "insert_after": "description",
+        "label": "HERO Project Match Id",
+        "options": ""
+      },
+      {
+        "doctype": "Event",
+        "fieldname": "custom_hero_deleted",
+        "fieldtype": "Data",
+        "id": "field:Event:custom_hero_deleted",
+        "insert_after": "description",
+        "label": "HERO Deleted",
+        "options": ""
+      },
+      {
+        "doctype": "Event",
+        "fieldname": "custom_hero_color",
+        "fieldtype": "Small Text",
+        "id": "field:Event:custom_hero_color",
+        "insert_after": "description",
+        "label": "HERO Color",
+        "options": ""
+      },
+      {
+        "doctype": "Event",
+        "fieldname": "custom_hero_is_done",
+        "fieldtype": "Data",
+        "id": "field:Event:custom_hero_is_done",
+        "insert_after": "description",
+        "label": "HERO Is Done",
+        "options": ""
+      },
+      {
+        "doctype": "Event",
+        "fieldname": "custom_hero_is_recurring",
+        "fieldtype": "Data",
+        "id": "field:Event:custom_hero_is_recurring",
+        "insert_after": "description",
+        "label": "HERO Is Recurring",
+        "options": ""
+      },
+      {
+        "doctype": "Event",
+        "fieldname": "custom_hero_provider",
+        "fieldtype": "Small Text",
+        "id": "field:Event:custom_hero_provider",
+        "insert_after": "description",
+        "label": "HERO Provider",
+        "options": ""
+      },
+      {
+        "doctype": "Event",
+        "fieldname": "custom_hero_source_id",
+        "fieldtype": "Data",
+        "id": "field:Event:custom_hero_source_id",
+        "insert_after": "description",
+        "label": "HERO Source Id",
+        "options": ""
+      },
+      {
+        "doctype": "Event",
+        "fieldname": "custom_hero_modified",
+        "fieldtype": "Data",
+        "id": "field:Event:custom_hero_modified",
+        "insert_after": "description",
+        "label": "HERO Modified",
+        "options": ""
+      },
+      {
+        "doctype": "Event",
+        "fieldname": "custom_hero_created",
+        "fieldtype": "Data",
+        "id": "field:Event:custom_hero_created",
+        "insert_after": "description",
+        "label": "HERO Created",
+        "options": ""
+      },
+      {
+        "doctype": "Event",
+        "fieldname": "custom_hero_type",
+        "fieldtype": "Small Text",
+        "id": "field:Event:custom_hero_type",
+        "insert_after": "description",
+        "label": "HERO Type",
+        "options": ""
+      },
+      {
+        "doctype": "Event",
+        "fieldname": "custom_hero_localized_type",
+        "fieldtype": "Small Text",
+        "id": "field:Event:custom_hero_localized_type",
+        "insert_after": "description",
+        "label": "HERO Localized Type",
+        "options": ""
+      },
+      {
+        "doctype": "Event",
+        "fieldname": "custom_hero_partner_id",
+        "fieldtype": "Data",
+        "id": "field:Event:custom_hero_partner_id",
+        "insert_after": "description",
+        "label": "HERO Partner Id",
+        "options": ""
+      },
+      {
+        "doctype": "Event",
+        "fieldname": "custom_hero_readonly",
+        "fieldtype": "Data",
+        "id": "field:Event:custom_hero_readonly",
+        "insert_after": "description",
+        "label": "HERO Readonly",
+        "options": ""
+      },
+      {
+        "doctype": "Event",
+        "fieldname": "custom_hero_resources",
+        "fieldtype": "Table",
+        "id": "field:Event:custom_hero_resources",
+        "insert_after": "description",
+        "label": "HERO Resources",
+        "options": "HERO Event Resource"
+      },
+      {
+        "doctype": "Event",
+        "fieldname": "custom_hero_partners",
+        "fieldtype": "Table",
+        "id": "field:Event:custom_hero_partners",
+        "insert_after": "description",
+        "label": "HERO Partners",
+        "options": "HERO Event Partner"
+      },
+      {
+        "doctype": "Event",
+        "fieldname": "custom_hero_project",
+        "fieldtype": "Link",
+        "id": "field:Event:custom_hero_project",
+        "insert_after": "description",
+        "label": "HERO Project",
+        "options": "Project"
+      },
+      {
+        "doctype": "Event",
+        "fieldname": "custom_hero_original_start",
+        "fieldtype": "Data",
+        "id": "field:Event:custom_hero_original_start",
+        "insert_after": "description",
+        "label": "HERO Original Start",
+        "options": ""
+      },
+      {
+        "doctype": "Event",
+        "fieldname": "custom_hero_original_end",
+        "fieldtype": "Data",
+        "id": "field:Event:custom_hero_original_end",
+        "insert_after": "description",
+        "label": "HERO Original End",
+        "options": ""
+      },
+      {
+        "doctype": "Event",
+        "fieldname": "custom_hero_key",
+        "fieldtype": "Data",
+        "id": "field:Event:custom_hero_key",
+        "insert_after": "description",
+        "label": "HERO Source Key",
+        "options": "",
+        "unique": 1
+      },
+      {
+        "doctype": "Event",
+        "fieldname": "custom_hero_source_instance",
+        "fieldtype": "Data",
+        "id": "field:Event:custom_hero_source_instance",
+        "insert_after": "description",
+        "label": "HERO Source Instance",
+        "options": ""
+      }
+    ],
+    "relations": [
+      {
+        "dependencies": [
+          "doctype:HERO Event Resource"
+        ],
+        "doctype": "Event",
+        "field_id": "field:Event:custom_hero_resources",
+        "fieldname": "custom_hero_resources",
+        "id": "relation:Event:HERO Event Resource",
+        "relation_type": "Table",
+        "target_doctype": "HERO Event Resource"
+      },
+      {
+        "dependencies": [
+          "doctype:HERO Event Partner"
+        ],
+        "doctype": "Event",
+        "field_id": "field:Event:custom_hero_partners",
+        "fieldname": "custom_hero_partners",
+        "id": "relation:Event:HERO Event Partner",
+        "relation_type": "Table",
+        "target_doctype": "HERO Event Partner"
+      },
+      {
+        "dependencies": [],
+        "doctype": "Event",
+        "field_id": "field:Event:custom_hero_project",
+        "fieldname": "custom_hero_project",
+        "id": "relation:Event:Project",
+        "relation_type": "Link",
+        "target_doctype": "Project"
+      },
+      {
+        "dependencies": [
+          "doctype:HERO External Task"
+        ],
+        "doctype": "HERO External Task",
+        "field_id": "field:HERO External Task:custom_hero_project",
+        "fieldname": "custom_hero_project",
+        "id": "relation:HERO External Task:Project",
+        "relation_type": "Link",
+        "target_doctype": "Project"
+      }
+    ]
+  },
+  "schema_fingerprint": "fee37bfa55a02f7a4d09b6b902e6600a835c992c8fe6644c358f5e511e025201"
+}

@@ -13,6 +13,7 @@ from hero_integration.services.direct_mapping import (
 from hero_integration.services.frappe_mapping_catalog import fields as catalog_fields
 from hero_integration.services.frappe_mapping_catalog import types_compatible
 from hero_integration.services.graphql_graph import normalize_schema
+from hero_integration.services.projection_contracts import CONTRACTS as PROJECTIONS
 
 
 @dataclass(frozen=True)
@@ -44,6 +45,7 @@ OPERATION_ROOTS = {
     "HeroCustomers": "contacts",
     "HeroProjectMatches": "project_matches",
 }
+OPERATION_ROOTS.update({name: value['root'] for name, value in PROJECTIONS.items()})
 MAX_SOURCE_RELATION_DEPTH = 4
 
 
@@ -98,7 +100,7 @@ def target_fields(
         label = str(field.label or field.fieldname)
         if needle and needle not in field.fieldname.lower() and needle not in label.lower():
             continue
-        protected = field.fieldname in SYSTEM_FIELDS | PROTECTED_FIELDS[doctype] | RESERVED_TARGET_FIELDS[doctype]
+        protected = field.fieldname in SYSTEM_FIELDS | PROTECTED_FIELDS.get(doctype, set()) | RESERVED_TARGET_FIELDS.get(doctype, set())
         is_child_relation = field.fieldtype == "Table"
         is_link = field.fieldtype == "Link"
         is_custom = bool(getattr(field, "is_custom_field", False))

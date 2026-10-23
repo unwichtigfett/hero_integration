@@ -13,6 +13,8 @@ from hero_integration.integrations.erpnext.company import confirmed_project_comp
 from hero_integration.integrations.erpnext.contact import (
     HomePhoneConflict,
     home_phone_for_customer,
+    primary_contact_values,
+    synchronize_primary_contact,
     synchronize_home_phone,
 )
 from hero_integration.sources.hero import GraphQLServiceSource, HeroSource, SourcePage
@@ -21,12 +23,14 @@ from hero_integration.services.conflict_notifications import notify_conflict_onc
 from hero_integration.services.integration_events import record_output
 from hero_integration.services.mapping_runtime import MappingPlanError, active_mapping_plan
 from hero_integration.services.project_naming import ProjectTitleValidationError, build_project_title
+from hero_integration.services.projection_contracts import CONTRACTS as PROJECTIONS, validate_projection_record
 
 
 CUSTOMER_ACTIONS = {"Customer Migration", "Cheap Data Migration", "Full Data Migration", "Sync"}
 PROJECT_ACTIONS = {"Project Migration", "Cheap Data Migration", "Full Data Migration", "Sync"}
 TERMINAL_STATES = {"Completed", "Completed With Conflicts", "Failed", "Cancelled", "Blocked"}
 PHASES = ("customer", "project")
+PROJECTION_ACTIONS = {"Projection Migration", "Schedule Migration"}
 PHASE_BLOCKING_RESULTS = {"BLOCKED_RECORD", "CONFLICT", "SKIPPED_AMBIGUOUS", "UNAVAILABLE"}
 
 
@@ -101,7 +105,45 @@ def _source_for_run(run, config):
     contract = from_documents(service, mapping, snapshot)
     if int(run.service_revision or 0) != contract.service_revision or int(run.mapping_revision or 0) != contract.mapping_revision:
         raise MappingPlanError("The queued run no longer matches its approved service or mapping revision.")
-    return GraphQLServiceSource(HeroGraphQLClient(config.endpoint, lambda: config.api_token, config.timeout_seconds), service, contract, getattr(snapshot, "source_instance", "") or config.source_instance)
+    source = GraphQLServiceSource(HeroGraphQLClient(config.endpoint, lambda: config.api_token, config.timeout_seconds), service, contract, getattr(snapshot, "source_instance", "") or config.source_instance)
+    if contract.target_operation == 'HeroProjectMatches':
+        customer_service, customer_mapping, customer_snapshot = _customer_read_documents(run)
+        customer_contract = from_documents(customer_service, customer_mapping, customer_snapshot)
+        source.customer_source = GraphQLServiceSource(source.client, customer_service, customer_contract, source.source_instance)
+    return source
+
+
+def customer_dependency(service, mapping):
+    """Resolve an explicitly configured same-snapshot dependency before queueing."""
+    from hero_integration.services.read_contract import from_documents
+    config = json.loads(mapping.mapping_json)
+    if config.get('target_operation') != 'HeroProjectMatches':
+        return {}
+    name = config.get('customer_service')
+    if not isinstance(name, str) or not name:
+        raise MappingPlanError('Project read mapping requires an approved customer_service dependency.')
+    customer_service = frappe.get_doc('HERO GraphQL Service', name)
+    customer_mapping = frappe.get_doc('HERO GraphQL Mapping', customer_service.read_mapping)
+    snapshot = frappe.get_doc('HERO GraphQL Schema Snapshot', service.schema_snapshot)
+    contract = from_documents(customer_service, customer_mapping, snapshot)
+    if contract.target_operation != 'HeroCustomers':
+        raise MappingPlanError('Customer dependency must use the Customer adapter on the same snapshot.')
+    return {'customer_service': customer_service.name, 'customer_service_revision': contract.service_revision,
+            'customer_mapping': customer_mapping.name, 'customer_mapping_revision': contract.mapping_revision}
+
+
+def _customer_read_documents(run):
+    from hero_integration.services.read_contract import from_documents
+    if not getattr(run, 'customer_service', '') or not getattr(run, 'customer_mapping', ''):
+        raise MappingPlanError('This Project run has no frozen Customer dependency.')
+    service = frappe.get_doc('HERO GraphQL Service', run.customer_service)
+    mapping = frappe.get_doc('HERO GraphQL Mapping', run.customer_mapping)
+    primary = frappe.get_doc('HERO GraphQL Service', run.graphql_service)
+    snapshot = frappe.get_doc('HERO GraphQL Schema Snapshot', primary.schema_snapshot)
+    contract = from_documents(service, mapping, snapshot)
+    if contract.target_operation != 'HeroCustomers' or contract.service_revision != int(run.customer_service_revision) or contract.mapping_revision != int(run.customer_mapping_revision):
+        raise MappingPlanError('The frozen Customer dependency changed; create a newly approved run.')
+    return service, mapping, snapshot
 
 
 def _claim_run(run) -> bool:
@@ -197,6 +239,9 @@ def _process_requested_phases(run, source: HeroSource) -> None:
     # This is intentionally stricter than a mere lookup during project creation:
     # the gate belongs to the same run and source instance, and survives retries.
     _bind_source_instance(run, source.source_instance)
+    if run.action in PROJECTION_ACTIONS:
+        _process_projection(run, source)
+        return
     needs_customer_phase = run.action in CUSTOMER_ACTIONS or run.action in PROJECT_ACTIONS
     if needs_customer_phase and not _process_phase(run, "customer", source.customers):
         return
@@ -218,6 +263,17 @@ def _process_requested_phases(run, source: HeroSource) -> None:
 def validate_run_mappings(run) -> None:
     """Validate every target phase against the contract frozen on ``run``."""
     operations = []
+    if run.action in PROJECTION_ACTIONS:
+        if not getattr(run, 'graphql_mapping', ''):
+            raise MappingPlanError('A projection requires an explicitly approved saved read service.')
+        mapping = frappe.get_doc('HERO GraphQL Mapping', run.graphql_mapping)
+        operation = json.loads(mapping.mapping_json).get('target_operation')
+        if operation not in PROJECTIONS:
+            raise MappingPlanError('The selected target is not a registered read-only projection.')
+        if run.action == 'Schedule Migration' and operation != 'HeroCalendarEvents':
+            raise MappingPlanError('Schedule Migration requires the calendar contract.')
+        _mapping_plan_for_run(run, operation)
+        return
     # Project imports deliberately require the Customer plan as well, because
     # they first execute the complete Customer phase of this run.
     if run.action in CUSTOMER_ACTIONS or run.action in PROJECT_ACTIONS:
@@ -234,16 +290,20 @@ def _mapping_plan_for_run(run, target_operation: str):
         return active_mapping_plan(target_operation)
     from hero_integration.services.read_contract import ReadContractError, from_documents
 
-    service = frappe.get_doc("HERO GraphQL Service", run.graphql_service)
-    mapping = frappe.get_doc("HERO GraphQL Mapping", run.graphql_mapping)
-    snapshot = frappe.get_doc("HERO GraphQL Schema Snapshot", service.schema_snapshot)
+    dependency = target_operation == 'HeroCustomers' and bool(getattr(run, 'customer_service', ''))
+    if dependency:
+        service, mapping, snapshot = _customer_read_documents(run)
+    else:
+        service = frappe.get_doc("HERO GraphQL Service", run.graphql_service)
+        mapping = frappe.get_doc("HERO GraphQL Mapping", run.graphql_mapping)
+        snapshot = frappe.get_doc("HERO GraphQL Schema Snapshot", service.schema_snapshot)
     try:
         contract = from_documents(service, mapping, snapshot)
     except ReadContractError as error:
         raise MappingPlanError(str(error)) from error
-    if int(getattr(run, "service_revision", 0) or 0) != contract.service_revision:
+    if int(getattr(run, 'customer_service_revision' if dependency else "service_revision", 0) or 0) != contract.service_revision:
         raise MappingPlanError("The queued run no longer matches its approved service revision.")
-    if int(getattr(run, "mapping_revision", 0) or 0) != contract.mapping_revision:
+    if int(getattr(run, 'customer_mapping_revision' if dependency else "mapping_revision", 0) or 0) != contract.mapping_revision:
         raise MappingPlanError("The queued run no longer matches its approved mapping revision.")
     if contract.target_operation != target_operation:
         raise MappingPlanError("The selected read mapping does not provide the required target operation.")
@@ -300,24 +360,149 @@ def _migrate_customer(record: dict[str, object], run) -> Result:
         plan = _mapping_plan_for_run(run, "HeroCustomers")
         source_id = plan.source_identity(record)
         values = plan.values(record)
-        address = _customer_primary_address(record)
+        contact_values = plan.customer_contact_values(values)
+        address = _customer_primary_address(record, plan.customer_primary_address_line2(record))
     except MappingPlanError as error:
         return Result("BLOCKED_RECORD", str(error))
     if plan.source_deleted(record):
-        _mark_source_deleted(_link("customer", source_id, _source_instance(record)))
+        if run.mode != 'Preview':
+            _mark_source_deleted(_link("customer", source_id, _source_instance(record)))
         return Result("SKIPPED_SOURCE_DELETED", "Source customer is deleted. No target deletion occurs.")
     if _is_contact_person(record):
         return Result("SKIPPED_CONTACT_PERSON", "Source contact person is not created as an ERPNext Customer.")
     if not values.get("customer_name"):
         return Result("BLOCKED_RECORD", "Configured customer record name is empty.")
+    if _source_instance(record) != 'default':
+        values['custom_hero_source_id'] = f'{_source_instance(record)}:{source_id}'
     return _upsert(
         "customer", source_id, record, values, "Customer", "customer_name", plan.mapping_version, run,
         after_insert=lambda customer: _synchronize_customer_relations(
-            customer, plan.home_phone(record), address, _source_instance(record), plan.mapping_version,
+            customer, contact_values, plan.home_phone(record), address, _source_instance(record), plan.mapping_version,
         ),
-        target_snapshot=lambda customer: _customer_target_values(customer, values, plan.home_phone(record)),
+        after_update=lambda customer: _synchronize_customer_relations(
+            customer, contact_values, plan.home_phone(record), address, _source_instance(record), plan.mapping_version,
+        ),
+        target_snapshot=lambda customer: _customer_target_values(customer, values, contact_values, plan.home_phone(record)),
         source_instance=_source_instance(record),
     )
+
+
+def _process_projection(run, source) -> None:
+    """Reuse the existing run, read service, mapping plan and conflict-safe writer."""
+    operation = source.contract.target_operation
+    plan = _mapping_plan_for_run(run, operation)
+    offset = int(run.resume_offset or 0)
+    index_start = int(run.resume_record_index or 0)
+    seen_pages = set()
+    while True:
+        _cancel_if_requested(run)
+        page = source.projection(offset)
+        page_ids = tuple(record.get('id') for record in page.records)
+        if page_ids and page_ids in seen_pages:
+            raise MappingPlanError('Projection pagination returned a repeated page.')
+        seen_pages.add(page_ids)
+        for index, record in enumerate(page.records):
+            if index < index_start:
+                continue
+            _cancel_if_requested(run)
+            result = _migrate_projection(record, run, plan)
+            _record_result(run, PROJECTIONS[operation]['source_type'], record, result)
+            run.resume_phase = operation
+            run.resume_offset, run.resume_record_index = offset, index + 1
+            run.save()
+        if page.next_offset is None:
+            return
+        offset, index_start = page.next_offset, 0
+        run.resume_offset, run.resume_record_index = offset, 0
+        run.save()
+
+
+def _migrate_projection(record, run, plan) -> Result:
+    operation = plan.target_operation or plan.operation
+    contract = PROJECTIONS[operation]
+    instance = _source_instance(record)
+    try:
+        source_id = plan.source_identity(record)
+        validate_projection_record(operation, record)
+        if record.get('is_deleted') is True or record.get('deleted') is True:
+            if run.mode != 'Preview':
+                _mark_source_deleted(_link(contract['source_type'], source_id, instance))
+            return Result('SKIPPED_SOURCE_DELETED', 'Source deletion is observed; no target deletion occurs.')
+        # An existing Event whose privacy or outbound settings changed must be
+        # held before resolving the saved native options.  This makes Preview
+        # fail closed even when it is invoked with a minimal test/run context,
+        # and guarantees the protected target is never updated.
+        existing = _link(contract['source_type'], source_id, instance) if contract.get('native_kind') == 'event' else None
+        if existing:
+            if existing.target_doctype != 'Event':
+                return Result('CONFLICT', 'Stored calendar binding is not a native Event.')
+            target = _native_lookup('Event', existing.target_name)
+            if target.get('event_type') != 'Private' or any(target.get(f) for f in ('event_participants', 'send_reminder', 'sync_with_google_calendar', 'add_video_conferencing')):
+                return Result('CONFLICT', 'Event sharing or outbound settings changed; native calendar update requires review.')
+        native_values, defaults = {}, {}
+        if contract.get('native_kind') or contract.get('native_bindings'):
+            from hero_integration.services.native_projections import values as native_resolve, creation_defaults
+            config = json.loads(frappe.get_doc('HERO GraphQL Mapping', run.graphql_mapping).mapping_json)
+            options = config.get('native_options')
+            native_values = native_resolve(contract, record, source_id, instance, options, lookup=_native_lookup,
+                                          item_link=lambda identity: _item_name_for_source(identity, instance))
+            if contract.get('native_kind') == 'event' and options['target_timezone'] != frappe.db.get_single_value('System Settings', 'time_zone'):
+                raise MappingPlanError('Configured event target timezone differs from the native System Settings timezone.')
+            defaults = creation_defaults(contract, options)
+        values = plan.values(record, project_link=lambda value: _project_name_for_source(value, instance), native_value=lambda target: native_values[target])
+        values['custom_hero_key'] = _digest([instance, contract['source_type'], source_id])
+        values['custom_hero_source_instance'] = instance
+    except (ValueError, MappingPlanError) as error:
+        return Result('BLOCKED_RECORD', str(error))
+    return _upsert(contract['source_type'], source_id, record, values, contract['target_doctype'],
+                   'item_code' if contract['target_doctype'] == 'Item' else 'custom_hero_key', plan.mapping_version, run, source_instance=instance,
+                   target_snapshot=lambda target: _projection_target_values(target, values, contract), creation_values=defaults)
+
+
+def _native_lookup(doctype, name):
+    if not isinstance(name, str) or not name or not frappe.db.exists(doctype, name):
+        raise MappingPlanError('Configured native reference does not exist: ' + doctype)
+    document = frappe.get_doc(doctype, name)
+    frappe.has_permission(doctype, 'read', doc=document, throw=True)
+    return document
+
+
+def _item_name_for_source(identity, instance):
+    link = _link('Documents_SupplyProduct', identity, instance)
+    if not link or link.target_doctype != 'Item':
+        raise MappingPlanError('Product version has no verified native Item binding.')
+    return _native_lookup('Item', link.target_name).name
+
+
+def _projection_target_values(target, values, contract):
+    snapshot = _target_values(target, values)
+    for binding in contract['bindings'].values():
+        if binding['fieldtype'] == 'Table':
+            field = binding['field']
+            keys = ('custom_hero_source_id', 'custom_hero_resource_name', 'custom_hero_resource_type', 'custom_hero_type_id') if field == 'custom_hero_resources' else ('custom_hero_source_id', 'custom_hero_partner_name')
+            snapshot[field] = [{key: row.get(key) for key in keys} for row in snapshot.get(field) or []]
+            continue
+        if binding['fieldtype'] != 'JSON':
+            continue
+        field = binding['field']
+        value = snapshot.get(field)
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except ValueError:
+                continue
+        snapshot[field] = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':'), allow_nan=False)
+    return snapshot
+
+
+def _project_name_for_source(value, source_instance):
+    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+        raise MappingPlanError('ProjectMatch reference must be a positive integer.')
+    link = _link('project', str(value), source_instance)
+    if not link or link.target_doctype != 'Project' or not frappe.db.exists('Project', link.target_name):
+        raise MappingPlanError('ProjectMatch reference has no verified native Project binding.')
+    frappe.has_permission('Project', 'read', doc=frappe.get_doc('Project', link.target_name), throw=True)
+    return link.target_name
 
 
 def _migrate_project(record: dict[str, object], run) -> Result:
@@ -411,16 +596,21 @@ def _upsert(
     run,
     *,
     after_insert=None,
+    after_update=None,
     target_snapshot=None,
     source_instance: str = "default",
+    creation_values: dict | None = None,
 ) -> Result:
     if not _target_available(doctype):
         return Result("UNAVAILABLE", f"{doctype} is not installed on this site.")
     source_hash = _digest(record)
     existing = _link(source_type, source_id, source_instance)
     if existing:
+        if existing.target_doctype != doctype:
+            return Result('CONFLICT', 'Stored binding has an incompatible target DocType.')
         if not frappe.db.exists(existing.target_doctype, existing.target_name):
-            _mark_link_conflict(existing, "Stored target reference no longer exists.")
+            if run.mode != "Preview":
+                _mark_link_conflict(existing, "Stored target reference no longer exists.")
             return Result("CONFLICT", "Stored target reference no longer exists.")
         target = frappe.get_doc(existing.target_doctype, existing.target_name)
         snapshot = target_snapshot or (lambda item: _target_values(item, values))
@@ -457,10 +647,18 @@ def _upsert(
             return Result("PREVIEW_OK", "Existing target would remain unchanged; local changes are observed only.", doctype, target.name)
         _observe_link(existing, source_hash, _digest(target_values))
         if changed_source:
-            for field in changed_source:
-                if field in values:
-                    target.set(field, values[field])
-            target.save()
+            savepoint = "hero_upsert_update"
+            frappe.db.savepoint(savepoint)
+            try:
+                for field in changed_source:
+                    if field in values:
+                        target.set(field, values[field])
+                target.save()
+                if after_update:
+                    after_update(target)
+            except (HomePhoneConflict, CustomerAddressError) as error:
+                frappe.db.rollback(save_point=savepoint)
+                return Result("CONFLICT", str(error), doctype, target.name)
             target_values = snapshot(target)
             target_field_hashes = field_hashes(target_values)
             _update_link_baseline(existing, source_hash, _digest(target_values), source_field_hashes, target_field_hashes, mapping_version)
@@ -482,7 +680,7 @@ def _upsert(
     savepoint = "hero_upsert_relation"
     frappe.db.savepoint(savepoint)
     try:
-        target = frappe.get_doc({"doctype": doctype, **values})
+        target = frappe.get_doc({"doctype": doctype, **(creation_values or {}), **values})
         target.insert()
         if after_insert:
             after_insert(target)
@@ -539,8 +737,17 @@ def _target_values(target, values: dict[str, object]) -> dict[str, object]:
     return {field: target.get(field) for field in values}
 
 
-def _customer_target_values(target, values: dict[str, object], home_phone: str | None) -> dict[str, object]:
+def _customer_target_values(target, values: dict[str, object], contact_values: dict[str, object], home_phone: str | None) -> dict[str, object]:
     snapshot = _target_values(target, values)
+    # Existing rows created before Contact persistence (or a relationship that
+    # cannot safely be read) retain the Customer-field snapshot for conflict
+    # detection.  A missing native value is not evidence that a user changed
+    # the visible Customer projection to ``None``.
+    snapshot.update({
+        field: value
+        for field, value in primary_contact_values(target, set(contact_values)).items()
+        if value is not None
+    })
     if home_phone:
         snapshot["hero_phone_home"] = home_phone_for_customer(target)
     return snapshot
@@ -604,7 +811,7 @@ def _is_contact_person(record: dict[str, object]) -> bool:
     return record.get("is_contact_person") is True
 
 
-def _customer_primary_address(record: dict[str, object]) -> dict[str, object] | None:
+def _customer_primary_address(record: dict[str, object], selected_line2: str | None = None) -> dict[str, object] | None:
     """Validate only the explicitly selected primary Customer.address relation."""
     value = record.get("address")
     if value is None:
@@ -617,10 +824,20 @@ def _customer_primary_address(record: dict[str, object]) -> dict[str, object] | 
     fields = {key: value.get(key) for key in ("street", "zipcode", "city")}
     if not all(isinstance(item, str) and item.strip() for item in fields.values()):
         raise MappingPlanError("Customer primary address is incomplete.")
-    return {"id": str(source_id), **{key: item.strip() for key, item in fields.items()}}
+    country = value.get('country')
+    country_code = country.get('code') if isinstance(country, dict) else None
+    address = {
+        "id": str(source_id),
+        **{key: item.strip() for key, item in fields.items()},
+        **({'country_code': country_code} if country_code is not None else {}),
+    }
+    if isinstance(selected_line2, str) and selected_line2.strip():
+        address["line_2"] = selected_line2.strip()
+    return address
 
 
-def _synchronize_customer_relations(customer, home_phone, address, source_instance: str, mapping_version: str) -> None:
+def _synchronize_customer_relations(customer, contact_values, home_phone, address, source_instance: str, mapping_version: str) -> None:
+    synchronize_primary_contact(customer, contact_values)
     synchronize_home_phone(customer, home_phone)
     if address is not None:
         _synchronize_customer_address(customer, address, source_instance, mapping_version)
@@ -630,25 +847,94 @@ def _synchronize_customer_address(customer, address: dict[str, object], source_i
     if not _target_available("Address"):
         raise CustomerAddressError("Address is not installed on this site.")
     source_id = str(address["id"])
+    code = address.get('country_code')
+    if not isinstance(code, str) or not code.strip():
+        raise CustomerAddressError('Primary address requires an explicit HERO country.code selection.')
+    countries = frappe.get_list('Country', filters={'code': code.strip().lower()}, pluck='name', limit_page_length=2)
+    if len(countries) != 1:
+        raise CustomerAddressError('HERO country code has no unique readable native Country binding.')
     values = {
+        'country': countries[0], 'address_type': 'Billing',
         "address_title": customer.name,
         "address_line1": address["street"],
         "pincode": address["zipcode"],
         "city": address["city"],
     }
+    if isinstance(address.get("line_2"), str) and address["line_2"].strip():
+        values["address_line2"] = address["line_2"].strip()
     payload = {"customer": customer.name, **address}
     existing = _link("customer_address", source_id, source_instance)
     if existing:
+        if existing.target_doctype != "Address":
+            _mark_link_conflict(existing, "Stored customer address reference has an incompatible target DocType.")
+            raise CustomerAddressError("Stored customer address reference has an incompatible target DocType.")
         if not frappe.db.exists("Address", existing.target_name):
             _mark_link_conflict(existing, "Stored customer address reference no longer exists.")
             raise CustomerAddressError("Stored customer address reference no longer exists.")
         target = frappe.get_doc("Address", existing.target_name)
-        if _digest(_target_values(target, values)) != existing.target_payload_hash:
+        if "address_line2" not in values:
+            prior_source = decode_hashes(getattr(existing, "source_field_hashes", ""))
+            prior_target = decode_hashes(getattr(existing, "target_field_hashes", ""))
+            if prior_source and prior_target and "address_line2" in prior_source:
+                legacy_source_fields = {field: values.get(field) for field in prior_source if field != "address_line2"}
+                legacy_target_fields = {field: target.get(field) for field in prior_target if field != "address_line2"}
+                if field_hashes(legacy_source_fields) != {field: value for field, value in prior_source.items() if field != "address_line2"}:
+                    _mark_link_conflict(existing, "HERO customer address changed outside the selected line_2 binding.")
+                    raise CustomerAddressError("HERO customer address changed outside the selected line_2 binding.")
+                if field_hashes(legacy_target_fields) != {field: value for field, value in prior_target.items() if field != "address_line2"}:
+                    _mark_link_conflict(existing, "Customer address changed outside HERO Integration.")
+                    raise CustomerAddressError("Customer address changed outside HERO Integration.")
+                return
+            if _digest(_target_values(target, values)) != existing.target_payload_hash:
+                _mark_link_conflict(existing, "Customer address changed outside HERO Integration.")
+                raise CustomerAddressError("Customer address changed outside HERO Integration.")
+            if existing.source_payload_hash != _digest(payload):
+                _mark_link_conflict(existing, "HERO customer address changed. Review is required before an update.")
+                raise CustomerAddressError("HERO customer address changed. Review is required before an update.")
+            return
+        _require_exclusive_customer_address(target, customer.name)
+        prior_source = decode_hashes(getattr(existing, "source_field_hashes", ""))
+        prior_target = decode_hashes(getattr(existing, "target_field_hashes", ""))
+        if prior_source is None or prior_target is None:
+            _mark_link_conflict(existing, "Customer address has no field-level baseline for the selected line_2 binding.")
+            raise CustomerAddressError("Customer address has no field-level baseline for the selected line_2 binding.")
+        legacy_source_fields = {field: values.get(field) for field in prior_source if field != "address_line2"}
+        legacy_target_fields = {field: target.get(field) for field in prior_target if field != "address_line2"}
+        if field_hashes(legacy_source_fields) != {field: value for field, value in prior_source.items() if field != "address_line2"}:
+            _mark_link_conflict(existing, "HERO customer address changed outside the selected line_2 binding.")
+            raise CustomerAddressError("HERO customer address changed outside the selected line_2 binding.")
+        if field_hashes(legacy_target_fields) != {field: value for field, value in prior_target.items() if field != "address_line2"}:
             _mark_link_conflict(existing, "Customer address changed outside HERO Integration.")
             raise CustomerAddressError("Customer address changed outside HERO Integration.")
-        if existing.source_payload_hash != _digest(payload):
-            _mark_link_conflict(existing, "HERO customer address changed. Review is required before an update.")
-            raise CustomerAddressError("HERO customer address changed. Review is required before an update.")
+        source_hashes = field_hashes(values)
+        target_values = _target_values(target, values)
+        target_hashes = field_hashes(target_values)
+        changed_source = changed_fields(prior_source, source_hashes)
+        changed_target = changed_fields(prior_target, target_hashes)
+        # V1 links predate address_line2.  Their field baseline therefore
+        # omits it; an empty current target field is not an external mutation
+        # and must not block the tightly-scoped V2 extension.
+        allowed_target_changes = set()
+        if "address_line2" not in prior_target and not target.get("address_line2"):
+            allowed_target_changes.add("address_line2")
+        if changed_target - allowed_target_changes:
+            _mark_link_conflict(existing, "Customer address changed outside HERO Integration.")
+            raise CustomerAddressError("Customer address changed outside HERO Integration.")
+        if changed_source - {"address_line2"}:
+            _mark_link_conflict(existing, "HERO customer address changed outside the selected line_2 binding.")
+            raise CustomerAddressError("HERO customer address changed outside the selected line_2 binding.")
+        if not changed_source:
+            return
+        if "address_line2" not in prior_source and target.get("address_line2"):
+            _mark_link_conflict(existing, "Customer address line_2 has an untracked local value.")
+            raise CustomerAddressError("Customer address line_2 has an untracked local value.")
+        target.address_line2 = values["address_line2"]
+        target.save()
+        target_values = _target_values(target, values)
+        _update_link_baseline(
+            existing, _digest(payload), _digest(target_values), field_hashes(values),
+            field_hashes(target_values), mapping_version,
+        )
         return
     target = frappe.get_doc({
         "doctype": "Address", **values,
@@ -665,6 +951,16 @@ def _synchronize_customer_address(customer, address: dict[str, object], source_i
         "target_field_hashes": encode_hashes(field_hashes(_target_values(target, values))),
         "mapping_version": mapping_version,
     }).insert()
+
+
+def _require_exclusive_customer_address(target, customer_name: str) -> None:
+    links = list(target.get("links") or [])
+    customer_links = [
+        row for row in links
+        if row.get("link_doctype") == "Customer" and row.get("link_name") == customer_name
+    ]
+    if len(links) != 1 or len(customer_links) != 1:
+        raise CustomerAddressError("Customer address is shared or has an ambiguous Dynamic Link binding.")
 
 
 def _bind_source_instance(run, source_instance: str) -> None:
