@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 import json, re
 from hero_integration.services.graphql_graph import analyze_snapshot, normalize_schema, GraphSnapshotError
-from hero_integration.graphql_protocol.schema import GraphQLSchema, GraphQLType, GraphQLField, GraphQLArgument, GraphQLTypeRef
+from hero_integration.graphql_protocol.schema import GraphQLSchema, GraphQLType, GraphQLField, GraphQLArgument, GraphQLEnumValue, GraphQLTypeRef
 from hero_integration.graphql_protocol.schema_snapshot import schema_fingerprint
 from hero_integration.graphql_protocol.operation_kind import GraphQLOperationKind
 from hero_integration.graphql_protocol.graphql_operation_materializer import GraphQLOperationBinding, GraphQLOperationMaterializer, GraphQLOperationMaterializationError
@@ -30,7 +30,8 @@ def schema(x):
  for t in x['types']:
   if not isinstance(t,Mapping) or not isinstance(t.get('fields') or [],list) or not isinstance(t.get('inputFields') or [],list): raise MappingContractError('Incomplete schema type.')
   fields=tuple(GraphQLField(name(f.get('name')),None,tuple(arg(a) for a in f.get('args',[])),ref(f.get('type')),False,None) for f in t.get('fields') or [] if isinstance(f,Mapping))
-  types.append(GraphQLType(name(t.get('kind')),name(t.get('name')),None,fields,tuple(arg(a) for a in t.get('inputFields') or [])))
+  enums=tuple(GraphQLEnumValue(name(e.get('name')),None,False,None) for e in t.get('enumValues') or [] if isinstance(e,Mapping))
+  types.append(GraphQLType(name(t.get('kind')),name(t.get('name')),None,fields,tuple(arg(a) for a in t.get('inputFields') or []),enums))
  roots=[]
  for key in ('queryType','mutationType','subscriptionType'):
   v=x.get(key); roots.append(None if v is None else name(v.get('name') if isinstance(v,Mapping) else None))
@@ -73,4 +74,14 @@ class MutationAdapter:
   if not d.source_instance or d.revision<1 or not d.input_paths or d.null_mode is not NullMode.MISSING_IS_UNCHANGED or (d.relation_mode is RelationMode.COLLECTION and not d.resolver_approved): raise MappingContractError('Non-executable mutation draft is incomplete.')
   f=next((x for x in s.ir.mutation_fields if x.name==d.field),None)
   if not f: raise MappingContractError('Unknown mutation field.')
+  args={a.name:a for a in f.arguments}
+  for path in d.input_paths:
+   if not path: raise MappingContractError('Empty mutation input path.')
+   current=args.get(path[0])
+   if current is None: raise MappingContractError('Unknown mutation argument.')
+   for segment in path[1:]:
+    parent=s.ir.type_named(current.type_ref.named_type() or '')
+    if parent is None or parent.kind!='INPUT_OBJECT': raise MappingContractError('Unsupported mutation input path.')
+    current=next((x for x in parent.input_fields if x.name==segment),None)
+    if current is None: raise MappingContractError('Unknown mutation input path.')
   return {'executable':False,'field':f.name,'snapshot_fingerprint':s.fingerprint,'source_instance':d.source_instance,'revision':d.revision,'input_paths':d.input_paths}
