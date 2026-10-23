@@ -12,10 +12,29 @@ CUSTOMER_QUERY_V1 = """
 query HeroCustomers($first: Int!, $offset: Int!, $orderBy: String!, $showDeleted: Boolean!) {
   contacts(first: $first, offset: $offset, orderBy: $orderBy, show_deleted: $showDeleted) {
     id nr first_name last_name full_name email phone_mobile phone_home company_name category type is_contact_person is_deleted
-    address { id street zipcode city }
+    address { id street zipcode city country { code } }
   }
 }
 """
+CUSTOMER_QUERY_V2 = """
+query HeroCustomers($first: Int!, $offset: Int!, $orderBy: String!, $showDeleted: Boolean!) {
+  contacts(first: $first, offset: $offset, orderBy: $orderBy, show_deleted: $showDeleted) {
+    id nr first_name last_name full_name email phone_mobile phone_home company_name category type is_contact_person is_deleted
+    address { id street line_2 zipcode city country { code } }
+  }
+}
+"""
+CUSTOMER_QUERY_V3 = """
+query HeroCustomers($first: Int!, $offset: Int!, $orderBy: String!, $showDeleted: Boolean!) {
+  contacts(first: $first, offset: $offset, orderBy: $orderBy, show_deleted: $showDeleted) {
+    id nr first_name last_name full_name email phone_mobile phone_home company_name company_legal_form category type is_contact_person is_deleted
+    address { id street line_2 zipcode city country { code } }
+  }
+}
+"""
+CUSTOMER_CONTRACT_V1 = "v1"
+CUSTOMER_CONTRACT_V2 = "v2"
+CUSTOMER_CONTRACT_V3 = "v3"
 PROJECT_QUERY_V1 = """
 query HeroProjectMatches($first: Int!, $offset: Int!, $orderBy: String!) {
   project_matches(first: $first, offset: $offset, orderBy: $orderBy) {
@@ -23,6 +42,7 @@ query HeroProjectMatches($first: Int!, $offset: Int!, $orderBy: String!) {
     customer { title full_name }
     address { full_address }
     display_id created modified
+    current_project_match_status { id status_code name short_name created modified step_id }
   }
 }
 """
@@ -30,12 +50,30 @@ PAGE_SIZE = 100
 CUSTOMER_SELECTED_PATHS = (
     "id", "nr", "first_name", "last_name", "full_name", "email", "phone_mobile", "phone_home",
     "company_name", "category", "type", "is_contact_person", "is_deleted",
-    "address.id", "address.street", "address.zipcode", "address.city",
+    "address.id", "address.street", "address.zipcode", "address.city", "address.country.code",
 )
+CUSTOMER_SELECTED_PATHS_V2 = (*CUSTOMER_SELECTED_PATHS, "address.line_2")
+CUSTOMER_SELECTED_PATHS_V3 = (*CUSTOMER_SELECTED_PATHS_V2, "company_legal_form")
 PROJECT_SELECTED_PATHS = (
     "id", "customer_id", "project_id", "project_title", "project_nr", "project_type", "partner_notes",
     "customer.title", "customer.full_name", "address.full_address", "display_id", "created", "modified",
+    "current_project_match_status.id", "current_project_match_status.status_code",
+    "current_project_match_status.name", "current_project_match_status.short_name",
+    "current_project_match_status.created", "current_project_match_status.modified",
+    "current_project_match_status.step_id",
 )
+
+
+def customer_query(contract_version: str) -> str:
+    """Return one explicitly reviewed Customer read-contract version."""
+
+    if contract_version == CUSTOMER_CONTRACT_V1:
+        return CUSTOMER_QUERY_V1
+    if contract_version == CUSTOMER_CONTRACT_V2:
+        return CUSTOMER_QUERY_V2
+    if contract_version == CUSTOMER_CONTRACT_V3:
+        return CUSTOMER_QUERY_V3
+    raise ValueError("Unsupported Customer read-contract version.")
 
 
 @dataclass(frozen=True)
@@ -77,6 +115,15 @@ class HeroSource:
             raise ValueError("HeroProjectMatches has no approved V1 filter variables.")
         return self._page(PROJECT_QUERY_V1, "project_matches", offset)
 
+    @staticmethod
+    def testing_ordering(operation: str) -> dict[str, object]:
+        """Native V1 readers have no verified descending HERO order contract."""
+        return {
+            "verified": False,
+            "order": "id",
+            "reason": "The native V1 reader's id order is not evidence of newest-first ordering.",
+        }
+
     def _page(self, query: str, root: str, offset: int, **extra: object) -> SourcePage:
         data = self.client.query(query, {"first": self.page_size, "offset": offset, "orderBy": "id", **extra})
         records = data.get(root)
@@ -96,12 +143,31 @@ class GraphQLServiceSource:
         self.source_instance = source_instance.strip() or "default"
 
     def customers(self, offset: int = 0) -> SourcePage:
+        if getattr(self, 'customer_source', None) is not None:
+            return self.customer_source.customers(offset)
         return self._page(offset, "HeroCustomers")
 
     def projects(self, offset: int = 0) -> SourcePage:
         return self._page(offset, "HeroProjectMatches")
 
+    def projection(self, offset: int = 0) -> SourcePage:
+        from hero_integration.services.projection_contracts import CONTRACTS
+        if self.contract.target_operation not in CONTRACTS:
+            raise ReadContractError('The selected read contract is not a projection.')
+        return self._page(offset, self.contract.target_operation)
+
+    @staticmethod
+    def testing_ordering(operation: str) -> dict[str, object]:
+        """Saved contracts must opt in with a reviewed descending order first."""
+        return {
+            "verified": False,
+            "order": "UNVERIFIED",
+            "reason": "The approved saved read contract does not prove newest-first ordering.",
+        }
+
     def _page(self, offset: int, operation: str) -> SourcePage:
+        if not isinstance(offset, int) or isinstance(offset, bool) or not 0 <= offset <= 10_000_000:
+            raise ReadContractError('Read offset is invalid or exceeds the reviewed run bound.')
         if operation != self.contract.target_operation:
             return SourcePage((), None)
         variables = dict(self.contract.variables)
@@ -112,7 +178,84 @@ class GraphQLServiceSource:
         records = value_at(data, self.contract.records_path)
         if not isinstance(records, list) or not all(isinstance(row, dict) for row in records):
             raise ReadContractError("The selected result path is not a list of objects.")
+        if len(records) > self.contract.page_size:
+            raise ReadContractError('Response exceeds the approved page size.')
         for row in records:
             value_at(row, self.contract.identity_path)
         annotated = tuple({**row, "_hero_source_instance": self.source_instance} for row in records)
         return SourcePage(annotated, offset + len(records) if len(records) == self.contract.page_size else None)
+
+
+class TestingPreviewSource:
+    """One shared, fail-closed request budget for a manual Preview run.
+
+    It is deliberately a source wrapper, not a second sync path: it only
+    forwards to an existing approved reader after that reader explicitly proves
+    its newest-first ordering.  The caller constructs its GraphQL client with
+    zero retries, so one forwarded page is exactly one external request.
+    """
+
+    def __init__(self, source, max_actions: int):
+        if not isinstance(max_actions, int) or isinstance(max_actions, bool) or not 1 <= max_actions <= 100:
+            raise ValueError("Testing Max. Actions must be between 1 and 100.")
+        self.source = source
+        self.source_instance = source.source_instance
+        self.max_actions = max_actions
+        self.executed_actions = 0
+        self.records_received = 0
+        self.results: dict[str, dict[str, object]] = {}
+        self.status = "COMPLETED"
+
+    def customers(self, offset: int = 0) -> SourcePage:
+        return self._page("HeroCustomers", self.source.customers, offset)
+
+    def projects(self, offset: int = 0) -> SourcePage:
+        return self._page("HeroProjectMatches", self.source.projects, offset)
+
+    def projection(self, offset: int = 0) -> SourcePage:
+        operation = getattr(getattr(self.source, "contract", None), "target_operation", "Projection")
+        return self._page(operation, self.source.projection, offset)
+
+    def _page(self, operation: str, reader, offset: int) -> SourcePage:
+        ordering = self._ordering(operation)
+        if not ordering.get("verified"):
+            self.status = "BLOCKED"
+            self.results[operation] = {
+                "status": "BLOCKED_ORDER_UNVERIFIED", "ordering": ordering.get("order", "UNVERIFIED"),
+                "requests": 0, "records_received": 0, "reason": ordering.get("reason", "Newest-first ordering is unverified."),
+            }
+            return SourcePage((), None)
+        if self.executed_actions >= self.max_actions:
+            self.status = "LIMIT_REACHED"
+            prior = self.results.get(operation, {})
+            self.results[operation] = {
+                **prior, "status": "SKIPPED_LIMIT" if not prior.get("requests") else "LIMIT_REACHED",
+                "ordering": ordering.get("order", "VERIFIED"), "requests": int(prior.get("requests", 0)),
+                "records_received": int(prior.get("records_received", 0)), "reason": "Shared testing request budget exhausted.",
+            }
+            return SourcePage((), None)
+        self.executed_actions += 1
+        try:
+            page = reader(offset)
+        except Exception:
+            self.status = "FAILED"
+            raise
+        records = len(page.records)
+        self.records_received += records
+        prior = self.results.get(operation, {})
+        self.results[operation] = {
+            "status": "COMPLETED", "ordering": ordering.get("order", "VERIFIED"),
+            "requests": int(prior.get("requests", 0)) + 1,
+            "records_received": int(prior.get("records_received", 0)) + records,
+        }
+        return page
+
+    def _ordering(self, operation: str) -> dict[str, object]:
+        provider = getattr(self.source, "testing_ordering", None)
+        value = provider(operation) if callable(provider) else None
+        if not isinstance(value, dict):
+            return {"verified": False, "order": "UNVERIFIED"}
+        order = str(value.get("order", "")).strip()
+        if not value.get("verified") or order.lower() not in {"created desc", "id desc"}:
+            return {**value, "verified": False, "order": order or "UNVERIFIED"}
+        return {**value, "order": order}

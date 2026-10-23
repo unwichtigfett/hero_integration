@@ -211,7 +211,7 @@
         }
         async show(force=false) {
             this.host.append(this.root);await this.ready;const serial=++this.sequence;this.cancelGraph();this.focusDialog?.hide();
-            const params=new URLSearchParams(location.search), requested=this.options.tool || params.get('tool') || 'analyzer';
+            const params=new URLSearchParams(location.search), requested=params.get('hero_tool') || this.options.tool || params.get('tool') || 'analyzer';
             this.tool=Object.hasOwn(this.panels,requested)?requested:'analyzer';this.root.classList.toggle('is-analyzer',this.tool==='analyzer');
             if(this.tool==='services'&&!this.editor){
                 this.editorInit=this.editorInit||this.initializeEditor();
@@ -239,7 +239,7 @@
             this.bindButton.hidden=!this.context.needs_binding_update;this.refreshButton.disabled=!this.context.can_write || !this.context.enabled || this.context.needs_binding_update;
             this.tabs.replaceChildren();for(const [key,label] of [['analyzer','API Analyzer'],['graph','Graph Viewer'],['services','GraphQL Services']]) {
                 const link=$('a','pc-shell-link'+(key===this.tool?' is-current':''),label);
-                const target=new URL(location.href);target.searchParams.set('tool',key);link.href=target.pathname+target.search+target.hash;
+                link.href=window.hero_integration_platform.url("api", {hero_tool: key, snapshot: this.context.connection_id || this.options.snapshot_name || ""});
                 this.tabs.append(hero_integration_shell.navigationLink(link));
             }
             for(const [key,panel] of Object.entries(this.panels))panel.hidden=key!==this.tool;

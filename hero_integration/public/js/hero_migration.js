@@ -4,6 +4,8 @@
     if (window.hero_integration_migration) return;
 
     const ACTIONS = [
+        ["Schedule Migration", "Imports one approved calendar contract into private native Events with resource and partner rows."],
+        ["Projection Migration", "Imports one approved HERO task contract into its restricted external-data DocType."],
         ["Customer Migration", "Creates or updates only approved customer mappings. Preview is side-effect free."],
         ["Project Migration", "Requires confirmed ERPNext Company and approved project mappings. Preview is side-effect free."],
         ["Cheap Data Migration", "Runs the bounded lightweight contract. Execute stays blocked unless active mappings permit it."],
@@ -25,15 +27,35 @@
         });
         page.main.append(root);
         function confirmStart(action) { frappe.confirm(`Execute ${action}? This queues exactly one background run after server-side System Manager and active-mapping gates succeed.`, () => start(action, 0)); }
-        function start(action, dryRun) { frappe.call({method: "hero_integration.api.start_migration", args: {action, dry_run: dryRun}}).then((response) => { if (response.message.run) { state.text(`${action} ${dryRun ? "preview" : "execution"} queued as ${response.message.run}.`); load(); } else state.text(response.message.detail || response.message.status || "No run was queued."); }).catch((error) => state.text(error.message || "The server blocked this action before it could run.")); }
+        function start(action, dryRun) {
+            const dialog = new frappe.ui.Dialog({
+                title: action + ": select approved read service",
+                fields: [{fieldname: "graphql_service", label: "GraphQL Service", fieldtype: "Link", options: "HERO GraphQL Service", reqd: 1}],
+                primary_action_label: dryRun ? "Preview" : "Queue confirmed execution",
+                primary_action(values) {
+                    frappe.call({method: "hero_integration.api.start_migration", args: {action, dry_run: dryRun, graphql_service: values.graphql_service}}).then((response) => {
+                        dialog.hide();
+                        if (response.message.run) { state.text(action + " queued as " + response.message.run + "."); load(); }
+                        else state.text(response.message.detail || response.message.status || "No run was queued.");
+                    }).catch((error) => state.text(error.message || "The server blocked this action before it could run."));
+                },
+            });
+            dialog.show();
+        }
         function renderRuns(rows) {
             runs.empty(); if (!rows.length) return runs.append($("<p class='text-muted'></p>").text("No stored runs yet."));
             const table = $("<table class='table table-sm'><thead><tr><th>Run</th><th>Action</th><th>Mode</th><th>State</th><th>Progress</th><th>Actions</th></tr></thead><tbody></tbody></table>");
             rows.forEach((row) => {
                 const controls = $("<span></span>");
                 if (["Queued", "Running"].includes(row.state)) controls.append($("<button type='button' class='btn btn-xs btn-default'>Cancel</button>").on("click", () => frappe.call({method: "hero_integration.api.cancel_run", args: {run_name: row.name}}).then(load)));
-                if (["Failed", "Cancelled", "Blocked"].includes(row.state)) controls.append($("<button type='button' class='btn btn-xs btn-default'>Resume</button>").on("click", () => frappe.call({method: "hero_integration.api.resume_run", args: {run_name: row.name}}).then(load)));
-                table.find("tbody").append($("<tr></tr>").append($("<td></td>").text(row.name), $("<td></td>").text(row.action), $("<td></td>").text(row.mode), $("<td></td>").text(row.state), $("<td></td>").text(`${row.processed || 0} processed; ${row.conflict_records || 0} conflicts`), $("<td></td>").append(controls)));
+                if (["Failed", "Cancelled", "Blocked"].includes(row.state) && !row.testing_enabled) controls.append($("<button type='button' class='btn btn-xs btn-default'>Resume</button>").on("click", () => frappe.call({method: "hero_integration.api.resume_run", args: {run_name: row.name}}).then(load)));
+                let testing = "";
+                if (row.testing_enabled) {
+                    let sources = "";
+                    try { sources = Object.entries(JSON.parse(row.testing_results_json || "{}")).map(([name, result]) => `${name}: ${result.status}`).join("; "); } catch (_) { sources = "Results unavailable"; }
+                    testing = ` Testing: ${row.testing_status || "PENDING"}; ${row.testing_executed_actions || 0}/${row.testing_max_actions || 0} HERO requests; ${row.testing_records_received || 0} records. ${sources}`;
+                }
+                table.find("tbody").append($("<tr></tr>").append($("<td></td>").text(row.name), $("<td></td>").text(row.action), $("<td></td>").text(row.mode), $("<td></td>").text(row.state), $("<td></td>").text(`${row.processed || 0} processed; ${row.conflict_records || 0} conflicts.${testing}`), $("<td></td>").append(controls)));
             }); runs.append(table);
         }
         function renderEvents(data) {

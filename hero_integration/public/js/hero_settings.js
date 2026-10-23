@@ -16,6 +16,9 @@
     const platform = window.hero_integration_platform;
     const GET = "workspace_settings_get";
     const SAVE = "workspace_settings_save";
+    const SAVE_TESTING = "workspace_testing_settings_save";
+    const SAVE_COMPANY = "workspace_erpnext_company_save";
+    const CONFIRM_COMPANY = "workspace_erpnext_company_confirm";
     const SET_MUTATION_EXECUTION = "workspace_mutation_execution_set";
 
     function node(tag, cls, text) {
@@ -106,6 +109,8 @@
         const pollingRate = document.createElement("input"); pollingRate.type = "number"; pollingRate.min = "1"; pollingRate.className = "hero-settings-input";
         const pollingConcurrency = document.createElement("input"); pollingConcurrency.type = "number"; pollingConcurrency.min = "1"; pollingConcurrency.max = "1"; pollingConcurrency.value = "1"; pollingConcurrency.className = "hero-settings-input";
         const pollingNotifications = document.createElement("input"); pollingNotifications.type = "checkbox"; pollingNotifications.className = "hero-settings-check";
+        const testingEnabled = document.createElement("input"); testingEnabled.type = "checkbox"; testingEnabled.className = "hero-settings-check";
+        const testingMaxActions = document.createElement("input"); testingMaxActions.type = "number"; testingMaxActions.min = "1"; testingMaxActions.max = "100"; testingMaxActions.step = "1"; testingMaxActions.className = "hero-settings-input";
 
         const token = document.createElement("input");
         token.type = "password";
@@ -146,6 +151,17 @@
 
         const save = node("button", "hero-settings-button primary", "Save Settings");
         save.type = "button";
+        const testingStatus = node("div", "hero-settings-status", "Testing settings are not loaded yet.");
+        testingStatus.setAttribute("role", "status");
+        const testingSave = node("button", "hero-settings-button secondary", "Save Testing Settings");
+        testingSave.type = "button";
+        const testingCard = node("section", "hero-settings-card hero-settings-testing");
+        testingCard.append(
+            node("h3", "", "Testing"),
+            field("Enabled", testingEnabled),
+            field("Max. Actions", testingMaxActions, "When enabled, manual synchronization previews are limited to the configured number of HERO API requests and start with the newest available records. No business data is modified."),
+            testingStatus, testingSave
+        );
         const pollingCard = node("section", "hero-settings-card hero-settings-polling");
         const pollingDetails = document.createElement("details");
         pollingDetails.className = "hero-settings-polling-details";
@@ -188,10 +204,17 @@
             field("HERO source instance", sourceInstance, "Stable identity for this external source.")
         );
         const companySection = node("fieldset", "hero-settings-section");
+        const companyStatus = node("div", "hero-settings-status", "Company selection is not loaded yet.");
+        companyStatus.setAttribute("role", "status");
+        const companySave = node("button", "hero-settings-button secondary", "Save Company");
+        companySave.type = "button";
+        const companyConfirm = node("button", "hero-settings-button secondary", "Confirm Company");
+        companyConfirm.type = "button";
         companySection.append(
             node("legend", "", "ERPNext Company"),
             field("ERPNext Company", company, "Existing ERPNext Company used for HERO projects."),
-            field("Confirm ERPNext Company", companyConfirmed, "A company change clears this confirmation server-side.")
+            field("Confirm ERPNext Company", companyConfirmed, "A company change clears this confirmation server-side."),
+            companyStatus, companySave, companyConfirm
         );
         const securitySection = node("fieldset", "hero-settings-section");
         securitySection.append(
@@ -201,12 +224,13 @@
         );
         card.append(connection, sources, companySection, securitySection, status, save);
 
-        root.append(header, card, pollingCard, mutationCard);
+        root.append(header, card, testingCard, pollingCard, mutationCard);
         workspace.replaceChildren(root);
 
-        let destroyed = false;
+        let destroyed = false, isBusy = false, storedCompany = "";
 
         function busy(value) {
+            isBusy = value;
             refresh.disabled = value;
             save.disabled = value;
             enabled.disabled = value;
@@ -216,7 +240,7 @@
             allowedHosts.disabled = value;
             sourceInstance.disabled = value;
             company.disabled = value;
-            companyConfirmed.disabled = value;
+            companyConfirmed.disabled = true;
             allowDeletion.disabled = value;
             adminRecipients.disabled = value;
             pollingMode.disabled = value;
@@ -224,6 +248,18 @@
             [pollingTimezone, pollingWindow, pollingSources, pollingFilters, pollingBootstrap, pollingPageSize, pollingPagination, pollingBackfill, pollingInventory, pollingReconciliation, pollingRetryLimit, pollingBackoff, pollingTimeout, pollingRate, pollingConcurrency, pollingNotifications].forEach((control) => { control.disabled = value; });
             mutationEnabled.disabled = value;
             mutationSave.disabled = value;
+            testingEnabled.disabled = value;
+            testingMaxActions.disabled = value;
+            testingSave.disabled = value;
+            companySave.disabled = value;
+            updateCompanyControls();
+        }
+
+        function updateCompanyControls() {
+            const selected = company.value.trim();
+            const savedSelection = Boolean(storedCompany) && selected === storedCompany;
+            companyConfirm.disabled = isBusy || !savedSelection;
+            companyConfirm.title = savedSelection ? "Confirm the saved ERPNext Company." : "Save the selected ERPNext Company before confirming it.";
         }
 
         function apply(data) {
@@ -232,8 +268,11 @@
             timeout.value = String(data.timeout_seconds || 30);
             allowedHosts.value = data.allowed_hero_hosts || "";
             sourceInstance.value = data.hero_source_instance || "default";
-            company.value = data.erpnext_company || "";
+            storedCompany = data.erpnext_company || "";
+            company.value = storedCompany;
             companyConfirmed.checked = Boolean(data.erpnext_company_confirmed);
+            companyStatus.textContent = uiText(!storedCompany ? "Save an ERPNext Company before confirming it." : companyConfirmed.checked ? "Confirmed" : "Company saved. Confirmation required.");
+            companyStatus.dataset.state = companyConfirmed.checked ? "success" : "";
             allowDeletion.checked = Boolean(data.allow_deletion);
             adminRecipients.value = data.admin_notification_recipients || "";
             pollingMode.value = data.polling?.mode || "OFF";
@@ -254,11 +293,14 @@
             pollingRate.value = String(data.polling?.rate_limit || 30);
             pollingConcurrency.value = String(data.polling?.concurrency || 1);
             pollingNotifications.checked = Boolean(data.polling?.notifications);
+            testingEnabled.checked = Boolean(data.testing?.enabled);
+            testingMaxActions.value = String(data.testing?.max_actions || 5);
             token.value = "";
             const configured = data.api_token_status === "CONFIGURED";
             tokenState.textContent = uiText(configured ? "Configured" : data.api_token_status === "CREDENTIAL_ERROR" ? "Credential error" : "Not configured");
             tokenState.dataset.state = configured ? "configured" : data.api_token_status === "CREDENTIAL_ERROR" ? "error" : "missing";
             applyMutationState(data);
+            updateCompanyControls();
         }
 
         function applyMutationState(data) {
@@ -289,6 +331,8 @@
         async function persist() {
             busy(true);
             status.textContent = uiText("Saving …");
+            const companyBeforeSave = storedCompany;
+            const requestedCompany = company.value.trim();
             try {
                 const data = await platform.api(SAVE, {
                     enabled: enabled.checked,
@@ -307,17 +351,91 @@
                     polling_page_size: Number(pollingPageSize.value), polling_pagination_strategy: pollingPagination.value,
                     polling_allow_backfill: pollingBackfill.checked, polling_full_inventory: pollingInventory.checked, polling_reconciliation: pollingReconciliation.checked,
                     polling_retry_limit: Number(pollingRetryLimit.value), polling_retry_backoff_seconds: Number(pollingBackoff.value), polling_timeout_seconds: Number(pollingTimeout.value),
-                    polling_rate_limit: Number(pollingRate.value), polling_concurrency: Number(pollingConcurrency.value), polling_notifications: pollingNotifications.checked
+                    polling_rate_limit: Number(pollingRate.value), polling_concurrency: Number(pollingConcurrency.value), polling_notifications: pollingNotifications.checked,
+                    testing_enabled: testingEnabled.checked, testing_max_actions: testingMaxActions.value
                 }, {write: true});
                 if (!destroyed) {
                     apply(data);
                     status.textContent = uiText("Settings saved.");
                     status.dataset.state = "success";
+                    if (requestedCompany !== companyBeforeSave && !data.erpnext_company_confirmed) {
+                        companyStatus.textContent = uiText("Company saved. Confirmation was reset because the company changed.");
+                        companyStatus.dataset.state = "";
+                    }
                 }
             } catch (error) {
                 if (!destroyed) {
                     status.textContent = `Could not save HERO settings. ${errorMessage(error)}`;
                     status.dataset.state = "error";
+                }
+            } finally {
+                if (!destroyed) busy(false);
+            }
+        }
+
+        async function persistTesting() {
+            busy(true);
+            testingStatus.textContent = uiText("Saving testing settings …");
+            try {
+                const data = await platform.api(SAVE_TESTING, {
+                    testing_enabled: testingEnabled.checked,
+                    testing_max_actions: testingMaxActions.value
+                }, {write: true});
+                if (!destroyed) {
+                    apply(data);
+                    testingStatus.textContent = uiText("Testing settings saved.");
+                    testingStatus.dataset.state = "success";
+                }
+            } catch (error) {
+                if (!destroyed) {
+                    testingStatus.textContent = `Could not save testing settings. ${errorMessage(error)}`;
+                    testingStatus.dataset.state = "error";
+                }
+            } finally {
+                if (!destroyed) busy(false);
+            }
+        }
+
+        async function persistCompany() {
+            busy(true);
+            companyStatus.textContent = uiText("Saving company …");
+            try {
+                const data = await platform.api(SAVE_COMPANY, {erpnext_company: company.value.trim()}, {write: true});
+                if (!destroyed) {
+                    apply(data);
+                    companyStatus.textContent = uiText(data.erpnext_company_confirmed ? "Confirmed" : "Company saved. Confirmation required.");
+                    companyStatus.dataset.state = data.erpnext_company_confirmed ? "success" : "";
+                }
+            } catch (error) {
+                if (!destroyed) {
+                    companyStatus.textContent = `Could not save ERPNext Company. ${errorMessage(error)}`;
+                    companyStatus.dataset.state = "error";
+                }
+            } finally {
+                if (!destroyed) busy(false);
+            }
+        }
+
+        async function confirmCompany() {
+            if (company.value.trim() !== storedCompany || !storedCompany) {
+                companyStatus.textContent = uiText("Save the selected ERPNext Company before confirming it.");
+                companyStatus.dataset.state = "error";
+                return;
+            }
+            busy(true);
+            companyStatus.textContent = uiText("Confirming company …");
+            try {
+                const data = await platform.api(CONFIRM_COMPANY, {erpnext_company: company.value.trim()}, {write: true});
+                if (!data.erpnext_company_confirmed) throw new Error("The server did not confirm the selected ERPNext Company.");
+                if (!destroyed) {
+                    apply(data);
+                    companyStatus.textContent = uiText("Confirmed");
+                    companyStatus.dataset.state = "success";
+                }
+            } catch (error) {
+                if (!destroyed) {
+                    companyStatus.textContent = `Could not confirm ERPNext Company. ${errorMessage(error)}`;
+                    companyStatus.dataset.state = "error";
                 }
             } finally {
                 if (!destroyed) busy(false);
@@ -344,6 +462,10 @@
 
         refresh.addEventListener("click", load);
         save.addEventListener("click", persist);
+        testingSave.addEventListener("click", persistTesting);
+        companySave.addEventListener("click", persistCompany);
+        companyConfirm.addEventListener("click", confirmCompany);
+        company.addEventListener("input", updateCompanyControls);
         mutationSave.addEventListener("click", persistMutationSetting);
         await load();
 
