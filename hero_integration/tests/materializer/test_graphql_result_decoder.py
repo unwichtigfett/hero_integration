@@ -1,16 +1,16 @@
 import json
 import unittest
 
-from hero_integration.materializer.transport import Response
-from hero_integration.materializer.graphql_operation_materializer import (
+from hero_integration.graphql_protocol.transport import Response
+from hero_integration.graphql_protocol.graphql_operation_materializer import (
     GraphQLOperationRequest,
     GraphQLResultBinding,
 )
-from hero_integration.materializer.graphql_result_decoder import (
+from hero_integration.graphql_protocol.graphql_result_decoder import (
     GraphQLResultDecodeError,
     decode_graphql_result,
 )
-from hero_integration.materializer.operation_kind import (
+from hero_integration.graphql_protocol.operation_kind import (
     GraphQLOperationKind,
 )
 

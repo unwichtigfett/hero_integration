@@ -1,18 +1,57 @@
 import pytest
-from hero_integration.materializer.graphql_argument_values import GraphQLArgumentValueError,parse_argument_text,validate_argument_values
-from hero_connector.tools.graphql_introspection import parse_introspection_payload
-from hero_integration.materializer.graphql_query_composer import build_query_composer_model
+from hero_integration.graphql_protocol.graphql_argument_values import (
+    GraphQLArgumentValueError,
+    parse_argument_text,
+    validate_argument_values,
+)
+from hero_integration.graphql_protocol.graphql_query_composer import build_query_composer_model
+from hero_integration.graphql_protocol.schema import (
+    GraphQLArgument,
+    GraphQLField,
+    GraphQLSchema,
+    GraphQLType,
+    GraphQLTypeRef,
+)
 
-def ref(kind,name=None,ofType=None): return {"kind":kind,"name":name,"ofType":ofType}
-def arg(name,t,default=None): return {"name":name,"description":None,"defaultValue":default,"type":t}
+def scalar(name):
+    return GraphQLTypeRef(kind="SCALAR", name=name)
+
+
+def argument(name, type_ref, default=None):
+    return GraphQLArgument(name, None, type_ref, default)
+
+
 def model():
-    S=lambda n:ref("SCALAR",n)
-    args=[arg("sourceRequestId",ref("NON_NULL",ofType=S("ID"))),arg("limit",S("Int"),"50"),arg("active",S("Boolean")),arg("ids",ref("LIST",ofType=ref("NON_NULL",ofType=S("ID")))),arg("requiredIds",ref("NON_NULL",ofType=ref("LIST",ofType=ref("NON_NULL",ofType=S("ID")))))]
-    types=[{"kind":"OBJECT","name":"Query","description":None,"fields":[{"name":"GetProject","description":None,"args":args,"type":ref("OBJECT","Project"),"isDeprecated":False,"deprecationReason":None}]},{"kind":"OBJECT","name":"Project","description":None,"fields":[]}]
-    types += [{"kind":"SCALAR","name":n,"description":None,"fields":None} for n in ("ID","Int","Boolean")]
-    s=parse_introspection_payload({"data":{"__schema":{"queryType":{"name":"Query"},"mutationType":None,"subscriptionType":None,"types":types}}})
-    return build_query_composer_model(s,s.query_fields[0])
-def spec(n): return next(s for s in model().arguments if s.name==n)
+    required_id = GraphQLTypeRef(kind="NON_NULL", of_type=scalar("ID"))
+    required_id_list = GraphQLTypeRef(
+        kind="NON_NULL",
+        of_type=GraphQLTypeRef(kind="LIST", of_type=required_id),
+    )
+    arguments = (
+        argument("sourceRequestId", required_id),
+        argument("limit", scalar("Int"), "50"),
+        argument("active", scalar("Boolean")),
+        argument("ids", GraphQLTypeRef(kind="LIST", of_type=required_id)),
+        argument("requiredIds", required_id_list),
+    )
+    field = GraphQLField(
+        "GetProject", None, arguments, GraphQLTypeRef(kind="OBJECT", name="Project"), False, None
+    )
+    schema = GraphQLSchema(
+        query_type_name="Query",
+        mutation_type_name=None,
+        subscription_type_name=None,
+        types=(
+            GraphQLType("OBJECT", "Query", None, fields=(field,)),
+            GraphQLType("OBJECT", "Project", None),
+            *(GraphQLType("SCALAR", name, None) for name in ("ID", "Int", "Boolean")),
+        ),
+    )
+    return build_query_composer_model(schema, field)
+
+
+def spec(name):
+    return next(item for item in model().arguments if item.name == name)
 
 def test_required_and_default_metadata():
     assert spec("sourceRequestId").required

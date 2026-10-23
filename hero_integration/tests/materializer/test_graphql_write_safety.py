@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from hero_integration.materializer.graphql_write_safety import (
+from hero_integration.graphql_protocol.graphql_write_safety import (
     GraphQLMutationApproval,
     GraphQLOperationKind,
     GraphQLWriteRequest,
