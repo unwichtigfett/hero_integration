@@ -12,7 +12,11 @@ from urllib.parse import urlsplit
 
 
 class HeroClientError(RuntimeError):
-    pass
+    """A redacted, machine-readable HERO transport or GraphQL failure."""
+
+    def __init__(self, message: str, *, code: str = "UNKNOWN"):
+        super().__init__(message)
+        self.code = code
 
 
 class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -71,7 +75,7 @@ class HeroGraphQLClient:
         assert_read_only(document)
         return self._post(document, variables)
 
-    def introspect(self, document: str) -> dict[str, object]:
+    def introspect(self, document: str, *, operation_name: str = "") -> dict[str, object]:
         """Execute the fixed read-only introspection document.
 
         Introspection uses the same HTTPS-only, allowlisted, no-redirect
@@ -79,13 +83,24 @@ class HeroGraphQLClient:
         response before persistence.
         """
         assert_read_only(document)
-        return {"data": self._post(document, {})}
+        return {"data": self._post(document, None, operation_name=operation_name)}
 
-    def _post(self, document: str, variables: Mapping[str, object]) -> dict[str, object]:
+    def _post(
+        self,
+        document: str,
+        variables: Mapping[str, object] | None,
+        *,
+        operation_name: str = "",
+    ) -> dict[str, object]:
         token = self.token_provider()
         if not isinstance(token, str) or not token.strip() or any(ord(char) < 32 for char in token):
             raise HeroClientError("HERO API token is missing or invalid.")
-        body = json.dumps({"query": document, "variables": dict(variables)}, allow_nan=False).encode()
+        body_payload: dict[str, object] = {"query": document}
+        if variables is not None:
+            body_payload["variables"] = dict(variables)
+        if operation_name:
+            body_payload["operationName"] = operation_name
+        body = json.dumps(body_payload, allow_nan=False).encode()
         request = urllib.request.Request(
             self.endpoint.url,
             data=body,
@@ -98,8 +113,12 @@ class HeroGraphQLClient:
             _NoRedirectHandler(),
         )
         payload = self._request_with_retry(opener, request)
-        if not isinstance(payload, dict) or payload.get("errors") or not isinstance(payload.get("data"), dict):
-            raise HeroClientError("HERO response is invalid.")
+        if not isinstance(payload, dict):
+            raise HeroClientError("HERO response is not a JSON object.", code="INVALID_RESPONSE")
+        if payload.get("errors"):
+            raise HeroClientError("HERO GraphQL rejected the request.", code="GRAPHQL_ERRORS")
+        if not isinstance(payload.get("data"), dict):
+            raise HeroClientError("HERO GraphQL response contains no data.", code="MISSING_DATA")
         return payload["data"]
 
     def _request_with_retry(self, opener, request) -> dict[str, object]:

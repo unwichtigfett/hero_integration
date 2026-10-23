@@ -8,34 +8,66 @@ from uuid import uuid4
 import frappe
 
 
-ACTIONS = {"Customer Migration", "Project Migration", "Cheap Data Migration", "Full Data Migration", "Sync"}
+ACTIONS = {
+    "Customer Migration",
+    "Project Migration",
+    "Cheap Data Migration",
+    "Full Data Migration",
+    "Sync",
+    "Projection Migration",
+    "Schedule Migration",
+}
 TERMINAL_STATES = {"Completed", "Completed With Conflicts", "Failed", "Cancelled", "Blocked"}
 MUTATION_EXECUTION_DISABLED = "HERO_MUTATION_EXECUTION_DISABLED"
 ACTIVE_MUTATION_RESERVATION = "active"
 
 
 @frappe.whitelist(methods=["POST"])
-def start_migration(action: str, dry_run: int | bool = 1, graphql_service: str = "") -> dict[str, str]:
+def start_migration(
+    action: str, dry_run: int | bool = 1, graphql_service: str = ""
+) -> dict[str, str]:
     """Queue a manually requested migration; this RPC is always administrative."""
     frappe.only_for("System Manager")
-    return _start_migration(action=action, dry_run=dry_run, scheduled=False, graphql_service=graphql_service)
+    return _start_migration(
+        action=action, dry_run=dry_run, scheduled=False, graphql_service=graphql_service
+    )
 
 
 def start_scheduled_sync() -> dict[str, str]:
-    """Internal scheduler entrypoint.  It is deliberately not whitelisted."""
-    return _start_migration(action="Sync", dry_run=0, scheduled=True, graphql_service="")
+    """Internal scheduler entrypoint; automatic execution requires an explicit service."""
+    return {"status": "SKIPPED_NO_APPROVED_SERVICE"}
 
 
-def _start_migration(action: str, dry_run: int | bool, scheduled: bool, graphql_service: str) -> dict[str, str]:
+def _start_migration(
+    action: str, dry_run: int | bool, scheduled: bool, graphql_service: str
+) -> dict[str, str]:
     if action not in ACTIONS:
         frappe.throw("Unsupported HERO migration action.")
     if not graphql_service:
         frappe.throw("An explicitly approved GraphQL service is required for a new migration run.")
     service, mapping = _approved_read_service(graphql_service)
-    _require_selected_mappings(action, service, mapping)
+    from hero_integration.services.migration import customer_dependency
+
+    dependencies = (
+        customer_dependency(service, mapping)
+        if action in {"Project Migration", "Cheap Data Migration", "Full Data Migration", "Sync"}
+        else {}
+    )
+    _require_selected_mappings(action, service, mapping, dependencies)
     if scheduled and _has_active_run():
         return {"status": "SKIPPED_ACTIVE_RUN"}
-    run = frappe.get_doc({"doctype": "HERO Integration Run", "action": action, "mode": "Preview" if int(dry_run) else "Execute", "graphql_service": service.name, "service_revision": service.service_revision, "graphql_mapping": mapping.name, "mapping_revision": mapping.mapping_revision})
+    run = frappe.get_doc(
+        {
+            "doctype": "HERO Integration Run",
+            "action": action,
+            "mode": "Preview" if int(dry_run) else "Execute",
+            "graphql_service": service.name,
+            "service_revision": service.service_revision,
+            "graphql_mapping": mapping.name,
+            "mapping_revision": mapping.mapping_revision,
+            **dependencies,
+        }
+    )
     run.insert()
     frappe.enqueue(
         "hero_integration.services.migration.execute_run",
@@ -51,7 +83,10 @@ def _start_migration(action: str, dry_run: int | bool, scheduled: bool, graphql_
 
 def _approved_read_service(service_name: str):
     from hero_integration.services.read_contract import ReadContractError, from_documents
+
     service = frappe.get_doc("HERO GraphQL Service", service_name)
+    if not service.read_mapping:
+        frappe.throw("The selected GraphQL service has no approved read mapping.")
     mapping = frappe.get_doc("HERO GraphQL Mapping", service.read_mapping)
     snapshot = frappe.get_doc("HERO GraphQL Schema Snapshot", service.schema_snapshot)
     try:
@@ -62,21 +97,36 @@ def _approved_read_service(service_name: str):
 
 
 @frappe.whitelist(methods=["POST"])
-def approve_read_service(query_id: str, mapping_name: str, expected_service_revision: int, expected_mapping_revision: int) -> dict[str, object]:
-    """Explicitly approve one saved read contract; it never queues a job."""
+def approve_read_service(
+    query_id: str,
+    mapping_name: str,
+    expected_service_revision: int,
+    expected_mapping_revision: int,
+) -> dict[str, object]:
+    """Approve one stored read contract; approval never queues a run."""
     frappe.only_for("System Manager")
     service = frappe.get_doc("HERO GraphQL Service", query_id)
     mapping = frappe.get_doc("HERO GraphQL Mapping", mapping_name)
-    if int(service.service_revision or 0) != int(expected_service_revision or 0) or int(mapping.mapping_revision or 0) != int(expected_mapping_revision or 0):
+    if int(service.service_revision or 0) != int(expected_service_revision or 0) or int(
+        mapping.mapping_revision or 0
+    ) != int(expected_mapping_revision or 0):
         frappe.throw("The service or mapping changed; reload it before approval.")
-    if service.schema_snapshot != mapping.schema_snapshot or service.status != "Validated" or mapping.status != "Active":
+    if (
+        service.schema_snapshot != mapping.schema_snapshot
+        or service.status != "Validated"
+        or mapping.status != "Active"
+    ):
         frappe.throw("Only a validated service and active mapping on the same snapshot can be approved.")
     service.read_mapping = mapping.name
     service.execution_status = "Approved"
     service.approved_service_revision = service.service_revision
     service.approved_mapping_revision = mapping.mapping_revision
     service.save()
-    return {"status": service.execution_status, "service_revision": service.service_revision, "mapping_revision": mapping.mapping_revision}
+    return {
+        "status": service.execution_status,
+        "service_revision": service.service_revision,
+        "mapping_revision": mapping.mapping_revision,
+    }
 
 
 @frappe.whitelist(methods=["POST"])
@@ -193,11 +243,13 @@ def workspace_schema_refresh(connection_id: str = "", binding_generation: int | 
     loading settings, or generating mapping suggestions never invokes it.
     """
     frappe.only_for("System Manager")
-    del binding_generation  # preserved compatibility parameter; no hidden binding state exists.
+    # Refresh always uses persisted server configuration, never a selected snapshot.
+    del connection_id, binding_generation
     from hero_integration.client.graphql import HeroClientError, HeroGraphQLClient
     from hero_integration.client.settings import HeroConfigurationError, get_configuration
     from hero_integration.services.introspection import (
         INTROSPECTION_QUERY,
+        COMPATIBILITY_INTROSPECTION_QUERY,
         IntrospectionError,
         canonical_schema,
         captured_at_utc,
@@ -208,15 +260,19 @@ def workspace_schema_refresh(connection_id: str = "", binding_generation: int | 
     try:
         configuration = get_configuration()
         endpoint_hash = endpoint_fingerprint(configuration.endpoint.url, configuration.source_instance)
-        if connection_id and connection_id not in {endpoint_hash, configuration.source_instance}:
-            frappe.throw("The selected schema connection does not match current HERO settings.")
         client = HeroGraphQLClient(
             configuration.endpoint,
             token_provider=lambda: configuration.api_token,
             timeout=configuration.timeout_seconds,
             max_retries=1,
         )
-        schema = canonical_schema(client.introspect(INTROSPECTION_QUERY))
+        try:
+            response = client.introspect(INTROSPECTION_QUERY)
+        except HeroClientError as error:
+            if error.code != "GRAPHQL_ERRORS":
+                raise
+            response = client.introspect(COMPATIBILITY_INTROSPECTION_QUERY)
+        schema = canonical_schema(response)
     except (HeroClientError, HeroConfigurationError, IntrospectionError, ValueError) as error:
         frappe.throw(f"HERO schema refresh failed safely: {error}")
 
@@ -224,9 +280,14 @@ def workspace_schema_refresh(connection_id: str = "", binding_generation: int | 
     from hero_integration.services.graphql_graph import analyze_snapshot
 
     fingerprint = analyze_snapshot(schema_json).fingerprint
+    type_count = len(schema["types"])
     existing = frappe.get_all(
         "HERO GraphQL Schema Snapshot",
-        filters={"schema_fingerprint": fingerprint},
+        filters={
+            "schema_fingerprint": fingerprint,
+            "source_instance": configuration.source_instance,
+            "endpoint_fingerprint": endpoint_hash,
+        },
         fields=["name", "schema_fingerprint", "execution_contract_status"],
         limit_page_length=1,
     )
@@ -237,6 +298,7 @@ def workspace_schema_refresh(connection_id: str = "", binding_generation: int | 
             "snapshot_name": row["name"],
             "schema_fingerprint": row["schema_fingerprint"],
             "execution_contract_status": row.get("execution_contract_status") or "Compatible",
+            "type_count": type_count,
         }
 
     previous_rows = frappe.get_all(
@@ -246,13 +308,14 @@ def workspace_schema_refresh(connection_id: str = "", binding_generation: int | 
     )
     previous = frappe.get_doc("HERO GraphQL Schema Snapshot", previous_rows[0]["name"]) if previous_rows else None
     diff = structural_diff(json.loads(previous.snapshot_json) if previous else None, schema)
+    captured_at = captured_at_utc()
     snapshot = frappe.get_doc({
         "doctype": "HERO GraphQL Schema Snapshot",
         "snapshot_json": json.dumps(schema_json, ensure_ascii=False, sort_keys=True),
         "source_instance": configuration.source_instance,
         "endpoint_fingerprint": endpoint_hash,
         "schema_version": 1,
-        "captured_at": captured_at_utc(),
+        "captured_at": captured_at,
         "structural_diff_json": json.dumps(diff, ensure_ascii=False, sort_keys=True),
         "execution_contract_status": "Blocked" if diff["breaking"] else "Compatible",
     })
@@ -262,6 +325,8 @@ def workspace_schema_refresh(connection_id: str = "", binding_generation: int | 
         "snapshot_name": snapshot.name,
         "schema_fingerprint": snapshot.schema_fingerprint,
         "execution_contract_status": snapshot.execution_contract_status,
+        "captured_at": captured_at,
+        "type_count": type_count,
         "structural_diff": diff,
     }
 
@@ -1306,8 +1371,8 @@ def _has_active_run() -> bool:
     return frappe.get_value("HERO Integration Run", state.active_run, "state") not in TERMINAL_STATES
 
 
-def _require_selected_mappings(action: str, service, mapping) -> None:
-    """Preflight the exact mapping definitions a newly queued run will freeze."""
+def _require_selected_mappings(action: str, service, mapping, dependencies=None) -> None:
+    """Preflight the exact mapping definitions a new run will freeze."""
     from hero_integration.services.mapping_runtime import MappingPlanError
     from hero_integration.services.migration import validate_run_mappings
 
@@ -1319,6 +1384,7 @@ def _require_selected_mappings(action: str, service, mapping) -> None:
                 service_revision=service.service_revision,
                 graphql_mapping=mapping.name,
                 mapping_revision=mapping.mapping_revision,
+                **(dependencies or {}),
             )
         )
     except MappingPlanError as error:

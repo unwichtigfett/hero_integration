@@ -48,6 +48,19 @@ class TestOfflineContracts(unittest.TestCase):
         )
         self.assertFalse(project_plan.values({"customer_id": 1, "project_title": ""}, lambda value: "Acme", lambda: "Executing Company").get("project_name"))
 
+    def test_customer_contact_persistence_uses_only_selected_contact_bindings(self):
+        plan = fixture_plan("HeroCustomers")
+        values = plan.values({
+            "company_name": "", "full_name": "Ada", "first_name": " Ada ",
+            "last_name": " Lovelace ", "email": "ada@synthetic.invalid", "phone_mobile": " 555 ",
+            "category": "not-a-contact-field",
+        })
+
+        self.assertEqual(plan.customer_contact_values(values), {
+            "first_name": "Ada", "last_name": "Lovelace",
+            "email_id": "ada@synthetic.invalid", "mobile_no": "555",
+        })
+
     def test_test_fixture_keeps_source_attributes_out_of_business_enums(self):
         customer = fixture_plan("HeroCustomers").values({
             "id": 10, "full_name": "Ada", "nr": "NR-10", "category": "Gold", "type": "External",

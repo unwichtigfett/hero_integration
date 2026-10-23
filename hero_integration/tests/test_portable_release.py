@@ -33,25 +33,35 @@ class TestPortableRelease(unittest.TestCase):
         self.assertTrue((PACKAGE / "modules.txt").is_file())
         self.assertTrue((PACKAGE / "patches.txt").is_file())
         self.assertTrue((PACKAGE / "install.py").is_file())
-        self.assertIn("recursive-include hero_integration *.json *.js *.txt", (ROOT / "MANIFEST.in").read_text())
+        manifest = (ROOT / "MANIFEST.in").read_text()
+        self.assertIn("recursive-include hero_integration *.json *.js *.txt", manifest)
+        self.assertIn("recursive-include hero_integration *.css", manifest)
 
     def test_required_release_documents_are_present(self):
         required = {
             "README.md",
             "INSTALLATION.md",
-            "CONFIGURATION.md",
-            "MANUAL_ACCEPTANCE.md",
-            "FEATURE_MATRIX.md",
-            "PORTABILITY_REPORT.md",
-            "DOCTYPE_EXTENSIONS.md",
-            "MAPPING_MATRIX.md",
+            "docs/CONFIGURATION.md",
+            "docs/MANUAL_ACCEPTANCE.md",
+            "docs/FEATURE_MATRIX.md",
+            "docs/PORTABILITY_REPORT.md",
+            "docs/DOCTYPE_EXTENSIONS.md",
+            "docs/MAPPING_MATRIX.md",
         }
 
         self.assertTrue(all((ROOT / filename).is_file() for filename in required))
 
     def test_production_files_have_no_fixed_host_bindings(self):
-        files = [path for path in PACKAGE.rglob("*") if path.suffix in PRODUCTION_SUFFIXES]
-        files = [path for path in files if "tests" not in path.parts]
+        files = [
+            path
+            for path in PACKAGE.rglob("*")
+            if path.is_file()
+            and path.suffix in PRODUCTION_SUFFIXES
+            and "tests" not in path.parts
+            # AppleDouble sidecars can be materialized by macOS archive tools.
+            # They are transport metadata, never Python package source.
+            and not path.name.startswith("._")
+        ]
         content = "\n".join(path.read_text() for path in files)
 
         self.assertFalse([marker for marker in FORBIDDEN_RUNTIME_MARKERS if marker in content])

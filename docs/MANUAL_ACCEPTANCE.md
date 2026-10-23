@@ -4,7 +4,7 @@ Run this procedure only on a new, owned, non-production Frappe v16 site with
 synthetic data. Do not configure a production HERO endpoint or token.
 
 1. Install ERPNext v16, then this app, by following
-   [INSTALLATION.md](INSTALLATION.md). Confirm that the site can open **HERO
+   [INSTALLATION.md](../INSTALLATION.md). Confirm that the site can open **HERO
    Integration Settings** and **HERO Migration Center**.
 2. Confirm that all HERO app DocTypes exist.
    Repeat `bench --site <site-name> migrate` and confirm that they are unchanged.

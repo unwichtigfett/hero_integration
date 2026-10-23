@@ -100,6 +100,23 @@ class TestSchemaProvisioning(unittest.TestCase):
         self.assertEqual(len(self.frappe.doctypes), 4)  # Customer, DocType, and two HERO DocTypes
         self.assertEqual(len(self.frappe.custom_fields), 1)
 
+    def test_read_only_custom_field_is_previewed_and_adopted_idempotently(self):
+        draft = package()
+        draft["schema"]["custom_fields"][0]["read_only"] = 1
+        draft["mappings"] = []
+
+        preview = schema_provisioning.preview_package("SYNTHETIC", json.dumps(draft))
+        field = next(item for item in preview["items"] if item["id"] == "field:customer-schema-value")
+        self.assertEqual(field["state"], "New")
+        definitions = schema_provisioning._definitions(draft["schema"])
+        self.assertEqual(schema_provisioning._PlannedMetadata(definitions).field("Customer", "custom_hero_schema_value").read_only, 1)
+
+        schema_provisioning.adopt_package("SYNTHETIC", json.dumps(draft), [field["id"]], True)
+        repeated = schema_provisioning.preview_package("SYNTHETIC", json.dumps(draft))
+        field = next(item for item in repeated["items"] if item["id"] == "field:customer-schema-value")
+        self.assertEqual(field["state"], "Unchanged")
+        self.assertEqual(self.frappe.custom_fields[("Customer", "custom_hero_schema_value")]["read_only"], 1)
+
     def test_schema_and_mapping_export_can_fill_a_fresh_site_checklist(self):
         preview = schema_provisioning.preview_package("SYNTHETIC", json.dumps(package()))
         schema_provisioning.adopt_package("SYNTHETIC", json.dumps(package()), [item["id"] for item in preview["items"] if item["selectable"]], True)
@@ -219,7 +236,7 @@ class _Frappe:
         if doctype not in self.doctypes:
             raise ValueError(doctype)
         fields = dict(self.doctypes[doctype]["fields"])
-        fields.update({fieldname: _Field(value["fieldtype"], value["options"]) for (dt, fieldname), value in self.custom_fields.items() if dt == doctype})
+        fields.update({fieldname: _Field(value["fieldtype"], value["options"], value.get("read_only", 0)) for (dt, fieldname), value in self.custom_fields.items() if dt == doctype})
         return SimpleNamespace(get_field=lambda fieldname: fields.get(fieldname))
 
 
@@ -277,8 +294,8 @@ class _Row(dict):
 
 
 class _Field:
-    def __init__(self, fieldtype, options=""):
+    def __init__(self, fieldtype, options="", read_only=0):
         self.fieldtype = fieldtype
         self.options = options
-        self.read_only = 0
+        self.read_only = read_only
         self.is_custom_field = fieldtype != "Data" or True
