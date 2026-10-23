@@ -18,7 +18,7 @@ class HEROGraphQLService(Document):
         if analyze_snapshot(json.loads(snapshot.snapshot_json)).fingerprint != snapshot.schema_fingerprint:
             frappe.throw("The selected GraphQL schema snapshot is stale.")
         self.schema_fingerprint = snapshot.schema_fingerprint
-        contract_fields = ("query_document", "schema_snapshot", "operation_name")
+        contract_fields = ("query_document", "schema_snapshot", "operation_name", "read_mapping")
         if not self.is_new() and self.has_value_changed("query_document"):
             self.service_revision = int(self.service_revision or 0) + 1
         if not self.is_new() and any(self.has_value_changed(field) for field in contract_fields):

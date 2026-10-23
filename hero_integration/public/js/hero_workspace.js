@@ -23,16 +23,18 @@
     // need an explicit release token. JavaScript must stay query-free when it
     // enters frappe.require(): Frappe owns the version parameter and uses the
     // original extension to select its script loader.
-    const ASSET_RELEASE = "20261021.14";
+    const ASSET_RELEASE = "20261023.22";
     const ASSETS = [
         "/assets/hero_integration/css/hero_tools.css",
         "/assets/hero_integration/css/hero_adapter.css",
         "/assets/hero_integration/css/hero_workspace.css",
         "/assets/hero_integration/css/hero_overview.css",
         "/assets/hero_integration/css/hero_settings.css",
+        "/assets/hero_integration/css/hero_api_summary.css",
         "/assets/hero_integration/js/hero_tools.js",
         "/assets/hero_integration/js/hero_overview.js",
         "/assets/hero_integration/js/hero_settings.js",
+        "/assets/hero_integration/js/hero_api_summary.js",
         "/assets/hero_integration/js/hero_mapping_editor.js",
         "/assets/hero_integration/js/hero_migration.js",
     ];
@@ -40,17 +42,19 @@
         ["hero_tools.js", "hero_workspace_tools"],
         ["hero_overview.js", "hero_integration_overview"],
         ["hero_settings.js", "hero_integration_settings_ui"],
+        ["hero_api_summary.js", "hero_integration_api_summary"],
         ["hero_mapping_editor.js", "hero_integration_mapping_editor"],
         ["hero_migration.js", "hero_integration_migration"],
     ]);
     const unsupported = new Set([
-        "synchronize_connection", "refresh_schema", "list_candidates", "mark_candidate",
+        "synchronize_connection", "list_candidates", "mark_candidate",
         "remove_candidate", "execute_service", "get_analyzer_service_draft", "save_analyzer_service",
     ]);
 
     const nativeMethods = new Set([
         "integration_overview", "workspace_context", "workspace_settings_get", "workspace_settings_save",
-        "workspace_mutation_execution_set", "workspace_sync_status",
+        "workspace_testing_settings_save", "workspace_erpnext_company_save", "workspace_erpnext_company_confirm",
+        "workspace_mutation_execution_set", "workspace_sync_status", "workspace_schema_refresh",
     ]);
     const errorMessage = (error) => {
         if (typeof error === "string") return error;
@@ -78,6 +82,10 @@
             throw new Error("This historic action is intentionally unavailable in the native workspace. Use the ERPNext Mapping Editor or saved read-only service definitions.");
         }
         const snapshot_name = snapshotName(args);
+        // The API tools still invoke this established workspace action.  It is
+        // now backed by the server-side snapshot workflow rather than a legacy
+        // connection binding.
+        if (method === "refresh_schema") return request("workspace_schema_refresh");
         if (method === "get_context") return request("workspace_context", {snapshot_name});
         if (method === "get_schema") return request("workspace_schema", {snapshot_name, search: args.search || "", kind: args.kind || "", start: args.start || 0, page_size: args.page_size || 50});
         if (method === "get_graph") return request("workspace_graph", {snapshot_name, start: args.start || 0, page_size: args.page_size || 200, node_id: args.node_id || ""});
@@ -122,7 +130,7 @@
     function routeTarget(section = "", tool = "") {
         if (LEGACY_SECTION_TO_TOOL[section]) return {section: "api", tool: LEGACY_SECTION_TO_TOOL[section]};
         if (section === "migration") return {section: "synchronization", tool: ""};
-        return {section: SECTION_NAMES[section] ? section : "overview", tool: API_TOOLS[tool] ? tool : "analyzer"};
+        return {section: SECTION_NAMES[section] ? section : "overview", tool: API_TOOLS[tool] ? tool : ""};
     }
     function routeUrl(section, params = {}) {
         const target = routeTarget(section, params.hero_tool);
@@ -131,7 +139,7 @@
             if (value !== undefined && value !== null && value !== "") query.set(key, String(value));
         });
         query.set("hero_section", target.section);
-        if (target.section === "api") query.set("hero_tool", target.tool);
+        if (target.section === "api" && target.tool) query.set("hero_tool", target.tool);
         else query.delete("hero_tool");
         return `/app/${CANONICAL_PAGE}?${query.toString()}`;
     }
@@ -211,22 +219,39 @@
             else if (section === "synchronization") window.hero_integration_migration.mount(sectionPage);
             else {
                 const tool = routeTarget(section, context.hero_tool).tool;
-                content.append(apiNavigation(tool));
-                const toolHost = document.createElement("div");
-                toolHost.className = "admin-hero-tool-host";
-                content.append(toolHost);
-                const workspace = new window.hero_workspace_tools.Workspace(toolHost, {tool, operationKind: context.operation_kind || "query"});
-                controller.workspace = workspace;
-                await workspace.show(true);
+                if (!tool) await window.hero_integration_api_summary.mount(content, context);
+                else {
+                    content.append(apiNavigation(tool));
+                    const toolHost = document.createElement("div");
+                    toolHost.className = "admin-hero-tool-host";
+                    content.append(toolHost);
+                    const workspace = new window.hero_workspace_tools.Workspace(toolHost, {tool, operationKind: context.operation_kind || "query"});
+                    controller.workspace = workspace;
+                    await workspace.show(true);
+                }
             }
         } catch (error) {
             failure(content, error);
         }
     }
+    function routeKey(section, context) {
+        return JSON.stringify([section, ...Object.entries(context).sort(([left], [right]) => left.localeCompare(right))]);
+    }
+    function renderRoute(section, context) {
+        if (!controller) return Promise.resolve();
+        const key = routeKey(section, context);
+        if (controller.routeKey === key && controller.routeRender) return controller.routeRender;
+        const routeRender = render(section, context).finally(() => {
+            if (controller?.routeKey === key) controller.routeRender = null;
+        });
+        controller.routeKey = key;
+        controller.routeRender = routeRender;
+        return routeRender;
+    }
     function showRoute() {
         const context = routeOptions();
         const target = routeTarget(context.hero_section, context.hero_tool);
-        return render(target.section, {...context, hero_section: target.section, hero_tool: target.tool});
+        return renderRoute(target.section, {...context, hero_section: target.section, hero_tool: target.tool});
     }
     function setRoute(section, params = {}) {
         const target = routeTarget(section, params.hero_tool);
@@ -236,10 +261,11 @@
             else context[key] = value;
         });
         context.hero_section = target.section;
-        if (target.section === "api") context.hero_tool = target.tool;
+        if (target.section === "api" && target.tool) context.hero_tool = target.tool;
         else delete context.hero_tool;
-        frappe.set_route(CANONICAL_PAGE, context);
-        return render(target.section, context);
+        frappe.route_options = {...context};
+        frappe.set_route(CANONICAL_PAGE);
+        return renderRoute(target.section, context);
     }
     async function mount(wrapper) {
         if (!controller) {

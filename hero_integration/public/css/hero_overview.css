@@ -2,7 +2,7 @@
     --hero-overview-card-surface: #f0f1f2;
     --hero-overview-card-border: #65717d;
     --hero-overview-card-label: var(--pc-text, #000000);
-    width: min(1100px, 100%);
+    width: 100%;
     margin: 0 auto;
 }
 
@@ -30,27 +30,31 @@
     color: var(--pc-text);
 }
 
-.hero-overview-grid {
+.hero-integration-ui .hero-overview-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
-    gap: 14px;
+    gap: 16px;
     align-items: stretch;
 }
 
-.hero-overview-metric {
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
+.hero-integration-ui .hero-overview-metric {
+    display: grid;
+    grid-template-columns: 42px minmax(0, 1fr);
+    align-items: start;
+    gap: 14px;
     min-width: 0;
-    min-height: 96px;
-    padding: 16px;
+    min-height: 132px;
+    padding: 18px;
     border: 2px solid var(--hero-overview-card-border) !important;
     border-radius: 10px;
     background-color: var(--hero-overview-card-surface) !important;
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--hero-overview-card-border) 28%, transparent);
+    box-shadow: 0 8px 22px rgb(0 0 0 / 3%);
 }
 
-.hero-overview-label {
+.hero-integration-ui .hero-overview-icon { display: grid; width: 40px; height: 40px; place-items: center; border-radius: 12px; background: color-mix(in srgb, var(--pc-text) 6%, transparent); color: var(--pc-text); font-size: 20px; line-height: 1; }
+.hero-integration-ui .hero-overview-metric-content { min-width: 0; }
+
+.hero-integration-ui .hero-overview-label {
     margin-bottom: 7px;
     font-size: 12px;
     font-weight: 600;
@@ -59,54 +63,50 @@
     color: var(--hero-overview-card-label);
 }
 
-.hero-overview-value {
+.hero-integration-ui .hero-overview-value {
     overflow-wrap: anywhere;
-    font-size: 14px;
-    font-weight: 600;
+    font-size: 16px;
+    font-weight: 750;
     color: var(--pc-text);
 }
 
-.hero-overview-value[data-state="ok"] {
-    color: var(--pc-text);
-    border-left: 3px solid #2e7d32;
+.hero-integration-ui .hero-overview-value[data-state="ok"] {
+    color: #2e7d32;
 }
 
-.hero-overview-value[data-state="warning"] {
-    color: var(--pc-text);
-    border-left: 3px solid #a15c00;
+.hero-integration-ui .hero-overview-value[data-state="warning"] {
+    color: #a15c00;
 }
 
-.hero-overview-value[data-state="off"] {
-    color: var(--pc-text);
-}
+.hero-integration-ui .hero-overview-value[data-state="off"] { color: var(--pc-text); }
+.hero-integration-ui .hero-overview-description { margin-top: 11px; color: var(--pc-textSecondary); font-size: 13px; line-height: 1.4; }
 
-.hero-overview-actions {
+.hero-integration-ui .hero-overview-actions {
     display: flex;
     flex-wrap: wrap;
     gap: 10px;
     margin-top: 18px;
 }
 
-.hero-overview-links {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    margin-top: 18px;
+.hero-integration-ui .hero-overview-links {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 12px;
+    margin-top: 28px;
     padding-top: 18px;
     border-top: 1px solid var(--admin-border, var(--pc-border));
 }
 
-.hero-overview-link {
-    padding: 7px 10px;
+.hero-integration-ui .hero-overview-link {
+    padding: 14px;
     border: 1px solid var(--admin-border, var(--pc-border));
-    border-radius: 7px;
+    border-radius: 8px;
     color: var(--pc-text);
+    font-weight: 700;
     text-decoration: none;
 }
 
-.hero-overview-link:hover {
-    text-decoration: underline;
-}
+.hero-integration-ui .hero-overview-link:hover, .hero-integration-ui .hero-overview-link:focus-visible { border-color: var(--pc-text); box-shadow: 0 0 0 2px color-mix(in srgb, var(--pc-text) 10%, transparent); outline: 0; text-decoration: none; }
 
 .hero-overview-button {
     min-height: 36px;
@@ -132,6 +132,7 @@
     color: var(--pc-text);
 }
 
+@media (max-width: 900px) { .hero-integration-ui .hero-overview-links { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 680px) {
     .hero-overview-header {
         flex-direction: column;
@@ -142,4 +143,5 @@
     .hero-overview-button {
         width: 100%;
     }
+    .hero-integration-ui .hero-overview-grid, .hero-integration-ui .hero-overview-links { grid-template-columns: 1fr; }
 }

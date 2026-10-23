@@ -33,6 +33,10 @@ class _Settings:
         self.password_error = password_error
         self.stored_credential = stored_credential
         self.allow_graphql_mutation_execution = allow_graphql_mutation_execution
+        self.erpnext_company = ""
+        self.erpnext_company_confirmed = 0
+        self.testing_enabled = 0
+        self.testing_max_actions = 5
         self.password_calls: list[tuple[str, bool]] = []
         self.save_calls = 0
 
@@ -94,6 +98,11 @@ class TestWorkspaceSettingsContract(unittest.TestCase):
         self.assertTrue(result["mutation_execution_released"])
         self.assertFalse(result["mutation_execution_enabled"])
         self.assertEqual(result["mutation_execution_status"], "DISABLED")
+
+    def test_testing_defaults_are_off_with_a_five_request_budget(self):
+        result, _ = self._call(_Settings())
+
+        self.assertEqual(result["testing"], {"enabled": False, "max_actions": 5})
 
     def test_enabled_global_setting_still_reports_that_per_operation_gates_apply(self):
         result, _ = self._call(_Settings(allow_graphql_mutation_execution=1))
@@ -161,6 +170,78 @@ class TestWorkspaceSettingsContract(unittest.TestCase):
         self.assertEqual(settings.polling_concurrency, 1)
         self.assertTrue(result["polling"]["reconciliation"])
         self.assertTrue(result["polling"]["notifications"])
+
+    def test_admin_can_persist_and_reload_testing_controls(self):
+        settings = _Settings()
+        frappe_mock = _FrappeSettingsMock(settings)
+
+        with patch.object(api, "frappe", frappe_mock):
+            result = api.workspace_settings_save(
+                True, settings.hero_api_url, testing_enabled=True, testing_max_actions="7",
+            )
+
+        self.assertEqual((settings.testing_enabled, settings.testing_max_actions), (1, 7))
+        self.assertEqual(result["testing"], {"enabled": True, "max_actions": 7})
+        self.assertEqual(settings.save_calls, 1)
+
+    def test_testing_budget_rejects_out_of_range_decimal_and_non_numeric_values(self):
+        settings = _Settings()
+        frappe_mock = _FrappeSettingsMock(settings)
+
+        with patch.object(api, "frappe", frappe_mock):
+            for value in (0, -1, 101, 1.5, "1.5", "five"):
+                with self.subTest(value=value), self.assertRaisesRegex(ValueError, "Testing Max. Actions"):
+                    api.workspace_settings_save(True, settings.hero_api_url, testing_max_actions=value)
+
+        self.assertEqual(settings.save_calls, 0)
+
+    def test_string_zero_is_not_a_preview_testing_configuration(self):
+        self.assertFalse(api._as_bool("0"))
+
+    def test_testing_endpoint_is_scoped_validated_and_accepts_boolean_transport_strings(self):
+        settings = _Settings()
+        frappe_mock = _FrappeSettingsMock(settings)
+        with patch.object(api, "frappe", frappe_mock):
+            result = api.workspace_testing_settings_save("true", "7")
+
+        self.assertEqual(frappe_mock.permission_calls, ["System Manager", "System Manager"])
+        self.assertEqual((settings.testing_enabled, settings.testing_max_actions), (1, 7))
+        self.assertEqual(settings.save_calls, 1)
+        self.assertEqual(result["testing"], {"enabled": True, "max_actions": 7})
+        self.assertTrue(api._as_bool("true"))
+        self.assertTrue(api._as_bool("1"))
+        self.assertFalse(api._as_bool("false"))
+        self.assertFalse(api._as_bool("0"))
+
+    def test_testing_endpoint_rejects_invalid_budget_without_saving(self):
+        settings = _Settings()
+        frappe_mock = _FrappeSettingsMock(settings)
+        with patch.object(api, "frappe", frappe_mock), self.assertRaisesRegex(ValueError, "Testing Max. Actions"):
+            api.workspace_testing_settings_save(False, "101")
+        self.assertEqual(settings.save_calls, 0)
+
+    def test_company_confirmation_requires_the_server_saved_selection(self):
+        settings = _Settings()
+        frappe_mock = _FrappeSettingsMock(settings)
+        with patch.object(api, "frappe", frappe_mock):
+            saved = api.workspace_erpnext_company_save("Synthetic Company")
+            confirmed = api.workspace_erpnext_company_confirm("Synthetic Company")
+
+        self.assertEqual(saved["erpnext_company"], "Synthetic Company")
+        self.assertTrue(confirmed["erpnext_company_confirmed"])
+        self.assertEqual(settings.erpnext_company_confirmed, 1)
+        self.assertEqual(settings.save_calls, 2)
+
+    def test_company_confirmation_rejects_unsaved_or_mismatched_selection(self):
+        settings = _Settings()
+        frappe_mock = _FrappeSettingsMock(settings)
+        with patch.object(api, "frappe", frappe_mock):
+            with self.assertRaisesRegex(ValueError, "Save an ERPNext Company"):
+                api.workspace_erpnext_company_confirm("Synthetic Company")
+            settings.erpnext_company = "Saved Company"
+            with self.assertRaisesRegex(ValueError, "Save the selected"):
+                api.workspace_erpnext_company_confirm("Other Company")
+        self.assertEqual(settings.save_calls, 0)
 
     def test_polling_rejects_controls_the_approved_reader_cannot_execute(self):
         settings = _Settings()

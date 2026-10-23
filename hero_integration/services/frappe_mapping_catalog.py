@@ -42,6 +42,44 @@ class CatalogField:
 CANONICAL_TARGETS = frozenset({"Customer", "Project"})
 
 
+class FrappePickerMetadata:
+    """Site metadata adapter shared by both mapping picker directions."""
+
+    def doctypes(self):
+        import frappe
+        from frappe.modules.utils import get_module_app
+
+        installed = set(frappe.get_installed_apps())
+        rows = frappe.get_all(
+            "DocType", fields=["name", "module", "istable", "issingle", "is_virtual", "custom"],
+            order_by="module asc, name asc",
+        )
+        result = []
+        for row in rows:
+            item = dict(row)
+            module = str(item.get("module") or "")
+            try:
+                app_name = get_module_app(module) if module else ""
+            except Exception:
+                app_name = "Custom" if item.get("custom") else ""
+            if app_name and app_name not in installed and app_name != "Custom":
+                continue
+            item["app_name"] = app_name or ("Custom" if item.get("custom") else "")
+            result.append(item)
+        return result
+
+    def can_write(self, doctype: str) -> bool:
+        import frappe
+
+        return bool(frappe.has_permission(doctype, "write"))
+
+    def fields(self, doctype: str):
+        import frappe
+
+        frappe.has_permission(doctype, "write", throw=True)
+        return frappe.get_meta(doctype).fields
+
+
 def validate_draft_spec(spec, metadata) -> CatalogField:
     """Validate a non-executable proposal without widening the active mapper."""
     contract = SOURCE_CONTRACTS.get(spec.operation)
@@ -114,6 +152,16 @@ def validate_draft_target(operation: str, source_type: str, target_doctype: str,
     if target_doctype not in CANONICAL_TARGETS and target.activation_allowed:
         raise AssertionError("Only canonical targets may be activated by this app.")
     return target
+
+
+def validate_draft_writeback_source(doctype: str, fieldname: str, metadata) -> CatalogField:
+    """Keep Draft-only writeback sources inside the same protected-field catalog."""
+    source = next((item for item in fields(metadata, doctype=doctype) if item.path == fieldname), None)
+    if source is None:
+        raise ValueError("The Frappe source field is not available in the current site metadata.")
+    if not source.selectable:
+        raise ValueError(source.reason)
+    return source
 
 
 def types_compatible(source_type: str, target_type: str) -> bool:

@@ -13,6 +13,7 @@ from hero_integration.services.direct_mapping import (
 from hero_integration.services.frappe_mapping_catalog import fields as catalog_fields
 from hero_integration.services.frappe_mapping_catalog import types_compatible
 from hero_integration.services.graphql_graph import normalize_schema
+from hero_integration.services.projection_contracts import CONTRACTS as PROJECTIONS
 
 
 @dataclass(frozen=True)
@@ -44,15 +45,16 @@ OPERATION_ROOTS = {
     "HeroCustomers": "contacts",
     "HeroProjectMatches": "project_matches",
 }
+OPERATION_ROOTS.update({name: value['root'] for name, value in PROJECTIONS.items()})
 MAX_SOURCE_RELATION_DEPTH = 4
 
 
 def source_fields(operation: str, schema: dict[str, object], search: str = "") -> list[PickerField]:
     contract = SOURCE_CONTRACTS.get(operation)
-    if not contract:
-        return []
     schema = normalize_schema(schema)
     needle = search.strip().lower()
+    if not contract:
+        return [field for field in _operation_schema_fields(schema, operation) if not needle or _matches(field, needle)]
     result = []
     root = OPERATION_ROOTS[operation]
     return_type, graphql_fields = _graphql_contract_fields(schema, root, contract["paths"])
@@ -79,10 +81,8 @@ def target_fields(
     operation: str, metadata, search: str = "", app_name: str = "", target_doctype: str = "",
 ) -> list[PickerField]:
     contract = SOURCE_CONTRACTS.get(operation)
-    if not contract:
-        return []
     if hasattr(metadata, "doctypes"):
-        return [
+        items = [
             PickerField(
                 item.path, item.label, item.fieldtype, item.nullable, item.relation, item.selectable, item.reason,
                 mapping_type=item.fieldtype, app_name=item.app_name, target_doctype=item.doctype,
@@ -91,6 +91,17 @@ def target_fields(
             )
             for item in catalog_fields(metadata, app_name, target_doctype, search)
         ]
+        if contract:
+            return items
+        return [
+            PickerField(
+                **{**item.__dict__, "selectable": False,
+                   "reason": "Schema-only query operation: an approved read-only import contract is required before activation."}
+            )
+            for item in items
+        ]
+    if not contract:
+        return []
     doctype = contract["target_doctype"]
     needle = search.strip().lower()
     result = []
@@ -98,7 +109,7 @@ def target_fields(
         label = str(field.label or field.fieldname)
         if needle and needle not in field.fieldname.lower() and needle not in label.lower():
             continue
-        protected = field.fieldname in SYSTEM_FIELDS | PROTECTED_FIELDS[doctype] | RESERVED_TARGET_FIELDS[doctype]
+        protected = field.fieldname in SYSTEM_FIELDS | PROTECTED_FIELDS.get(doctype, set()) | RESERVED_TARGET_FIELDS.get(doctype, set())
         is_child_relation = field.fieldtype == "Table"
         is_link = field.fieldtype == "Link"
         is_custom = bool(getattr(field, "is_custom_field", False))
@@ -230,6 +241,66 @@ def _schema_only_fields(
                 f"{root}.{field['name']}" if root else field["name"], return_type=str(graphql_type.get("name", "")), mapping_type="",
             ))
     return result
+
+
+def _operation_schema_fields(schema: dict[str, object], operation: str) -> list[PickerField]:
+    """Show exact saved query fields when no import contract exists, fail-closed."""
+    schema = _schema_body(schema)
+    types = {
+        item.get("name"): item for item in schema.get("types", [])
+        if isinstance(item, dict) and isinstance(item.get("name"), str)
+    }
+    root = types.get(_operation_root_name(schema, "queryType", "Query"))
+    if not isinstance(root, dict):
+        return []
+    operation_field = next((item for item in root.get("fields", []) if isinstance(item, dict) and item.get("name") == operation), None)
+    if not isinstance(operation_field, dict):
+        return []
+    return_type, nullable, kind = _type_details(operation_field.get("type"))
+    is_collection = _is_list(operation_field.get("type"))
+    result: list[PickerField] = []
+    if kind not in {"OBJECT", "INTERFACE", "UNION"} or return_type not in types:
+        return [PickerField(
+            operation, operation, return_type, nullable, "", False,
+            "Schema-only query return: an approved read-only import contract is required before activation.",
+            operation, operation, return_type,
+        )]
+    _walk_operation_fields(types, types[return_type], operation, "", return_type, is_collection, set(), result)
+    return result
+
+
+def _walk_operation_fields(
+    types: dict[object, dict[str, object]], current: dict[str, object], root: str, path: str,
+    return_type: str, collection: bool, visited: set[str], result: list[PickerField], depth: int = 0,
+) -> None:
+    name = str(current.get("name") or "")
+    if depth >= MAX_SOURCE_RELATION_DEPTH or name in visited:
+        return
+    for item in current.get("fields", []) if isinstance(current.get("fields"), list) else []:
+        if not isinstance(item, dict) or not isinstance(item.get("name"), str):
+            continue
+        type_name, nullable, kind = _type_details(item.get("type"))
+        item_path = f"{path}.{item['name']}" if path else item["name"]
+        graphql_path = f"{root}{'[]' if collection else ''}.{item_path}"
+        item_collection = collection or _is_list(item.get("type"))
+        reason = (
+            "Collection return: an approved collection identity and read-only import contract are required before activation."
+            if item_collection else "Schema-only query field: an approved read-only import contract is required before activation."
+        )
+        relation = type_name if kind in {"OBJECT", "INTERFACE", "UNION"} else ""
+        result.append(PickerField(item_path, item["name"].replace("_", " ").title(), type_name, nullable, relation, False, reason, graphql_path, root, return_type))
+        nested = types.get(type_name)
+        if isinstance(nested, dict) and kind in {"OBJECT", "INTERFACE", "UNION"} and not _is_list(item.get("type")):
+            _walk_operation_fields(types, nested, root, item_path, return_type, item_collection, visited | {name}, result, depth + 1)
+
+
+def _is_list(reference: object) -> bool:
+    current = reference
+    while isinstance(current, dict):
+        if current.get("kind") == "LIST":
+            return True
+        current = current.get("ofType")
+    return False
 
 
 def _graphql_contract_fields(

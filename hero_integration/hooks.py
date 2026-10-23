@@ -16,6 +16,13 @@ scheduler_events = {
     "hourly": ["hero_integration.tasks.run_scheduled_sync"],
 }
 
+# Native Desk extension only.  It asks the server for eligible, linked fields
+# on every form refresh and never observes or sends values by itself.
+doctype_js = {
+    "Customer": "public/js/hero_writeback.js",
+    "Project": "public/js/hero_writeback.js",
+}
+
 # The gate intentionally covers only HERO-owned documents. It cannot block a
 # user from deleting arbitrary ERPNext records, but it does cover every native
 # app RPC, background path and direct DocType deletion route.

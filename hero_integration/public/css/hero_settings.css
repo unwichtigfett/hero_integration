@@ -1,5 +1,5 @@
-.hero-settings {
-    width: min(860px, 100%);
+.hero-integration-ui .hero-settings {
+    width: 100%;
     margin: 0 auto;
     color: var(--pc-text);
 }
@@ -22,27 +22,31 @@
     color: var(--pc-text);
 }
 
-.hero-settings-card {
+.hero-integration-ui .hero-settings-card {
     display: grid;
     gap: 18px;
-    padding: 22px;
+    padding: 18px;
     border: 1px solid var(--admin-border, var(--pc-border));
     border-radius: 10px;
     background: var(--admin-surface, var(--pc-surface));
 }
 
-.hero-settings-section {
+.hero-integration-ui .hero-settings > .hero-settings-card:first-of-type { grid-template-columns: minmax(0, 1.2fr) minmax(320px, .9fr); align-items: start; }
+.hero-integration-ui .hero-settings > .hero-settings-card:first-of-type > .hero-settings-section:first-child { grid-row: span 3; }
+.hero-integration-ui .hero-settings > .hero-settings-card:first-of-type > .hero-settings-status, .hero-integration-ui .hero-settings > .hero-settings-card:first-of-type > .hero-settings-button { grid-column: 1 / -1; }
+
+.hero-integration-ui .hero-settings-section {
     display: grid;
     gap: 14px;
     min-width: 0;
     margin: 0;
     padding: 16px;
-    border: 2px solid var(--hero-field-border, var(--admin-border, var(--pc-border)));
+    border: 1px solid var(--pc-border);
     border-radius: 8px;
     background: var(--pc-surfaceRaised, var(--admin-surface, var(--pc-surface)));
 }
 
-.hero-settings-section legend {
+.hero-integration-ui .hero-settings-section legend {
     width: auto;
     margin: 0;
     padding: 0 6px;
@@ -219,6 +223,7 @@
     border-color: color-mix(in srgb, var(--hero-field-border, var(--admin-border, var(--pc-border))) 58%, var(--admin-surface, var(--pc-surface)));
 }
 
+@media (max-width: 900px) { .hero-integration-ui .hero-settings > .hero-settings-card:first-of-type { grid-template-columns: 1fr; } .hero-integration-ui .hero-settings > .hero-settings-card:first-of-type > .hero-settings-section:first-child, .hero-integration-ui .hero-settings > .hero-settings-card:first-of-type > .hero-settings-status, .hero-integration-ui .hero-settings > .hero-settings-card:first-of-type > .hero-settings-button { grid-column: auto; grid-row: auto; } }
 @media (max-width: 680px) {
     .hero-settings-header {
         flex-direction: column;
