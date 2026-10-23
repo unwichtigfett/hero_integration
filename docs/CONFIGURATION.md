@@ -7,18 +7,20 @@ source; use a distinct confirmed value for a separate HERO source.
 Open **HERO Integration Settings** as a System Manager after installation.
 
 1. Enter the HTTPS GraphQL endpoint.
+   {{ https://login.hero-software.de/api/external/v7/graphql }}
 2. Add exactly that hostname, without a scheme or path, to **Allowed HERO
    Hosts**. Use one hostname per line.
-3. Enter the read-only HERO token in **HERO API Token**. Frappe stores this as
-   a `Password` field; it is never copied into a migration run or queue job.
+   {{ login.hero-software.de }}
+3. Enter your HERO-API token in **HERO API Token**. Frappe stores this as
+   a `Password` field, it is never copied into a migration run or queue job.
 4. Keep the default timeout or choose a whole number between 1 and 120 seconds.
 
-Select the one existing ERPNext Company to own all imported Projects and enable
+Select an existing ERPNext Company to own all imported Projects and enable
 **Confirm Company for HERO Projects**. The app checks that the Company exists,
 is readable by the current user, and is not disabled.
 
-Use **HERO Migration Center** to start a Preview before an Execute run. A
-preview creates no Customer, Project, or source-link record. Execute creates
+Use **HERO Migration Center** to start a Preview before an execution run.
+A preview creates source-link record. Execute creates
 only records with a complete explicitly activated mapping. Existing records are skipped or
 reported as conflicts; the app does not silently update or delete them.
 
@@ -41,14 +43,6 @@ Enable **Scheduled Sync** only after a successful manual preview and execute
 run. The registered hourly job is one-way from HERO to Frappe. It skips when a
 run is active and persists the active-run guard in **HERO Integration Sync
 State**.
-
-For a read run, select a validated **HERO GraphQL Service** and one active
-**HERO GraphQL Mapping** from the same validated snapshot. The mapping must
-explicitly name its canonical target operation, response-list path, external
-identity path, allowed variables, bounded page size and active mapping
-definition IDs. Use the separate approval action for the exact service and
-mapping revisions; saving or validating alone never queues work. A later query,
-snapshot or mapping revision invalidates that approval before a run can start.
 
 Attachments, Helpdesk tickets, and reverse synchronization are unavailable.
 The app does not infer a source contract or a target mapping for them.
