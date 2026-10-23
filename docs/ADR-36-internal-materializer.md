@@ -6,6 +6,6 @@ Decision: hero_integration ships a versioned internal pure-Python materializer p
 
 Scope: deterministic operation rendering, typed variables, stable selections, result decoding, and request fingerprints only. Snapshot adaptation and mapping-controller integration remain later phases.
 
-Provenance: MIT-licensed hero_connector source; source revision and imported file hashes are recorded in hero_integration/materializer/SOURCE_PROVENANCE.json.
+Provenance: MIT-licensed hero_connector source; source revision and imported file hashes are recorded in hero_integration/graphql_protocol/SOURCE_PROVENANCE.json.
 
 Safety: existing ReadContract, writeback gates, preview, confirmation, audit, no-retry mutation transport, mappings, services, and contracts remain unchanged.

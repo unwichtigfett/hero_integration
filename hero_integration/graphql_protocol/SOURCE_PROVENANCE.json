@@ -18,7 +18,7 @@
     "transport.py": "ee4a729d360c274600161d533a1b1bf16993b1e8c75212cca8b44b0703557bd0"
   },
   "license": "MIT",
-  "package": "hero_integration.materializer",
+  "package": "hero_integration.graphql_protocol",
   "source_repository": "hero_connector",
   "source_revision": "6908a5acf7fe00726cc379c9b1d72824bc7a601d",
   "version": "1.0.0"
