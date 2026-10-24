@@ -46,6 +46,19 @@ class TestBindingRegistry(unittest.TestCase):
         self.assertEqual(self.service.get_field_bindings(parent.site_scope, parent.identity_key), tuple(sorted((first, second), key=lambda item: item.identity_key)))
         with self.assertRaises(BindingRegistryError): self.field(type(parent).create(site_scope="one.test", source_instance="hero-a", object_type="Contact", external_object_id="missing", target_app="erpnext", target_doctype="Customer", target_name="CUST-X", mapping_definition_id="x", mapping_revision=1))
 
+    def test_source_field_enumeration_is_site_and_source_scoped(self):
+        first_parent = self.obj()
+        first = self.field(first_parent)
+        outbound = self.field(first_parent, source_field="email", target_field="email_id", mapping_definition_id="contact-email", direction=MappingDirection.FRAPPE_TO_HERO)
+        other_parent = self.obj(source_instance="hero-b", external_object_id="43", target_name="CUST-2")
+        other = self.field(other_parent)
+        self.assertEqual(
+            self.service.get_field_bindings_for_source("one.test", "hero-a"),
+            tuple(sorted((first, outbound), key=lambda item: item.identity_key)),
+        )
+        self.assertEqual(self.service.get_field_bindings_for_source("one.test", "hero-b"), (other,))
+        self.assertEqual(self.service.get_field_bindings_for_source("two.test", "hero-a"), ())
+
     def test_acknowledgment_is_guarded_idempotent_and_stale_safe(self):
         field = self.field(self.obj())
         source, target = state_fingerprint(None, present=True), state_fingerprint(False, present=True)

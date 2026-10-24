@@ -65,6 +65,7 @@ class BindingStorage(Protocol):
     def object(self, site: str, key: str) -> ObjectBinding | None: ...
     def field(self, site: str, key: str) -> FieldBinding | None: ...
     def fields_for_object(self, site: str, parent: str) -> tuple[FieldBinding, ...]: ...
+    def fields_for_source(self, site: str, source_instance: str) -> tuple[FieldBinding, ...]: ...
     def put_object(self, value: ObjectBinding) -> ObjectBinding: ...
     def put_field(self, value: FieldBinding) -> FieldBinding: ...
     def update_field(self, value: FieldBinding, expected_revision: int) -> FieldBinding: ...
@@ -75,6 +76,7 @@ class InMemoryBindingStorage:
     def object(self, site, key): return self._objects.get((site, key))
     def field(self, site, key): return self._fields.get((site, key))
     def fields_for_object(self, site, parent): return tuple(sorted((v for (s, _), v in self._fields.items() if s == site and v.object_binding_key == parent), key=lambda v: v.identity_key))
+    def fields_for_source(self, site, source_instance): return tuple(sorted((v for (s, _), v in self._fields.items() if s == site and v.source_instance == source_instance), key=lambda v: v.identity_key))
     def put_object(self, value):
         with self._lock:
             prior = self.object(value.site_scope, value.identity_key)
@@ -108,6 +110,7 @@ class BindingRegistryService:
         return old
     def get_object_binding(self, site_scope: str, identity_key: str): return self._storage.object(site_scope, identity_key)
     def get_field_bindings(self, site_scope: str, object_binding_key: str): return self._storage.fields_for_object(site_scope, object_binding_key)
+    def get_field_bindings_for_source(self, site_scope: str, source_instance: str): return self._storage.fields_for_source(site_scope, source_instance)
     def record_verified_acknowledgment(self, binding: FieldBinding, *, expected_revision: int, mapping_definition_id: str, mapping_revision: int, source_fingerprint: str, target_fingerprint: str, evidence_id: str, version: int) -> FieldBinding:
         _id(evidence_id, "acknowledgment evidence")
         if mapping_definition_id != binding.mapping_definition_id or mapping_revision != binding.mapping_revision: raise BindingRegistryError("Acknowledgment does not bind the current mapping.")
@@ -154,6 +157,9 @@ class FrappeBindingStorage:
         return None if not rows else self._field(frappe.get_doc(self.FIELD, rows[0].name))
     def fields_for_object(self, site, parent):
         frappe = self._scope(site); rows = frappe.get_all(self.FIELD, filters={"site_scope": site, "object_binding": parent}, fields=["name"], order_by="identity_key asc")
+        return tuple(self._field(frappe.get_doc(self.FIELD, row.name)) for row in rows)
+    def fields_for_source(self, site, source_instance):
+        frappe = self._scope(site); rows = frappe.get_all(self.FIELD, filters={"site_scope": site, "source_instance": source_instance}, fields=["name"], order_by="identity_key asc")
         return tuple(self._field(frappe.get_doc(self.FIELD, row.name)) for row in rows)
     def put_object(self, value):
         frappe = self._scope(value.site_scope); self._write(frappe, self.OBJECT, "create"); old = self.object(value.site_scope, value.identity_key)
