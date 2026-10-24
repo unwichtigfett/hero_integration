@@ -35,6 +35,7 @@ class TestMappingExchange(unittest.TestCase):
             only_for=lambda role: calls.append(("only_for", role)),
             enqueue=lambda *args, **kwargs: calls.append(("enqueue", args, kwargs)),
             throw=lambda message: (_ for _ in ()).throw(ValueError(message)),
+            get_single=lambda doctype: SimpleNamespace(testing_enabled=0, testing_max_actions=5) if doctype == "HERO Integration Settings" else (_ for _ in ()).throw(AssertionError(f"Unexpected singleton: {doctype}")),
         )
         service = SimpleNamespace(name="SERVICE", service_revision=1)
         mapping = SimpleNamespace(name="MAPPING", mapping_revision=1)
