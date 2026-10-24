@@ -14,7 +14,8 @@ from hero_integration.services.mapping_registry_model import (
     MissingSemantics, MissingValuePolicy, TransformPolicy,
 )
 from hero_integration.services.schema_provisioning_lifecycle import (
-    InMemoryProvisioningAudit, ProvisioningApproval, ProvisioningExecutor,
+    InMemoryProvisioningApprovalAuthority, InMemoryProvisioningAudit,
+    ProvisioningApproval, ProvisioningExecutor,
     ProvisioningLifecycleError,
 )
 from hero_integration.services.schema_registry import SchemaTypeReference
@@ -65,7 +66,7 @@ class TestProvisioningLifecycle(unittest.TestCase):
     def test_authorization_and_audit_precede_mocked_schema_write(self):
         value = plan()
         adapter, audit = FakeAdapter("meta-1"), InMemoryProvisioningAudit()
-        result = ProvisioningExecutor(audit, adapter, clock=lambda: 1).apply_authorized(value, approval(value))
+        result = ProvisioningExecutor(audit, adapter, InMemoryProvisioningApprovalAuthority(), clock=lambda: 1).apply_authorized(value, approval(value))
         self.assertEqual(result.state.value, "APPLIED")
         self.assertEqual(audit.events[0][1], "RESERVED")
         self.assertEqual(len(adapter.writes), 1)
@@ -74,7 +75,7 @@ class TestProvisioningLifecycle(unittest.TestCase):
     def test_rejects_stale_forged_expired_actor_or_replayed_approval_before_writes(self):
         value = plan()
         adapter = FakeAdapter("meta-1")
-        executor = ProvisioningExecutor(InMemoryProvisioningAudit(), adapter, clock=lambda: 1)
+        executor = ProvisioningExecutor(InMemoryProvisioningAudit(), adapter, InMemoryProvisioningApprovalAuthority(), clock=lambda: 1)
         for forged in (
             replace(approval(value), mapping_revision=5),
             replace(approval(value), expires_at=1.0),
@@ -91,20 +92,20 @@ class TestProvisioningLifecycle(unittest.TestCase):
         value = plan()
         stale = FakeAdapter("changed")
         with self.assertRaises(ProvisioningLifecycleError):
-            ProvisioningExecutor(InMemoryProvisioningAudit(), stale, clock=lambda: 1).apply_authorized(value, approval(value))
+            ProvisioningExecutor(InMemoryProvisioningAudit(), stale, InMemoryProvisioningApprovalAuthority(), clock=lambda: 1).apply_authorized(value, approval(value))
         self.assertEqual(stale.writes, [])
         audit = InMemoryProvisioningAudit()
         audit.fail = "reserve"
         adapter = FakeAdapter("meta-1")
         with self.assertRaises(ProvisioningLifecycleError):
-            ProvisioningExecutor(audit, adapter, clock=lambda: 1).apply_authorized(value, approval(value))
+            ProvisioningExecutor(audit, adapter, InMemoryProvisioningApprovalAuthority(), clock=lambda: 1).apply_authorized(value, approval(value))
         self.assertEqual(adapter.writes, [])
 
     def test_record_failure_preserves_reconciliation_requirement_and_prevents_replay(self):
         value = plan()
         audit, adapter = InMemoryProvisioningAudit(), FakeAdapter("meta-1")
         audit.fail = "record"
-        executor = ProvisioningExecutor(audit, adapter, clock=lambda: 1)
+        executor = ProvisioningExecutor(audit, adapter, InMemoryProvisioningApprovalAuthority(), clock=lambda: 1)
         with self.assertRaises(ProvisioningLifecycleError):
             executor.apply_authorized(value, approval(value))
         self.assertEqual(len(adapter.writes), 1)
@@ -130,7 +131,7 @@ class TestProvisioningLifecycle(unittest.TestCase):
         )
         adapter, audit = FakeAdapter("meta-1"), InMemoryProvisioningAudit()
         with self.assertRaises(ProvisioningLifecycleError):
-            ProvisioningExecutor(audit, adapter, clock=lambda: 1).apply_authorized(value, approval(value))
+            ProvisioningExecutor(audit, adapter, InMemoryProvisioningApprovalAuthority(), clock=lambda: 1).apply_authorized(value, approval(value))
         self.assertEqual(adapter.writes, [])
         self.assertEqual(audit.events, [])
 
@@ -138,7 +139,7 @@ class TestProvisioningLifecycle(unittest.TestCase):
         value = plan()
         audit, adapter = InMemoryProvisioningAudit(), FakeAdapter("meta-1")
         audit.fail = "finalize"
-        executor = ProvisioningExecutor(audit, adapter, clock=lambda: 1)
+        executor = ProvisioningExecutor(audit, adapter, InMemoryProvisioningApprovalAuthority(), clock=lambda: 1)
         with self.assertRaises(ProvisioningLifecycleError):
             executor.apply_authorized(value, approval(value))
         with self.assertRaises(ProvisioningLifecycleError):
