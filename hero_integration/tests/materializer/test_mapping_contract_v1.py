@@ -12,6 +12,7 @@ from hero_integration.graphql_protocol.transport import Response
 from hero_integration.services.graphql_graph import analyze_snapshot
 from hero_integration.services.mapping_contract_v1 import (
     MappingContractError,
+    adapt_read_contract,
     MutationAdapter,
     MutationDraft,
     NullMode,
@@ -21,7 +22,7 @@ from hero_integration.services.mapping_contract_v1 import (
     SnapshotAdapter,
     StoredSnapshot,
 )
-from hero_integration.services.read_contract import ReadContractError, from_documents
+from hero_integration.services.read_contract import ReadContract, ReadContractError, from_documents
 from hero_integration.sources.hero import CUSTOMER_CONTRACT_V1, customer_query
 
 
@@ -351,3 +352,53 @@ def test_mutation_draft_is_never_executable_and_blocks_partial_or_unapproved_col
     ):
         with pytest.raises(MappingContractError):
             MutationAdapter().materialize(snapshot(), draft_value)
+
+READ_QUERY = """query SearchCases($v1: CaseFilter!, $v2: Boolean, $v3: Int!, $v4: CaseOrder) {
+  cases: searchCases(filter: $v1, includeDeleted: $v2, offset: $v3, orderBy: $v4) {
+  id
+  owner {
+    name
+  }
+}
+}"""
+
+def approved_read_contract():
+ values = dict(draft().variables)
+ values["offset"] = "$offset"
+ return ReadContract(
+  service_name="READ-SERVICE", service_revision=7, mapping_name="READ-MAPPING",
+  mapping_revision=3, target_operation="HeroCustomers", records_path="cases",
+  identity_path="id", definition_ids=("customer-id",), variables=values, page_size=2,
+ )
+
+def test_read_adapter_seals_validated_contract_v1_request_without_changing_transport_query():
+ adapted = adapt_read_contract(
+  snapshot(), approved_read_contract(), draft(), READ_QUERY, offset=0,
+  service_revision=7, mapping_revision=3, snapshot_fingerprint=snapshot().fingerprint,
+ )
+ assert adapted.transport_document == READ_QUERY
+ assert adapted.request.document == READ_QUERY
+ assert adapted.request.variables["v3"] == 0
+ assert adapted.selected_paths == ("id", "owner.name")
+ assert tuple(binding.response_path for binding in adapted.result_bindings) == (
+  ("data", "cases", "id"), ("data", "cases", "owner", "name"),
+ )
+
+ assert adapted == adapt_read_contract(
+  snapshot(), approved_read_contract(), draft(), READ_QUERY, offset=0,
+  service_revision=7, mapping_revision=3, snapshot_fingerprint=snapshot().fingerprint,
+ )
+def test_read_adapter_rejects_saved_query_variable_revision_snapshot_and_binding_mismatches():
+ contract = approved_read_contract()
+ with pytest.raises(MappingContractError, match="saved reviewed query"):
+  adapt_read_contract(snapshot(), contract, draft(), READ_QUERY + "\n", offset=0, service_revision=7, mapping_revision=3, snapshot_fingerprint=snapshot().fingerprint)
+ with pytest.raises(MappingContractError, match="variable"):
+  adapt_read_contract(snapshot(), contract, draft(variables={**draft().variables, "offset": 1}), READ_QUERY, offset=0, service_revision=7, mapping_revision=3, snapshot_fingerprint=snapshot().fingerprint)
+ with pytest.raises(MappingContractError, match="mapping revision"):
+  adapt_read_contract(snapshot(), contract, draft(), READ_QUERY, offset=0, service_revision=7, mapping_revision=4, snapshot_fingerprint=snapshot().fingerprint)
+ with pytest.raises(MappingContractError, match="snapshot fingerprint"):
+  adapt_read_contract(snapshot(), contract, draft(), READ_QUERY, offset=0, service_revision=7, mapping_revision=3, snapshot_fingerprint="0" * 64)
+ with pytest.raises(MappingContractError, match="result bindings"):
+  adapt_read_contract(snapshot(), contract, draft(selected_paths=()), READ_QUERY, offset=0, service_revision=7, mapping_revision=3, snapshot_fingerprint=snapshot().fingerprint)
+ with pytest.raises(MappingContractError, match="read-only"):
+  adapt_read_contract(snapshot(), contract, draft(), "mutation Write { updateCase { id } }", offset=0, service_revision=7, mapping_revision=3, snapshot_fingerprint=snapshot().fingerprint)
