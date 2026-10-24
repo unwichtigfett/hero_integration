@@ -62,7 +62,7 @@ class QueryAdapter:
   f=next((x for x in s.ir.query_fields if x.name==d.field),None)
   if not f: raise MappingContractError('Unknown query field.')
   args={x.name for x in f.arguments}
-  if (d.pagination and d.pagination not in d.variables) or any(x and x not in args for x in (d.pagination,d.ordering)): raise MappingContractError('Invalid pagination/ordering contract.')
+  if (d.pagination and d.pagination not in d.variables) or (d.ordering and d.ordering not in d.variables) or any(x and x not in args for x in (d.pagination,d.ordering)): raise MappingContractError('Invalid pagination/ordering contract.')
   b=GraphQLOperationBinding('draft:'+d.operation_name,s.ir_fingerprint,'operation:query:'+d.field,GraphQLOperationKind.QUERY,d.operation_name,d.alias,d.selected_paths)
   p=SourceApiProposalModel(1,s.ir_fingerprint,(),(),(SourceOperationProposal(b.operation_node_id,d.field,GraphQLOperationKind.QUERY,SourceOperationRole.COLLECTION,None,(),(),(),()),))
   try: return GraphQLOperationMaterializer().materialize(s.ir,p,b,d.variables)
