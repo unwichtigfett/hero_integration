@@ -77,7 +77,7 @@ class FrappeSchemaProvisioningAdapter:
 
     @staticmethod
     def _require_authority(frappe, operation: ProvisioningOperation) -> None:
-        if getattr(getattr(frappe, "session", None), "user", None) != "Administrator" and not frappe.has_role("System Manager"):
+        if getattr(getattr(frappe, "session", None), "user", None) != "Administrator" and "System Manager" not in frappe.get_roles():
             raise PermissionError("System Manager or Administrator authority is required.")
         target = "DocType" if operation.kind == ProvisioningOperationKind.CREATE_CUSTOM_DOCTYPE else "Custom Field"
         frappe.has_permission(target, "create", throw=True)

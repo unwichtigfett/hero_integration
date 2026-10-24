@@ -158,7 +158,7 @@ class FrappeLedger:
         frappe = self._frappe()
         if getattr(getattr(frappe, "local", None), "site", None) != site: raise MigrationError("Migration ledger cannot cross site scope.")
         user = getattr(getattr(frappe, "session", None), "user", None)
-        if user != "Administrator" and not frappe.has_role("System Manager"): raise PermissionError("System Manager or Administrator authority is required.")
+        if user != "Administrator" and "System Manager" not in frappe.get_roles(): raise PermissionError("System Manager or Administrator authority is required.")
         return frappe
     def run(self, key):
         frappe = self._frappe(); rows = frappe.get_all(self.RUN, filters={"migration_run_id": key}, fields=["name"])
@@ -200,7 +200,7 @@ class FrappeDocumentAdapter:
     def resolve_or_write(self, site, app, doctype, identity, values):
         frappe = self._frappe()
         if getattr(getattr(frappe, "local", None), "site", None) != site: raise MigrationError("Target document cannot cross site scope.")
-        if getattr(getattr(frappe, "session", None), "user", None) != "Administrator" and not frappe.has_role("System Manager"): raise PermissionError("System Manager or Administrator authority is required.")
+        if getattr(getattr(frappe, "session", None), "user", None) != "Administrator" and "System Manager" not in frappe.get_roles(): raise PermissionError("System Manager or Administrator authority is required.")
         _text(app, "target app"); _text(doctype, "target DocType"); _text(identity, "source identity")
         if not isinstance(values, dict) or self.identity_field in values: raise MigrationError("Target values are invalid or overwrite stable identity.")
         frappe.has_permission(doctype, "read", throw=True); rows = frappe.get_all(doctype, filters={self.identity_field: identity}, fields=["name"])

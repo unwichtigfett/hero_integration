@@ -78,7 +78,7 @@ class FrappeProvisioningApprovalStore:
         actor = getattr(getattr(frappe, "session", None), "user", None)
         if not isinstance(actor, str) or not actor:
             raise ProvisioningLifecycleError("An authenticated actor is required.")
-        if actor != "Administrator" and not frappe.has_role("System Manager"):
+        if actor != "Administrator" and "System Manager" not in frappe.get_roles():
             raise PermissionError("System Manager or Administrator authorization is required.")
         frappe.has_permission(self.DOCTYPE, permission, throw=True)
         return actor

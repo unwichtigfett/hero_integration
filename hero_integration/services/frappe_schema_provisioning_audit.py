@@ -94,7 +94,7 @@ class FrappeProvisioningAuditStore:
             raise ProvisioningLifecycleError("Audit document does not belong to the current site.")
 
     def _require_authority(self, frappe, permission: str) -> None:
-        if getattr(getattr(frappe, "session", None), "user", None) != "Administrator" and not frappe.has_role("System Manager"):
+        if getattr(getattr(frappe, "session", None), "user", None) != "Administrator" and "System Manager" not in frappe.get_roles():
             raise PermissionError("System Manager or Administrator authority is required.")
         frappe.has_permission(self.DOCTYPE, permission, throw=True)
 

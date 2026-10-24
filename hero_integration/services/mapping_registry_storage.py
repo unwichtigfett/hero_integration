@@ -272,7 +272,7 @@ class FrappeMappingRegistryStorage:
 
     def _assert_write_authority(self, frappe) -> None:
         user = getattr(getattr(frappe, "session", None), "user", None)
-        if user != "Administrator" and not frappe.has_role("System Manager"):
+        if user != "Administrator" and "System Manager" not in frappe.get_roles():
             raise PermissionError("System Manager or Administrator authority is required.")
         frappe.has_permission(self._REGISTRY, "write", throw=True)
 
