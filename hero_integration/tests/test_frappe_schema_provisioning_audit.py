@@ -25,8 +25,8 @@ class FakeFrappe:
     def has_permission(self, *args, **kwargs):
         return True
 
-    def has_role(self, role):
-        return True
+    def get_roles(self):
+        return ("System Manager",)
 
     def get_doc(self, *args):
         api = self

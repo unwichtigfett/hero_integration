@@ -142,7 +142,7 @@ class FrappeBindingStorage:
         return frappe
     def _write(self, frappe, doctype, permission="write"):
         user = getattr(getattr(frappe, "session", None), "user", None)
-        if user != "Administrator" and not frappe.has_role("System Manager"): raise PermissionError("System Manager or Administrator authority is required.")
+        if user != "Administrator" and "System Manager" not in frappe.get_roles(): raise PermissionError("System Manager or Administrator authority is required.")
         frappe.has_permission(doctype, permission, throw=True)
     def object(self, site, key):
         frappe = self._scope(site); rows = frappe.get_all(self.OBJECT, filters={"site_scope": site, "identity_key": key}, fields=["name"])
