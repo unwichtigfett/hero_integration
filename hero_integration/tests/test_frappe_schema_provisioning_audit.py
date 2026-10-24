@@ -16,6 +16,11 @@ class FakeFrappe:
         self.local = SimpleNamespace(site="site.test")
         self.session = SimpleNamespace(user="admin")
         self.docs = {}
+        self.commits = 0
+        self.db = SimpleNamespace(commit=self._commit)
+
+    def _commit(self):
+        self.commits += 1
 
     def has_permission(self, *args, **kwargs):
         return True
@@ -49,6 +54,7 @@ def test_source_audit_adapter_reserves_before_outcomes_and_finalization():
     store.record(audit_id, value.operations[0].operation_id, "APPLIED")
     store.finalize(audit_id, ProvisioningState.APPLIED)
     assert api.docs[audit_id].lifecycle_state == "APPLIED"
+    assert api.commits == 3
 
 
 def test_audit_rejects_actor_or_site_substitution_without_payload_leakage():
