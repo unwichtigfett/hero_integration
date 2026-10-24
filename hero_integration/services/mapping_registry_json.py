@@ -93,10 +93,9 @@ def canonical_mapping_registry_json(value: MappingRegistryJsonV3 | Mapping[str, 
         )
     if not isinstance(value, Mapping):
         raise MappingRegistryJsonError("Canonical serialization requires a v3 payload.")
-    return serialize_mapping_registry_v3(
-        site_scope=value.get("site_scope"), registry_revision=value.get("registry_revision"),
-        provenance=value.get("provenance"), definitions=value.get("definitions"),
-    )
+    # A raw mapping must already be a complete v3 document.  Parsing before
+    # projection prevents unknown or sensitive keys from being discarded.
+    return canonical_mapping_registry_json(parse_mapping_registry_v3(_canonical_json(dict(value))))
 
 
 def _payload_without_integrity(
