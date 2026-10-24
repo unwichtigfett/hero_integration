@@ -8,8 +8,10 @@ from hero_integration.services.graphql_graph import analyze_snapshot, normalize_
 from hero_integration.graphql_protocol.schema import GraphQLSchema, GraphQLType, GraphQLField, GraphQLArgument, GraphQLEnumValue, GraphQLTypeRef
 from hero_integration.graphql_protocol.schema_snapshot import schema_fingerprint
 from hero_integration.graphql_protocol.operation_kind import GraphQLOperationKind
-from hero_integration.graphql_protocol.graphql_operation_materializer import GraphQLOperationBinding, GraphQLOperationMaterializer, GraphQLOperationMaterializationError
+from hero_integration.graphql_protocol.graphql_operation_materializer import GraphQLOperationBinding, GraphQLOperationMaterializer, GraphQLOperationMaterializationError, GraphQLOperationRequest, GraphQLResultBinding
+from hero_integration.client.graphql import HeroClientError, assert_read_only
 from hero_integration.graphql_protocol.source_proposals import SourceApiProposalModel, SourceOperationProposal, SourceOperationRole
+from hero_integration.services.read_contract import ReadContract
 V1=1; NAME=re.compile(r'^[_A-Za-z][_0-9A-Za-z]*$'); SHA=re.compile(r'^[0-9a-f]{64}$')
 class MappingContractError(ValueError): pass
 class Direction(StrEnum): READ='read'; WRITE='write'
@@ -67,6 +69,33 @@ class QueryAdapter:
   p=SourceApiProposalModel(1,s.ir_fingerprint,(),(),(SourceOperationProposal(b.operation_node_id,d.field,GraphQLOperationKind.QUERY,SourceOperationRole.COLLECTION,None,(),(),(),()),))
   try: return GraphQLOperationMaterializer().materialize(s.ir,p,b,d.variables)
   except GraphQLOperationMaterializationError as e: raise MappingContractError(str(e)) from e
+@dataclass(frozen=True,slots=True)
+class ContractV1ReadAdapter:
+ contract:ReadContract; request:GraphQLOperationRequest; transport_document:str; selected_paths:tuple[str,...]; result_bindings:tuple[GraphQLResultBinding,...]
+def adapt_read_contract(s,contract,d,saved_query,*,offset,service_revision,mapping_revision,snapshot_fingerprint):
+ if not isinstance(contract,ReadContract): raise MappingContractError('Validated read contract required.')
+ if service_revision!=contract.service_revision: raise MappingContractError('Stale service revision.')
+ if mapping_revision!=contract.mapping_revision: raise MappingContractError('Stale mapping revision.')
+ if snapshot_fingerprint!=s.fingerprint: raise MappingContractError('Stale snapshot fingerprint.')
+ if not isinstance(offset,int) or isinstance(offset,bool) or offset<0: raise MappingContractError('Invalid read offset.')
+ if not isinstance(saved_query,str) or not saved_query.strip(): raise MappingContractError('Saved reviewed query required.')
+ try: assert_read_only(saved_query)
+ except HeroClientError as error: raise MappingContractError('Saved reviewed query must be read-only.') from error
+ if d.alias!=contract.records_path or not d.selected_paths or contract.identity_path not in d.selected_paths: raise MappingContractError('Invalid result bindings.')
+ variables={}
+ for key,value in contract.variables.items():
+  if value=='$offset': variables[key]=offset
+  elif value=='$page_size': variables[key]=contract.page_size
+  elif isinstance(value,str) and value.startswith('$'): raise MappingContractError('Unsupported read-contract variable.')
+  else: variables[key]=value
+ if dict(d.variables)!=variables: raise MappingContractError('Read-contract variable semantics differ.')
+ request=QueryAdapter().materialize(s,d)
+ if request.document!=saved_query: raise MappingContractError('Materialized query conflicts with saved reviewed query.')
+ paths=tuple(binding.selection_path for binding in request.result_bindings)
+ response_paths=tuple(binding.response_path for binding in request.result_bindings)
+ expected_paths=tuple(tuple(path.split('.')) for path in d.selected_paths)
+ if not request.result_bindings or paths!=expected_paths or any(path[:2]!=('data',d.alias) for path in response_paths): raise MappingContractError('Invalid result bindings.')
+ return ContractV1ReadAdapter(contract,request,saved_query,tuple(d.selected_paths),request.result_bindings)
 @dataclass(frozen=True,slots=True)
 class MutationDraft: field:str; input_paths:tuple[tuple[str,...],...]; source_instance:str; revision:int; relation_mode:RelationMode=RelationMode.SINGLE; resolver_approved:bool=False; null_mode:NullMode=NullMode.MISSING_IS_UNCHANGED
 class MutationAdapter:
