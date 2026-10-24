@@ -47,6 +47,7 @@ class FrappeProvisioningAuditStore:
             "audit_payload_json": json.dumps(payload, sort_keys=True, separators=(",", ":")),
         })
         document.insert()
+        self._commit_durable_boundary(frappe)
         return document.name
 
     def record(self, audit_id: str, operation_id: str, outcome: str) -> None:
@@ -63,6 +64,7 @@ class FrappeProvisioningAuditStore:
         document.audit_payload_json = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         document.lifecycle_state = ProvisioningState.APPLYING.value
         document.save()
+        self._commit_durable_boundary(frappe)
 
     def finalize(self, audit_id: str, state: ProvisioningState) -> None:
         if state.value not in self._FINAL_STATES:
@@ -75,6 +77,7 @@ class FrappeProvisioningAuditStore:
             raise ProvisioningLifecycleError("A finalized provisioning audit state is immutable.")
         document.lifecycle_state = state.value
         document.save()
+        self._commit_durable_boundary(frappe)
 
     def _frappe(self, site_scope: str | None = None):
         if self._frappe_module is None:
@@ -94,3 +97,14 @@ class FrappeProvisioningAuditStore:
         if getattr(getattr(frappe, "session", None), "user", None) != "Administrator" and not frappe.has_role("System Manager"):
             raise PermissionError("System Manager or Administrator authority is required.")
         frappe.has_permission(self.DOCTYPE, permission, throw=True)
+
+    @staticmethod
+    def _commit_durable_boundary(frappe) -> None:
+        """Seal B5 audit evidence before or after an irreversible schema effect."""
+        commit = getattr(getattr(frappe, "db", None), "commit", None)
+        if not callable(commit):
+            raise ProvisioningLifecycleError("The durable provisioning audit transaction boundary is unavailable.")
+        try:
+            commit()
+        except Exception as error:
+            raise ProvisioningLifecycleError("The durable provisioning audit transaction boundary failed.") from error
