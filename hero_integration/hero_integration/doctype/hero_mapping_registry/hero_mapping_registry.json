@@ -1,0 +1,11 @@
+{
+ "doctype": "DocType", "name": "HERO Mapping Registry", "module": "HERO Integration", "autoname": "format:HERO-MAPREG-{#####}", "track_changes": 1,
+ "fields": [
+  {"fieldname":"site_scope","label":"Site Scope","fieldtype":"Data","reqd":1,"unique":1,"read_only":1,"in_list_view":1},
+  {"fieldname":"active_revision","label":"Active Revision","fieldtype":"Int","reqd":1,"default":"0","read_only":1,"in_list_view":1},
+  {"fieldname":"active_version","label":"Active Mapping Version","fieldtype":"Link","options":"HERO Mapping Registry Version","read_only":1},
+  {"fieldname":"format_version","label":"Mapping Format Version","fieldtype":"Data","read_only":1},
+  {"fieldname":"updated_by_registry","label":"Updated by Registry","fieldtype":"Data","read_only":1}
+ ],
+ "permissions":[{"role":"System Manager","read":1,"write":1,"create":1}], "modified":"2026-10-24 00:00:00.000000"
+}
