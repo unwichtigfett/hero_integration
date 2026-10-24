@@ -5,7 +5,7 @@ import unittest
 
 from hero_integration.services.binding_registry import (
     BindingConflict, BindingRegistryError, BindingRegistryService, BindingState,
-    InMemoryBindingStorage, state_fingerprint,
+    FrappeBindingStorage, InMemoryBindingStorage, state_fingerprint,
 )
 from hero_integration.services.mapping_registry_model import MappingDirection
 
@@ -68,5 +68,16 @@ class TestBindingRegistry(unittest.TestCase):
         for thread in threads: thread.start()
         for thread in threads: thread.join()
         self.assertEqual({value.identity_key for value in values}, {values[0].identity_key})
+
+    def test_duplicate_reread_accepts_only_exactly_compatible_record(self):
+        candidate = self.obj()
+        class DuplicateEntryError(Exception): pass
+        self.assertIs(candidate, FrappeBindingStorage._after_duplicate(DuplicateEntryError(), lambda: candidate, candidate))
+        with self.assertRaises(BindingConflict): FrappeBindingStorage._after_duplicate(DuplicateEntryError(), lambda: None, candidate)
+        with self.assertRaises(BindingConflict): FrappeBindingStorage._after_duplicate(DuplicateEntryError(), lambda: self.obj(mapping_revision=2), candidate)
+
+    def test_non_duplicate_insert_failure_is_not_retried(self):
+        candidate = self.obj()
+        with self.assertRaises(RuntimeError): FrappeBindingStorage._after_duplicate(RuntimeError("db unavailable"), lambda: candidate, candidate)
 
 if __name__ == "__main__": unittest.main()
