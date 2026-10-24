@@ -5,7 +5,7 @@ import frappe
 
 def run_scheduled_sync() -> None:
     settings = frappe.get_single("HERO Integration Settings")
-    from hero_integration.services.polling import effective_mode, runtime_plan, scheduler_due
+    from hero_integration.services.polling import effective_mode, scheduler_due
 
     mode = effective_mode(settings)
     # Older existing sites do not necessarily carry the later status field.
@@ -19,11 +19,6 @@ def run_scheduled_sync() -> None:
 
         run_monitor()
         return
-    if runtime_plan(settings)["unsupported_sources"]:
-        from hero_integration.services.polling import _record_event
+    from hero_integration.services.sync_runtime_adapter import run_scheduled_auto_sync
 
-        _record_event("AUTO_SYNC", "Skipped", "Schema-only polling source requires a supported runtime adapter; no HERO request was made.")
-        return
-    from hero_integration.api import start_scheduled_sync
-
-    start_scheduled_sync()
+    run_scheduled_auto_sync()
