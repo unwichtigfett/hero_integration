@@ -1,6 +1,7 @@
 from __future__ import annotations
 from hashlib import sha256
 import unittest
+from types import SimpleNamespace
 from hero_integration.graphql_protocol.graphql_operation_materializer import GraphQLOperationRequest, GraphQLResultBinding
 from hero_integration.graphql_protocol.operation_kind import GraphQLOperationKind
 from hero_integration.services.binding_registry import BindingRegistryService, InMemoryBindingStorage
@@ -70,6 +71,11 @@ class TestSync(unittest.TestCase):
   updated=execute_sync_hero(intent,approval,Transport(ack),self.bindings); done=OutboundIntent(updated,1,FP,"b"*64,True,"m",{})
   self.assertEqual(sync_hero_eligibility(done),Eligibility.NOT_ELIGIBLE)
   changed=OutboundIntent(updated,1,FP,"new-local",True,"m",{}); self.assertEqual(sync_hero_eligibility(changed),Eligibility.LOCAL_CHANGED)
+ def test_frappe_scope_rejects_unauthorized_actor_without_legacy_has_role_api(self):
+  fake=SimpleNamespace(local=SimpleNamespace(site="site"),session=SimpleNamespace(user="Guest"),get_roles=lambda: ())
+  with self.assertRaises(PermissionError): FrappeSyncLedger(fake)._scope("site")
+  fake.session.user="manager"; fake.get_roles=lambda: ("System Manager",)
+  self.assertIs(FrappeSyncLedger(fake)._scope("site"),fake)
  def test_outbound_rejects_unauthorized_unverified_or_implicit_write(self):
   intent=OutboundIntent(self.binding,1,FP,"local",True,"mutation X { x { id } }",{})
   with self.assertRaises(PermissionError): execute_sync_hero(intent,OutboundApproval(False,True,True,True,True,1),Transport(OutboundAck(True,"e","a"*64,"b"*64)),self.bindings)

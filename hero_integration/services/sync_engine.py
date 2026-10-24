@@ -119,7 +119,9 @@ class FrappeSyncLedger:
     def _scope(self,site):
         frappe=self._frappe()
         if getattr(getattr(frappe,"local",None),"site",None)!=site: raise SyncError("Sync ledger cannot cross site scope.")
-        if getattr(getattr(frappe,"session",None),"user",None)!="Administrator" and not frappe.has_role("System Manager"): raise PermissionError("System Manager or Administrator authority is required.")
+        user=getattr(getattr(frappe,"session",None),"user",None)
+        roles=getattr(frappe,"get_roles",lambda: ())()
+        if user!="Administrator" and "System Manager" not in roles: raise PermissionError("System Manager or Administrator authority is required.")
         return frappe
     def state(self,site):
         frappe=self._frappe(); rows=frappe.get_all(self.STATE,filters={"site_scope":site},fields=["name"])
