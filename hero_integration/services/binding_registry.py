@@ -140,10 +140,10 @@ class FrappeBindingStorage:
         frappe = self._frappe()
         if getattr(getattr(frappe, "local", None), "site", None) != site: raise BindingRegistryError("Binding access cannot cross site scope.")
         return frappe
-    def _write(self, frappe, doctype):
+    def _write(self, frappe, doctype, permission="write"):
         user = getattr(getattr(frappe, "session", None), "user", None)
         if user != "Administrator" and not frappe.has_role("System Manager"): raise PermissionError("System Manager or Administrator authority is required.")
-        frappe.has_permission(doctype, "write", throw=True)
+        frappe.has_permission(doctype, permission, throw=True)
     def object(self, site, key):
         frappe = self._scope(site); rows = frappe.get_all(self.OBJECT, filters={"site_scope": site, "identity_key": key}, fields=["name"])
         if len(rows) > 1: raise BindingConflict("Object binding identity is not unique.")
@@ -156,19 +156,29 @@ class FrappeBindingStorage:
         frappe = self._scope(site); rows = frappe.get_all(self.FIELD, filters={"site_scope": site, "object_binding": parent}, fields=["name"], order_by="identity_key asc")
         return tuple(self._field(frappe.get_doc(self.FIELD, row.name)) for row in rows)
     def put_object(self, value):
-        frappe = self._scope(value.site_scope); self._write(frappe, self.OBJECT); old = self.object(value.site_scope, value.identity_key)
+        frappe = self._scope(value.site_scope); self._write(frappe, self.OBJECT, "create"); old = self.object(value.site_scope, value.identity_key)
         if old is not None: return old
-        frappe.get_doc({"doctype": self.OBJECT, "identity_key": value.identity_key, "site_scope": value.site_scope, "source_instance": value.source_instance, "object_type": value.object_type, "external_object_id": value.external_object_id, "target_app": value.target_app, "target_doctype": value.target_doctype, "target_name": value.target_name, "mapping_definition_id": value.mapping_definition_id, "mapping_revision": value.mapping_revision, "binding_revision": value.revision, "lifecycle": value.lifecycle, "reconciliation": value.reconciliation}).insert()
-        return value
+        try:
+            frappe.get_doc({"doctype": self.OBJECT, "identity_key": value.identity_key, "site_scope": value.site_scope, "source_instance": value.source_instance, "object_type": value.object_type, "external_object_id": value.external_object_id, "target_app": value.target_app, "target_doctype": value.target_doctype, "target_name": value.target_name, "mapping_definition_id": value.mapping_definition_id, "mapping_revision": value.mapping_revision, "binding_revision": value.revision, "lifecycle": value.lifecycle, "reconciliation": value.reconciliation}).insert()
+            return value
+        except Exception as error:
+            return self._after_duplicate(error, lambda: self.object(value.site_scope, value.identity_key), value)
     def put_field(self, value):
-        frappe = self._scope(value.site_scope); self._write(frappe, self.FIELD)
-        if self.object(value.site_scope, value.object_binding_key) is None: raise BindingRegistryError("Field binding parent does not exist.")
+        frappe = self._scope(value.site_scope); self._write(frappe, self.FIELD, "create")
+        parent = self.object(value.site_scope, value.object_binding_key)
+        if parent is None: raise BindingRegistryError("Field binding parent does not exist.")
+        if (value.source_instance, value.target_app, value.target_doctype, value.target_name) != (parent.source_instance, parent.target_app, parent.target_doctype, parent.target_name): raise BindingRegistryError("Field binding does not match its object binding identity.")
         old = self.field(value.site_scope, value.identity_key)
         if old is not None: return old
-        frappe.get_doc({"doctype": self.FIELD, "identity_key": value.identity_key, "object_binding": value.object_binding_key, "site_scope": value.site_scope, "source_instance": value.source_instance, "source_field": value.source_field, "target_app": value.target_app, "target_doctype": value.target_doctype, "target_name": value.target_name, "target_field": value.target_field, "mapping_definition_id": value.mapping_definition_id, "mapping_revision": value.mapping_revision, "direction": value.direction.value, "binding_revision": value.revision, "sync_state": value.state.value, "acknowledged_source_fingerprint": value.acknowledged_source_fingerprint, "acknowledged_target_fingerprint": value.acknowledged_target_fingerprint, "acknowledged_version": value.acknowledged_version, "reconciliation": value.reconciliation}).insert()
-        return value
+        try:
+            frappe.get_doc({"doctype": self.FIELD, "identity_key": value.identity_key, "object_binding": value.object_binding_key, "site_scope": value.site_scope, "source_instance": value.source_instance, "source_field": value.source_field, "target_app": value.target_app, "target_doctype": value.target_doctype, "target_name": value.target_name, "target_field": value.target_field, "mapping_definition_id": value.mapping_definition_id, "mapping_revision": value.mapping_revision, "direction": value.direction.value, "binding_revision": value.revision, "sync_state": value.state.value, "acknowledged_source_fingerprint": value.acknowledged_source_fingerprint, "acknowledged_target_fingerprint": value.acknowledged_target_fingerprint, "acknowledged_version": value.acknowledged_version, "reconciliation": value.reconciliation}).insert()
+            return value
+        except Exception as error:
+            return self._after_duplicate(error, lambda: self.field(value.site_scope, value.identity_key), value)
     def update_field(self, value, expected_revision):
-        frappe = self._scope(value.site_scope); self._write(frappe, self.FIELD); old = self.field(value.site_scope, value.identity_key)
+        frappe = self._scope(value.site_scope); self._write(frappe, self.FIELD)
+        frappe.db.sql("select name from `tabHERO Field Binding` where identity_key=%s and site_scope=%s for update", (value.identity_key, value.site_scope))
+        old = self.field(value.site_scope, value.identity_key)
         if old is None or old.revision != expected_revision: raise BindingConflict("Field binding revision is stale.")
         doc = frappe.get_doc(self.FIELD, value.identity_key)
         for key, item in {"binding_revision": value.revision, "sync_state": value.state.value, "acknowledged_source_fingerprint": value.acknowledged_source_fingerprint, "acknowledged_target_fingerprint": value.acknowledged_target_fingerprint, "acknowledged_version": value.acknowledged_version, "reconciliation": value.reconciliation}.items(): setattr(doc, key, item)
@@ -177,3 +187,11 @@ class FrappeBindingStorage:
     def _object(doc): return ObjectBinding(doc.identity_key, doc.site_scope, doc.source_instance, doc.object_type, doc.external_object_id, doc.target_app, doc.target_doctype, doc.target_name, doc.mapping_definition_id, int(doc.mapping_revision), int(doc.binding_revision), doc.lifecycle or "VALID", doc.reconciliation or "")
     @staticmethod
     def _field(doc): return FieldBinding(doc.identity_key, doc.object_binding, doc.site_scope, doc.source_instance, doc.source_field, doc.target_app, doc.target_doctype, doc.target_name, doc.target_field, doc.mapping_definition_id, int(doc.mapping_revision), MappingDirection(doc.direction), int(doc.binding_revision), BindingState(doc.sync_state or BindingState.UNACKNOWLEDGED), doc.acknowledged_source_fingerprint or None, doc.acknowledged_target_fingerprint or None, int(doc.acknowledged_version or 0), doc.reconciliation or "")
+    @staticmethod
+    def _after_duplicate(error, reread, candidate):
+        """Only Frappe's explicit duplicate exception is safe to retry by reread."""
+        if error.__class__.__name__ != "DuplicateEntryError": raise error
+        existing = reread()
+        if existing is None: raise BindingConflict("Duplicate insertion did not expose a canonical binding.") from error
+        if existing != candidate: raise BindingConflict("Duplicate insertion conflicts with canonical binding state.") from error
+        return existing
