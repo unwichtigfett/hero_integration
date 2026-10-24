@@ -48,10 +48,34 @@ class ProvisioningAudit(Protocol):
     def finalize(self, audit_id: str, state: ProvisioningState) -> None: ...
 
 
+class ProvisioningApprovalAuthority(Protocol):
+    """Server-owned source that durably consumes exactly one approved plan."""
+
+    def consume(
+        self,
+        plan: ProvisioningPlan,
+        approval: ProvisioningApproval,
+        current_actor: str,
+        now: float,
+    ) -> None: ...
+
+
 class ProvisioningAdapter(Protocol):
     def metadata_fingerprint(self, site_scope: str) -> str: ...
     def apply(self, site_scope: str, operation: ProvisioningOperation) -> None: ...
     def verify(self, site_scope: str, operation: ProvisioningOperation) -> bool: ...
+
+
+class InMemoryProvisioningApprovalAuthority:
+    """Test-only replay guard. Production execution requires a durable authority."""
+
+    def __init__(self) -> None:
+        self._consumed: set[str] = set()
+
+    def consume(self, plan, approval, current_actor, now) -> None:
+        if approval.approval_id in self._consumed:
+            raise ProvisioningLifecycleError("Provisioning approval was already consumed.")
+        self._consumed.add(approval.approval_id)
 
 
 class InMemoryProvisioningAudit:
@@ -90,19 +114,20 @@ class ProvisioningExecutor:
         self,
         audit: ProvisioningAudit,
         adapter: ProvisioningAdapter,
+        approvals: ProvisioningApprovalAuthority,
         clock: Callable[[], float] = time,
     ) -> None:
-        self._audit, self._adapter, self._clock = audit, adapter, clock
-        self._used_approvals: set[str] = set()
+        self._audit, self._adapter, self._approvals, self._clock = audit, adapter, approvals, clock
 
     def apply_authorized(self, plan: ProvisioningPlan, approval: ProvisioningApproval) -> ProvisioningResult:
-        _authorize(plan, approval, self._used_approvals, self._audit.current_actor(plan.site_scope), self._clock())
         _require_executable_operations(plan)
+        current_actor = self._audit.current_actor(plan.site_scope)
+        _authorize(plan, approval, current_actor, self._clock())
+        self._approvals.consume(plan, approval, current_actor, self._clock())
         expected_metadata = plan.metadata_fingerprint
         if self._adapter.metadata_fingerprint(plan.site_scope) != expected_metadata:
             raise ProvisioningLifecycleError("Provisioning plan metadata is stale.")
         audit_id = self._audit.reserve(plan, approval)
-        self._used_approvals.add(approval.approval_id)
         completed: list[str] = []
         schema_effect_started = False
         try:
@@ -153,14 +178,11 @@ def _require_executable_operations(plan: ProvisioningPlan) -> None:
 def _authorize(
     plan: ProvisioningPlan,
     approval: ProvisioningApproval,
-    used: set[str],
     current_actor: str,
     now: float,
 ) -> None:
     if plan.execution_authority != "NONE":
         raise ProvisioningLifecycleError("Plans must never carry execution authority.")
-    if approval.approval_id in used:
-        raise ProvisioningLifecycleError("Provisioning approval was already consumed.")
     if not approval.approval_id or not approval.actor or approval.actor != current_actor:
         raise ProvisioningLifecycleError("Provisioning approval actor does not match the authenticated actor.")
     if not isinstance(approval.expires_at, (float, int)) or approval.expires_at <= now:
