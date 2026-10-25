@@ -1,0 +1,22 @@
+{
+ "doctype": "DocType", "name": "HERO Mapping Draft", "module": "HERO Integration", "autoname": "field:draft_key", "track_changes": 1,
+ "fields": [
+  {"fieldname":"draft_key","fieldtype":"Data","reqd":1,"unique":1,"read_only":1},
+  {"fieldname":"site_scope","fieldtype":"Data","reqd":1,"read_only":1},
+  {"fieldname":"definition_id","fieldtype":"Data","reqd":1,"read_only":1},
+  {"fieldname":"owner_user","fieldtype":"Link","options":"User","reqd":1,"read_only":1},
+  {"fieldname":"generation","fieldtype":"Int","reqd":1,"read_only":1},
+  {"fieldname":"state","fieldtype":"Select","options":"OPEN\nDISCARDED","default":"OPEN","reqd":1,"read_only":1},
+  {"fieldname":"content_json","fieldtype":"Code","options":"JSON","reqd":1},
+  {"fieldname":"content_hash","fieldtype":"Data","reqd":1,"read_only":1},
+  {"fieldname":"content_revision","fieldtype":"Int","reqd":1,"read_only":1},
+  {"fieldname":"base_active_mapping","fieldtype":"Link","options":"HERO GraphQL Mapping","reqd":1,"read_only":1},
+  {"fieldname":"base_active_revision","fieldtype":"Int","reqd":1,"read_only":1},
+  {"fieldname":"base_active_hash","fieldtype":"Data","reqd":1,"read_only":1},
+  {"fieldname":"base_schema_fingerprint","fieldtype":"Data","reqd":1,"read_only":1},
+  {"fieldname":"diagnostics_json","fieldtype":"Code","options":"JSON","read_only":1},
+  {"fieldname":"warning_fingerprint","fieldtype":"Data","read_only":1}
+ ],
+ "permissions":[{"role":"System Manager","read":1,"write":1,"create":1}],"modified":"2026-10-25 00:00:00.000000"
+}
+
