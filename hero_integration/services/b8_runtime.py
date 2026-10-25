@@ -36,6 +36,7 @@ def reconstruct_materialized_read_plan(selection: RuntimePlanSelection, *, frapp
         mapping = frappe.get_doc("HERO GraphQL Mapping", selection.graphql_mapping)
         sealed = SealedRead.from_documents(service, mapping, snapshot)
         draft = _draft(_compilation_input(mapping.mapping_json), selection)
+        _validate_against_sealed_read(sealed, draft)
         validated = SnapshotAdapter().adapt(StoredSnapshot(
             snapshot.name, snapshot.snapshot_json, snapshot.schema_fingerprint,
             snapshot.source_instance, snapshot.analysis_status,
@@ -80,7 +81,7 @@ def _draft(value: Mapping[str, object], selection: RuntimePlanSelection) -> Quer
         or not isinstance(selected, Sequence) or isinstance(selected, (str, bytes))
         or not all(isinstance(path, str) and path for path in selected)
         or not isinstance(variables, Mapping)
-        or any(isinstance(item, str) and item.startswith("$") for item in variables.values())
+        or _contains_dynamic_value(variables)
     ):
         raise RuntimeReconstructionError("B8 compilation input is incomplete or has dynamic arguments.")
     return QueryDraft(
@@ -91,11 +92,45 @@ def _draft(value: Mapping[str, object], selection: RuntimePlanSelection) -> Quer
     )
 
 
+def _validate_against_sealed_read(sealed: SealedRead, draft: QueryDraft) -> None:
+    """Bind persisted B2 arguments and result bindings to the B7 read contract.
+
+    The materializer's rendered query alone cannot expose a changed scalar
+    variable value.  Resolve the two reviewed symbolic values locally, then
+    require the persisted B2 input to be exactly that concrete mapping.
+    """
+    contract = sealed.contract
+    if draft.alias != contract.records_path or contract.identity_path not in draft.selected_paths:
+        raise RuntimeReconstructionError("B8 compilation bindings differ from the sealed B7 read contract.")
+    expected: dict[str, object] = {}
+    for name, value in contract.variables.items():
+        if value == "$offset":
+            expected[name] = 0
+        elif value == "$page_size":
+            expected[name] = contract.page_size
+        elif isinstance(value, str) and value.startswith("$"):
+            raise RuntimeReconstructionError("B8 compilation cannot resolve an unreviewed symbolic argument.")
+        else:
+            expected[name] = value
+    if dict(draft.variables) != expected:
+        raise RuntimeReconstructionError("B8 compilation arguments differ from the sealed B7 read contract.")
+
+
 def _contains_secret_key(value: object) -> bool:
     if isinstance(value, Mapping):
         return any("token" in str(key).lower() or "secret" in str(key).lower() or _contains_secret_key(item) for key, item in value.items())
     if isinstance(value, (tuple, list)):
         return any(_contains_secret_key(item) for item in value)
+    return False
+
+
+def _contains_dynamic_value(value: object) -> bool:
+    if isinstance(value, str):
+        return value.startswith("$")
+    if isinstance(value, Mapping):
+        return any(_contains_dynamic_value(item) for item in value.values())
+    if isinstance(value, (tuple, list)):
+        return any(_contains_dynamic_value(item) for item in value)
     return False
 
 

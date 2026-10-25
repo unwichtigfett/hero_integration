@@ -56,6 +56,7 @@ class TestBindingRegistry(unittest.TestCase):
             self.service.get_field_bindings_for_source("one.test", "hero-a"),
             tuple(sorted((first, outbound), key=lambda item: item.identity_key)),
         )
+        self.assertEqual(self.service.get_inbound_field_bindings_for_source("one.test", "hero-a"), (first,))
         self.assertEqual(self.service.get_field_bindings_for_source("one.test", "hero-b"), (other,))
         self.assertEqual(self.service.get_field_bindings_for_source("two.test", "hero-a"), ())
 

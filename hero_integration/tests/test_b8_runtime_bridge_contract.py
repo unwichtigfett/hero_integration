@@ -8,6 +8,14 @@ from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import patch
 
+try:
+    import frappe  # noqa: F401
+except ModuleNotFoundError:
+    frappe = types.ModuleType("frappe")
+    frappe.whitelist = lambda *args, **kwargs: lambda function: function
+    sys.modules["frappe"] = frappe
+
+from hero_integration import api
 from hero_integration.services import sync_runtime_adapter
 
 
@@ -111,6 +119,101 @@ class TestB8RuntimeBridgeContract(unittest.TestCase):
                 sync_runtime_adapter.run_scheduled_auto_sync(frappe_module=frappe_module)
 
         service.assert_not_called()
+
+    def test_pending_sync_api_requires_system_manager_and_uses_canonical_adapter(self):
+        calls = []
+        fake_frappe = SimpleNamespace(
+            only_for=lambda role: calls.append(("only_for", role)),
+            throw=lambda message: (_ for _ in ()).throw(ValueError(message)),
+        )
+        result = sync_runtime_adapter.RuntimePreflight("INCOMPLETE", "a" * 64, 8, "hero-one")
+        with patch.object(api, "frappe", fake_frappe), patch.object(
+            sync_runtime_adapter, "run_pending_sync", return_value=result
+        ) as pending:
+            response = api.pending_sync("8")
+
+        self.assertEqual(calls, [("only_for", "System Manager")])
+        pending.assert_called_once_with(8)
+        self.assertEqual(response, {
+            "status": "INCOMPLETE", "plan_key": "a" * 64,
+            "generation": 8, "source_instance": "hero-one",
+        })
+
+    def test_pending_sync_api_rejects_invalid_generation_before_adapter(self):
+        fake_frappe = SimpleNamespace(
+            only_for=lambda _role: None,
+            throw=lambda message: (_ for _ in ()).throw(ValueError(message)),
+        )
+        with patch.object(api, "frappe", fake_frappe), patch.object(sync_runtime_adapter, "run_pending_sync") as pending:
+            with self.assertRaises(ValueError):
+                api.pending_sync("0")
+        pending.assert_not_called()
+
+    def _sync_hero_context(self, *, synchronized=False):
+        from hero_integration.services.binding_registry import BindingRegistryService, InMemoryBindingStorage
+        from hero_integration.services.mapping_registry_model import MappingDirection
+        from hero_integration.services.sync_engine import OutboundIntent
+
+        bindings = BindingRegistryService(InMemoryBindingStorage())
+        parent = bindings.create_or_resolve_object_binding(
+            site_scope="b9-test.localhost", source_instance="hero-one", object_type="Contact",
+            external_object_id="1", target_app="erpnext", target_doctype="Customer", target_name="CUST-1",
+            mapping_definition_id="definition", mapping_revision=3,
+        )
+        binding = bindings.create_or_resolve_field_binding(
+            parent, source_field="name", target_field="customer_name", mapping_definition_id="definition",
+            mapping_revision=3, direction=MappingDirection.HERO_TO_FRAPPE,
+        )
+        local = "b" * 64 if synchronized else "a" * 64
+        if synchronized:
+            binding = bindings.record_verified_acknowledgment(
+                binding, expected_revision=1, mapping_definition_id="definition", mapping_revision=3,
+                source_fingerprint="c" * 64, target_fingerprint=local, evidence_id="evidence", version=1,
+            )
+        intent = OutboundIntent(binding, 3, "d" * 64, local, True, "mutation X { update { id } }", {})
+        return {
+            "bindings": bindings, "binding": binding, "parent": parent,
+            "executable": SimpleNamespace(generation=4),
+            "snapshot": SimpleNamespace(schema_fingerprint="d" * 64),
+            "mapping": {"target": {"operation": "update"}}, "intent": intent,
+            "fingerprint": "f" * 64,
+        }
+
+    def test_sync_hero_rejects_missing_confirmation_without_audit_or_transport(self):
+        context = self._sync_hero_context()
+        calls = []
+        fake_frappe = SimpleNamespace(
+            only_for=lambda role: calls.append(("only_for", role)),
+            throw=lambda message: (_ for _ in ()).throw(ValueError(message)),
+        )
+        with patch.object(api, "frappe", fake_frappe), patch.object(
+            api, "_sync_hero_context", return_value=context
+        ), patch.object(api, "_assert_mutation_execution_released") as release, patch.object(
+            api, "_reserve_mutation"
+        ) as reserve:
+            with self.assertRaises(ValueError):
+                api.sync_hero_execute("binding", "mapping", 4, 1, "wrong", 1)
+
+        self.assertEqual(calls, [("only_for", "System Manager")])
+        release.assert_not_called()
+        reserve.assert_not_called()
+
+    def test_sync_hero_rejects_unchanged_binding_before_audit_or_transport(self):
+        context = self._sync_hero_context(synchronized=True)
+        fake_frappe = SimpleNamespace(
+            only_for=lambda _role: None,
+            throw=lambda message: (_ for _ in ()).throw(ValueError(message)),
+        )
+        with patch.object(api, "frappe", fake_frappe), patch.object(
+            api, "_sync_hero_context", return_value=context
+        ), patch.object(api, "_assert_mutation_execution_released") as release, patch.object(
+            api, "_reserve_mutation"
+        ) as reserve:
+            with self.assertRaises(ValueError):
+                api.sync_hero_execute("binding", "mapping", 4, context["binding"].revision, "f" * 64, 1)
+
+        release.assert_not_called()
+        reserve.assert_not_called()
 
 
 if __name__ == "__main__":  # pragma: no cover

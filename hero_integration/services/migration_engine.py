@@ -208,6 +208,29 @@ class FrappeDocumentAdapter:
         if rows:
             frappe.has_permission(doctype, "write", throw=True); doc = frappe.get_doc(doctype, rows[0].name); _assign(doc, values); doc.save(); return doc.name
         frappe.has_permission(doctype, "create", throw=True); doc = frappe.get_doc({"doctype": doctype, self.identity_field: identity, **values}); doc.insert(); return doc.name
+    def update_existing_bound(self, site, app, doctype, name, values):
+        """Update an already-bound target without resolving or inserting one."""
+        frappe = self._frappe()
+        if getattr(getattr(frappe, "local", None), "site", None) != site:
+            raise MigrationError("Bound target cannot cross site scope.")
+        _text(app, "target app"); _text(doctype, "target DocType"); _text(name, "bound target")
+        if not isinstance(values, dict) or not values or "name" in values:
+            raise MigrationError("Bound target values are invalid.")
+        if getattr(getattr(frappe, "session", None), "user", None) != "Administrator" and "System Manager" not in frappe.get_roles():
+            raise PermissionError("System Manager or Administrator authority is required.")
+        frappe.has_permission(doctype, "read", throw=True)
+        if not frappe.db.exists(doctype, name):
+            return False
+        meta = frappe.get_meta(doctype)
+        if any(not meta.get_field(field) for field in values): raise MigrationError("Bound target field no longer exists.")
+        frappe.has_permission(doctype, "write", throw=True)
+        document = frappe.get_doc(doctype, name)
+        changed = {key: value for key, value in values.items() if document.get(key) != value}
+        if changed:
+            _assign(document, changed)
+            document.save()
+        return True
+
 
 
 class MigrationEngine:
