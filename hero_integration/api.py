@@ -168,6 +168,11 @@ def _sync_hero_context(binding_identity_key: str, mapping_name: str, expected_pl
     if row.status != "Active" or row.direction != "FRAPPE_TO_MUTATION" or row.source_instance != binding.source_instance:
         frappe.throw("Sync Hero mutation mapping is not active for this source instance.")
     snapshot, schema = _validated_snapshot(row.schema_snapshot)
+    if (
+        snapshot.name != executable.selection.schema_snapshot
+        or snapshot.schema_fingerprint != executable.selection.schema_fingerprint
+    ):
+        frappe.throw("Sync Hero mutation snapshot does not match the approved runtime plan.")
     try:
         mapping = normalise_mapping(json.loads(row.mapping_json), schema)
     except (TypeError, ValueError, WritebackContractError):
