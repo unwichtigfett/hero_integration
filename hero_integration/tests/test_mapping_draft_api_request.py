@@ -309,3 +309,14 @@ class TestMappingDraftAPIRequest(unittest.TestCase):
         self.assertEqual('Active',frappe.db.get_value('HERO GraphQL Mapping',self.rows['active'],'status'))
         frappe.destroy()
         self.assertEqual(before,self.state())
+
+    def test_foreign_legacy_draft_write_does_not_transfer_last_editor(self):
+        before=self.state()
+        args={'snapshot_name':self.snapshot,'operation_kind':'QUERY','operation_name':'readThings',
+              'direction':'QUERY_TO_FRAPPE','mapping_json':'{"source":{}}','mapping_name':self.rows['draft'],'expected_revision':1}
+        self.assertEqual(403,self.rpc('b','graphql_mapping_save',args,'POST')[0])
+        self.assertEqual(403,self.request('b','/api/resource/HERO GraphQL Mapping/'+self.rows['draft'],'PUT',{'mapping_json':'{}'})[0])
+        connect()
+        self.assertEqual('Administrator',frappe.db.get_value('HERO GraphQL Mapping',self.rows['draft'],'modified_by'))
+        frappe.destroy()
+        self.assertEqual(before,self.state())
