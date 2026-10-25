@@ -28,7 +28,28 @@ class TestHeroDeskUiContract(unittest.TestCase):
         metadata = json.loads(definitions[0].read_text())
         self.assertEqual(metadata["page_name"], "hero-integration")
         self.assertEqual(metadata["module"], "HERO Integration")
-        self.assertEqual(metadata["roles"], [{"role": "System Manager"}])
+        self.assertEqual(metadata["roles"], [{"role": "Employee"}, {"role": "System Manager"}])
+
+    def test_universal_mapping_frontend_uses_only_authorized_lifecycle_contracts(self):
+        workspace = WORKSPACE_JS.read_text()
+        mapping = MAPPING_EDITOR_JS.read_text()
+        for contract in (
+            "isSystemManager", 'section === "mapping"', "frontend_mapping_list",
+            "Employee read-only view", "All Mapping Status", "mapping_name",
+            "expected_revision", "unchanged", "activation_required", "Reload current Draft",
+            "runtime_plan_status", "runtime_plan_approve", "Plan lifecycle",
+        ):
+            with self.subTest(contract=contract):
+                self.assertIn(contract, workspace + mapping)
+        self.assertNotIn('method: "frappe.client.get_list"', mapping)
+        migration = MIGRATION_JS.read_text()
+        for contract in (
+            "pending_sync", "expected_plan_generation", "Pending Sync", "RECONCILIATION_REQUIRED",
+        ):
+            with self.subTest(contract=contract):
+                self.assertIn(contract, migration)
+        self.assertNotIn("sync_hero_preview", migration)
+        self.assertNotIn("sync_hero_execute", migration)
 
     def test_workspace_uses_stored_state_and_one_canonical_route(self):
         source = WORKSPACE_JS.read_text()
@@ -216,9 +237,9 @@ class TestHeroDeskUiContract(unittest.TestCase):
     def test_mapping_editor_lists_saved_active_read_mappings_independently_from_the_source_picker(self):
         source = MAPPING_EDITOR_JS.read_text()
         for contract in (
-            'method: "frappe.client.get_list"', 'doctype: "HERO Frappe Mapping"',
-            'schema_snapshot: snapshotName', 'schema_fingerprint: schemaFingerprint', 'status: "Active"',
-            "limit_page_length: 500", "savedReadMappings", "readOperationFilter", "Reset filters",
+            "frontend_mapping_list", "item.schema_snapshot === snapshotName",
+            "item.schema_fingerprint === schemaFingerprint", "item.status === \"Active\"",
+            "savedReadMappings", "readOperationFilter", "Reset filters",
             "Read mappings could not be loaded", "Loading saved active read mappings", "loadActiveReadMappings", "Active Read Mappings",
         ):
             with self.subTest(contract=contract):

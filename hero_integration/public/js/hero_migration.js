@@ -15,11 +15,11 @@
 
     function mount(page) {
         page.main.empty().addClass("hero-integration-ui");
-        const root = $("<section class='hero-migration-center'></section>"), state = $("<div class='hero-migration-state' aria-live='polite'></div>"), runs = $("<div class='hero-migration-runs'></div>"), events = $("<div class='hero-migration-events'></div>"), refresh = $("<button type='button' class='btn btn-default'>Refresh stored status</button>");
+        const root = $("<section class='hero-migration-center'></section>"), state = $("<div class='hero-migration-state' aria-live='polite'></div>"), pendingSource = $("<input class='form-control' placeholder='Source instance'>"), pendingState = $("<div class='hero-pending-sync-state' aria-live='polite'></div>"), pendingLoad = $("<button type='button' class='btn btn-default'>Load approved plan</button>"), pendingStart = $("<button type='button' class='btn btn-default' disabled>Request Pending Sync</button>"), runs = $("<div class='hero-migration-runs'></div>"), events = $("<div class='hero-migration-events'></div>"), refresh = $("<button type='button' class='btn btn-default'>Refresh stored status</button>");
         const intro = $("<section class='hero-migration-panel hero-migration-intro'></section>").append($("<h2>HERO Migration / Synchronization</h2><p class='text-muted'>Preview never writes business or link status. Execute is separately confirmed and enforced server-side for System Managers only.</p>"), refresh);
         const actions = $("<section class='hero-migration-panel'></section>").append($("<h3>Manual actions</h3>"), $("<div class='hero-migration-actions'></div>"));
         const actionGrid = actions.find(".hero-migration-actions");
-        root.append(intro, actions, $("<section class='hero-migration-panel hero-migration-status'></section>").append($("<h3>Current run status</h3>"), state), $("<section class='hero-migration-panel'></section>").append($("<h3>Runs, progress, conflicts, cancellation and resume</h3>"), runs), $("<section class='hero-migration-panel'></section>").append($("<h3>Polling and error history</h3>"), events));
+        root.append(intro, actions, $("<section class='hero-migration-panel hero-pending-sync'></section>").append($("<h3>Pending Sync</h3><p class='text-muted'>Manual Pending Sync never enables scheduled polling. A current approved runtime plan and explicit confirmation are required.</p>"), $("<div class='hero-mapping-controls'></div>").append($("<label></label>").text("Source instance").append(pendingSource), pendingLoad, pendingStart), pendingState), $("<section class='hero-migration-panel hero-migration-status'></section>").append($("<h3>Current run status</h3>"), state), $("<section class='hero-migration-panel'></section>").append($("<h3>Runs, progress, conflicts, cancellation and resume</h3>"), runs), $("<section class='hero-migration-panel'></section>").append($("<h3>Polling and error history</h3>"), events));
         ACTIONS.forEach(([action, description]) => {
             const preview = $("<button type='button' class='btn btn-default'>Preview</button>").on("click", () => start(action, 1));
             const execute = $("<button type='button' class='btn btn-primary'>Execute</button>").on("click", () => confirmStart(action));
@@ -41,6 +41,23 @@
                 },
             });
             dialog.show();
+        }
+        let pendingPlan = null, pendingSequence = 0;
+        function renderPendingPlan() {
+            pendingStart.prop("disabled", pendingPlan?.state !== "APPROVED" || !pendingPlan?.generation);
+            if (!pendingPlan) return;
+            if (pendingPlan.state === "NOT_FOUND") return pendingState.text("No configured runtime plan for this source instance.");
+            pendingState.text(`Plan ${pendingPlan.plan_key || "—"}: ${pendingPlan.state}; revision ${pendingPlan.revision || "—"}; generation ${pendingPlan.generation || "—"}. ${pendingPlan.state === "APPROVED" ? "Explicit confirmation is still required." : "Pending Sync is unavailable until the server reports an approved plan."}`);
+        }
+        function loadPendingPlan() {
+            const sourceInstance = pendingSource.val().trim(), request = ++pendingSequence;
+            if (!sourceInstance) return pendingState.text("Select a source instance before requesting Pending Sync.");
+            pendingPlan = null; pendingStart.prop("disabled", true); pendingState.text("Loading runtime-plan status …");
+            return frappe.call({method: "hero_integration.api.runtime_plan_status", type: "GET", args: {source_instance: sourceInstance}}).then((response) => { if (request !== pendingSequence) return; pendingPlan = response.message || null; renderPendingPlan(); }).catch((error) => { if (request !== pendingSequence) return; pendingState.text(`Pending Sync is unavailable: ${error.message || "runtime-plan request failed"}.`); });
+        }
+        function requestPendingSync() {
+            if (pendingPlan?.state !== "APPROVED" || !pendingPlan?.generation) return;
+            frappe.confirm("Request one manual Pending Sync using this approved plan generation? Polling remains OFF and uncertain results are not retried.", () => frappe.call({method: "hero_integration.api.pending_sync", type: "POST", args: {expected_plan_generation: pendingPlan.generation}}).then((response) => { const result = response.message || {}; pendingState.text(`Pending Sync submitted: ${result.status || "incomplete result"}; plan ${result.plan_key || pendingPlan.plan_key}; generation ${result.generation || pendingPlan.generation}.${result.status === "RECONCILIATION_REQUIRED" ? " RECONCILIATION_REQUIRED: refresh and resolve server-reported reconciliation before another request." : " Submission is not a completed synchronization; refresh status for authoritative progress."}`); load(); }).catch((error) => { pendingState.text(`Pending Sync was rejected or incomplete: ${error.message || "request failed"}. Refresh the approved plan before any new explicit request.`); }));
         }
         function renderRuns(rows) {
             runs.empty(); if (!rows.length) return runs.append($("<p class='text-muted'></p>").text("No stored runs yet."));
@@ -67,7 +84,7 @@
             const list = $("<ul></ul>"); rows.forEach((row) => list.append($("<li></li>").text(`${row.modified}: ${row.mode} ${row.status} — ${row.detail || ""}`))); events.append(list);
         }
         function load() { state.text("Loading stored status …"); return frappe.call({method: "hero_integration.api.workspace_sync_status"}).then((response) => { const data = response.message || {}; state.text(`Status: ${data.sync_status || "Not started"}. Last success: ${data.last_successful_sync || "never"}. Watermarks: ${data.watermarks?.status || "Not established"}.`); renderRuns(data.runs || []); renderEvents(data); }).catch((error) => state.text(error.message || "Stored status could not be loaded.")); }
-        refresh.on("click", load); ACTIONS.forEach(([action]) => page.add_menu_item(action + " Preview", () => start(action, 1))); load();
+        refresh.on("click", load); pendingLoad.on("click", loadPendingPlan); pendingStart.on("click", requestPendingSync); ACTIONS.forEach(([action]) => page.add_menu_item(action + " Preview", () => start(action, 1))); load();
     }
 
     window.hero_integration_migration = Object.freeze({mount});
