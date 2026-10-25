@@ -28,47 +28,25 @@ class ReadContract:
 
 
 def from_documents(service, mapping, snapshot) -> ReadContract:
-    if service.status != "Validated":
-        raise ReadContractError("The selected GraphQL service is not validated.")
-    if getattr(service, "execution_status", "Pending Approval") != "Approved":
-        raise ReadContractError("The selected GraphQL service has no explicit execution approval.")
-    if int(getattr(service, "approved_service_revision", 0) or 0) != int(service.service_revision or 0):
-        raise ReadContractError("The selected GraphQL service approval is stale.")
-    if service.schema_snapshot != snapshot.name or service.schema_fingerprint != snapshot.schema_fingerprint:
-        raise ReadContractError("The selected GraphQL service no longer matches its schema snapshot.")
-    if mapping.name != getattr(service, "read_mapping", "") or mapping.status != "Active":
-        raise ReadContractError("The selected read mapping is not active.")
-    if mapping.schema_snapshot != snapshot.name or mapping.schema_fingerprint != snapshot.schema_fingerprint:
-        raise ReadContractError("The selected read mapping no longer matches its schema snapshot.")
-    if int(getattr(service, "approved_mapping_revision", 0) or 0) != int(mapping.mapping_revision or 0):
-        raise ReadContractError("The selected read mapping approval is stale.")
-    assert_read_only(service.query_document)
-    try:
-        config = json.loads(mapping.mapping_json)
-    except (TypeError, ValueError, json.JSONDecodeError) as error:
-        raise ReadContractError("The selected read mapping is not valid JSON.") from error
-    if not isinstance(config, Mapping):
-        raise ReadContractError("The selected read mapping must be an object.")
-    target = config.get("target_operation")
-    records_path, identity_path = config.get("records_path"), config.get("identity_path")
-    definition_ids, variables, page_size = config.get("mapping_definition_ids"), config.get("variables", {}), config.get("page_size", 100)
-    if target not in {"HeroCustomers", "HeroProjectMatches", *PROJECTIONS}:
-        raise ReadContractError("The selected target adapter is not supported.")
-    if not isinstance(records_path, str) or not records_path or not isinstance(identity_path, str) or not identity_path:
-        raise ReadContractError("The selected read mapping requires record and external identity paths.")
-    if not isinstance(definition_ids, list) or not definition_ids or not all(isinstance(value, str) and value for value in definition_ids):
-        raise ReadContractError("The selected read mapping requires explicit active mapping definitions.")
-    if not isinstance(variables, Mapping) or not isinstance(page_size, int) or isinstance(page_size, bool) or not 1 <= page_size <= 1000:
-        raise ReadContractError("The selected variables or page size are invalid.")
+    """Validate the immutable legacy B7 saved-query contract.
+
+    This remains the only contract accepted by the legacy migration executor.
+    Universal B8 materialization must opt into ``universal_from_documents``
+    and present its own canonical-operation seal.
+    """
+    contract, config = _common_contract(service, mapping, snapshot)
+    target = contract.target_operation
+    records_path, identity_path = contract.records_path, contract.identity_path
+    variables, definition_ids = contract.variables, contract.definition_ids
     if target in PROJECTIONS:
-        contract = PROJECTIONS[target]
+        projection = PROJECTIONS[target]
         from hero_integration.services.native_projections import validate_options
-        validate_options(contract, config.get('native_options'))
-        if snapshot.schema_fingerprint != contract['fingerprint']:
+        validate_options(projection, config.get('native_options'))
+        if snapshot.schema_fingerprint != projection['fingerprint']:
             raise ReadContractError('Projection requires its reviewed schema fingerprint.')
         if service.query_document.strip() != approved_query(target).strip():
             raise ReadContractError('Projection requires the exact reviewed read-only query.')
-        if records_path != contract['root'] or identity_path != 'id' or dict(variables) != {'first': '$page_size', 'offset': '$offset'}:
+        if records_path != projection['root'] or identity_path != 'id' or dict(variables) != {'first': '$page_size', 'offset': '$offset'}:
             raise ReadContractError('Projection pagination, root or identity path is invalid.')
     elif target in {"HeroCustomers", "HeroProjectMatches"}:
         # The two native adapters also have closed read contracts.  Do not let
@@ -114,7 +92,62 @@ def from_documents(service, mapping, snapshot) -> ReadContract:
             or dict(variables) != expected_variables
         ):
             raise ReadContractError("Native adapter requires its exact reviewed read-only query and variables.")
-    return ReadContract(service.name, int(service.service_revision), mapping.name, int(mapping.mapping_revision), target, records_path, identity_path, tuple(definition_ids), dict(variables), page_size)
+    return contract
+
+
+def universal_from_documents(service, mapping, snapshot) -> ReadContract:
+    """Validate shared B7 identities without adopting the legacy query bytes.
+
+    Only B8 calls this helper, after the separately approved canonical
+    operation seal has been recomputed.  The caller owns that additional
+    universal-contract validation; this helper deliberately cannot make a
+    legacy executor accept a materialized query.
+    """
+    contract, _config = _common_contract(service, mapping, snapshot)
+    return contract
+
+
+def _common_contract(service, mapping, snapshot) -> tuple[ReadContract, Mapping[str, object]]:
+    if service.status != "Validated":
+        raise ReadContractError("The selected GraphQL service is not validated.")
+    if getattr(service, "execution_status", "Pending Approval") != "Approved":
+        raise ReadContractError("The selected GraphQL service has no explicit execution approval.")
+    if int(getattr(service, "approved_service_revision", 0) or 0) != int(service.service_revision or 0):
+        raise ReadContractError("The selected GraphQL service approval is stale.")
+    if service.schema_snapshot != snapshot.name or service.schema_fingerprint != snapshot.schema_fingerprint:
+        raise ReadContractError("The selected GraphQL service no longer matches its schema snapshot.")
+    if mapping.name != getattr(service, "read_mapping", "") or mapping.status != "Active":
+        raise ReadContractError("The selected read mapping is not active.")
+    if mapping.schema_snapshot != snapshot.name or mapping.schema_fingerprint != snapshot.schema_fingerprint:
+        raise ReadContractError("The selected read mapping no longer matches its schema snapshot.")
+    if int(getattr(service, "approved_mapping_revision", 0) or 0) != int(mapping.mapping_revision or 0):
+        raise ReadContractError("The selected read mapping approval is stale.")
+    assert_read_only(service.query_document)
+    try:
+        config = json.loads(mapping.mapping_json)
+    except (TypeError, ValueError, json.JSONDecodeError) as error:
+        raise ReadContractError("The selected read mapping is not valid JSON.") from error
+    if not isinstance(config, Mapping):
+        raise ReadContractError("The selected read mapping must be an object.")
+    target = config.get("target_operation")
+    records_path, identity_path = config.get("records_path"), config.get("identity_path")
+    definition_ids, variables, page_size = config.get("mapping_definition_ids"), config.get("variables", {}), config.get("page_size", 100)
+    if target not in {"HeroCustomers", "HeroProjectMatches", *PROJECTIONS}:
+        raise ReadContractError("The selected target adapter is not supported.")
+    if not isinstance(records_path, str) or not records_path or not isinstance(identity_path, str) or not identity_path:
+        raise ReadContractError("The selected read mapping requires record and external identity paths.")
+    if not isinstance(definition_ids, list) or not definition_ids or not all(isinstance(value, str) and value for value in definition_ids):
+        raise ReadContractError("The selected read mapping requires explicit active mapping definitions.")
+    if not isinstance(variables, Mapping) or not isinstance(page_size, int) or isinstance(page_size, bool) or not 1 <= page_size <= 1000:
+        raise ReadContractError("The selected variables or page size are invalid.")
+    return (
+        ReadContract(
+            service.name, int(service.service_revision), mapping.name,
+            int(mapping.mapping_revision), target, records_path, identity_path,
+            tuple(definition_ids), dict(variables), page_size,
+        ),
+        config,
+    )
 
 
 def value_at(value: object, path: str) -> object:
