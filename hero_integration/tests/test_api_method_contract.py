@@ -7,7 +7,7 @@ import unittest
 
 API = Path(__file__).resolve().parents[1] / "api.py"
 WRITE_RPC_NAMES = {
-    "start_migration", "cancel_run", "resume_run", "workspace_schema_refresh", "workspace_settings_save",
+    "start_migration", "pending_sync", "sync_hero_execute", "cancel_run", "resume_run", "workspace_schema_refresh", "workspace_settings_save",
     "workspace_testing_settings_save", "workspace_erpnext_company_save", "workspace_erpnext_company_confirm",
     "workspace_mutation_execution_set", "graphql_mapping_save", "workspace_service_save", "workspace_service_validate",
     "workspace_service_delete", "adopt_mapping_package", "resume_mapping_adoption",

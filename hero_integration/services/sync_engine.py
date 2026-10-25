@@ -159,11 +159,10 @@ class FrappeBoundIndex:
     """Read-only B6 enumeration; it never creates bindings or target records."""
     def __init__(self, frappe_module=None): self._frappe_module=frappe_module
     def fields(self, site_scope, source_instance):
-        from hero_integration.services.binding_registry import FrappeBindingStorage
+        from hero_integration.services.binding_registry import BindingRegistryService, FrappeBindingStorage
         storage=FrappeBindingStorage(self._frappe_module)
         result=[]
-        for binding in storage.fields_for_source(site_scope,source_instance):
-            if binding.direction is not MappingDirection.HERO_TO_FRAPPE: continue
+        for binding in BindingRegistryService(storage).get_inbound_field_bindings_for_source(site_scope,source_instance):
             parent=storage.object(site_scope,binding.object_binding_key)
             if parent is None or parent.source_instance!=source_instance: raise SyncConflict("Bound field has no current object binding.")
             result.append(BoundField(parent.external_object_id,binding,tuple(binding.source_field.split("."))))
@@ -175,11 +174,11 @@ class FrappeBoundProcessor:
     Initial migration owns binding creation and inserts. This processor accepts
     neither an unbound object nor a new field and cannot provision schema.
     """
-    def __init__(self, mapping_revision, definition_ids, frappe_module=None):
-        self.mapping_revision,self.definition_ids,self._frappe_module=mapping_revision,frozenset(definition_ids),frappe_module
+    def __init__(self, mapping_revision, definition_ids, frappe_module=None, document_adapter=None):
+        self.mapping_revision,self.definition_ids,self._frappe_module,self._document_adapter=mapping_revision,frozenset(definition_ids),frappe_module,document_adapter
     def process(self, record, fields):
         try:
-            identity=_identity(record); grouped={}
+            identity=_identity(record); grouped={}; site_scope=None
             for field in fields:
                 binding=field.binding
                 if (field.object_id!=identity or binding.direction is not MappingDirection.HERO_TO_FRAPPE or
@@ -187,18 +186,20 @@ class FrappeBoundProcessor:
                     binding.state is BindingState.RECONCILIATION_REQUIRED):
                     raise SyncConflict("Bound field is stale or ineligible.")
                 value=_extract_bound(record,field.source_path)
+                if site_scope is None: site_scope=binding.site_scope
+                elif binding.site_scope!=site_scope: raise SyncConflict("Bound fields cannot cross site scope.")
                 if value is _BOUND_MISSING: return False
-                grouped.setdefault((binding.target_doctype,binding.target_name),{})[binding.target_field]=value
-            frappe=self._frappe()
-            for (doctype,name), values in grouped.items():
-                if not frappe.db.exists(doctype,name): return False
-                meta=frappe.get_meta(doctype)
-                if any(field=="name" or not meta.get_field(field) for field in values): return False
-                frappe.has_permission(doctype,"write",throw=True)
-                document=frappe.get_doc(doctype,name)
-                changed={key:value for key,value in values.items() if document.get(key)!=value}
-                if changed:
-                    _assign(document,changed); document.save()
+                target=grouped.setdefault((binding.target_app,binding.target_doctype,binding.target_name),{})
+                if binding.target_field in target and target[binding.target_field]!=value: return False
+                target[binding.target_field]=value
+            if self._document_adapter is None:
+                from hero_integration.services.migration_engine import FrappeDocumentAdapter
+                writer=FrappeDocumentAdapter("name",self._frappe_module)
+            else:
+                writer=self._document_adapter
+            if not callable(getattr(writer,"update_existing_bound",None)): return False
+            for (app,doctype,name), values in grouped.items():
+                if not writer.update_existing_bound(site_scope,app,doctype,name,values): return False
             return True
         except Exception:
             return False
@@ -215,8 +216,11 @@ class SyncEngine:
     def __init__(self, ledger:SyncLedger, plan:MaterializedReadPlan, provider:ChangeProvider, index:BoundIndex, processor:BoundProcessor): self.ledger,self.plan,self.provider,self.index,self.processor=ledger,plan,provider,index,processor
     def configure(self, configuration:PollingConfiguration, *, expected:int|None=None):
         prior=self.ledger.state(configuration.site_scope)
-        if prior and prior.configuration!=configuration: return self.ledger.save_state(SyncState(configuration,prior.cursor,(),SyncStatus.RECONCILIATION_REQUIRED,prior.generation+1,"configuration changed"),prior.generation if expected is None else expected)
-        return self.ledger.save_state(SyncState(configuration),expected if expected is not None else (prior.generation if prior else None))
+        if prior:
+            if expected is not None and prior.generation!=expected: raise SyncConflict("Stale sync state.")
+            if prior.configuration==configuration: return prior
+            return self.ledger.save_state(SyncState(configuration,prior.cursor,(),SyncStatus.RECONCILIATION_REQUIRED,prior.generation+1,"configuration changed"),prior.generation)
+        return self.ledger.save_state(SyncState(configuration),expected)
     def poll(self, run:SyncRun):
         state=self._state(run)
         if not run.automatic: raise SyncError("Polling requires automatic run identity.")

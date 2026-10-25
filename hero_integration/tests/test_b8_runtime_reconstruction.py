@@ -30,7 +30,7 @@ def _context():
     compilation = {"b8_compilation": {"version": 1, "operation_name": "SearchThings", "alias": "things", "field": "things", "selected_paths": ["id", "name"], "variables": draft.variables}}
     mapping = SimpleNamespace(name="B8-MAPPING", mapping_json=json.dumps(compilation))
     service = SimpleNamespace(name="B8-SERVICE", query_document=request.document)
-    sealed = SealedRead(ReadContract("B8-SERVICE", 3, "B8-MAPPING", 4, "Projection", "cases", "id", ("d",), {}, 10), request.document, fingerprint, sha256(request.document.encode()).hexdigest())
+    sealed = SealedRead(ReadContract("B8-SERVICE", 3, "B8-MAPPING", 4, "Projection", "things", "id", ("d",), {"first": "$page_size"}, 1), request.document, fingerprint, sha256(request.document.encode()).hexdigest())
     docs = {("HERO GraphQL Schema Snapshot", snapshot.name): snapshot, ("HERO GraphQL Service", service.name): service, ("HERO GraphQL Mapping", mapping.name): mapping}
     return selection, request, sealed, mapping, SimpleNamespace(get_doc=lambda doctype, name: docs[(doctype, name)])
 
@@ -53,3 +53,27 @@ class TestB8RuntimeReconstruction(unittest.TestCase):
         with patch.object(FrappeRuntimePlanReferences, "validate_current"), patch.object(SealedRead, "from_documents", return_value=sealed):
             with self.assertRaises(b8_runtime.RuntimeReconstructionError):
                 b8_runtime.reconstruct_materialized_read_plan(selection, frappe_module=frappe)
+
+    def test_rejects_compilation_arguments_or_bindings_outside_the_sealed_read_contract(self):
+        selection, _expected, sealed, mapping, frappe = _context()
+        payload = json.loads(mapping.mapping_json)
+        payload["b8_compilation"]["variables"] = {"first": 2}
+        mapping.mapping_json = json.dumps(payload)
+        with patch.object(FrappeRuntimePlanReferences, "validate_current"), patch.object(SealedRead, "from_documents", return_value=sealed):
+            with self.assertRaises(b8_runtime.RuntimeReconstructionError):
+                b8_runtime.reconstruct_materialized_read_plan(selection, frappe_module=frappe)
+        payload["b8_compilation"]["variables"] = {"first": 1}
+        payload["b8_compilation"]["alias"] = "not_the_sealed_root"
+        mapping.mapping_json = json.dumps(payload)
+        with patch.object(FrappeRuntimePlanReferences, "validate_current"), patch.object(SealedRead, "from_documents", return_value=sealed):
+            with self.assertRaises(b8_runtime.RuntimeReconstructionError):
+                b8_runtime.reconstruct_materialized_read_plan(selection, frappe_module=frappe)
+
+    def test_rejects_nested_dynamic_compilation_values_before_materialization(self):
+        selection, _expected, _sealed, _mapping, _frappe = _context()
+        with self.assertRaises(b8_runtime.RuntimeReconstructionError):
+            b8_runtime._draft(
+                {"version": 1, "operation_name": "SearchThings", "alias": "things", "field": "things",
+                 "selected_paths": ["id"], "variables": {"first": {"unreviewed": "$cursor"}}},
+                selection,
+            )

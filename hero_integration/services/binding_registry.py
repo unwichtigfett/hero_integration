@@ -111,6 +111,7 @@ class BindingRegistryService:
     def get_object_binding(self, site_scope: str, identity_key: str): return self._storage.object(site_scope, identity_key)
     def get_field_bindings(self, site_scope: str, object_binding_key: str): return self._storage.fields_for_object(site_scope, object_binding_key)
     def get_field_bindings_for_source(self, site_scope: str, source_instance: str): return self._storage.fields_for_source(site_scope, source_instance)
+    def get_inbound_field_bindings_for_source(self, site_scope: str, source_instance: str): return tuple(binding for binding in self._storage.fields_for_source(site_scope, source_instance) if binding.direction is MappingDirection.HERO_TO_FRAPPE)
     def record_verified_acknowledgment(self, binding: FieldBinding, *, expected_revision: int, mapping_definition_id: str, mapping_revision: int, source_fingerprint: str, target_fingerprint: str, evidence_id: str, version: int) -> FieldBinding:
         _id(evidence_id, "acknowledgment evidence")
         if mapping_definition_id != binding.mapping_definition_id or mapping_revision != binding.mapping_revision: raise BindingRegistryError("Acknowledgment does not bind the current mapping.")
