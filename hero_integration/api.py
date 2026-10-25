@@ -1008,13 +1008,161 @@ def graphql_mapping_list(snapshot_name: str, operation_kind: str = "") -> list[d
     )
 
 
+def _mapping_reader_authorized() -> None:
+    """Permit the small employee-facing mapping projection, never raw documents."""
+    roles = set(getattr(frappe, "get_roles", lambda: ())())
+    if {"Employee", "System Manager"}.isdisjoint(roles):
+        frappe.throw(
+            "Employee or System Manager authority is required to inspect mapping status.",
+            getattr(frappe, "PermissionError", PermissionError),
+        )
+
+
+def _row_value(row: object, field: str, default: object = "") -> object:
+    if isinstance(row, dict):
+        return row.get(field, default)
+    return getattr(row, field, default)
+
+
+_FRONTEND_MAPPING_KEYS = frozenset({
+    "alias", "doctype", "field", "graphql_type", "identity_path", "kind", "mapping_definition_id",
+    "mapping_definition_ids", "missing", "operation", "operation_name", "path", "purpose", "record_path",
+    "records_path", "relation", "result_bindings", "selected_paths", "source", "source_path", "target",
+    "target_field", "target_operation", "transform", "transformation", "type",
+})
+_FRONTEND_SECRET_KEYS = frozenset({
+    "api_key", "api_token", "authorization", "credential", "credentials", "endpoint", "password", "payload",
+    "secret", "token", "value", "variables",
+})
+
+
+def _sanitized_mapping_definition(raw: object) -> dict[str, object]:
+    """Return only structural mapping data suitable for an employee-facing list."""
+    try:
+        value = json.loads(raw) if isinstance(raw, str) else raw
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    if not isinstance(value, dict):
+        return {}
+
+    def sanitize(item: object) -> object:
+        if isinstance(item, dict):
+            result: dict[str, object] = {}
+            for key, child in item.items():
+                normalized = str(key).lower()
+                if normalized in _FRONTEND_SECRET_KEYS or key not in _FRONTEND_MAPPING_KEYS:
+                    continue
+                result[str(key)] = sanitize(child)
+            return result
+        if isinstance(item, (list, tuple)):
+            return [sanitize(child) for child in item]
+        if isinstance(item, (str, int, float, bool)) or item is None:
+            return item
+        return ""
+
+    sanitized = sanitize(value)
+    return sanitized if isinstance(sanitized, dict) else {}
+
+
+@frappe.whitelist(methods=["GET"])
+def frontend_mapping_list() -> dict[str, list[dict[str, object]]]:
+    """Read-only, redacted mapping/status projection for Employee and System Manager users."""
+    _mapping_reader_authorized()
+    graphql_rows = frappe.get_all(
+        "HERO GraphQL Mapping",
+        fields=[
+            "name", "schema_snapshot", "schema_fingerprint", "source_instance", "operation_kind", "operation_name",
+            "direction", "status", "mapping_revision", "mapping_json",
+        ],
+        order_by="modified desc",
+        limit=500,
+    )
+    frappe_rows = frappe.get_all(
+        "HERO Frappe Mapping",
+        fields=[
+            "name", "definition_id", "operation", "source_path", "source_type", "target_doctype", "target_field",
+            "purpose", "transformation", "relation", "priority", "status", "mapping_revision", "schema_snapshot",
+            "schema_fingerprint",
+        ],
+        order_by="modified desc",
+        limit=500,
+    )
+    return {
+        "graphql_mappings": [
+            {
+                "name": _row_value(row, "name"),
+                "schema_snapshot": _row_value(row, "schema_snapshot"),
+                "schema_fingerprint": _row_value(row, "schema_fingerprint"),
+                "source_instance": _row_value(row, "source_instance"),
+                "operation_kind": _row_value(row, "operation_kind"),
+                "operation_name": _row_value(row, "operation_name"),
+                "direction": _row_value(row, "direction"),
+                "status": _row_value(row, "status"),
+                "revision": int(_row_value(row, "mapping_revision", 0) or 0),
+                "definition": _sanitized_mapping_definition(_row_value(row, "mapping_json")),
+            }
+            for row in graphql_rows
+        ],
+        "frappe_mappings": [
+            {
+                field: _row_value(row, field)
+                for field in (
+                    "name", "definition_id", "operation", "source_path", "source_type", "target_doctype",
+                    "target_field", "purpose", "transformation", "relation", "priority", "status",
+                    "schema_snapshot", "schema_fingerprint",
+                )
+            }
+            | {"revision": int(_row_value(row, "mapping_revision", 0) or 0)}
+            for row in frappe_rows
+        ],
+    }
+
+
+def _required_revision(value: int | str, label: str) -> int:
+    try:
+        revision = int(value)
+    except (TypeError, ValueError):
+        frappe.throw(f"{label} is invalid.")
+    if isinstance(value, bool) or revision < 1:
+        frappe.throw(f"{label} is invalid.")
+    return revision
+
+
+def _mapping_semantic_content(item, *, snapshot_name: str, operation_kind: str, operation_name: str, direction: str, parsed: dict[str, object]) -> bool:
+    """Compare canonical, executable mapping fields; UI-only suggestion metadata is excluded."""
+    try:
+        stored = json.loads(item.mapping_json)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return False
+    return (
+        item.schema_snapshot == snapshot_name
+        and item.operation_kind == operation_kind
+        and item.operation_name == operation_name
+        and item.direction == direction
+        and stored == parsed
+    )
+
+
+def _mapping_save_result(item, *, unchanged: bool) -> dict[str, object]:
+    return {
+        "name": item.name,
+        "status": item.status,
+        "revision": int(item.mapping_revision or 1),
+        "schema_fingerprint": item.schema_fingerprint,
+        "unchanged": unchanged,
+        "activation_required": item.status == "Draft",
+    }
+
+
 @frappe.whitelist(methods=["POST"])
 def graphql_mapping_save(
     snapshot_name: str, operation_kind: str, operation_name: str, direction: str, mapping_json: str,
-    mapping_name: str = "", activate: int | bool = 0, suggestion_reason: str = "", confidence: float = 0,
+    mapping_name: str = "", expected_revision: int | str = 0, activate: int | bool = 0,
+    suggestion_reason: str = "", confidence: float = 0,
 ) -> dict[str, object]:
-    """Persist a dynamic mapping as Draft unless a System Manager explicitly activates it."""
+    """Persist a revision-checked Draft, or explicitly activate its current owner's Draft."""
     frappe.only_for("System Manager")
+    activate_requested = _as_bool(activate)
     try:
         parsed = json.loads(mapping_json)
         if not isinstance(parsed, dict):
@@ -1031,7 +1179,7 @@ def graphql_mapping_save(
         )
 
         try:
-            if activate in (True, 1, "1", "true", "True"):
+            if activate_requested:
                 parsed = normalise_mapping(parsed, schema)
             else:
                 try:
@@ -1064,16 +1212,103 @@ def graphql_mapping_save(
     item = frappe.get_doc("HERO GraphQL Mapping", mapping_name) if mapping_name else frappe.new_doc("HERO GraphQL Mapping")
     if mapping_name and item.schema_snapshot != snapshot_name:
         frappe.throw("The GraphQL mapping belongs to another schema snapshot.")
+    if mapping_name:
+        expected = _required_revision(expected_revision, "GraphQL mapping revision")
+        if expected != int(item.mapping_revision or 0):
+            frappe.throw("GraphQL mapping revision is stale; reload the current Draft.")
+    elif expected_revision not in (0, "", None):
+        frappe.throw("A new GraphQL mapping cannot specify an existing revision.")
+
+    canonical_kind = operation_kind.upper()
+    unchanged = mapping_name and _mapping_semantic_content(
+        item,
+        snapshot_name=snapshot_name,
+        operation_kind=canonical_kind,
+        operation_name=operation_name,
+        direction=direction,
+        parsed=parsed,
+    )
+    if activate_requested:
+        if mapping_name and not unchanged:
+            frappe.throw("Save GraphQL mapping changes as a Draft before activation.")
+        if mapping_name and item.status == "Draft" and item.modified_by != frappe.session.user:
+            frappe.throw("Only the administrator who last changed this Draft may activate it.")
+        if mapping_name and item.status not in {"Draft", "Active"}:
+            frappe.throw("Only a current Draft may be activated.")
+        if mapping_name and item.status == "Active":
+            return _mapping_save_result(item, unchanged=True)
+        if mapping_name:
+            item.status = "Active"
+            item.save()
+            return _mapping_save_result(item, unchanged=False)
+    if mapping_name and unchanged:
+        return _mapping_save_result(item, unchanged=True)
+
     item.schema_snapshot = snapshot_name
-    item.operation_kind = operation_kind.upper()
+    item.operation_kind = canonical_kind
     item.operation_name = operation_name
     item.direction = direction
     item.mapping_json = json.dumps(parsed, ensure_ascii=False, sort_keys=True)
     item.suggestion_reason = suggestion_reason[:1000]
     item.confidence = max(0, min(float(confidence or 0), 1))
-    item.status = "Active" if activate in (True, 1, "1", "true", "True") else "Draft"
+    item.status = "Active" if activate_requested else "Draft"
     item.save()
-    return {"name": item.name, "status": item.status, "revision": int(item.mapping_revision or 1), "schema_fingerprint": item.schema_fingerprint}
+    return _mapping_save_result(item, unchanged=False)
+
+
+def _runtime_plan_result(plan) -> dict[str, object]:
+    selection = plan.selection
+    return {
+        "state": plan.state.value,
+        "plan_key": plan.plan_key,
+        "source_instance": selection.source_instance,
+        "revision": plan.revision,
+        "generation": plan.generation,
+        "execution_mode": selection.execution_mode,
+        "operation_name": selection.operation_name,
+        "graphql_service": selection.graphql_service,
+        "service_revision": selection.service_revision,
+        "graphql_mapping": selection.graphql_mapping,
+        "mapping_revision": selection.mapping_revision,
+        "schema_snapshot": selection.schema_snapshot,
+        "schema_fingerprint": selection.schema_fingerprint,
+        "approved_by": plan.approved_by,
+    }
+
+
+@frappe.whitelist(methods=["GET"])
+def runtime_plan_status(source_instance: str) -> dict[str, object]:
+    """Return redacted lifecycle status through the canonical runtime-plan service."""
+    frappe.only_for("System Manager")
+    from hero_integration.services.sync_runtime_adapter import _runtime_plan_service
+
+    from hero_integration.services.runtime_plan import RuntimePlanConflict, RuntimePlanError
+
+    try:
+        plan = _runtime_plan_service(frappe).current(frappe.local.site, source_instance)
+    except (RuntimePlanConflict, RuntimePlanError, PermissionError, ValueError) as error:
+        frappe.throw(str(error))
+    if plan is None:
+        return {"state": "NOT_FOUND", "source_instance": source_instance}
+    return _runtime_plan_result(plan)
+
+
+@frappe.whitelist(methods=["POST"])
+def runtime_plan_approve(plan_key: str, expected_revision: int | str) -> dict[str, object]:
+    """Approve exactly one current Draft through the B8 CAS lifecycle owner."""
+    frappe.only_for("System Manager")
+    from hero_integration.services.runtime_plan import RuntimePlanConflict, RuntimePlanError
+    from hero_integration.services.sync_runtime_adapter import _runtime_plan_service
+
+    try:
+        plan = _runtime_plan_service(frappe).approve(
+            plan_key,
+            expected_revision=_required_revision(expected_revision, "Runtime plan revision"),
+            actor=frappe.session.user,
+        )
+    except (RuntimePlanConflict, RuntimePlanError, PermissionError, ValueError) as error:
+        frappe.throw(str(error))
+    return _runtime_plan_result(plan)
 
 
 @frappe.whitelist()

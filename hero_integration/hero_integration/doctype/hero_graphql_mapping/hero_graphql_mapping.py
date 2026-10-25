@@ -15,6 +15,7 @@ from hero_integration.services.schema_operations import catalog
 class HEROGraphQLMapping(Document):
     def validate(self) -> None:
         frappe.only_for("System Manager")
+        previous = self.get_doc_before_save() if not self.is_new() else None
         snapshot = frappe.get_doc("HERO GraphQL Schema Snapshot", self.schema_snapshot)
         if snapshot.analysis_status != "Validated":
             frappe.throw("A validated schema snapshot is required.")
@@ -73,6 +74,10 @@ class HEROGraphQLMapping(Document):
                     continue
                 if other_source == source:
                     frappe.throw("An active writeback mapping already owns this Frappe field.")
-        if not self.is_new() and self.has_value_changed("mapping_json"):
+        semantic_fields = ("schema_snapshot", "operation_kind", "operation_name", "direction", "mapping_json")
+        if not self.is_new() and any(self.has_value_changed(field) for field in semantic_fields):
             self.mapping_revision = int(self.mapping_revision or 0) + 1
             self.status = "Draft"
+        if self.status == "Active" and previous and previous.status == "Draft":
+            if previous.modified_by != frappe.session.user:
+                frappe.throw("Only the administrator who last changed this Draft may activate it.")
