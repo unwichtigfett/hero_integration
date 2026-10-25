@@ -13,6 +13,8 @@
         synchronization: "Synchronization",
         settings: "Settings",
     });
+    const userRoles = new Set(frappe.boot?.user?.roles || frappe.user_roles || []);
+    const isSystemManager = userRoles.has("System Manager");
     const API_TOOLS = Object.freeze({
         analyzer: "API Analyzer",
         graph: "Graph Viewer",
@@ -172,7 +174,7 @@
         const root = document.createElement("nav");
         root.className = "hero-unified-navigation";
         root.setAttribute("aria-label", "HERO Integration sections");
-        Object.entries(SECTION_NAMES).forEach(([section, label]) => {
+        Object.entries(SECTION_NAMES).filter(([section]) => isSystemManager || section === "mapping").forEach(([section, label]) => {
             const button = document.createElement("button");
             button.type = "button";
             button.className = "btn btn-default btn-sm";
@@ -203,6 +205,9 @@
     }
     async function render(section, context) {
         if (!controller) return;
+        if (!isSystemManager && section !== "mapping") {
+            section = "mapping"; context = {...context, hero_section: "mapping", hero_tool: ""};
+        }
         const {page, shell, content} = controller;
         resetPage(page);
         controller.workspace?.destroy?.();
@@ -254,7 +259,7 @@
         return renderRoute(target.section, {...context, hero_section: target.section, hero_tool: target.tool});
     }
     function setRoute(section, params = {}) {
-        const target = routeTarget(section, params.hero_tool);
+        const target = !isSystemManager && section !== "mapping" ? {section: "mapping", tool: ""} : routeTarget(section, params.hero_tool);
         const context = {...routeOptions()};
         Object.entries(params).forEach(([key, value]) => {
             if (value === null || value === "") delete context[key];
@@ -281,5 +286,5 @@
         await showRoute();
     }
 
-    window.hero_integration_ui = Object.freeze({ensureStyles: ensureAssets, mount, showRoute, setRoute, routeOptions});
+    window.hero_integration_ui = Object.freeze({ensureStyles: ensureAssets, mount, showRoute, setRoute, routeOptions, isSystemManager});
 })();

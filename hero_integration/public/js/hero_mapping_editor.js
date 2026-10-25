@@ -48,9 +48,11 @@
         const importFile = $("<input type='file' accept='application/json,.json' class='form-control-file'>"), exchangeResult = $("<div class='mt-2'></div>");
         const advanced = $("<details class='hero-mapping-advanced'><summary>Advanced: JSON import and schema provisioning</summary></details>");
         const provisionCustomField = $("<button type='button' class='btn btn-default btn-sm'>Prepare Custom Field provisioning</button>");
+        const allMappingStatus = $("<div class='hero-mapping-table-wrap hero-mapping-all-status' aria-live='polite'></div>"), allMappingFilter = $("<input class='form-control' placeholder='Filter all permitted mappings'>"), allMappingRefresh = $("<button type='button' class='btn btn-default btn-sm'>Refresh mapping status</button>");
+        const runtimeSource = $("<input class='form-control' placeholder='Source instance'>"), runtimeStatus = $("<div class='hero-mapping-runtime-status' aria-live='polite'></div>"), runtimeRefresh = $("<button type='button' class='btn btn-default btn-sm'>Load runtime plan</button>"), runtimeApprove = $("<button type='button' class='btn btn-default btn-sm' disabled>Approve current Draft</button>");
         let selectedSource = null, selectedTarget = null, importPayload = null, activeSourceFields = [], pendingSourcePath = routeContext.source_path || "";
         let sourceStart = 0, targetStart = 0, currentSuggestions = [], suggestionsExpanded = false, reverseExpanded = false, suggestionDirection = "", suggestionSequence = 0, sourceLoadSequence = 0, targetCatalogSequence = 0;
-        let savedReadMappings = [], readMappingLoadError = "", readMappingsLoading = false, readMappingLoadSequence = 0, writebackCatalog = null, writebackFields = [], selectedWritebackField = null, writebackCatalogSequence = 0, writebackSourceStart = 0, writebackTargetStart = 0, dynamicMappings = [];
+        let savedReadMappings = [], readMappingLoadError = "", readMappingsLoading = false, readMappingLoadSequence = 0, allMappings = [], allMappingSequence = 0, runtimePlan = null, runtimeSequence = 0, writebackCatalog = null, writebackFields = [], selectedWritebackField = null, writebackCatalogSequence = 0, writebackSourceStart = 0, writebackTargetStart = 0, dynamicMappings = [];
         const requestedSnapshotName = routeContext.snapshot_name || routeContext.snapshot || "";
         const snapshotStorageKey = () => {
             const site = String(frappe.boot?.sitename || window.location.host || "site");
@@ -74,9 +76,10 @@
             $("<section class='hero-mapping-pane'></section>").append($("<h3>HERO source</h3><p class='text-muted'>Search the saved, read-only operation and select one source field.</p>"), sourceSearch, sourceList, sourcePager, sourceDetails, $("<h4 class='hero-mapping-subheading'>Suggested HERO source fields</h4>"), reverseSearch, reverseSuggestions),
             $("<section class='hero-mapping-pane'></section>").append($("<h3>Frappe target</h3><p class='text-muted'>Choose an installed app, then a DocType, before searching its fields. This catalog is available even when no HERO schema snapshot has been saved yet.</p>"), targetApp, targetCatalogStatus, retryTargetCatalog, targetDocType, targetSearch, targetList, targetPager, targetDetails, $("<p class='text-muted hero-mapping-provision-note'></p>").append("Missing a Custom Field? ", provisionCustomField)),
         );
-        advanced.append($("<p class='text-muted'></p>").text("An upload only fills a reviewed checklist. Select changes and confirm one adoption; it never migrates business data."), importFile, exchangeResult);
+        advanced.append($("<p class='text-muted'></p>").text("Warning: Import replaces the entire mapping configuration. Mappings are never merged automatically. To combine mappings, merge the JSON files manually before importing. Export and back up the current mapping configuration first."), importFile, exchangeResult);
         page.main.append(
             $("<header class='hero-mapping-header'><h2>HERO Mapping Editor</h2><p class='text-muted'>Mappings are reviewed proposals. Creating a Draft never activates it.</p></header>"), controls,
+            $("<section class='hero-mapping-section'></section>").append($("<h3>All Mapping Status</h3><p class='text-muted'>Permitted structural mapping definitions and lifecycle state. Sensitive configuration is never shown.</p>"), $("<div class='hero-mapping-controls'></div>").append($("<label></label>").text("Mapping filter").append(allMappingFilter), allMappingRefresh), allMappingStatus),
             $("<section class='hero-mapping-section'></section>").append($("<h3>Map fields</h3>"), mappingGrid, preview),
             $("<section class='hero-mapping-section'></section>").append($("<h3>Review Suggestions</h3><p class='text-muted'>The strongest compatible proposals are shown first; reviewing one only prepares a Draft.</p>"), suggestions),
             $("<section class='hero-mapping-section'></section>").append($("<h3>Active Read Mappings</h3><p class='text-muted'>All saved active mappings for the selected snapshot are shown independently from the source-field picker.</p>"), statusSummary, $("<div class='hero-mapping-controls'></div>").append($("<label></label>").text("Read operation").append(readOperationFilter), $("<label></label>").text("Field filter").append(activeSearch), resetReadFilters), activeMappings), advanced,
@@ -90,6 +93,7 @@
                 writebackComparison, $("<div class='hero-mapping-controls'></div>").append($("<label></label>").text("Transformation").append(dynamicTransformation), $("<label></label>").text("Suggestion rationale").append(dynamicReason), $("<label></label>").text("Confidence 0–1").append(dynamicConfidence)), dynamicPreview,
                 $("<div class='mt-2'></div>").append(saveDynamicDraft, document.createTextNode(" "), activateDynamic), dynamicStatus, $("<h4>Saved writeback mappings</h4>"), dynamicSearch, dynamicRows,
             ),
+            $("<section class='hero-mapping-section hero-mapping-runtime'></section>").append($("<h3>Plan lifecycle</h3><p class='text-muted'>A runtime plan is approved only by the server-authorized lifecycle. Approval never enables polling.</p>"), $("<div class='hero-mapping-controls'></div>").append($("<label></label>").text("Source instance").append(runtimeSource), runtimeRefresh, runtimeApprove), runtimeStatus),
         );
 
         const showDetails = (details, field) => {
@@ -150,6 +154,28 @@
             filtered.forEach((mapping) => table.find("tbody").append($("<tr></tr>").toggleClass("is-conflict", conflicts.has(`${mapping.operation}:${mapping.source_path}`)).append($("<td></td>").append($("<span class='hero-mapping-status'></span>").addClass(`status-${statusClass(mapping.status)}`).text(mapping.status)), $("<td></td>").text(mapping.operation), $("<td></td>").text(mapping.source_path), $("<td></td>").text(`${mapping.target_doctype}.${mapping.target_field}`), $("<td></td>").text(mapping.mapping_revision || "—"))));
             activeMappings.append(table);
         };
+        const renderAllMappingStatus = () => {
+            const needle = allMappingFilter.val().trim().toLowerCase();
+            const rows = [...(allMappings.graphql_mappings || []).map((item) => ({...item, kind: "GraphQL", source: `${item.operation_kind || ""} ${item.operation_name || ""}`, target: item.direction || ""})), ...(allMappings.frappe_mappings || []).map((item) => ({...item, kind: "Frappe", source: item.source_path || item.operation || "", target: `${item.target_doctype || ""}.${item.target_field || ""}`}))].filter((item) => !needle || [item.name, item.kind, item.source, item.target, item.status, item.revision].join(" ").toLowerCase().includes(needle));
+            allMappingStatus.empty();
+            if (!rows.length) return allMappingStatus.append($("<p class='text-muted'></p>").text(needle ? "No permitted mappings match this filter." : "No permitted mappings are configured."));
+            const table = $("<table class='table table-sm hero-mapping-table'><thead><tr><th>Mapping</th><th>Kind</th><th>Direction / source</th><th>Target</th><th>Status</th><th>Revision</th></tr></thead><tbody></tbody></table>");
+            rows.forEach((item) => table.find("tbody").append($("<tr></tr>").append($("<td></td>").text(item.name), $("<td></td>").text(item.kind), $("<td></td>").text(item.source), $("<td></td>").text(item.target), $("<td></td>").append($("<span class='hero-mapping-status'></span>").addClass(`status-${statusClass(item.status)}`).text(item.status || "Unknown")), $("<td></td>").text(item.revision || "—"))));
+            allMappingStatus.append(table);
+        };
+        const loadAllMappingStatus = () => {
+            const request = ++allMappingSequence; allMappingStatus.empty().append($("<p class='text-muted'></p>").text("Loading permitted mapping status…"));
+            return frappe.call({method: "hero_integration.api.frontend_mapping_list", type: "GET", args: {}}).then((response) => { if (request !== allMappingSequence) return; allMappings = response.message || {}; renderAllMappingStatus(); }).catch((error) => { if (request !== allMappingSequence) return; allMappingStatus.empty().append($("<p class='text-danger'></p>").text(`Mapping status is unavailable: ${error?.message || "permission denied or request failed"}.`)); });
+        };
+        const renderRuntimePlan = () => {
+            runtimeStatus.empty(); const plan = runtimePlan;
+            if (!plan) return; if (plan.state === "NOT_FOUND") { runtimeStatus.append($("<p class='text-muted'></p>").text("No configured runtime plan for this source instance.")); runtimeApprove.prop("disabled", true); return; }
+            const rows = [["State", plan.state], ["Plan", plan.plan_key], ["Revision", plan.revision], ["Generation", plan.generation], ["Mapping", plan.graphql_mapping], ["Schema", plan.schema_snapshot], ["Approved by", plan.approved_by || "—"]];
+            runtimeStatus.append($("<dl class='hero-mapping-detail-list'></dl>").append(rows.flatMap(([label, value]) => [$("<dt></dt>").text(label), $("<dd></dd>").text(value ?? "—")]))); runtimeApprove.prop("disabled", plan.state !== "DRAFT" || !plan.plan_key || !plan.revision);
+        };
+        const loadRuntimePlan = () => { const sourceInstance = runtimeSource.val().trim(), request = ++runtimeSequence; if (!sourceInstance) { runtimeStatus.text("Enter a source instance to load its runtime plan."); return; } runtimeStatus.text("Loading runtime plan…"); return frappe.call({method: "hero_integration.api.runtime_plan_status", type: "GET", args: {source_instance: sourceInstance}}).then((response) => { if (request !== runtimeSequence) return; runtimePlan = response.message || null; renderRuntimePlan(); }).catch((error) => { if (request !== runtimeSequence) return; runtimePlan = null; runtimeApprove.prop("disabled", true); runtimeStatus.text(`Runtime plan is unavailable: ${error?.message || "request failed"}.`); }); };
+        const approveRuntimePlan = () => { if (!runtimePlan?.plan_key || !runtimePlan?.revision) return; frappe.confirm("Approve this current runtime-plan Draft? This does not enable polling.", () => frappe.call({method: "hero_integration.api.runtime_plan_approve", type: "POST", args: {plan_key: runtimePlan.plan_key, expected_revision: runtimePlan.revision}}).then((response) => { runtimePlan = response.message || null; renderRuntimePlan(); }).catch((error) => { runtimeStatus.text(`Runtime plan approval was rejected: ${error?.message || "request failed"}. Reload the current plan before retrying.`); })); };
+
         const selectedSnapshot = () => snapshots.get(snapshot.val()) || null;
         const hasValidSnapshot = () => selectedSnapshot()?.analysis_status === "Validated";
         let queryOperations = [], dynamicOperations = [];
@@ -193,6 +219,7 @@
                 dynamicRows.append($("<h5></h5>").text(`${status} writeback mappings (${group.length})`), table);
             });
         };
+        const currentDynamicMapping = () => { const mapping = visualDynamicMapping(); return mapping ? dynamicMappings.find((row) => row.operation_name === dynamicOperation.val() && row.direction === dynamicDirection() && row.mapping_json && JSON.stringify(row.mapping_json) === JSON.stringify(mapping)) : null; };
         const loadDynamicMappings = () => {
             if (!hasValidSnapshot()) { dynamicMappings = []; return renderDynamicMappings(); }
             return frappe.call({method: "hero_integration.api.graphql_mapping_list", args: {snapshot_name: snapshot.val(), operation_kind: "MUTATION"}}).then((response) => { dynamicMappings = response.message || []; renderDynamicMappings(); });
@@ -337,10 +364,11 @@
             if (!mapping || Array.isArray(mapping) || typeof mapping !== "object") return frappe.msgprint("Choose one Frappe field and its reviewed HERO input field.");
             const contract = writebackContract();
             if (activate && (!contract || !contract.activation_ready)) return frappe.msgprint(contract?.blocker || "The reusable technical mutation contract is not ready for activation.");
-            const submit = () => frappe.call({method: "hero_integration.api.graphql_mapping_save", args: {snapshot_name: snapshot.val(), operation_kind: "MUTATION", operation_name: dynamicOperation.val(), direction: dynamicDirection(), mapping_json: JSON.stringify(mapping), activate, suggestion_reason: dynamicReason.val().trim(), confidence: Number(dynamicConfidence.val())}}).then((response) => {
-                dynamicStatus.text(`${response.message.status} mapping ${response.message.name}, revision ${response.message.revision}.`); loadDynamicMappings(); loadWritebackCatalog();
+            const submit = () => frappe.call({method: "hero_integration.api.graphql_mapping_save", args: {snapshot_name: snapshot.val(), operation_kind: "MUTATION", operation_name: dynamicOperation.val(), direction: dynamicDirection(), mapping_json: JSON.stringify(mapping), mapping_name: currentDynamicMapping()?.name || "", expected_revision: currentDynamicMapping()?.mapping_revision || 0, activate, suggestion_reason: dynamicReason.val().trim(), confidence: Number(dynamicConfidence.val())}}).then((response) => {
+                dynamicStatus.text(response.message.unchanged ? `No semantic change; ${response.message.name} remains revision ${response.message.revision}.` : `${response.message.status} mapping ${response.message.name}, revision ${response.message.revision}.${response.message.activation_required ? " Explicit activation is still required." : ""}`); loadDynamicMappings(); loadAllMappingStatus(); loadWritebackCatalog();
             });
-            if (activate) frappe.confirm("Activate this reviewed contract? Future execution still requires separate snapshot, permission, and confirmation gates.", submit); else submit();
+            const save = () => submit().catch((error) => { dynamicStatus.text(`Save was rejected: ${error?.message || "request failed"}. Reload current Draft before resolving a stale revision; unsaved selections are retained.`); loadDynamicMappings(); });
+            if (activate) frappe.confirm("Activate this reviewed contract? Future execution still requires separate snapshot, permission, and confirmation gates.", save); else save();
         };
         const showSnapshotMetadata = () => {
             const selected = selectedSnapshot();
@@ -450,6 +478,7 @@
             const groups = {}; checklist.items.forEach((item) => (groups[item.group] ||= []).push(item)); Object.entries(groups).forEach(([group, items]) => { const section = $("<div class='mb-3'></div>").append($("<h6></h6>").text(group)); items.forEach((item) => { const checkbox = $("<input type='checkbox' class='mr-2' data-item-id=''> ").attr("data-item-id", item.id).prop("checked", selected.has(item.id)).prop("disabled", !item.selectable); checkbox.on("change", () => { if (checkbox.prop("checked")) { item.dependencies.filter((dependency) => !selected.has(dependency)).forEach((dependency) => { selected.add(dependency); exchangeResult.find(`input[data-item-id='${dependency}']`).prop("checked", true); }); selected.add(item.id); } else if (checklist.items.some((candidate) => candidate.dependencies.includes(item.id) && selected.has(candidate.id))) { checkbox.prop("checked", true); return frappe.msgprint("Deselect dependent entries before removing this requirement."); } else selected.delete(item.id); update(); }); section.append($("<label class='d-block'></label>").append(checkbox, document.createTextNode(`${item.state}: ${item.label}. ${item.detail}`))); }); exchangeResult.append(section); });
             exchangeResult.append($("<button class='btn btn-primary'>Apply selected adoption</button>").on("click", () => { if (!selected.size) return frappe.msgprint("Select at least one valid change."); frappe.confirm("Provision the selected schema and activate selected mappings? This cannot migrate HERO data.", () => frappe.call({method: "hero_integration.api.adopt_mapping_package", args: {snapshot_name: snapshot.val(), payload_json: importPayload, selected_ids_json: JSON.stringify([...selected]), confirmed: true}}).then((result) => exchangeResult.append($("<pre class='mt-2'></pre>").text(JSON.stringify(result.message, null, 2))))); })); update();
         };
+        allMappingFilter.on("input", renderAllMappingStatus); allMappingRefresh.on("click", loadAllMappingStatus); runtimeRefresh.on("click", loadRuntimePlan); runtimeApprove.on("click", approveRuntimePlan);
         sourceSearch.on("input", () => loadSources(0)); reverseSearch.on("input", renderReverseSuggestions); targetSearch.on("input", () => loadTargets(0)); activeSearch.on("input", renderActiveMappings); readOperationFilter.on("change", renderActiveMappings);
         resetReadFilters.on("click", () => { readOperationFilter.val(""); activeSearch.val(""); renderActiveMappings(); });
         operationSearch.on("input", renderQueryOperations); writebackSearch.on("input", renderWritebackFields); writebackTargetSearch.on("input", () => { writebackTargetStart = 0; renderWritebackTargets(); }); dynamicOperationSearch.on("input", () => { writebackTargetStart = 0; renderDynamicOperations(); }); dynamicSearch.on("input", renderDynamicMappings);
@@ -466,14 +495,9 @@
             if (!hasValidSnapshot()) return;
             const snapshotName = snapshot.val(), schemaFingerprint = selectedSnapshot()?.schema_fingerprint || "", request = ++readMappingLoadSequence;
             readMappingLoadError = ""; readMappingsLoading = true; savedReadMappings = []; renderReadOperationFilter(); renderActiveMappings();
-            return frappe.call({method: "frappe.client.get_list", args: {
-                doctype: "HERO Frappe Mapping",
-                filters: {schema_snapshot: snapshotName, schema_fingerprint: schemaFingerprint, status: "Active"},
-                fields: ["name", "definition_id", "operation", "source_path", "source_type", "target_doctype", "target_field", "status", "priority", "mapping_revision"],
-                order_by: "operation asc, priority asc, definition_id asc", limit_page_length: 500,
-            }}).then((response) => {
+            return frappe.call({method: "hero_integration.api.frontend_mapping_list", type: "GET", args: {}}).then((response) => {
                 if (request !== readMappingLoadSequence || snapshot.val() !== snapshotName) return;
-                savedReadMappings = response.message || []; readMappingLoadError = ""; readMappingsLoading = false; renderReadOperationFilter(); renderActiveMappings();
+                savedReadMappings = (response.message?.frappe_mappings || []).filter((item) => item.schema_snapshot === snapshotName && item.schema_fingerprint === schemaFingerprint && item.status === "Active").map((item) => ({...item, mapping_revision: item.revision})); readMappingLoadError = ""; readMappingsLoading = false; renderReadOperationFilter(); renderActiveMappings();
             }).catch((error) => {
                 if (request !== readMappingLoadSequence || snapshot.val() !== snapshotName) return;
                 savedReadMappings = []; readMappingLoadError = error?.message || error?.httpStatusText || "request failed"; readMappingsLoading = false; renderReadOperationFilter(); renderActiveMappings();
@@ -518,7 +542,8 @@
         page.set_primary_action("Open Graph Viewer", () => { if (!hasValidSnapshot()) return frappe.msgprint("Choose a validated GraphQL Schema Snapshot first."); window.hero_integration_ui.setRoute("api", {hero_tool: "graph", snapshot: snapshot.val()}); });
         page.add_menu_item("Export Mapping JSON", () => { if (!hasValidSnapshot()) return frappe.msgprint("Choose a validated GraphQL Schema Snapshot first."); frappe.call({method: "hero_integration.api.export_mapping_json", args: {snapshot_name: snapshot.val()}}).then((response) => { const exported = response.message, url = URL.createObjectURL(new Blob([exported.content], {type: "application/json"})), link = document.createElement("a"); link.href = url; link.download = exported.filename; link.click(); URL.revokeObjectURL(url); }); });
         page.add_menu_item("GraphQL Services", () => window.hero_integration_ui.setRoute("api", {hero_tool: "services", snapshot: snapshot.val()})); page.add_menu_item("Review Draft Mappings", () => frappe.set_route("List", "HERO Frappe Mapping"));
-        clearTargets("Choose an app and DocType before fields are loaded."); renderReverseSuggestions(); showSnapshotMetadata(); renderDynamicPreview(); loadSnapshotList(); loadTargetCatalog();
+        if (!window.hero_integration_ui?.isSystemManager) { page.main.empty().append($("<header class='hero-mapping-header'><h2>HERO Mapping Status</h2><p class='text-muted'>Employee read-only view. Administrative editing and runtime operations are unavailable.</p></header>"), $("<section class='hero-mapping-section'></section>").append($("<h3>All Mapping Status</h3>"), $("<div class='hero-mapping-controls'></div>").append($("<label></label>").text("Mapping filter").append(allMappingFilter), allMappingRefresh), allMappingStatus)); loadAllMappingStatus(); return; }
+        clearTargets("Choose an app and DocType before fields are loaded."); renderReverseSuggestions(); showSnapshotMetadata(); renderDynamicPreview(); loadAllMappingStatus(); loadSnapshotList(); loadTargetCatalog();
     }
 
     window.hero_integration_mapping_editor = Object.freeze({mount});
