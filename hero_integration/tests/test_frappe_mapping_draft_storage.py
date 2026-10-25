@@ -203,7 +203,7 @@ class TestFrappeMappingDraftStorage(unittest.TestCase):
         with self.assertRaises(Exception): frappe.delete_doc(revision.doctype, revision.name, ignore_permissions=True)
         raw = frappe.get_doc('HERO Mapping Draft', draft.key)
         raw.content_json = '{}'
-        with self.assertRaises(PermissionError): raw.save()
+        with self.assertRaises(frappe.PermissionError): raw.save()
         with self.assertRaises(Exception): raw.db_set('content_json','{}')
         with self.assertRaises(Exception): frappe.delete_doc(raw.doctype, raw.name, ignore_permissions=True)
         with self.assertRaises(ValueError): self.service.discard(self.definition, ONE, 1, 1)

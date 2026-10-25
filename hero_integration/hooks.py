@@ -52,3 +52,15 @@ doc_events["*"] = {"on_update": "hero_integration.services.change_detection.obse
 
 # This app ships DocTypes as source and has no site-specific fixtures.
 fixtures = []
+
+permission_query_conditions = {
+    doctype: "hero_integration.services.mapping_draft_access.personal_mapping_query"
+    for doctype in ("HERO Mapping Draft", "HERO Mapping Revision")
+}
+has_permission = {
+    doctype: "hero_integration.services.mapping_draft_access.personal_mapping_permission"
+    for doctype in ("HERO Mapping Draft", "HERO Mapping Revision")
+}
+permission_query_conditions["Version"] = "hero_integration.services.mapping_draft_access.personal_version_query"
+has_permission["Version"] = "hero_integration.services.mapping_draft_access.personal_version_permission"
+extend_doctype_class = {"Version": ["hero_integration.services.mapping_draft_access.PersonalMappingVersionAccess"]}

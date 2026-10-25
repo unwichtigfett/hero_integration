@@ -128,11 +128,11 @@ def _plan():
 
 class TestFrontendApiBoundary(unittest.TestCase):
     def test_employee_can_read_only_sanitized_mapping_status(self):
-        frappe = _Frappe(roles=("Employee",), user="employee@example.invalid")
+        frappe = _Frappe(roles=("Employee",), user="employee@example.invalid", mapping=_Mapping(status="Active"))
         with patch.object(api, "frappe", frappe):
             result = api.frontend_mapping_list()
 
-        self.assertEqual(result["graphql_mappings"][0]["status"], "Draft")
+        self.assertEqual(result["graphql_mappings"][0]["status"], "Active")
         self.assertEqual(result["frappe_mappings"][0]["status"], "Active")
         self.assertEqual(result["graphql_mappings"][0]["definition"], {"record_path": "things"})
         self.assertNotIn("must-not-leak", repr(result))
