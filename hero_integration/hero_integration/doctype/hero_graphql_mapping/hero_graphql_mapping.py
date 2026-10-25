@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 
 import frappe
@@ -74,6 +75,13 @@ class HEROGraphQLMapping(Document):
                     continue
                 if other_source == source:
                     frappe.throw("An active writeback mapping already owns this Frappe field.")
+        if not self.definition_id:
+            self.definition_id = self.name or ""
+        if previous and self.definition_id != previous.definition_id:
+            frappe.throw("GraphQL mapping definition identity is immutable.")
+        self.content_hash = hashlib.sha256(
+            json.dumps(mapping, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
         semantic_fields = ("schema_snapshot", "operation_kind", "operation_name", "direction", "mapping_json")
         if not self.is_new() and any(self.has_value_changed(field) for field in semantic_fields):
             self.mapping_revision = int(self.mapping_revision or 0) + 1
