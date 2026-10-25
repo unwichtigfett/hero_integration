@@ -5,11 +5,19 @@ from frappe.model.document import Document
 
 
 class HEROMappingRevision(Document):
+    def check_permission(self, *args, **kwargs):
+        from hero_integration.services.mapping_draft_access import check_personal_document
+        check_personal_document(self)
+        return super().check_permission(*args, **kwargs)
+
     def validate(self) -> None:
         if not self.is_new():
             frappe.throw("Mapping revisions are immutable.")
         from hero_integration.services.frappe_mapping_draft_storage import assert_storage_write
-        assert_storage_write(self)
+        try:
+            assert_storage_write(self)
+        except PermissionError:
+            frappe.throw("Personal mapping document write denied.", frappe.PermissionError)
 
     def on_trash(self):
         frappe.throw("Mapping revision history must be retained.")

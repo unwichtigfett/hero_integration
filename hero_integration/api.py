@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from contextlib import contextmanager
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -1065,27 +1066,32 @@ def _sanitized_mapping_definition(raw: object) -> dict[str, object]:
 
 
 @frappe.whitelist(methods=["GET"])
-def frontend_mapping_list() -> dict[str, list[dict[str, object]]]:
+def frontend_mapping_list(search: str = "", start: int | str = 0, page_size: int | str = 50):
     """Read-only, redacted mapping/status projection for Employee and System Manager users."""
     _mapping_reader_authorized()
+    _mapping_request_fields({"search", "start", "page_size"})
+    search = _mapping_text(search, "search", 120, allow_empty=True)
+    start, page_size = _mapping_int(start, "start", 0, 10000), _mapping_int(page_size, "page_size", 1, 100)
+    graphql_search = [[field, "like", "%" + search + "%"] for field in ("name", "operation_name")]
+    frappe_search = [[field, "like", "%" + search + "%"] for field in ("name", "definition_id", "operation")]
     graphql_rows = frappe.get_all(
         "HERO GraphQL Mapping",
+        filters={"status": "Active"}, or_filters=graphql_search if search else None,
         fields=[
             "name", "schema_snapshot", "schema_fingerprint", "source_instance", "operation_kind", "operation_name",
             "direction", "status", "mapping_revision", "mapping_json",
         ],
-        order_by="modified desc",
-        limit=500,
+        order_by="name asc", limit_start=start, limit=page_size,
     )
     frappe_rows = frappe.get_all(
         "HERO Frappe Mapping",
+        filters={"status": "Active"}, or_filters=frappe_search if search else None,
         fields=[
             "name", "definition_id", "operation", "source_path", "source_type", "target_doctype", "target_field",
             "purpose", "transformation", "relation", "priority", "status", "mapping_revision", "schema_snapshot",
             "schema_fingerprint",
         ],
-        order_by="modified desc",
-        limit=500,
+        order_by="name asc", limit_start=start, limit=page_size,
     )
     return {
         "graphql_mappings": [
@@ -1101,7 +1107,7 @@ def frontend_mapping_list() -> dict[str, list[dict[str, object]]]:
                 "revision": int(_row_value(row, "mapping_revision", 0) or 0),
                 "definition": _sanitized_mapping_definition(_row_value(row, "mapping_json")),
             }
-            for row in graphql_rows
+            for row in graphql_rows if _row_value(row, "status") == "Active"
         ],
         "frappe_mappings": [
             {
@@ -1113,9 +1119,216 @@ def frontend_mapping_list() -> dict[str, list[dict[str, object]]]:
                 )
             }
             | {"revision": int(_row_value(row, "mapping_revision", 0) or 0)}
-            for row in frappe_rows
+            for row in frappe_rows if _row_value(row, "status") == "Active"
         ],
+        "pagination": {
+            "start": start, "page_size": page_size,
+            "graphql_total": _active_mapping_count("HERO GraphQL Mapping", graphql_search if search else None),
+            "frappe_total": _active_mapping_count("HERO Frappe Mapping", frappe_search if search else None),
+        },
     }
+
+
+def _mapping_request_fields(allowed):
+    fields = set(getattr(frappe, "form_dict", {}) or {}) - {"cmd", "csrf_token"}
+    if fields - allowed:
+        frappe.throw("MAPPING_INPUT_INVALID: Unsupported request field.")
+
+
+def _mapping_text(value, label, maximum=140, allow_empty=False):
+    if (not isinstance(value, str) or len(value) > maximum or (not value and not allow_empty)
+            or any(ord(char) < 32 or 0xD800 <= ord(char) <= 0xDFFF for char in value)):
+        frappe.throw(f"MAPPING_INPUT_INVALID: Invalid {label}.")
+    return value
+
+
+def _mapping_int(value, label, minimum=0, maximum=2147483647):
+    if isinstance(value, str) and len(value) <= 10 and value.isascii() and value.isdigit():
+        value = int(value)
+    if type(value) is not int or not minimum <= value <= maximum:
+        frappe.throw(f"MAPPING_INPUT_INVALID: Invalid {label}.")
+    return value
+
+
+def _active_mapping_count(doctype, or_filters):
+    rows = frappe.get_all(doctype, filters={"status": "Active"}, or_filters=or_filters,
+                          fields=[{"COUNT": "name", "as": "total"}], limit=1)
+    return int(_row_value(rows[0], "total", 0)) if rows else 0
+
+
+@frappe.whitelist(methods=["GET"])
+def frontend_mapping_detail(mapping_type: str, name: str):
+    _mapping_reader_authorized()
+    _mapping_request_fields({"mapping_type", "name"})
+    name = _mapping_text(name, "name")
+    doctype = {"graphql": "HERO GraphQL Mapping", "frappe": "HERO Frappe Mapping"}.get(mapping_type)
+    if not doctype:
+        frappe.throw("MAPPING_INPUT_INVALID: Invalid mapping_type.")
+    # Filter before loading or serializing; missing and inactive IDs are identical.
+    if not frappe.db.exists(doctype, {"name": name, "status": "Active"}):
+        frappe.throw("Active mapping not found.", frappe.DoesNotExistError)
+    row = frappe.get_doc(doctype, name)
+    if row.status != "Active":
+        frappe.throw("Active mapping not found.", frappe.DoesNotExistError)
+    if mapping_type == "graphql":
+        fields = ("name", "schema_snapshot", "schema_fingerprint", "source_instance", "operation_kind", "operation_name", "direction", "status")
+        return {field: row.get(field) for field in fields} | {
+            "revision": int(row.mapping_revision or 0),
+            "definition": _sanitized_mapping_definition(row.mapping_json),
+        }
+    fields = ("name", "definition_id", "operation", "source_path", "source_type", "target_doctype", "target_field",
+              "purpose", "transformation", "relation", "priority", "status", "schema_snapshot", "schema_fingerprint")
+    return {field: row.get(field) for field in fields} | {"revision": int(row.mapping_revision or 0)}
+
+
+def _personal_draft_identity(definition_id):
+    frappe.only_for("System Manager")
+    from hero_integration.services.mapping_draft_service import draft_key
+    definition_id = _mapping_text(definition_id, "definition_id")
+    return definition_id, draft_key(frappe.local.site, definition_id, frappe.session.user)
+
+
+def _personal_draft_document(definition_id):
+    definition_id, key = _personal_draft_identity(definition_id)
+    # No open_draft call: a read must never create a draft or change generation.
+    if not frappe.db.exists("HERO Mapping Draft", {"name": key, "definition_id": definition_id,
+            "site_scope": frappe.local.site, "owner_user": frappe.session.user}):
+        return None
+    doc = frappe.get_doc("HERO Mapping Draft", key)
+    doc.check_permission("read")
+    return doc
+
+
+def _personal_draft_result(value):
+    from dataclasses import asdict
+    return asdict(value)
+
+
+def _personal_draft_doc_result(doc):
+    if doc is None:
+        return {"draft": None}
+    return {"draft": {
+        "key": doc.draft_key, "site_scope": doc.site_scope, "definition_id": doc.definition_id, "owner": doc.owner_user,
+        "generation": int(doc.generation), "state": doc.state, "content": json.loads(doc.content_json),
+        "content_hash": doc.content_hash, "content_revision": int(doc.content_revision),
+        "base_active_name": doc.base_active_mapping, "base_active_revision": int(doc.base_active_revision),
+        "base_active_hash": doc.base_active_hash, "base_schema_fingerprint": doc.base_schema_fingerprint,
+    }}
+
+
+@contextmanager
+def _personal_draft_errors():
+    from hero_integration.services.mapping_draft_service import DraftConflict, MappingDraftError
+    try:
+        yield
+    except DraftConflict:
+        frappe.throw("MAPPING_DRAFT_CONFLICT: Reload the current personal draft.", frappe.TimestampMismatchError)
+    except PermissionError:
+        frappe.throw("Personal mapping draft access denied.", frappe.PermissionError)
+    except MappingDraftError:
+        frappe.throw("MAPPING_DRAFT_INVALID: Invalid content or unavailable active definition.")
+
+
+@frappe.whitelist(methods=["POST"])
+def mapping_draft_create(definition_id: str):
+    _mapping_request_fields({"definition_id"})
+    definition_id, _ = _personal_draft_identity(definition_id)
+    from hero_integration.services.frappe_mapping_draft_storage import FrappeMappingDraftStorage
+    with _personal_draft_errors():
+        draft = FrappeMappingDraftStorage().service().open_draft(definition_id, frappe.session.user)
+    return {"draft": _personal_draft_result(draft)}
+
+
+@frappe.whitelist(methods=["GET"])
+def mapping_draft_read(definition_id: str):
+    _mapping_request_fields({"definition_id"})
+    return _personal_draft_doc_result(_personal_draft_document(definition_id))
+
+
+def _personal_draft_content(raw):
+    try:
+        valid_size = isinstance(raw, str) and len(raw.encode("utf-8")) <= 65536
+    except UnicodeError:
+        valid_size = False
+    if not valid_size:
+        frappe.throw("MAPPING_INPUT_INVALID: mapping_json must be JSON text of at most 65536 bytes.")
+    try:
+        def pairs(items):
+            value = {}
+            for key, child in items:
+                if key in value:
+                    raise ValueError("Duplicate JSON key")
+                value[key] = child
+            return value
+        def invalid_constant(value):
+            raise ValueError("Non-finite JSON constant")
+        content = json.loads(raw, object_pairs_hook=pairs, parse_constant=invalid_constant)
+        if not isinstance(content, dict):
+            raise ValueError
+        remaining = 4096
+        def bound(value, depth=0):
+            nonlocal remaining
+            remaining -= 1
+            if depth > 16 or remaining < 0:
+                raise ValueError
+            if isinstance(value, dict):
+                for child in value.values(): bound(child, depth + 1)
+            elif isinstance(value, list):
+                for child in value: bound(child, depth + 1)
+        bound(content)
+        return content
+    except (ValueError, TypeError, RecursionError):
+        frappe.throw("MAPPING_INPUT_INVALID: Invalid or over-complex mapping JSON object.")
+
+
+@frappe.whitelist(methods=["POST"])
+def mapping_draft_save(definition_id: str, expected_generation: int | str,
+                       expected_draft_revision: int | str, expected_active_revision: int | str, mapping_json: str):
+    _mapping_request_fields({"definition_id", "expected_generation", "expected_draft_revision", "expected_active_revision", "mapping_json"})
+    definition_id, _ = _personal_draft_identity(definition_id)
+    generation = _mapping_int(expected_generation, "expected_generation", 1)
+    revision = _mapping_int(expected_draft_revision, "expected_draft_revision")
+    active = _mapping_int(expected_active_revision, "expected_active_revision", 1)
+    content = _personal_draft_content(mapping_json)
+    from hero_integration.services.frappe_mapping_draft_storage import FrappeMappingDraftStorage
+    with _personal_draft_errors():
+        result = FrappeMappingDraftStorage().service().save(definition_id, frappe.session.user, revision, active,
+                                                          content, expected_generation=generation)
+    return {"draft": _personal_draft_result(result.draft), "unchanged": result.unchanged}
+
+
+@frappe.whitelist(methods=["GET"])
+def mapping_draft_revisions(definition_id: str, start: int | str = 0, page_size: int | str = 20, revision_name: str = ""):
+    _mapping_request_fields({"definition_id", "start", "page_size", "revision_name"})
+    definition_id, key = _personal_draft_identity(definition_id)
+    start, page_size = _mapping_int(start, "start", 0, 10000), _mapping_int(page_size, "page_size", 1, 100)
+    revision_name = _mapping_text(revision_name, "revision_name", allow_empty=True)
+    filters = {"draft_key": key, "actor": frappe.session.user}
+    if revision_name:
+        filters["name"] = revision_name
+    rows = frappe.get_all("HERO Mapping Revision", filters=filters,
+        fields=["name", "generation", "revision", "kind", "actor", "content_json", "content_hash",
+                "base_active_mapping", "base_active_revision", "base_active_hash", "base_schema_fingerprint"],
+        order_by="generation desc, revision desc", limit_start=start, limit=page_size)
+    if revision_name and not rows:
+        frappe.throw("Personal mapping revision not found.", frappe.DoesNotExistError)
+    for row in rows:
+        row["content"] = json.loads(row.pop("content_json"))
+    return {"items": rows, "total": frappe.db.count("HERO Mapping Revision", filters), "start": start, "page_size": page_size}
+
+
+@frappe.whitelist(methods=["POST"])
+def mapping_draft_discard(definition_id: str, expected_generation: int | str, expected_draft_revision: int | str, confirmed=False):
+    _mapping_request_fields({"definition_id", "expected_generation", "expected_draft_revision", "confirmed"})
+    definition_id, _ = _personal_draft_identity(definition_id)
+    generation = _mapping_int(expected_generation, "expected_generation", 1)
+    revision = _mapping_int(expected_draft_revision, "expected_draft_revision")
+    if confirmed not in (True, "true", "1"):
+        frappe.throw("MAPPING_CONFIRMATION_REQUIRED: Explicit discard confirmation is required.")
+    from hero_integration.services.frappe_mapping_draft_storage import FrappeMappingDraftStorage
+    with _personal_draft_errors():
+        draft = FrappeMappingDraftStorage().service().discard(definition_id, frappe.session.user, generation, revision, confirmed=True)
+    return {"draft": _personal_draft_result(draft)}
 
 
 def _required_revision(value: int | str, label: str) -> int:

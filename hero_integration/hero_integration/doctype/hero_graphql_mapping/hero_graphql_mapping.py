@@ -16,6 +16,8 @@ from hero_integration.services.schema_operations import catalog
 class HEROGraphQLMapping(Document):
     def validate(self) -> None:
         frappe.only_for("System Manager")
+        from hero_integration.services.mapping_draft_access import protect_managed_mapping
+        protect_managed_mapping(self)
         previous = self.get_doc_before_save() if not self.is_new() else None
         snapshot = frappe.get_doc("HERO GraphQL Schema Snapshot", self.schema_snapshot)
         if snapshot.analysis_status != "Validated":
