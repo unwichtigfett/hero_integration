@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import nullcontext
 from dataclasses import dataclass
+from functools import wraps
 from hashlib import sha256
 import json
+from typing import ContextManager, Protocol
 
 
 class MappingDraftError(ValueError):
@@ -77,6 +80,14 @@ class DraftSaveResult:
     unchanged: bool
 
 
+class MappingDraftStorage(Protocol):
+    def transaction(self, definition_id: str, actor: str) -> ContextManager: ...
+    def active(self, definition_id: str) -> ActiveMapping: ...
+    def draft(self, key: str) -> MappingDraft | None: ...
+    def save_draft(self, value: MappingDraft) -> None: ...
+    def append_revision(self, value: MappingDraftRevision) -> None: ...
+
+
 class InMemoryMappingDraftStorage:
     """Test double only: it does not establish database atomicity."""
 
@@ -106,14 +117,26 @@ class InMemoryMappingDraftStorage:
     def revisions(self) -> tuple[MappingDraftRevision, ...]:
         return tuple(_revision_copy(value) for value in self._revisions)
 
+    def transaction(self, definition_id: str, actor: str):
+        return nullcontext()
+
+
+def _transactional(method):
+    @wraps(method)
+    def wrapped(self, definition_id, actor, *args, **kwargs):
+        with self._storage.transaction(definition_id, actor):
+            return method(self, definition_id, actor, *args, **kwargs)
+    return wrapped
+
 
 class MappingDraftService:
     """Owns personal identity, CAS and immutable saved draft snapshots only."""
 
-    def __init__(self, storage: InMemoryMappingDraftStorage, *, canonicalize: Canonicalizer | None = None) -> None:
+    def __init__(self, storage: MappingDraftStorage, *, canonicalize: Canonicalizer | None = None) -> None:
         self._storage = storage
         self._canonicalize = canonicalize or _object
 
+    @_transactional
     def open_draft(self, definition_id: str, actor: str) -> MappingDraft:
         active = self._storage.active(definition_id)
         actor = _actor(actor)
@@ -129,8 +152,13 @@ class MappingDraftService:
         self._storage.save_draft(value)
         return value
 
-    def save(self, definition_id: str, actor: str, expected_draft_revision: int, expected_active_revision: int, content: object) -> DraftSaveResult:
+    @_transactional
+    def save(self, definition_id: str, actor: str, expected_draft_revision: int, expected_active_revision: int, content: object, *, expected_generation: int | None = None) -> DraftSaveResult:
         active, draft = self._current(definition_id, actor)
+        if expected_generation is None and getattr(self._storage, "requires_generation", False):
+            raise DraftConflict("An expected personal draft generation is required.")
+        if expected_generation is not None and (type(expected_generation) is not int or expected_generation != draft.generation):
+            raise DraftConflict("Personal mapping draft generation is stale.")
         self._assert_current(active, draft, expected_draft_revision, expected_active_revision)
         canonical = _object(self._canonicalize(_object(content)))
         content_hash = _hash(canonical)
@@ -149,12 +177,13 @@ class MappingDraftService:
         ))
         return DraftSaveResult(updated, False)
 
-    def discard(self, definition_id: str, actor: str, expected_generation: int, expected_draft_revision: int) -> MappingDraft:
+    @_transactional
+    def discard(self, definition_id: str, actor: str, expected_generation: int, expected_draft_revision: int, *, confirmed: bool = False) -> MappingDraft:
+        if confirmed is not True:
+            raise MappingDraftError("Explicit confirmation is required to discard a draft.")
         active, draft = self._current(definition_id, actor)
         if draft.generation != expected_generation or draft.content_revision != expected_draft_revision:
             raise DraftConflict("Personal mapping draft changed; reload before discarding.")
-        if active.revision != draft.base_active_revision or active.content_hash != draft.base_active_hash:
-            raise DraftConflict("Active mapping changed; reload before discarding the draft.")
         discarded = MappingDraft(
             draft.key, draft.site_scope, draft.definition_id, draft.owner, draft.generation, "DISCARDED",
             _copy(draft.content), draft.content_hash, draft.content_revision, draft.base_active_name,
@@ -172,12 +201,16 @@ class MappingDraftService:
 
     @staticmethod
     def _assert_current(active: ActiveMapping, draft: MappingDraft, expected_draft_revision: int, expected_active_revision: int) -> None:
+        if any(type(value) is not int or value < 0 for value in (expected_draft_revision, expected_active_revision)):
+            raise DraftConflict("Expected revisions must be non-negative integers.")
         if draft.content_revision != expected_draft_revision:
             raise DraftConflict("Personal mapping draft revision is stale.")
         if active.revision != expected_active_revision or active.revision != draft.base_active_revision:
             raise DraftConflict("Active mapping revision is stale.")
         if active.content_hash != draft.base_active_hash:
             raise DraftConflict("Active mapping content changed; reload before saving the draft.")
+        if active.schema_fingerprint != draft.base_schema_fingerprint:
+            raise DraftConflict("Mapping schema changed; reload before saving the draft.")
 
 
 def draft_key(site_scope: str, definition_id: str, owner: str) -> str:
@@ -196,7 +229,7 @@ def _object(value: object) -> dict[str, object]:
     if not isinstance(value, dict):
         raise MappingDraftError("Draft mapping content must be a JSON object.")
     try:
-        return json.loads(json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+        return json.loads(json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False))
     except (TypeError, ValueError) as error:
         raise MappingDraftError("Draft mapping content is not JSON-safe.") from error
 
@@ -219,4 +252,3 @@ def _draft_copy(value: MappingDraft) -> MappingDraft:
 
 def _revision_copy(value: MappingDraftRevision) -> MappingDraftRevision:
     return MappingDraftRevision(value.draft_key, value.generation, value.revision, value.kind, value.actor, _copy(value.content), value.content_hash, value.base_active_name, value.base_active_revision, value.base_active_hash, value.base_schema_fingerprint)
-
