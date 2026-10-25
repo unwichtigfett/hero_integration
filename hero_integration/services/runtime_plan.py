@@ -257,12 +257,15 @@ class RuntimePlanService:
         return stored
 
     def current_approved(self, site_scope: str, source_instance: str) -> RuntimePlan | None:
-        _identifier(site_scope, "site scope")
-        _identifier(source_instance, "source instance")
-        plan = self._storage.read_scope(site_scope, source_instance)
+        plan = self.current(site_scope, source_instance)
         if plan is None or plan.state is not RuntimePlanState.APPROVED:
             return None
         return plan
+
+    def current(self, site_scope: str, source_instance: str) -> RuntimePlan | None:
+        _identifier(site_scope, "site scope")
+        _identifier(source_instance, "source instance")
+        return self._storage.read_scope(site_scope, source_instance)
 
     def resolve_executable_plan(
         self, site_scope: str, source_instance: str, expected_generation: int, automatic: bool, actor: str
@@ -423,7 +426,9 @@ class FrappeRuntimePlanStorage:
         if self.read_scope(plan.selection.site_scope, plan.selection.source_instance) is not None:
             raise RuntimePlanConflict("A runtime plan already exists for this site/source instance.")
         try:
-            frappe.get_doc(self._payload(plan)).insert()
+            document = frappe.get_doc(self._payload(plan))
+            document.flags.runtime_plan_lifecycle_write = True
+            document.insert()
         except Exception as error:
             if error.__class__.__name__ != "DuplicateEntryError":
                 raise
@@ -451,6 +456,7 @@ class FrappeRuntimePlanStorage:
             raise RuntimePlanConflict("Runtime plan cannot cross site/source scope.")
         for field, value in self._payload(plan, doctype=False).items():
             setattr(document, field, value)
+        document.flags.runtime_plan_lifecycle_write = True
         document.save()
         return plan
 
