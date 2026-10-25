@@ -55,11 +55,14 @@ def protect_managed_mapping(doc):
     previous = doc.get_doc_before_save()
     if not previous:
         return
+    fields = ("mapping_json", "schema_snapshot", "operation_kind", "operation_name", "direction", "status", "mapping_revision", "definition_id")
+    changed = any(doc.get(field) != previous.get(field) for field in fields)
+    if changed and previous.status == "Draft" and previous.modified_by != frappe.session.user:
+        frappe.throw("Foreign legacy mapping drafts cannot be overwritten.", frappe.PermissionError)
     definition = previous.get("definition_id") or previous.name
     if not frappe.db.exists("DocType", "HERO Mapping Draft"):
         return
     if not frappe.db.exists("HERO Mapping Draft", {"definition_id": definition}):
         return
-    fields = ("mapping_json", "schema_snapshot", "operation_kind", "operation_name", "direction", "status", "mapping_revision", "definition_id")
-    if any(doc.get(field) != previous.get(field) for field in fields):
+    if changed:
         frappe.throw("PERSONAL_DRAFT_REQUIRED: Use the personal mapping draft API.", frappe.PermissionError)
