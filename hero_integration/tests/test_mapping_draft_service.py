@@ -83,7 +83,7 @@ class TestMappingDraftService(unittest.TestCase):
             self.active.definition_id, "admin.one@example.invalid", 0, 3, {"record_path": "changed"}
         )
         discarded = self.service.discard(
-            self.active.definition_id, "admin.one@example.invalid", saved.draft.generation, saved.draft.content_revision
+            self.active.definition_id, "admin.one@example.invalid", saved.draft.generation, saved.draft.content_revision, confirmed=True
         )
         reopened = self.service.open_draft(self.active.definition_id, "admin.one@example.invalid")
 
@@ -96,5 +96,4 @@ class TestMappingDraftService(unittest.TestCase):
     def test_actor_cannot_discard_another_administrators_draft(self) -> None:
         first = self.service.open_draft(self.active.definition_id, "admin.one@example.invalid")
         with self.assertRaises(DraftConflict):
-            self.service.discard(self.active.definition_id, "admin.two@example.invalid", first.generation, 0)
-
+            self.service.discard(self.active.definition_id, "admin.two@example.invalid", first.generation, 0, confirmed=True)
