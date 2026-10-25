@@ -7,6 +7,7 @@ reader as a change provider while B7 materialized runtime persistence is absent.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from uuid import uuid4
 
 
 BLOCKED_NO_B7_MATERIALIZED_RUNTIME = "BLOCKED_NO_B7_MATERIALIZED_RUNTIME"
@@ -81,11 +82,71 @@ def run_scheduled_auto_sync(*, frappe_module=None) -> RuntimePreflight:
     )
     if executable.selection.execution_mode != RUNTIME_EXECUTION_MODE:
         raise RuntimeBridgeError("Runtime plan execution mode is not AUTO_SYNC.")
+    return _run(executable, frappe, automatic=True)
+
+
+def run_pending_sync(expected_plan_generation: int, *, frappe_module=None, provider=None) -> RuntimePreflight:
+    """Run an explicitly requested bound-only reconciliation while polling is OFF.
+
+    The caller must supply the generation observed in its reviewed plan.  This
+    is intentionally not a global cursor claim: an unproven provider returns
+    an explicit incomplete/reconciliation status before any read is made.
+    """
+    frappe = _frappe(frappe_module)
+    settings = frappe.get_single("HERO Integration Settings")
+    site_scope = getattr(getattr(frappe, "local", None), "site", "")
+    source_instance = str(getattr(settings, "hero_source_instance", "default") or "default").strip()
+    if not site_scope or not source_instance:
+        raise RuntimeBridgeError("Pending Sync requires current site and source identities.")
+    actor = getattr(getattr(frappe, "session", None), "user", "")
+    service = _runtime_plan_service(frappe)
+    executable = service.resolve_executable_plan(site_scope, source_instance, expected_plan_generation, False, actor)
+    return _run(executable, frappe, automatic=False, provider=provider)
+
+
+def _run(executable, frappe, *, automatic: bool, provider=None) -> RuntimePreflight:
+    from hero_integration.services.b8_runtime import reconstruct_materialized_read_plan
+    from hero_integration.services.polling import effective_mode
+    from hero_integration.services.sync_engine import (
+        ChangeCapabilities,
+        FrappeBoundIndex,
+        FrappeBoundProcessor,
+        FrappeSyncLedger,
+        PollingConfiguration,
+        SyncEngine,
+        SyncRun,
+    )
+
     if executable.selection.operation_revision != executable.selection.service_revision:
         raise RuntimeBridgeError("Runtime plan operation revision is stale.")
-    return RuntimePreflight(
-        BLOCKED_NO_B7_MATERIALIZED_RUNTIME,
-        executable.plan_key,
-        executable.generation,
+    materialized = reconstruct_materialized_read_plan(executable.selection, frappe_module=frappe)
+    settings = frappe.get_single("HERO Integration Settings")
+    configuration = PollingConfiguration(
+        executable.selection.site_scope,
+        effective_mode(settings) == "AUTO_SYNC",
+        max(60, int(getattr(settings, "polling_interval_minutes", 60) or 60) * 60),
         executable.selection.source_instance,
+        executable.selection.mapping_revision,
+        executable.selection.schema_fingerprint,
     )
+    engine = SyncEngine(
+        FrappeSyncLedger(frappe), materialized, provider or _UnprovenProvider(),
+        FrappeBoundIndex(frappe),
+        FrappeBoundProcessor(materialized.sealed.contract.mapping_revision, materialized.sealed.contract.definition_ids, frappe),
+    )
+    state = engine.configure(configuration)
+    run = SyncRun(uuid4().hex, executable.selection.site_scope, executable.actor, state.generation, automatic)
+    result = engine.poll(run) if automatic else engine.pending_sync(run)
+    return RuntimePreflight(result.status.value, executable.plan_key, result.generation, executable.selection.source_instance)
+
+
+class _UnprovenProvider:
+    """No generic/offset reader can claim a complete B8 delta cursor."""
+    capabilities = None
+
+    def __init__(self):
+        from hero_integration.services.sync_engine import ChangeCapabilities
+        self.capabilities = ChangeCapabilities(False, False, False)
+
+    def changes(self, cursor):
+        raise AssertionError("An unproven provider must not be read.")
