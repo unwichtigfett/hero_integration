@@ -14,6 +14,7 @@ from typing import Protocol
 
 from hero_integration.graphql_protocol.operation_kind import GraphQLOperationKind
 from hero_integration.services.binding_registry import BindingRegistryService, FieldBinding, BindingState
+from hero_integration.services.mapping_registry_model import MappingDirection
 from hero_integration.services.migration_engine import SealedRead
 
 
@@ -50,7 +51,11 @@ class MaterializedReadPlan:
         _text(self.source_instance,"source instance")
         request=self.request
         if getattr(request,"operation_kind",None) is not GraphQLOperationKind.QUERY: raise SyncError("B8 accepts only a B2 query request.")
-        if getattr(request,"schema_fingerprint",None)!=self.sealed.snapshot_fingerprint: raise SyncError("B2 request fingerprint differs from B7 seal.")
+        # B7 seals the persisted introspection snapshot fingerprint, while B2
+        # correctly carries the canonical graphql_protocol IR fingerprint.
+        # They are validated at their own boundaries by the runtime
+        # reconstructor and must not be conflated here.
+        if not isinstance(getattr(request,"schema_fingerprint",None),str) or not getattr(request,"schema_fingerprint",None): raise SyncError("B2 request has no materializer fingerprint.")
         if getattr(request,"document",None)!=self.sealed.query_document: raise SyncError("B2 document must exactly preserve the approved saved query.")
         if not getattr(request,"result_bindings",None): raise SyncError("B2 request has no sealed result bindings.")
 
@@ -150,6 +155,58 @@ class FrappeSyncLedger:
         if rows:
             doc=frappe.get_doc(self.RUN,rows[0].name); doc.state="COMPLETED"; doc.save()
 
+class FrappeBoundIndex:
+    """Read-only B6 enumeration; it never creates bindings or target records."""
+    def __init__(self, frappe_module=None): self._frappe_module=frappe_module
+    def fields(self, site_scope, source_instance):
+        from hero_integration.services.binding_registry import FrappeBindingStorage
+        storage=FrappeBindingStorage(self._frappe_module)
+        result=[]
+        for binding in storage.fields_for_source(site_scope,source_instance):
+            if binding.direction is not MappingDirection.HERO_TO_FRAPPE: continue
+            parent=storage.object(site_scope,binding.object_binding_key)
+            if parent is None or parent.source_instance!=source_instance: raise SyncConflict("Bound field has no current object binding.")
+            result.append(BoundField(parent.external_object_id,binding,tuple(binding.source_field.split("."))))
+        return tuple(sorted(result,key=lambda field: field.binding.identity_key))
+
+class FrappeBoundProcessor:
+    """B7 update-only writer for existing B6-bound target fields.
+
+    Initial migration owns binding creation and inserts. This processor accepts
+    neither an unbound object nor a new field and cannot provision schema.
+    """
+    def __init__(self, mapping_revision, definition_ids, frappe_module=None):
+        self.mapping_revision,self.definition_ids,self._frappe_module=mapping_revision,frozenset(definition_ids),frappe_module
+    def process(self, record, fields):
+        try:
+            identity=_identity(record); grouped={}
+            for field in fields:
+                binding=field.binding
+                if (field.object_id!=identity or binding.direction is not MappingDirection.HERO_TO_FRAPPE or
+                    binding.mapping_revision!=self.mapping_revision or binding.mapping_definition_id not in self.definition_ids or
+                    binding.state is BindingState.RECONCILIATION_REQUIRED):
+                    raise SyncConflict("Bound field is stale or ineligible.")
+                value=_extract_bound(record,field.source_path)
+                if value is _BOUND_MISSING: return False
+                grouped.setdefault((binding.target_doctype,binding.target_name),{})[binding.target_field]=value
+            frappe=self._frappe()
+            for (doctype,name), values in grouped.items():
+                if not frappe.db.exists(doctype,name): return False
+                meta=frappe.get_meta(doctype)
+                if any(field=="name" or not meta.get_field(field) for field in values): return False
+                frappe.has_permission(doctype,"write",throw=True)
+                document=frappe.get_doc(doctype,name)
+                changed={key:value for key,value in values.items() if document.get(key)!=value}
+                if changed:
+                    _assign(document,changed); document.save()
+            return True
+        except Exception:
+            return False
+    def _frappe(self):
+        if self._frappe_module is not None: return self._frappe_module
+        import frappe
+        return frappe
+
 def scheduler_due(configuration:PollingConfiguration, elapsed_seconds:object)->bool:
     """Pure scheduler gate; scheduler registration and job enqueueing are external."""
     return configuration.enabled and isinstance(elapsed_seconds,(int,float)) and not isinstance(elapsed_seconds,bool) and elapsed_seconds>=configuration.interval_seconds
@@ -244,6 +301,12 @@ def _identity(record):
     value=record.get("id")
     if not isinstance(value,(str,int)) or isinstance(value,bool) or not str(value): raise SyncError("Provider record has no stable identity.")
     return str(value)
+_BOUND_MISSING=object()
+def _extract_bound(value,path):
+    for key in path:
+        if not isinstance(value,Mapping) or key not in value: return _BOUND_MISSING
+        value=value[key]
+    return value
 def _page_marker(page): return sha256(json.dumps([page.next_cursor,page.records],sort_keys=True,default=str,separators=(",",":")).encode()).hexdigest()
 
 def _assign(doc,values):

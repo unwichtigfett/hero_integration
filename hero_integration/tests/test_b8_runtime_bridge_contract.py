@@ -70,10 +70,14 @@ class TestB8RuntimeBridgeContract(unittest.TestCase):
             session=SimpleNamespace(user="Administrator"),
             get_single=lambda _doctype: SimpleNamespace(polling_mode="AUTO_SYNC", scheduled_sync_enabled=1, hero_source_instance="hero-one"),
         )
-        with patch.object(sync_runtime_adapter, "_runtime_plan_service", return_value=Service()):
+        expected = sync_runtime_adapter.RuntimePreflight("INCOMPLETE", executable.plan_key, executable.generation, "hero-one")
+        with patch.object(sync_runtime_adapter, "_runtime_plan_service", return_value=Service()), patch.object(
+            sync_runtime_adapter, "_run", return_value=expected
+        ) as runtime:
             result = sync_runtime_adapter.run_scheduled_auto_sync(frappe_module=frappe_module)
 
-        self.assertEqual(result.status, sync_runtime_adapter.BLOCKED_NO_B7_MATERIALIZED_RUNTIME)
+        self.assertIs(result, expected)
+        runtime.assert_called_once_with(executable, frappe_module, automatic=True)
         self.assertEqual(calls, [
             ("current", "b9-test.localhost", "hero-one"),
             ("resolve", ("b9-test.localhost", "hero-one", 7, True, "Administrator")),
