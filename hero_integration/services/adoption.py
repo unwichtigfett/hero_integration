@@ -44,6 +44,11 @@ def execute(adoption_name: str) -> dict[str, object]:
         selection = json.loads(adoption.selected_ids_json)
     except (TypeError, ValueError) as error:
         raise SchemaProvisioningError("Legacy adoption requires a new preview.") from error
+    if adoption.status == "Completed" and isinstance(selection, list) and all(isinstance(item, str) for item in selection):
+        outcome = json.loads(adoption.outcome_json or "{}")
+        if not isinstance(outcome, dict):
+            raise SchemaProvisioningError("Legacy adoption outcome is invalid.")
+        return {**outcome, "adoption_name": adoption.name, "confirmation_binding": "LEGACY_UNVERIFIED"}
     if not isinstance(selection, dict) or set(selection) != {"ids", "preview", "binding"}:
         raise SchemaProvisioningError("Legacy adoption requires a new preview.")
     expected = _binding(adoption.schema_snapshot, adoption.package_json, {"ids": selection["ids"], "preview": selection["preview"]}, adoption.name)
