@@ -195,11 +195,25 @@ class TestHeroDeskUiContract(unittest.TestCase):
 
     def test_mapping_editor_bounds_collections_and_preserves_server_identity(self):
         source = MAPPING_EDITOR_JS.read_text()
-        for contract in ("graphql_total", "frappe_total", "Definitions on this page", "HERO operations and mapping definitions",
+        for contract in ("graphql_total", "frappe_total", "Definitions in this direction on this page", "HERO operations and mapping definitions",
                          "definition_id: active.definition_id", "mapping_type: kind, name: item.name", "page_size: 20"):
             self.assertIn(contract, source)
         for excluded in ("graphql_mapping_save", "adopt_mapping_package", "import_mapping_json", "runtime_plan_approve"):
             self.assertNotIn(excluded, source)
+
+    def test_schema_explorer_is_admin_only_and_reads_saved_schema(self):
+        source = MAPPING_EDITOR_JS.read_text()
+        explorer = source.split("function renderSchemaExplorer()", 1)[1].split("function renderList()", 1)[0]
+        for contract in ("if (!admin) return", "analysis_status === 'Validated'", "schema_snapshot_list",
+                         "schema_operation_catalog", "mapping_suggestions", "leaveWorkspace", "hero_tool: 'graph'",
+                         "epoch === viewEpoch", "section[0].isConnected", "tab === viewTab",
+                         "hero-mapping-picker-resume", "loadSnapshots(name, operation)",
+                         "suggestionSerial === suggestionRequest", "Retry saved schema",
+                         "result.length >= 100", "this list may be incomplete",
+                         "previously selected snapshot is not available in this result"):
+            self.assertIn(contract, explorer)
+        for forbidden in ("graphql_mapping_save", "adopt_mapping_package", "workspace_schema_refresh"):
+            self.assertNotIn(forbidden, explorer)
 
     def test_mapping_editor_has_explicit_save_and_lossless_local_undo(self):
         source = MAPPING_EDITOR_JS.read_text()
@@ -212,7 +226,7 @@ class TestHeroDeskUiContract(unittest.TestCase):
 
     def test_mapping_editor_uses_existing_catalogs_and_scoped_table_details(self):
         source = MAPPING_EDITOR_JS.read_text()
-        for contract in ("mapping_target_catalog", "mapping_target_picker_page", "schema_operation_catalog",
+        for contract in ("mapping_target_catalog", "mapping_target_catalog_page", "schema_operation_catalog",
                          "hero-mapping-editor-grid", "hero-mapping-row-detail", "hero-mapping-table",
                          "Search fields by name, full path or type", "My saved revisions — read only"):
             self.assertIn(contract, source)
