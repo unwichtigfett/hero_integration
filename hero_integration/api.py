@@ -2208,8 +2208,11 @@ def preview_mapping_candidate(
         frappe.throw("Source path is not selected by the approved HERO operation.")
     target_doctype = target_doctype or contract["target_doctype"]
     spec = MappingSpec(operation, source_path, target_doctype, target_field, contract["paths"][source_path])
-    target = validate_draft_target(operation, spec.source_type, target_doctype, target_field, _FrappePickerMetadata())
-    value = transformed_value(spec, source_value(record, source_path))
+    try:
+        target = validate_draft_target(operation, spec.source_type, target_doctype, target_field, _FrappePickerMetadata())
+        value = transformed_value(spec, source_value(record, source_path))
+    except ValueError as error:
+        frappe.throw(str(error))
     return {
         "operation": operation,
         "source_path": source_path,
