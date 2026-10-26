@@ -21,13 +21,20 @@
         if (typeof draft.content_json === "string") value.content = parseContent(draft.content_json);
         return value;
     };
+    const verifiedActiveRevision = (draft) => {
+        if (typeof draft?.reconciliation_json !== "string") return null;
+        try {
+            const value = JSON.parse(draft.reconciliation_json);
+            return Number.isInteger(value?.active_revision) && value.active_revision > 0 ? value.active_revision : null;
+        } catch (_) { return null; }
+    };
     const stable = (value) => JSON.stringify(value, (_, item) => item && typeof item === "object" && !JSON.isRawJSON?.(item) && !Array.isArray(item)
         ? Object.fromEntries(Object.keys(item).sort().map((key) => [key, item[key]])) : item);
     const ownRule = (value, id) => Object.hasOwn(value.field_rules || {}, id) ? value.field_rules[id] : null;
     const object = (value) => value && typeof value === "object" && !Array.isArray(value);
     class DraftState {
         constructor(draft) { this.accept(draft); }
-        accept(draft) { this.saved = draftValue(draft); this.content = clone(this.saved.content); this.referenceOrder = [...(this.content.mapping_definition_ids || [])]; this.undo = []; this.reconciliation = null; this.blocked = false; }
+        accept(draft) { this.saved = draftValue(draft); this.verifiedActiveRevision = verifiedActiveRevision(this.saved); this.content = clone(this.saved.content); this.referenceOrder = [...(this.content.mapping_definition_ids || [])]; this.undo = []; this.reconciliation = null; this.blocked = false; }
         get dirty() { return stable(this.content) !== stable(this.saved.content); }
         invalidateReconciliation() { this.reconciliation = null; }
         set(path, value) {
@@ -83,7 +90,7 @@
             const d = this.saved;
             return {definition_id: d.definition_id, expected_generation: d.generation,
                 expected_draft_revision: d.content_revision,
-                expected_active_revision: this.reconciliation?.activeRevision ?? d.base_active_revision,
+                expected_active_revision: this.reconciliation?.activeRevision ?? this.verifiedActiveRevision ?? d.base_active_revision,
                 expected_reconciliation_revision: this.reconciliation?.reconciliationRevision ?? (d.reconciliation_revision || 0),
                 reconciliation_json: this.reconciliation?.json || "",
                 mapping_json: JSON.stringify(this.content)};
