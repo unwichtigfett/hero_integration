@@ -77,6 +77,75 @@
         doc.operation_kind === "MUTATION" && doc.operation_name === row.operation_name && doc.status === row.status &&
         doc.mapping_revision === row.mapping_revision && (doc.suggestion_reason || "") === (row.suggestion_reason || "") &&
         (doc.confidence ?? null) === (row.confidence ?? null) && typeof doc.mapping_json === "string";
+    const sharedWritebackDraftAccess = (doc, row, snapshot, actor) => {
+        if (!legacyWritebackDetailMatches(doc, row, snapshot)) return "STALE";
+        if (doc.status !== "Draft") return "NOT_DRAFT";
+        if (typeof actor !== "string" || !actor || typeof doc.modified_by !== "string" || doc.modified_by !== actor) return "OWNER_CONFLICT";
+        if (!Number.isInteger(doc.mapping_revision) || doc.mapping_revision < 1 || typeof doc.definition_id !== "string" || !doc.definition_id) return "INVALID";
+        return "EDITABLE";
+    };
+    const reviewedWritebackEditable = (mappingJson, catalog) => {
+        if (typeof mappingJson !== "string" || !Array.isArray(catalog?.fields) || typeof JSON.rawJSON !== "function") return false;
+        let rawVersion = false, mapping;
+        try {
+            mapping = JSON.parse(mappingJson, (key, value, context) => {
+                if (typeof value === "number") {
+                    if (key !== "version" || value !== 1 || context?.source !== "1") throw new Error("Unsafe number.");
+                    rawVersion = true;
+                }
+                return value;
+            });
+        } catch (_) { return false; }
+        // A round trip must preserve the original JSON tokens; this also rejects
+        // duplicate keys and alternate escaped tokens before any edit is allowed.
+        const compact = mappingJson.replace(/"(?:\\.|[^"\\])*"|\s+/g, (part) => part[0] === '"' ? part : "");
+        if (JSON.stringify(mapping) !== compact) return false;
+        const exactKeys = (value, keys) => object(value) && Object.keys(value).sort().join("\0") === [...keys].sort().join("\0");
+        if (!rawVersion || !exactKeys(mapping, ["version", "source", "target", "transformation"]) ||
+            !exactKeys(mapping.source, ["doctype", "field"]) ||
+            !exactKeys(mapping.target, ["operation", "argument", "input_type", "field"]) ||
+            ![mapping.source.doctype, mapping.source.field, mapping.target.operation, mapping.target.argument, mapping.target.input_type, mapping.target.field].every((v) => typeof v === "string" && v) ||
+            !["Identity", "Trim"].includes(mapping.transformation)) return false;
+        const matches = catalog.fields.filter((field) => field.doctype === mapping.source.doctype && field.path === mapping.source.field && field.selectable === true &&
+            field.target && ["operation", "argument", "input_type", "field"].every((key) => field.target[key] === mapping.target[key]));
+        return matches.length === 1;
+    };
+    const buildReviewedWriteback = (catalog, doctype, field, transformation) => {
+        if (!Array.isArray(catalog?.fields) || !["Identity", "Trim"].includes(transformation)) throw new Error("Invalid reviewed writeback selection.");
+        const matches = catalog.fields.filter((item) => item.doctype === doctype && item.path === field && item.selectable === true && item.target &&
+            ["operation", "argument", "input_type", "field"].every((key) => typeof item.target[key] === "string" && item.target[key]));
+        if (matches.length !== 1) throw new Error("Choose exactly one reviewed source and target.");
+        const target = Object.fromEntries(["operation", "argument", "input_type", "field"].map((key) => [key, matches[0].target[key]]));
+        return {version: 1, source: {doctype, field}, target, transformation};
+    };
+    const sharedWritebackRequest = ({doc, row, actor, catalog, snapshot, choice, transformation, reason, confidence}) => {
+        if (typeof reason !== "string" || reason.length > 1000 || typeof confidence !== "string" || confidence === "") throw new Error("Invalid review values.");
+        const score = Number(confidence);
+        if (!Number.isFinite(score) || score < 0 || score > 1) throw new Error("Confidence must be between 0 and 1.");
+        if (!["Identity", "Trim"].includes(transformation)) throw new Error("Invalid transformation.");
+        let mapping, changedReason = true, changedConfidence = true;
+        if (doc) {
+            if (sharedWritebackDraftAccess(doc, row, snapshot, actor) !== "EDITABLE") throw new Error("Shared draft status, owner or revision changed.");
+            if (!reviewedWritebackEditable(doc.mapping_json, catalog)) throw new Error("This shared draft cannot be edited without losing parameters.");
+            const initial = JSON.parse(doc.mapping_json);
+            changedReason = reason !== String(doc.suggestion_reason || "");
+            changedConfidence = score !== Number(doc.confidence ?? 0);
+            if (!changedReason && !changedConfidence && transformation === initial.transformation) return null;
+            mapping = {...initial, transformation};
+        } else {
+            if (!choice) throw new Error("Choose a reviewed source and target.");
+            mapping = buildReviewedWriteback(catalog, choice.doctype, choice.path, transformation);
+        }
+        const args = {snapshot_name:snapshot, operation_kind:"MUTATION", operation_name:mapping.target.operation,
+            direction:"FRAPPE_TO_MUTATION", mapping_json:JSON.stringify(mapping), mapping_name:doc?.name || "",
+            expected_revision:doc?.mapping_revision || 0, activate:0};
+        if (changedReason) args.suggestion_reason = reason;
+        if (changedConfidence) args.confidence = score;
+        return args;
+    };
+    const sharedWritebackSaveAccepted = (result, doc) => Boolean(result && typeof result.name === "string" && result.name &&
+        result.status === "Draft" && Number.isInteger(result.revision) && result.revision >= 1 && result.unchanged === false &&
+        (!doc || (result.name === doc.name && result.revision > doc.mapping_revision)));
     const legacyWritebackCurrent = (admin, viewTab, currentTab, viewEpoch, currentEpoch, serial, currentSerial, snapshot, selected, connected, disposed) =>
         admin && viewTab === "Mutation" && currentTab === viewTab && viewEpoch === currentEpoch && serial === currentSerial &&
         Boolean(snapshot) && snapshot === selected && connected && !disposed;
@@ -309,7 +378,7 @@
         const root = $("<section class='hero-mapping-core'></section>").appendTo(host);
         const shell = host.closest(".admin-workspace").addClass("hero-mapping-shell");
         const admin = Boolean(window.hero_integration_ui?.isSystemManager);
-        let disposed = false, epoch = 0, busy = false, model = null, active = null, mode = "active", selected = 0, ownedDownload = null;
+        let disposed = false, epoch = 0, busy = false, sharedDirty = false, model = null, active = null, mode = "active", selected = 0, ownedDownload = null;
         let search = String(context.mapping_search || ""), start = Number(context.mapping_start || 0), listing;
         let revisionsStart = 0, returnFocus = null, fieldFilter = "", detailRequest = 0, exchangeSequence = 0;
         const exchanges = new Map();
@@ -337,7 +406,7 @@
             event.preventDefault(); switchTab(next); tabButtons[tabNames.indexOf(tab)].trigger("focus");
         });
         function otherDirty() { return tabStates.otherDirty(tab); }
-        function anyDirty() { return Boolean(model?.dirty || otherDirty()); }
+        function anyDirty() { return Boolean(sharedDirty || model?.dirty || otherDirty()); }
         function switchTab(next) {
             if (next === tab || locked() || root.find("dialog").length) return;
             const previous = tab;
@@ -414,6 +483,7 @@
             ], cancel);
         }
         function leaveWorkspace(action, cancel = () => {}) {
+            if (sharedDirty) { say("Close or save the shared draft editor before leaving."); return cancel(); }
             if (otherDirty()) { say("Save or discard the unsaved changes in the other mapping tab before leaving."); return cancel(); }
             return leave(action, cancel);
         }
@@ -538,6 +608,59 @@
                 const legacyDetail = $("<div></div>");
                 const currentLegacy = (serial, name) => legacyWritebackCurrent(admin, viewTab, tab, viewEpoch, epoch,
                     serial, legacyRequest, name, snapshot.val(), section[0].isConnected, disposed);
+                const showSharedEditor = (doc, catalog, name, serial, row = null) => {
+                    if (locked() || root.find('dialog').length || !currentLegacy(serial, name)) return;
+                    const creating = !doc, opener = document.activeElement, dialog = $("<dialog class='hero-mapping-dialog'></dialog>");
+                    const heading = $('<h3></h3>').text(text(creating ? 'Create shared writeback draft' : 'Edit shared writeback draft'));
+                    dialog.attr('aria-label', text(creating ? 'Create shared writeback draft' : 'Edit shared writeback draft')).append(heading,
+                        $('<p></p>').text(text('This is a shared draft, separate from personal drafts. Saving never activates it.')));
+                    const state = $("<p role='status'></p>"), choices = $("<select class='form-control' aria-label='Reviewed shared source'></select>");
+                    const candidates = creating ? catalog.fields.filter((item) => item.selectable === true && item.target) : [];
+                    if (creating) {
+                        choices.append($('<option></option>').val('').text(text('Choose a reviewed source and target')));
+                        candidates.forEach((item, index) => choices.append($('<option></option>').val(String(index)).text(`${item.doctype}.${item.path} → ${reviewedTargetLabel(item)}`)));
+                        dialog.append($('<label></label>').text(text('Reviewed source and target')).append(choices));
+                    } else dialog.append($('<p></p>').text(`${text('Shared draft')}: ${doc.name} · ${text('Status')}: ${doc.status} · ${text('Revision')}: ${doc.mapping_revision} · ${text('Last editor')}: ${doc.modified_by}`));
+                    const initial = doc ? JSON.parse(doc.mapping_json) : null;
+                    const transform = $("<select class='form-control' aria-label='Shared draft transformation'><option value='Identity'>Identity</option><option value='Trim'>Trim</option></select>").val(initial?.transformation || 'Identity');
+                    const reason = $("<textarea class='form-control' aria-label='Shared draft review reason' maxlength='1000'></textarea>").val(doc?.suggestion_reason || '');
+                    const confidence = $("<input class='form-control' type='number' min='0' max='1' step='any' aria-label='Shared draft confidence'>").val(doc?.confidence ?? 0);
+                    const initialReason = String(reason.val()), initialConfidence = String(confidence.val()), initialTransform = transform.val();
+                    let consumed = false;
+                    const update = () => { sharedDirty = creating ? Boolean(choices.val() || reason.val() || Number(confidence.val()) !== 0 || transform.val() !== 'Identity') :
+                        reason.val() !== initialReason || confidence.val() !== initialConfidence || transform.val() !== initialTransform; };
+                    choices.add(transform).add(reason).add(confidence).on('input change', update);
+                    const close = () => { sharedDirty = false; dialog[0].close(); dialog.remove(); if (opener?.isConnected) opener.focus(); };
+                    const cancel = () => { if (!sharedDirty || window.confirm(text('Discard unsaved shared draft changes?'))) close(); };
+                    dialog.on('cancel', (event) => { event.preventDefault(); if (!busy) cancel(); });
+                    const saveShared = button(creating ? 'Create shared draft' : 'Save shared draft', async () => {
+                        if (consumed || locked() || !currentLegacy(serial, name)) return;
+                        update(); if (!creating && !sharedDirty) { state.text(text('No changes to save.')); return; }
+                        let args;
+                        try {
+                            const choice = creating && choices.val() !== '' ? candidates[Number(choices.val())] : null;
+                            args = sharedWritebackRequest({doc, row, actor:frappe.session?.user, catalog, snapshot:name, choice,
+                                transformation:transform.val(), reason:reason.val(), confidence:String(confidence.val())});
+                            if (!args) { state.text(text('No changes to save.')); return; }
+                        } catch (error) { state.text(text(error.message)); return; }
+                        consumed = true;
+                        const disabled = root.find('button,input,select,textarea').map((_, el) => ({el, value:el.disabled})).get();
+                        setBusy(true); state.text(text('Saving shared draft…'));
+                        try {
+                            const result = await rpc('graphql_mapping_save', args, true);
+                            if (!currentLegacy(serial, name)) return;
+                            if (!sharedWritebackSaveAccepted(result, doc)) throw new Error('Uncertain shared draft result.');
+                            close(); await loadLegacy();
+                        } catch (_) {
+                            if (currentLegacy(serial, name)) state.text(text('Save failed or its outcome is unknown. Status, owner or revision may have changed. Your inputs are kept; close this editor and reload before trying again. No retry was made.'));
+                        } finally {
+                            if (!disposed) { setBusy(false); disabled.forEach(({el,value}) => { if (el.isConnected) el.disabled = value; }); if (dialog[0].isConnected && consumed) saveShared.prop('disabled', true); }
+                        }
+                    }, true);
+                    dialog.append($('<label></label>').text(text('Transformation')).append(transform), $('<label></label>').text(text('Review reason')).append(reason),
+                        $('<label></label>').text(text('Confidence 0–1')).append(confidence), state, saveShared, button('Cancel', cancel));
+                    root.append(dialog); dialog[0].showModal();
+                };
                 const loadLegacy = async () => {
                     const serial = ++legacyRequest, name = snapshot.val();
                     detailSerial++; legacyRows.empty(); legacyDetail.empty();
@@ -561,7 +684,13 @@
                                         legacyDetail.text(text('Shared mapping changed. Refresh the list before inspecting it.')); return;
                                     }
                                     legacyDetail.empty().append($('<p></p>').text(`${text('Last editor')}: ${doc.modified_by || '—'} · ${text('Definition ID')}: ${doc.definition_id || '—'}`),
-                                        $('<p></p>').text(text('Stored mapping JSON (read only):')), $('<pre></pre>').text(doc.mapping_json));
+                                        $('<p></p>').text(text('Stored mapping JSON:')), $('<pre></pre>').text(doc.mapping_json));
+                                    const access = sharedWritebackDraftAccess(doc, row, name, frappe.session?.user);
+                                    if (access !== 'EDITABLE') return legacyDetail.append($('<p></p>').text(text(access === 'OWNER_CONFLICT' ? 'Only the last editor can change this shared draft.' : 'Only a current shared draft can be edited.')));
+                                    const catalog = await rpc('writeback_mapper_catalog', {snapshot_name:name});
+                                    if (!currentLegacy(serial, name) || detailRequest !== detailSerial) return;
+                                    if (!reviewedWritebackEditable(doc.mapping_json, catalog)) return legacyDetail.append($('<p></p>').text(text('This shared draft remains read only because editing could discard parameters or change JSON tokens.')));
+                                    legacyDetail.append(button('Edit my shared draft', () => showSharedEditor(doc, catalog, name, serial, row)));
                                 } catch (error) { if (currentLegacy(serial, name) && detailRequest === detailSerial) legacyDetail.text(errorText(error)); }
                             }));
                             legacyRows.append(line);
@@ -573,7 +702,16 @@
                 section.on('hero-mapping-picker-resume', () => { legacyRequest++; detailSerial++; legacyRows.empty(); legacyDetail.empty(); legacyState.text(text('Choose a validated snapshot again to refresh shared mappings.')); });
                 section.append($('<h4></h4>').text(text('Shared writeback mappings')),
                     $('<p></p>').text(text('Shared mappings are separate from personal drafts. Inspection is read only; it does not establish activation eligibility or publish a personal draft.')),
-                    legacyState, legacyRows, legacyDetail, button('Refresh shared writeback mappings', loadLegacy));
+                    legacyState, legacyRows, legacyDetail, button('Refresh shared writeback mappings', loadLegacy),
+                    button('Prepare new shared writeback draft', async () => {
+                        const serial = legacyRequest, name = snapshot.val();
+                        if (!name) { legacyState.text(text('Choose a validated snapshot first.')); return; }
+                        if (!currentLegacy(serial, name) || locked()) return;
+                        try {
+                            const catalog = await rpc('writeback_mapper_catalog', {snapshot_name:name});
+                            if (currentLegacy(serial, name)) showSharedEditor(null, catalog, name, serial);
+                        } catch (error) { if (currentLegacy(serial, name)) legacyState.text(errorText(error)); }
+                    }));
             }
             const packagePreview = $("<div class='hero-mapping-package-preview'></div>");
             const packageState = $("<p role='status'></p>");
@@ -1369,5 +1507,5 @@
         const controller = {beforeLeave: leaveWorkspace, destroy() { shell.removeClass("hero-mapping-shell"); disposed = true; epoch++; window.removeEventListener("beforeunload", unload); if (router.route === guardedRoute) router.route = originalRoute; document.removeEventListener("click", links, true); }};
         current = controller; loadList(); return controller;
     }
-    window.hero_integration_mapping_editor = Object.freeze({mount, DraftState, stable, readActiveRule, readSnapshotPages, exchangeExpectedStates, exchangeCounts, exchangeCanAdopt, reviewedTargetLabel, writebackContractLabel, legacyWritebackRows, legacyWritebackDetailMatches, legacyWritebackCurrent, legacyPackageSelection, legacyPackageAdoptionArgs, legacyCandidateArgs, legacyCandidateMatches, legacyCandidateRawMessage, legacyCandidateRpc, legacyCandidatePreviewText, isOwnedExportLink, mappingTabs, directionForTab, bindingAccess, selectedPickerApp, hasCurrentDraftBase, canSaveDraft, tabKeyTarget, MappingTabStates, resumePendingView});
+    window.hero_integration_mapping_editor = Object.freeze({mount, DraftState, stable, readActiveRule, readSnapshotPages, exchangeExpectedStates, exchangeCounts, exchangeCanAdopt, reviewedTargetLabel, writebackContractLabel, legacyWritebackRows, legacyWritebackDetailMatches, sharedWritebackDraftAccess, reviewedWritebackEditable, buildReviewedWriteback, sharedWritebackRequest, sharedWritebackSaveAccepted, legacyWritebackCurrent, legacyPackageSelection, legacyPackageAdoptionArgs, legacyCandidateArgs, legacyCandidateMatches, legacyCandidateRawMessage, legacyCandidateRpc, legacyCandidatePreviewText, isOwnedExportLink, mappingTabs, directionForTab, bindingAccess, selectedPickerApp, hasCurrentDraftBase, canSaveDraft, tabKeyTarget, MappingTabStates, resumePendingView});
 })();
