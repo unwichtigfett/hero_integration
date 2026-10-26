@@ -45,38 +45,56 @@ def bounded(content):
     return content
 
 
-def validate_edits(prior, submitted):
-    """Known paths editable; additional existing paths immutable, including omission.
+def same_value(left, right):
+    # JSON has one number kind. Browsers serialize 1.0 as 1 and -0.0 as 0;
+    # booleans are never numbers, despite Python's bool/int equality.
+    if type(left) in (int, float) and type(right) in (int, float):
+        return left == right
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        return left.keys() == right.keys() and all(same_value(left[k], right[k]) for k in left)
+    if isinstance(left, list):
+        return len(left) == len(right) and all(same_value(a, b) for a, b in zip(left, right))
+    return left == right
 
-    Removing a known assignment/root is explicit. Unknown existing parameters
-    must be sent unchanged; new arbitrary or privileged paths are rejected.
-    """
+
+def validate_edits(prior, submitted):
+    """Validate edits and retain exact stored values at immutable paths."""
+    result = deepcopy(submitted)
     for key in set(prior) | set(submitted):
         if key in {'field_rules', 'field_rule_bases', 'mapping_definition_ids'}:
-            continue  # Storage owns reference resolution and provenance checks.
+            continue
         if key in TEXT_FIELDS:
             if key in submitted and not isinstance(submitted[key], str):
-                if key not in prior or not same(submitted[key], prior[key]):
+                if key not in prior or not same_value(submitted[key], prior[key]):
                     raise MappingDraftError('Invalid text configuration.')
+                result[key] = deepcopy(prior[key])
         elif key in EDITABLE:
             if key not in submitted:
                 continue
             value, before = submitted[key], prior.get(key, {})
             if not isinstance(value, dict) or not isinstance(before, dict):
-                if key not in prior or not same(value, before):
+                if key not in prior or not same_value(value, before):
                     raise MappingDraftError('Unsupported assignment shape.')
+                result[key] = deepcopy(prior[key])
                 continue
             for child in set(before) | set(value):
                 if child in EDITABLE[key]:
                     if child in value and not isinstance(value[child], str):
-                        if child not in before or not same(value[child], before[child]):
+                        if child not in before or not same_value(value[child], before[child]):
                             raise MappingDraftError('Invalid assignment field.')
-                elif child not in before or child not in value or not same(value[child], before[child]):
-                    raise MappingDraftError('Additional assignment parameter is read-only.')
-        elif key not in prior or key not in submitted or not same(submitted[key], prior[key]):
-            raise MappingDraftError('Additional mapping parameter is read-only.')
+                        result[key][child] = deepcopy(before[child])
+                else:
+                    if child not in before or child not in value or not same_value(value[child], before[child]):
+                        raise MappingDraftError('Additional assignment parameter is read-only.')
+                    result[key][child] = deepcopy(before[child])
+        else:
+            if key not in prior or key not in submitted or not same_value(submitted[key], prior[key]):
+                raise MappingDraftError('Additional mapping parameter is read-only.')
+            result[key] = deepcopy(prior[key])
     references(submitted)
-    return deepcopy(submitted)
+    return result
 
 
 def validate_rule(rule):

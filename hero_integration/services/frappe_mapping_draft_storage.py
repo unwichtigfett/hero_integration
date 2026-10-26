@@ -165,7 +165,7 @@ class FrappeMappingDraftStorage:
         rule = f.get_doc("HERO Frappe Mapping", rows[0].name)
         rule.check_permission("read")
         return ({field: rule.get(field) for field in RULE_FIELDS},
-                {"name": rule.name, "revision": int(rule.mapping_revision),
+                {"name": rule.name, "revision": int(rule.mapping_revision), "operation": rule.operation,
                  "schema_snapshot": rule.schema_snapshot, "schema_fingerprint": rule.schema_fingerprint})
 
     def initial_content(self, content):
