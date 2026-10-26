@@ -102,3 +102,21 @@ test('long active rule IDs resolve exactly after multiple prefix pages',async()=
  const prefix='r'.repeat(120), ids=[prefix,prefix+'a',prefix+'a'.repeat(19)+'A',prefix+'a'.repeat(19)+'B'];
  for(const id of ids){const calls=[];const found=await resolveRule(id,async(args)=>{calls.push(args);assert.ok(args.search.length<=120);return args.start===0?{frappe_mappings:[{definition_id:prefix+'wrong'}],pagination:{frappe_total:101}}:{frappe_mappings:[{definition_id:id,target_field:id.slice(-1)}],pagination:{frappe_total:101}};});assert.equal(found.definition_id,id);assert.equal(calls.length,2);assert.equal(calls[1].start,100);}
 });
+
+test('reconciliation apply remains local, carries exact JSON proof to save, and edits invalidate it',()=>{
+ const raw='{"records_path":"before","extra":{"positive":9007199254740993}}';
+ const draft={...fixture(),content:JSON.parse(raw),content_json:raw,reconciliation_revision:0};
+ const state=new DraftState(draft);
+ const proof='{"version":1,"candidate":{"extra":{"positive":9007199254740993}}}';
+ const result=raw.replace('before','after');
+ state.applyReconciliation(result,proof,9,0);
+ const args=state.saveArgs();
+ assert.equal(args.expected_active_revision,9);
+ assert.equal(args.expected_reconciliation_revision,0);
+ assert.equal(args.reconciliation_json,proof);
+ assert.match(args.mapping_json,/"positive":9007199254740993/);
+ state.set(['records_path'],'later');
+ const changed=state.saveArgs();
+ assert.equal(changed.reconciliation_json,'');
+ assert.equal(changed.expected_active_revision,7);
+});

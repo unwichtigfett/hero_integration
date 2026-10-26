@@ -102,6 +102,28 @@
    "label": "Base Schema Fingerprint"
   },
   {
+   "fieldname": "base_content_json",
+   "fieldtype": "Code",
+   "options": "JSON",
+   "read_only": 1,
+   "label": "Immutable Base Content Json"
+  },
+  {
+   "fieldname": "reconciliation_revision",
+   "fieldtype": "Int",
+   "default": "0",
+   "reqd": 1,
+   "read_only": 1,
+   "label": "Reconciliation Revision"
+  },
+  {
+   "fieldname": "reconciliation_json",
+   "fieldtype": "Code",
+   "options": "JSON",
+   "read_only": 1,
+   "label": "Reconciliation Evidence Json"
+  },
+  {
    "fieldname": "diagnostics_json",
    "fieldtype": "Code",
    "options": "JSON",

@@ -9,7 +9,7 @@ from uuid import uuid4
 import frappe
 from hero_integration.tests import test_mapping_draft_api_request as base
 from hero_integration.services.frappe_mapping_draft_storage import FrappeMappingDraftStorage
-from hero_integration.services.mapping_draft_service import DraftConflict
+from hero_integration.services.mapping_draft_service import DraftConflict, reconciliation_proof_from_json
 
 
 def configure():
@@ -29,6 +29,33 @@ def writer(definition, actor, content, barrier, result):
     except Exception as error:
         frappe.db.rollback(); result.put((cid,'ERROR',repr(error)))
     finally: frappe.destroy()
+
+
+def reconciliation_writer(definition, actor, content, proof_json, barrier, result):
+    """A second real MariaDB connection racing the exact same proof."""
+    configure(); base.connect(); frappe.set_user(actor)
+    cid=frappe.db.sql('select connection_id()')[0][0]
+    try:
+        proof=reconciliation_proof_from_json(proof_json)
+        barrier.wait(10)
+        FrappeMappingDraftStorage().service().save(
+            definition, actor, 0, 2, content, expected_generation=1,
+            expected_reconciliation_revision=0, reconciliation=proof,
+        )
+        frappe.db.commit(); result.put((cid,'SAVED'))
+    except DraftConflict:
+        frappe.db.rollback(); result.put((cid,'CONFLICT'))
+    except Exception as error:
+        frappe.db.rollback(); result.put((cid,'ERROR',repr(error)))
+    finally: frappe.destroy()
+
+
+def observe_reconciliation(key, queue):
+    configure(); base.connect()
+    queue.put((frappe.db.sql('select connection_id()')[0][0],
+        frappe.db.get_value('HERO Mapping Draft',key,['content_revision','reconciliation_revision']),
+        frappe.db.count('HERO Mapping Revision',{'draft_key':key})))
+    frappe.destroy()
 
 
 def observe(key, queue):
@@ -202,3 +229,104 @@ class TestPersonalRulesRequest(base.TestMappingDraftAPIRequest):
         edited=json.loads(draft['content_json']);edited['field_rules'][ids[-1]]['target_field']='last-exact-id'
         status,result=self.rpc('a','mapping_draft_save',self.args_for(draft,edited),'POST');self.assertEqual(200,status,result);self.assertEqual(edited,json.loads(result['message']['draft']['content_json']))
         self.assertEqual(403,self.rpc('employee','mapping_draft_read',{'definition_id':self.definition})[0])
+
+    def test_reconciliation_preview_apply_and_save_are_bound_and_nonpersistent_until_save(self):
+        active = self.prepare_rules()
+        draft = self.create('a')
+        candidate = json.loads(draft['content_json'])
+        candidate['records_path'] = 'local-draft-path'
+        changed_active = deepcopy(active)
+        changed_active['records_path'] = 'current-active-path'
+        base.connect()
+        frappe.db.set_value('HERO GraphQL Mapping', self.rows['active'], {
+            'mapping_json': json.dumps(changed_active), 'mapping_revision': 2,
+        })
+        frappe.db.commit(); frappe.destroy()
+        preview_args = {
+            'definition_id': draft['definition_id'], 'expected_generation': draft['generation'],
+            'expected_draft_revision': draft['content_revision'], 'expected_active_revision': 2,
+            'expected_reconciliation_revision': 0, 'candidate_json': json.dumps(candidate),
+        }
+        before = self.state()
+        status, preview = self.rpc('a', 'mapping_draft_reconcile_preview', preview_args, 'POST')
+        self.assertEqual(200, status, preview)
+        self.assertEqual(before, self.state(), 'preview must not persist draft content or evidence')
+        conflict = next(item for item in preview['message']['items'] if item['identifier'] == 'root:records_path')
+        self.assertEqual('CONFLICT', conflict['state'])
+        apply_args = dict(preview_args, accepted_suggestions_json=json.dumps({'items': []}),
+                          conflict_choices_json=json.dumps({'root:records_path': 'DRAFT'}))
+        status, applied = self.rpc('a', 'mapping_draft_reconcile_apply', apply_args, 'POST')
+        self.assertEqual(200, status, applied)
+        self.assertEqual(before, self.state(), 'local apply must not persist draft content or evidence')
+        self.assertEqual('local-draft-path', json.loads(applied['message']['result_content_json'])['records_path'])
+        save_args = self.args_for(draft, json.loads(applied['message']['result_content_json']))
+        save_args.update({'expected_active_revision': 2, 'expected_reconciliation_revision': 0,
+                          'reconciliation_json': applied['message']['reconciliation_json']})
+        status, saved = self.rpc('a', 'mapping_draft_save', save_args, 'POST')
+        self.assertEqual(200, status, saved)
+        self.assertFalse(saved['message']['unchanged'])
+        self.assertTrue(saved['message']['reconciliation_updated'])
+        self.assertEqual(1, saved['message']['draft']['content_revision'])
+        self.assertEqual(1, saved['message']['draft']['reconciliation_revision'])
+        self.assertEqual(saved['message']['draft'], self.rpc('a', 'mapping_draft_read', {
+            'definition_id': draft['definition_id'],
+        })[1]['message']['draft'])
+        self.assertEqual(403, self.rpc('employee', 'mapping_draft_reconcile_preview', preview_args, 'POST')[0])
+        self.assertIn(self.rpc(None, 'mapping_draft_reconcile_apply', apply_args, 'POST')[0], (401, 403))
+        stale = dict(save_args, expected_reconciliation_revision=0)
+        self.assertEqual(417, self.rpc('a', 'mapping_draft_save', stale, 'POST')[0])
+        later=json.loads(saved['message']['draft']['content_json'])
+        later['field_rules'][self.rule_id]['target_field']='post-reconciliation-private-edit'
+        later_args=self.args_for(saved['message']['draft'],later)
+        later_args.update({'expected_active_revision':2,'expected_reconciliation_revision':1})
+        status,later_saved=self.rpc('a','mapping_draft_save',later_args,'POST')
+        self.assertEqual(200,status,later_saved)
+        self.assertEqual((2,1),(later_saved['message']['draft']['content_revision'],later_saved['message']['draft']['reconciliation_revision']))
+
+    def _reconciliation_fixture(self):
+        active=self.prepare_rules(); draft=self.create('a'); candidate=json.loads(draft['content_json'])
+        candidate['records_path']='local-race-path'; changed=deepcopy(active);changed['records_path']='active-race-path'
+        base.connect();frappe.db.set_value('HERO GraphQL Mapping',self.rows['active'],{'mapping_json':json.dumps(changed),'mapping_revision':2});frappe.db.commit();frappe.destroy()
+        args={'definition_id':draft['definition_id'],'expected_generation':1,'expected_draft_revision':0,
+              'expected_active_revision':2,'expected_reconciliation_revision':0,'candidate_json':json.dumps(candidate)}
+        status,applied=self.rpc('a','mapping_draft_reconcile_apply',dict(args,
+            accepted_suggestions_json=json.dumps({'items':[]}),conflict_choices_json=json.dumps({'root:records_path':'DRAFT'})),'POST')
+        self.assertEqual(200,status,applied)
+        return draft,json.loads(applied['message']['result_content_json']),applied['message']['reconciliation_json']
+
+    def test_reconciliation_evidence_real_connections_has_one_cas_winner(self):
+        draft,content,proof=self._reconciliation_fixture()
+        ctx=multiprocessing.get_context('spawn');barrier=ctx.Barrier(2);queue=ctx.Queue();processes=[]
+        try:
+            for _ in range(2):
+                processes.append(ctx.Process(target=reconciliation_writer,args=(self.definition,self.users['a'],content,proof,barrier,queue)))
+            for process in processes: process.start()
+            outcomes=[queue.get(timeout=20),queue.get(timeout=20)]
+            self.assertEqual(2,len({item[0] for item in outcomes}));self.assertCountEqual(['SAVED','CONFLICT'],[item[1] for item in outcomes])
+            saved=self.rpc('a','mapping_draft_read',{'definition_id':self.definition})[1]['message']['draft']
+            self.assertEqual((1,1),(saved['content_revision'],saved['reconciliation_revision']))
+            self.assertEqual(1,self.rpc('a','mapping_draft_revisions',{'definition_id':self.definition})[1]['message']['total'])
+            print('RECONCILIATION_CAS_REAL_CONNECTIONS',outcomes,flush=True)
+        finally:
+            for process in processes:
+                process.join(10)
+                if process.is_alive(): process.terminate();process.join(5)
+            queue.close();queue.join_thread()
+
+    def test_reconciliation_evidence_write_failure_rolls_back_real_connection(self):
+        draft,content,proof_json=self._reconciliation_fixture();proof=reconciliation_proof_from_json(proof_json)
+        base.connect();frappe.set_user(self.users['a']);cid=frappe.db.sql('select connection_id()')[0][0]
+        storage=FrappeMappingDraftStorage();original=storage.save_draft
+        def failure(value): original(value);raise RuntimeError('synthetic reconciliation evidence failure')
+        with patch.object(storage,'save_draft',side_effect=failure):
+            with self.assertRaises(RuntimeError): storage.service().save(self.definition,self.users['a'],0,2,content,
+                expected_generation=1,expected_reconciliation_revision=0,reconciliation=proof)
+        frappe.db.commit();frappe.destroy()
+        ctx=multiprocessing.get_context('spawn');queue=ctx.Queue();process=ctx.Process(target=observe_reconciliation,args=(draft['key'],queue));process.start()
+        try:
+            other,revisions,count=queue.get(timeout=20);self.assertNotEqual(cid,other);self.assertEqual(((0,0),0),(revisions,count))
+            print('RECONCILIATION_ROLLBACK_REAL_CONNECTIONS',cid,other,revisions,count,flush=True)
+        finally:
+            process.join(10)
+            if process.is_alive():process.terminate();process.join(5)
+            queue.close();queue.join_thread()

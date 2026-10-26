@@ -6,6 +6,7 @@ from hero_integration.services.mapping_draft_service import (
     ActiveMapping,
     DraftConflict,
     InMemoryMappingDraftStorage,
+    MappingDraftError,
     MappingDraftService,
 )
 
@@ -97,3 +98,103 @@ class TestMappingDraftService(unittest.TestCase):
         first = self.service.open_draft(self.active.definition_id, "admin.one@example.invalid")
         with self.assertRaises(DraftConflict):
             self.service.discard(self.active.definition_id, "admin.two@example.invalid", first.generation, 0, confirmed=True)
+
+    def test_reconciliation_requires_the_immutable_base_and_explicit_conflict_choice(self) -> None:
+        draft = self.service.open_draft(self.active.definition_id, "admin.one@example.invalid")
+        self.storage.put_active(ActiveMapping(
+            self.active.site_scope, self.active.definition_id, self.active.name, 4,
+            self.active.schema_fingerprint, {"record_path": "active-customers", "selected_paths": ["id"]},
+        ))
+        candidate = {"record_path": "draft-customers", "selected_paths": ["id"]}
+        preview = self.service.reconcile_preview(
+            self.active.definition_id, "admin.one@example.invalid", draft.content_revision, 4,
+            candidate, expected_generation=draft.generation, expected_reconciliation_revision=0,
+        )
+        self.assertEqual(["root:record_path"], [item.identifier for item in preview.conflicts])
+        with self.assertRaises(MappingDraftError):
+            self.service.reconcile_apply(preview, accepted_suggestions=(), conflict_choices={})
+        applied = self.service.reconcile_apply(
+            preview, accepted_suggestions=(), conflict_choices={"root:record_path": "DRAFT"},
+        )
+        self.assertEqual("draft-customers", applied.content["record_path"])
+        saved = self.service.save(
+            self.active.definition_id, "admin.one@example.invalid", draft.content_revision, 4,
+            applied.content, expected_generation=draft.generation,
+            expected_reconciliation_revision=0, reconciliation=applied.proof,
+        )
+        self.assertFalse(saved.unchanged)
+        self.assertTrue(saved.reconciliation_updated)
+        self.assertEqual(1, saved.draft.content_revision)
+        self.assertEqual(1, saved.draft.reconciliation_revision)
+        self.assertEqual(1, len(self.storage.revisions()))
+
+    def test_reconciliation_of_a_revision_only_active_change_has_no_content_revision(self) -> None:
+        draft = self.service.open_draft(self.active.definition_id, "admin.one@example.invalid")
+        self.storage.put_active(ActiveMapping(
+            self.active.site_scope, self.active.definition_id, self.active.name, 4,
+            self.active.schema_fingerprint, self.active.content,
+        ))
+        preview = self.service.reconcile_preview(
+            self.active.definition_id, "admin.one@example.invalid", 0, 4, draft.content,
+            expected_generation=1, expected_reconciliation_revision=0,
+        )
+        self.assertFalse(preview.suggestions)
+        self.assertFalse(preview.conflicts)
+        applied = self.service.reconcile_apply(preview, accepted_suggestions=(), conflict_choices={})
+        saved = self.service.save(
+            self.active.definition_id, "admin.one@example.invalid", 0, 4, applied.content,
+            expected_generation=1, expected_reconciliation_revision=0, reconciliation=applied.proof,
+        )
+        self.assertTrue(saved.unchanged)
+        self.assertTrue(saved.reconciliation_updated)
+        self.assertEqual(0, saved.draft.content_revision)
+        self.assertEqual(1, saved.draft.reconciliation_revision)
+
+    def test_save_after_reconciliation_uses_verified_active_baseline_without_replacing_b(self) -> None:
+        draft = self.service.open_draft(self.active.definition_id, "admin.one@example.invalid")
+        changed_active = ActiveMapping(
+            self.active.site_scope, self.active.definition_id, self.active.name, 4,
+            self.active.schema_fingerprint, {"record_path": "active-customers", "selected_paths": ["id"]},
+        )
+        self.storage.put_active(changed_active)
+        preview = self.service.reconcile_preview(
+            self.active.definition_id, "admin.one@example.invalid", 0, 4,
+            {"record_path": "draft-customers", "selected_paths": ["id"]},
+            expected_generation=1, expected_reconciliation_revision=0,
+        )
+        applied = self.service.reconcile_apply(
+            preview, accepted_suggestions=(), conflict_choices={"root:record_path": "DRAFT"},
+        )
+        reconciled = self.service.save(
+            self.active.definition_id, "admin.one@example.invalid", 0, 4, applied.content,
+            expected_generation=1, expected_reconciliation_revision=0, reconciliation=applied.proof,
+        )
+        later = self.service.save(
+            self.active.definition_id, "admin.one@example.invalid", 1, 4,
+            {"record_path": "later-draft-customers", "selected_paths": ["id"]},
+            expected_generation=1, expected_reconciliation_revision=1,
+        )
+        self.assertEqual(3, reconciled.draft.base_active_revision)
+        self.assertEqual(2, later.draft.content_revision)
+        self.assertEqual(1, later.draft.reconciliation_revision)
+
+    def test_active_change_after_preview_rejects_the_reconciliation_proof(self) -> None:
+        draft = self.service.open_draft(self.active.definition_id, "admin.one@example.invalid")
+        self.storage.put_active(ActiveMapping(
+            self.active.site_scope, self.active.definition_id, self.active.name, 4,
+            self.active.schema_fingerprint, self.active.content,
+        ))
+        preview = self.service.reconcile_preview(
+            self.active.definition_id, "admin.one@example.invalid", 0, 4, draft.content,
+            expected_generation=1, expected_reconciliation_revision=0,
+        )
+        applied = self.service.reconcile_apply(preview, accepted_suggestions=(), conflict_choices={})
+        self.storage.put_active(ActiveMapping(
+            self.active.site_scope, self.active.definition_id, self.active.name, 5,
+            self.active.schema_fingerprint, self.active.content,
+        ))
+        with self.assertRaises(DraftConflict):
+            self.service.save(
+                self.active.definition_id, "admin.one@example.invalid", 0, 5, applied.content,
+                expected_generation=1, expected_reconciliation_revision=0, reconciliation=applied.proof,
+            )

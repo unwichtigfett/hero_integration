@@ -1203,7 +1203,11 @@ def _personal_draft_document(definition_id):
 def _personal_draft_result(value):
     from dataclasses import asdict
     result = asdict(value)
+    result.pop("base_content", None)
+    result.pop("reconciliation", None)
     result["content_json"] = json.dumps(value.content, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    result["base_content_json"] = json.dumps(value.base_content, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False) if value.base_content is not None else None
+    result["reconciliation_json"] = json.dumps(value.reconciliation, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False) if value.reconciliation is not None else None
     return result
 
 
@@ -1217,6 +1221,9 @@ def _personal_draft_doc_result(doc):
         "content_hash": doc.content_hash, "content_revision": int(doc.content_revision),
         "base_active_name": doc.base_active_mapping, "base_active_revision": int(doc.base_active_revision),
         "base_active_hash": doc.base_active_hash, "base_schema_fingerprint": doc.base_schema_fingerprint,
+        "base_content_json": doc.base_content_json or None,
+        "reconciliation_revision": int(doc.reconciliation_revision or 0),
+        "reconciliation_json": doc.reconciliation_json or None,
     }}
 
 
@@ -1285,20 +1292,118 @@ def _personal_draft_content(raw):
         frappe.throw("MAPPING_INPUT_INVALID: Invalid or over-complex mapping JSON object.")
 
 
+def _personal_draft_json_object(raw, label, maximum=65536):
+    try:
+        valid_size = isinstance(raw, str) and len(raw.encode("utf-8")) <= maximum
+    except UnicodeError:
+        valid_size = False
+    if not valid_size:
+        frappe.throw(f"MAPPING_INPUT_INVALID: {label} must be JSON text within its size limit.")
+    try:
+        def pairs(items):
+            value = {}
+            for key, child in items:
+                if key in value:
+                    raise ValueError("Duplicate JSON key")
+                value[key] = child
+            return value
+        value = json.loads(raw, object_pairs_hook=pairs, parse_constant=lambda _value: (_ for _ in ()).throw(ValueError()))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        frappe.throw(f"MAPPING_INPUT_INVALID: Invalid {label} JSON.")
+    if not isinstance(value, dict):
+        frappe.throw(f"MAPPING_INPUT_INVALID: {label} must be a JSON object.")
+    return value
+
+
+def _reconciliation_preview_result(value):
+    return {
+        "definition_id": value.definition_id,
+        "generation": value.generation,
+        "draft_revision": value.draft_revision,
+        "reconciliation_revision": value.reconciliation_revision,
+        "base": {"name": value.base_active_name, "revision": value.base_active_revision, "hash": value.base_active_hash},
+        "active": {"name": value.active_name, "revision": value.active_revision, "hash": value.active_hash,
+                   "content_hash": value.active_content_hash},
+        "candidate_content_json": json.dumps(value.candidate, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False),
+        "items": [{"identifier": item.identifier, "kind": item.kind, "state": item.state,
+                    "base_json": item.base_json, "active_json": item.active_json,
+                    "draft_json": item.draft_json, "identities": list(item.identities)} for item in value.items],
+    }
+
+
+def _reconciliation_values(raw, label):
+    value = _personal_draft_json_object(raw, label, 32768)
+    return value
+
+
 @frappe.whitelist(methods=["POST"])
 def mapping_draft_save(definition_id: str, expected_generation: int | str,
-                       expected_draft_revision: int | str, expected_active_revision: int | str, mapping_json: str):
-    _mapping_request_fields({"definition_id", "expected_generation", "expected_draft_revision", "expected_active_revision", "mapping_json"})
+                       expected_draft_revision: int | str, expected_active_revision: int | str, mapping_json: str,
+                       expected_reconciliation_revision: int | str = 0, reconciliation_json: str = ""):
+    _mapping_request_fields({"definition_id", "expected_generation", "expected_draft_revision", "expected_active_revision", "mapping_json", "expected_reconciliation_revision", "reconciliation_json"})
     definition_id, _ = _personal_draft_identity(definition_id)
     generation = _mapping_int(expected_generation, "expected_generation", 1)
     revision = _mapping_int(expected_draft_revision, "expected_draft_revision")
     active = _mapping_int(expected_active_revision, "expected_active_revision", 1)
+    reconciliation_revision = _mapping_int(expected_reconciliation_revision, "expected_reconciliation_revision")
     content = _personal_draft_content(mapping_json)
     from hero_integration.services.frappe_mapping_draft_storage import FrappeMappingDraftStorage
+    from hero_integration.services.mapping_draft_service import reconciliation_proof_from_json
     with _personal_draft_errors():
+        proof = reconciliation_proof_from_json(reconciliation_json) if reconciliation_json else None
         result = FrappeMappingDraftStorage().service().save(definition_id, frappe.session.user, revision, active,
-                                                          content, expected_generation=generation)
-    return {"draft": _personal_draft_result(result.draft), "unchanged": result.unchanged}
+                                                          content, expected_generation=generation,
+                                                          expected_reconciliation_revision=reconciliation_revision,
+                                                          reconciliation=proof)
+    return {"draft": _personal_draft_result(result.draft), "unchanged": result.unchanged,
+            "reconciliation_updated": result.reconciliation_updated}
+
+
+def _reconciliation_request(definition_id, expected_generation, expected_draft_revision,
+                            expected_active_revision, expected_reconciliation_revision, candidate_json):
+    definition_id, _ = _personal_draft_identity(definition_id)
+    generation = _mapping_int(expected_generation, "expected_generation", 1)
+    revision = _mapping_int(expected_draft_revision, "expected_draft_revision")
+    active = _mapping_int(expected_active_revision, "expected_active_revision", 1)
+    reconciliation_revision = _mapping_int(expected_reconciliation_revision, "expected_reconciliation_revision")
+    candidate = _personal_draft_content(candidate_json)
+    from hero_integration.services.frappe_mapping_draft_storage import FrappeMappingDraftStorage
+    service = FrappeMappingDraftStorage().service()
+    preview = service.reconcile_preview(definition_id, frappe.session.user, revision, active, candidate,
+                                        expected_generation=generation,
+                                        expected_reconciliation_revision=reconciliation_revision)
+    return service, preview
+
+
+@frappe.whitelist(methods=["POST"])
+def mapping_draft_reconcile_preview(definition_id: str, expected_generation: int | str,
+                                    expected_draft_revision: int | str, expected_active_revision: int | str,
+                                    expected_reconciliation_revision: int | str, candidate_json: str):
+    _mapping_request_fields({"definition_id", "expected_generation", "expected_draft_revision", "expected_active_revision", "expected_reconciliation_revision", "candidate_json"})
+    with _personal_draft_errors():
+        _, preview = _reconciliation_request(definition_id, expected_generation, expected_draft_revision,
+                                             expected_active_revision, expected_reconciliation_revision, candidate_json)
+    return _reconciliation_preview_result(preview)
+
+
+@frappe.whitelist(methods=["POST"])
+def mapping_draft_reconcile_apply(definition_id: str, expected_generation: int | str,
+                                  expected_draft_revision: int | str, expected_active_revision: int | str,
+                                  expected_reconciliation_revision: int | str, candidate_json: str,
+                                  accepted_suggestions_json: str, conflict_choices_json: str):
+    _mapping_request_fields({"definition_id", "expected_generation", "expected_draft_revision", "expected_active_revision", "expected_reconciliation_revision", "candidate_json", "accepted_suggestions_json", "conflict_choices_json"})
+    with _personal_draft_errors():
+        service, preview = _reconciliation_request(definition_id, expected_generation, expected_draft_revision,
+                                                    expected_active_revision, expected_reconciliation_revision, candidate_json)
+        accepted = _reconciliation_values(accepted_suggestions_json, "accepted reconciliation suggestions")
+        if set(accepted) != {"items"} or not isinstance(accepted["items"], list):
+            frappe.throw("MAPPING_INPUT_INVALID: Invalid accepted reconciliation suggestions.")
+        choices = _reconciliation_values(conflict_choices_json, "reconciliation conflict choices")
+        result = service.reconcile_apply(preview, accepted_suggestions=accepted["items"], conflict_choices=choices)
+        from hero_integration.services.mapping_draft_service import reconciliation_proof_json
+        result_content_json = json.dumps(result.content, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
+        return {"preview": _reconciliation_preview_result(preview), "result_content": result.content,
+                "result_content_json": result_content_json, "reconciliation_json": reconciliation_proof_json(result.proof)}
 
 
 @frappe.whitelist(methods=["GET"])
