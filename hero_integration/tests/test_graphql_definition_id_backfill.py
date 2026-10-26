@@ -10,6 +10,8 @@ class FakeDB:
         self.rows = [SimpleNamespace(**row) for row in rows]
         self.draft, self.binding, self.resolved, self.revision = draft, binding, resolved, revision
         self.updates = []
+    def has_column(self, table, column):
+        return True
     def table_exists(self, table):
         return table in {"HERO Mapping Draft", "HERO Field Binding", "HERO Object Binding", "HERO Frappe Mapping", "HERO Mapping Revision"}
     def sql(self, query, values=None, as_dict=False):
