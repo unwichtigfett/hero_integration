@@ -5,6 +5,23 @@ import test from 'node:test';
 const window = {};
 vm.runInNewContext(readFileSync(new URL('../public/js/hero_mapping_editor.js', import.meta.url), 'utf8'), {window});
 const {DraftState, stable} = window.hero_integration_mapping_editor;
+test('returning to a pending view repeats only its read and retains its exact identity', () => {
+ const {resumePendingView, MappingTabStates} = window.hero_integration_mapping_editor;
+ const calls=[];
+ const handlers={list:()=>calls.push(['list']), detail:(item,kind)=>calls.push(['detail',item,kind])};
+ const tabs=new MappingTabStates();
+ const item={name:'definition-1',definition_id:'identity-1'};
+ tabs.set('Query',{pendingView:{kind:'list'},search:'needle',start:20});
+ tabs.set('Mutation',{pendingView:{kind:'detail',item,mappingType:'graphql'}});
+ resumePendingView(tabs.get('Query').pendingView,handlers);
+ resumePendingView(tabs.get('Mutation').pendingView,handlers);
+ assert.deepEqual(calls,[['list'],['detail',item,'graphql']]);
+ assert.equal(tabs.get('Query').search,'needle');
+ assert.equal(tabs.get('Query').start,20);
+ assert.equal(resumePendingView({kind:'binding'},handlers),false);
+ assert.equal(resumePendingView(null,handlers),false);
+ assert.equal(calls.length,2);
+});
 test('only the exact in-progress editor download is exempt from navigation interception', () => {
  const {isOwnedExportLink}=window.hero_integration_mapping_editor;
  const owned={href:'blob:https://site/owned',download:'query.json'};
