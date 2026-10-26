@@ -198,7 +198,7 @@ class TestHeroDeskUiContract(unittest.TestCase):
         for contract in ("graphql_total", "frappe_total", "Definitions in this direction on this page", "HERO operations and mapping definitions",
                          "definition_id: active.definition_id", "mapping_type: kind, name: item.name", "page_size: 20"):
             self.assertIn(contract, source)
-        for excluded in ("graphql_mapping_save", "import_mapping_json", "runtime_plan_approve"):
+        for excluded in ("import_mapping_json", "runtime_plan_approve"):
             self.assertNotIn(excluded, source)
 
     def test_schema_explorer_is_admin_only_and_reads_saved_schema(self):
@@ -212,8 +212,22 @@ class TestHeroDeskUiContract(unittest.TestCase):
                          "readSnapshotPages((args) => rpc('schema_snapshot_list', args)", "snapshot list could not be loaded completely",
                          "previously selected snapshot is not available in this result"):
             self.assertIn(contract, explorer)
-        for forbidden in ("graphql_mapping_save", "workspace_schema_refresh"):
+        for forbidden in ("workspace_schema_refresh",):
             self.assertNotIn(forbidden, explorer)
+
+    def test_shared_writeback_save_is_scoped_and_conflict_guarded(self):
+        source = MAPPING_EDITOR_JS.read_text()
+        explorer = source.split("function renderSchemaExplorer()", 1)[1].split("function renderList()", 1)[0]
+        for contract in ("if (!admin) return", "sharedWritebackDraftAccess(doc, row, name, frappe.session?.user)",
+                         "reviewedWritebackEditable(doc.mapping_json, catalog)", "showSharedEditor", "if (consumed || locked() || !currentLegacy(serial, name)) return",
+                         "sharedWritebackRequest({doc, row, actor:frappe.session?.user", "rpc('graphql_mapping_save', args, true)",
+                         "No retry was made", "Your inputs are kept", "Only the last editor can change this shared draft"):
+            self.assertIn(contract, explorer)
+        for contract in ('mapping_name:doc?.name || ""', 'expected_revision:doc?.mapping_revision || 0',
+                         'direction:"FRAPPE_TO_MUTATION"', 'activate:0', 'Only a current shared draft',
+                         'sharedDirty || model?.dirty', 'reviewedWritebackEditable'):
+            self.assertIn(contract, source)
+        self.assertNotIn('activate:1', explorer)
 
     def test_legacy_package_adoption_requires_admin_checked_preview_and_explicit_confirmation(self):
         source = MAPPING_EDITOR_JS.read_text()

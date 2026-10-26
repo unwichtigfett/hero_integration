@@ -380,3 +380,73 @@ test('schema-only confirmed adoption request binds exact preview and does not se
  assert.equal(args.selected_ids_json,'["field:one"]');
  assert.throws(()=>legacyPackageAdoptionArgs('snapshot-a','{"schema":{}}',preview,['mapping:one']),/dependencies/);
 });
+
+test('only the current actor and exact shared Draft identity are eligible for editing', () => {
+ const {sharedWritebackDraftAccess}=window.hero_integration_mapping_editor;
+ const row={name:'draft',operation_name:'update_contact',status:'Draft',mapping_revision:3};
+ const doc={doctype:'HERO GraphQL Mapping',name:'draft',schema_snapshot:'snap',direction:'FRAPPE_TO_MUTATION',operation_kind:'MUTATION',operation_name:'update_contact',status:'Draft',mapping_revision:3,mapping_json:'{}',definition_id:'def',modified_by:'alice'};
+ assert.equal(sharedWritebackDraftAccess(doc,row,'snap','alice'),'EDITABLE');
+ assert.equal(sharedWritebackDraftAccess(doc,row,'snap','bob'),'OWNER_CONFLICT');
+ assert.equal(sharedWritebackDraftAccess(doc,row,'snap',''),'OWNER_CONFLICT');
+ assert.equal(sharedWritebackDraftAccess({...doc,mapping_revision:4},row,'snap','alice'),'STALE');
+ assert.equal(sharedWritebackDraftAccess({...doc,status:'Active'},{...row,status:'Active'},'snap','alice'),'NOT_DRAFT');
+ assert.equal(sharedWritebackDraftAccess({...doc,definition_id:''},row,'snap','alice'),'INVALID');
+});
+
+test('shared reviewed edit is fail-closed against unknown fields and numerical token changes', () => {
+ const {reviewedWritebackEditable}=window.hero_integration_mapping_editor;
+ const mapping={version:1,source:{doctype:'Customer',field:'customer_name'},target:{operation:'update_contact',argument:'contact',input_type:'CustomerInput',field:'full_name'},transformation:'Trim'};
+ const catalog={fields:[{doctype:'Customer',path:'customer_name',selectable:true,target:{...mapping.target,graphql_type:'String'}}]};
+ const json=JSON.stringify(mapping);
+ assert.equal(reviewedWritebackEditable(json,catalog),true);
+ assert.equal(reviewedWritebackEditable(JSON.stringify({...mapping,unknown:9007199254740992}),catalog),false);
+ assert.equal(reviewedWritebackEditable(json.replace('"version":1','"version":1.0'),catalog),false);
+ assert.equal(reviewedWritebackEditable(json.replace('"version":1','"version":1,"version":1'),catalog),false);
+ assert.equal(reviewedWritebackEditable(JSON.stringify({...mapping,target:{...mapping.target,field_path:'full_name'}}),catalog),false);
+ assert.equal(reviewedWritebackEditable(json,{fields:[catalog.fields[0],catalog.fields[0]]}),false);
+ assert.equal(reviewedWritebackEditable(json,{fields:[]}),false);
+});
+
+test('new reviewed shared mapping is projected only from one permitted catalog source target', () => {
+ const {buildReviewedWriteback}=window.hero_integration_mapping_editor;
+ const target={operation:'update_contact',argument:'contact',input_type:'CustomerInput',field:'full_name',graphql_type:'String'};
+ const entry={doctype:'Customer',path:'customer_name',selectable:true,target};
+ const result=buildReviewedWriteback({fields:[entry]},'Customer','customer_name','Trim');
+ assert.equal(JSON.stringify(result),JSON.stringify({version:1,source:{doctype:'Customer',field:'customer_name'},target:{operation:'update_contact',argument:'contact',input_type:'CustomerInput',field:'full_name'},transformation:'Trim'}));
+ assert.throws(()=>buildReviewedWriteback({fields:[entry,entry]},'Customer','customer_name','Trim'));
+ assert.throws(()=>buildReviewedWriteback({fields:[{...entry,selectable:false}]},'Customer','customer_name','Trim'));
+ assert.throws(()=>buildReviewedWriteback({fields:[entry]},'Customer','other','Trim'));
+ assert.throws(()=>buildReviewedWriteback({fields:[entry]},'Customer','customer_name','Unknown'));
+});
+
+test('shared writeback requests enforce owner, revision, no-op and review-only edits without activation', () => {
+ const {sharedWritebackRequest}=window.hero_integration_mapping_editor;
+ const mapping={version:1,source:{doctype:'Customer',field:'customer_name'},target:{operation:'update_contact',argument:'contact',input_type:'CustomerInput',field:'full_name'},transformation:'Trim'};
+ const catalog={fields:[{doctype:'Customer',path:'customer_name',selectable:true,target:{...mapping.target,graphql_type:'String'}}]};
+ const row={name:'draft',operation_name:'update_contact',status:'Draft',mapping_revision:3,suggestion_reason:'old',confidence:0.7};
+ const doc={...row,doctype:'HERO GraphQL Mapping',schema_snapshot:'snap',direction:'FRAPPE_TO_MUTATION',operation_kind:'MUTATION',mapping_json:JSON.stringify(mapping),definition_id:'def',modified_by:'alice'};
+ const input={doc,row,actor:'alice',catalog,snapshot:'snap',transformation:'Trim',reason:'old',confidence:'0.7'};
+ assert.equal(sharedWritebackRequest(input),null);
+ const reasonOnly=sharedWritebackRequest({...input,reason:'reviewed'});
+ assert.equal(reasonOnly.suggestion_reason,'reviewed');assert.equal(Object.hasOwn(reasonOnly,'confidence'),false);
+ assert.equal(reasonOnly.mapping_name,'draft');assert.equal(reasonOnly.expected_revision,3);assert.equal(reasonOnly.activate,0);
+ assert.throws(()=>sharedWritebackRequest({...input,reason:'edit',actor:'bob'}),/owner/);
+ assert.throws(()=>sharedWritebackRequest({...input,reason:'edit',doc:{...doc,status:'Active'}}),/status/);
+ assert.throws(()=>sharedWritebackRequest({...input,reason:'edit',doc:{...doc,mapping_json:JSON.stringify({...mapping,extra:'retain'})}}),/losing parameters/);
+ const choice=catalog.fields[0]; const created=sharedWritebackRequest({...input,doc:null,row:null,choice,reason:'new'});
+ assert.equal(created.mapping_name,'');assert.equal(created.expected_revision,0);assert.equal(created.activate,0);
+ assert.equal(JSON.parse(created.mapping_json).target.field,'full_name');
+});
+
+test('shared save is accepted only for the expected identity and a changed revision', () => {
+ const {sharedWritebackSaveAccepted}=window.hero_integration_mapping_editor;
+ const doc={name:'draft-1',mapping_revision:3};
+ const result={name:'draft-1',status:'Draft',revision:4,unchanged:false};
+ assert.equal(sharedWritebackSaveAccepted(result,doc),true);
+ assert.equal(sharedWritebackSaveAccepted({...result,name:'draft-2'},doc),false);
+ assert.equal(sharedWritebackSaveAccepted({...result,revision:3},doc),false);
+ assert.equal(sharedWritebackSaveAccepted({...result,unchanged:true},doc),false);
+ assert.equal(sharedWritebackSaveAccepted({...result,status:'Active'},doc),false);
+ assert.equal(sharedWritebackSaveAccepted({...result,name:''},null),false);
+ assert.equal(sharedWritebackSaveAccepted(result,null),true);
+});
