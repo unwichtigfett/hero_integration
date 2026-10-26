@@ -19,7 +19,7 @@ class PreDB:
     def sql(self, query):
         if query.startswith("SELECT name FROM `tabHERO GraphQL Mapping`"):
             return [("row",)] if any(row["definition_id"] == "" for row in self.rows) else []
-        assert query == "UPDATE `tabHERO GraphQL Mapping` SET definition_id = NULL WHERE definition_id = ''"
+        assert query == "UPDATE `tabHERO GraphQL Mapping` SET definition_id = NULL WHERE OCTET_LENGTH(definition_id) = 0"
         for row in self.rows:
             if row["definition_id"] == "": row["definition_id"] = None
 
@@ -46,11 +46,11 @@ def version(definitions):
 
 class TestIdentityUpgradeGuards(unittest.TestCase):
     def test_presync_only_normalizes_empty_strings_and_is_idempotent(self):
-        rows = [{"definition_id": ""}, {"definition_id": ""}, {"definition_id": None}, {"definition_id": "persisted"}]
+        rows = [{"definition_id": ""}, {"definition_id": ""}, {"definition_id": None}, {"definition_id": " "}, {"definition_id": "  "}, {"definition_id": "persisted"}]
         db = PreDB(rows)
         with patch.object(pre, "frappe", SimpleNamespace(db=db)):
             pre.execute(); pre.execute()
-        self.assertEqual([row["definition_id"] for row in rows], [None, None, None, "persisted"])
+        self.assertEqual([row["definition_id"] for row in rows], [None, None, None, " ", "  ", "persisted"])
     def test_invalid_registry_blocks_presync_before_empty_normalization(self):
         rows = [{"definition_id": ""}, {"definition_id": ""}]
         with patch.object(pre, "frappe", SimpleNamespace(db=PreDB(rows))), \
@@ -81,3 +81,34 @@ class TestIdentityUpgradeGuards(unittest.TestCase):
             with self.subTest(entry=entry[0][:1]), self.assertRaisesRegex(ValueError, "registry identity"):
                 TestIdentityBackfill().run_patch(db)
             self.assertEqual(db.updates, [])
+
+    def test_old_empty_registry_without_identity_columns_is_allowed(self):
+        class OldRegistryDB(PreDB):
+            def table_exists(self, name):
+                return name in {"HERO GraphQL Mapping", "HERO Mapping Registry Version"}
+            def has_column(self, name, column):
+                return name != "HERO Mapping Registry Version"
+            def sql(self, query):
+                if query.startswith("SELECT name FROM `tabHERO Mapping Registry Version`"):
+                    return []
+                return super().sql(query)
+        rows = [{"definition_id": ""}, {"definition_id": " "}]
+        with patch.object(pre, "frappe", SimpleNamespace(db=OldRegistryDB(rows))):
+            pre.execute()
+        self.assertEqual(rows, [{"definition_id": None}, {"definition_id": " "}])
+
+    def test_populated_old_registry_without_identity_columns_blocks_before_mutation(self):
+        class OldRegistryDB(PreDB):
+            def table_exists(self, name):
+                return name in {"HERO GraphQL Mapping", "HERO Mapping Registry Version"}
+            def has_column(self, name, column):
+                return name != "HERO Mapping Registry Version"
+            def sql(self, query):
+                if query.startswith("SELECT name FROM `tabHERO Mapping Registry Version`"):
+                    return [("old",)]
+                return super().sql(query)
+        rows = [{"definition_id": ""}, {"definition_id": " "}]
+        with patch.object(pre, "frappe", SimpleNamespace(db=OldRegistryDB(rows))):
+            with self.assertRaisesRegex(ValueError, "reconciliation is required"):
+                pre.execute()
+        self.assertEqual(rows, [{"definition_id": ""}, {"definition_id": " "}])

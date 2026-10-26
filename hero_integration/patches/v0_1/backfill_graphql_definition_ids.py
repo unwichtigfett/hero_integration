@@ -61,6 +61,11 @@ def execute():
 def _registry_definition_ids(db):
     if not db.table_exists("HERO Mapping Registry Version"):
         return set()
+    if not all(db.has_column("HERO Mapping Registry Version", column)
+               for column in ("mapping_payload_json", "integrity_hash")):
+        if db.sql("SELECT name FROM `tabHERO Mapping Registry Version` LIMIT 1 FOR UPDATE"):
+            raise ValueError("Legacy mapping registry has records without readable identity columns; reconciliation is required.")
+        return set()
     from hero_integration.services.mapping_registry_service import MappingRegistryService
     from hero_integration.services.mapping_registry_storage import _decode_payload, _integrity
 
