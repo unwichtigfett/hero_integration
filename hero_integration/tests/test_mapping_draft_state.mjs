@@ -28,6 +28,15 @@ test('directional adoption requires the current valid preview and idle matching 
 });
 const fixture = () => ({definition_id:'canonical-distinct', generation:2, content_revision:3, base_active_revision:7, state:'OPEN',
  content:{mapping_definition_ids:['a','b','c'],variables:{hidden:['keep',1]},records_path:'things',complex:{other:true}}});
+test('choosing a mutation source updates its app, DocType and field in the local draft', () => {
+ const state = new DraftState({...fixture(), content:{source:{app:'old-app',doctype:'Old',field:'old', extra:'keep'},target:{operation:'mutate'},additional:{value:0}}});
+ state.setFrappeSource('erpnext','Task','subject');
+ assert.equal(stable(state.content.source),stable({app:'erpnext',doctype:'Task',field:'subject',extra:'keep'}));
+ assert.equal(stable(state.content.target),stable({operation:'mutate'}));
+ assert.equal(stable(state.content.additional),stable({value:0}));
+ assert.equal(state.dirty,true);
+ assert.equal(state.saved.content.source.app,'old-app');
+});
 test('roundtrip retains all parameters and CAS identity', () => {
  const state=new DraftState(fixture()); state.set(['records_path'],'other'); const args=state.saveArgs();
  assert.equal(args.definition_id,'canonical-distinct'); assert.equal(args.expected_generation,2); assert.equal(args.expected_draft_revision,3);
@@ -168,4 +177,38 @@ test('directional import rejects a malformed preview before any save request can
  assert.throws(()=>window.hero_integration_mapping_editor.exchangeExpectedStates({items:[
   {definition_id:'query-a',expected:{generation:0,draft_revision:0,active_revision:'9',reconciliation_revision:0}},
  ]}),/Invalid directional import preview/);
+});
+
+test('tab state storage retains distinct drafts and supplied view state', () => {
+ const {MappingTabStates,directionForTab,mappingTabs}=window.hero_integration_mapping_editor;
+ const tabs=new MappingTabStates();
+ const query=new DraftState({...fixture(),definition_id:'query',content:{records_path:'before'}});
+ const mutation=new DraftState({...fixture(),definition_id:'mutation',content:{source:{app:'erpnext',doctype:'Task',field:'subject'}}});
+ query.set(['records_path'],'unsaved query'); mutation.setFrappeSource('erpnext','Task','description');
+ const queryView={model:query,selected:2,validation:'required',revision:query.saved.content_revision,input:'unsaved query'};
+ const mutationView={model:mutation,selected:0,validation:'invalid field',revision:mutation.saved.content_revision,input:'description'};
+ tabs.set('Query',queryView); tabs.set('Mutation',mutationView); tabs.set('Binding',{model:null,readOnly:true});
+ assert.equal(stable(mappingTabs),stable(['Query','Mutation','Binding']));
+ assert.equal(directionForTab('Query'),'QUERY_TO_FRAPPE'); assert.equal(directionForTab('Mutation'),'FRAPPE_TO_MUTATION'); assert.equal(directionForTab('Binding'),null);
+ assert.strictEqual(tabs.get('Query'),queryView); assert.strictEqual(tabs.get('Mutation'),mutationView);
+ assert.equal(tabs.get('Query').model.content.records_path,'unsaved query');
+ assert.equal(tabs.get('Mutation').model.content.source.field,'description');
+ assert.equal(tabs.get('Query').selected,2); assert.equal(tabs.get('Mutation').validation,'invalid field');
+ assert.equal(tabs.get('Query').revision,3); assert.equal(tabs.get('Binding').readOnly,true);
+ assert.equal(tabs.otherDirty('Binding'),true); assert.equal(tabs.otherDirty('Query'),true);
+ assert.equal(query.saveArgs().definition_id,'query'); assert.equal(mutation.saveArgs().definition_id,'mutation');
+});
+test('tab keyboard navigation wraps and supports Home and End', () => {
+ const target=window.hero_integration_mapping_editor.tabKeyTarget;
+ assert.equal(target('Query','ArrowLeft'),'Binding'); assert.equal(target('Binding','ArrowRight'),'Query');
+ assert.equal(target('Mutation','Home'),'Query'); assert.equal(target('Mutation','End'),'Binding');
+ assert.equal(target('Query','Tab'),null); assert.equal(target('unknown','ArrowRight'),null);
+});
+
+test('binding tab restricts the read view to administrators with a definition', () => {
+ const access=window.hero_integration_mapping_editor.bindingAccess;
+ assert.equal(access(false,{definition_id:'query'}),'ADMIN_ONLY');
+ assert.equal(access(true,null),'SELECT_DEFINITION');
+ assert.equal(access(true,{name:'not-a-definition-id'}),'SELECT_DEFINITION');
+ assert.equal(access(true,{definition_id:'query'}),'READ_ONLY');
 });

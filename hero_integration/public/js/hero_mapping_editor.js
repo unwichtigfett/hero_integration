@@ -53,6 +53,23 @@
     const exchangeCanAdopt = (entry, currentEntry, contextKey, locked) => !locked &&
         entry === currentEntry && entry?.context?.key === contextKey && entry?.preview?.can_save === true;
     const isOwnedExportLink = (link, ownedLink) => Boolean(ownedLink) && link === ownedLink;
+    const mappingTabs = Object.freeze(["Query", "Mutation", "Binding"]);
+    const directionForTab = (tab) => tab === "Query" ? "QUERY_TO_FRAPPE" : tab === "Mutation" ? "FRAPPE_TO_MUTATION" : null;
+    const bindingAccess = (admin, definition) => !admin ? "ADMIN_ONLY" : definition?.definition_id ? "READ_ONLY" : "SELECT_DEFINITION";
+    function tabKeyTarget(tab, key) {
+        const index = mappingTabs.indexOf(tab);
+        if (index < 0) return null;
+        if (key === "Home") return mappingTabs[0];
+        if (key === "End") return mappingTabs.at(-1);
+        const delta = key === "ArrowRight" ? 1 : key === "ArrowLeft" ? -1 : 0;
+        return delta ? mappingTabs[(index + delta + mappingTabs.length) % mappingTabs.length] : null;
+    }
+    class MappingTabStates {
+        constructor() { this.states = new Map(); }
+        set(tab, state) { this.states.set(tab, state); }
+        get(tab) { return this.states.get(tab); }
+        otherDirty(tab) { return [...this.states.entries()].some(([name, state]) => name !== tab && state.model?.dirty); }
+    }
     class DraftState {
         constructor(draft) { this.accept(draft); }
         accept(draft) { this.saved = draftValue(draft); this.verifiedActiveRevision = verifiedActiveRevision(this.saved); this.content = clone(this.saved.content); this.referenceOrder = [...(this.content.mapping_definition_ids || [])]; this.undo = []; this.reconciliation = null; this.blocked = false; }
@@ -63,6 +80,11 @@
             let target = this.content;
             path.slice(0, -1).forEach((key) => { if (!Object.hasOwn(target, key) || !object(target[key])) Object.defineProperty(target, key, {value: {}, enumerable: true, configurable: true, writable: true}); target = target[key]; });
             Object.defineProperty(target, path.at(-1), {value, enumerable: true, configurable: true, writable: true});
+        }
+        setFrappeSource(app, doctype, field) {
+            this.set(["source", "app"], app);
+            this.set(["source", "doctype"], doctype);
+            this.set(["source", "field"], field);
         }
         remove(index) {
             this.invalidateReconciliation();
@@ -173,7 +195,55 @@
         const status = $("<p role='status' aria-live='polite'></p>");
         const toolbar = $("<div class='hero-mapping-actions'></div>");
         const body = $("<div class='hero-mapping-body'></div>");
-        root.append($("<h2 tabindex='-1'></h2>").text(text("Mapping")), status, toolbar, body);
+        const tabs = $("<div role='tablist' aria-label='Mapping sections' class='hero-mapping-actions'></div>");
+        const panel = $("<section role='tabpanel' id='hero-mapping-tabpanel'></section>").append(toolbar, body);
+        root.append($("<h2 tabindex='-1'></h2>").text(text("Mapping")), tabs, status, panel);
+        const tabNames = mappingTabs, tabStates = new MappingTabStates();
+        let tab = "Query", bindingOrigin = "Query", rowChangeHandler = null, pendingView = false;
+        const tabButtons = tabNames.map((name) => button(name, () => switchTab(name)).attr({
+            role: "tab", id: `hero-mapping-tab-${name.toLowerCase()}`, "aria-controls": "hero-mapping-tabpanel"
+        }).appendTo(tabs));
+        function updateTabs() {
+            tabButtons.forEach((el, index) => el.attr({"aria-selected": String(tabNames[index] === tab), tabindex: tabNames[index] === tab ? "0" : "-1"}));
+            panel.attr("aria-labelledby", `hero-mapping-tab-${tab.toLowerCase()}`);
+        }
+        tabs.on("keydown", "[role=tab]", (event) => {
+            const next = tabKeyTarget(tab, event.key);
+            if (!next) return;
+            event.preventDefault(); switchTab(next); tabButtons[tabNames.indexOf(tab)].trigger("focus");
+        });
+        function otherDirty() { return tabStates.otherDirty(tab); }
+        function anyDirty() { return Boolean(model?.dirty || otherDirty()); }
+        function switchTab(next) {
+            if (next === tab || locked() || root.find("dialog").length) return;
+            const previous = tab;
+            epoch++; detailRequest++;
+            tabStates.set(previous, {active, model, mode, selected, search, start, listing, revisionsStart, returnFocus, fieldFilter,
+                rowChangeHandler, status: status.text(), toolbar: toolbar.contents().detach(), body: body.contents().detach()});
+            root.off("hero-mapping-content-change"); rowChangeHandler = null;
+            const bindingActive = active;
+            tab = next; updateTabs();
+            if (next === "Binding") {
+                bindingOrigin = previous === "Binding" ? bindingOrigin : previous;
+                active = bindingActive; model = null; mode = "active";
+                toolbar.empty(); body.empty();
+                const access = bindingAccess(admin, active);
+                if (access === "ADMIN_ONLY") { say("Bindings are available to administrators."); body.append($("<p></p>").text(text("Employee read-only view"))); }
+                else if (access === "SELECT_DEFINITION") { say("Select a mapping definition in Query or Mutation to view its bindings."); }
+                else showBindings(0);
+                return;
+            }
+            const state = tabStates.get(next);
+            if (state) {
+                ({active, model, mode, selected, search, start, listing, revisionsStart, returnFocus, fieldFilter, rowChangeHandler} = state);
+                toolbar.empty().append(state.toolbar); body.empty().append(state.body); say(state.status);
+                if (rowChangeHandler) root.on("hero-mapping-content-change", rowChangeHandler);
+            } else {
+                active = null; model = null; mode = "active"; selected = 0; search = ""; start = 0; listing = null;
+                revisionsStart = 0; returnFocus = null; fieldFilter = ""; loadList();
+            }
+        }
+        updateTabs();
         const say = (value) => status.text(text(value));
         const focusHeading = () => root.find("h2").trigger("focus");
         const locked = () => busy || disposed;
@@ -216,13 +286,17 @@
                 ["Continue editing", cancel],
             ], cancel);
         }
+        function leaveWorkspace(action, cancel = () => {}) {
+            if (otherDirty()) { say("Save or discard the unsaved changes in the other mapping tab before leaving."); return cancel(); }
+            return leave(action, cancel);
+        }
         function updateDirty() {
             root.find("[data-draft-state]").text(text(model?.dirty ? "Local changes — not saved" : "Saved personal draft"));
             root.trigger("hero-mapping-content-change");
         }
         async function loadList() {
-            const request = ++epoch; ruleCache.clear(); active = null; model = null; mode = "active";
-            root.off("hero-mapping-content-change"); toolbar.empty(); body.empty(); say("Loading active mappings…");
+            const request = ++epoch; pendingView = true; ruleCache.clear(); active = null; model = null; mode = "active";
+            rowChangeHandler = null; root.off("hero-mapping-content-change"); toolbar.empty(); body.empty(); say("Loading active mappings…");
             const filter = field("Search active definitions and rules", search, (value) => { search = value; }, toolbar).attr("maxlength", 120);
             const apply = () => { search = filter.val(); start = 0; loadList(); };
             filter.on("keydown", (event) => { if (event.key === "Enter") apply(); });
@@ -233,25 +307,27 @@
                 listing = result; renderList(); say("");
                 if (returnFocus) { root.find("[data-mapping-name]").filter((_, el) => el.dataset.mappingName === returnFocus).first().trigger("focus"); returnFocus = null; }
             } catch (error) { if (request === epoch && !disposed) { say(errorText(error)); body.append(button("Retry", loadList)); } }
+            finally { if (request === epoch) pendingView = false; }
         }
         function renderList() {
             body.empty();
             const p = listing.pagination;
-            const definitions = listing.graphql_mappings;
+            const direction = directionForTab(tab);
+            const definitions = listing.graphql_mappings.filter((item) => item.direction === direction);
             const groups = new Map();
             definitions.forEach((item) => { const key = `${item.operation_kind} ${item.operation_name}`; if (!groups.has(key)) groups.set(key, []); groups.get(key).push(item); });
             body.append($("<h3></h3>").text(text("HERO operations and mapping definitions")),
-                $("<p class='text-muted'></p>").text(`${text("Definitions on this page")}: ${definitions.length} / ${p.graphql_total}`));
-            if (!definitions.length) body.append($("<p></p>").text(text(search ? "No active definitions match your search." : "No active mapping definitions.")));
+                $("<p class='text-muted'></p>").text(`${text("Definitions in this direction on this page")}: ${definitions.length} · ${text("All directions")}: ${p.graphql_total}`));
+            if (!definitions.length) body.append($("<p></p>").text(text("No matching definitions in this direction on this page. Other pages may contain results.")));
             groups.forEach((items, label) => {
                 const group = $("<details open class='hero-mapping-operation'></details>").append($("<summary></summary>").text(label));
                 items.forEach((item) => group.append(button(`${item.name} · ${text("Active")} · ${text("Revision")} ${item.revision}`, () => open(item, "graphql"))
                     .attr("data-mapping-name", item.name)));
                 body.append(group);
             });
-            body.append($("<h3></h3>").text(text("Active field rules")), $("<p class='text-muted'></p>").text(`${text("Rules on this page")}: ${listing.frappe_mappings.length} / ${p.frappe_total}`));
-            listing.frappe_mappings.forEach((item) => body.append(button(`${item.operation} · ${item.source_path} → ${item.target_doctype}.${item.target_field}`, () => open(item, "frappe"))));
-            if (!listing.frappe_mappings.length) body.append($("<p></p>").text(text(search ? "No active field rules match your search." : "No active field rules.")));
+            if (tab === "Query") body.append($("<h3></h3>").text(text("Active field rules")), $("<p class='text-muted'></p>").text(`${text("Rules on this page")}: ${listing.frappe_mappings.length} / ${p.frappe_total}`));
+            if (tab === "Query") listing.frappe_mappings.forEach((item) => body.append(button(`${item.operation} · ${item.source_path} → ${item.target_doctype}.${item.target_field}`, () => open(item, "frappe"))));
+            if (tab === "Query" && !listing.frappe_mappings.length) body.append($("<p></p>").text(text(search ? "No active field rules match your search." : "No active field rules.")));
             const pager = $("<div class='hero-mapping-actions'></div>");
             pager.append(button("Previous page", () => { start = Math.max(0, start - 20); loadList(); }).prop("disabled", start === 0),
                 $("<span></span>").text(`${text("Page")} ${Math.floor(start / 20) + 1}`),
@@ -260,7 +336,7 @@
         }
         async function open(item, kind) {
             if (locked()) return;
-            const request = ++epoch; ruleCache.clear(); body.empty(); toolbar.empty(); say("Loading active definition…");
+            const request = ++epoch; pendingView = true; ruleCache.clear(); body.empty(); toolbar.empty(); say("Loading active definition…");
             toolbar.append(button("Back to mappings", () => leave(loadList)));
             try {
                 const detail = await rpc("frontend_mapping_detail", {mapping_type: kind, name: item.name});
@@ -268,6 +344,7 @@
                 active = {...detail, mapping_type: kind}; mode = "active"; model = null; selected = 0; fieldFilter = ""; returnFocus = item.name;
                 renderDetail(); say(""); focusHeading();
             } catch (error) { if (request === epoch && !disposed) say(errorText(error)); }
+            finally { if (request === epoch) pendingView = false; }
         }
         function content() { return mode === "draft" ? model.content : active.definition || active; }
         function exchangePreviewDialog(entry, originalOpener = document.activeElement) {
@@ -407,7 +484,6 @@
                     if (model.blocked) toolbar.append(button("Check saved draft", reconcile), button("Reload saved draft", reloadDraft));
                 }
             }
-            if (admin && active.definition_id) toolbar.append(button("Bindings", () => leave(() => showBindings(0))));
             const value = content();
             renderContext(value);
             const list = rows(value);
@@ -435,7 +511,8 @@
                 if (list.length && !table.find("tbody").children().length) table.find("tbody").append($("<tr><td colspan='4'></td></tr>").find("td").text(text("No field mappings match this filter.")).end());
                 if (focusedRow !== undefined) table.find(`[data-row-selection="${focusedRow}"]`).trigger("focus");
             };
-            root.off("hero-mapping-content-change").on("hero-mapping-content-change", drawRows);
+            rowChangeHandler = drawRows;
+            root.off("hero-mapping-content-change").on("hero-mapping-content-change", rowChangeHandler);
             drawRows(); left.append(table);
             const tableEpoch = epoch;
             list.filter((row) => row.reference && !ownRule(value, row.id) && !ruleCache.has(row.id)).forEach(async (row) => {
@@ -690,8 +767,8 @@
         }
         async function showBindings(offset) {
             if (!admin || !active?.definition_id) return;
-            const request = ++epoch;
-            toolbar.empty().append(button("Back to definition", () => { mode = model ? "draft" : "active"; renderDetail(); }));
+            const request = ++epoch; pendingView = true;
+            toolbar.empty().append(button("Back to definition", () => switchTab(bindingOrigin)));
             body.empty().append($("<h3></h3>").text(text("Bindings — read only")),
                 $("<p class='text-muted'></p>").text(text("Existing binding identities, mappings and status. This view cannot create, update, synchronize or activate a binding.")));
             say("Loading bindings…");
@@ -716,6 +793,7 @@
                 ));
                 say("");
             } catch (error) { if (!disposed && request === epoch) { say(errorText(error)); body.append(button("Retry", () => showBindings(offset))); } }
+            finally { if (request === epoch) pendingView = false; }
         }
         async function addReference() {
             const panel = $("<section class='hero-mapping-row-detail'></section>"); body.append(panel);
@@ -784,7 +862,7 @@
                             if (source) { model.set(["field_rules", row.id, "target_doctype"], f.target_doctype || doctype.val()); model.set(["field_rules", row.id, "target_field"], f.path); }
                             else { model.set(["field_rules", row.id, "source_path"], f.path); model.set(["field_rules", row.id, "source_type"], f.mapping_type || f.fieldtype); }
                         }
-                        else if (source) { model.set(["source", "doctype"], f.target_doctype || doctype.val()); model.set(["source", "field"], f.path); }
+                        else if (source) { model.setFrappeSource(app.val(), f.target_doctype || doctype.val(), f.path); }
                         else { model.set(["target", "argument"], f.argument); model.set(["target", "operation"], active.operation_name); model.set(["target", "field"], f.path); if (Object.hasOwn(model.content.target, "field_path")) model.set(["target", "field_path"], f.path); model.set(["target", "graphql_type"], f.type); }
                         renderDetail();
                     }).prop("disabled", f.selectable === false)));
@@ -811,31 +889,31 @@
         // Frappe starts its SPA route before later window popstate listeners.
         // Keep this adapter local to the mounted editor and restore its exact owner on destroy.
         function guardedRoute(...args) {
-            if (!model?.dirty && !busy) return originalRoute.apply(this, args);
+            if (!anyDirty() && !busy) return originalRoute.apply(this, args);
             const destination = location.href;
             history.pushState(pageHistoryState, "", pageUrl);
             if (busy || routePending) { say("Wait for the current request before leaving."); return Promise.resolve(false); }
             routePending = true;
-            return new Promise((resolve) => leave(() => {
+            return new Promise((resolve) => leaveWorkspace(() => {
                 routePending = false;
                 history.replaceState(pageHistoryState, "", destination);
                 resolve(originalRoute.apply(router, args));
             }, () => { routePending = false; resolve(false); }));
         }
         router.route = guardedRoute;
-        const unload = (event) => { if (model?.dirty || busy) { event.preventDefault(); event.returnValue = ""; } };
+        const unload = (event) => { if (anyDirty() || busy) { event.preventDefault(); event.returnValue = ""; } };
         window.addEventListener("beforeunload", unload);
         // Capture links leaving the page before Frappe's delegated router handles them.
         const links = (event) => {
             const link = event.target.closest("a[href]");
             if (isOwnedExportLink(link, ownedDownload)) return;
-            if (link && (model?.dirty || busy) && !event.defaultPrevented && !event.metaKey && !event.ctrlKey && link.origin === location.origin && link.href !== location.href) {
-                event.preventDefault(); event.stopImmediatePropagation(); leave(() => { location.href = link.href; });
+            if (link && (anyDirty() || busy) && !event.defaultPrevented && !event.metaKey && !event.ctrlKey && link.origin === location.origin && link.href !== location.href) {
+                event.preventDefault(); event.stopImmediatePropagation(); leaveWorkspace(() => { location.href = link.href; });
             }
         };
         document.addEventListener("click", links, true);
-        const controller = {beforeLeave: leave, destroy() { shell.removeClass("hero-mapping-shell"); disposed = true; epoch++; window.removeEventListener("beforeunload", unload); if (router.route === guardedRoute) router.route = originalRoute; document.removeEventListener("click", links, true); }};
+        const controller = {beforeLeave: leaveWorkspace, destroy() { shell.removeClass("hero-mapping-shell"); disposed = true; epoch++; window.removeEventListener("beforeunload", unload); if (router.route === guardedRoute) router.route = originalRoute; document.removeEventListener("click", links, true); }};
         current = controller; loadList(); return controller;
     }
-    window.hero_integration_mapping_editor = Object.freeze({mount, DraftState, stable, readActiveRule, exchangeExpectedStates, exchangeCounts, exchangeCanAdopt, isOwnedExportLink});
+    window.hero_integration_mapping_editor = Object.freeze({mount, DraftState, stable, readActiveRule, exchangeExpectedStates, exchangeCounts, exchangeCanAdopt, isOwnedExportLink, mappingTabs, directionForTab, bindingAccess, tabKeyTarget, MappingTabStates});
 })();

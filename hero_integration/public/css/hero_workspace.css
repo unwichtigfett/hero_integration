@@ -100,6 +100,7 @@
 
 /* Personal mapping editor: scoped to the mapping surface. */
 .hero-mapping-core .hero-mapping-actions { display:flex; flex-wrap:wrap; gap:8px; align-items:end; margin-block:12px; }
+.hero-mapping-core [role="tab"][aria-selected="true"] { border:2px solid var(--pc-focus, var(--text-color)); font-weight:700; }
 .hero-mapping-core .btn { background:var(--pc-surfaceRaised, var(--card-bg)); border-color:var(--pc-border, var(--border-color)); color:var(--pc-text, var(--text-color)); }
 .hero-mapping-core .btn:hover:not(:disabled), .hero-mapping-core .btn:active:not(:disabled) { background:var(--pc-surface, var(--control-bg)); border-color:var(--pc-text, var(--text-color)); color:var(--pc-text, var(--text-color)); }
 .hero-mapping-core .hero-mapping-input { display:flex; flex-direction:column; gap:5px; margin-block:8px; min-width:180px; }
