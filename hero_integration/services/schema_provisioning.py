@@ -23,6 +23,54 @@ class SchemaProvisioningError(ValueError):
     pass
 
 
+def preview_schema(schema: object) -> dict[str, object]:
+    """Validate declarative schema only; this never writes or activates mappings."""
+    definitions = _definitions(schema)
+    items = _schema_items(definitions)
+    return {
+        "items": items,
+        "counts": {state: sum(item["state"] == state for item in items) for state in SCHEMA_STATES},
+    }
+
+
+def provision_schema(schema: object) -> dict[str, object]:
+    """Provision every validated missing schema item without touching mappings.
+
+    Frappe/MariaDB DDL can commit independently of a later mapping-DML
+    transaction.  Callers must therefore persist mappings only after this
+    function returns and report ``created`` if that later step fails.
+    """
+    definitions = _definitions(schema)
+    items = _schema_items(definitions)
+    blocked = [item for item in items if item["state"] in {"Conflict", "Invalid"}]
+    if blocked:
+        raise SchemaProvisioningError("Schema package contains conflicts or invalid definitions.")
+    selected = {item["id"] for item in items if item["state"] in {"New", "Changed"}}
+    if not selected:
+        return {"status": "UNCHANGED", "created": {"custom_doctypes": [], "custom_fields": []}}
+    _validate_selection({item["id"]: item for item in items}, selected)
+    _require_schema_permissions(definitions, selected)
+    created = {"custom_doctypes": [], "custom_fields": []}
+    relation_fields = _relation_fields(definitions)
+    selected_relation_fields = {
+        relation["field_id"] for relation in definitions["relations"] if relation["id"] in selected
+    }
+    for definition in _ordered_doctypes(definitions, selected):
+        if _doctype_is_new(definition):
+            _create_custom_doctype(definition, selected_relation_fields)
+            created["custom_doctypes"].append(definition["name"])
+    for definition in definitions["custom_fields"]:
+        if definition["id"] in selected and _custom_field_is_new(definition):
+            _create_custom_field(definition)
+            created["custom_fields"].append(f"{definition['doctype']}.{definition['fieldname']}")
+    for relation in definitions["relations"]:
+        if relation["id"] in selected:
+            _provision_relation(relation, relation_fields, created)
+    _validate_selected_relations(definitions, selected)
+    return {"status": "COMPLETED", "created": created,
+            "schema_note": "Frappe DDL rollback is not promised."}
+
+
 def preview_package(snapshot_name: str, payload_json: str) -> dict[str, object]:
     snapshot = mapping_exchange._validated_snapshot(snapshot_name)
     package = mapping_exchange._parse_payload(payload_json, snapshot.schema_fingerprint)
