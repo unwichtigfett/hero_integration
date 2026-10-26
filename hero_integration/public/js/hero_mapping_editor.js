@@ -54,6 +54,17 @@
         entry === currentEntry && entry?.context?.key === contextKey && entry?.preview?.can_save === true;
     const isOwnedExportLink = (link, ownedLink) => Boolean(ownedLink) && link === ownedLink;
     const mappingTabs = Object.freeze(["Query", "Mutation", "Binding"]);
+    async function readSnapshotPages(fetchPage, isCurrent) {
+        const result = [];
+        for (let start = 0; ; start += 100) {
+            const page = await fetchPage({start, page_size: 100});
+            if (!isCurrent()) return null;
+            if (!Array.isArray(page) || page.length > 100) throw new Error('Invalid snapshot page.');
+            result.push(...page);
+            if (page.length < 100) return result;
+            if (start > 2147483547) throw new Error('Snapshot list exceeds the supported range.');
+        }
+    }
     const directionForTab = (tab) => tab === "Query" ? "QUERY_TO_FRAPPE" : tab === "Mutation" ? "FRAPPE_TO_MUTATION" : null;
     const bindingAccess = (admin, definition) => !admin ? "ADMIN_ONLY" : definition?.definition_id ? "READ_ONLY" : "SELECT_DEFINITION";
     const resumePendingView = (pending, handlers) => {
@@ -369,10 +380,9 @@
                 const serial = ++request; suggestionRequest++; resetSnapshots(); resetOperations(); details.empty();
                 info.text(text('Loading saved snapshots…')); limitNotice.empty();
                 try {
-                    const result = await rpc('schema_snapshot_list', {});
-                    if (!currentView(serial)) return;
+                    const result = await readSnapshotPages((args) => rpc('schema_snapshot_list', args), () => currentView(serial));
+                    if (!result) return;
                     const valid = result.filter((row) => row.analysis_status === 'Validated');
-                    if (result.length >= 100) limitNotice.text(text('Only the first 100 saved snapshots are returned; this list may be incomplete.'));
                     if (preferredSnapshot && !valid.some((row) => row.name === preferredSnapshot)) {
                         limitNotice.text(`${limitNotice.text()} ${text('The previously selected snapshot is not available in this result. Select a validated snapshot again.')}`.trim());
                     }
@@ -381,7 +391,7 @@
                     if (preferredSnapshot && valid.some((row) => row.name === preferredSnapshot)) {
                         snapshot.val(preferredSnapshot); await loadOperations(preferredSnapshot, preferredOperation);
                     }
-                } catch (error) { if (currentView(serial)) info.text(errorText(error)); }
+                } catch (error) { if (currentView(serial)) { limitNotice.text(text('The snapshot list could not be loaded completely. Retry before choosing a snapshot.')); info.text(errorText(error)); } }
             }
             snapshot.on('change', () => { packageRequest++; packagePreview.empty(); loadOperations(snapshot.val()); });
             source.add(target).on('input', () => { suggestionRequest++; details.empty(); info.text(text('Select Show field suggestions to load the current inputs.')); });
@@ -1169,5 +1179,5 @@
         const controller = {beforeLeave: leaveWorkspace, destroy() { shell.removeClass("hero-mapping-shell"); disposed = true; epoch++; window.removeEventListener("beforeunload", unload); if (router.route === guardedRoute) router.route = originalRoute; document.removeEventListener("click", links, true); }};
         current = controller; loadList(); return controller;
     }
-    window.hero_integration_mapping_editor = Object.freeze({mount, DraftState, stable, readActiveRule, exchangeExpectedStates, exchangeCounts, exchangeCanAdopt, isOwnedExportLink, mappingTabs, directionForTab, bindingAccess, selectedPickerApp, hasCurrentDraftBase, canSaveDraft, tabKeyTarget, MappingTabStates, resumePendingView});
+    window.hero_integration_mapping_editor = Object.freeze({mount, DraftState, stable, readActiveRule, readSnapshotPages, exchangeExpectedStates, exchangeCounts, exchangeCanAdopt, isOwnedExportLink, mappingTabs, directionForTab, bindingAccess, selectedPickerApp, hasCurrentDraftBase, canSaveDraft, tabKeyTarget, MappingTabStates, resumePendingView});
 })();

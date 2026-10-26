@@ -209,7 +209,7 @@ class TestHeroDeskUiContract(unittest.TestCase):
                          "epoch === viewEpoch", "section[0].isConnected", "tab === viewTab",
                          "hero-mapping-picker-resume", "loadSnapshots(name, operation)",
                          "suggestionSerial === suggestionRequest", "Retry saved schema",
-                         "result.length >= 100", "this list may be incomplete",
+                         "readSnapshotPages((args) => rpc('schema_snapshot_list', args)", "snapshot list could not be loaded completely",
                          "previously selected snapshot is not available in this result"):
             self.assertIn(contract, explorer)
         for forbidden in ("graphql_mapping_save", "workspace_schema_refresh"):

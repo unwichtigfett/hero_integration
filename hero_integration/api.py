@@ -433,10 +433,12 @@ def workspace_sync_status() -> dict[str, object]:
         ),
     }
 @frappe.whitelist()
-def schema_snapshot_list() -> list[dict[str, object]]:
-    """List saved snapshots without exposing configuration or making network calls."""
+def schema_snapshot_list(start: int | str = 0, page_size: int | str = 100) -> list[dict[str, object]]:
+    """List saved snapshots; request successive pages until a page is empty."""
     frappe.only_for("System Manager")
-    return _schema_snapshot_rows()
+    start = _mapping_int(start, "start", 0, 2147483647)
+    page_size = _mapping_int(page_size, "page_size", 1, 100)
+    return _schema_snapshot_rows(start, page_size)
 
 
 @frappe.whitelist(methods=["POST"])
@@ -535,15 +537,16 @@ def workspace_schema_refresh(connection_id: str = "", binding_generation: int | 
     }
 
 
-def _schema_snapshot_rows() -> list[dict[str, object]]:
+def _schema_snapshot_rows(start: int = 0, page_size: int = 100) -> list[dict[str, object]]:
     return frappe.get_all(
         "HERO GraphQL Schema Snapshot",
         fields=[
             "name", "schema_fingerprint", "analysis_status", "analysis_detail", "modified",
             "source_instance", "endpoint_fingerprint", "captured_at", "execution_contract_status",
         ],
-        order_by="modified desc",
-        limit_page_length=100,
+        order_by="modified desc, name asc",
+        limit_start=start,
+        limit_page_length=page_size,
     )
 
 
