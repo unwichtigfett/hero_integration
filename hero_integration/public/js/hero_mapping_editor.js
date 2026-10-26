@@ -64,6 +64,22 @@
         if (!matching[0].activation_ready) return matching[0].blocker || "Technical contract is not ready.";
         return "Technical contract is active; mapping validation and separate execution gates still apply.";
     };
+    const legacyWritebackRows = (rows) => {
+        if (!Array.isArray(rows) || rows.some((row) => !object(row) || typeof row.name !== "string" || !row.name ||
+            typeof row.direction !== "string" || typeof row.operation_kind !== "string" || typeof row.operation_name !== "string" ||
+            typeof row.status !== "string" || !Number.isInteger(row.mapping_revision) || row.mapping_revision < 0)) {
+            throw new Error("Invalid shared mapping list.");
+        }
+        return rows.filter((row) => row.direction === "FRAPPE_TO_MUTATION" && row.operation_kind === "MUTATION");
+    };
+    const legacyWritebackDetailMatches = (doc, row, snapshot) => object(doc) && doc.doctype === "HERO GraphQL Mapping" &&
+        doc.name === row.name && doc.schema_snapshot === snapshot && doc.direction === "FRAPPE_TO_MUTATION" &&
+        doc.operation_kind === "MUTATION" && doc.operation_name === row.operation_name && doc.status === row.status &&
+        doc.mapping_revision === row.mapping_revision && (doc.suggestion_reason || "") === (row.suggestion_reason || "") &&
+        (doc.confidence ?? null) === (row.confidence ?? null) && typeof doc.mapping_json === "string";
+    const legacyWritebackCurrent = (admin, viewTab, currentTab, viewEpoch, currentEpoch, serial, currentSerial, snapshot, selected, connected, disposed) =>
+        admin && viewTab === "Mutation" && currentTab === viewTab && viewEpoch === currentEpoch && serial === currentSerial &&
+        Boolean(snapshot) && snapshot === selected && connected && !disposed;
     const isOwnedExportLink = (link, ownedLink) => Boolean(ownedLink) && link === ownedLink;
     const mappingTabs = Object.freeze(["Query", "Mutation", "Binding"]);
     async function readSnapshotPages(fetchPage, isCurrent) {
@@ -407,6 +423,8 @@
                     snapshot.prop('disabled', false); info.text(text('Choose a validated snapshot.'));
                     if (preferredSnapshot && valid.some((row) => row.name === preferredSnapshot)) {
                         snapshot.val(preferredSnapshot); await loadOperations(preferredSnapshot, preferredOperation);
+                        if (!disposed && epoch === viewEpoch && tab === viewTab && section[0].isConnected && snapshot.val() === preferredSnapshot)
+                            section.trigger('hero-mapping-refresh-shared');
                     }
                 } catch (error) { if (currentView(serial)) { limitNotice.text(text('The snapshot list could not be loaded completely. Retry before choosing a snapshot.')); info.text(errorText(error)); } }
             }
@@ -414,6 +432,50 @@
             source.add(target).on('input', () => { suggestionRequest++; details.empty(); info.text(text('Select Show field suggestions to load the current inputs.')); });
             section.append(snapshot, operations, info, limitNotice, details);
             if (viewTab === 'Query') section.append(source, target, suggestions);
+            if (viewTab === 'Mutation') {
+                let legacyRequest = 0, detailSerial = 0;
+                const legacyState = $("<p role='status'></p>");
+                const legacyRows = $("<div></div>");
+                const legacyDetail = $("<div></div>");
+                const currentLegacy = (serial, name) => legacyWritebackCurrent(admin, viewTab, tab, viewEpoch, epoch,
+                    serial, legacyRequest, name, snapshot.val(), section[0].isConnected, disposed);
+                const loadLegacy = async () => {
+                    const serial = ++legacyRequest, name = snapshot.val();
+                    detailSerial++; legacyRows.empty(); legacyDetail.empty();
+                    if (!name || snapshot.prop('disabled')) { legacyState.text(text('Choose a validated snapshot to inspect shared writeback mappings.')); return; }
+                    legacyState.text(text('Loading shared writeback mappings…'));
+                    try {
+                        const result = await rpc('graphql_mapping_list', {snapshot_name: name, operation_kind: 'MUTATION'});
+                        if (!currentLegacy(serial, name)) return;
+                        const rows = legacyWritebackRows(result);
+                        legacyState.text(`${text('Shared writeback mappings')}: ${rows.length}. ${text('This list is read only and is separate from personal drafts.')}`);
+                        rows.forEach((row) => {
+                            const line = $('<p></p>').text(`${row.name} · ${row.operation_name} · ${row.status} · ${text('Revision')}: ${row.mapping_revision} · ${text('Reason')}: ${row.suggestion_reason || '—'} · ${text('Confidence')}: ${row.confidence ?? '—'} `);
+                            line.append(button('Inspect shared mapping', async () => {
+                                const detailRequest = ++detailSerial; legacyDetail.empty().text(text('Loading shared mapping…'));
+                                try {
+                                    const response = await frappe.call({method: 'frappe.client.get', type: 'GET', args: {doctype: 'HERO GraphQL Mapping', name: row.name}});
+                                    if (!currentLegacy(serial, name) || detailRequest !== detailSerial) return;
+                                    if (response?.exc) throw response;
+                                    const doc = response?.message;
+                                    if (!legacyWritebackDetailMatches(doc, row, name)) {
+                                        legacyDetail.text(text('Shared mapping changed. Refresh the list before inspecting it.')); return;
+                                    }
+                                    legacyDetail.empty().append($('<p></p>').text(`${text('Last editor')}: ${doc.modified_by || '—'} · ${text('Definition ID')}: ${doc.definition_id || '—'}`),
+                                        $('<p></p>').text(text('Stored mapping JSON (read only):')), $('<pre></pre>').text(doc.mapping_json));
+                                } catch (error) { if (currentLegacy(serial, name) && detailRequest === detailSerial) legacyDetail.text(errorText(error)); }
+                            }));
+                            legacyRows.append(line);
+                        });
+                    } catch (error) { if (currentLegacy(serial, name)) legacyState.text(errorText(error)); }
+                };
+                snapshot.on('change', loadLegacy);
+                section.on('hero-mapping-refresh-shared', loadLegacy);
+                section.on('hero-mapping-picker-resume', () => { legacyRequest++; detailSerial++; legacyRows.empty(); legacyDetail.empty(); legacyState.text(text('Choose a validated snapshot again to refresh shared mappings.')); });
+                section.append($('<h4></h4>').text(text('Shared writeback mappings')),
+                    $('<p></p>').text(text('Shared mappings are separate from personal drafts. Inspection is read only; it does not establish activation eligibility or publish a personal draft.')),
+                    legacyState, legacyRows, legacyDetail, button('Refresh shared writeback mappings', loadLegacy));
+            }
             const packagePreview = $("<div class='hero-mapping-package-preview'></div>");
             const packageState = $("<p role='status'></p>");
             const fileInput = $("<input type='file' accept='application/json,.json' aria-label='Mapping package'>");
@@ -1172,5 +1234,5 @@
         const controller = {beforeLeave: leaveWorkspace, destroy() { shell.removeClass("hero-mapping-shell"); disposed = true; epoch++; window.removeEventListener("beforeunload", unload); if (router.route === guardedRoute) router.route = originalRoute; document.removeEventListener("click", links, true); }};
         current = controller; loadList(); return controller;
     }
-    window.hero_integration_mapping_editor = Object.freeze({mount, DraftState, stable, readActiveRule, readSnapshotPages, exchangeExpectedStates, exchangeCounts, exchangeCanAdopt, reviewedTargetLabel, writebackContractLabel, isOwnedExportLink, mappingTabs, directionForTab, bindingAccess, selectedPickerApp, hasCurrentDraftBase, canSaveDraft, tabKeyTarget, MappingTabStates, resumePendingView});
+    window.hero_integration_mapping_editor = Object.freeze({mount, DraftState, stable, readActiveRule, readSnapshotPages, exchangeExpectedStates, exchangeCounts, exchangeCanAdopt, reviewedTargetLabel, writebackContractLabel, legacyWritebackRows, legacyWritebackDetailMatches, legacyWritebackCurrent, isOwnedExportLink, mappingTabs, directionForTab, bindingAccess, selectedPickerApp, hasCurrentDraftBase, canSaveDraft, tabKeyTarget, MappingTabStates, resumePendingView});
 })();

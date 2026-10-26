@@ -283,3 +283,40 @@ test('reviewed writeback information is descriptive and fails closed for missing
  assert.match(writebackContractLabel({contracts:[{operation:'update_contact',activation_ready:true},{operation:'update_contact',activation_ready:true}]},'update_contact'),/unavailable/);
  assert.match(writebackContractLabel({contracts:[{operation:'update_contact',activation_ready:1}]},'update_contact'),/unavailable/);
 });
+
+test('shared writeback inventory preserves draft review metadata and filters direction', () => {
+ const {legacyWritebackRows}=window.hero_integration_mapping_editor;
+ const draft={name:'legacy-draft',operation_kind:'MUTATION',direction:'FRAPPE_TO_MUTATION',operation_name:'update_contact',status:'Draft',mapping_revision:3,suggestion_reason:'review me',confidence:0};
+ const other={...draft,name:'other',direction:'QUERY_TO_FRAPPE'};
+ const result=legacyWritebackRows([draft,other]);
+ assert.equal(result.length,1); assert.equal(result[0].name,'legacy-draft');
+ assert.equal(result[0].suggestion_reason,'review me'); assert.equal(result[0].confidence,0); assert.equal(result[0].mapping_revision,3);
+ assert.throws(()=>legacyWritebackRows([{...draft,mapping_revision:'3'}]),/Invalid shared mapping list/);
+ assert.throws(()=>legacyWritebackRows(null),/Invalid shared mapping list/);
+});
+test('shared writeback responses only render for the authorized, connected current snapshot and tab', () => {
+ const {legacyWritebackCurrent}=window.hero_integration_mapping_editor;
+ const args=[true,'Mutation','Mutation',3,3,7,7,'snapshot-a','snapshot-a',true,false];
+ assert.equal(legacyWritebackCurrent(...args),true);
+ for (const [index, value] of [[0,false],[2,'Query'],[4,4],[6,8],[8,'snapshot-b'],[9,false],[10,true]]) {
+  const changed=[...args];changed[index]=value; assert.equal(legacyWritebackCurrent(...changed),false);
+ }
+});
+
+test('shared detail rejects changed snapshot, status, revision and identity before displaying content', () => {
+ const {legacyWritebackDetailMatches}=window.hero_integration_mapping_editor;
+ const row={name:'draft',operation_name:'update_contact',status:'Draft',mapping_revision:3};
+ const doc={doctype:'HERO GraphQL Mapping',name:'draft',schema_snapshot:'snap',direction:'FRAPPE_TO_MUTATION',operation_kind:'MUTATION',operation_name:'update_contact',status:'Draft',mapping_revision:3,mapping_json:'{}'};
+ assert.equal(legacyWritebackDetailMatches(doc,row,'snap'),true);
+ for (const [key,value] of Object.entries({name:'other',schema_snapshot:'other',direction:'QUERY_TO_FRAPPE',operation_kind:'QUERY',operation_name:'other',status:'Active',mapping_revision:4,mapping_json:null})) {
+  assert.equal(legacyWritebackDetailMatches({...doc,[key]:value},row,'snap'),false);
+ }
+});
+
+test('shared inventory retains entries beyond twenty and rejects an invalid response', () => {
+ const {legacyWritebackRows}=window.hero_integration_mapping_editor;
+ const rows=Array.from({length:45},(_,i)=>({name:`mapping-${i}`,operation_name:'update_contact',direction:'FRAPPE_TO_MUTATION',operation_kind:'MUTATION',status:'Draft',mapping_revision:1}));
+ assert.equal(legacyWritebackRows(rows).length,45);
+ assert.equal(legacyWritebackRows(rows)[44].name,'mapping-44');
+ assert.throws(()=>legacyWritebackRows({items:rows}),/Invalid shared mapping list/);
+});
