@@ -186,7 +186,7 @@ class TestFrappeMappingDraftStorage(unittest.TestCase):
                 if after_insert: original(value)
                 raise RuntimeError('synthetic persistence failure')
             with patch.object(self.storage, 'append_revision', side_effect=fail):
-                with self.assertRaises(RuntimeError): self.save({'incomplete':True})
+                with self.assertRaises(RuntimeError): self.save({'record_path':'incomplete'})
             self.assertEqual(0, self.open().content_revision)
             self.assertEqual(0, frappe.db.count('HERO Mapping Revision', {'draft_key':draft.key}))
         frappe.db.commit()
