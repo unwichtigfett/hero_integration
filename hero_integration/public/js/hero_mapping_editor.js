@@ -56,6 +56,11 @@
     const mappingTabs = Object.freeze(["Query", "Mutation", "Binding"]);
     const directionForTab = (tab) => tab === "Query" ? "QUERY_TO_FRAPPE" : tab === "Mutation" ? "FRAPPE_TO_MUTATION" : null;
     const bindingAccess = (admin, definition) => !admin ? "ADMIN_ONLY" : definition?.definition_id ? "READ_ONLY" : "SELECT_DEFINITION";
+    const resumePendingView = (pending, handlers) => {
+        if (pending?.kind === "list") return handlers.list();
+        if (pending?.kind === "detail") return handlers.detail(pending.item, pending.mappingType);
+        return false;
+    };
     const selectedPickerApp = (model, side, value, admin) =>
         model?.frappeSelection?.side === side && model.frappeSelection.doctype === value?.doctype
             ? model.frappeSelection.app : admin ? "" : value?.app || "";
@@ -213,7 +218,7 @@
         const panel = $("<section role='tabpanel' id='hero-mapping-tabpanel'></section>").append(toolbar, body);
         root.append($("<h2 tabindex='-1'></h2>").text(text("Mapping")), tabs, status, panel);
         const tabNames = mappingTabs, tabStates = new MappingTabStates();
-        let tab = "Query", bindingOrigin = "Query", rowChangeHandler = null, pendingView = false;
+        let tab = "Query", bindingOrigin = "Query", rowChangeHandler = null, pendingView = null;
         const tabButtons = tabNames.map((name) => button(name, () => switchTab(name)).attr({
             role: "tab", id: `hero-mapping-tab-${name.toLowerCase()}`, "aria-controls": "hero-mapping-tabpanel"
         }).appendTo(tabs));
@@ -233,7 +238,8 @@
             const previous = tab;
             epoch++; detailRequest++;
             tabStates.set(previous, {active, model, mode, selected, search, start, listing, revisionsStart, returnFocus, fieldFilter,
-                rowChangeHandler, status: status.text(), toolbar: toolbar.contents().detach(), body: body.contents().detach()});
+                rowChangeHandler, pendingView, status: status.text(), toolbar: toolbar.contents().detach(), body: body.contents().detach()});
+            pendingView = null;
             root.off("hero-mapping-content-change"); rowChangeHandler = null;
             const bindingActive = active;
             tab = next; updateTabs();
@@ -252,6 +258,8 @@
                 ({active, model, mode, selected, search, start, listing, revisionsStart, returnFocus, fieldFilter, rowChangeHandler} = state);
                 toolbar.empty().append(state.toolbar); body.empty().append(state.body); say(state.status);
                 if (rowChangeHandler) root.on("hero-mapping-content-change", rowChangeHandler);
+                body.find("[data-field-picker]").trigger("hero-mapping-picker-resume");
+                resumePendingView(state.pendingView, {list: loadList, detail: open});
             } else {
                 active = null; model = null; mode = "active"; selected = 0; search = ""; start = 0; listing = null;
                 revisionsStart = 0; returnFocus = null; fieldFilter = ""; loadList();
@@ -309,7 +317,7 @@
             root.trigger("hero-mapping-content-change");
         }
         async function loadList() {
-            const request = ++epoch; pendingView = true; ruleCache.clear(); active = null; model = null; mode = "active";
+            const request = ++epoch; pendingView = {kind: "list"}; ruleCache.clear(); active = null; model = null; mode = "active";
             rowChangeHandler = null; root.off("hero-mapping-content-change"); toolbar.empty(); body.empty(); say("Loading active mappings…");
             const filter = field("Search active definitions and rules", search, (value) => { search = value; }, toolbar).attr("maxlength", 120);
             const apply = () => { search = filter.val(); start = 0; loadList(); };
@@ -321,7 +329,7 @@
                 listing = result; renderList(); say("");
                 if (returnFocus) { root.find("[data-mapping-name]").filter((_, el) => el.dataset.mappingName === returnFocus).first().trigger("focus"); returnFocus = null; }
             } catch (error) { if (request === epoch && !disposed) { say(errorText(error)); body.append(button("Retry", loadList)); } }
-            finally { if (request === epoch) pendingView = false; }
+            finally { if (request === epoch) pendingView = null; }
         }
         function renderList() {
             body.empty();
@@ -350,7 +358,7 @@
         }
         async function open(item, kind) {
             if (locked()) return;
-            const request = ++epoch; pendingView = true; ruleCache.clear(); body.empty(); toolbar.empty(); say("Loading active definition…");
+            const request = ++epoch; pendingView = {kind: "detail", item, mappingType: kind}; ruleCache.clear(); body.empty(); toolbar.empty(); say("Loading active definition…");
             toolbar.append(button("Back to mappings", () => leave(loadList)));
             try {
                 const detail = await rpc("frontend_mapping_detail", {mapping_type: kind, name: item.name});
@@ -358,7 +366,7 @@
                 active = {...detail, mapping_type: kind}; mode = "active"; model = null; selected = 0; fieldFilter = ""; returnFocus = item.name;
                 renderDetail(); say(""); focusHeading();
             } catch (error) { if (request === epoch && !disposed) say(errorText(error)); }
-            finally { if (request === epoch) pendingView = false; }
+            finally { if (request === epoch) pendingView = null; }
         }
         function content() { return mode === "draft" ? model.content : active.definition || active; }
         function exchangePreviewDialog(entry, originalOpener = document.activeElement) {
@@ -862,7 +870,7 @@
         }
         async function showBindings(offset) {
             if (!admin || !active?.definition_id) return;
-            const request = ++epoch; pendingView = true;
+            const request = ++epoch; pendingView = {kind: "binding"};
             toolbar.empty().append(button("Back to definition", () => switchTab(bindingOrigin)));
             body.empty().append($("<h3></h3>").text(text("Bindings — read only")),
                 $("<p class='text-muted'></p>").text(text("Existing binding identities, mappings and status. This view cannot create, update, synchronize or activate a binding.")));
@@ -888,7 +896,7 @@
                 ));
                 say("");
             } catch (error) { if (!disposed && request === epoch) { say(errorText(error)); body.append(button("Retry", () => showBindings(offset))); } }
-            finally { if (request === epoch) pendingView = false; }
+            finally { if (request === epoch) pendingView = null; }
         }
         async function addReference() {
             const panel = $("<section class='hero-mapping-row-detail'></section>"); body.append(panel);
@@ -918,8 +926,8 @@
         async function picker(side, panel, row = {}) {
             panel.find("[data-field-picker]").remove();
             const pickerHost = $("<section data-field-picker></section>"); panel.append(pickerHost);
-            let seq = 0, fieldStart = 0, frappeCatalog = null;
-            const pickerEpoch = epoch;
+            let seq = 0, fieldStart = 0, frappeCatalog = null, fieldsPending = false, catalogPending = false;
+            let pickerEpoch = epoch;
             const currentPicker = (request) => request === seq && pickerEpoch === epoch && pickerHost[0].isConnected;
             const query = field("Search fields by name, full path or type", "", () => { seq++; results.empty(); }, pickerHost);
             const pickerId = `hero-mapping-picker-${Math.random().toString(36).slice(2)}`;
@@ -931,10 +939,11 @@
             const results = $("<div></div>");
             const mutation = mutationMapping();
             const source = row.reference ? side === "target" : mutation ? side === "source" : side === "target";
+            query.prop("disabled", source);
             pickerHost.append(app, appOptions, doctype, doctypeOptions, catalogState, results);
             const load = async () => {
                 if (source && !doctype.val()) { results.text(text("Choose an app and DocType before searching fields.")); return; }
-                const request = ++seq; results.text(text("Loading fields…"));
+                const request = ++seq; fieldsPending = true; results.text(text("Loading fields…"));
                 try {
                     let fields;
                     if (source && mutationMapping() && !row.reference) {
@@ -971,22 +980,34 @@
                         renderDetail();
                     }).prop("disabled", f.selectable === false)));
                 } catch (error) { if (currentPicker(request)) results.text(errorText(error)); }
+                finally { if (currentPicker(request)) fieldsPending = false; }
             };
             const searchFields = button("Search fields", () => { fieldStart = 0; load(); }).prop("disabled", source);
             pickerHost.append(searchFields, button("Close field search", () => pickerHost.remove()));
-            if (source) results.text(text("Choose an app and DocType before searching fields."));
-            if (!source) { app.hide(); doctype.hide(); query.trigger("focus"); return; }
-            try { const catalogMethod = mutationMapping() && !row.reference ? "writeback_mapper_catalog" : "mapping_target_catalog";
+            const loadCatalog = async () => {
+                const request = ++seq; catalogPending = true;
+                catalogState.text(text("Loading installed-app catalog…"));
+                try { const catalogMethod = mutationMapping() && !row.reference ? "writeback_mapper_catalog" : "mapping_target_catalog";
                 const result = await rpc(catalogMethod, catalogMethod === "writeback_mapper_catalog" ? {snapshot_name: active.schema_snapshot} : {});
-                if (!currentPicker(seq)) return;
+                if (!currentPicker(request)) return;
                 frappeCatalog = result;
-                app.prop("disabled", false); doctype.prop("disabled", false);
+                app.prop("disabled", false); doctype.prop("disabled", false); query.prop("disabled", false);
+                appOptions.empty();
                 result.apps.forEach((item) => appOptions.append($("<option></option>").val(item.app_name || item)));
                 catalogState.text(`${text("Searchable installed-app catalog")}: ${result.apps.length} ${text("apps")}, ${result.doctypes.length} ${text("DocTypes")}.`);
                 app.on("input change", () => { seq++; results.empty(); fieldStart = 0; searchFields.prop("disabled", true); doctype.val(""); doctypeOptions.empty(); const matches = result.doctypes.filter((item) => item.app_name === app.val()); matches.forEach((item) => doctypeOptions.append($("<option></option>").val(item.doctype))); catalogState.text(`${text("Searchable DocTypes")}: ${matches.length}. ${text("Unavailable options remain listed and explain why when selected.")}`); });
                 doctype.on("input change", () => { seq++; results.empty(); fieldStart = 0; const item = result.doctypes.find((candidate) => candidate.app_name === app.val() && candidate.doctype === doctype.val()); searchFields.prop("disabled", !item?.selectable); catalogState.text(item ? `${item.doctype}: ${item.selectable ? text("available") : item.reason || text("unavailable")}` : text("Choose a listed app and DocType.")); });
                 query.trigger("focus");
-            } catch (error) { results.text(errorText(error)); }
+                } catch (error) { if (currentPicker(request)) { query.prop("disabled", false); catalogState.text(errorText(error)); results.text(errorText(error)); } }
+                finally { if (currentPicker(request)) catalogPending = false; }
+            };
+            pickerHost.on("hero-mapping-picker-resume", () => {
+                pickerEpoch = epoch; seq++;
+                if (catalogPending) { catalogPending = false; loadCatalog(); }
+                else if (fieldsPending) { fieldsPending = false; load(); }
+            });
+            if (source) { results.text(text("Choose an app and DocType before searching fields.")); loadCatalog(); }
+            else { app.hide(); doctype.hide(); query.trigger("focus"); }
         }
         const pageUrl = location.href, pageHistoryState = history.state;
         const router = frappe.router, originalRoute = router.route;
@@ -1020,5 +1041,5 @@
         const controller = {beforeLeave: leaveWorkspace, destroy() { shell.removeClass("hero-mapping-shell"); disposed = true; epoch++; window.removeEventListener("beforeunload", unload); if (router.route === guardedRoute) router.route = originalRoute; document.removeEventListener("click", links, true); }};
         current = controller; loadList(); return controller;
     }
-    window.hero_integration_mapping_editor = Object.freeze({mount, DraftState, stable, readActiveRule, exchangeExpectedStates, exchangeCounts, exchangeCanAdopt, isOwnedExportLink, mappingTabs, directionForTab, bindingAccess, selectedPickerApp, hasCurrentDraftBase, canSaveDraft, tabKeyTarget, MappingTabStates});
+    window.hero_integration_mapping_editor = Object.freeze({mount, DraftState, stable, readActiveRule, exchangeExpectedStates, exchangeCounts, exchangeCanAdopt, isOwnedExportLink, mappingTabs, directionForTab, bindingAccess, selectedPickerApp, hasCurrentDraftBase, canSaveDraft, tabKeyTarget, MappingTabStates, resumePendingView});
 })();
