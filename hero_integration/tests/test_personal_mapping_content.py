@@ -19,3 +19,11 @@ class TestPersonalMappingContent(unittest.TestCase):
                       {'source':prior['source']},
                       {**prior,'actor':'Administrator'}):
             with self.assertRaises(MappingDraftError): validate_edits(prior,value)
+
+    def test_browser_integral_float_roundtrip_retains_original_subtrees(self):
+        prior={'extra':{'whole':1.0,'negative_zero':-0.0},'source':{'field':'before','extension':{'whole':1.0}}}
+        submitted={'extra':{'whole':1,'negative_zero':0},'source':{'field':'after','extension':{'whole':1}}}
+        result=validate_edits(prior,submitted)
+        expected=deepcopy(prior);expected['source']['field']='after'
+        self.assertEqual(json.dumps(expected,sort_keys=True),json.dumps(result,sort_keys=True))
+        self.assertIsInstance(result['extra']['whole'],float)

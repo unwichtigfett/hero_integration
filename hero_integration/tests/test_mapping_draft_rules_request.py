@@ -74,10 +74,11 @@ class TestPersonalRulesRequest(base.TestMappingDraftAPIRequest):
         self.assertEqual(active,json.loads(frappe.db.get_value('HERO GraphQL Mapping',self.rows['active'],'mapping_json')))
         self.assertEqual('original_target',frappe.db.get_value('HERO Frappe Mapping',self.rule_name,'target_field'))
         # Fixture-only template change; never a personal-write side effect.
-        frappe.db.set_value('HERO Frappe Mapping',self.rule_name,{'target_field':'later_template','mapping_revision':2})
+        frappe.db.set_value('HERO Frappe Mapping',self.rule_name,{'target_field':'later_template','mapping_revision':2,'operation':'later_template_operation'})
         frappe.db.commit();frappe.destroy()
         history=self.rpc('a','mapping_draft_revisions',{'definition_id':self.definition})[1]['message']
         self.assertEqual(content,history['items'][0]['content'])
+        self.assertEqual('readThings',history['items'][0]['content']['field_rule_bases'][self.rule_id]['operation'])
         status,data=self.rpc('a','mapping_draft_save',self.args_for(saved,content),'POST')
         self.assertEqual(200,status,data);self.assertTrue(data['message']['unchanged'])
         self.assertEqual(saved['content_revision'],data['message']['draft']['content_revision'])
@@ -113,15 +114,17 @@ class TestPersonalRulesRequest(base.TestMappingDraftAPIRequest):
             {'kind':'OBJECT','name':'Query','fields':[{'name':'readThings','args':[],'type':{'kind':'SCALAR','name':'String'}}]},
             {'kind':'OBJECT','name':'Mutation','fields':[{'name':'editSynthetic','args':[{'name':'input','type':{'kind':'INPUT_OBJECT','name':'SyntheticInput'}}],'type':{'kind':'SCALAR','name':'String'}}]},
             {'kind':'INPUT_OBJECT','name':'SyntheticInput','inputFields':[{'name':'field','type':{'kind':'SCALAR','name':'String'}}]}, {'kind':'SCALAR','name':'String'}]}}
-        content={'version':1,'source':{'doctype':'Synthetic Record','field':'source','additional_source':{'keep':False}},
+        content={'version':1,'source':{'doctype':'Synthetic Record','field':'source','additional_source':{'keep':False,'whole_float':1.0}},
             'target':{'operation':'editSynthetic','argument':'input','input_type':'SyntheticInput','field':'field','field_path':'field','graphql_type':'String'},
-            'transformation':'Identity','draft_only':True,'additional_parameter':{'false':False,'zero':0,'empty':'','list':[]}}
+            'transformation':'Identity','draft_only':True,'additional_parameter':{'false':False,'zero':0,'empty':'','list':[],'whole_float':1.0,'negative_zero':-0.0}}
         frappe.db.set_value(snapshot.doctype,snapshot.name,'snapshot_json',json.dumps(schema))
         frappe.db.set_value('HERO GraphQL Mapping',self.rows['active'],{'mapping_json':json.dumps(content),'direction':'FRAPPE_TO_MUTATION','operation_kind':'MUTATION','operation_name':'editSynthetic'})
         frappe.db.commit();frappe.destroy()
         draft=self.create();changed=deepcopy(draft['content']);changed['transformation']='Trim'
-        status,data=self.rpc('a','mapping_draft_save',self.args_for(draft,changed),'POST');self.assertEqual(200,status,data)
-        self.assertEqual(changed,data['message']['draft']['content'])
+        submitted=deepcopy(changed);submitted['additional_parameter']['whole_float']=1;submitted['additional_parameter']['negative_zero']=0;submitted['source']['additional_source']['whole_float']=1
+        status,data=self.rpc('a','mapping_draft_save',self.args_for(draft,submitted),'POST');self.assertEqual(200,status,data)
+        self.assertEqual(json.dumps(changed,sort_keys=True),json.dumps(data['message']['draft']['content'],sort_keys=True))
+        saved=data['message']['draft'];status,noop=self.rpc('a','mapping_draft_save',self.args_for(saved,submitted),'POST');self.assertEqual(200,status,noop);self.assertTrue(noop['message']['unchanged'])
         self.assertEqual(changed,self.rpc('a','mapping_draft_read',{'definition_id':self.definition})[1]['message']['draft']['content'])
         incomplete=deepcopy(changed);incomplete['target']['field']=''
         saved=data['message']['draft'];status,data=self.rpc('a','mapping_draft_save',self.args_for(saved,incomplete),'POST')
