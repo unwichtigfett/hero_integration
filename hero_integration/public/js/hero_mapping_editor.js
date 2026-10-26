@@ -2,14 +2,32 @@
     "use strict";
     if (window.hero_integration_mapping_editor) return;
     const text = (value) => window.hero_integration_i18n?.text(value) ?? String(value);
-    const clone = (value) => JSON.parse(JSON.stringify(value));
-    const stable = (value) => JSON.stringify(value, (_, item) => item && typeof item === "object" && !Array.isArray(item)
+    // Scoped to mapping content: revive original integer tokens from the server's
+    // canonical JSON text, never from a Number that HTTP JSON already rounded.
+    const parseContent = (source) => JSON.parse(source, (_key, value, context) => {
+        if (typeof value !== "number" || Number.isSafeInteger(value)) return value;
+        if (!context?.source) {
+            if (Number.isInteger(value) || !Number.isFinite(value)) throw new Error("This browser cannot preserve mapping JSON numbers.");
+            return value;
+        }
+        if (!/^-?(0|[1-9][0-9]*)$/.test(context.source)) return value;
+        if (typeof JSON.rawJSON !== "function") throw new Error("This browser cannot preserve mapping JSON numbers.");
+        return JSON.rawJSON(context.source);
+    });
+    const clone = (value) => parseContent(JSON.stringify(value));
+    const draftValue = (draft) => {
+        if (!draft) return draft;
+        const value = clone(draft);
+        if (typeof draft.content_json === "string") value.content = parseContent(draft.content_json);
+        return value;
+    };
+    const stable = (value) => JSON.stringify(value, (_, item) => item && typeof item === "object" && !JSON.isRawJSON?.(item) && !Array.isArray(item)
         ? Object.fromEntries(Object.keys(item).sort().map((key) => [key, item[key]])) : item);
     const ownRule = (value, id) => Object.hasOwn(value.field_rules || {}, id) ? value.field_rules[id] : null;
     const object = (value) => value && typeof value === "object" && !Array.isArray(value);
     class DraftState {
         constructor(draft) { this.accept(draft); }
-        accept(draft) { this.saved = clone(draft); this.content = clone(draft.content); this.undo = []; this.blocked = false; }
+        accept(draft) { this.saved = draftValue(draft); this.content = clone(this.saved.content); this.referenceOrder = [...(this.content.mapping_definition_ids || [])]; this.undo = []; this.blocked = false; }
         get dirty() { return stable(this.content) !== stable(this.saved.content); }
         set(path, value) {
             let target = this.content;
@@ -27,10 +45,24 @@
                 delete this.content.source; delete this.content.target;
             }
         }
+        restoreReference(removed) {
+            const ids = this.content.mapping_definition_ids;
+            if (ids.includes(removed.value)) return;
+            const rank = this.referenceOrder.indexOf(removed.value);
+            const next = ids.findIndex((id) => this.referenceOrder.indexOf(id) > rank);
+            ids.splice(next >= 0 ? next : ids.length, 0, removed.value);
+        }
+        addReference(id) {
+            const ids = this.content.mapping_definition_ids;
+            if (ids.includes(id)) return;
+            const index = this.undo.findLastIndex((entry) => entry.kind === "reference" && entry.value === id);
+            if (index >= 0) this.restoreReference(this.undo.splice(index, 1)[0]);
+            else { this.referenceOrder.push(id); ids.push(id); }
+        }
         restore() {
             const removed = this.undo.pop();
             if (!removed) return;
-            if (removed.kind === "reference") this.content.mapping_definition_ids.splice(removed.index, 0, removed.value);
+            if (removed.kind === "reference") this.restoreReference(removed);
             else Object.assign(this.content, removed.value);
         }
         saveArgs() {
@@ -51,6 +83,7 @@
             return stable(value) === stable(submitted);
         }
         resolve(current, submitted) {
+            current = draftValue(current);
             const prior = this.saved;
             if (current?.state === "OPEN" && current.generation === prior.generation &&
                 current.base_active_revision === prior.base_active_revision &&
@@ -64,6 +97,17 @@
         if (response?.exc) throw response;
         return response.message;
     };
+    async function readActiveRule(id, list = (args) => rpc("frontend_mapping_list", args)) {
+        const search = Array.from(id).slice(0, 120).join("");
+        for (let start = 0; start <= 10000; start += 100) {
+            const result = await list({search, start, page_size: 100});
+            const found = result.frappe_mappings.find((rule) => rule.definition_id === id);
+            if (found) return found;
+            if (start + 100 >= result.pagination.frappe_total) return null;
+        }
+        // The API cannot page further: this is incomplete, never a not-found result.
+        throw new Error("Active rule search exceeds the readable page range.");
+    }
     const denied = (error) => [401, 403].includes(error?.status) || /PermissionError|SessionExpired/.test(error?.responseJSON?.exc_type || error?.exc_type || "");
     const errorText = (error) => denied(error) ? text("You do not have permission to view or change this mapping.")
         : text("The request failed. Your changes have been kept.");
@@ -76,7 +120,7 @@
         const admin = Boolean(window.hero_integration_ui?.isSystemManager);
         let disposed = false, epoch = 0, busy = false, model = null, active = null, mode = "active", selected = 0;
         let search = String(context.mapping_search || ""), start = Number(context.mapping_start || 0), listing;
-        let revisionsStart = 0, returnFocus = null, fieldFilter = "";
+        let revisionsStart = 0, returnFocus = null, fieldFilter = "", detailRequest = 0;
         const ruleCache = new Map();
         const button = (label, fn, primary = false) => $("<button type='button'></button>")
             .addClass(primary ? "btn btn-primary btn-sm" : "btn btn-default btn-sm").text(text(label)).on("click", fn);
@@ -121,7 +165,7 @@
             root.trigger("hero-mapping-content-change");
         }
         async function loadList() {
-            const request = ++epoch; active = null; model = null; mode = "active";
+            const request = ++epoch; ruleCache.clear(); active = null; model = null; mode = "active";
             root.off("hero-mapping-content-change"); toolbar.empty(); body.empty(); say("Loading active mappings…");
             const filter = field("Search active definitions and rules", search, (value) => { search = value; }, toolbar).attr("maxlength", 120);
             const apply = () => { search = filter.val(); start = 0; loadList(); };
@@ -160,7 +204,7 @@
         }
         async function open(item, kind) {
             if (locked()) return;
-            const request = ++epoch; body.empty(); toolbar.empty(); say("Loading active definition…");
+            const request = ++epoch; ruleCache.clear(); body.empty(); toolbar.empty(); say("Loading active definition…");
             toolbar.append(button("Back to mappings", () => leave(loadList)));
             try {
                 const detail = await rpc("frontend_mapping_detail", {mapping_type: kind, name: item.name});
@@ -180,7 +224,7 @@
             body.empty().append($("<h3></h3>").text(`${active.operation_name || active.operation} · ${active.name}`),
                 $("<p></p>").text(`${text("Active revision")}: ${active.revision}`));
             if (admin && active.mapping_type === "graphql") {
-                toolbar.append(button("Active version", () => leave(() => { model = null; mode = "active"; renderDetail(); })),
+                toolbar.append(button("Active version", () => leave(() => { epoch++; ruleCache.clear(); model = null; mode = "active"; renderDetail(); })),
                     button("Open my draft", openDraft), button("My saved revisions", () => leave(() => showRevisions(0))));
                 if (mode === "draft") {
                     toolbar.append(button("Save draft", save, true).attr("data-save-draft", ""), button("Discard saved draft", discard));
@@ -219,9 +263,8 @@
             const tableEpoch = epoch;
             list.filter((row) => row.reference && !ownRule(value, row.id) && !ruleCache.has(row.id)).forEach(async (row) => {
                 try {
-                    const result = await rpc("frontend_mapping_list", {search: row.id, start: 0, page_size: 100});
-                    const rule = result.frappe_mappings.find((item) => item.definition_id === row.id);
-                    if (rule && !disposed && tableEpoch === epoch && table[0].isConnected) { ruleCache.set(row.id, rule); drawRows(); }
+                    const rule = await readActiveRule(row.id);
+                    if (rule && !disposed && tableEpoch === epoch && table[0].isConnected && !ruleCache.has(row.id)) { ruleCache.set(row.id, rule); drawRows(); }
                 } catch (_) { /* The reference remains visible; details offer the error context. */ }
             });
             if (!list.length) left.append($("<p></p>").text(text("No field mappings in this definition.")));
@@ -245,6 +288,7 @@
             if (model?.blocked) root.find("[data-save-draft]").prop("disabled", true);
         }
         async function renderRow(row, panel) {
+            const selectionRequest = ++detailRequest;
             panel.empty(); panel.attr("data-row-id", row.id);
             if (row.reference && mode === "draft" && ownRule(model.content, row.id)) {
                 const rule = model.content.field_rules[row.id];
@@ -264,12 +308,11 @@
                 const request = epoch;
                 try {
                     // Definition IDs of field rules are not document names. Resolve using the active list contract.
-                    const result = await rpc("frontend_mapping_list", {search: row.id, start: 0, page_size: 100});
-                    if (disposed || request !== epoch || !panel[0].isConnected || panel.attr("data-row-id") !== row.id) return;
-                    const match = result.frappe_mappings.find((r) => r.definition_id === row.id);
-                    if (match) { ruleCache.set(row.id, match); panel.append(safeJson(match)); }
+                    const match = await readActiveRule(row.id);
+                    if (disposed || request !== epoch || selectionRequest !== detailRequest || !panel[0].isConnected || panel.attr("data-row-id") !== row.id) return;
+                    if (match) { ruleCache.set(row.id, match); root.trigger("hero-mapping-content-change"); panel.append(safeJson(match)); }
                     else panel.append($("<p></p>").text(text("The referenced rule is not visible in these active search results.")));
-                } catch (error) { if (panel[0].isConnected && panel.attr("data-row-id") === row.id) panel.append($("<p></p>").text(errorText(error))); }
+                } catch (error) { if (!disposed && request === epoch && selectionRequest === detailRequest && panel[0].isConnected && panel.attr("data-row-id") === row.id) panel.append($("<p></p>").text(errorText(error))); }
                 return;
             }
             const value = row.value;
@@ -313,12 +356,13 @@
             const state = model, submitted = clone(state.content), request = ++epoch; setBusy(true); say("Saving personal draft…");
             try {
                 const result = await rpc("mapping_draft_save", state.saveArgs(), true);
+                const saved = draftValue(result.draft);
                 if (disposed || request !== epoch) return false;
                 // Backend normalization must not silently erase additional stored parameters.
-                if (!state.matches(result.draft.content, submitted)) {
+                if (!state.matches(saved.content, submitted)) {
                     state.blocked = true; say("The saved content differs from your edits. Your local changes have been kept. Check the saved draft before continuing."); return false;
                 }
-                state.accept(result.draft); say(result.unchanged ? "No changes to save. Personal draft unchanged." : "Personal draft saved. Not validated or activated."); return true;
+                state.accept(saved); say(result.unchanged ? "No changes to save. Personal draft unchanged." : "Personal draft saved. Not validated or activated."); return true;
             } catch (error) {
                 if (disposed || request !== epoch) return false;
                 state.blocked = true;
@@ -377,7 +421,7 @@
                 toolbar.empty().append(button("Back to definition", () => { mode = model ? "draft" : "active"; renderDetail(); }));
                 body.empty().append($("<h3></h3>").text(text("My saved revisions — read only")));
                 if (!result.items.length) body.append($("<p></p>").text(text("No saved personal revisions.")));
-                result.items.forEach((item) => body.append($("<details></details>").append($("<summary></summary>").text(`${text("Generation")} ${item.generation} · ${text("Revision")} ${item.revision}`), safeJson(item.content))));
+                result.items.forEach((item) => body.append($("<details></details>").append($("<summary></summary>").text(`${text("Generation")} ${item.generation} · ${text("Revision")} ${item.revision}`), safeJson(typeof item.content_json === "string" ? parseContent(item.content_json) : item.content))));
                 body.append(button("Previous revisions", () => showRevisions(Math.max(0, revisionsStart - 20))).prop("disabled", !revisionsStart),
                     button("Next revisions", () => showRevisions(revisionsStart + 20)).prop("disabled", revisionsStart + 20 >= result.total)); say("");
             } catch (error) { if (!disposed && request === epoch) say(errorText(error)); }
@@ -394,7 +438,7 @@
                     resultHost.append($("<p></p>").text(`${text("Available rules on this page")}: ${available.length}. ${text("Active search results")}: ${result.pagination.frappe_total}.`));
                     available.forEach((rule) => resultHost.append(button(`${rule.source_path} → ${rule.target_doctype}.${rule.target_field} · ${rule.transformation}`, () => {
                         if (!model.content.mapping_definition_ids.includes(rule.definition_id)) {
-                            model.content.mapping_definition_ids.push(rule.definition_id);
+                            model.addReference(rule.definition_id);
                             if (!model.content.field_rules) model.content.field_rules = {};
                             if (!ownRule(model.content, rule.definition_id)) model.set(["field_rules", rule.definition_id], Object.fromEntries(
                                 ["source_path", "source_type", "target_doctype", "target_field", "purpose", "transformation", "relation", "priority"].map((key) => [key, rule[key] ?? null])));
@@ -487,5 +531,5 @@
         const controller = {beforeLeave: leave, destroy() { shell.removeClass("hero-mapping-shell"); disposed = true; epoch++; window.removeEventListener("beforeunload", unload); if (router.route === guardedRoute) router.route = originalRoute; document.removeEventListener("click", links, true); }};
         current = controller; loadList(); return controller;
     }
-    window.hero_integration_mapping_editor = Object.freeze({mount, DraftState, stable});
+    window.hero_integration_mapping_editor = Object.freeze({mount, DraftState, stable, readActiveRule});
 })();

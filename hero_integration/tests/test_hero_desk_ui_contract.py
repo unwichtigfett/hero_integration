@@ -203,7 +203,7 @@ class TestHeroDeskUiContract(unittest.TestCase):
 
     def test_mapping_editor_has_explicit_save_and_lossless_local_undo(self):
         source = MAPPING_EDITOR_JS.read_text()
-        for contract in ("class DraftState", "JSON.parse(JSON.stringify(value))", "this.undo.push", "this.undo.pop",
+        for contract in ("class DraftState", "parseContent(JSON.stringify(value))", "this.undo.push", "this.undo.pop",
                          "mapping_draft_save", "Save and leave", "Discard changes", "Continue editing",
                          "TimestampMismatchError", "Check saved draft", "beforeunload"):
             self.assertIn(contract, source)

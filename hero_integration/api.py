@@ -1202,7 +1202,9 @@ def _personal_draft_document(definition_id):
 
 def _personal_draft_result(value):
     from dataclasses import asdict
-    return asdict(value)
+    result = asdict(value)
+    result["content_json"] = json.dumps(value.content, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    return result
 
 
 def _personal_draft_doc_result(doc):
@@ -1211,6 +1213,7 @@ def _personal_draft_doc_result(doc):
     return {"draft": {
         "key": doc.draft_key, "site_scope": doc.site_scope, "definition_id": doc.definition_id, "owner": doc.owner_user,
         "generation": int(doc.generation), "state": doc.state, "content": json.loads(doc.content_json),
+        "content_json": doc.content_json,
         "content_hash": doc.content_hash, "content_revision": int(doc.content_revision),
         "base_active_name": doc.base_active_mapping, "base_active_revision": int(doc.base_active_revision),
         "base_active_hash": doc.base_active_hash, "base_schema_fingerprint": doc.base_schema_fingerprint,
@@ -1314,7 +1317,7 @@ def mapping_draft_revisions(definition_id: str, start: int | str = 0, page_size:
     if revision_name and not rows:
         frappe.throw("Personal mapping revision not found.", frappe.DoesNotExistError)
     for row in rows:
-        row["content"] = json.loads(row.pop("content_json"))
+        row["content"] = json.loads(row["content_json"])
     return {"items": rows, "total": frappe.db.count("HERO Mapping Revision", filters), "start": start, "page_size": page_size}
 
 
