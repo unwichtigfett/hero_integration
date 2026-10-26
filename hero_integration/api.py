@@ -1078,7 +1078,7 @@ def frontend_mapping_list(search: str = "", start: int | str = 0, page_size: int
         "HERO GraphQL Mapping",
         filters={"status": "Active"}, or_filters=graphql_search if search else None,
         fields=[
-            "name", "schema_snapshot", "schema_fingerprint", "source_instance", "operation_kind", "operation_name",
+            "name", "definition_id", "schema_snapshot", "schema_fingerprint", "source_instance", "operation_kind", "operation_name",
             "direction", "status", "mapping_revision", "mapping_json",
         ],
         order_by="name asc", limit_start=start, limit=page_size,
@@ -1097,6 +1097,7 @@ def frontend_mapping_list(search: str = "", start: int | str = 0, page_size: int
         "graphql_mappings": [
             {
                 "name": _row_value(row, "name"),
+                "definition_id": _row_value(row, "definition_id"),
                 "schema_snapshot": _row_value(row, "schema_snapshot"),
                 "schema_fingerprint": _row_value(row, "schema_fingerprint"),
                 "source_instance": _row_value(row, "source_instance"),
@@ -1171,7 +1172,7 @@ def frontend_mapping_detail(mapping_type: str, name: str):
     if row.status != "Active":
         frappe.throw("Active mapping not found.", frappe.DoesNotExistError)
     if mapping_type == "graphql":
-        fields = ("name", "schema_snapshot", "schema_fingerprint", "source_instance", "operation_kind", "operation_name", "direction", "status")
+        fields = ("name", "definition_id", "schema_snapshot", "schema_fingerprint", "source_instance", "operation_kind", "operation_name", "direction", "status")
         return {field: row.get(field) for field in fields} | {
             "revision": int(row.mapping_revision or 0),
             "definition": _sanitized_mapping_definition(row.mapping_json),
