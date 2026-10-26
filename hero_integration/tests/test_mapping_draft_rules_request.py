@@ -14,7 +14,7 @@ from hero_integration.services.mapping_draft_service import DraftConflict
 
 def configure():
     base.ROOT=os.environ['HERO_RULES_TEST_ROOT']
-    base.SITES=base.ROOT+'/sites'; base.SITE='mapping06c.localhost'; base.DB='heromapping06c'
+    base.SITES=base.ROOT+'/sites'; base.SITE=os.environ.get('HERO_DRAFT_TEST_SITE','mapping06c.localhost'); base.DB=os.environ.get('HERO_DRAFT_TEST_DB','heromapping06c')
 
 
 def writer(definition, actor, content, barrier, result):
@@ -165,3 +165,40 @@ class TestPersonalRulesRequest(base.TestMappingDraftAPIRequest):
             process.join(10)
             if process.is_alive():process.terminate();process.join(5)
             queue.close();queue.join_thread()
+
+
+    def test_exact_integer_text_transport_noop_edit_history_and_rejected_manipulation(self):
+        content=self.prepare_rules()
+        content['additional_parameter']['integers']=[9007199254740991,9007199254740992,9007199254740993,-9007199254740993,{'nested':9007199254740993}]
+        base.connect();frappe.db.set_value('HERO GraphQL Mapping',self.rows['active'],'mapping_json',json.dumps(content));frappe.db.commit();frappe.destroy()
+        draft=self.create();exact=json.loads(draft['content_json']);self.assertEqual(content['additional_parameter'],exact['additional_parameter'])
+        for number in exact['additional_parameter']['integers'][:4]:self.assertIs(type(number),int)
+        args=self.args_for(draft,exact);args['mapping_json']=draft['content_json']
+        status,result=self.rpc('a','mapping_draft_save',args,'POST');self.assertEqual(200,status,result);self.assertTrue(result['message']['unchanged']);self.assertEqual(draft['content_hash'],result['message']['draft']['content_hash'])
+        exact['field_rules'][self.rule_id]['target_field']='integer-safe-other-edit'
+        status,result=self.rpc('a','mapping_draft_save',self.args_for(draft,exact),'POST');self.assertEqual(200,status,result)
+        saved=result['message']['draft'];self.assertEqual(1,saved['content_revision']);self.assertEqual(exact,json.loads(saved['content_json']))
+        read=self.rpc('a','mapping_draft_read',{'definition_id':self.definition})[1]['message']['draft'];self.assertEqual(saved,read)
+        for number in json.loads(read['content_json'])['additional_parameter']['integers'][:4]:self.assertIs(type(number),int)
+        history=self.rpc('a','mapping_draft_revisions',{'definition_id':self.definition})[1]['message']['items'][0];self.assertEqual(saved['content_json'],history['content_json']);self.assertEqual(saved['content_hash'],history['content_hash'])
+        before=self.state();bad=deepcopy(exact);bad['additional_parameter']['integers'][2]=9007199254740992
+        self.assertEqual(417,self.rpc('a','mapping_draft_save',self.args_for(saved,bad),'POST')[0])
+        injected=self.args_for(saved,exact);injected['content_json']='{}'
+        self.assertEqual(417,self.rpc('a','mapping_draft_save',injected,'POST')[0]);self.assertEqual(before,self.state())
+        status,result=self.rpc('a','mapping_draft_save',self.args_for(saved,exact),'POST');self.assertEqual(200,status,result);self.assertTrue(result['message']['unchanged'])
+
+    def test_long_reference_identities_are_exact_across_active_pages_and_draft_roundtrip(self):
+        content=self.prepare_rules();prefix=('r'+uuid4().hex).ljust(120,'r');ids=[prefix,prefix+'a',prefix+'a'*19+'A',prefix+'a'*19+'B']
+        base.connect();template=frappe.get_doc('HERO Frappe Mapping',self.rule_name).as_dict()
+        for i,identity in enumerate([prefix+'c'+str(n).zfill(19) for n in range(101)]+ids):
+            row=dict(template,name='SYNTHETIC-LONG-'+self.definition+'-'+str(i).zfill(4),definition_id=identity);frappe.get_doc(row).db_insert()
+        content['mapping_definition_ids']=ids;frappe.db.set_value('HERO GraphQL Mapping',self.rows['active'],'mapping_json',json.dumps(content));frappe.db.commit();frappe.destroy()
+        found=[]
+        for start in (0,100):
+            status,result=self.rpc('employee','frontend_mapping_list',{'search':prefix,'start':start,'page_size':100});self.assertEqual(200,status,result);self.assertEqual(105,result['message']['pagination']['frappe_total']);found+=result['message']['frappe_mappings']
+        self.assertEqual(ids,[row['definition_id'] for row in found if row['definition_id'] in ids])
+        detail=self.rpc('employee','frontend_mapping_detail',{'mapping_type':'frappe','name':found[-1]['name']})[1]['message'];self.assertEqual(ids[-1],detail['definition_id'])
+        draft=self.create();self.assertEqual(ids,draft['content']['mapping_definition_ids']);self.assertEqual(set(ids),set(draft['content']['field_rules']))
+        edited=json.loads(draft['content_json']);edited['field_rules'][ids[-1]]['target_field']='last-exact-id'
+        status,result=self.rpc('a','mapping_draft_save',self.args_for(draft,edited),'POST');self.assertEqual(200,status,result);self.assertEqual(edited,json.loads(result['message']['draft']['content_json']))
+        self.assertEqual(403,self.rpc('employee','mapping_draft_read',{'definition_id':self.definition})[0])

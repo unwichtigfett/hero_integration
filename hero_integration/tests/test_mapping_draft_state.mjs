@@ -74,3 +74,31 @@ test('browser numeric serialization preserves no-op and strict boolean response 
  const altered=JSON.parse(JSON.stringify(draft.content)); altered.additional_parameter.flag=0;
  assert.equal(state.matches(altered,submitted),false);
 });
+
+
+test('exact integer tokens survive raw HTTP content, no-op, edits and read recovery', () => {
+ const raw='{"records_path":"before","extra":{"safe":9007199254740991,"edge":9007199254740992,"positive":9007199254740993,"negative":-9007199254740993,"nested":[9007199254740993]}}';
+ const draft={...fixture(),content:JSON.parse(raw),content_json:raw};
+ const state=new DraftState(draft); assert.equal(state.dirty,false);
+ assert.match(state.saveArgs().mapping_json,/"positive":9007199254740993/);
+ assert.match(state.saveArgs().mapping_json,/"negative":-9007199254740993/);
+ state.set(['records_path'],'after');const submitted=state.content;
+ const saved={...draft,content_revision:4,content:JSON.parse(raw.replace('before','after')),content_json:raw.replace('before','after')};
+ assert.equal(state.resolve(saved,submitted),true);assert.equal(state.dirty,false);
+ assert.match(state.saveArgs().mapping_json,/"nested":\[9007199254740993\]/);
+});
+test('re-adding removed identities consumes their Undo without overwriting private edits', () => {
+ const d=fixture();d.content.field_rules={a:{target_field:'initial'}};
+ const s=new DraftState(d);s.remove(0);s.remove(0);s.set(['field_rules','a','target_field'],'current');
+ s.addReference('a');assert.equal(s.undo.length,1);s.restore();
+ assert.equal(stable(s.content.mapping_definition_ids),stable(['a','b','c']));
+ assert.equal(s.content.field_rules.a.target_field,'current');assert.equal(new Set(s.content.mapping_definition_ids).size,3);
+ s.remove(1);s.blocked=true;const before=stable(s.content);assert.equal(s.undo.length,1);assert.equal(stable(s.content),before);
+ s.restore();assert.equal(stable(s.content.mapping_definition_ids),stable(['a','b','c']));
+ const two=new DraftState({...fixture(),content:{mapping_definition_ids:['a','b']}});two.remove(0);two.remove(0);two.addReference('a');two.restore();assert.equal(stable(two.content.mapping_definition_ids),stable(['a','b']));
+});
+test('long active rule IDs resolve exactly after multiple prefix pages',async()=>{
+ const resolveRule=window.hero_integration_mapping_editor.readActiveRule;
+ const prefix='r'.repeat(120), ids=[prefix,prefix+'a',prefix+'a'.repeat(19)+'A',prefix+'a'.repeat(19)+'B'];
+ for(const id of ids){const calls=[];const found=await resolveRule(id,async(args)=>{calls.push(args);assert.ok(args.search.length<=120);return args.start===0?{frappe_mappings:[{definition_id:prefix+'wrong'}],pagination:{frappe_total:101}}:{frappe_mappings:[{definition_id:id,target_field:id.slice(-1)}],pagination:{frappe_total:101}};});assert.equal(found.definition_id,id);assert.equal(calls.length,2);assert.equal(calls[1].start,100);}
+});
