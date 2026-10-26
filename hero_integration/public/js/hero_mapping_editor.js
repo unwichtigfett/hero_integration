@@ -155,6 +155,8 @@
         const say = (value) => status.text(text(value));
         const focusHeading = () => root.find("h2").trigger("focus");
         const locked = () => busy || disposed;
+        const mutationMapping = (value = {}) => [value, active || {}].some((candidate) =>
+            candidate.operation_kind === "MUTATION" || candidate.direction === "FRAPPE_TO_MUTATION");
         const setBusy = (value) => { busy = value; root.attr("aria-busy", String(value)); root.find("button,input,select,textarea").prop("disabled", value); };
         const field = (label, value, change, parent = body) => {
             const input = $("<input class='form-control'>").val(value ?? "").prop("disabled", busy);
@@ -260,7 +262,9 @@
                     if (model.blocked) toolbar.append(button("Check saved draft", reconcile), button("Reload saved draft", reloadDraft));
                 }
             }
+            if (admin && active.definition_id) toolbar.append(button("Bindings", () => leave(() => showBindings(0))));
             const value = content();
+            renderContext(value);
             const list = rows(value);
             const grid = $("<div class='hero-mapping-editor-grid'></div>");
             const left = $("<section class='hero-mapping-table-wrap'></section>");
@@ -315,6 +319,26 @@
             updateDirty(); if (busy) root.find("button,input,select,textarea").prop("disabled", true);
             if (model?.blocked) root.find("[data-save-draft]").prop("disabled", true);
         }
+        function renderContext(value) {
+            const mutation = mutationMapping(value);
+            const sourceTitle = mutation ? "Source Frappe" : "Source HERO";
+            const targetTitle = mutation ? "Target HERO" : "Target Frappe";
+            const sourceLines = mutation
+                ? [["Installed app", value.source?.app || "—"], ["DocType", value.source?.doctype || "—"], ["Field", value.source?.field || "—"]]
+                : [["Validated schema snapshot", active.schema_snapshot || "—"], ["Query / operation", active.operation_name || value.operation_name || "—"], ["Object / path", value.records_path || value.record_path || value.source_path || "—"]];
+            const targetLines = mutation
+                ? [["Mutation", active.operation_name || value.target?.operation || "—"], ["Argument / input path", value.target?.argument || "—"], ["Input field", value.target?.field_path || value.target?.field || "—"]]
+                : [["Installed app", value.target?.app || "—"], ["DocType", value.target?.doctype || "—"], ["Field", value.target?.field || value.target_field || "—"]];
+            const context = $("<section class='hero-mapping-context' aria-label='Mapping context'></section>")
+                .append($("<h4></h4>").text(text(mutation ? "Mutation mapping context" : "Query mapping context")));
+            const pane = (title, lines) => {
+                const section = $("<section class='hero-mapping-context-pane'></section>").append($("<h5></h5>").text(text(title)));
+                lines.forEach(([label, value]) => section.append($("<p></p>").append($("<strong></strong>").text(`${text(label)}: `), document.createTextNode(String(value)))));
+                return section;
+            };
+            context.append(pane(sourceTitle, sourceLines), pane(targetTitle, targetLines));
+            body.append(context);
+        }
         async function renderRow(row, panel) {
             const selectionRequest = ++detailRequest;
             panel.empty(); panel.attr("data-row-id", row.id);
@@ -346,8 +370,9 @@
             const value = row.value;
             panel.append($("<h4></h4>").text(text("Field mapping details")));
             if (mode !== "draft" || panel.attr("data-editable") !== "true") { panel.append(safeJson(value)); return; }
-            for (const [label, path] of [["Source DocType", ["source", "doctype"]], ["Source field", ["source", "field"]],
-                ["Target argument", ["target", "argument"]], ["Target field path", ["target", Object.hasOwn(value.target || {}, "field_path") ? "field_path" : "field"]],
+            const mutation = mutationMapping(value);
+            for (const [label, path] of [[mutation ? "Source Frappe DocType" : "Source HERO DocType", ["source", "doctype"]], [mutation ? "Source Frappe field" : "Source HERO field", ["source", "field"]],
+                [mutation ? "Target HERO argument" : "Target Frappe argument", ["target", "argument"]], [mutation ? "Target HERO input field" : "Target Frappe field path", ["target", Object.hasOwn(value.target || {}, "field_path") ? "field_path" : "field"]],
                 ["Transformation", ["transformation"]]]) {
                 const v = path.reduce((a, key) => a?.[key], value);
                 if (v !== undefined && typeof v !== "string") { panel.append($("<p></p>").text(`${label}: ${text("Configured special rule; preserved unchanged")}`)); continue; }
@@ -518,6 +543,35 @@
                     button("Next revisions", () => showRevisions(revisionsStart + 20)).prop("disabled", revisionsStart + 20 >= result.total)); say("");
             } catch (error) { if (!disposed && request === epoch) say(errorText(error)); }
         }
+        async function showBindings(offset) {
+            if (!admin || !active?.definition_id) return;
+            const request = ++epoch;
+            toolbar.empty().append(button("Back to definition", () => { mode = model ? "draft" : "active"; renderDetail(); }));
+            body.empty().append($("<h3></h3>").text(text("Bindings — read only")),
+                $("<p class='text-muted'></p>").text(text("Existing binding identities, mappings and status. This view cannot create, update, synchronize or activate a binding.")));
+            say("Loading bindings…");
+            try {
+                const result = await rpc("frontend_mapping_bindings", {definition_id: active.definition_id, start: offset, page_size: 20});
+                if (disposed || request !== epoch) return;
+                if (!result.items.length) body.append($("<p></p>").text(text("No existing bindings use this mapping definition.")));
+                result.items.forEach((item) => {
+                    const summary = `${item.direction} · ${item.source_instance}.${item.source_field} → ${item.target_doctype}.${item.target_field} · ${item.sync_state || "UNACKNOWLEDGED"}`;
+                    const detail = $("<details class='hero-mapping-binding'></details>").append($("<summary></summary>").text(summary));
+                    detail.append(safeJson({identity_key: item.identity_key, object_binding: item.object_binding,
+                        mapping_definition_id: item.mapping_definition_id, mapping_revision: item.mapping_revision,
+                        binding_revision: item.binding_revision, acknowledged_version: item.acknowledged_version,
+                        object: item.object || null}));
+                    body.append(detail);
+                });
+                const p = result.pagination;
+                body.append($("<div class='hero-mapping-actions'></div>").append(
+                    button("Previous bindings", () => showBindings(Math.max(0, p.start - p.page_size))).prop("disabled", !p.start),
+                    $("<span></span>").text(`${text("Bindings")} ${p.total ? p.start + 1 : 0}–${Math.min(p.start + p.page_size, p.total)} / ${p.total}`),
+                    button("Next bindings", () => showBindings(p.start + p.page_size)).prop("disabled", p.start + p.page_size >= p.total),
+                ));
+                say("");
+            } catch (error) { if (!disposed && request === epoch) { say(errorText(error)); body.append(button("Retry", () => showBindings(offset))); } }
+        }
         async function addReference() {
             const panel = $("<section class='hero-mapping-row-detail'></section>"); body.append(panel);
             const query = field("Search existing active field rules", "", () => {}, panel);
@@ -546,29 +600,41 @@
         async function picker(side, panel, row = {}) {
             const pickerHost = $("<section></section>"); panel.append(pickerHost);
             const query = field("Search fields by name, full path or type", "", () => {}, pickerHost);
-            const app = $("<select class='form-control' aria-label='App'></select>"), doctype = $("<select class='form-control' aria-label='DocType'></select>");
-            const results = $("<div></div>"); let seq = 0, fieldStart = 0;
-            const source = row.reference ? side === "target" : side === "source"; pickerHost.append(app, doctype, results);
+            const pickerId = `hero-mapping-picker-${Math.random().toString(36).slice(2)}`;
+            const app = $("<input class='form-control' aria-label='App' autocomplete='off'>").attr("list", `${pickerId}-apps`);
+            const doctype = $("<input class='form-control' aria-label='DocType' autocomplete='off'>").attr("list", `${pickerId}-doctypes`);
+            const appOptions = $("<datalist></datalist>").attr("id", `${pickerId}-apps`);
+            const doctypeOptions = $("<datalist></datalist>").attr("id", `${pickerId}-doctypes`);
+            const catalogState = $("<p class='text-muted'></p>");
+            const results = $("<div></div>"); let seq = 0, fieldStart = 0, frappeCatalog = null;
+            const source = row.reference ? side === "target" : side === "source"; pickerHost.append(app, appOptions, doctype, doctypeOptions, catalogState, results);
             const load = async () => {
                 if (source && !doctype.val()) { results.text(text("Choose an app and DocType before searching fields.")); return; }
                 const request = ++seq; results.text(text("Loading fields…"));
                 try {
                     let fields;
-                    if (source) { const result = await rpc("mapping_target_picker_page", {operation: active.operation_name, app_name: app.val() || "", target_doctype: doctype.val() || "", search: query.val(), start: fieldStart, page_size: 50}); fields = result.items; if (request !== seq || !pickerHost[0].isConnected) return; results.text(`${fieldStart + 1}–${fieldStart + fields.length} / ${result.total}`); results.append(button("Previous fields", () => { fieldStart = Math.max(0, fieldStart - 50); load(); }).prop("disabled", !fieldStart), button("Next fields", () => { fieldStart += 50; load(); }).prop("disabled", fieldStart + 50 >= result.total)); }
+                    if (source && mutationMapping() && !row.reference) {
+                        const available = (frappeCatalog?.fields || []).filter((field) => field.app_name === app.val() && field.doctype === doctype.val() && `${field.path} ${field.label} ${field.fieldtype} ${field.description || ""}`.toLowerCase().includes(query.val().toLowerCase()));
+                        fields = available.slice(fieldStart, fieldStart + 50);
+                        results.text(`${available.length ? fieldStart + 1 : 0}–${Math.min(fieldStart + fields.length, available.length)} / ${available.length}`);
+                        results.append(button("Previous fields", () => { fieldStart = Math.max(0, fieldStart - 50); load(); }).prop("disabled", !fieldStart), button("Next fields", () => { fieldStart += 50; load(); }).prop("disabled", fieldStart + 50 >= available.length));
+                    } else if (source) { const result = await rpc("mapping_target_catalog_page", {app_name: app.val() || "", doctype: doctype.val() || "", search: query.val(), start: fieldStart, page_size: 50}); fields = result.items; if (request !== seq || !pickerHost[0].isConnected) return; results.text(`${result.total ? fieldStart + 1 : 0}–${Math.min(fieldStart + fields.length, result.total)} / ${result.total}`); results.append(button("Previous fields", () => { fieldStart = Math.max(0, fieldStart - 50); load(); }).prop("disabled", !fieldStart), button("Next fields", () => { fieldStart += 50; load(); }).prop("disabled", fieldStart + 50 >= result.total)); }
                     else if (row.reference) {
                         const result = await rpc("mapping_source_picker_page", {snapshot_name: active.schema_snapshot, operation: model.content.target_operation || active.operation_name,
                             search: query.val(), start: fieldStart, page_size: 50});
                         if (request !== seq || !pickerHost[0].isConnected) return;
-                        fields = result.items; results.text(`${fieldStart + 1}–${fieldStart + fields.length} / ${result.total}`);
+                        fields = result.items; results.text(`${result.total ? fieldStart + 1 : 0}–${Math.min(fieldStart + fields.length, result.total)} / ${result.total}`);
                         results.append(button("Previous fields", () => { fieldStart = Math.max(0, fieldStart - 50); load(); }).prop("disabled", !fieldStart),
                             button("Next fields", () => { fieldStart += 50; load(); }).prop("disabled", fieldStart + 50 >= result.total));
                     }
                     else { const catalog = await rpc("schema_operation_catalog", {snapshot_name: active.schema_snapshot, operation_kind: active.operation_kind});
                         const operation = catalog.find((v) => v.operation_name === active.operation_name);
-                        fields = Object.entries(operation?.input_fields || {}).flatMap(([argument, list]) => list.map((f) => ({...f, argument, fieldtype: f.type})));
-                        const needle = query.val().toLowerCase(); fields = fields.filter((v) => `${v.argument}.${v.path} ${v.type}`.toLowerCase().includes(needle)); if (request !== seq || !pickerHost[0].isConnected) return; results.empty(); }
+                        const all = Object.entries(operation?.input_fields || {}).flatMap(([argument, list]) => list.map((f) => ({...f, argument, fieldtype: f.type})));
+                        const needle = query.val().toLowerCase(); const matched = all.filter((v) => `${v.argument}.${v.path} ${v.type}`.toLowerCase().includes(needle));
+                        fields = matched.slice(fieldStart, fieldStart + 50); results.text(`${matched.length ? fieldStart + 1 : 0}–${Math.min(fieldStart + fields.length, matched.length)} / ${matched.length}`);
+                        results.append(button("Previous fields", () => { fieldStart = Math.max(0, fieldStart - 50); load(); }).prop("disabled", !fieldStart), button("Next fields", () => { fieldStart += 50; load(); }).prop("disabled", fieldStart + 50 >= matched.length)); }
                     if (request !== seq || !pickerHost[0].isConnected) return;
-                    fields.forEach((f) => results.append(button(`${f.argument ? f.argument + "." : ""}${f.path} · ${f.fieldtype}`, () => {
+                    fields.forEach((f) => results.append(button(`${f.argument ? f.argument + "." : ""}${f.path} · ${f.fieldtype || f.type}${f.nullable === false ? " · required" : ""}${f.select_options?.length ? ` · enum: ${f.select_options.join(", ")}` : ""}${f.selectable === false ? ` · unavailable: ${f.reason || "not permitted"}` : ""}`, () => {
                         if (row.reference) {
                             if (source) { model.set(["field_rules", row.id, "target_doctype"], f.target_doctype || doctype.val()); model.set(["field_rules", row.id, "target_field"], f.path); }
                             else { model.set(["field_rules", row.id, "source_path"], f.path); model.set(["field_rules", row.id, "source_type"], f.mapping_type || f.fieldtype); }
@@ -576,19 +642,21 @@
                         else if (source) { model.set(["source", "doctype"], f.target_doctype || doctype.val()); model.set(["source", "field"], f.path); }
                         else { model.set(["target", "argument"], f.argument); model.set(["target", "operation"], active.operation_name); model.set(["target", "field"], f.path); if (Object.hasOwn(model.content.target, "field_path")) model.set(["target", "field_path"], f.path); model.set(["target", "graphql_type"], f.type); }
                         renderDetail();
-                    })));
+                    }).prop("disabled", f.selectable === false)));
                 } catch (error) { if (request === seq && pickerHost[0].isConnected) results.text(errorText(error)); }
             };
             const searchFields = button("Search fields", () => { fieldStart = 0; load(); }).prop("disabled", source);
             pickerHost.append(searchFields, button("Close field search", () => pickerHost.remove()));
             if (source) results.text(text("Choose an app and DocType before searching fields."));
             if (!source) { app.hide(); doctype.hide(); query.trigger("focus"); return; }
-            try { const result = await rpc("mapping_target_catalog");
+            try { const catalogMethod = mutationMapping() && !row.reference ? "writeback_mapper_catalog" : "mapping_target_catalog";
+                const result = await rpc(catalogMethod, catalogMethod === "writeback_mapper_catalog" ? {snapshot_name: active.schema_snapshot} : {});
                 if (!pickerHost[0].isConnected) return;
-                app.append($("<option></option>").val("").text(text("Choose an app")));
-                result.apps.forEach((item) => app.append($("<option></option>").val(item.app_name || item).text(item.app_name || item)));
-                app.on("change", () => { searchFields.prop("disabled", true); doctype.empty().append($("<option></option>").val("").text(text("Choose a DocType"))); result.doctypes.filter((item) => item.app_name === app.val()).forEach((item) => doctype.append($("<option></option>").val(item.doctype).text(item.doctype).prop("disabled", !item.selectable).attr("title", item.reason || ""))); });
-                doctype.on("change", () => searchFields.prop("disabled", !doctype.val()));
+                frappeCatalog = result;
+                result.apps.forEach((item) => appOptions.append($("<option></option>").val(item.app_name || item)));
+                catalogState.text(`${text("Searchable installed-app catalog")}: ${result.apps.length} ${text("apps")}, ${result.doctypes.length} ${text("DocTypes")}.`);
+                app.on("input change", () => { fieldStart = 0; searchFields.prop("disabled", true); doctype.val(""); doctypeOptions.empty(); const matches = result.doctypes.filter((item) => item.app_name === app.val()); matches.forEach((item) => doctypeOptions.append($("<option></option>").val(item.doctype))); catalogState.text(`${text("Searchable DocTypes")}: ${matches.length}. ${text("Unavailable options remain listed and explain why when selected.")}`); });
+                doctype.on("input change", () => { const item = result.doctypes.find((candidate) => candidate.app_name === app.val() && candidate.doctype === doctype.val()); searchFields.prop("disabled", !item?.selectable); catalogState.text(item ? `${item.doctype}: ${item.selectable ? text("available") : item.reason || text("unavailable")}` : text("Choose a listed app and DocType.")); });
                 query.trigger("focus");
             } catch (error) { results.text(errorText(error)); }
         }

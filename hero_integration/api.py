@@ -1026,7 +1026,7 @@ def _row_value(row: object, field: str, default: object = "") -> object:
 
 
 _FRONTEND_MAPPING_KEYS = frozenset({
-    "alias", "doctype", "field", "graphql_type", "identity_path", "kind", "mapping_definition_id",
+    "alias", "app", "argument", "doctype", "field", "field_path", "graphql_type", "identity_path", "input_type", "kind", "mapping_definition_id",
     "mapping_definition_ids", "missing", "operation", "operation_name", "path", "purpose", "record_path",
     "records_path", "relation", "result_bindings", "selected_paths", "source", "source_path", "target",
     "target_field", "target_operation", "transform", "transformation", "type",
@@ -1180,6 +1180,70 @@ def frontend_mapping_detail(mapping_type: str, name: str):
     fields = ("name", "definition_id", "operation", "source_path", "source_type", "target_doctype", "target_field",
               "purpose", "transformation", "relation", "priority", "status", "schema_snapshot", "schema_fingerprint")
     return {field: row.get(field) for field in fields} | {"revision": int(row.mapping_revision or 0)}
+
+
+@frappe.whitelist(methods=["GET"])
+def frontend_mapping_bindings(
+    definition_id: str, start: int | str = 0, page_size: int | str = 20,
+) -> dict[str, object]:
+    """Read the existing, site-scoped binding contract without changing it.
+
+    Bindings contain target-record identities and are consequently an
+    administrative read surface.  The Mapping editor uses this narrow
+    projection rather than a new binding model or direct DocType CRUD.
+    """
+    frappe.only_for("System Manager")
+    _mapping_request_fields({"definition_id", "start", "page_size"})
+    definition_id = _mapping_text(definition_id, "definition_id")
+    start, page_size = _mapping_int(start, "start", 0, 10000), _mapping_int(page_size, "page_size", 1, 100)
+    filters = {"site_scope": frappe.local.site, "mapping_definition_id": definition_id}
+    rows = frappe.get_all(
+        "HERO Field Binding", filters=filters,
+        fields=[
+            "identity_key", "object_binding", "source_instance", "source_field", "target_app",
+            "target_doctype", "target_name", "target_field", "mapping_definition_id",
+            "mapping_revision", "direction", "binding_revision", "sync_state", "acknowledged_version",
+        ],
+        order_by="identity_key asc", limit_start=start, limit=page_size,
+    )
+    object_keys = sorted({str(_row_value(row, "object_binding")) for row in rows if _row_value(row, "object_binding")})
+    objects = frappe.get_all(
+        "HERO Object Binding",
+        filters={"site_scope": frappe.local.site, "identity_key": ["in", object_keys]},
+        fields=[
+            "identity_key", "source_instance", "object_type", "external_object_id", "target_app",
+            "target_doctype", "target_name", "mapping_definition_id", "mapping_revision",
+            "binding_revision", "lifecycle",
+        ],
+        order_by="identity_key asc",
+    ) if object_keys else []
+    parent_by_key = {
+        str(_row_value(row, "identity_key")): {
+            field: _row_value(row, field)
+            for field in (
+                "identity_key", "source_instance", "object_type", "external_object_id", "target_app",
+                "target_doctype", "target_name", "mapping_definition_id", "mapping_revision",
+                "binding_revision", "lifecycle",
+            )
+        }
+        for row in objects
+    }
+    item_fields = (
+        "identity_key", "object_binding", "source_instance", "source_field", "target_app", "target_doctype",
+        "target_name", "target_field", "mapping_definition_id", "mapping_revision", "direction",
+        "binding_revision", "sync_state", "acknowledged_version",
+    )
+    return {
+        "items": [
+            {field: _row_value(row, field) for field in item_fields}
+            | {"object": parent_by_key.get(str(_row_value(row, "object_binding")))}
+            for row in rows
+        ],
+        "pagination": {
+            "start": start, "page_size": page_size,
+            "total": int(frappe.db.count("HERO Field Binding", filters=filters)),
+        },
+    }
 
 
 def _personal_draft_identity(definition_id):
@@ -1853,6 +1917,27 @@ def mapping_target_catalog(app_name: str = "", search: str = "") -> dict[str, ob
     from hero_integration.services.frappe_mapping_catalog import catalog
 
     return catalog(_FrappePickerMetadata(), app_name, search)
+
+
+@frappe.whitelist(methods=["GET"])
+def mapping_target_catalog_page(
+    app_name: str = "", doctype: str = "", search: str = "", start: int | str = 0, page_size: int | str = 50,
+) -> dict[str, object]:
+    """Page the existing installed-app field catalog without suggesting a mapping."""
+    frappe.only_for("System Manager")
+    _mapping_request_fields({"app_name", "doctype", "search", "start", "page_size"})
+    app_name = _mapping_text(app_name, "app_name", 140, allow_empty=True)
+    doctype = _mapping_text(doctype, "doctype", 140, allow_empty=True)
+    search = _mapping_text(search, "search", 120, allow_empty=True)
+    start, page_size = _mapping_int(start, "start", 0, 10000), _mapping_int(page_size, "page_size", 1, 50)
+    from hero_integration.services.frappe_mapping_catalog import fields
+
+    entries = fields(_FrappePickerMetadata(), app_name, doctype, search)
+    return {
+        "items": [entry.__dict__ for entry in entries[start:start + page_size]],
+        "total": len(entries), "start": start, "page_size": page_size,
+        "has_more": start + page_size < len(entries),
+    }
 
 
 @frappe.whitelist()
