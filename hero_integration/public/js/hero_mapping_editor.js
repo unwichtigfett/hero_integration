@@ -331,6 +331,73 @@
             } catch (error) { if (request === epoch && !disposed) { say(errorText(error)); body.append(button("Retry", loadList)); } }
             finally { if (request === epoch) pendingView = null; }
         }
+        function renderSchemaExplorer() {
+            if (!admin) return;
+            let viewEpoch = epoch, request = 0, suggestionRequest = 0;
+            const viewTab = tab, section = $("<details class='hero-mapping-schema-explorer' data-field-picker></details>").append($('<summary></summary>').text(text('Inspect saved schema')));
+            const snapshot = $("<select class='form-control' aria-label='Saved schema snapshot'></select>");
+            const operations = $("<select class='form-control' aria-label='Schema operation'></select>");
+            const info = $("<p role='status'></p>"), limitNotice = $("<p role='status'></p>"), details = $('<pre></pre>');
+            const source = $("<input class='form-control' aria-label='HERO source path'>"), target = $("<input class='form-control' aria-label='Target DocType (optional)'>");
+            const currentView = (number) => !disposed && epoch === viewEpoch && tab === viewTab && number === request && section[0].isConnected;
+            const resetOperations = () => operations.empty().append($('<option></option>').val('').text(text('Choose an operation'))).prop('disabled', true);
+            const resetSnapshots = () => snapshot.empty().append($('<option></option>').val('').text(text('Choose a validated snapshot'))).prop('disabled', true);
+            resetSnapshots(); resetOperations();
+            const suggestions = button('Show field suggestions', async () => {
+                const snapshotName = snapshot.val(), operation = operations.val(), sourcePath = source.val().trim();
+                if (!snapshotName || !operation || !sourcePath || snapshot.prop('disabled') || operations.prop('disabled')) return info.text(text('Choose a snapshot and query operation and enter a source path.'));
+                const serial = request, suggestionSerial = ++suggestionRequest; info.text(text('Loading suggestions…'));
+                try {
+                    const result = await rpc('mapping_suggestions', {snapshot_name: snapshotName, operation, source_path: sourcePath, target_doctype: target.val().trim()});
+                    if (currentView(serial) && suggestionSerial === suggestionRequest) { details.text(JSON.stringify(result, null, 2)); info.text(text('Suggestions are read only.')); }
+                } catch (error) { if (currentView(serial) && suggestionSerial === suggestionRequest) info.text(errorText(error)); }
+            });
+            async function loadOperations(name, preferred = '') {
+                const serial = ++request; suggestionRequest++; resetOperations(); details.empty();
+                if (!name) { info.text(text('Choose a validated snapshot.')); return; }
+                info.text(text('Loading schema operations…'));
+                try {
+                    const result = await rpc('schema_operation_catalog', {snapshot_name: name, operation_kind: viewTab === 'Query' ? 'QUERY' : 'MUTATION'});
+                    if (!currentView(serial)) return;
+                    result.forEach((item) => operations.append($('<option></option>').val(item.operation_name).text(`${item.operation_name} → ${item.return_type || 'unknown'}`)));
+                    operations.prop('disabled', false); info.text(text('Choose an operation to inspect its schema.'));
+                    operations.off('change').on('change', () => { suggestionRequest++; const item = result.find((row) => row.operation_name === operations.val()); details.text(item ? JSON.stringify(item, null, 2) : ''); info.text(text('Suggestions are read only; select Show field suggestions to load them.')); });
+                    if (preferred && result.some((item) => item.operation_name === preferred)) operations.val(preferred).trigger('change');
+                } catch (error) { if (currentView(serial)) info.text(errorText(error)); }
+            }
+            async function loadSnapshots(preferredSnapshot = '', preferredOperation = '') {
+                const serial = ++request; suggestionRequest++; resetSnapshots(); resetOperations(); details.empty();
+                info.text(text('Loading saved snapshots…')); limitNotice.empty();
+                try {
+                    const result = await rpc('schema_snapshot_list', {});
+                    if (!currentView(serial)) return;
+                    const valid = result.filter((row) => row.analysis_status === 'Validated');
+                    if (result.length >= 100) limitNotice.text(text('Only the first 100 saved snapshots are returned; this list may be incomplete.'));
+                    if (preferredSnapshot && !valid.some((row) => row.name === preferredSnapshot)) {
+                        limitNotice.text(`${limitNotice.text()} ${text('The previously selected snapshot is not available in this result. Select a validated snapshot again.')}`.trim());
+                    }
+                    valid.forEach((row) => snapshot.append($('<option></option>').val(row.name).text(row.name)));
+                    snapshot.prop('disabled', false); info.text(text('Choose a validated snapshot.'));
+                    if (preferredSnapshot && valid.some((row) => row.name === preferredSnapshot)) {
+                        snapshot.val(preferredSnapshot); await loadOperations(preferredSnapshot, preferredOperation);
+                    }
+                } catch (error) { if (currentView(serial)) info.text(errorText(error)); }
+            }
+            snapshot.on('change', () => loadOperations(snapshot.val()));
+            source.add(target).on('input', () => { suggestionRequest++; details.empty(); info.text(text('Select Show field suggestions to load the current inputs.')); });
+            section.append(snapshot, operations, info, limitNotice, details);
+            if (viewTab === 'Query') section.append(source, target, suggestions);
+            section.append(button('Retry saved schema', () => loadSnapshots(snapshot.val(), operations.val())));
+            section.append(button('Open Graph Viewer', () => {
+                const name = snapshot.val(); if (!name || snapshot.prop('disabled')) return info.text(text('Choose a validated snapshot.'));
+                leaveWorkspace(() => window.hero_integration_ui.setRoute('api', {hero_tool: 'graph', snapshot: name}));
+            }));
+            section.on('hero-mapping-picker-resume', () => {
+                const name = snapshot.val() || '', operation = operations.val() || '';
+                viewEpoch = epoch; loadSnapshots(name, operation);
+            });
+            body.append(section); loadSnapshots();
+        }
         function renderList() {
             body.empty();
             const p = listing.pagination;
@@ -355,6 +422,7 @@
                 $("<span></span>").text(`${text("Page")} ${Math.floor(start / 20) + 1}`),
                 button("Next page", () => { start += 20; loadList(); }).prop("disabled", start + 20 >= Math.max(p.graphql_total, p.frappe_total) || start >= 10000));
             body.append(pager);
+            renderSchemaExplorer();
         }
         async function open(item, kind) {
             if (locked()) return;
