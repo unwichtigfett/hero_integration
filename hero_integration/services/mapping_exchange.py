@@ -33,8 +33,30 @@ def export_json(snapshot_name: str) -> str:
         fields=[*EXPORTED_FIELDS, "schema_manifest"],
         order_by="operation asc, priority asc, definition_id asc",
     )
-    schema = None
-    canonical_manifest = None
+    schema = _merge_export_schemas(mappings)
+    exported = [_exportable(row) for row in mappings]
+    from hero_integration.services.schema_provisioning import _target_dependency
+    checklist_ids = {item["id"] for group in schema.values() for item in group}
+    for item in exported:
+        dependencies = item["schema_dependencies"]
+        required = _target_dependency(schema, item)
+        if any(dependency not in checklist_ids for dependency in dependencies) or (required and required not in dependencies):
+            raise MappingExchangeError("Mapping export contains invalid schema dependencies.")
+    payload = {
+        "format_version": FORMAT_VERSION,
+        "schema_fingerprint": snapshot.schema_fingerprint,
+        "schema": schema,
+        "mappings": exported,
+    }
+    return _canonical_json(payload)
+
+
+def _merge_export_schemas(mappings) -> dict[str, list[object]]:
+    """Union identical declarations, then validate the complete exported schema."""
+    from hero_integration.services.schema_provisioning import SchemaProvisioningError, _definitions
+
+    groups = {key: {} for key in _empty_schema()}
+    global_ids = {}
     for row in mappings:
         manifest = row.get("schema_manifest")
         if manifest is None or manifest == "":
@@ -42,26 +64,33 @@ def export_json(snapshot_name: str) -> str:
         if not isinstance(manifest, str):
             raise MappingExchangeError("Mapping export contains an invalid schema manifest.")
         try:
-            parsed = json.loads(manifest)
-        except (TypeError, ValueError) as error:
-            raise MappingExchangeError("Mapping export contains an invalid schema manifest.") from error
-        try:
+            def unique_fields(pairs):
+                result = {}
+                for key, value in pairs:
+                    if key in result:
+                        raise ValueError("Duplicate JSON field")
+                    result[key] = value
+                return result
+            parsed = json.loads(manifest, object_pairs_hook=unique_fields)
             _validate_schema(parsed)
-        except MappingExchangeError as error:
-            raise MappingExchangeError("Mapping export contains an invalid schema manifest.") from error
-        canonical = _canonical_json(parsed)
-        if canonical_manifest is not None and canonical != canonical_manifest:
-            raise MappingExchangeError("Mapping export contains conflicting schema manifests.")
-        schema, canonical_manifest = parsed, canonical
-    if schema is None:
-        schema = _empty_schema()
-    payload = {
-        "format_version": FORMAT_VERSION,
-        "schema_fingerprint": snapshot.schema_fingerprint,
-        "schema": schema,
-        "mappings": [_exportable(row) for row in mappings],
-    }
-    return _canonical_json(payload)
+            for key, entries in parsed.items():
+                for entry in entries:
+                    if not isinstance(entry, dict) or not isinstance(entry.get("id"), str) or not entry["id"]:
+                        raise ValueError("Invalid schema definition ID")
+                    identity = entry["id"]
+                    canonical = _canonical_json(entry)
+                    if identity in global_ids and global_ids[identity] != (key, canonical):
+                        raise ValueError("Conflicting schema definition ID")
+                    global_ids[identity] = (key, canonical)
+                    groups[key][identity] = entry
+        except (TypeError, ValueError, MappingExchangeError) as error:
+            raise MappingExchangeError("Mapping export contains an invalid or conflicting schema manifest.") from error
+    schema = {key: [entries[identity] for identity in sorted(entries)] for key, entries in groups.items()}
+    try:
+        _definitions(schema)
+    except (SchemaProvisioningError, KeyError, TypeError, ValueError) as error:
+        raise MappingExchangeError("Mapping export contains invalid or conflicting schema definitions.") from error
+    return schema
 
 
 def preview_import(snapshot_name: str, payload_json: str) -> dict[str, object]:

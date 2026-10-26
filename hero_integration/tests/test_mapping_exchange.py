@@ -61,26 +61,53 @@ class TestMappingExchange(unittest.TestCase):
         self.assertTrue(all(marker not in export_text for marker in ("token", "endpoint", "password", "source_payload_hash", "migration_log")))
 
     def test_export_manifest_integrity(self):
-        schema = {"custom_doctypes": [{"name": "Example"}], "custom_fields": [], "relations": []}
-        def exported(manifests):
+        def field(identity, name):
+            return {"id": identity, "doctype": "Customer", "fieldname": name, "label": "Synthetic", "fieldtype": "Data", "options": "", "insert_after": ""}
+        a, b = field("field:a", "custom_hero_a"), field("field:b", "custom_hero_b")
+        schema = lambda *items: {"custom_doctypes": [], "custom_fields": list(items), "relations": []}
+        def exported(manifests, dependencies="[]", target=""):
             self.frappe.rows = {
                 str(index): _Row({"definition_id": str(index), "schema_fingerprint": FINGERPRINT,
-                                  "schema_manifest": manifest, "schema_dependencies": "[]"})
+                                  "schema_manifest": manifest, "schema_dependencies": dependencies,
+                                  "target_doctype": "Customer", "target_field": target})
                 for index, manifest in enumerate(manifests)
             }
             return json.loads(mapping_exchange.export_json("SYNTHETIC"))["schema"]
 
         self.assertEqual(exported([None, ""]), mapping_exchange._empty_schema())
-        self.assertEqual(exported([json.dumps(schema), json.dumps(schema, sort_keys=True, indent=2), ""]), schema)
-        for manifests in [
-            ["{"],
-            [json.dumps({"custom_doctypes": [], "custom_fields": []})],
-            [json.dumps(schema), json.dumps(mapping_exchange._empty_schema())],
-            [json.dumps(schema), "{"],
-            [42],
-        ]:
+        self.assertEqual(exported([json.dumps(schema(a)), json.dumps(schema(a), sort_keys=True, indent=2)]), schema(a))
+        self.assertEqual(exported([json.dumps(schema(a)), json.dumps(schema(b))]), schema(a, b))
+        self.assertEqual(exported([json.dumps(schema(b, a)), json.dumps(schema(a))]), schema(a, b))
+        self.assertEqual(exported([json.dumps(schema(a, b))], '{"ids":["field:a"]}', "custom_hero_a"), schema(a, b))
+        conflicts = [
+            ["{"], [json.dumps({"custom_doctypes": [], "custom_fields": []})],
+            [json.dumps(schema(a)), json.dumps(schema({**a, "label": "changed"}))],
+            [json.dumps(schema(a, {**b, "fieldname": a["fieldname"]}))],
+            [json.dumps(schema(a)), "{"], [42],
+        ]
+        for manifests in conflicts:
             with self.subTest(manifests=manifests), self.assertRaises(mapping_exchange.MappingExchangeError):
                 exported(manifests)
+        duplicate_key = '{"custom_doctypes":[],"custom_fields":[],"relations":[],"relations":[]}'
+        with self.assertRaises(mapping_exchange.MappingExchangeError):
+            exported([duplicate_key])
+        cross_group_id = {"id": "field:a", "name": "HERO Test", "label": "Test", "is_child": False, "fields": []}
+        with self.assertRaises(mapping_exchange.MappingExchangeError):
+            exported([json.dumps({**schema(a), "custom_doctypes": [cross_group_id]})])
+        link = {**a, "fieldtype": "Link", "options": "Customer"}
+        valid_relation = {"id": "relation:a", "doctype": "Customer", "field_id": "field:a", "fieldname": "custom_hero_a", "relation_type": "Link", "target_doctype": "Customer", "dependencies": ["field:a"]}
+        linked_schema = {**schema(link), "relations": [valid_relation]}
+        with patch("hero_integration.services.schema_provisioning._doctype_exists", return_value=True):
+            self.assertEqual(exported([json.dumps(schema(link)), json.dumps({**schema(), "relations": [valid_relation]})]), linked_schema)
+            with self.assertRaises(mapping_exchange.MappingExchangeError):
+                exported([json.dumps({**linked_schema, "relations": [{**valid_relation, "dependencies": ["field:missing"]}]})])
+        with self.assertRaises(mapping_exchange.MappingExchangeError):
+            exported([json.dumps(schema(a))], '{"ids":["field:missing"]}')
+        with self.assertRaises(mapping_exchange.MappingExchangeError):
+            exported([json.dumps(schema(a))], "[]", "custom_hero_a")
+        relation = {"id": "relation:a", "doctype": "Customer", "field_id": "field:missing", "fieldname": "custom_hero_a", "relation_type": "Link", "target_doctype": "Customer", "dependencies": []}
+        with self.assertRaises(mapping_exchange.MappingExchangeError):
+            exported([json.dumps({**schema(a), "relations": [relation]})])
 
     def test_export_dependencies_default_and_valid_ids(self):
         for stored, expected in [('[]', []), ('{"ids":[]}', []), ('{"ids":["field:one","type:two"]}', ["field:one", "type:two"])]:
