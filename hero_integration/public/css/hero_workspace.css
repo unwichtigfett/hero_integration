@@ -130,5 +130,6 @@
 
 .hero-mapping-core .hero-mapping-body > .btn { margin:4px; text-align:left; white-space:normal; overflow-wrap:anywhere; }
 .hero-integration-ui .hero-mapping-core .btn.btn-primary { background:var(--pc-surfaceRaised); color:var(--pc-text); border:2px solid var(--pc-focus); font-weight:700; }
+.hero-integration-ui .hero-mapping-core .hero-mapping-dialog .btn.btn-primary { border-color:var(--pc-text, var(--text-color)); }
 .hero-integration-ui .hero-mapping-core .btn:hover:not(:disabled) { background:var(--pc-surfaceRaised); color:var(--pc-text); }
 .hero-integration-ui .hero-mapping-core .btn:disabled { background:var(--pc-surface); color:var(--pc-text); opacity:.55; }

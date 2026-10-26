@@ -5,6 +5,15 @@ import test from 'node:test';
 const window = {};
 vm.runInNewContext(readFileSync(new URL('../public/js/hero_mapping_editor.js', import.meta.url), 'utf8'), {window});
 const {DraftState, stable} = window.hero_integration_mapping_editor;
+test('only the exact in-progress editor download is exempt from navigation interception', () => {
+ const {isOwnedExportLink}=window.hero_integration_mapping_editor;
+ const owned={href:'blob:https://site/owned',download:'query.json'};
+ const other={href:owned.href,download:owned.download};
+ assert.equal(isOwnedExportLink(owned,owned),true);
+ assert.equal(isOwnedExportLink(other,owned),false);
+ assert.equal(isOwnedExportLink(owned,null),false);
+ assert.equal(isOwnedExportLink(null,null),false);
+});
 test('directional adoption requires the current valid preview and idle matching context', () => {
  const {exchangeCanAdopt}=window.hero_integration_mapping_editor;
  const entry={context:{key:'query-context'},preview:{can_save:true}};
