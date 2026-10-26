@@ -65,7 +65,7 @@ class TestMappingExchange(unittest.TestCase):
         def exported(manifests):
             self.frappe.rows = {
                 str(index): _Row({"definition_id": str(index), "schema_fingerprint": FINGERPRINT,
-                                  "schema_manifest": manifest})
+                                  "schema_manifest": manifest, "schema_dependencies": "[]"})
                 for index, manifest in enumerate(manifests)
             }
             return json.loads(mapping_exchange.export_json("SYNTHETIC"))["schema"]
@@ -81,6 +81,18 @@ class TestMappingExchange(unittest.TestCase):
         ]:
             with self.subTest(manifests=manifests), self.assertRaises(mapping_exchange.MappingExchangeError):
                 exported(manifests)
+
+    def test_export_dependencies_default_and_valid_ids(self):
+        for stored, expected in [('[]', []), ('{"ids":[]}', []), ('{"ids":["field:one","type:two"]}', ["field:one", "type:two"])]:
+            with self.subTest(stored=stored):
+                self.assertEqual(mapping_exchange._exportable({"schema_dependencies": stored})["schema_dependencies"], expected)
+
+    def test_export_dependencies_rejects_corrupt_or_lossy_values(self):
+        for stored in ['{', '{}', '{"ids":null}', '{"ids":"field:one"}', '{"ids":[1]}',
+                       '{"ids":[],"other":"preserve me"}', '{"ids":["x"],"ids":[]}',
+                       '["field:one"]', 'null', '', None, 42]:
+            with self.subTest(stored=stored), self.assertRaises(mapping_exchange.MappingExchangeError):
+                mapping_exchange._exportable({"schema_dependencies": stored})
 
     def test_identical_import_is_idempotent(self):
         payload = json.dumps(fixture_payload(FINGERPRINT))
