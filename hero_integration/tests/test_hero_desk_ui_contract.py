@@ -198,7 +198,7 @@ class TestHeroDeskUiContract(unittest.TestCase):
         for contract in ("graphql_total", "frappe_total", "Definitions in this direction on this page", "HERO operations and mapping definitions",
                          "definition_id: active.definition_id", "mapping_type: kind, name: item.name", "page_size: 20"):
             self.assertIn(contract, source)
-        for excluded in ("graphql_mapping_save", "adopt_mapping_package", "import_mapping_json", "runtime_plan_approve"):
+        for excluded in ("graphql_mapping_save", "import_mapping_json", "runtime_plan_approve"):
             self.assertNotIn(excluded, source)
 
     def test_schema_explorer_is_admin_only_and_reads_saved_schema(self):
@@ -212,8 +212,21 @@ class TestHeroDeskUiContract(unittest.TestCase):
                          "result.length >= 100", "this list may be incomplete",
                          "previously selected snapshot is not available in this result"):
             self.assertIn(contract, explorer)
-        for forbidden in ("graphql_mapping_save", "adopt_mapping_package", "workspace_schema_refresh"):
+        for forbidden in ("graphql_mapping_save", "workspace_schema_refresh"):
             self.assertNotIn(forbidden, explorer)
+
+    def test_legacy_package_actions_require_preview_confirmation_and_admin(self):
+        source = MAPPING_EDITOR_JS.read_text()
+        explorer = source.split("function renderSchemaExplorer()", 1)[1].split("function renderList()", 1)[0]
+        for contract in ("if (!admin) return", "preview_mapping_package", "export_mapping_json",
+                         "downloadExport(result.filename, result.content)", "item.selectable !== true",
+                         "frappe.confirm", "adopt_mapping_package", "selected_ids_json: JSON.stringify(selection)",
+                         "confirmed: true", "anyDirty()", "packageCurrent(serial, name)",
+                         "Schema changes may persist if adoption fails", "Check the adoption record", "setBusy(true)"):
+            self.assertIn(contract, explorer)
+        self.assertLess(explorer.index("frappe.confirm"), explorer.index("rpc('adopt_mapping_package'"))
+        self.assertIn("rpc('preview_mapping_package', {snapshot_name: name, payload_json: payload}, true)", explorer)
+        self.assertIn('type: write ? "POST" : "GET"', source)
 
     def test_mapping_editor_has_explicit_save_and_lossless_local_undo(self):
         source = MAPPING_EDITOR_JS.read_text()

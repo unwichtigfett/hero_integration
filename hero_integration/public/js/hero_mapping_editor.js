@@ -333,7 +333,7 @@
         }
         function renderSchemaExplorer() {
             if (!admin) return;
-            let viewEpoch = epoch, request = 0, suggestionRequest = 0;
+            let viewEpoch = epoch, request = 0, suggestionRequest = 0, packageRequest = 0;
             const viewTab = tab, section = $("<details class='hero-mapping-schema-explorer' data-field-picker></details>").append($('<summary></summary>').text(text('Inspect saved schema')));
             const snapshot = $("<select class='form-control' aria-label='Saved schema snapshot'></select>");
             const operations = $("<select class='form-control' aria-label='Schema operation'></select>");
@@ -383,17 +383,77 @@
                     }
                 } catch (error) { if (currentView(serial)) info.text(errorText(error)); }
             }
-            snapshot.on('change', () => loadOperations(snapshot.val()));
+            snapshot.on('change', () => { packageRequest++; packagePreview.empty(); loadOperations(snapshot.val()); });
             source.add(target).on('input', () => { suggestionRequest++; details.empty(); info.text(text('Select Show field suggestions to load the current inputs.')); });
             section.append(snapshot, operations, info, limitNotice, details);
             if (viewTab === 'Query') section.append(source, target, suggestions);
-            section.append(button('Retry saved schema', () => loadSnapshots(snapshot.val(), operations.val())));
+            const packagePreview = $("<div class='hero-mapping-package-preview'></div>");
+            const packageState = $("<p role='status'></p>");
+            const fileInput = $("<input type='file' accept='application/json,.json' aria-label='Mapping package'>");
+            const packageCurrent = (serial, name) => !disposed && !busy && epoch === viewEpoch && tab === viewTab &&
+                section[0].isConnected && serial === packageRequest && name === snapshot.val() && !snapshot.prop('disabled');
+            fileInput.on('change', async () => {
+                const file = fileInput[0].files?.[0], name = snapshot.val(); fileInput.val('');
+                if (!file || !name || locked() || snapshot.prop('disabled')) { packageState.text(text('Choose a validated snapshot and a package.')); return; }
+                const serial = ++packageRequest; packagePreview.empty(); packageState.text(text('Loading package preview…'));
+                try {
+                    const payload = await file.text();
+                    if (!packageCurrent(serial, name)) return;
+                    const preview = await rpc('preview_mapping_package', {snapshot_name: name, payload_json: payload}, true);
+                    if (!packageCurrent(serial, name)) return;
+                    if (!Array.isArray(preview?.items)) throw new Error('Invalid package preview.');
+                    const selected = new Set();
+                    packageState.text(text('Preview only. Select entries to review for adoption.'));
+                    preview.items.forEach((item) => {
+                        const checkbox = $("<input type='checkbox'>").prop('disabled', item.selectable !== true);
+                        checkbox.on('change', () => { if (checkbox.prop('checked')) selected.add(item.id); else selected.delete(item.id); });
+                        packagePreview.append($('<label class="d-block"></label>').append(checkbox,
+                            document.createTextNode(` ${item.id} · ${item.group}: ${item.state} · ${item.label} · ${item.detail || ''} · ${text('Dependencies')}: ${(item.dependencies || []).join(', ') || '—'}`)));
+                    });
+                    const apply = button('Adopt selected package entries', () => {
+                        if (!packageCurrent(serial, name) || !selected.size || anyDirty()) {
+                            packageState.text(text(anyDirty() ? 'Save or discard local changes in all mapping tabs before adoption.' : 'Select at least one valid entry.')); return;
+                        }
+                        const selection = [...selected];
+                        frappe.confirm(text('Provision the selected schema and activate the selected mappings? Schema changes may persist if adoption fails. This does not migrate HERO data.'), async () => {
+                            if (!packageCurrent(serial, name) || anyDirty()) return;
+                            packageRequest++; setBusy(true);
+                            packageState.text(text('Submitting confirmed adoption…'));
+                            let result, message = 'Adoption was rejected or its outcome is uncertain. Check the adoption record before a new preview.';
+                            try {
+                                result = await rpc('adopt_mapping_package', {snapshot_name: name, payload_json: payload,
+                                    selected_ids_json: JSON.stringify(selection), confirmed: true}, true);
+                                message = 'Adoption submitted. Review the server result before further action.';
+                            } catch (_) { /* Do not retry a potentially partially applied DDL operation. */ }
+                            finally {
+                                if (!disposed && epoch === viewEpoch && tab === viewTab) {
+                                    setBusy(false); renderList(); say(message);
+                                    if (result) body.append(safeJson(result));
+                                }
+                            }
+                        });
+                    }, true);
+                    packagePreview.append(apply);
+                } catch (error) { if (packageCurrent(serial, name)) packageState.text(errorText(error)); }
+            });
+            const exportPackage = button('Export active mapping package', async () => {
+                const name = snapshot.val(); if (!name || locked() || snapshot.prop('disabled')) return packageState.text(text('Choose a validated snapshot.'));
+                const serial = ++packageRequest; packagePreview.empty(); packageState.text(text('Exporting active mapping package…'));
+                try {
+                    const result = await rpc('export_mapping_json', {snapshot_name: name});
+                    if (!packageCurrent(serial, name)) return;
+                    downloadExport(result.filename, result.content); packageState.text(text('Active mapping package exported. Personal drafts are not included.'));
+                } catch (error) { if (packageCurrent(serial, name)) packageState.text(errorText(error)); }
+            });
+            section.append($('<h4></h4>').text(text('Active mapping package')), fileInput, exportPackage, packageState, packagePreview);
+            section.append(button('Retry saved schema', () => { packageRequest++; packagePreview.empty(); loadSnapshots(snapshot.val(), operations.val()); }));
             section.append(button('Open Graph Viewer', () => {
                 const name = snapshot.val(); if (!name || snapshot.prop('disabled')) return info.text(text('Choose a validated snapshot.'));
                 leaveWorkspace(() => window.hero_integration_ui.setRoute('api', {hero_tool: 'graph', snapshot: name}));
             }));
             section.on('hero-mapping-picker-resume', () => {
                 const name = snapshot.val() || '', operation = operations.val() || '';
+                packageRequest++; packagePreview.empty(); packageState.text(text('Choose a package again to preview it.'));
                 viewEpoch = epoch; loadSnapshots(name, operation);
             });
             body.append(section); loadSnapshots();
