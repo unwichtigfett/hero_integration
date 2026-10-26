@@ -79,6 +79,32 @@ class TestRC16NativeSafety(IntegrationTestCase):
         self.run_names.append(run.name)
         return run
 
+    def test_failed_job_rolls_back_business_change_and_releases_own_claim(self):
+        from frappe.utils.background_jobs import execute_job
+        from hero_integration.services import migration
+
+        customer = frappe.get_doc({"doctype": "Customer", "customer_name": self.token}).insert(ignore_permissions=True)
+        run = self._run()
+        frappe.db.commit()
+
+        def fail_after_write(_run, _source):
+            frappe.db.set_value("Customer", customer.name, "customer_name", self.token + "-uncommitted")
+            raise RuntimeError("synthetic job failure")
+
+        with patch.object(migration, "validate_run_mappings"), patch.object(migration, "get_configuration"), \
+                patch.object(migration, "_source_for_run"), patch.object(migration, "_process_requested_phases", side_effect=fail_after_write):
+            with self.assertRaisesRegex(RuntimeError, "synthetic job failure"):
+                execute_job(frappe.local.site, migration.execute_run, None, self.token, {"run_name": run.name}, user="Administrator", is_async=False)
+
+        self.assertEqual(frappe.db.get_value("Customer", customer.name, "customer_name"), self.token)
+        self.assertEqual(frappe.db.get_value("HERO Integration Run", run.name, "state"), "Failed")
+        self.assertFalse(frappe.db.get_single_value("HERO Integration Sync State", "active_run"))
+        followup = self._run()
+        frappe.db.commit()
+        self.assertTrue(_claim_run(followup))
+        migration._finalize_failed_run(run.name, run.started_on)
+        self.assertEqual(frappe.db.get_single_value("HERO Integration Sync State", "active_run"), followup.name)
+
     def test_frappe_dispatcher_rejects_get_for_every_write_rpc(self) -> None:
         previous_request = getattr(frappe.local, "request", None)
         try:
