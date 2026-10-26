@@ -153,20 +153,59 @@ class FrappeMappingDraftStorage:
         values["name"] = f"{value.draft_key}-{value.generation}-{value.revision}"
         self.frappe.get_doc(values).insert(set_name=values["name"])
 
-    def canonicalize(self, content):
+    def _rule_snapshot(self, identity):
+        from hero_integration.services.personal_mapping_content import RULE_FIELDS
+        f, parent = self.frappe, self._definition
+        config = json.loads(parent.mapping_json)
+        rows = f.get_all("HERO Frappe Mapping", filters={"definition_id": identity, "status": "Active",
+            "schema_snapshot": parent.schema_snapshot, "schema_fingerprint": parent.schema_fingerprint,
+            "operation": config.get("target_operation", parent.operation_name)}, fields=["name"], limit=2)
+        if len(rows) != 1:
+            raise MappingDraftError("Exactly one visible active field-rule template in this definition scope is required.")
+        rule = f.get_doc("HERO Frappe Mapping", rows[0].name)
+        rule.check_permission("read")
+        return ({field: rule.get(field) for field in RULE_FIELDS},
+                {"name": rule.name, "revision": int(rule.mapping_revision),
+                 "schema_snapshot": rule.schema_snapshot, "schema_fingerprint": rule.schema_fingerprint})
+
+    def initial_content(self, content):
+        from hero_integration.services.personal_mapping_content import bounded, references
         self._scope()
-        if self._definition.direction != "FRAPPE_TO_MUTATION":
-            return content
-        from hero_integration.services.frappe_writeback import (
-            WritebackContractError, normalise_draft_mapping, normalise_mapping,
-        )
-        snapshot = self.frappe.get_doc("HERO GraphQL Schema Snapshot", self._definition.schema_snapshot)
-        schema = json.loads(snapshot.snapshot_json)
-        for normalize in (normalise_mapping, normalise_draft_mapping):
-            try:
-                return normalize(content, schema)
-            except WritebackContractError:
-                continue
-        # Structural storage is deliberately weaker than activation validation.
-        # Incomplete or invalid business choices remain non-executable drafts.
-        return content
+        value = _object(content)
+        ids = references(value)
+        if not ids:
+            return bounded(value)
+        if "field_rules" in value or "field_rule_bases" in value:
+            raise MappingDraftError("Active content already uses reserved personal snapshot fields.")
+        value["field_rules"], value["field_rule_bases"] = {}, {}
+        for identity in ids:
+            value["field_rules"][identity], value["field_rule_bases"][identity] = self._rule_snapshot(identity)
+        return bounded(value)
+
+    def canonicalize(self, content):
+        from hero_integration.services.personal_mapping_content import bounded, references, same, validate_edits, validate_rule
+        self._scope()
+        key = draft_key(self.frappe.local.site, self._definition.definition_id, self.frappe.session.user)
+        prior = self.draft(key).content
+        value = validate_edits(prior, content)
+        rules, bases = value.get("field_rules", {}), value.get("field_rule_bases", {})
+        if not isinstance(rules, dict) or not isinstance(bases, dict) or not same(bases, prior.get("field_rule_bases", {})):
+            raise MappingDraftError("Field-rule provenance is server-managed.")
+        known = prior.get("field_rules", {})
+        # Retain unlinked snapshots too: Undo/relink may restore the private edit.
+        if set(known) - set(rules):
+            raise MappingDraftError("Existing rule snapshots must be retained.")
+        for identity in references(value):
+            if identity not in known:
+                snapshot, provenance = self._rule_snapshot(identity)
+                rules.setdefault(identity, snapshot)
+                bases[identity] = provenance
+        if set(rules) != set(bases):
+            raise MappingDraftError("Unknown field-rule snapshot.")
+        for rule in rules.values():
+            validate_rule(rule)
+        if rules or "field_rules" in prior:
+            value["field_rules"], value["field_rule_bases"] = rules, bases
+        # Personal drafts store structural content losslessly. Executable
+        # writeback normalization remains solely at its existing execution gate.
+        return bounded(value)

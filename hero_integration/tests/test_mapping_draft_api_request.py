@@ -130,7 +130,15 @@ class TestMappingDraftAPIRequest(unittest.TestCase):
 
     def save_args(self, revision=0, content=None):
         return {'definition_id':self.definition,'expected_generation':1,'expected_draft_revision':revision,
-                'expected_active_revision':1,'mapping_json':json.dumps(content if content is not None else {'source':{}})}
+                'expected_active_revision':1,'mapping_json':json.dumps(self.retained_content(content))}
+
+    def retained_content(self, content):
+        # Existing non-editable fixture parameters must be sent unchanged.
+        value = dict(content if content is not None else {'source': {}})
+        value['variables'] = {'value': 'SAMPLE_NOT_VISIBLE'}
+        if isinstance(value.get('source'), dict):
+            value['source'] = dict(value['source'], value='SAMPLE_NOT_VISIBLE')
+        return value
 
     def state(self):
         connect()
