@@ -60,6 +60,7 @@ class TestProjectCompanyMigration(unittest.TestCase):
         frappe_module.log_error = lambda **kwargs: None
         utils_module = types.ModuleType("frappe.utils")
         utils_module.now_datetime = lambda: "2026-10-16 00:00:00"
+        utils_module.get_datetime = lambda value: value
         sys.modules["frappe"] = frappe_module
         sys.modules["frappe.utils"] = utils_module
 

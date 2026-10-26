@@ -3,9 +3,10 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
+from datetime import timedelta
 
 import frappe
-from frappe.utils import now_datetime
+from frappe.utils import get_datetime, now_datetime
 
 from hero_integration.client.graphql import HeroGraphQLClient
 from hero_integration.client.settings import get_configuration
@@ -184,7 +185,10 @@ def _claim_run(run) -> bool:
             (run.name, "HERO Integration Sync State", "active_run"),
         )
         run.state = "Running"
-        run.started_on = now_datetime()
+        started_on = now_datetime()
+        if run.started_on:
+            started_on = max(started_on, get_datetime(run.started_on) + timedelta(microseconds=1))
+        run.started_on = started_on
         run.save()
         # Persist the reservation before another connection may inspect it or
         # this worker starts any source I/O.  Releasing the advisory lock

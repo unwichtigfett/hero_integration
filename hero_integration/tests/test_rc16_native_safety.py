@@ -129,6 +129,23 @@ class TestRC16NativeSafety(IntegrationTestCase):
         link.reload()
         self.assertNotEqual(link.observed_target_hash, old_observation)
 
+    def test_stale_failed_finalizer_does_not_release_reclaimed_same_run(self):
+        from hero_integration.services import migration
+
+        run = self._run()
+        frappe.db.commit()
+        self.assertTrue(_claim_run(run))
+        first_claim = run.started_on
+        migration._finalize_failed_run(run.name, first_claim)
+        frappe.db.set_value("HERO Integration Run", run.name, "state", "Queued")
+        frappe.db.commit()
+        requeued = frappe.get_doc("HERO Integration Run", run.name)
+        self.assertTrue(_claim_run(requeued))
+        self.assertGreater(requeued.started_on, first_claim)
+        migration._finalize_failed_run(run.name, first_claim)
+        self.assertEqual(frappe.db.get_value("HERO Integration Run", run.name, "state"), "Running")
+        self.assertEqual(frappe.db.get_single_value("HERO Integration Sync State", "active_run"), run.name)
+
     def test_frappe_dispatcher_rejects_get_for_every_write_rpc(self) -> None:
         previous_request = getattr(frappe.local, "request", None)
         try:
