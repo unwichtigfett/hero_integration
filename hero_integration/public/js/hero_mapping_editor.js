@@ -52,6 +52,18 @@
     }, {NEW: 0, REPLACE: 0, UNCHANGED: 0, REMOVE: 0});
     const exchangeCanAdopt = (entry, currentEntry, contextKey, locked) => !locked &&
         entry === currentEntry && entry?.context?.key === contextKey && entry?.preview?.can_save === true;
+    const reviewedTargetLabel = (field) => {
+        const target = field?.target;
+        if (!target || ![target.operation, target.argument, target.field].every((value) => typeof value === "string" && value)) return "";
+        return `${target.operation} / ${target.argument}.${target.field}`;
+    };
+    const writebackContractLabel = (catalog, operation) => {
+        if (!Array.isArray(catalog?.contracts) || !operation) return "Technical contract status unavailable.";
+        const matching = catalog.contracts.filter((item) => item.operation === operation);
+        if (matching.length !== 1 || typeof matching[0].activation_ready !== "boolean") return "Technical contract status unavailable.";
+        if (!matching[0].activation_ready) return matching[0].blocker || "Technical contract is not ready.";
+        return "Technical contract is active; mapping validation and separate execution gates still apply.";
+    };
     const isOwnedExportLink = (link, ownedLink) => Boolean(ownedLink) && link === ownedLink;
     const mappingTabs = Object.freeze(["Query", "Mutation", "Binding"]);
     async function readSnapshotPages(fetchPage, isCurrent) {
@@ -1053,11 +1065,12 @@
             const appOptions = $("<datalist></datalist>").attr("id", `${pickerId}-apps`);
             const doctypeOptions = $("<datalist></datalist>").attr("id", `${pickerId}-doctypes`);
             const catalogState = $("<p class='text-muted'></p>");
+            const contractState = $("<p class='text-muted' role='status'></p>");
             const results = $("<div></div>");
             const mutation = mutationMapping();
             const source = row.reference ? side === "target" : mutation ? side === "source" : side === "target";
             query.prop("disabled", source);
-            pickerHost.append(app, appOptions, doctype, doctypeOptions, catalogState, results);
+            pickerHost.append(app, appOptions, doctype, doctypeOptions, catalogState, contractState, results);
             const load = async () => {
                 if (source && !doctype.val()) { results.text(text("Choose an app and DocType before searching fields.")); return; }
                 const request = ++seq; fieldsPending = true; results.text(text("Loading fields…"));
@@ -1085,7 +1098,7 @@
                         fields = matched.slice(fieldStart, fieldStart + 50); results.text(`${matched.length ? fieldStart + 1 : 0}–${Math.min(fieldStart + fields.length, matched.length)} / ${matched.length}`);
                         results.append(button("Previous fields", () => { fieldStart = Math.max(0, fieldStart - 50); load(); }).prop("disabled", !fieldStart), button("Next fields", () => { fieldStart += 50; load(); }).prop("disabled", fieldStart + 50 >= matched.length)); }
                     if (!currentPicker(request)) return;
-                    fields.forEach((f) => results.append(button(`${f.argument ? f.argument + "." : ""}${f.path} · ${f.fieldtype || f.type}${f.nullable === false ? " · required" : ""}${f.select_options?.length ? ` · enum: ${f.select_options.join(", ")}` : ""}${f.selectable === false ? ` · unavailable: ${f.reason || "not permitted"}` : ""}`, () => {
+                    fields.forEach((f) => results.append(button(`${f.argument ? f.argument + "." : ""}${f.path} · ${f.fieldtype || f.type}${f.nullable === false ? " · required" : ""}${f.select_options?.length ? ` · enum: ${f.select_options.join(", ")}` : ""}${source && mutation && !row.reference && reviewedTargetLabel(f) ? ` · ${text("Reviewed HERO target")}: ${reviewedTargetLabel(f)}` : ""}${f.selectable === false ? ` · unavailable: ${f.reason || "not permitted"}` : ""}`, () => {
                         if (row.reference) {
                             if (source) { const selectedDoctype = f.target_doctype || doctype.val(); model.referenceApps ||= Object.create(null); model.referenceApps[row.id] = {app: app.val(), doctype: selectedDoctype}; model.set(["field_rules", row.id, "target_doctype"], selectedDoctype); model.set(["field_rules", row.id, "target_field"], f.path); }
                             else { model.set(["field_rules", row.id, "source_path"], f.path); model.set(["field_rules", row.id, "source_type"], f.mapping_type || f.fieldtype); }
@@ -1108,6 +1121,7 @@
                 const result = await rpc(catalogMethod, catalogMethod === "writeback_mapper_catalog" ? {snapshot_name: active.schema_snapshot} : {});
                 if (!currentPicker(request)) return;
                 frappeCatalog = result;
+                if (catalogMethod === "writeback_mapper_catalog") contractState.text(text(writebackContractLabel(result, active.operation_name)));
                 app.prop("disabled", false); doctype.prop("disabled", false); query.prop("disabled", false);
                 appOptions.empty();
                 result.apps.forEach((item) => appOptions.append($("<option></option>").val(item.app_name || item)));
@@ -1158,5 +1172,5 @@
         const controller = {beforeLeave: leaveWorkspace, destroy() { shell.removeClass("hero-mapping-shell"); disposed = true; epoch++; window.removeEventListener("beforeunload", unload); if (router.route === guardedRoute) router.route = originalRoute; document.removeEventListener("click", links, true); }};
         current = controller; loadList(); return controller;
     }
-    window.hero_integration_mapping_editor = Object.freeze({mount, DraftState, stable, readActiveRule, readSnapshotPages, exchangeExpectedStates, exchangeCounts, exchangeCanAdopt, isOwnedExportLink, mappingTabs, directionForTab, bindingAccess, selectedPickerApp, hasCurrentDraftBase, canSaveDraft, tabKeyTarget, MappingTabStates, resumePendingView});
+    window.hero_integration_mapping_editor = Object.freeze({mount, DraftState, stable, readActiveRule, readSnapshotPages, exchangeExpectedStates, exchangeCounts, exchangeCanAdopt, reviewedTargetLabel, writebackContractLabel, isOwnedExportLink, mappingTabs, directionForTab, bindingAccess, selectedPickerApp, hasCurrentDraftBase, canSaveDraft, tabKeyTarget, MappingTabStates, resumePendingView});
 })();
