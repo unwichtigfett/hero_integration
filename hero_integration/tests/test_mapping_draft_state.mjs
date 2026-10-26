@@ -120,3 +120,12 @@ test('reconciliation apply remains local, carries exact JSON proof to save, and 
  assert.equal(changed.reconciliation_json,'');
  assert.equal(changed.expected_active_revision,7);
 });
+
+test('reopened reconciliation uses its verified active revision for a later save',()=>{
+ const draft={...fixture(),reconciliation_revision:1,reconciliation_json:'{"version":1,"active_revision":9}'};
+ const state=new DraftState(draft);state.set(['records_path'],'later');
+ const args=state.saveArgs();
+ assert.equal(args.expected_active_revision,9);
+ assert.equal(args.expected_reconciliation_revision,1);
+ assert.equal(args.reconciliation_json,'');
+});
