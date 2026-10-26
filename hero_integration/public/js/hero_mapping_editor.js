@@ -55,11 +55,15 @@
     const isOwnedExportLink = (link, ownedLink) => Boolean(ownedLink) && link === ownedLink;
     const mappingTabs = Object.freeze(["Query", "Mutation", "Binding"]);
     async function readSnapshotPages(fetchPage, isCurrent) {
-        const result = [];
+        const result = [], seen = new Set();
         for (let start = 0; ; start += 100) {
             const page = await fetchPage({start, page_size: 100});
             if (!isCurrent()) return null;
             if (!Array.isArray(page) || page.length > 100) throw new Error('Invalid snapshot page.');
+            for (const item of page) {
+                if (typeof item?.name !== 'string' || !item.name || seen.has(item.name)) throw new Error('Snapshot list changed or contains invalid identities.');
+                seen.add(item.name);
+            }
             result.push(...page);
             if (page.length < 100) return result;
             if (start > 2147483547) throw new Error('Snapshot list exceeds the supported range.');
@@ -382,6 +386,7 @@
                 try {
                     const result = await readSnapshotPages((args) => rpc('schema_snapshot_list', args), () => currentView(serial));
                     if (!result) return;
+                    limitNotice.text(text('Snapshots can change while pages load. Retry saved schema to refresh the list.'));
                     const valid = result.filter((row) => row.analysis_status === 'Validated');
                     if (preferredSnapshot && !valid.some((row) => row.name === preferredSnapshot)) {
                         limitNotice.text(`${limitNotice.text()} ${text('The previously selected snapshot is not available in this result. Select a validated snapshot again.')}`.trim());
@@ -412,50 +417,24 @@
                     const preview = await rpc('preview_mapping_package', {snapshot_name: name, payload_json: payload}, true);
                     if (!packageCurrent(serial, name)) return;
                     if (!Array.isArray(preview?.items)) throw new Error('Invalid package preview.');
-                    const selected = new Set();
-                    packageState.text(text('Preview only. Select entries to review for adoption.'));
-                    preview.items.forEach((item) => {
-                        const checkbox = $("<input type='checkbox'>").prop('disabled', item.selectable !== true);
-                        checkbox.on('change', () => { if (checkbox.prop('checked')) selected.add(item.id); else selected.delete(item.id); });
-                        packagePreview.append($('<label class="d-block"></label>').append(checkbox,
-                            document.createTextNode(` ${item.id} · ${item.group}: ${item.state} · ${item.label} · ${item.detail || ''} · ${text('Dependencies')}: ${(item.dependencies || []).join(', ') || '—'}`)));
-                    });
-                    const apply = button('Adopt selected package entries', () => {
-                        if (!packageCurrent(serial, name) || !selected.size || anyDirty()) {
-                            packageState.text(text(anyDirty() ? 'Save or discard local changes in all mapping tabs before adoption.' : 'Select at least one valid entry.')); return;
-                        }
-                        const selection = [...selected];
-                        frappe.confirm(text('Provision the selected schema and activate the selected mappings? Schema changes may persist if adoption fails. This does not migrate HERO data.'), async () => {
-                            if (!packageCurrent(serial, name) || anyDirty()) return;
-                            packageRequest++; setBusy(true);
-                            packageState.text(text('Submitting confirmed adoption…'));
-                            let result, message = 'Adoption was rejected or its outcome is uncertain. Check the adoption record before a new preview.';
-                            try {
-                                result = await rpc('adopt_mapping_package', {snapshot_name: name, payload_json: payload,
-                                    selected_ids_json: JSON.stringify(selection), confirmed: true}, true);
-                                message = 'Adoption submitted. Review the server result before further action.';
-                            } catch (_) { /* Do not retry a potentially partially applied DDL operation. */ }
-                            finally {
-                                if (!disposed && epoch === viewEpoch && tab === viewTab) {
-                                    setBusy(false); renderList(); say(message);
-                                    if (result) body.append(safeJson(result));
-                                }
-                            }
-                        });
-                    }, true);
-                    packagePreview.append(apply);
+                    packageState.text(text('Preview only.'));
+                    preview.items.forEach((item) => packagePreview.append($('<p></p>').text(
+                        `${item.id} · ${item.group}: ${item.state} · ${item.label} · ${item.detail || ''} · ${text('Dependencies')}: ${(item.dependencies || []).join(', ') || '—'}`)));
                 } catch (error) { if (packageCurrent(serial, name)) packageState.text(errorText(error)); }
             });
-            const exportPackage = button('Export active mapping package', async () => {
+            const exportPackage = button('Export saved field mapping package', async () => {
                 const name = snapshot.val(); if (!name || locked() || snapshot.prop('disabled')) return packageState.text(text('Choose a validated snapshot.'));
-                const serial = ++packageRequest; packagePreview.empty(); packageState.text(text('Exporting active mapping package…'));
+                const serial = ++packageRequest; packagePreview.empty(); packageState.text(text('Exporting saved field mapping package…'));
                 try {
                     const result = await rpc('export_mapping_json', {snapshot_name: name});
                     if (!packageCurrent(serial, name)) return;
-                    downloadExport(result.filename, result.content); packageState.text(text('Active mapping package exported. Personal drafts are not included.'));
+                    downloadExport(result.filename, result.content); packageState.text(text('Saved field mapping package exported for this snapshot fingerprint, including Active, Draft and Disabled mappings. Personal drafts are not included.'));
                 } catch (error) { if (packageCurrent(serial, name)) packageState.text(errorText(error)); }
             });
-            section.append($('<h4></h4>').text(text('Active mapping package')), fileInput, exportPackage, packageState, packagePreview);
+            section.append($('<h4></h4>').text(text('Saved field mapping package')),
+                $('<p></p>').text(text('Export includes saved global field mappings for this snapshot fingerprint, including Active, Draft and Disabled mappings. Personal drafts are not included.')),
+                $('<p role="status"></p>').text(text('Package adoption is unavailable because the preview is not bound to the current target revisions. Preview and export remain available.')),
+                fileInput, exportPackage, packageState, packagePreview);
             section.append(button('Retry saved schema', () => { packageRequest++; packagePreview.empty(); loadSnapshots(snapshot.val(), operations.val()); }));
             section.append(button('Open Graph Viewer', () => {
                 const name = snapshot.val(); if (!name || snapshot.prop('disabled')) return info.text(text('Choose a validated snapshot.'));

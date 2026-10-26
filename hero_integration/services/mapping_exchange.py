@@ -33,14 +33,28 @@ def export_json(snapshot_name: str) -> str:
         fields=[*EXPORTED_FIELDS, "schema_manifest"],
         order_by="operation asc, priority asc, definition_id asc",
     )
-    manifests = {row.get("schema_manifest") for row in mappings if row.get("schema_manifest")}
-    schema = _empty_schema()
-    if len(manifests) == 1:
+    schema = None
+    canonical_manifest = None
+    for row in mappings:
+        manifest = row.get("schema_manifest")
+        if manifest is None or manifest == "":
+            continue
+        if not isinstance(manifest, str):
+            raise MappingExchangeError("Mapping export contains an invalid schema manifest.")
         try:
-            schema = json.loads(manifests.pop())
-        except json.JSONDecodeError:
-            # A damaged local Draft must not make a safe export invent schema.
-            schema = _empty_schema()
+            parsed = json.loads(manifest)
+        except (TypeError, ValueError) as error:
+            raise MappingExchangeError("Mapping export contains an invalid schema manifest.") from error
+        try:
+            _validate_schema(parsed)
+        except MappingExchangeError as error:
+            raise MappingExchangeError("Mapping export contains an invalid schema manifest.") from error
+        canonical = _canonical_json(parsed)
+        if canonical_manifest is not None and canonical != canonical_manifest:
+            raise MappingExchangeError("Mapping export contains conflicting schema manifests.")
+        schema, canonical_manifest = parsed, canonical
+    if schema is None:
+        schema = _empty_schema()
     payload = {
         "format_version": FORMAT_VERSION,
         "schema_fingerprint": snapshot.schema_fingerprint,
