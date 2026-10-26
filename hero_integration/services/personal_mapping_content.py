@@ -31,7 +31,7 @@ def references(content):
 
 
 def bounded(content):
-    if len(json.dumps(content, ensure_ascii=False, allow_nan=False).encode('utf-8')) > 65536:
+    if len(json.dumps(content, ensure_ascii=False, allow_nan=False, separators=(',', ':')).encode('utf-8')) > 65536:
         raise MappingDraftError('Personal content exceeds its size limit.')
     remaining = 4096
     def walk(value, depth=0):
