@@ -85,8 +85,15 @@ class HEROGraphQLMapping(Document):
             json.dumps(mapping, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
         ).hexdigest()
         semantic_fields = ("schema_snapshot", "operation_kind", "operation_name", "direction", "mapping_json")
-        if not self.is_new() and any(self.has_value_changed(field) for field in semantic_fields):
-            self.mapping_revision = int(self.mapping_revision or 0) + 1
+        content_changed = bool(previous and any(self.has_value_changed(field) for field in semantic_fields))
+        writeback_scope = bool(previous and (previous.direction == "FRAPPE_TO_MUTATION" or self.direction == "FRAPPE_TO_MUTATION"))
+        review_changed = bool(writeback_scope and any(self.has_value_changed(field) for field in ("suggestion_reason", "confidence")))
+        status_changed = bool(writeback_scope and previous.status != self.status)
+        draft_editor_changed = bool(writeback_scope and (previous.status == "Draft" or self.status == "Draft")
+                                    and previous.modified_by != self.modified_by)
+        if content_changed or review_changed or status_changed or draft_editor_changed:
+            self.mapping_revision = int(previous.mapping_revision or 0) + 1
+        if content_changed:
             self.status = "Draft"
         if self.status == "Active" and previous and previous.status == "Draft":
             if previous.modified_by != frappe.session.user:

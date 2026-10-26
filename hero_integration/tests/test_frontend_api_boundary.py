@@ -33,6 +33,7 @@ class _Mapping:
 
 
 class _Frappe:
+    PermissionError = PermissionError
     def __init__(self, *, roles=("System Manager",), user="Administrator", mapping=None):
         self._roles = roles
         self.session = SimpleNamespace(user=user)
@@ -53,7 +54,7 @@ class _Frappe:
     def throw(self, message, exception=ValueError):
         raise exception(message)
 
-    def get_doc(self, doctype, name):
+    def get_doc(self, doctype, name, **kwargs):
         assert (doctype, name) == ("HERO GraphQL Mapping", self.mapping.name)
         return self.mapping
 

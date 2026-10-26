@@ -1591,6 +1591,28 @@ def _mapping_semantic_content(item, *, snapshot_name: str, operation_kind: str, 
     )
 
 
+def _unique_mapping_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("Writeback mapping contains duplicate JSON object keys.")
+        result[key] = value
+    return result
+
+
+def _mapping_values_preserved(original, normalized):
+    if isinstance(original, dict):
+        return isinstance(normalized, dict) and all(
+            key in normalized and _mapping_values_preserved(value, normalized[key])
+            for key, value in original.items()
+        )
+    if isinstance(original, list):
+        return isinstance(normalized, list) and len(original) == len(normalized) and all(
+            _mapping_values_preserved(value, replacement) for value, replacement in zip(original, normalized)
+        )
+    return type(original) is type(normalized) and original == normalized
+
+
 def _mapping_save_result(item, *, unchanged: bool) -> dict[str, object]:
     return {
         "name": item.name,
@@ -1606,21 +1628,24 @@ def _mapping_save_result(item, *, unchanged: bool) -> dict[str, object]:
 def graphql_mapping_save(
     snapshot_name: str, operation_kind: str, operation_name: str, direction: str, mapping_json: str,
     mapping_name: str = "", expected_revision: int | str = 0, activate: int | bool = 0,
-    suggestion_reason: str = "", confidence: float = 0,
+    suggestion_reason: str | None = None, confidence: float | None = None,
 ) -> dict[str, object]:
     """Persist a revision-checked Draft, or explicitly activate its current owner's Draft."""
     frappe.only_for("System Manager")
     activate_requested = _as_bool(activate)
     try:
-        parsed = json.loads(mapping_json)
+        parsed = json.loads(mapping_json, object_pairs_hook=_unique_mapping_object if direction == "FRAPPE_TO_MUTATION" else None)
         if not isinstance(parsed, dict):
             raise ValueError
-    except (ValueError, TypeError, json.JSONDecodeError):
+    except (ValueError, TypeError, json.JSONDecodeError) as error:
+        if direction == "FRAPPE_TO_MUTATION" and str(error) == "Writeback mapping contains duplicate JSON object keys.":
+            frappe.throw(str(error))
         frappe.throw("GraphQL mapping JSON must be an object.")
     if direction not in {"QUERY_TO_FRAPPE", "FRAPPE_TO_MUTATION"}:
         frappe.throw("Unsupported GraphQL mapping direction.")
     if direction == "FRAPPE_TO_MUTATION":
         _, schema = _validated_snapshot(snapshot_name)
+        submitted_mapping = parsed
         from hero_integration.services.frappe_mapping_catalog import validate_draft_writeback_source
         from hero_integration.services.frappe_writeback import (
             WritebackContractError, draft_source_type_compatible, normalise_draft_mapping, normalise_mapping,
@@ -1639,27 +1664,50 @@ def graphql_mapping_save(
                     )
                     if not draft_source_type_compatible(source_field.fieldtype, parsed["target"]["graphql_type"]):
                         frappe.throw("The selected Frappe source and HERO scalar or enum input types are incompatible.")
+            if not _mapping_values_preserved(submitted_mapping, parsed):
+                frappe.throw("Writeback mapping contains parameters that would not be preserved.")
             source = parsed["source"]
         except (ValueError, WritebackContractError) as error:
             frappe.throw(str(error))
         if not mapping_name:
+            # Serialize only API-created drafts sharing this exact source.
+            # The existing controller lock is connection-scoped and released
+            # at the full transaction boundary, including rollback.
+            from hero_integration.hero_integration.doctype.hero_frappe_mapping.hero_frappe_mapping import _lock_active_target
+            _lock_active_target("writeback:" + snapshot_name, source["doctype"], direction + ":" + source["field"])
             matches = []
-            for row in frappe.get_all(
-                "HERO GraphQL Mapping",
-                filters={"schema_snapshot": snapshot_name, "direction": direction},
-                fields=["name", "mapping_json"],
-            ):
+            rows = frappe.db.sql(
+                "SELECT name, mapping_json FROM `tabHERO GraphQL Mapping` "
+                "WHERE schema_snapshot = %s AND direction = %s FOR UPDATE",
+                (snapshot_name, direction), as_dict=True,
+            )
+            for row in rows:
                 try:
-                    if json.loads(row.mapping_json).get("source") == source:
-                        matches.append(row.name)
-                except (AttributeError, TypeError, ValueError):
-                    continue
+                    stored = json.loads(row.mapping_json, object_pairs_hook=_unique_mapping_object)
+                    stored_source = stored.get("source") if isinstance(stored, dict) else None
+                except (TypeError, ValueError):
+                    stored_source = None
+                if not isinstance(stored_source, dict) or not all(isinstance(stored_source.get(key), str) for key in ("doctype", "field")):
+                    frappe.throw("Existing writeback mapping source cannot be safely inspected.")
+                if all(stored_source[key] == source[key] for key in ("doctype", "field")):
+                    if stored_source != source:
+                        frappe.throw("Existing writeback source contains parameters that cannot be safely reconciled.")
+                    matches.append(row.name)
             if len(matches) > 1:
                 frappe.throw("More than one stored writeback mapping owns this Frappe field; resolve the duplicate before saving.")
             mapping_name = matches[0] if matches else ""
-    item = frappe.get_doc("HERO GraphQL Mapping", mapping_name) if mapping_name else frappe.new_doc("HERO GraphQL Mapping")
+    if not mapping_name:
+        item = frappe.new_doc("HERO GraphQL Mapping")
+    elif direction == "FRAPPE_TO_MUTATION":
+        item = frappe.get_doc("HERO GraphQL Mapping", mapping_name, for_update=True)
+    else:
+        item = frappe.get_doc("HERO GraphQL Mapping", mapping_name)
+        if item.direction == "FRAPPE_TO_MUTATION":
+            item = frappe.get_doc("HERO GraphQL Mapping", mapping_name, for_update=True)
     if mapping_name and item.schema_snapshot != snapshot_name:
         frappe.throw("The GraphQL mapping belongs to another schema snapshot.")
+    if mapping_name and item.direction != direction:
+        frappe.throw("An existing GraphQL mapping cannot change direction.")
     if mapping_name:
         expected = _required_revision(expected_revision, "GraphQL mapping revision")
         if expected != int(item.mapping_revision or 0):
@@ -1667,8 +1715,26 @@ def graphql_mapping_save(
     elif expected_revision not in (0, "", None):
         frappe.throw("A new GraphQL mapping cannot specify an existing revision.")
 
+    if mapping_name and direction == "FRAPPE_TO_MUTATION" and item.direction == direction:
+        try:
+            stored_mapping = json.loads(item.mapping_json, object_pairs_hook=_unique_mapping_object)
+            try:
+                normalized_stored = normalise_mapping(stored_mapping, schema)
+            except WritebackContractError:
+                normalized_stored = normalise_draft_mapping(stored_mapping, schema)
+        except (TypeError, ValueError, WritebackContractError):
+            frappe.throw("Existing writeback mapping cannot be safely replaced; preserve its parameters.")
+        if not _mapping_values_preserved(stored_mapping, normalized_stored):
+            frappe.throw("Existing writeback mapping contains parameters that would not be preserved.")
+
+    writeback_scope = direction == "FRAPPE_TO_MUTATION" or (mapping_name and item.direction == "FRAPPE_TO_MUTATION")
+    if mapping_name and writeback_scope and item.status == "Draft" and item.modified_by != frappe.session.user:
+        message = ("Only the administrator who last changed this Draft may activate it." if activate_requested
+                   else "Foreign legacy mapping drafts cannot be overwritten.")
+        frappe.throw(message, frappe.PermissionError)
+
     canonical_kind = operation_kind.upper()
-    unchanged = mapping_name and _mapping_semantic_content(
+    content_unchanged = mapping_name and _mapping_semantic_content(
         item,
         snapshot_name=snapshot_name,
         operation_kind=canonical_kind,
@@ -1676,6 +1742,17 @@ def graphql_mapping_save(
         direction=direction,
         parsed=parsed,
     )
+    reason = (suggestion_reason[:1000] if suggestion_reason is not None
+              else (item.suggestion_reason or "") if mapping_name else "")
+    score = (max(0, min(float(confidence or 0), 1)) if confidence is not None
+             else float(item.confidence or 0) if mapping_name else 0)
+    if not writeback_scope:
+        reason = suggestion_reason[:1000] if suggestion_reason is not None else ""
+        score = max(0, min(float(confidence or 0), 1))
+    unchanged = bool(content_unchanged and (not writeback_scope or (reason == (item.suggestion_reason or "")
+                     and score == float(item.confidence or 0))))
+    if mapping_name and writeback_scope and content_unchanged and not unchanged and item.status != "Draft":
+        frappe.throw("Review metadata can only be edited on a Draft.")
     if activate_requested:
         if mapping_name and not unchanged:
             frappe.throw("Save GraphQL mapping changes as a Draft before activation.")
@@ -1697,9 +1774,12 @@ def graphql_mapping_save(
     item.operation_name = operation_name
     item.direction = direction
     item.mapping_json = json.dumps(parsed, ensure_ascii=False, sort_keys=True)
-    item.suggestion_reason = suggestion_reason[:1000]
-    item.confidence = max(0, min(float(confidence or 0), 1))
-    item.status = "Active" if activate_requested else "Draft"
+    item.suggestion_reason = reason
+    item.confidence = score
+    if activate_requested:
+        item.status = "Active"
+    elif not content_unchanged:
+        item.status = "Draft"
     item.save()
     return _mapping_save_result(item, unchanged=False)
 
