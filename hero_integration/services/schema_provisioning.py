@@ -137,6 +137,7 @@ def adopt_package(
     if not selected or not selected <= set(items):
         raise SchemaProvisioningError("The selection is empty or contains an unknown checklist item.")
     _validate_selection(items, selected)
+    required_schema = _required_schema_closure(items, selected)
     snapshot = mapping_exchange._validated_snapshot(snapshot_name)
     package = mapping_exchange._parse_payload(payload_json, snapshot.schema_fingerprint)
     definitions = _definitions(package["schema"])
@@ -171,7 +172,7 @@ def adopt_package(
                 _provision_relation(relation, relation_fields, created)
         _validate_selected_relations(definitions, selected)
         current_schema = {item["id"]: item for item in _schema_items(definitions)}
-        if any(current_schema[item_id]["state"] != "Unchanged" for item_id in selected if item_id in current_schema):
+        if any(current_schema.get(item_id, {}).get("state") != "Unchanged" for item_id in required_schema):
             raise SchemaProvisioningError("Schema changed during provisioning; reconciliation is required.")
         # MariaDB DDL may commit and invalidate earlier savepoints. All mapping
         # activation belongs to a fresh DML transaction after provisioning.
@@ -337,6 +338,24 @@ def _validate_selection(items, selected):
         missing = [dependency for dependency in item["dependencies"] if dependency not in selected and items.get(dependency, {}).get("state") != "Unchanged"]
         if missing:
             raise SchemaProvisioningError(f"{item_id} requires: {', '.join(missing)}.")
+
+
+def _required_schema_closure(items, selected):
+    pending = list(selected)
+    seen = set()
+    required = set()
+    while pending:
+        item_id = pending.pop()
+        if item_id in seen:
+            continue
+        seen.add(item_id)
+        item = items.get(item_id)
+        if not item:
+            raise SchemaProvisioningError("A required schema dependency is unknown.")
+        if item["kind"] == "schema":
+            required.add(item_id)
+        pending.extend(item["dependencies"])
+    return required
 
 
 def _require_schema_permissions(definitions, selected):
