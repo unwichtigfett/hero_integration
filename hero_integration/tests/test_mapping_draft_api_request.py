@@ -320,3 +320,49 @@ class TestMappingDraftAPIRequest(unittest.TestCase):
         self.assertEqual('Administrator',frappe.db.get_value('HERO GraphQL Mapping',self.rows['draft'],'modified_by'))
         frappe.destroy()
         self.assertEqual(before,self.state())
+
+    def test_projected_identity_drives_personal_draft_roundtrip(self):
+        before = self.state()
+        projected = {}
+        for actor in ('a', 'employee'):
+            status, data = self.rpc(actor, 'frontend_mapping_list', {'search': self.rows['active']})
+            self.assertEqual(200, status, data)
+            row = next(r for r in data['message']['graphql_mappings'] if r['name'] == self.rows['active'])
+            self.assertEqual(self.definition, row['definition_id'])
+            self.assertNotEqual(row['name'], row['definition_id'])
+            status, data = self.rpc(actor, 'frontend_mapping_detail', {'mapping_type': 'graphql', 'name': row['name']})
+            self.assertEqual(200, status, data)
+            self.assertEqual(row['definition_id'], data['message']['definition_id'])
+            projected[actor] = row['definition_id']
+        self.assertEqual(before, self.state(), 'list/detail must not write')
+        identity = projected['a']
+        for other in (identity, self.definition + '2'):
+            status, data = self.rpc('a', 'mapping_draft_read', {'definition_id': other})
+            self.assertEqual((200, {'draft': None}), (status, data['message']))
+        self.assertEqual(before, self.state(), 'reads must not create drafts/revisions')
+        status, data = self.rpc('a', 'mapping_draft_create', {'definition_id': identity}, 'POST')
+        self.assertEqual(200, status, data)
+        self.assertEqual(identity, data['message']['draft']['definition_id'])
+        self.assertEqual(self.rows['active'], data['message']['draft']['base_active_name'])
+        args = self.save_args(content={'record_path': 'readThings', 'source': {'field': 'synthetic'}})
+        args['definition_id'] = identity
+        status, data = self.rpc('a', 'mapping_draft_save', args, 'POST')
+        self.assertEqual(200, status, data)
+        saved = data['message']['draft']
+        self.assertEqual(identity, saved['definition_id'])
+        status, data = self.rpc('a', 'mapping_draft_read', {'definition_id': identity})
+        self.assertEqual(200, status, data)
+        self.assertEqual(saved, data['message']['draft'])
+        before = self.state()
+        for method, verb, payload in (
+            ('mapping_draft_read', 'GET', {'definition_id': projected['employee']}),
+            ('mapping_draft_revisions', 'GET', {'definition_id': projected['employee']}),
+            ('mapping_draft_create', 'POST', {'definition_id': projected['employee']}),
+            ('mapping_draft_save', 'POST', args),
+            ('mapping_draft_discard', 'POST', {'definition_id': projected['employee'], 'expected_generation': 1,
+                'expected_draft_revision': 1, 'confirmed': True}),
+        ):
+            self.assertEqual(403, self.rpc('employee', method, payload, verb)[0])
+        self.assertEqual(before, self.state())
+        self.assertEqual(0, self.rpc('b', 'mapping_draft_revisions', {'definition_id': identity})[1]['message']['total'])
+        self.assertIsNone(self.rpc('a', 'mapping_draft_read', {'definition_id': self.rows['active2']})[1]['message']['draft'])
