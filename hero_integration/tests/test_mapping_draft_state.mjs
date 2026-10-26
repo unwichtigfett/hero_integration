@@ -129,3 +129,22 @@ test('reopened reconciliation uses its verified active revision for a later save
  assert.equal(args.expected_reconciliation_revision,1);
  assert.equal(args.reconciliation_json,'');
 });
+
+test('directional import save serializes only the server preview CAS states',()=>{
+ const preview={items:[
+  {definition_id:'query-a',state:'NEW',expected:{generation:0,draft_revision:0,active_revision:9,reconciliation_revision:0}},
+  {definition_id:'query-b',state:'REMOVE',expected:{generation:4,draft_revision:7,active_revision:10,reconciliation_revision:2}},
+ ]};
+ const states=window.hero_integration_mapping_editor.exchangeExpectedStates(preview);
+ assert.equal(stable(states),stable([
+  {definition_id:'query-a',generation:0,draft_revision:0,active_revision:9,reconciliation_revision:0},
+  {definition_id:'query-b',generation:4,draft_revision:7,active_revision:10,reconciliation_revision:2},
+ ]));
+ assert.equal(stable(window.hero_integration_mapping_editor.exchangeCounts(preview)),stable({NEW:1,REPLACE:0,UNCHANGED:0,REMOVE:1}));
+});
+
+test('directional import rejects a malformed preview before any save request can be constructed',()=>{
+ assert.throws(()=>window.hero_integration_mapping_editor.exchangeExpectedStates({items:[
+  {definition_id:'query-a',expected:{generation:0,draft_revision:0,active_revision:'9',reconciliation_revision:0}},
+ ]}),/Invalid directional import preview/);
+});
