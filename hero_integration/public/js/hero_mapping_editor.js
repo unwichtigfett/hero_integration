@@ -50,6 +50,8 @@
         if (["NEW", "REPLACE", "UNCHANGED", "REMOVE"].includes(state)) result[state]++;
         return result;
     }, {NEW: 0, REPLACE: 0, UNCHANGED: 0, REMOVE: 0});
+    const exchangeCanAdopt = (entry, currentEntry, contextKey, locked) => !locked &&
+        entry === currentEntry && entry?.context?.key === contextKey && entry?.preview?.can_save === true;
     class DraftState {
         constructor(draft) { this.accept(draft); }
         accept(draft) { this.saved = draftValue(draft); this.verifiedActiveRevision = verifiedActiveRevision(this.saved); this.content = clone(this.saved.content); this.referenceOrder = [...(this.content.mapping_definition_ids || [])]; this.undo = []; this.reconciliation = null; this.blocked = false; }
@@ -270,6 +272,7 @@
         function exchangePreviewDialog(entry) {
             if (root.find("dialog").length) return;
             const opener = document.activeElement, preview = entry.preview, counts = exchangeCounts(preview);
+            const canAdopt = () => exchangeCanAdopt(entry, exchanges.get(entry.context.key), exchangeContext()?.key, locked());
             const dialog = $("<dialog class='hero-mapping-dialog'></dialog>");
             const heading = $("<h3 id='hero-mapping-exchange-title'></h3>").text(text(`Import ${exchangeLabel(entry.context)} mappings`));
             const close = () => { dialog[0].close(); dialog.remove(); if (opener?.isConnected) opener.focus(); };
@@ -283,7 +286,7 @@
             dialog.append($("<details></details>").append($("<summary></summary>").text(`${text("Schema provisioning preview")} (${schema.length})`), safeJson(preview.schema || {})));
             if (!preview.can_save) dialog.append($("<p role='alert'></p>").text(text("This package cannot be saved because the schema preview has a conflict or invalid definition.")));
             const adopt = async () => {
-                const adoptEntry = () => { exchanges.set(entry.context.key, {...entry, adopted: true}); say(`Imported ${exchangeLabel(entry.context)} package adopted locally. Save imported ${exchangeLabel(entry.context)} drafts to persist this direction.`); renderDetail(); };
+                const adoptEntry = () => { if (!canAdopt()) return; exchanges.set(entry.context.key, {...entry, adopted: true}); say(`Imported ${exchangeLabel(entry.context)} package adopted locally. Save imported ${exchangeLabel(entry.context)} drafts to persist this direction.`); renderDetail(); };
                 if (!model?.dirty) return adoptEntry();
                 modal("Unsaved changes", "Adopting this directional package replaces the local working draft collection. Save or discard the current local edits first.", [
                     ["Save and adopt", async () => { if (await save()) adoptEntry(); }, true],
@@ -291,7 +294,7 @@
                     ["Continue editing", () => {}],
                 ]);
             };
-            dialog.append(button("Adopt locally", async () => { close(); await adopt(); }, true).prop("disabled", !preview.can_save),
+            dialog.append(button("Adopt locally", async () => { if (!canAdopt()) return; close(); await adopt(); }, true).prop("disabled", !canAdopt()),
                 button("Close", close));
             root.append(dialog); dialog[0].showModal(); dialog.find("button").first().trigger("focus");
         }
@@ -299,6 +302,7 @@
             const context = exchangeContext();
             if (locked() || !context || !file) return;
             const request = ++epoch, sequence = ++exchangeSequence;
+            let entry;
             setBusy(true); say(`Reading ${exchangeLabel(context)} import file…`);
             try {
                 const payload = await file.text();
@@ -306,11 +310,11 @@
                 const preview = await rpc("mapping_draft_exchange_preview", {payload_json: payload,
                     source_instance: context.source_instance, snapshot_name: context.snapshot_name, direction: context.direction}, true);
                 if (disposed || request !== epoch || sequence !== exchangeSequence || context.key !== exchangeContext()?.key) return;
-                const entry = {context, payload, preview, adopted: false};
-                exchanges.set(context.key, entry); exchangePreviewDialog(entry); say("Import preview is ready. No personal drafts or schema were changed.");
+                entry = {context, payload, preview, adopted: false};
+                exchanges.set(context.key, entry); say("Import preview is ready. No personal drafts or schema were changed.");
             } catch (error) {
                 if (!disposed && request === epoch) say(denied(error) ? errorText(error) : "The import preview failed. Your current work and saved drafts have been kept.");
-            } finally { if (!disposed && request === epoch) { setBusy(false); renderDetail(); } }
+            } finally { if (!disposed && request === epoch) { setBusy(false); renderDetail(); if (entry) exchangePreviewDialog(entry); } }
         }
         function chooseImport() {
             const context = exchangeContext();
@@ -816,5 +820,5 @@
         const controller = {beforeLeave: leave, destroy() { shell.removeClass("hero-mapping-shell"); disposed = true; epoch++; window.removeEventListener("beforeunload", unload); if (router.route === guardedRoute) router.route = originalRoute; document.removeEventListener("click", links, true); }};
         current = controller; loadList(); return controller;
     }
-    window.hero_integration_mapping_editor = Object.freeze({mount, DraftState, stable, readActiveRule, exchangeExpectedStates, exchangeCounts});
+    window.hero_integration_mapping_editor = Object.freeze({mount, DraftState, stable, readActiveRule, exchangeExpectedStates, exchangeCounts, exchangeCanAdopt});
 })();

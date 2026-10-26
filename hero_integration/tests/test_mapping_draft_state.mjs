@@ -5,6 +5,18 @@ import test from 'node:test';
 const window = {};
 vm.runInNewContext(readFileSync(new URL('../public/js/hero_mapping_editor.js', import.meta.url), 'utf8'), {window});
 const {DraftState, stable} = window.hero_integration_mapping_editor;
+test('directional adoption requires the current valid preview and idle matching context', () => {
+ const {exchangeCanAdopt}=window.hero_integration_mapping_editor;
+ const entry={context:{key:'query-context'},preview:{can_save:true}};
+ assert.equal(exchangeCanAdopt(entry,entry,'query-context',false),true);
+ for (const can_save of [false,undefined,null,1]) {
+  const blocked={...entry,preview:{can_save}};
+  assert.equal(exchangeCanAdopt(blocked,blocked,'query-context',false),false);
+ }
+ assert.equal(exchangeCanAdopt(entry,{...entry},'query-context',false),false);
+ assert.equal(exchangeCanAdopt(entry,entry,'mutation-context',false),false);
+ assert.equal(exchangeCanAdopt(entry,entry,'query-context',true),false);
+});
 const fixture = () => ({definition_id:'canonical-distinct', generation:2, content_revision:3, base_active_revision:7, state:'OPEN',
  content:{mapping_definition_ids:['a','b','c'],variables:{hidden:['keep',1]},records_path:'things',complex:{other:true}}});
 test('roundtrip retains all parameters and CAS identity', () => {
