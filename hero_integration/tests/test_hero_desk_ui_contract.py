@@ -34,10 +34,10 @@ class TestHeroDeskUiContract(unittest.TestCase):
         workspace = WORKSPACE_JS.read_text()
         mapping = MAPPING_EDITOR_JS.read_text()
         for contract in (
-            "isSystemManager", 'section === "mapping"', "frontend_mapping_list",
-            "Employee read-only view", "All Mapping Status", "mapping_name",
-            "expected_revision", "unchanged", "activation_required", "Reload current Draft",
-            "runtime_plan_status", "runtime_plan_approve", "Plan lifecycle",
+            "isSystemManager", 'section === "mapping"', "frontend_mapping_list", "frontend_mapping_detail",
+            "Employee read-only view", "definition_id", "expected_generation", "expected_draft_revision",
+            "expected_active_revision", "unchanged", "mapping_draft_create", "mapping_draft_read",
+            "mapping_draft_save", "mapping_draft_discard", "mapping_draft_revisions",
         ):
             with self.subTest(contract=contract):
                 self.assertIn(contract, workspace + mapping)
@@ -193,80 +193,31 @@ class TestHeroDeskUiContract(unittest.TestCase):
         for forbidden in ("auto_domain", "hero_connector", "process_core_shell", "semantic variable", "state machine"):
             self.assertNotIn(forbidden, source.lower())
 
-    def test_mapping_editor_retains_one_confirmed_bulk_adoption(self):
+    def test_mapping_editor_bounds_collections_and_preserves_server_identity(self):
         source = MAPPING_EDITOR_JS.read_text()
-        for contract in (
-            "adopt_mapping_package", "frappe.confirm", "pendingSourcePath",
-            "mapping_target_catalog", "target_doctype", "hero-mapping-grid",
-            "Review Suggestions", "Active Read Mappings", "hero-mapping-statuses",
-            "hero-mapping-table", "hero-mapping-advanced", "status: \"Draft\"",
-            "mapping_source_picker_page", "mapping_target_picker_page", "PAGE_SIZE = 50",
-            "hero-mapping-picker", "Show more suggestions", "Prepare Custom Field provisioning",
-            "mapping_suggestions", "Suggested HERO source fields", "hero-mapping-reverse-suggestions",
-            "Use HERO field", "Show more HERO suggestions",
-        ):
-            with self.subTest(contract=contract):
-                self.assertIn(contract, source)
-        self.assertIn("Promise.all", source)
-        self.assertIn("sourceSearch.val()", source)
-        self.assertIn("activeSearch.on", source)
-        self.assertIn("reverseSearch.on", source)
-        self.assertIn('if (!targetDocType.val()) return clearTargets', source)
-        self.assertNotIn("hero-mapping-field-list", source)
-        self.assertNotIn("Zuordnen", source)
+        for contract in ("graphql_total", "frappe_total", "Definitions on this page", "HERO operations and mapping definitions",
+                         "definition_id: active.definition_id", "mapping_type: kind, name: item.name", "page_size: 20"):
+            self.assertIn(contract, source)
+        for excluded in ("graphql_mapping_save", "adopt_mapping_package", "import_mapping_json", "runtime_plan_approve"):
+            self.assertNotIn(excluded, source)
 
-    def test_mapping_editor_requires_an_explicit_validated_snapshot_before_source_loading(self):
+    def test_mapping_editor_has_explicit_save_and_lossless_local_undo(self):
         source = MAPPING_EDITOR_JS.read_text()
-        for contract in (
-            "schema_snapshot_list", "Choose a saved GraphQL Schema Snapshot", "hero-mapping-snapshot-metadata",
-            "schema_fingerprint", "analysis_status", "analysis_detail", "hasValidSnapshot",
-            "invalidateSnapshotState", "sourceLoadSequence", "mapping_source_picker_page", "mapping_suggestions",
-        ):
-            with self.subTest(contract=contract):
-                self.assertIn(contract, source)
-        for contract in (
-            "snapshotStorageKey", "hero-integration.mapping.snapshot:", "window.localStorage",
-            "const preferredName = requestedSnapshotName || storedName",
-            'preferredSnapshot?.analysis_status === "Validated"', "persistSnapshotName(preferredName)",
-        ):
-            with self.subTest(contract=contract):
-                self.assertIn(contract, source)
-        self.assertNotIn("snapshot.val(rows[0]", source)
-        self.assertNotIn("snapshot.val(snapshots", source)
+        for contract in ("class DraftState", "JSON.parse(JSON.stringify(value))", "this.undo.push", "this.undo.pop",
+                         "mapping_draft_save", "Save and leave", "Discard changes", "Continue editing",
+                         "TimestampMismatchError", "Check saved draft", "beforeunload"):
+            self.assertIn(contract, source)
+        self.assertNotIn("setInterval", source)
+        self.assertNotIn("setTimeout(save", source)
 
-    def test_mapping_editor_lists_saved_active_read_mappings_independently_from_the_source_picker(self):
+    def test_mapping_editor_uses_existing_catalogs_and_scoped_table_details(self):
         source = MAPPING_EDITOR_JS.read_text()
-        for contract in (
-            "frontend_mapping_list", "item.schema_snapshot === snapshotName",
-            "item.schema_fingerprint === schemaFingerprint", "item.status === \"Active\"",
-            "savedReadMappings", "readOperationFilter", "Reset filters",
-            "Read mappings could not be loaded", "Loading saved active read mappings", "loadActiveReadMappings", "Active Read Mappings",
-        ):
-            with self.subTest(contract=contract):
-                self.assertIn(contract, source)
-        renderer = source.split("const renderActiveMappings = () => {", 1)[1].split("const selectedSnapshot", 1)[0]
-        self.assertNotIn("activeSourceFields", renderer)
-        self.assertIn("No saved read mappings match these filters.", renderer)
-        self.assertIn("renderReadOperationFilter", source)
-
-    def test_lower_writeback_mapper_is_mutation_only_and_has_its_own_picker_state(self):
-        source = MAPPING_EDITOR_JS.read_text()
-        for contract in (
-            "Frappe to HERO writeback", "schema_operation_catalog", "graphql_mapping_list",
-            "graphql_mapping_save", "FRAPPE_TO_MUTATION", "Save Draft",
-            "Activate reviewed mapping", "dynamicDirection", "dynamicOperations", "frappe.confirm",
-            "writeback_mapper_catalog", "writebackApp", "writebackDocType", "writebackSearch",
-            "writebackSourceList", "writebackTargetSearch", "writebackTargetList", "renderWritebackTargets",
-            "writebackComparison", "dynamicSearch", "schema-proven HERO input field", "Reusable technical contract",
-        ):
-            with self.subTest(contract=contract):
-                self.assertIn(contract, source)
-        lower_mapping = source.split("const visualDynamicMapping =", 1)[1].split("const renderDynamicPreview =", 1)[0]
-        self.assertNotIn("targetApp", lower_mapping)
-        self.assertNotIn("targetDocType", lower_mapping)
-        self.assertNotIn("selectedTarget", lower_mapping)
-        self.assertIn("saveDynamic(false)", source)
-        self.assertNotIn("snapshot.val(rows[0]", source)
+        for contract in ("mapping_target_catalog", "mapping_target_picker_page", "schema_operation_catalog",
+                         "hero-mapping-editor-grid", "hero-mapping-row-detail", "hero-mapping-table",
+                         "Search fields by name, full path or type", "My saved revisions — read only"):
+            self.assertIn(contract, source)
+        self.assertNotIn('"Customer"', source)
+        self.assertNotIn('"Project"', source)
 
     def test_polling_and_synchronization_controls_are_visible_without_a_new_page(self):
         settings = SETTINGS_JS.read_text()
@@ -371,7 +322,7 @@ class TestHeroDeskUiContract(unittest.TestCase):
                 self.assertIn(contract, settings)
         self.assertIn("hero-migration-panel", migration)
         self.assertIn("hero-migration-actions", migration)
-        self.assertIn("Map fields", mapping)
+        self.assertIn("Field mapping details", mapping)
 
     def test_hero_owned_ui_strings_are_not_routed_through_frappe_translation(self):
         sources = [WORKSPACE_JS, TOOLS_JS, SETTINGS_JS, MAPPING_EDITOR_JS, MIGRATION_JS]
@@ -389,12 +340,8 @@ class TestHeroDeskUiContract(unittest.TestCase):
         ):
             with self.subTest(contract=contract):
                 self.assertIn(contract, workspace)
-        for contract in (
-            "Retry app catalog", "Retry saved snapshots", "targetCatalogSequence", "visualDynamicMapping",
-            "schema-proven HERO input field", "Advanced: JSON import and schema provisioning", "renderDynamicPreview",
-        ):
-            with self.subTest(contract=contract):
-                self.assertIn(contract, mapping)
+        for contract in ("errorText(error)", "Your changes have been kept", "request !== epoch", "disposed"):
+            self.assertIn(contract, mapping)
 
     def test_styles_are_packaged_with_the_app(self):
         self.assertTrue(WORKSPACE_CSS.is_file())

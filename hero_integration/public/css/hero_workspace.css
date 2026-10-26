@@ -97,3 +97,29 @@
 .hero-integration-ui .hero-migration-action-buttons .btn { min-width: 92px; }
 @media (max-width: 900px) { .hero-integration-ui .hero-mapping-controls, .hero-integration-ui .hero-mapping-grid { grid-template-columns: 1fr; } .hero-integration-ui .hero-migration-actions { grid-template-columns: 1fr; } }
 @media (max-width: 900px) { .hero-integration-summary-grid, .hero-integration-summary-grid.compact { grid-template-columns: 1fr; } .hero-integration-split, .hero-integration-graph-layout { grid-template-columns: 1fr; } .hero-integration-graph-controls { grid-template-columns: 1fr 1fr; } }
+
+/* Personal mapping editor: scoped to the mapping surface. */
+.hero-mapping-core .hero-mapping-actions { display:flex; flex-wrap:wrap; gap:8px; align-items:end; margin-block:12px; }
+.hero-mapping-core .hero-mapping-input { display:flex; flex-direction:column; gap:5px; margin-block:8px; min-width:180px; }
+.hero-mapping-core .hero-mapping-editor-grid { display:grid; grid-template-columns:minmax(0, 1.25fr) minmax(260px, 1fr); gap:16px; align-items:start; }
+.hero-mapping-core .hero-mapping-row-detail { padding:16px; border:1px solid var(--border-color); border-radius:var(--border-radius); background:var(--card-bg); min-width:0; overflow-wrap:anywhere; }
+.hero-mapping-core .hero-mapping-operation { margin-block:12px; padding:12px; border:1px solid var(--border-color); border-radius:var(--border-radius); }
+.hero-mapping-core .hero-mapping-operation > button { display:block; margin-block:8px; text-align:left; white-space:normal; overflow-wrap:anywhere; }
+.hero-mapping-core .hero-mapping-table td { overflow-wrap:anywhere; white-space:normal; }
+.hero-mapping-core .hero-mapping-table td button { text-align:left; white-space:normal; overflow-wrap:anywhere; }
+.hero-mapping-core .hero-mapping-table tr.is-selected { background:var(--control-bg); }
+.hero-mapping-core pre { white-space:pre-wrap; overflow-wrap:anywhere; max-height:420px; overflow:auto; }
+.hero-mapping-core button:focus-visible, .hero-mapping-core summary:focus-visible { outline:2px solid var(--primary); outline-offset:3px; }
+.hero-mapping-core .hero-mapping-dialog { background:var(--card-bg); color:var(--text-color); border:1px solid var(--border-color); border-radius:var(--border-radius); max-width:min(560px, 95vw); padding:24px; }
+.hero-mapping-core .hero-mapping-dialog button { margin:6px; }
+.hero-mapping-core .hero-mapping-dialog::backdrop { background:rgba(0,0,0,.4); }
+@media(max-width:900px) { .hero-mapping-core .hero-mapping-editor-grid { grid-template-columns:minmax(0,1fr); } }
+
+.hero-mapping-shell.admin-workspace { padding:16px; box-sizing:border-box; min-width:0; }
+.hero-mapping-shell .hero-unified-content, .hero-mapping-core { min-width:0; }
+.hero-mapping-core .hero-mapping-table td:last-child button { white-space:nowrap; }
+
+.hero-mapping-core .hero-mapping-body > .btn { margin:4px; text-align:left; white-space:normal; overflow-wrap:anywhere; }
+.hero-integration-ui .hero-mapping-core .btn.btn-primary { background:var(--pc-surfaceRaised); color:var(--pc-text); border:2px solid var(--pc-focus); font-weight:700; }
+.hero-integration-ui .hero-mapping-core .btn:hover:not(:disabled) { background:var(--pc-surfaceRaised); color:var(--pc-text); }
+.hero-integration-ui .hero-mapping-core .btn:disabled { background:var(--pc-surface); color:var(--pc-text); opacity:.55; }

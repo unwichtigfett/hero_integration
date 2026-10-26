@@ -1,550 +1,491 @@
 (() => {
     "use strict";
-
     if (window.hero_integration_mapping_editor) return;
-
-    const PAGE_SIZE = 50;
-    const statusClass = (status) => ["active", "draft"].includes(String(status || "").toLowerCase()) ? String(status).toLowerCase() : "invalid";
-
-    function mount(page, routeContext = {}) {
-        page.main.empty().addClass("hero-integration-ui");
-        const snapshot = $("<select class='form-control' disabled><option value=''>Choose a saved GraphQL Schema Snapshot</option></select>");
-        const snapshotMetadata = $("<div class='text-muted hero-mapping-snapshot-metadata' aria-live='polite'></div>");
-        const operation = $("<select class='form-control' disabled><option value=''>Choose a snapshot query</option></select>");
-        const operationSearch = $("<input class='form-control' placeholder='Filter snapshot queries' disabled>");
-        const sourceSearch = $("<input class='form-control' placeholder='Name, path, type, or relation'>");
-        const reverseSearch = $("<input class='form-control' placeholder='Filter suggested HERO fields' disabled>");
-        const targetSearch = $("<input class='form-control' placeholder='Name, fieldname, type, or description' disabled>");
-        const readOperationFilter = $("<select class='form-control' disabled><option value=''>All read operations</option></select>");
-        const activeSearch = $("<input class='form-control' placeholder='Filter saved read mappings by field'>");
-        const resetReadFilters = $("<button type='button' class='btn btn-default btn-sm' disabled>Reset filters</button>");
-        const targetApp = $("<select class='form-control'><option value=''>Choose an app</option></select>");
-        const targetDocType = $("<select class='form-control' disabled><option value=''>Choose a DocType</option></select>");
-        const targetCatalogStatus = $("<div class='text-muted hero-mapping-catalog-status' aria-live='polite'></div>");
-        const retryTargetCatalog = $("<button type='button' class='btn btn-default btn-sm' hidden>Retry app catalog</button>");
-        const retrySnapshots = $("<button type='button' class='btn btn-default btn-sm' hidden>Retry saved snapshots</button>");
-        const sourceList = $("<div class='hero-mapping-picker-host'></div>"), targetList = $("<div class='hero-mapping-picker-host'></div>");
-        const reverseSuggestions = $("<div class='hero-mapping-reverse-suggestions'></div>");
-        const sourceDetails = $("<details class='hero-mapping-field-details'><summary>HERO field details</summary></details>");
-        const targetDetails = $("<details class='hero-mapping-field-details'><summary>Frappe field details</summary></details>");
-        const sourcePager = $("<div class='hero-mapping-pager'></div>"), targetPager = $("<div class='hero-mapping-pager'></div>");
-        const suggestions = $("<div class='hero-mapping-table-wrap'></div>"), activeMappings = $("<div class='hero-mapping-table-wrap'></div>");
-        const statusSummary = $("<div class='hero-mapping-statuses'></div>"), preview = $("<pre class='hero-mapping-preview' aria-live='polite'></pre>");
-        const dynamicKind = $("<input class='form-control' value='MUTATION' readonly>");
-        const writebackApp = $("<select class='form-control' disabled><option value=''>Choose an app</option></select>");
-        const writebackDocType = $("<select class='form-control' disabled><option value=''>Choose a DocType</option></select>");
-        const writebackSearch = $("<input class='form-control' placeholder='Name, fieldname, or type' disabled>");
-        const dynamicOperation = $("<select class='form-control' disabled><option value=''>Choose a snapshot mutation</option></select>");
-        const dynamicOperationSearch = $("<input class='form-control' placeholder='Filter snapshot mutations' disabled>");
-        const writebackTargetSearch = $("<input class='form-control' placeholder='Filter writable HERO input fields' disabled>");
-        const dynamicArguments = $("<div class='text-muted hero-mapping-operation-arguments'></div>");
-        const dynamicFieldPath = $("<select class='form-control' disabled><option value=''>Choose the schema-proven HERO input field</option></select>"), dynamicTransformation = $("<select class='form-control'><option value='Identity'>Identity</option><option value='Trim'>Trim text</option></select>"), dynamicPreview = $("<pre class='hero-mapping-preview' aria-live='polite'></pre>");
-        const dynamicReason = $("<input class='form-control' placeholder='Why this mapping is compatible'>"), dynamicConfidence = $("<input class='form-control' type='number' min='0' max='1' step='0.01' value='0.5'>");
-        const dynamicContract = $("<div class='text-muted hero-mapping-operation-arguments' aria-live='polite'></div>"), dynamicStatus = $("<div class='hero-mapping-statuses' aria-live='polite'></div>"), dynamicRows = $("<div class='hero-mapping-table-wrap'></div>"), dynamicSearch = $("<input class='form-control' placeholder='Filter saved writeback mappings'>");
-        const writebackSourceList = $("<div class='hero-mapping-picker-host'></div>"), writebackTargetList = $("<div class='hero-mapping-picker-host'></div>");
-        const writebackSourceDetails = $("<details class='hero-mapping-field-details'><summary>Frappe source field details</summary></details>"), writebackTargetDetails = $("<details class='hero-mapping-field-details'><summary>HERO target field details</summary></details>");
-        const writebackSourcePager = $("<div class='hero-mapping-pager'></div>"), writebackTargetPager = $("<div class='hero-mapping-pager'></div>"), writebackComparison = $("<div class='hero-mapping-operation-arguments' aria-live='polite'></div>");
-        const saveDynamicDraft = $("<button type='button' class='btn btn-default'>Save Draft</button>"), activateDynamic = $("<button type='button' class='btn btn-warning'>Activate reviewed mapping</button>");
-        const importFile = $("<input type='file' accept='application/json,.json' class='form-control-file'>"), exchangeResult = $("<div class='mt-2'></div>");
-        const advanced = $("<details class='hero-mapping-advanced'><summary>Advanced: JSON import and schema provisioning</summary></details>");
-        const provisionCustomField = $("<button type='button' class='btn btn-default btn-sm'>Prepare Custom Field provisioning</button>");
-        const allMappingStatus = $("<div class='hero-mapping-table-wrap hero-mapping-all-status' aria-live='polite'></div>"), allMappingFilter = $("<input class='form-control' placeholder='Filter all permitted mappings'>"), allMappingRefresh = $("<button type='button' class='btn btn-default btn-sm'>Refresh mapping status</button>");
-        const runtimeSource = $("<input class='form-control' placeholder='Source instance'>"), runtimeStatus = $("<div class='hero-mapping-runtime-status' aria-live='polite'></div>"), runtimeRefresh = $("<button type='button' class='btn btn-default btn-sm'>Load runtime plan</button>"), runtimeApprove = $("<button type='button' class='btn btn-default btn-sm' disabled>Approve current Draft</button>");
-        let selectedSource = null, selectedTarget = null, importPayload = null, activeSourceFields = [], pendingSourcePath = routeContext.source_path || "";
-        let sourceStart = 0, targetStart = 0, currentSuggestions = [], suggestionsExpanded = false, reverseExpanded = false, suggestionDirection = "", suggestionSequence = 0, sourceLoadSequence = 0, targetCatalogSequence = 0;
-        let savedReadMappings = [], readMappingLoadError = "", readMappingsLoading = false, readMappingLoadSequence = 0, allMappings = [], allMappingSequence = 0, runtimePlan = null, runtimeSequence = 0, writebackCatalog = null, writebackFields = [], selectedWritebackField = null, writebackCatalogSequence = 0, writebackSourceStart = 0, writebackTargetStart = 0, dynamicMappings = [];
-        const requestedSnapshotName = routeContext.snapshot_name || routeContext.snapshot || "";
-        const snapshotStorageKey = () => {
-            const site = String(frappe.boot?.sitename || window.location.host || "site");
-            const user = String(frappe.session?.user || frappe.boot?.user?.name || "guest");
-            return `hero-integration.mapping.snapshot:${site}:${user}`;
-        };
-        const storedSnapshotName = () => {
-            try { return window.localStorage.getItem(snapshotStorageKey()) || ""; } catch (_) { return ""; }
-        };
-        const persistSnapshotName = (name) => {
-            try {
-                if (name) window.localStorage.setItem(snapshotStorageKey(), name);
-                else window.localStorage.removeItem(snapshotStorageKey());
-            } catch (_) { /* Browser storage is optional; route state remains authoritative. */ }
-        };
-        const snapshots = new Map();
-        const requestedOperation = routeContext.operation || "";
-
-        const controls = $("<div class='hero-mapping-controls'></div>").append($("<label></label>").text("GraphQL Schema Snapshot").append(snapshot, snapshotMetadata, retrySnapshots), $("<label></label>").text("HERO source operation").append(operationSearch, operation));
-        const mappingGrid = $("<div class='hero-mapping-grid'></div>").append(
-            $("<section class='hero-mapping-pane'></section>").append($("<h3>HERO source</h3><p class='text-muted'>Search the saved, read-only operation and select one source field.</p>"), sourceSearch, sourceList, sourcePager, sourceDetails, $("<h4 class='hero-mapping-subheading'>Suggested HERO source fields</h4>"), reverseSearch, reverseSuggestions),
-            $("<section class='hero-mapping-pane'></section>").append($("<h3>Frappe target</h3><p class='text-muted'>Choose an installed app, then a DocType, before searching its fields. This catalog is available even when no HERO schema snapshot has been saved yet.</p>"), targetApp, targetCatalogStatus, retryTargetCatalog, targetDocType, targetSearch, targetList, targetPager, targetDetails, $("<p class='text-muted hero-mapping-provision-note'></p>").append("Missing a Custom Field? ", provisionCustomField)),
-        );
-        advanced.append($("<p class='text-muted'></p>").text("Warning: Import replaces the entire mapping configuration. Mappings are never merged automatically. To combine mappings, merge the JSON files manually before importing. Export and back up the current mapping configuration first."), importFile, exchangeResult);
-        page.main.append(
-            $("<header class='hero-mapping-header'><h2>HERO Mapping Editor</h2><p class='text-muted'>Mappings are reviewed proposals. Creating a Draft never activates it.</p></header>"), controls,
-            $("<section class='hero-mapping-section'></section>").append($("<h3>All Mapping Status</h3><p class='text-muted'>Permitted structural mapping definitions and lifecycle state. Sensitive configuration is never shown.</p>"), $("<div class='hero-mapping-controls'></div>").append($("<label></label>").text("Mapping filter").append(allMappingFilter), allMappingRefresh), allMappingStatus),
-            $("<section class='hero-mapping-section'></section>").append($("<h3>Map fields</h3>"), mappingGrid, preview),
-            $("<section class='hero-mapping-section'></section>").append($("<h3>Review Suggestions</h3><p class='text-muted'>The strongest compatible proposals are shown first; reviewing one only prepares a Draft.</p>"), suggestions),
-            $("<section class='hero-mapping-section'></section>").append($("<h3>Active Read Mappings</h3><p class='text-muted'>All saved active mappings for the selected snapshot are shown independently from the source-field picker.</p>"), statusSummary, $("<div class='hero-mapping-controls'></div>").append($("<label></label>").text("Read operation").append(readOperationFilter), $("<label></label>").text("Field filter").append(activeSearch), resetReadFilters), activeMappings), advanced,
-            $("<section class='hero-mapping-section hero-mapping-dynamic'></section>").append(
-                $("<h3>Frappe to HERO writeback</h3><p class='text-muted'>Inspect every saved mutation and eligible installed-app source field. Only one reviewed, schema-bound contract can ever be activated; all other compatible proposals remain non-executable Drafts.</p>"),
-                $("<div class='hero-mapping-controls'></div>").append($("<label></label>").text("Contract type").append(dynamicKind), $("<label></label>").text("Technical contract").append(dynamicContract), dynamicArguments),
-                $("<div class='hero-mapping-grid'></div>").append(
-                    $("<section class='hero-mapping-pane'></section>").append($("<h3>Frappe source</h3><p class='text-muted'>Choose an eligible local field from any installed app. The source picker is independent from the HERO-to-Frappe mapper.</p>"), $("<label></label>").text("Frappe app").append(writebackApp), $("<label></label>").text("Frappe source DocType").append(writebackDocType), writebackSearch, writebackSourceList, writebackSourcePager, writebackSourceDetails),
-                    $("<section class='hero-mapping-pane'></section>").append($("<h3>HERO mutation target</h3><p class='text-muted'>Choose the validated snapshot mutation and inspect its exact typed input fields. Only reviewed contracts can be activated.</p>"), $("<label></label>").text("Snapshot mutation").append(dynamicOperationSearch, dynamicOperation), writebackTargetSearch, writebackTargetList, writebackTargetPager, writebackTargetDetails),
-                ),
-                writebackComparison, $("<div class='hero-mapping-controls'></div>").append($("<label></label>").text("Transformation").append(dynamicTransformation), $("<label></label>").text("Suggestion rationale").append(dynamicReason), $("<label></label>").text("Confidence 0–1").append(dynamicConfidence)), dynamicPreview,
-                $("<div class='mt-2'></div>").append(saveDynamicDraft, document.createTextNode(" "), activateDynamic), dynamicStatus, $("<h4>Saved writeback mappings</h4>"), dynamicSearch, dynamicRows,
-            ),
-            $("<section class='hero-mapping-section hero-mapping-runtime'></section>").append($("<h3>Plan lifecycle</h3><p class='text-muted'>A runtime plan is approved only by the server-authorized lifecycle. Approval never enables polling.</p>"), $("<div class='hero-mapping-controls'></div>").append($("<label></label>").text("Source instance").append(runtimeSource), runtimeRefresh, runtimeApprove), runtimeStatus),
-        );
-
-        const showDetails = (details, field) => {
-            details.empty().append($("<summary></summary>").text(`${field.label || field.path} details`));
-            const rows = [["Fieldname", field.path], ["Type", field.fieldtype], ["Relation", field.relation || "—"], ["Description", field.description || field.reason || "—"]];
-            details.append($("<dl class='hero-mapping-detail-list'></dl>").append(rows.flatMap(([label, value]) => [$("<dt></dt>").text(label), $("<dd></dd>").text(value)]))).prop("open", true);
-        };
-        const renderPager = (container, result, load) => {
-            container.empty(); if (!result.total) return;
-            const first = result.start + 1, last = result.start + result.items.length;
-            container.append($("<span class='text-muted'></span>").text(`${first}–${last} of ${result.total}`));
-            if (result.start) container.append($("<button type='button' class='btn btn-default btn-sm'>Previous</button>").on("click", () => load(Math.max(0, result.start - PAGE_SIZE))));
-            if (result.has_more) container.append($("<button type='button' class='btn btn-default btn-sm'>Next</button>").on("click", () => load(result.start + PAGE_SIZE)));
-        };
-        const renderPicker = (container, result, choose, details, label, groupBy) => {
-            container.empty();
-            if (!result.items.length) return container.append($("<p class='text-muted'></p>").text(result.total ? "Refine the search to find a field." : "No compatible fields found."));
-            const picker = $("<select class='form-control hero-mapping-picker' size='8'></select>").attr("aria-label", label).append($("<option value=''></option>").text(`Choose a ${label}`));
-            const groups = new Map();
-            result.items.forEach((field, index) => {
-                const key = groupBy(field), group = groups.get(key) || $("<optgroup></optgroup>").attr("label", key);
-                group.append($("<option></option>").val(String(index)).text(`${field.label} · ${field.path} · ${field.fieldtype}${field.relation ? ` → ${field.relation}` : ""}`).prop("disabled", !field.selectable));
-                groups.set(key, group);
-            });
-            groups.forEach((group) => picker.append(group));
-            picker.on("change", () => { const field = result.items[Number(picker.val())]; if (field) { showDetails(details, field); if (field.selectable) choose(field); } });
-            container.append(picker);
-        };
-        const renderReadOperationFilter = () => {
-            const selected = readOperationFilter.val(), operations = [...new Set(savedReadMappings.map((mapping) => mapping.operation).filter(Boolean))].sort();
-            readOperationFilter.empty().append($("<option value=''></option>").text("All read operations"));
-            operations.forEach((value) => readOperationFilter.append($("<option></option>").val(value).text(value)));
-            readOperationFilter.val(operations.includes(selected) ? selected : "").prop("disabled", !operations.length);
-            resetReadFilters.prop("disabled", !savedReadMappings.length);
-        };
-        const renderActiveMappings = () => {
-            if (readMappingLoadError) {
-                statusSummary.empty(); activeMappings.empty().append($("<p class='text-danger'></p>").text(`Read mappings could not be loaded: ${readMappingLoadError}`));
-                return;
+    const text = (value) => window.hero_integration_i18n?.text(value) ?? String(value);
+    const clone = (value) => JSON.parse(JSON.stringify(value));
+    const stable = (value) => JSON.stringify(value, (_, item) => item && typeof item === "object" && !Array.isArray(item)
+        ? Object.fromEntries(Object.keys(item).sort().map((key) => [key, item[key]])) : item);
+    const ownRule = (value, id) => Object.hasOwn(value.field_rules || {}, id) ? value.field_rules[id] : null;
+    const object = (value) => value && typeof value === "object" && !Array.isArray(value);
+    class DraftState {
+        constructor(draft) { this.accept(draft); }
+        accept(draft) { this.saved = clone(draft); this.content = clone(draft.content); this.undo = []; this.blocked = false; }
+        get dirty() { return stable(this.content) !== stable(this.saved.content); }
+        set(path, value) {
+            let target = this.content;
+            path.slice(0, -1).forEach((key) => { if (!Object.hasOwn(target, key) || !object(target[key])) Object.defineProperty(target, key, {value: {}, enumerable: true, configurable: true, writable: true}); target = target[key]; });
+            Object.defineProperty(target, path.at(-1), {value, enumerable: true, configurable: true, writable: true});
+        }
+        remove(index) {
+            if (Array.isArray(this.content.mapping_definition_ids)) {
+                this.undo.push({kind: "reference", index, value: this.content.mapping_definition_ids[index]});
+                this.content.mapping_definition_ids.splice(index, 1);
+            } else {
+                const removed = {};
+                for (const key of ["source", "target"]) if (Object.hasOwn(this.content, key)) removed[key] = clone(this.content[key]);
+                this.undo.push({kind: "single", value: removed});
+                delete this.content.source; delete this.content.target;
             }
-            if (!hasValidSnapshot()) {
-                statusSummary.empty(); activeMappings.empty().append($("<p class='text-muted'></p>").text("Choose a validated snapshot to load saved read mappings."));
-                return;
+        }
+        restore() {
+            const removed = this.undo.pop();
+            if (!removed) return;
+            if (removed.kind === "reference") this.content.mapping_definition_ids.splice(removed.index, 0, removed.value);
+            else Object.assign(this.content, removed.value);
+        }
+        saveArgs() {
+            const d = this.saved;
+            return {definition_id: d.definition_id, expected_generation: d.generation,
+                expected_draft_revision: d.content_revision, expected_active_revision: d.base_active_revision,
+                mapping_json: JSON.stringify(this.content)};
+        }
+        matches(current, submitted) {
+            const value = clone(current), prior = this.saved.content;
+            for (const id of submitted.mapping_definition_ids || []) {
+                if (!Object.hasOwn(prior.field_rule_bases || {}, id)) {
+                    if (!Object.hasOwn(submitted.field_rule_bases || {}, id) && value.field_rule_bases) delete value.field_rule_bases[id];
+                    if (!Object.hasOwn(submitted.field_rules || {}, id) && value.field_rules) delete value.field_rules[id];
+                }
             }
-            if (readMappingsLoading) {
-                statusSummary.empty(); activeMappings.empty().append($("<p class='text-muted'></p>").text("Loading saved active read mappings…"));
-                return;
-            }
-            const rows = savedReadMappings, operationFilter = readOperationFilter.val(), needle = activeSearch.val().trim().toLowerCase();
-            const filtered = rows.filter((mapping) => (!operationFilter || mapping.operation === operationFilter) && (!needle || [mapping.operation, mapping.definition_id, mapping.source_path, mapping.source_type, mapping.target_doctype, mapping.target_field].join(" ").toLowerCase().includes(needle)));
-            const counts = rows.reduce((result, mapping) => { result[mapping.operation] = (result[mapping.operation] || 0) + 1; return result; }, {});
-            statusSummary.empty().append($("<span class='hero-mapping-status status-active'></span>").text(`Active: ${rows.length}`), $("<span class='hero-mapping-status'></span>").text(`Visible: ${filtered.length}`));
-            Object.entries(counts).sort(([left], [right]) => left.localeCompare(right)).forEach(([label, count]) => statusSummary.append($("<span class='hero-mapping-status'></span>").text(`${label}: ${count}`)));
-            activeMappings.empty(); if (!rows.length) return activeMappings.append($("<p class='text-muted'></p>").text("No active read mappings are saved for this snapshot."));
-            if (!filtered.length) return activeMappings.append($("<p class='text-muted'></p>").text("No saved read mappings match these filters."));
-            const table = $("<table class='table table-sm hero-mapping-table'><thead><tr><th>Status</th><th>Operation</th><th>HERO source</th><th>Frappe target</th><th>Revision</th></tr></thead><tbody></tbody></table>");
-            const conflicts = new Set(rows.filter((row) => rows.filter((other) => other.operation === row.operation && other.source_path === row.source_path).length > 1).map((row) => `${row.operation}:${row.source_path}`));
-            filtered.forEach((mapping) => table.find("tbody").append($("<tr></tr>").toggleClass("is-conflict", conflicts.has(`${mapping.operation}:${mapping.source_path}`)).append($("<td></td>").append($("<span class='hero-mapping-status'></span>").addClass(`status-${statusClass(mapping.status)}`).text(mapping.status)), $("<td></td>").text(mapping.operation), $("<td></td>").text(mapping.source_path), $("<td></td>").text(`${mapping.target_doctype}.${mapping.target_field}`), $("<td></td>").text(mapping.mapping_revision || "—"))));
-            activeMappings.append(table);
-        };
-        const renderAllMappingStatus = () => {
-            const needle = allMappingFilter.val().trim().toLowerCase();
-            const rows = [...(allMappings.graphql_mappings || []).map((item) => ({...item, kind: "GraphQL", source: `${item.operation_kind || ""} ${item.operation_name || ""}`, target: item.direction || ""})), ...(allMappings.frappe_mappings || []).map((item) => ({...item, kind: "Frappe", source: item.source_path || item.operation || "", target: `${item.target_doctype || ""}.${item.target_field || ""}`}))].filter((item) => !needle || [item.name, item.kind, item.source, item.target, item.status, item.revision].join(" ").toLowerCase().includes(needle));
-            allMappingStatus.empty();
-            if (!rows.length) return allMappingStatus.append($("<p class='text-muted'></p>").text(needle ? "No permitted mappings match this filter." : "No permitted mappings are configured."));
-            const table = $("<table class='table table-sm hero-mapping-table'><thead><tr><th>Mapping</th><th>Kind</th><th>Direction / source</th><th>Target</th><th>Status</th><th>Revision</th></tr></thead><tbody></tbody></table>");
-            rows.forEach((item) => table.find("tbody").append($("<tr></tr>").append($("<td></td>").text(item.name), $("<td></td>").text(item.kind), $("<td></td>").text(item.source), $("<td></td>").text(item.target), $("<td></td>").append($("<span class='hero-mapping-status'></span>").addClass(`status-${statusClass(item.status)}`).text(item.status || "Unknown")), $("<td></td>").text(item.revision || "—"))));
-            allMappingStatus.append(table);
-        };
-        const loadAllMappingStatus = () => {
-            const request = ++allMappingSequence; allMappingStatus.empty().append($("<p class='text-muted'></p>").text("Loading permitted mapping status…"));
-            return frappe.call({method: "hero_integration.api.frontend_mapping_list", type: "GET", args: {}}).then((response) => { if (request !== allMappingSequence) return; allMappings = response.message || {}; renderAllMappingStatus(); }).catch((error) => { if (request !== allMappingSequence) return; allMappingStatus.empty().append($("<p class='text-danger'></p>").text(`Mapping status is unavailable: ${error?.message || "permission denied or request failed"}.`)); });
-        };
-        const renderRuntimePlan = () => {
-            runtimeStatus.empty(); const plan = runtimePlan;
-            if (!plan) return; if (plan.state === "NOT_FOUND") { runtimeStatus.append($("<p class='text-muted'></p>").text("No configured runtime plan for this source instance.")); runtimeApprove.prop("disabled", true); return; }
-            const rows = [["State", plan.state], ["Plan", plan.plan_key], ["Revision", plan.revision], ["Generation", plan.generation], ["Mapping", plan.graphql_mapping], ["Schema", plan.schema_snapshot], ["Approved by", plan.approved_by || "—"]];
-            runtimeStatus.append($("<dl class='hero-mapping-detail-list'></dl>").append(rows.flatMap(([label, value]) => [$("<dt></dt>").text(label), $("<dd></dd>").text(value ?? "—")]))); runtimeApprove.prop("disabled", plan.state !== "DRAFT" || !plan.plan_key || !plan.revision);
-        };
-        const loadRuntimePlan = () => { const sourceInstance = runtimeSource.val().trim(), request = ++runtimeSequence; if (!sourceInstance) { runtimeStatus.text("Enter a source instance to load its runtime plan."); return; } runtimeStatus.text("Loading runtime plan…"); return frappe.call({method: "hero_integration.api.runtime_plan_status", type: "GET", args: {source_instance: sourceInstance}}).then((response) => { if (request !== runtimeSequence) return; runtimePlan = response.message || null; renderRuntimePlan(); }).catch((error) => { if (request !== runtimeSequence) return; runtimePlan = null; runtimeApprove.prop("disabled", true); runtimeStatus.text(`Runtime plan is unavailable: ${error?.message || "request failed"}.`); }); };
-        const approveRuntimePlan = () => { if (!runtimePlan?.plan_key || !runtimePlan?.revision) return; frappe.confirm("Approve this current runtime-plan Draft? This does not enable polling.", () => frappe.call({method: "hero_integration.api.runtime_plan_approve", type: "POST", args: {plan_key: runtimePlan.plan_key, expected_revision: runtimePlan.revision}}).then((response) => { runtimePlan = response.message || null; renderRuntimePlan(); }).catch((error) => { runtimeStatus.text(`Runtime plan approval was rejected: ${error?.message || "request failed"}. Reload the current plan before retrying.`); })); };
-
-        const selectedSnapshot = () => snapshots.get(snapshot.val()) || null;
-        const hasValidSnapshot = () => selectedSnapshot()?.analysis_status === "Validated";
-        let queryOperations = [], dynamicOperations = [];
-        const dynamicDirection = () => "FRAPPE_TO_MUTATION";
-        const writebackContract = () => (writebackCatalog?.contracts || []).find((item) => item.operation === dynamicOperation.val()) || null;
-        const mutationTargetFields = () => {
-            const selected = dynamicOperations.find((item) => item.operation_name === dynamicOperation.val());
-            if (!selected) return [];
-            return (selected.arguments || []).flatMap((argument) => (selected.input_fields?.[argument.name] || []).map((field) => ({
-                key: `${argument.name}:${field.path}`, operation: selected.operation_name, argument: argument.name,
-                input_type: argument.input_type || argument.type, field: field.path, field_path: field.path,
-                graphql_type: field.type, required: field.required, kind: field.kind,
-                path: `${argument.name}${field.path ? `.${field.path}` : ""}`,
-                label: `${argument.name}${field.path ? `.${field.path}` : ""}`,
-                fieldtype: field.type, relation: argument.type, selectable: Boolean(field.selectable),
-                reason: field.reason || "Direct scalar or enum input field.",
-                description: `Argument: ${argument.name} (${argument.type}). Path: ${field.path || "direct argument"}. ${field.required ? "Required." : "Nullable."}`,
-            })));
-        };
-        const selectedWritebackTarget = () => mutationTargetFields().find((item) => item.key === dynamicFieldPath.val()) || null;
-        const visualDynamicMapping = () => {
-            const target = selectedWritebackTarget();
-            if (!writebackDocType.val() || !selectedWritebackField?.path || !target) return null;
-            return {version: 1, source: {doctype: writebackDocType.val(), field: selectedWritebackField.path}, target, transformation: dynamicTransformation.val()};
-        };
-        const renderDynamicPreview = () => {
-            const mapping = visualDynamicMapping();
-            writebackComparison.text(mapping ? `${mapping.source.doctype}.${mapping.source.field} → ${mapping.target.operation} / ${mapping.target.argument}.${mapping.target.field || "direct"} · ${mapping.target.graphql_type || "schema type pending"} · ${mapping.transformation}` : "Choose one Frappe source field and its schema-proven HERO mutation input field.");
-            dynamicPreview.text(mapping ? JSON.stringify({writes: false, status: "Draft preview", mapping}, null, 2) : "Choose a Frappe app, DocType, source field, snapshot mutation, and schema-proven HERO input field to preview a Draft.");
-        };
-        const renderDynamicMappings = () => {
-            const needle = dynamicSearch.val().trim().toLowerCase();
-            const rows = dynamicMappings.filter((row) => !needle || [row.name, row.operation_name, row.direction, row.status, row.suggestion_reason].join(" ").toLowerCase().includes(needle));
-            dynamicRows.empty();
-            if (!rows.length) return dynamicRows.append($("<p class='text-muted'></p>").text("No dynamic mapping contracts are stored for this snapshot and type."));
-            ["Draft", "Active", "Invalid"].forEach((status) => {
-                const group = rows.filter((row) => statusClass(row.status) === status.toLowerCase());
-                if (!group.length) return;
-                const table = $("<table class='table table-sm hero-mapping-table'><thead><tr><th>Operation</th><th>Direction</th><th>Status</th><th>Revision</th></tr></thead><tbody></tbody></table>");
-                group.forEach((row) => table.find("tbody").append($("<tr></tr>").append($("<td></td>").text(row.operation_name), $("<td></td>").text(row.direction), $("<td></td>").append($("<span class='hero-mapping-status'></span>").addClass(`status-${statusClass(row.status)}`).text(row.status)), $("<td></td>").text(row.mapping_revision || "—"))));
-                dynamicRows.append($("<h5></h5>").text(`${status} writeback mappings (${group.length})`), table);
-            });
-        };
-        const currentDynamicMapping = () => { const mapping = visualDynamicMapping(); return mapping ? dynamicMappings.find((row) => row.operation_name === dynamicOperation.val() && row.direction === dynamicDirection() && row.mapping_json && JSON.stringify(row.mapping_json) === JSON.stringify(mapping)) : null; };
-        const loadDynamicMappings = () => {
-            if (!hasValidSnapshot()) { dynamicMappings = []; return renderDynamicMappings(); }
-            return frappe.call({method: "hero_integration.api.graphql_mapping_list", args: {snapshot_name: snapshot.val(), operation_kind: "MUTATION"}}).then((response) => { dynamicMappings = response.message || []; renderDynamicMappings(); });
-        };
-        const renderWritebackContract = () => {
-            const contract = writebackContract();
-            dynamicContract.empty();
-            if (!dynamicOperation.val()) return activateDynamic.prop("disabled", true);
-            if (!contract) {
-                dynamicContract.text("No schema-bound technical mutation contract exists for this operation; it can only remain a non-executable Draft.");
-                return activateDynamic.prop("disabled", true);
-            }
-            const names = (contract.contracts || []).map((item) => `${item.name} (${item.status}, rev ${item.contract_revision || 1})`).join(", ");
-            dynamicContract.text(contract.activation_ready ? `Reusable technical contract: ${names}.` : contract.blocker);
-            activateDynamic.prop("disabled", !contract.activation_ready || !visualDynamicMapping());
-        };
-        const renderWritebackInputTarget = () => {
-            dynamicFieldPath.empty().append($("<option value=''></option>").text("Choose the schema-proven HERO input field"));
-            mutationTargetFields().forEach((target) => dynamicFieldPath.append($("<option></option>").val(target.key).text(`${target.path} · ${target.graphql_type}${target.required ? " · required" : " · nullable"}`).prop("disabled", !target.selectable).attr("title", target.reason)));
-            dynamicFieldPath.prop("disabled", !dynamicOperation.val());
-            renderWritebackTargets();
-            renderWritebackContract();
-            renderDynamicPreview();
-        };
-        const renderQueryOperations = () => {
-            const current = operation.val() || requestedOperation || queryOperations.find((item) => item.operation_name === "HeroCustomers")?.operation_name || queryOperations[0]?.operation_name || "";
-            const needle = operationSearch.val().trim().toLowerCase();
-            const visible = queryOperations.filter((item) => !needle || [item.operation_name, item.return_type, ...(item.arguments || []).map((argument) => `${argument.name} ${argument.type}`)].join(" ").toLowerCase().includes(needle));
-            operation.empty().append($("<option value=''></option>").text("Choose a snapshot query"));
-            visible.forEach((item) => operation.append($("<option></option>").val(item.operation_name).text(`${item.operation_name} → ${item.return_type || "unknown"}`)));
-            operation.val(visible.some((item) => item.operation_name === current) ? current : "").prop("disabled", !visible.length);
-            operationSearch.prop("disabled", !queryOperations.length);
-        };
-        const loadQueryOperations = () => {
-            queryOperations = []; operation.empty().append($("<option value=''></option>").text("Choose a snapshot query")).prop("disabled", true); operationSearch.prop("disabled", true);
-            if (!hasValidSnapshot()) return;
-            return frappe.call({method: "hero_integration.api.schema_operation_catalog", args: {snapshot_name: snapshot.val(), operation_kind: "QUERY"}}).then((response) => {
-                queryOperations = response.message || [];
-                renderQueryOperations();
-                if (operation.val()) loadSources(0);
-            });
-        };
-        const renderDynamicOperations = () => {
-            const current = dynamicOperation.val();
-            const needle = dynamicOperationSearch.val().trim().toLowerCase();
-            const visible = dynamicOperations.filter((item) => !needle || [item.operation_name, item.return_type, ...(item.arguments || []).map((argument) => `${argument.name} ${argument.type}`)].join(" ").toLowerCase().includes(needle));
-            dynamicOperation.empty().append($("<option value=''></option>").text("Choose a snapshot mutation"));
-            visible.forEach((item) => dynamicOperation.append($("<option></option>").val(item.operation_name).text(`${item.operation_name} → ${item.return_type || "unknown"}`)));
-            dynamicOperation.val(visible.some((item) => item.operation_name === current) ? current : "").prop("disabled", !visible.length);
-            dynamicOperationSearch.prop("disabled", !dynamicOperations.length);
-            showDynamicOperation();
-        };
-        const renderWritebackTargets = () => {
-            const operation = dynamicOperations.find((item) => item.operation_name === dynamicOperation.val());
-            writebackTargetList.empty(); writebackTargetPager.empty();
-            if (!operation) {
-                writebackTargetSearch.val("").prop("disabled", true);
-                writebackTargetDetails.empty().append($("<summary>HERO target field details</summary>"));
-                return writebackTargetList.append($("<p class='text-muted'></p>").text("Choose a snapshot mutation to inspect its typed input arguments and fields."));
-            }
-            writebackTargetSearch.prop("disabled", false);
-            const needle = writebackTargetSearch.val().trim().toLowerCase();
-            const fields = mutationTargetFields().filter((field) => !needle || [field.label, field.path, field.fieldtype, field.relation, field.description, field.reason].join(" ").toLowerCase().includes(needle));
-            const page = fields.slice(writebackTargetStart, writebackTargetStart + PAGE_SIZE);
-            renderPicker(writebackTargetList, {items: page, total: fields.length, start: writebackTargetStart, has_more: writebackTargetStart + PAGE_SIZE < fields.length}, (field) => {
-                dynamicFieldPath.val(field.key); showDetails(writebackTargetDetails, field); renderWritebackContract(); renderDynamicPreview();
-            }, writebackTargetDetails, "HERO mutation input field", (field) => field.relation || "mutation input");
-            renderPager(writebackTargetPager, {items: page, total: fields.length, start: writebackTargetStart, has_more: writebackTargetStart + PAGE_SIZE < fields.length}, (start) => { writebackTargetStart = start; renderWritebackTargets(); });
-        };
-        const selectWritebackField = (field) => {
-            selectedWritebackField = field?.selectable ? field : null;
-            writebackTargetStart = 0;
-            if (selectedWritebackField) showDetails(writebackSourceDetails, selectedWritebackField);
-            showDynamicOperation();
-        };
-        const renderWritebackFields = () => {
-            const doctype = writebackDocType.val();
-            writebackFields = (writebackCatalog?.fields || []).filter((field) => field.doctype === doctype);
-            selectedWritebackField = null;
-            writebackSourceStart = 0;
-            const needle = writebackSearch.val().trim().toLowerCase();
-            const fields = writebackFields.filter((field) => !needle || [field.label, field.path, field.fieldtype, field.reason].join(" ").toLowerCase().includes(needle));
-            const page = fields.slice(writebackSourceStart, writebackSourceStart + PAGE_SIZE);
-            writebackSearch.prop("disabled", !doctype);
-            renderPicker(writebackSourceList, {items: page, total: fields.length, start: writebackSourceStart, has_more: writebackSourceStart + PAGE_SIZE < fields.length}, selectWritebackField, writebackSourceDetails, "Frappe source field", () => doctype || "Frappe source");
-            renderPager(writebackSourcePager, {items: page, total: fields.length, start: writebackSourceStart, has_more: writebackSourceStart + PAGE_SIZE < fields.length}, (start) => { writebackSourceStart = start; renderWritebackFields(); });
-            renderWritebackInputTarget();
-        };
-        const renderWritebackDocTypes = () => {
-            const current = writebackDocType.val();
-            writebackDocType.empty().append($("<option value=''></option>").text("Choose a DocType"));
-            (writebackCatalog?.doctypes || []).forEach((item) => writebackDocType.append($("<option></option>").val(item.doctype).text(`${item.app_name || "Custom"} / ${item.doctype}`).prop("disabled", !item.selectable).attr("title", item.reason || "")));
-            writebackDocType.val(current).prop("disabled", !writebackApp.val() || !(writebackCatalog?.doctypes || []).length);
-            renderWritebackFields();
-        };
-        const loadWritebackCatalog = () => {
-            if (!hasValidSnapshot()) {
-                writebackCatalog = null; selectedWritebackField = null;
-                writebackApp.prop("disabled", true); writebackDocType.prop("disabled", true); writebackSearch.prop("disabled", true);
-                writebackSourceList.empty(); writebackSourcePager.empty();
-                return renderWritebackInputTarget();
-            }
-            const request = ++writebackCatalogSequence, selectedApp = writebackApp.val(), selectedDocType = writebackDocType.val();
-            writebackApp.prop("disabled", true);
-            return frappe.call({method: "hero_integration.api.writeback_mapper_catalog", args: {snapshot_name: snapshot.val(), app_name: selectedApp, source_doctype: selectedDocType}}).then((response) => {
-                if (request !== writebackCatalogSequence) return;
-                writebackCatalog = response.message || {apps: [], doctypes: [], fields: [], contracts: []};
-                writebackApp.empty().append($("<option value=''></option>").text("Choose an app"));
-                (writebackCatalog.apps || []).forEach((app) => writebackApp.append($("<option></option>").val(app).text(app)));
-                writebackApp.val(selectedApp).prop("disabled", !(writebackCatalog.apps || []).length);
-                renderWritebackDocTypes();
-            }).catch((error) => {
-                if (request !== writebackCatalogSequence) return;
-                writebackCatalog = null; selectedWritebackField = null;
-                writebackApp.prop("disabled", false); writebackDocType.prop("disabled", true); writebackSearch.prop("disabled", true);
-                writebackSourceList.empty().append($("<p class='text-danger'></p>").text("Writeback source catalog could not be loaded. Retry after resolving the backend error.")); writebackSourcePager.empty();
-                dynamicStatus.text(`Writeback source fields could not be loaded: ${error?.message || "request failed"}.`);
-                renderWritebackInputTarget();
-            });
-        };
-        const showDynamicOperation = () => {
-            const selected = dynamicOperations.find((item) => item.operation_name === dynamicOperation.val());
-            dynamicArguments.empty();
-            if (!selected) return renderWritebackInputTarget();
-            const args = (selected.arguments || []).map((argument) => { const fields = selected.input_fields?.[argument.name] || []; return `${argument.name}: ${argument.type}${argument.required ? " (required)" : ""}${fields.length ? `; ${fields.length} typed input field(s)` : ""}`; }).join(", ");
-            dynamicArguments.text(`Return: ${selected.return_type || "unknown"}. Arguments: ${args || "none"}. Nested input paths, lists, enums, nullability, and scalars are read directly from the validated snapshot; collections remain disabled without a resolver.`);
-            renderWritebackInputTarget();
-        };
-        const loadDynamicOperations = () => {
-            dynamicOperations = []; dynamicOperation.empty().append($("<option value=''></option>").text("Choose a snapshot operation")).prop("disabled", !hasValidSnapshot()); dynamicArguments.empty();
-            if (!hasValidSnapshot()) { dynamicMappings = []; renderDynamicMappings(); return; }
-            return frappe.call({method: "hero_integration.api.schema_operation_catalog", args: {snapshot_name: snapshot.val(), operation_kind: "MUTATION"}}).then((response) => {
-                dynamicOperations = response.message || [];
-                renderDynamicOperations();
-                dynamicStatus.text(dynamicOperations.length ? `${dynamicOperations.length} snapshot mutations available. Choose a Frappe source field and typed input field; activation stays contract-gated.` : "The selected validated snapshot declares no mutations.");
-                loadDynamicMappings();
-            });
-        };
-        const saveDynamic = (activate) => {
-            if (!hasValidSnapshot() || !dynamicOperation.val()) return frappe.msgprint("Choose a validated snapshot operation first.");
-            const mapping = visualDynamicMapping();
-            if (!mapping || Array.isArray(mapping) || typeof mapping !== "object") return frappe.msgprint("Choose one Frappe field and its reviewed HERO input field.");
-            const contract = writebackContract();
-            if (activate && (!contract || !contract.activation_ready)) return frappe.msgprint(contract?.blocker || "The reusable technical mutation contract is not ready for activation.");
-            const submit = () => frappe.call({method: "hero_integration.api.graphql_mapping_save", args: {snapshot_name: snapshot.val(), operation_kind: "MUTATION", operation_name: dynamicOperation.val(), direction: dynamicDirection(), mapping_json: JSON.stringify(mapping), mapping_name: currentDynamicMapping()?.name || "", expected_revision: currentDynamicMapping()?.mapping_revision || 0, activate, suggestion_reason: dynamicReason.val().trim(), confidence: Number(dynamicConfidence.val())}}).then((response) => {
-                dynamicStatus.text(response.message.unchanged ? `No semantic change; ${response.message.name} remains revision ${response.message.revision}.` : `${response.message.status} mapping ${response.message.name}, revision ${response.message.revision}.${response.message.activation_required ? " Explicit activation is still required." : ""}`); loadDynamicMappings(); loadAllMappingStatus(); loadWritebackCatalog();
-            });
-            const save = () => submit().catch((error) => { dynamicStatus.text(`Save was rejected: ${error?.message || "request failed"}. Reload current Draft before resolving a stale revision; unsaved selections are retained.`); loadDynamicMappings(); });
-            if (activate) frappe.confirm("Activate this reviewed contract? Future execution still requires separate snapshot, permission, and confirmation gates.", save); else save();
-        };
-        const showSnapshotMetadata = () => {
-            const selected = selectedSnapshot();
-            snapshotMetadata.empty();
-            if (!selected) return snapshotMetadata.text("Choose a saved, validated snapshot before loading HERO source fields or suggestions.");
-            const rows = [
-                ["Name", selected.name], ["Fingerprint", selected.schema_fingerprint || "—"],
-                ["Validation", selected.analysis_status || "Unavailable"], ["Modified", selected.modified || "—"],
-            ];
-            snapshotMetadata.append($("<dl class='hero-mapping-detail-list'></dl>").append(rows.flatMap(([label, value]) => [$("<dt></dt>").text(label), $("<dd></dd>").text(value)])));
-            if (selected.analysis_detail) snapshotMetadata.append($("<p></p>").text(selected.analysis_detail));
-            if (!hasValidSnapshot()) snapshotMetadata.append($("<p class='text-danger'></p>").text("This snapshot is not validated and cannot be used for mappings."));
-        };
-        const showPreview = () => {
-            if (!hasValidSnapshot() || !selectedSource || !selectedTarget) return;
-            const sourceType = selectedSource.mapping_type || "string|null", value = sourceType.startsWith("int") ? 1 : sourceType.startsWith("boolean") ? true : "Synthetic preview value", segments = selectedSource.path.split(".").filter(Boolean), record = {};
-            let nestedRecord = record; segments.forEach((segment, index) => { if (index === segments.length - 1) nestedRecord[segment] = value; else nestedRecord = nestedRecord[segment] = {}; });
-            frappe.call({method: "hero_integration.api.preview_mapping_candidate", args: {snapshot_name: snapshot.val(), operation: operation.val(), source_path: selectedSource.path, target_field: selectedTarget.path, target_doctype: selectedTarget.target_doctype || targetDocType.val(), source_record_json: JSON.stringify(record)}}).then((response) => {
-                preview.text(JSON.stringify(response.message, null, 2));
-                page.set_secondary_action("Create Draft Mapping", () => frappe.new_doc("HERO Frappe Mapping", {operation: operation.val(), source_path: selectedSource.path, source_type: selectedSource.mapping_type, target_doctype: selectedTarget.target_doctype || targetDocType.val(), target_field: selectedTarget.path, schema_snapshot: snapshot.val(), status: "Draft"}));
-            });
-        };
-        const useReverseSuggestion = (match) => {
-            selectedSource = {
-                path: match.source_path, label: match.source_path, fieldtype: match.source_graphql_type,
-                mapping_type: match.source_type, graphql_path: match.source_graphql_path,
-                relation: match.source_relation, return_type: match.source_return_type,
-            };
-            showDetails(sourceDetails, selectedSource); showPreview();
-        };
-        const renderReverseSuggestions = () => {
-            reverseSuggestions.empty();
-            if (!selectedTarget) {
-                reverseSearch.prop("disabled", true);
-                return reverseSuggestions.append($("<p class='text-muted'></p>").text("Choose a Frappe target field to see compatible HERO source fields."));
-            }
-            reverseSearch.prop("disabled", false);
-            if (suggestionDirection !== "target") return reverseSuggestions.append($("<p class='text-muted'></p>").text("Choose the target field again to refresh HERO suggestions."));
-            const needle = reverseSearch.val().trim().toLowerCase(), matches = currentSuggestions.filter((match) => !needle || [match.source_path, match.source_graphql_path, match.source_graphql_type, match.source_type, match.source_relation, match.reason, match.confidence].join(" ").toLowerCase().includes(needle));
-            if (!matches.length) return reverseSuggestions.append($("<p class='text-muted'></p>").text("No compatible HERO source field exists for this target."));
-            const shown = reverseExpanded ? matches : matches.slice(0, 5), list = $("<div class='hero-mapping-suggestion-list'></div>");
-            shown.forEach((match) => {
-                const type = match.source_graphql_type || match.source_type, path = match.source_graphql_path || match.source_path;
-                const relation = match.source_relation ? ` Relation: ${match.source_relation}.` : "";
-                list.append($("<div class='hero-mapping-suggestion'></div>").append($("<strong></strong>").text(`${path} · ${type}`), $("<p class='text-muted mb-1'></p>").text(`Contract path: ${match.source_path}. ${match.reason} Confidence: ${match.confidence}.${relation}`), $("<button type='button' class='btn btn-default btn-sm'>Use HERO field</button>").on("click", () => useReverseSuggestion(match))));
-            });
-            reverseSuggestions.append(list);
-            if (!reverseExpanded && matches.length > shown.length) reverseSuggestions.append($("<button type='button' class='btn btn-default btn-sm'>Show more HERO suggestions</button>").on("click", () => { reverseExpanded = true; renderReverseSuggestions(); }));
-        };
-        const renderSuggestions = () => {
-            suggestions.empty(); if (!currentSuggestions.length) return suggestions.append($("<p class='text-muted'></p>").text(suggestionDirection === "target" ? "No compatible HERO source field exists for this target." : "No compatible target exists for this selection."));
-            const shown = suggestionsExpanded ? currentSuggestions : currentSuggestions.slice(0, 5), table = $("<table class='table table-sm hero-mapping-table'><thead><tr><th>HERO source</th><th>Frappe target</th><th>Reason</th><th>Confidence</th></tr></thead><tbody></tbody></table>");
-            shown.forEach((match) => {
-                const review = $("<button type='button' class='btn btn-sm btn-outline-primary'>Review</button>").on("click", () => { selectedSource = selectedSource?.path === match.source_path ? selectedSource : {path: match.source_path, mapping_type: match.source_type}; selectedTarget = {path: match.target_field, target_doctype: match.target_doctype}; showPreview(); });
-                table.find("tbody").append($("<tr></tr>").append($("<td></td>").text(match.source_path), $("<td></td>").text(`${match.target_app || "Custom"}/${match.target_doctype}.${match.target_field}`), $("<td></td>").text(match.reason), $("<td></td>").append(review, document.createTextNode(` ${match.confidence} (${match.score})`))));
-            });
-            suggestions.append(table); if (!suggestionsExpanded && currentSuggestions.length > shown.length) suggestions.append($("<button type='button' class='btn btn-default btn-sm'>Show more suggestions</button>").on("click", () => { suggestionsExpanded = true; renderSuggestions(); }));
-        };
-        const resetSuggestions = () => { suggestionSequence += 1; currentSuggestions = []; suggestionDirection = ""; suggestionsExpanded = false; reverseExpanded = false; reverseSearch.val(""); renderSuggestions(); renderReverseSuggestions(); };
-        const showSuggestions = (args, direction) => {
-            if (!hasValidSnapshot()) return resetSuggestions();
-            const request = ++suggestionSequence;
-            frappe.call({method: "hero_integration.api.mapping_suggestions", args: Object.assign({snapshot_name: snapshot.val(), operation: operation.val(), target_doctype: targetDocType.val()}, args)}).then((response) => {
-                if (request !== suggestionSequence) return;
-                currentSuggestions = response.message || []; suggestionDirection = direction; suggestionsExpanded = false; reverseExpanded = false; reverseSearch.val(""); renderSuggestions(); renderReverseSuggestions();
-            });
-        };
-        const selectSource = (field) => { selectedSource = field; showSuggestions({source_path: field.path}, "source"); showPreview(); };
-        const selectTarget = (field) => { selectedTarget = field; showSuggestions({target_field: field.path, target_doctype: field.target_doctype}, "target"); showPreview(); renderDynamicPreview(); };
-        const loadSources = (start = sourceStart) => {
-            if (!hasValidSnapshot()) return;
-            const snapshotName = snapshot.val(), request = ++sourceLoadSequence;
-            sourceStart = start; const args = {snapshot_name: snapshotName, operation: operation.val()};
-            Promise.all([frappe.call({method: "hero_integration.api.mapping_source_picker_page", args: {...args, search: sourceSearch.val(), start, page_size: PAGE_SIZE}}), frappe.call({method: "hero_integration.api.mapping_source_picker", args: {...args, search: ""}})]).then(([response, complete]) => {
-                if (request !== sourceLoadSequence || snapshot.val() !== snapshotName) return;
-                const result = response.message || {items: [], total: 0}; activeSourceFields = complete.message || [];
-                renderPicker(sourceList, result, selectSource, sourceDetails, "HERO field", (field) => field.selectable ? "Selected operation fields" : "Schema-only context"); renderPager(sourcePager, result, loadSources);
-                const requested = result.items.find((field) => field.path === pendingSourcePath && field.selectable); if (requested) { pendingSourcePath = ""; selectSource(requested); }
-            });
-        };
-        const clearTargets = (message) => { targetList.empty().append($("<p class='text-muted'></p>").text(message)); targetPager.empty(); targetDetails.empty().append($("<summary>Frappe field details</summary>")); };
-        const loadTargets = (start = targetStart) => {
-            if (!targetDocType.val()) return clearTargets("Choose an app and DocType before fields are loaded.");
-            targetStart = start;
-            frappe.call({method: "hero_integration.api.mapping_target_picker_page", args: {operation: operation.val(), search: targetSearch.val(), app_name: targetApp.val(), target_doctype: targetDocType.val(), start, page_size: PAGE_SIZE}}).then((response) => {
-                const result = response.message || {items: [], total: 0}; renderPicker(targetList, result, selectTarget, targetDetails, "Frappe field", () => targetDocType.val()); renderPager(targetPager, result, loadTargets);
-            });
-        };
-        const loadTargetCatalog = () => {
-            const request = ++targetCatalogSequence, selectedApp = targetApp.val(), selectedDocType = targetDocType.val();
-            targetCatalogStatus.text("Loading installed Frappe apps …"); retryTargetCatalog.prop("hidden", true); targetApp.prop("disabled", true);
-            return frappe.call({method: "hero_integration.api.mapping_target_catalog", args: {app_name: selectedApp}}).then((response) => {
-                if (request !== targetCatalogSequence) return;
-                const catalog = response.message || {apps: [], doctypes: []};
-                targetApp.empty().append($("<option value=''></option>").text("Choose an app")); (catalog.apps || []).forEach((app) => targetApp.append($("<option></option>").val(app).text(app))); targetApp.val(selectedApp).prop("disabled", false);
-                targetDocType.empty().append($("<option value=''></option>").text("Choose a DocType")).prop("disabled", !selectedApp); targetSearch.prop("disabled", !selectedDocType);
-                (catalog.doctypes || []).forEach((item) => targetDocType.append($("<option></option>").val(item.doctype).text(`${item.app_name || "Custom"} / ${item.doctype}`).prop("disabled", !item.selectable).attr("title", item.reason))); targetDocType.val(selectedDocType);
-                targetCatalogStatus.text(catalog.apps?.length ? `${catalog.apps.length} installed apps available.` : "No installed Frappe apps were returned.");
-            }).catch((error) => {
-                if (request !== targetCatalogSequence) return;
-                targetApp.prop("disabled", false); targetCatalogStatus.text(`Installed Frappe apps could not be loaded: ${error?.message || "request failed"}.`); retryTargetCatalog.prop("hidden", false);
-            });
-        };
-        const renderChecklist = (checklist) => {
-            exchangeResult.empty(); const selected = new Set(checklist.items.filter((item) => item.selectable).map((item) => item.id)), summary = $("<p class='text-muted'></p>"), update = () => summary.text(`${selected.size} selected. ${checklist.counts.Conflict || 0} conflicts and ${checklist.counts.Invalid || 0} invalid entries remain excluded.`);
-            const controls = $("<div class='mb-2'></div>"), all = $("<button class='btn btn-sm btn-default mr-2'>Select all valid</button>"), none = $("<button class='btn btn-sm btn-default mr-2'>Clear selection</button>"); all.on("click", () => { checklist.items.filter((item) => item.selectable).forEach((item) => selected.add(item.id)); exchangeResult.find("input[data-item-id]").prop("checked", true); update(); }); none.on("click", () => { selected.clear(); exchangeResult.find("input[data-item-id]").prop("checked", false); update(); }); exchangeResult.append(controls.append(all, none, summary));
-            const groups = {}; checklist.items.forEach((item) => (groups[item.group] ||= []).push(item)); Object.entries(groups).forEach(([group, items]) => { const section = $("<div class='mb-3'></div>").append($("<h6></h6>").text(group)); items.forEach((item) => { const checkbox = $("<input type='checkbox' class='mr-2' data-item-id=''> ").attr("data-item-id", item.id).prop("checked", selected.has(item.id)).prop("disabled", !item.selectable); checkbox.on("change", () => { if (checkbox.prop("checked")) { item.dependencies.filter((dependency) => !selected.has(dependency)).forEach((dependency) => { selected.add(dependency); exchangeResult.find(`input[data-item-id='${dependency}']`).prop("checked", true); }); selected.add(item.id); } else if (checklist.items.some((candidate) => candidate.dependencies.includes(item.id) && selected.has(candidate.id))) { checkbox.prop("checked", true); return frappe.msgprint("Deselect dependent entries before removing this requirement."); } else selected.delete(item.id); update(); }); section.append($("<label class='d-block'></label>").append(checkbox, document.createTextNode(`${item.state}: ${item.label}. ${item.detail}`))); }); exchangeResult.append(section); });
-            exchangeResult.append($("<button class='btn btn-primary'>Apply selected adoption</button>").on("click", () => { if (!selected.size) return frappe.msgprint("Select at least one valid change."); frappe.confirm("Provision the selected schema and activate selected mappings? This cannot migrate HERO data.", () => frappe.call({method: "hero_integration.api.adopt_mapping_package", args: {snapshot_name: snapshot.val(), payload_json: importPayload, selected_ids_json: JSON.stringify([...selected]), confirmed: true}}).then((result) => exchangeResult.append($("<pre class='mt-2'></pre>").text(JSON.stringify(result.message, null, 2))))); })); update();
-        };
-        allMappingFilter.on("input", renderAllMappingStatus); allMappingRefresh.on("click", loadAllMappingStatus); runtimeRefresh.on("click", loadRuntimePlan); runtimeApprove.on("click", approveRuntimePlan);
-        sourceSearch.on("input", () => loadSources(0)); reverseSearch.on("input", renderReverseSuggestions); targetSearch.on("input", () => loadTargets(0)); activeSearch.on("input", renderActiveMappings); readOperationFilter.on("change", renderActiveMappings);
-        resetReadFilters.on("click", () => { readOperationFilter.val(""); activeSearch.val(""); renderActiveMappings(); });
-        operationSearch.on("input", renderQueryOperations); writebackSearch.on("input", renderWritebackFields); writebackTargetSearch.on("input", () => { writebackTargetStart = 0; renderWritebackTargets(); }); dynamicOperationSearch.on("input", () => { writebackTargetStart = 0; renderDynamicOperations(); }); dynamicSearch.on("input", renderDynamicMappings);
-        const invalidateSnapshotState = () => {
-            sourceLoadSequence += 1; selectedSource = null; selectedTarget = null; importPayload = null; activeSourceFields = []; sourceStart = 0; pendingSourcePath = "";
-            readMappingLoadSequence += 1; savedReadMappings = []; readMappingLoadError = ""; readMappingsLoading = false; readOperationFilter.empty().append($("<option value=''></option>").text("All read operations")).prop("disabled", true); resetReadFilters.prop("disabled", true); activeSearch.val(""); renderActiveMappings();
-            resetSuggestions(); preview.empty(); sourceSearch.prop("disabled", !hasValidSnapshot()); importFile.prop("disabled", !hasValidSnapshot()); sourceList.empty().append($("<p class='text-muted'></p>").text(hasValidSnapshot() ? "Loading HERO fields…" : "Choose a validated snapshot before loading HERO fields.")); sourcePager.empty();
-            sourceDetails.empty().append($("<summary>HERO field details</summary>")); targetDetails.empty().append($("<summary>Frappe field details</summary>")); exchangeResult.empty(); importFile.val("");
-            writebackCatalog = null; writebackFields = []; selectedWritebackField = null; writebackCatalogSequence += 1; writebackSourceStart = 0; writebackTargetStart = 0; dynamicMappings = [];
-            writebackApp.val(""); writebackDocType.val(""); writebackSearch.val(""); writebackTargetSearch.val(""); dynamicFieldPath.val(""); dynamicReason.val(""); writebackSourceList.empty(); writebackTargetList.empty(); writebackSourcePager.empty(); writebackTargetPager.empty(); renderDynamicMappings(); renderDynamicPreview(); loadDynamicOperations(); loadWritebackCatalog();
-            loadQueryOperations();
-        };
-        const loadActiveReadMappings = () => {
-            if (!hasValidSnapshot()) return;
-            const snapshotName = snapshot.val(), schemaFingerprint = selectedSnapshot()?.schema_fingerprint || "", request = ++readMappingLoadSequence;
-            readMappingLoadError = ""; readMappingsLoading = true; savedReadMappings = []; renderReadOperationFilter(); renderActiveMappings();
-            return frappe.call({method: "hero_integration.api.frontend_mapping_list", type: "GET", args: {}}).then((response) => {
-                if (request !== readMappingLoadSequence || snapshot.val() !== snapshotName) return;
-                savedReadMappings = (response.message?.frappe_mappings || []).filter((item) => item.schema_snapshot === snapshotName && item.schema_fingerprint === schemaFingerprint && item.status === "Active").map((item) => ({...item, mapping_revision: item.revision})); readMappingLoadError = ""; readMappingsLoading = false; renderReadOperationFilter(); renderActiveMappings();
-            }).catch((error) => {
-                if (request !== readMappingLoadSequence || snapshot.val() !== snapshotName) return;
-                savedReadMappings = []; readMappingLoadError = error?.message || error?.httpStatusText || "request failed"; readMappingsLoading = false; renderReadOperationFilter(); renderActiveMappings();
-            });
-        };
-        const loadSnapshotList = () => {
-            retrySnapshots.prop("hidden", true);
-            return frappe.call({method: "hero_integration.api.schema_snapshot_list"}).then((response) => {
-            const rows = response.message || [];
-            snapshots.clear(); snapshot.empty().append($("<option value=''></option>").text("Choose a saved GraphQL Schema Snapshot"));
-            rows.forEach((row) => { snapshots.set(row.name, row); snapshot.append($("<option></option>").val(row.name).text(`${row.name} · ${row.analysis_status || "Unavailable"}`)); });
-            const storedName = storedSnapshotName();
-            const preferredName = requestedSnapshotName || storedName;
-            const preferredSnapshot = snapshots.get(preferredName);
-            if (preferredSnapshot?.analysis_status === "Validated") {
-                snapshot.val(preferredName);
-                persistSnapshotName(preferredName);
-            } else if (!requestedSnapshotName && storedName) {
-                // Do not retain a deleted, invalid, or other-site snapshot selection.
-                persistSnapshotName("");
-            }
-            snapshot.prop("disabled", !rows.length); showSnapshotMetadata(); invalidateSnapshotState();
-            if (hasValidSnapshot()) { loadSources(0); loadActiveReadMappings(); } else if (!rows.length) snapshotMetadata.text("No saved schema snapshot yet. Create an explicit, validated snapshot before selecting HERO operations; Frappe targets remain available.");
-            }).catch((error) => { snapshot.prop("disabled", true); snapshotMetadata.text(`Saved snapshots could not be loaded: ${error?.message || "request failed"}. HERO source fields remain unavailable.`); retrySnapshots.prop("hidden", false); });
-        };
-        targetApp.on("change", () => { selectedTarget = null; targetStart = 0; targetDocType.val(""); targetSearch.val("").prop("disabled", true); resetSuggestions(); clearTargets("Choose a DocType before fields are loaded."); loadTargetCatalog(); });
-        targetDocType.on("change", () => { selectedTarget = null; targetStart = 0; resetSuggestions(); targetSearch.val("").prop("disabled", !targetDocType.val()); loadTargets(0); });
-        operation.on("change", () => { selectedSource = null; selectedTarget = null; sourceStart = 0; targetStart = 0; resetSuggestions(); preview.empty(); if (operation.val()) { loadSources(0); loadTargets(0); } });
-        writebackApp.on("change", () => { selectedWritebackField = null; writebackDocType.val(""); writebackSearch.val(""); loadWritebackCatalog(); });
-        writebackDocType.on("change", renderWritebackFields);
-        dynamicOperation.on("change", () => { writebackTargetStart = 0; showDynamicOperation(); });
-        dynamicFieldPath.on("change", () => { renderWritebackContract(); renderDynamicPreview(); }); dynamicTransformation.on("change", () => { renderWritebackContract(); renderDynamicPreview(); });
-        saveDynamicDraft.on("click", () => saveDynamic(false)); activateDynamic.on("click", () => saveDynamic(true));
-        snapshot.on("change", () => {
-            if (hasValidSnapshot()) persistSnapshotName(snapshot.val());
-            else persistSnapshotName("");
-            showSnapshotMetadata(); invalidateSnapshotState(); if (hasValidSnapshot()) { loadSources(0); loadActiveReadMappings(); }
-        });
-        retryTargetCatalog.on("click", loadTargetCatalog); retrySnapshots.on("click", loadSnapshotList);
-        provisionCustomField.on("click", () => advanced.prop("open", true).find("summary").trigger("focus"));
-        importFile.on("change", (event) => { const file = event.target.files[0]; if (!file || !hasValidSnapshot()) return; const reader = new FileReader(); reader.onload = () => { importPayload = reader.result; frappe.call({method: "hero_integration.api.preview_mapping_package", args: {snapshot_name: snapshot.val(), payload_json: importPayload}}).then((response) => renderChecklist(response.message)); }; reader.readAsText(file); });
-        page.set_primary_action("Open Graph Viewer", () => { if (!hasValidSnapshot()) return frappe.msgprint("Choose a validated GraphQL Schema Snapshot first."); window.hero_integration_ui.setRoute("api", {hero_tool: "graph", snapshot: snapshot.val()}); });
-        page.add_menu_item("Export Mapping JSON", () => { if (!hasValidSnapshot()) return frappe.msgprint("Choose a validated GraphQL Schema Snapshot first."); frappe.call({method: "hero_integration.api.export_mapping_json", args: {snapshot_name: snapshot.val()}}).then((response) => { const exported = response.message, url = URL.createObjectURL(new Blob([exported.content], {type: "application/json"})), link = document.createElement("a"); link.href = url; link.download = exported.filename; link.click(); URL.revokeObjectURL(url); }); });
-        page.add_menu_item("GraphQL Services", () => window.hero_integration_ui.setRoute("api", {hero_tool: "services", snapshot: snapshot.val()})); page.add_menu_item("Review Draft Mappings", () => frappe.set_route("List", "HERO Frappe Mapping"));
-        if (!window.hero_integration_ui?.isSystemManager) { page.main.empty().append($("<header class='hero-mapping-header'><h2>HERO Mapping Status</h2><p class='text-muted'>Employee read-only view. Administrative editing and runtime operations are unavailable.</p></header>"), $("<section class='hero-mapping-section'></section>").append($("<h3>All Mapping Status</h3>"), $("<div class='hero-mapping-controls'></div>").append($("<label></label>").text("Mapping filter").append(allMappingFilter), allMappingRefresh), allMappingStatus)); loadAllMappingStatus(); return; }
-        clearTargets("Choose an app and DocType before fields are loaded."); renderReverseSuggestions(); showSnapshotMetadata(); renderDynamicPreview(); loadAllMappingStatus(); loadSnapshotList(); loadTargetCatalog();
+            for (const key of ["field_rules", "field_rule_bases"]) if (!Object.hasOwn(submitted, key) && value[key] && !Object.keys(value[key]).length) delete value[key];
+            return stable(value) === stable(submitted);
+        }
+        resolve(current, submitted) {
+            const prior = this.saved;
+            if (current?.state === "OPEN" && current.generation === prior.generation &&
+                current.base_active_revision === prior.base_active_revision &&
+                [prior.content_revision, prior.content_revision + 1].includes(current.content_revision) &&
+                this.matches(current.content, submitted)) { this.accept(current); return true; }
+            this.blocked = stable(current) !== stable(this.saved); return false;
+        }
     }
-
-    window.hero_integration_mapping_editor = Object.freeze({mount});
+    const rpc = async (method, args = {}, write = false) => {
+        const response = await frappe.call({method: `hero_integration.api.${method}`, type: write ? "POST" : "GET", args});
+        if (response?.exc) throw response;
+        return response.message;
+    };
+    const denied = (error) => [401, 403].includes(error?.status) || /PermissionError|SessionExpired/.test(error?.responseJSON?.exc_type || error?.exc_type || "");
+    const errorText = (error) => denied(error) ? text("You do not have permission to view or change this mapping.")
+        : text("The request failed. Your changes have been kept.");
+    let current;
+    function mount(page, context = {}) {
+        current?.destroy();
+        const host = page.main.empty().addClass("hero-integration-ui");
+        const root = $("<section class='hero-mapping-core'></section>").appendTo(host);
+        const shell = host.closest(".admin-workspace").addClass("hero-mapping-shell");
+        const admin = Boolean(window.hero_integration_ui?.isSystemManager);
+        let disposed = false, epoch = 0, busy = false, model = null, active = null, mode = "active", selected = 0;
+        let search = String(context.mapping_search || ""), start = Number(context.mapping_start || 0), listing;
+        let revisionsStart = 0, returnFocus = null, fieldFilter = "";
+        const ruleCache = new Map();
+        const button = (label, fn, primary = false) => $("<button type='button'></button>")
+            .addClass(primary ? "btn btn-primary btn-sm" : "btn btn-default btn-sm").text(text(label)).on("click", fn);
+        const status = $("<p role='status' aria-live='polite'></p>");
+        const toolbar = $("<div class='hero-mapping-actions'></div>");
+        const body = $("<div class='hero-mapping-body'></div>");
+        root.append($("<h2 tabindex='-1'></h2>").text(text("Mapping")), status, toolbar, body);
+        const say = (value) => status.text(text(value));
+        const focusHeading = () => root.find("h2").trigger("focus");
+        const locked = () => busy || disposed;
+        const setBusy = (value) => { busy = value; root.attr("aria-busy", String(value)); root.find("button,input,select,textarea").prop("disabled", value); };
+        const field = (label, value, change, parent = body) => {
+            const input = $("<input class='form-control'>").val(value ?? "").prop("disabled", busy);
+            $("<label class='hero-mapping-input'></label>").append($("<span></span>").text(text(label)), input).appendTo(parent);
+            input.on("input", () => { change(input.val()); updateDirty(); }); return input;
+        };
+        const safeJson = (value) => $("<pre class='hero-mapping-preview'></pre>").text(JSON.stringify(value, null, 2));
+        function modal(title, description, actions, cancel = () => {}) {
+            if (root.find("dialog").length) return;
+            const opener = document.activeElement;
+            const dialog = $("<dialog class='hero-mapping-dialog'></dialog>");
+            const heading = $("<h3></h3>").text(text(title)).attr("id", "hero-mapping-dialog-title");
+            dialog.attr("aria-labelledby", "hero-mapping-dialog-title").append(heading, $("<p></p>").text(text(description)));
+            const close = () => { dialog[0].close(); dialog.remove(); if (opener?.isConnected) opener.focus(); };
+            actions.forEach(([label, action, primary]) => dialog.append(button(label, async () => {
+                close(); await action();
+            }, primary)));
+            dialog.on("cancel", () => { cancel(); setTimeout(() => dialog.remove(), 0); });
+            root.append(dialog); dialog[0].showModal(); dialog.find("button").last().trigger("focus");
+        }
+        function leave(action, cancel = () => {}) {
+            if (locked()) return cancel();
+            if (!model?.dirty) return action();
+            modal("Unsaved changes", "Save your personal draft before leaving, discard local changes, or continue editing.", [
+                ["Save and leave", async () => { if (await save()) action(); else cancel(); }, true],
+                ["Discard changes", () => { model.content = clone(model.saved.content); model.undo = []; action(); }],
+                ["Continue editing", cancel],
+            ], cancel);
+        }
+        function updateDirty() {
+            root.find("[data-draft-state]").text(text(model?.dirty ? "Local changes — not saved" : "Saved personal draft"));
+            root.trigger("hero-mapping-content-change");
+        }
+        async function loadList() {
+            const request = ++epoch; active = null; model = null; mode = "active";
+            root.off("hero-mapping-content-change"); toolbar.empty(); body.empty(); say("Loading active mappings…");
+            const filter = field("Search active definitions and rules", search, (value) => { search = value; }, toolbar).attr("maxlength", 120);
+            const apply = () => { search = filter.val(); start = 0; loadList(); };
+            filter.on("keydown", (event) => { if (event.key === "Enter") apply(); });
+            toolbar.append(button("Search", apply));
+            try {
+                const result = await rpc("frontend_mapping_list", {search, start, page_size: 20});
+                if (disposed || request !== epoch) return;
+                listing = result; renderList(); say("");
+                if (returnFocus) { root.find("[data-mapping-name]").filter((_, el) => el.dataset.mappingName === returnFocus).first().trigger("focus"); returnFocus = null; }
+            } catch (error) { if (request === epoch && !disposed) { say(errorText(error)); body.append(button("Retry", loadList)); } }
+        }
+        function renderList() {
+            body.empty();
+            const p = listing.pagination;
+            const definitions = listing.graphql_mappings;
+            const groups = new Map();
+            definitions.forEach((item) => { const key = `${item.operation_kind} ${item.operation_name}`; if (!groups.has(key)) groups.set(key, []); groups.get(key).push(item); });
+            body.append($("<h3></h3>").text(text("HERO operations and mapping definitions")),
+                $("<p class='text-muted'></p>").text(`${text("Definitions on this page")}: ${definitions.length} / ${p.graphql_total}`));
+            if (!definitions.length) body.append($("<p></p>").text(text(search ? "No active definitions match your search." : "No active mapping definitions.")));
+            groups.forEach((items, label) => {
+                const group = $("<details open class='hero-mapping-operation'></details>").append($("<summary></summary>").text(label));
+                items.forEach((item) => group.append(button(`${item.name} · ${text("Active")} · ${text("Revision")} ${item.revision}`, () => open(item, "graphql"))
+                    .attr("data-mapping-name", item.name)));
+                body.append(group);
+            });
+            body.append($("<h3></h3>").text(text("Active field rules")), $("<p class='text-muted'></p>").text(`${text("Rules on this page")}: ${listing.frappe_mappings.length} / ${p.frappe_total}`));
+            listing.frappe_mappings.forEach((item) => body.append(button(`${item.operation} · ${item.source_path} → ${item.target_doctype}.${item.target_field}`, () => open(item, "frappe"))));
+            if (!listing.frappe_mappings.length) body.append($("<p></p>").text(text(search ? "No active field rules match your search." : "No active field rules.")));
+            const pager = $("<div class='hero-mapping-actions'></div>");
+            pager.append(button("Previous page", () => { start = Math.max(0, start - 20); loadList(); }).prop("disabled", start === 0),
+                $("<span></span>").text(`${text("Page")} ${Math.floor(start / 20) + 1}`),
+                button("Next page", () => { start += 20; loadList(); }).prop("disabled", start + 20 >= Math.max(p.graphql_total, p.frappe_total) || start >= 10000));
+            body.append(pager);
+        }
+        async function open(item, kind) {
+            if (locked()) return;
+            const request = ++epoch; body.empty(); toolbar.empty(); say("Loading active definition…");
+            toolbar.append(button("Back to mappings", () => leave(loadList)));
+            try {
+                const detail = await rpc("frontend_mapping_detail", {mapping_type: kind, name: item.name});
+                if (disposed || request !== epoch) return;
+                active = {...detail, mapping_type: kind}; mode = "active"; model = null; selected = 0; fieldFilter = ""; returnFocus = item.name;
+                renderDetail(); say(""); focusHeading();
+            } catch (error) { if (request === epoch && !disposed) say(errorText(error)); }
+        }
+        function content() { return mode === "draft" ? model.content : active.definition || active; }
+        function rows(value) {
+            if (Array.isArray(value.mapping_definition_ids)) return value.mapping_definition_ids.map((id, index) => ({id, index, reference: true}));
+            if (object(value.source) || object(value.target)) return [{id: "single", index: 0, value}];
+            return [];
+        }
+        function renderDetail() {
+            toolbar.empty().append(button("Back to mappings", () => leave(loadList)));
+            body.empty().append($("<h3></h3>").text(`${active.operation_name || active.operation} · ${active.name}`),
+                $("<p></p>").text(`${text("Active revision")}: ${active.revision}`));
+            if (admin && active.mapping_type === "graphql") {
+                toolbar.append(button("Active version", () => leave(() => { model = null; mode = "active"; renderDetail(); })),
+                    button("Open my draft", openDraft), button("My saved revisions", () => leave(() => showRevisions(0))));
+                if (mode === "draft") {
+                    toolbar.append(button("Save draft", save, true).attr("data-save-draft", ""), button("Discard saved draft", discard));
+                    body.append($("<p data-draft-state></p>"), $("<p class='text-muted'></p>").text(`${text("Personal draft revision")}: ${model.saved.content_revision} · ${text("Generation")}: ${model.saved.generation}`));
+                    if (model.blocked) toolbar.append(button("Check saved draft", reconcile), button("Reload saved draft", reloadDraft));
+                }
+            }
+            const value = content();
+            const list = rows(value);
+            const grid = $("<div class='hero-mapping-editor-grid'></div>");
+            const left = $("<section class='hero-mapping-table-wrap'></section>");
+            const detail = $("<section class='hero-mapping-row-detail' aria-label='Selected field mapping'></section>");
+            const table = $("<table class='table table-sm hero-mapping-table'><thead><tr><th>Source</th><th>Target</th><th>Rule</th><th></th></tr></thead><tbody></tbody></table>");
+            const editable = mode === "draft";
+            detail.attr("data-editable", String(editable));
+            const searchInput = field("Filter field mappings", fieldFilter, (value) => { fieldFilter = value; }, left);
+            const drawRows = () => {
+                const focusedRow = table.find(":focus").attr("data-row-selection");
+                table.find("tbody").empty(); const needle = searchInput.val().trim().toLowerCase();
+                list.forEach((row, index) => {
+                    const v = row.value, linked = ownRule(value, row.id) || ruleCache.get(row.id), source = row.reference ? (linked?.source_path || row.id) : `${v.source?.doctype || ""}.${v.source?.field || ""}`;
+                    const target = row.reference ? (linked ? `${linked.target_doctype}.${linked.target_field}` : text("Existing active field rule")) : `${v.target?.operation || ""} / ${v.target?.argument || ""}.${v.target?.field_path ?? v.target?.field ?? ""}`;
+                    const rule = row.reference ? (linked?.transformation || text("Referenced rule")) : v.transformation || v.transform || text("No transformation configured");
+                    if (needle && !`${source} ${target} ${rule}`.toLowerCase().includes(needle)) return;
+                    const tr = $("<tr></tr>").toggleClass("is-selected", selected === index);
+                    tr.append($("<td></td>").append(button(source, () => { selected = index; drawRows(); renderRow(row, detail); }).attr("data-row-selection", index)), $("<td></td>").text(target), $("<td></td>").text(typeof rule === "string" ? rule : text("Configured special rule")));
+                    const actions = $("<td></td>");
+                    if (editable) actions.append(button("Remove", () => { model.remove(row.index); selected = 0; renderDetail(); const next = root.find("[data-row-selection]").eq(Math.min(row.index, rows(model.content).length - 1)); if (next.length) next.trigger("focus"); else root.find("button").filter((_, el) => el.textContent.startsWith(text("Undo removal"))).trigger("focus"); say("Mapping removed locally. Undo is available until a successful save."); }));
+                    tr.append(actions); table.find("tbody").append(tr);
+                });
+                if (list.length && !table.find("tbody").children().length) table.find("tbody").append($("<tr><td colspan='4'></td></tr>").find("td").text(text("No field mappings match this filter.")).end());
+                if (focusedRow !== undefined) table.find(`[data-row-selection="${focusedRow}"]`).trigger("focus");
+            };
+            root.off("hero-mapping-content-change").on("hero-mapping-content-change", drawRows);
+            drawRows(); left.append(table);
+            const tableEpoch = epoch;
+            list.filter((row) => row.reference && !ownRule(value, row.id) && !ruleCache.has(row.id)).forEach(async (row) => {
+                try {
+                    const result = await rpc("frontend_mapping_list", {search: row.id, start: 0, page_size: 100});
+                    const rule = result.frappe_mappings.find((item) => item.definition_id === row.id);
+                    if (rule && !disposed && tableEpoch === epoch && table[0].isConnected) { ruleCache.set(row.id, rule); drawRows(); }
+                } catch (_) { /* The reference remains visible; details offer the error context. */ }
+            });
+            if (!list.length) left.append($("<p></p>").text(text("No field mappings in this definition.")));
+            if (editable) {
+                if (Array.isArray(value.mapping_definition_ids)) left.append(button("Add existing field rule", addReference));
+                else if (!value.source && !value.target && active.direction === "FRAPPE_TO_MUTATION") left.append(button("Add field mapping", () => { model.set(["source"], {}); model.set(["target"], {}); renderDetail(); }).prop("disabled", model.undo.length > 0));
+                left.append(button(`Undo removal (${model.undo.length})`, () => { model.restore(); renderDetail(); }).prop("disabled", !model.undo.length));
+            }
+            grid.append(left, detail); body.append(grid);
+            if (list[selected]) renderRow(list[selected], detail);
+            for (const key of ["records_path", "record_path", "identity_path", "target_operation"]) {
+                if (!(key in value)) continue;
+                if (editable && typeof value[key] === "string") field(key.replaceAll("_", " "), value[key], (v) => model.set([key], v));
+                else body.append($("<p></p>").text(`${key}: ${JSON.stringify(value[key])}`));
+            }
+            const structure = $("<details></details>").append($("<summary></summary>").text(text("Configured structure and additional rules")), safeJson(value));
+            body.append(structure);
+            if (!admin) body.append($("<p class='text-muted'></p>").text(text("Employee read-only view")));
+            if (editable) body.append($("<p class='text-muted'></p>").text(text("Saving keeps a personal draft. It does not validate or activate the mapping.")));
+            updateDirty(); if (busy) root.find("button,input,select,textarea").prop("disabled", true);
+            if (model?.blocked) root.find("[data-save-draft]").prop("disabled", true);
+        }
+        async function renderRow(row, panel) {
+            panel.empty(); panel.attr("data-row-id", row.id);
+            if (row.reference && mode === "draft" && ownRule(model.content, row.id)) {
+                const rule = model.content.field_rules[row.id];
+                panel.append($("<h4></h4>").text(text("Personal field rule")));
+                for (const [label, key] of [["Source path", "source_path"], ["Source type", "source_type"], ["Target DocType", "target_doctype"],
+                    ["Target field", "target_field"], ["Transformation", "transformation"], ["Purpose", "purpose"], ["Relation", "relation"]]) {
+                    field(label, rule[key] ?? "", (next) => model.set(["field_rules", row.id, key], next), panel);
+                }
+                const priority = field("Priority", rule.priority ?? "", (next) => model.set(["field_rules", row.id, "priority"], next === "" ? null : Number(next)), panel);
+                priority.attr({type: "number", step: "1", min: "-1000000", max: "1000000"});
+                panel.append(button("Search source fields", () => picker("source", panel, row)), button("Search target fields", () => picker("target", panel, row)),
+                    $("<p class='text-muted'></p>").text(text("Changes belong to your personal draft. The active field rule stays unchanged.")));
+                return;
+            }
+            if (row.reference) {
+                panel.append($("<h4></h4>").text(row.id), $("<p></p>").text(text("This definition references a separately maintained field rule.")));
+                const request = epoch;
+                try {
+                    // Definition IDs of field rules are not document names. Resolve using the active list contract.
+                    const result = await rpc("frontend_mapping_list", {search: row.id, start: 0, page_size: 100});
+                    if (disposed || request !== epoch || !panel[0].isConnected || panel.attr("data-row-id") !== row.id) return;
+                    const match = result.frappe_mappings.find((r) => r.definition_id === row.id);
+                    if (match) { ruleCache.set(row.id, match); panel.append(safeJson(match)); }
+                    else panel.append($("<p></p>").text(text("The referenced rule is not visible in these active search results.")));
+                } catch (error) { if (panel[0].isConnected && panel.attr("data-row-id") === row.id) panel.append($("<p></p>").text(errorText(error))); }
+                return;
+            }
+            const value = row.value;
+            panel.append($("<h4></h4>").text(text("Field mapping details")));
+            if (mode !== "draft" || panel.attr("data-editable") !== "true") { panel.append(safeJson(value)); return; }
+            for (const [label, path] of [["Source DocType", ["source", "doctype"]], ["Source field", ["source", "field"]],
+                ["Target argument", ["target", "argument"]], ["Target field path", ["target", Object.hasOwn(value.target || {}, "field_path") ? "field_path" : "field"]],
+                ["Transformation", ["transformation"]]]) {
+                const v = path.reduce((a, key) => a?.[key], value);
+                if (v !== undefined && typeof v !== "string") { panel.append($("<p></p>").text(`${label}: ${text("Configured special rule; preserved unchanged")}`)); continue; }
+                field(label, v || "", (next) => { model.set(path, next); if (path[0] === "target" && path[1] === "field_path" && Object.hasOwn(value.target, "field")) model.set(["target", "field"], next); }, panel);
+            }
+            panel.append(button("Search source fields", () => picker("source", panel)), button("Search target fields", () => picker("target", panel)));
+            panel.append($("<details></details>").append($("<summary></summary>").text(text("All configured rule parameters")), safeJson(value)));
+        }
+        async function openDraft() {
+            leave(async () => {
+                if (locked()) return; const request = ++epoch; setBusy(true); say("Loading your saved draft…");
+                try {
+                    const result = await rpc("mapping_draft_read", {definition_id: active.definition_id});
+                    if (disposed || request !== epoch) return;
+                    if (result.draft?.state === "OPEN") { model = new DraftState(result.draft); mode = "draft"; renderDetail(); say(""); }
+                    else modal("Create personal draft", "No open personal draft exists. Create one from the active definition?", [
+                        ["Create my draft", createDraft, true], ["Cancel", () => {}],
+                    ]);
+                } catch (error) { say(errorText(error)); }
+                finally { if (!disposed && request === epoch) { setBusy(false); renderDetail(); } }
+            });
+        }
+        async function createDraft() {
+            if (locked()) return; setBusy(true); const request = ++epoch;
+            try { const result = await rpc("mapping_draft_create", {definition_id: active.definition_id}, true);
+                if (disposed || request !== epoch) return; model = new DraftState(result.draft); mode = "draft"; say("Personal draft opened.");
+            } catch (error) { say(errorText(error)); }
+            finally { if (!disposed && request === epoch) { setBusy(false); renderDetail(); } }
+        }
+        async function save() {
+            if (locked() || !model || model.blocked) return false;
+            const invalid = root.find("input").filter((_, el) => !el.checkValidity())[0];
+            if (invalid) { invalid.reportValidity(); invalid.focus(); return false; }
+            const state = model, submitted = clone(state.content), request = ++epoch; setBusy(true); say("Saving personal draft…");
+            try {
+                const result = await rpc("mapping_draft_save", state.saveArgs(), true);
+                if (disposed || request !== epoch) return false;
+                // Backend normalization must not silently erase additional stored parameters.
+                if (!state.matches(result.draft.content, submitted)) {
+                    state.blocked = true; say("The saved content differs from your edits. Your local changes have been kept. Check the saved draft before continuing."); return false;
+                }
+                state.accept(result.draft); say(result.unchanged ? "No changes to save. Personal draft unchanged." : "Personal draft saved. Not validated or activated."); return true;
+            } catch (error) {
+                if (disposed || request !== epoch) return false;
+                state.blocked = true;
+                const kind = error?.responseJSON?.exc_type || error?.exc_type;
+                if (kind === "TimestampMismatchError") say("The saved draft or active version changed. Your edits and Undo have been kept. Check the saved draft before continuing.");
+                else if (error?.status >= 400 && error?.status < 500) { state.blocked = false; say(errorText(error)); }
+                else {
+                    try { const result = await rpc("mapping_draft_read", {definition_id: state.saved.definition_id});
+                        if (disposed || request !== epoch) return false;
+                        if (state.resolve(result.draft, submitted)) { say("Personal draft save confirmed by reading it again."); return true; }
+                        if (!state.blocked) { say("Your changes are not saved. Choose Save draft to try again."); return false; }
+                    } catch (_) { /* Keep unknown status and local content; never retry a write. */ }
+                    say("Save status is uncertain. Your edits and Undo have been kept. Check the saved draft before continuing.");
+                }
+                return false;
+            } finally { if (!disposed && request === epoch) { setBusy(false); renderDetail(); } }
+        }
+        async function reconcile() {
+            if (locked() || !model) return; setBusy(true); const request = ++epoch;
+            try { const result = await rpc("mapping_draft_read", {definition_id: model.saved.definition_id});
+                if (disposed || request !== epoch) return;
+                if (model.resolve(result.draft, model.content)) say("Personal draft matches your edits. Save status confirmed.");
+                else if (!model.blocked) say("Your changes are not saved. Choose Save draft to try again.");
+                else say("The saved draft differs. Your local edits remain. Reload only if you want to replace them.");
+            } catch (error) { say(errorText(error)); }
+            finally { if (!disposed && request === epoch) { setBusy(false); renderDetail(); } }
+        }
+        function reloadDraft() {
+            modal("Reload saved draft", "Replace local edits and Undo history with your currently saved draft?", [["Reload saved draft", async () => {
+                if (locked()) return; const request = ++epoch; setBusy(true);
+                try { const result = await rpc("mapping_draft_read", {definition_id: active.definition_id});
+                    if (disposed || request !== epoch) return;
+                    if (result.draft?.state === "OPEN") { model.accept(result.draft); say("Saved personal draft reloaded."); }
+                    else say("There is no open saved draft. Your local changes remain.");
+                } catch (error) { say(errorText(error)); }
+                finally { if (!disposed && request === epoch) { setBusy(false); renderDetail(); } }
+            }], ["Continue editing", () => {}]]);
+        }
+        function discard() {
+            if (locked() || !model) return;
+            modal("Discard saved personal draft", model.dirty ? "Discard your saved personal draft and all unsaved local changes? Saved revisions remain available." : "Discard your saved personal draft? Saved revisions remain available.", [
+                ["Discard saved draft", async () => {
+                    if (locked()) return; setBusy(true); const request = ++epoch;
+                    try { await rpc("mapping_draft_discard", {definition_id: model.saved.definition_id, expected_generation: model.saved.generation,
+                        expected_draft_revision: model.saved.content_revision, confirmed: true}, true);
+                        if (disposed || request !== epoch) return; model = null; mode = "active"; say("Personal draft discarded.");
+                    } catch (error) { say(errorText(error)); }
+                    finally { if (!disposed && request === epoch) { setBusy(false); renderDetail(); } }
+                }], ["Continue editing", () => {}],
+            ]);
+        }
+        async function showRevisions(offset) {
+            const request = ++epoch; revisionsStart = offset; say("Loading your saved revisions…");
+            try { const result = await rpc("mapping_draft_revisions", {definition_id: active.definition_id, start: revisionsStart, page_size: 20});
+                if (disposed || request !== epoch) return;
+                toolbar.empty().append(button("Back to definition", () => { mode = model ? "draft" : "active"; renderDetail(); }));
+                body.empty().append($("<h3></h3>").text(text("My saved revisions — read only")));
+                if (!result.items.length) body.append($("<p></p>").text(text("No saved personal revisions.")));
+                result.items.forEach((item) => body.append($("<details></details>").append($("<summary></summary>").text(`${text("Generation")} ${item.generation} · ${text("Revision")} ${item.revision}`), safeJson(item.content))));
+                body.append(button("Previous revisions", () => showRevisions(Math.max(0, revisionsStart - 20))).prop("disabled", !revisionsStart),
+                    button("Next revisions", () => showRevisions(revisionsStart + 20)).prop("disabled", revisionsStart + 20 >= result.total)); say("");
+            } catch (error) { if (!disposed && request === epoch) say(errorText(error)); }
+        }
+        async function addReference() {
+            const panel = $("<section class='hero-mapping-row-detail'></section>"); body.append(panel);
+            const query = field("Search existing active field rules", "", () => {}, panel);
+            const resultHost = $("<div></div>").appendTo(panel); let seq = 0, ruleStart = 0;
+            const loadRules = async () => {
+                const request = ++seq; resultHost.empty();
+                try { const result = await rpc("frontend_mapping_list", {search: query.val().slice(0, 120), start: ruleStart, page_size: 100});
+                    if (request !== seq || !panel[0].isConnected) return;
+                    const available = result.frappe_mappings.filter((rule) => rule.schema_snapshot === active.schema_snapshot && rule.schema_fingerprint === active.schema_fingerprint && rule.operation === (model.content.target_operation || active.operation_name));
+                    resultHost.append($("<p></p>").text(`${text("Available rules on this page")}: ${available.length}. ${text("Active search results")}: ${result.pagination.frappe_total}.`));
+                    available.forEach((rule) => resultHost.append(button(`${rule.source_path} → ${rule.target_doctype}.${rule.target_field} · ${rule.transformation}`, () => {
+                        if (!model.content.mapping_definition_ids.includes(rule.definition_id)) {
+                            model.content.mapping_definition_ids.push(rule.definition_id);
+                            if (!model.content.field_rules) model.content.field_rules = {};
+                            if (!ownRule(model.content, rule.definition_id)) model.set(["field_rules", rule.definition_id], Object.fromEntries(
+                                ["source_path", "source_type", "target_doctype", "target_field", "purpose", "transformation", "relation", "priority"].map((key) => [key, rule[key] ?? null])));
+                        }
+                        renderDetail();
+                    })));
+                    resultHost.append(button("Previous rules", () => { ruleStart = Math.max(0, ruleStart - 100); loadRules(); }).prop("disabled", !ruleStart),
+                        button("Next rules", () => { ruleStart += 100; loadRules(); }).prop("disabled", ruleStart + 100 >= result.pagination.frappe_total || ruleStart >= 10000));
+                } catch (error) { if (request === seq && panel[0].isConnected) resultHost.text(errorText(error)); }
+            };
+            panel.append(button("Search rules", () => { ruleStart = 0; loadRules(); }), button("Close field search", () => panel.remove())); query.trigger("focus");
+        }
+        async function picker(side, panel, row = {}) {
+            const pickerHost = $("<section></section>"); panel.append(pickerHost);
+            const query = field("Search fields by name, full path or type", "", () => {}, pickerHost);
+            const app = $("<select class='form-control' aria-label='App'></select>"), doctype = $("<select class='form-control' aria-label='DocType'></select>");
+            const results = $("<div></div>"); let seq = 0, fieldStart = 0;
+            const source = row.reference ? side === "target" : side === "source"; pickerHost.append(app, doctype, results);
+            const load = async () => {
+                if (source && !doctype.val()) { results.text(text("Choose an app and DocType before searching fields.")); return; }
+                const request = ++seq; results.text(text("Loading fields…"));
+                try {
+                    let fields;
+                    if (source) { const result = await rpc("mapping_target_picker_page", {operation: active.operation_name, app_name: app.val() || "", target_doctype: doctype.val() || "", search: query.val(), start: fieldStart, page_size: 50}); fields = result.items; if (request !== seq || !pickerHost[0].isConnected) return; results.text(`${fieldStart + 1}–${fieldStart + fields.length} / ${result.total}`); results.append(button("Previous fields", () => { fieldStart = Math.max(0, fieldStart - 50); load(); }).prop("disabled", !fieldStart), button("Next fields", () => { fieldStart += 50; load(); }).prop("disabled", fieldStart + 50 >= result.total)); }
+                    else if (row.reference) {
+                        const result = await rpc("mapping_source_picker_page", {snapshot_name: active.schema_snapshot, operation: model.content.target_operation || active.operation_name,
+                            search: query.val(), start: fieldStart, page_size: 50});
+                        if (request !== seq || !pickerHost[0].isConnected) return;
+                        fields = result.items; results.text(`${fieldStart + 1}–${fieldStart + fields.length} / ${result.total}`);
+                        results.append(button("Previous fields", () => { fieldStart = Math.max(0, fieldStart - 50); load(); }).prop("disabled", !fieldStart),
+                            button("Next fields", () => { fieldStart += 50; load(); }).prop("disabled", fieldStart + 50 >= result.total));
+                    }
+                    else { const catalog = await rpc("schema_operation_catalog", {snapshot_name: active.schema_snapshot, operation_kind: active.operation_kind});
+                        const operation = catalog.find((v) => v.operation_name === active.operation_name);
+                        fields = Object.entries(operation?.input_fields || {}).flatMap(([argument, list]) => list.map((f) => ({...f, argument, fieldtype: f.type})));
+                        const needle = query.val().toLowerCase(); fields = fields.filter((v) => `${v.argument}.${v.path} ${v.type}`.toLowerCase().includes(needle)); if (request !== seq || !pickerHost[0].isConnected) return; results.empty(); }
+                    if (request !== seq || !pickerHost[0].isConnected) return;
+                    fields.forEach((f) => results.append(button(`${f.argument ? f.argument + "." : ""}${f.path} · ${f.fieldtype}`, () => {
+                        if (row.reference) {
+                            if (source) { model.set(["field_rules", row.id, "target_doctype"], f.target_doctype || doctype.val()); model.set(["field_rules", row.id, "target_field"], f.path); }
+                            else { model.set(["field_rules", row.id, "source_path"], f.path); model.set(["field_rules", row.id, "source_type"], f.mapping_type || f.fieldtype); }
+                        }
+                        else if (source) { model.set(["source", "doctype"], f.target_doctype || doctype.val()); model.set(["source", "field"], f.path); }
+                        else { model.set(["target", "argument"], f.argument); model.set(["target", "operation"], active.operation_name); model.set(["target", "field"], f.path); if (Object.hasOwn(model.content.target, "field_path")) model.set(["target", "field_path"], f.path); model.set(["target", "graphql_type"], f.type); }
+                        renderDetail();
+                    })));
+                } catch (error) { if (request === seq && pickerHost[0].isConnected) results.text(errorText(error)); }
+            };
+            const searchFields = button("Search fields", () => { fieldStart = 0; load(); }).prop("disabled", source);
+            pickerHost.append(searchFields, button("Close field search", () => pickerHost.remove()));
+            if (source) results.text(text("Choose an app and DocType before searching fields."));
+            if (!source) { app.hide(); doctype.hide(); query.trigger("focus"); return; }
+            try { const result = await rpc("mapping_target_catalog");
+                if (!pickerHost[0].isConnected) return;
+                app.append($("<option></option>").val("").text(text("Choose an app")));
+                result.apps.forEach((item) => app.append($("<option></option>").val(item.app_name || item).text(item.app_name || item)));
+                app.on("change", () => { searchFields.prop("disabled", true); doctype.empty().append($("<option></option>").val("").text(text("Choose a DocType"))); result.doctypes.filter((item) => item.app_name === app.val()).forEach((item) => doctype.append($("<option></option>").val(item.doctype).text(item.doctype).prop("disabled", !item.selectable).attr("title", item.reason || ""))); });
+                doctype.on("change", () => searchFields.prop("disabled", !doctype.val()));
+                query.trigger("focus");
+            } catch (error) { results.text(errorText(error)); }
+        }
+        const pageUrl = location.href, pageHistoryState = history.state;
+        const router = frappe.router, originalRoute = router.route;
+        let routePending = false;
+        // Frappe starts its SPA route before later window popstate listeners.
+        // Keep this adapter local to the mounted editor and restore its exact owner on destroy.
+        function guardedRoute(...args) {
+            if (!model?.dirty && !busy) return originalRoute.apply(this, args);
+            const destination = location.href;
+            history.pushState(pageHistoryState, "", pageUrl);
+            if (busy || routePending) { say("Wait for the current request before leaving."); return Promise.resolve(false); }
+            routePending = true;
+            return new Promise((resolve) => leave(() => {
+                routePending = false;
+                history.replaceState(pageHistoryState, "", destination);
+                resolve(originalRoute.apply(router, args));
+            }, () => { routePending = false; resolve(false); }));
+        }
+        router.route = guardedRoute;
+        const unload = (event) => { if (model?.dirty || busy) { event.preventDefault(); event.returnValue = ""; } };
+        window.addEventListener("beforeunload", unload);
+        // Capture links leaving the page before Frappe's delegated router handles them.
+        const links = (event) => {
+            const link = event.target.closest("a[href]");
+            if (link && (model?.dirty || busy) && !event.defaultPrevented && !event.metaKey && !event.ctrlKey && link.origin === location.origin && link.href !== location.href) {
+                event.preventDefault(); event.stopImmediatePropagation(); leave(() => { location.href = link.href; });
+            }
+        };
+        document.addEventListener("click", links, true);
+        const controller = {beforeLeave: leave, destroy() { shell.removeClass("hero-mapping-shell"); disposed = true; epoch++; window.removeEventListener("beforeunload", unload); if (router.route === guardedRoute) router.route = originalRoute; document.removeEventListener("click", links, true); }};
+        current = controller; loadList(); return controller;
+    }
+    window.hero_integration_mapping_editor = Object.freeze({mount, DraftState, stable});
 })();
