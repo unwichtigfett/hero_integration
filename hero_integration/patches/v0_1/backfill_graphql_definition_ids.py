@@ -1,4 +1,6 @@
 """Persist independent canonical identities for legacy GraphQL mappings."""
+import json
+from types import SimpleNamespace
 from uuid import uuid4
 
 import frappe
@@ -23,6 +25,8 @@ def execute():
             if row.definition_id:
                 occupied.add(row.definition_id)
                 identity_counts[row.definition_id] = identity_counts.get(row.definition_id, 0) + 1
+    registry_ids = _registry_definition_ids(db)
+    occupied.update(registry_ids)
     if db.table_exists("HERO Mapping Draft"):
         drafts = db.sql("SELECT base_active_mapping, definition_id FROM `tabHERO Mapping Draft` FOR UPDATE", as_dict=True)
         if any(not persisted_by_name.get(row.base_active_mapping)
@@ -35,7 +39,9 @@ def execute():
     for doctype in ("HERO Field Binding", "HERO Object Binding"):
         if db.table_exists(doctype):
             bindings = db.sql(f"SELECT mapping_definition_id FROM `tab{doctype}` FOR UPDATE", as_dict=True)
-            if any(identity_counts.get(row.mapping_definition_id, 0) != 1 for row in bindings):
+            if any(identity_counts.get(row.mapping_definition_id, 0) > 1 or
+                   (identity_counts.get(row.mapping_definition_id, 0) == 0 and row.mapping_definition_id not in registry_ids)
+                   for row in bindings):
                 frappe.throw("Legacy mapping identity cannot be backfilled while ambiguous binding references exist.")
     # definition_id is a persisted, unique opaque Data identifier (API maximum
     # 140 characters). A UUIDv4 hex token is 32 characters, independent of the
@@ -50,3 +56,36 @@ def execute():
     for identity, name in allocations:
         db.sql("UPDATE `tabHERO GraphQL Mapping` SET definition_id = %s WHERE name = %s "
                "AND (definition_id IS NULL OR definition_id = '')", (identity, name))
+
+
+def _registry_definition_ids(db):
+    if not db.table_exists("HERO Mapping Registry Version"):
+        return set()
+    from hero_integration.services.mapping_registry_service import MappingRegistryService
+    from hero_integration.services.mapping_registry_storage import _decode_payload, _integrity
+
+    def unique(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("Duplicate key")
+            result[key] = value
+        return result
+
+    identities = set()
+    versions = db.sql("SELECT mapping_payload_json, integrity_hash FROM `tabHERO Mapping Registry Version` FOR UPDATE", as_dict=True)
+    for row in versions:
+        try:
+            raw = row.mapping_payload_json
+            if not isinstance(raw, str) or _integrity(raw) != row.integrity_hash:
+                raise ValueError("Registry integrity mismatch")
+            json.loads(raw, object_pairs_hook=unique, parse_constant=lambda _: (_ for _ in ()).throw(ValueError("Invalid constant")))
+            version = SimpleNamespace(payload=_decode_payload(raw))
+            definitions = MappingRegistryService.__new__(MappingRegistryService)._definitions(version)
+            ids = [item.definition_id for item in definitions]
+            if len(ids) != len(set(ids)):
+                raise ValueError("Duplicate registry identity")
+            identities.update(ids)
+        except Exception as error:
+            raise ValueError("Stored mapping registry identity cannot be safely inspected.") from error
+    return identities
