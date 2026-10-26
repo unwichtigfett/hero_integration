@@ -47,6 +47,10 @@ class CustomerAddressError(ValueError):
     pass
 
 
+class RepeatedProjectionPageError(MappingPlanError):
+    """The current projection attempt cannot continue without duplicating a page."""
+
+
 def execute_run(run_name: str) -> None:
     run = frappe.get_doc("HERO Integration Run", run_name)
     frappe.set_user(run.owner)
@@ -71,6 +75,10 @@ def execute_run(run_name: str) -> None:
             run.finished_on = now_datetime()
             run.save()
             _mark_sync_success(run)
+    except RepeatedProjectionPageError as error:
+        failed = True
+        frappe.db.rollback()
+        _finalize_blocked_run(run.name, claim_started_on, str(error))
     except MappingPlanError as error:
         run.reload()
         _mark_running_phase_failed(run)
@@ -211,14 +219,23 @@ def _claim_run(run) -> bool:
 
 def _finalize_failed_run(run_name: str, claim_started_on) -> None:
     """Finalize only this still-current claim after its business rollback."""
+    _finalize_rolled_back_run(run_name, claim_started_on, "Failed", "Migration failed. See Error Log for the redacted server exception.")
+
+
+def _finalize_blocked_run(run_name: str, claim_started_on, detail: str) -> None:
+    """Persist the repeated-page diagnosis after discarding the attempt's writes."""
+    _finalize_rolled_back_run(run_name, claim_started_on, "Blocked", detail)
+
+
+def _finalize_rolled_back_run(run_name: str, claim_started_on, state: str, detail: str) -> None:
     if _locked_active_run() != run_name:
         return
     run = frappe.get_doc("HERO Integration Run", run_name)
     if run.state != "Running" or run.started_on != claim_started_on:
         return
     _mark_running_phase_failed(run)
-    run.state = "Failed"
-    run.error_message = "Migration failed. See Error Log for the redacted server exception."
+    run.state = state
+    run.error_message = detail
     run.finished_on = now_datetime()
     run.save()
     _mark_sync_error(run)
@@ -472,7 +489,7 @@ def _process_projection(run, source) -> None:
             return
         page_ids = tuple(record.get('id') for record in page.records)
         if page_ids and page_ids in seen_pages:
-            raise MappingPlanError('Projection pagination returned a repeated page.')
+            raise RepeatedProjectionPageError('Projection pagination returned a repeated page.')
         seen_pages.add(page_ids)
         for index, record in enumerate(page.records):
             if index < index_start:
