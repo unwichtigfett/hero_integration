@@ -100,7 +100,7 @@
 
 /* Personal mapping editor: scoped to the mapping surface. */
 .hero-mapping-core .hero-mapping-actions { display:flex; flex-wrap:wrap; gap:8px; align-items:end; margin-block:12px; }
-.hero-mapping-core [role="tab"][aria-selected="true"] { border:2px solid var(--pc-focus, var(--text-color)); font-weight:700; }
+.hero-mapping-core [role="tab"][aria-selected="true"] { border:2px solid var(--pc-text, var(--text-color)); font-weight:700; }
 .hero-mapping-core .btn { background:var(--pc-surfaceRaised, var(--card-bg)); border-color:var(--pc-border, var(--border-color)); color:var(--pc-text, var(--text-color)); }
 .hero-mapping-core .btn:hover:not(:disabled), .hero-mapping-core .btn:active:not(:disabled) { background:var(--pc-surface, var(--control-bg)); border-color:var(--pc-text, var(--text-color)); color:var(--pc-text, var(--text-color)); }
 .hero-mapping-core .hero-mapping-input { display:flex; flex-direction:column; gap:5px; margin-block:8px; min-width:180px; }
@@ -130,7 +130,7 @@
 .hero-mapping-core .hero-mapping-table td:last-child button { white-space:nowrap; }
 
 .hero-mapping-core .hero-mapping-body > .btn { margin:4px; text-align:left; white-space:normal; overflow-wrap:anywhere; }
-.hero-integration-ui .hero-mapping-core .btn.btn-primary { background:var(--pc-surfaceRaised); color:var(--pc-text); border:2px solid var(--pc-focus); font-weight:700; }
+.hero-integration-ui .hero-mapping-core .btn.btn-primary { background:var(--pc-surfaceRaised); color:var(--pc-text); border:2px solid var(--pc-text, var(--text-color)); font-weight:700; }
 .hero-integration-ui .hero-mapping-core .hero-mapping-dialog .btn.btn-primary { border-color:var(--pc-text, var(--text-color)); }
 .hero-integration-ui .hero-mapping-core .btn:hover:not(:disabled) { background:var(--pc-surfaceRaised); color:var(--pc-text); }
 .hero-integration-ui .hero-mapping-core .btn:disabled { background:var(--pc-surface); color:var(--pc-text); opacity:.55; }

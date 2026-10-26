@@ -144,6 +144,36 @@ def _plan():
 
 
 class TestFrontendApiBoundary(unittest.TestCase):
+    def test_direction_filter_precedes_pagination_and_count(self):
+        class Mixed(_Frappe):
+            def get_all(self, doctype, **kwargs):
+                self.get_all_calls.append((doctype, kwargs))
+                if doctype == 'HERO Frappe Mapping':
+                    rows = [{'name': 'rule-1', 'definition_id': 'rule', 'status': 'Active'}]
+                else:
+                    rows = [dict(name=f'map-{index}', definition_id=f'def-{index}', status='Active',
+                                 direction='QUERY_TO_FRAPPE' if index % 2 == 0 else 'FRAPPE_TO_MUTATION',
+                                 mapping_revision=1, mapping_json='{}') for index in range(6)]
+                filters = kwargs.get('filters') or {}
+                rows = [row for row in rows if all(row.get(k) == v for k, v in filters.items())]
+                if kwargs.get('fields') == [{'COUNT': 'name', 'as': 'total'}]:
+                    return [{'total': len(rows)}]
+                start, limit = kwargs.get('limit_start', 0), kwargs.get('limit', 100)
+                return rows[start:start + limit]
+        frappe = Mixed(roles=('Employee',))
+        with patch.object(api, 'frappe', frappe):
+            q0 = api.frontend_mapping_list(start=0, page_size=1, direction='QUERY_TO_FRAPPE')
+            q1 = api.frontend_mapping_list(start=1, page_size=1, direction='QUERY_TO_FRAPPE')
+            m0 = api.frontend_mapping_list(start=0, page_size=1, direction='FRAPPE_TO_MUTATION')
+            all_rows = api.frontend_mapping_list(start=0, page_size=10)
+            with self.assertRaises(ValueError):
+                api.frontend_mapping_list(direction='OTHER')
+        self.assertEqual([q0['graphql_mappings'][0]['name'], q1['graphql_mappings'][0]['name']], ['map-0', 'map-2'])
+        self.assertEqual((q0['pagination']['graphql_total'], q1['pagination']['graphql_total']), (3, 3))
+        self.assertEqual(m0['graphql_mappings'][0]['name'], 'map-1')
+        self.assertEqual((m0['pagination']['graphql_total'], m0['pagination']['frappe_total'], m0['frappe_mappings']), (3, 0, []))
+        self.assertEqual(all_rows['pagination']['graphql_total'], 6)
+
     def test_employee_can_read_only_sanitized_mapping_status(self):
         frappe = _Frappe(roles=("Employee",), user="employee@example.invalid", mapping=_Mapping(status="Active"))
         with patch.object(api, "frappe", frappe):

@@ -56,6 +56,14 @@
     const mappingTabs = Object.freeze(["Query", "Mutation", "Binding"]);
     const directionForTab = (tab) => tab === "Query" ? "QUERY_TO_FRAPPE" : tab === "Mutation" ? "FRAPPE_TO_MUTATION" : null;
     const bindingAccess = (admin, definition) => !admin ? "ADMIN_ONLY" : definition?.definition_id ? "READ_ONLY" : "SELECT_DEFINITION";
+    const selectedPickerApp = (model, side, value, admin) =>
+        model?.frappeSelection?.side === side && model.frappeSelection.doctype === value?.doctype
+            ? model.frappeSelection.app : admin ? "" : value?.app || "";
+    const hasCurrentDraftBase = (model, active) => Boolean(model && !model.detailStale && active &&
+        active.definition_id === model.saved.definition_id &&
+        (!model.saved.base_active_name || active.name === model.saved.base_active_name) &&
+        active.revision === (model.reconciliation?.activeRevision ?? model.verifiedActiveRevision ?? model.saved.base_active_revision));
+    const canSaveDraft = (model, active) => Boolean(model && !model.blocked && hasCurrentDraftBase(model, active));
     function tabKeyTarget(tab, key) {
         const index = mappingTabs.indexOf(tab);
         if (index < 0) return null;
@@ -82,9 +90,15 @@
             Object.defineProperty(target, path.at(-1), {value, enumerable: true, configurable: true, writable: true});
         }
         setFrappeSource(app, doctype, field) {
-            this.set(["source", "app"], app);
+            this.frappeSelection = {side: "source", app, doctype};
             this.set(["source", "doctype"], doctype);
             this.set(["source", "field"], field);
+        }
+        setFrappeTarget(app, doctype, field) {
+            this.frappeSelection = {side: "target", app, doctype};
+            this.set(["target", "doctype"], doctype);
+            this.set(["target", "field"], field);
+            if (Object.hasOwn(this.content.target, "field_path")) this.set(["target", "field_path"], field);
         }
         remove(index) {
             this.invalidateReconciliation();
@@ -302,7 +316,7 @@
             filter.on("keydown", (event) => { if (event.key === "Enter") apply(); });
             toolbar.append(button("Search", apply));
             try {
-                const result = await rpc("frontend_mapping_list", {search, start, page_size: 20});
+                const result = await rpc("frontend_mapping_list", {search, start, page_size: 20, direction: directionForTab(tab)});
                 if (disposed || request !== epoch) return;
                 listing = result; renderList(); say("");
                 if (returnFocus) { root.find("[data-mapping-name]").filter((_, el) => el.dataset.mappingName === returnFocus).first().trigger("focus"); returnFocus = null; }
@@ -317,8 +331,8 @@
             const groups = new Map();
             definitions.forEach((item) => { const key = `${item.operation_kind} ${item.operation_name}`; if (!groups.has(key)) groups.set(key, []); groups.get(key).push(item); });
             body.append($("<h3></h3>").text(text("HERO operations and mapping definitions")),
-                $("<p class='text-muted'></p>").text(`${text("Definitions in this direction on this page")}: ${definitions.length} · ${text("All directions")}: ${p.graphql_total}`));
-            if (!definitions.length) body.append($("<p></p>").text(text("No matching definitions in this direction on this page. Other pages may contain results.")));
+                $("<p class='text-muted'></p>").text(`${text("Definitions in this direction on this page")}: ${definitions.length} / ${p.graphql_total}`));
+            if (!definitions.length) body.append($("<p></p>").text(text(search ? "No active definitions match your search." : "No active mapping definitions in this direction.")));
             groups.forEach((items, label) => {
                 const group = $("<details open class='hero-mapping-operation'></details>").append($("<summary></summary>").text(label));
                 items.forEach((item) => group.append(button(`${item.name} · ${text("Active")} · ${text("Revision")} ${item.revision}`, () => open(item, "graphql"))
@@ -475,7 +489,7 @@
                             .prop("disabled", !imported.adopted || !imported.preview.can_save));
                 }
                 if (mode === "draft") {
-                    toolbar.append(button("Compare active changes", compareActiveChanges), button("Save draft", save, true).attr("data-save-draft", ""), button("Discard saved draft", discard));
+                    toolbar.append(button("Compare active changes", compareActiveChanges).prop("disabled", Boolean(model.detailStale)), button("Save draft", save, true).attr("data-save-draft", ""), button("Discard saved draft", discard));
                     const reconciliationState = model.reconciliation ? "Local reconciliation changes — not saved"
                         : model.saved.reconciliation_json ? "Saved reconciliation evidence is current only for its recorded draft content."
                             : "No saved reconciliation evidence.";
@@ -499,16 +513,19 @@
                 table.find("tbody").empty(); const needle = searchInput.val().trim().toLowerCase();
                 list.forEach((row, index) => {
                     const v = row.value, linked = ownRule(value, row.id) || ruleCache.get(row.id), source = row.reference ? (linked?.source_path || row.id) : `${v.source?.doctype || ""}.${v.source?.field || ""}`;
-                    const target = row.reference ? (linked ? `${linked.target_doctype}.${linked.target_field}` : text("Existing active field rule")) : `${v.target?.operation || ""} / ${v.target?.argument || ""}.${v.target?.field_path ?? v.target?.field ?? ""}`;
+                    const target = row.reference ? (linked ? `${linked.target_doctype}.${linked.target_field}` : text("Existing active field rule"))
+                        : mutationMapping(v) ? `${v.target?.operation || ""} / ${v.target?.argument || ""}.${v.target?.field_path ?? v.target?.field ?? ""}`
+                            : `${v.target?.doctype || ""}.${v.target?.field_path ?? v.target?.field ?? ""}`;
                     const rule = row.reference ? (linked?.transformation || text("Referenced rule")) : v.transformation || v.transform || text("No transformation configured");
                     if (needle && !`${source} ${target} ${rule}`.toLowerCase().includes(needle)) return;
                     const tr = $("<tr></tr>").toggleClass("is-selected", selected === index);
-                    tr.append($("<td></td>").append(button(source, () => { selected = index; drawRows(); renderRow(row, detail); }).attr("data-row-selection", index)), $("<td></td>").text(target), $("<td></td>").text(typeof rule === "string" ? rule : text("Configured special rule")));
+                    tr.append($("<td></td>").append(button(source, () => { selected = index; drawRows(); renderRow(row, detail); body.find(".hero-mapping-context").trigger("hero-mapping-selection-change"); }).attr("data-row-selection", index)), $("<td></td>").text(target), $("<td></td>").text(typeof rule === "string" ? rule : text("Configured special rule")));
                     const actions = $("<td></td>");
                     if (editable) actions.append(button("Remove", () => { model.remove(row.index); selected = 0; renderDetail(); const next = root.find("[data-row-selection]").eq(Math.min(row.index, rows(model.content).length - 1)); if (next.length) next.trigger("focus"); else root.find("button").filter((_, el) => el.textContent.startsWith(text("Undo removal"))).trigger("focus"); say("Mapping removed locally. Undo is available until a successful save."); }));
                     tr.append(actions); table.find("tbody").append(tr);
                 });
                 if (list.length && !table.find("tbody").children().length) table.find("tbody").append($("<tr><td colspan='4'></td></tr>").find("td").text(text("No field mappings match this filter.")).end());
+                body.find(".hero-mapping-context").trigger("hero-mapping-summary-refresh");
                 if (focusedRow !== undefined) table.find(`[data-row-selection="${focusedRow}"]`).trigger("focus");
             };
             rowChangeHandler = drawRows;
@@ -539,18 +556,21 @@
             if (!admin) body.append($("<p class='text-muted'></p>").text(text("Employee read-only view")));
             if (editable) body.append($("<p class='text-muted'></p>").text(text("Saving keeps a personal draft. It does not validate or activate the mapping.")));
             updateDirty(); if (busy) root.find("button,input,select,textarea").prop("disabled", true);
-            if (model?.blocked) root.find("[data-save-draft]").prop("disabled", true);
+            if (model && !canSaveDraft(model, active)) root.find("[data-save-draft]").prop("disabled", true);
         }
         function renderContext(value) {
             const mutation = mutationMapping(value);
             const sourceTitle = mutation ? "Source Frappe" : "Source HERO";
             const targetTitle = mutation ? "Target HERO" : "Target Frappe";
+            const frappeSide = mutation ? "source" : "target";
+            const frappeValue = value[frappeSide] || {};
+            const selectedApp = selectedPickerApp(model, frappeSide, frappeValue, admin);
             const sourceLines = mutation
-                ? [["Installed app", value.source?.app || "—"], ["DocType", value.source?.doctype || "—"], ["Field", value.source?.field || "—"]]
+                ? [["Installed app", selectedApp || "—"], ["DocType", value.source?.doctype || "—"], ["Field", value.source?.field || "—"]]
                 : [["Validated schema snapshot", active.schema_snapshot || "—"], ["Query / operation", active.operation_name || value.operation_name || "—"], ["Object / path", value.records_path || value.record_path || value.source_path || "—"]];
             const targetLines = mutation
                 ? [["Mutation", active.operation_name || value.target?.operation || "—"], ["Argument / input path", value.target?.argument || "—"], ["Input field", value.target?.field_path || value.target?.field || "—"]]
-                : [["Installed app", value.target?.app || "—"], ["DocType", value.target?.doctype || "—"], ["Field", value.target?.field || value.target_field || "—"]];
+                : [["Installed app", selectedApp || "—"], ["DocType", value.target?.doctype || "—"], ["Field", value.target?.field_path || value.target?.field || value.target_field || "—"]];
             const context = $("<section class='hero-mapping-context' aria-label='Mapping context'></section>")
                 .append($("<h4></h4>").text(text(mutation ? "Mutation mapping context" : "Query mapping context")));
             const pane = (title, lines) => {
@@ -558,8 +578,65 @@
                 lines.forEach(([label, value]) => section.append($("<p></p>").append($("<strong></strong>").text(`${text(label)}: `), document.createTextNode(String(value)))));
                 return section;
             };
-            context.append(pane(sourceTitle, sourceLines), pane(targetTitle, targetLines));
+            const sourcePane = pane(sourceTitle, sourceLines), targetPane = pane(targetTitle, targetLines);
+            if (Array.isArray(value.mapping_definition_ids)) {
+                const heroPane = mutation ? targetPane : sourcePane;
+                const frappePane = mutation ? sourcePane : targetPane;
+                heroPane.append($('<p></p>').append($('<strong></strong>').text(`${text("Selected field path")}: `), document.createTextNode("—")),
+                    $('<p></p>').append($('<strong></strong>').text(`${text("Selected field type")}: `), document.createTextNode("—")));
+                const showLine = (pane, index, value) => pane.children("p").eq(index).contents().last().replaceWith(document.createTextNode(String(value || "—")));
+                let referenceCatalog;
+                const refreshSummary = () => {
+                    const row = rows(content())[selected];
+                    const rule = row?.reference ? ownRule(content(), row.id) || ruleCache.get(row.id) : null;
+                    const type = rule?.source_type || "", path = rule?.source_path || "";
+                    const doctype = rule?.target_doctype || "", field = rule?.target_field || "";
+                    const savedApp = model?.referenceApps?.[row?.id];
+                    const app = savedApp?.doctype === doctype ? savedApp.app : "";
+                    showLine(heroPane, 3, path); showLine(heroPane, 4, type);
+                    showLine(frappePane, 0, app); showLine(frappePane, 1, doctype); showLine(frappePane, 2, field);
+                    if (!admin || !doctype || app || !row?.id || !context[0].isConnected) return;
+                    const requestEpoch = epoch, rowId = row.id, definition = active, currentModel = model;
+                    referenceCatalog ||= rpc("mapping_target_catalog", {}).catch(() => null);
+                    referenceCatalog.then((catalog) => {
+                        if (!catalog || disposed || epoch !== requestEpoch || active !== definition || model !== currentModel || !context[0].isConnected) return;
+                        const selectedRow = rows(content())[selected];
+                        const currentRule = selectedRow?.reference ? ownRule(content(), selectedRow.id) || ruleCache.get(selectedRow.id) : null;
+                        if (selectedRow?.id !== rowId || currentRule?.target_doctype !== doctype) return;
+                        const entry = catalog.doctypes.find((item) => item.doctype === doctype && item.selectable);
+                        if (!entry) return;
+                        if (model) { model.referenceApps ||= Object.create(null); model.referenceApps[rowId] = {app: entry.app_name, doctype}; }
+                        showLine(frappePane, 0, entry.app_name);
+                    });
+                };
+                context.on("hero-mapping-summary-refresh", refreshSummary);
+            }
+            if (admin && mode === "draft") {
+                const currentRow = () => rows(model.content)[selected] || {};
+                const available = () => !Array.isArray(model.content.mapping_definition_ids) || Boolean(ownRule(model.content, currentRow().id));
+                const sourcePicker = button("Choose source fields", () => { if (available()) picker("source", sourcePane, currentRow()); });
+                const targetPicker = button("Choose target fields", () => { if (available()) picker("target", targetPane, currentRow()); });
+                const updatePickers = () => { const disabled = !available(); sourcePicker.prop("disabled", disabled); targetPicker.prop("disabled", disabled); };
+                context.on("hero-mapping-selection-change", () => { sourcePane.find("[data-field-picker]").remove(); targetPane.find("[data-field-picker]").remove(); updatePickers(); });
+                sourcePane.append(sourcePicker); targetPane.append(targetPicker); updatePickers();
+            }
+            context.append(sourcePane, targetPane);
             body.append(context);
+            context.trigger("hero-mapping-summary-refresh");
+            if (admin && !selectedApp && frappeValue.doctype && active.mapping_type === "graphql") {
+                const requestEpoch = epoch, definition = active, currentModel = model;
+                const selectedDoctype = frappeValue.doctype;
+                const method = mutation ? "writeback_mapper_catalog" : "mapping_target_catalog";
+                const args = mutation ? {snapshot_name: active.schema_snapshot, source_doctype: selectedDoctype} : {};
+                rpc(method, args).then((result) => {
+                    if (disposed || epoch !== requestEpoch || active !== definition || model !== currentModel || !context[0].isConnected || content()[frappeSide]?.doctype !== selectedDoctype) return;
+                    const entry = result.doctypes.find((item) => item.doctype === selectedDoctype && item.selectable);
+                    if (!entry) return;
+                    if (model) model.frappeSelection = {side: frappeSide, app: entry.app_name, doctype: selectedDoctype};
+                    const pane = mutation ? sourcePane : targetPane;
+                    pane.find("p").first().contents().last().replaceWith(document.createTextNode(String(entry.app_name)));
+                }).catch(() => { /* The picker will display a catalog error when opened. */ });
+            }
         }
         async function renderRow(row, panel) {
             const selectionRequest = ++detailRequest;
@@ -603,29 +680,45 @@
             panel.append(button("Search source fields", () => picker("source", panel)), button("Search target fields", () => picker("target", panel)));
             panel.append($("<details></details>").append($("<summary></summary>").text(text("All configured rule parameters")), safeJson(value)));
         }
+        async function refreshDraftActive(state, request) {
+            const selected = active;
+            const detail = await rpc("frontend_mapping_detail", {mapping_type: "graphql", name: selected.name});
+            if (disposed || request !== epoch || model !== state) return false;
+            if (detail.name !== selected.name || detail.definition_id !== state.saved.definition_id || !Number.isInteger(detail.revision) || detail.revision < 1) {
+                throw new Error("Active mapping identity changed.");
+            }
+            active = {...detail, mapping_type: "graphql"};
+            state.detailStale = false;
+            state.blocked = !hasCurrentDraftBase(state, active);
+            return true;
+        }
         async function openDraft() {
             leave(async () => {
                 if (locked()) return; const request = ++epoch; setBusy(true); say("Loading your saved draft…");
                 try {
                     const result = await rpc("mapping_draft_read", {definition_id: active.definition_id});
                     if (disposed || request !== epoch) return;
-                    if (result.draft?.state === "OPEN") { model = new DraftState(result.draft); mode = "draft"; renderDetail(); say(""); }
+                    if (result.draft?.state === "OPEN") {
+                        model = new DraftState(result.draft); mode = "draft"; model.detailStale = true; model.blocked = true;
+                        if (await refreshDraftActive(model, request)) say(model.blocked ? "The active mapping changed. Compare active changes before saving." : "");
+                    }
                     else modal("Create personal draft", "No open personal draft exists. Create one from the active definition?", [
                         ["Create my draft", createDraft, true], ["Cancel", () => {}],
                     ]);
-                } catch (error) { say(errorText(error)); }
+                } catch (error) { say(model?.detailStale ? "The active mapping could not be refreshed. Return to mappings and reopen the draft before editing." : errorText(error)); }
                 finally { if (!disposed && request === epoch) { setBusy(false); renderDetail(); } }
             });
         }
         async function createDraft() {
             if (locked()) return; setBusy(true); const request = ++epoch;
             try { const result = await rpc("mapping_draft_create", {definition_id: active.definition_id}, true);
-                if (disposed || request !== epoch) return; model = new DraftState(result.draft); mode = "draft"; say("Personal draft opened.");
-            } catch (error) { say(errorText(error)); }
+                if (disposed || request !== epoch) return; model = new DraftState(result.draft); mode = "draft"; model.detailStale = true; model.blocked = true;
+                if (await refreshDraftActive(model, request)) say(model.blocked ? "The active mapping changed. Compare active changes before saving." : "Personal draft opened.");
+            } catch (error) { say(model?.detailStale ? "The active mapping could not be refreshed. Return to mappings and reopen the draft before editing." : errorText(error)); }
             finally { if (!disposed && request === epoch) { setBusy(false); renderDetail(); } }
         }
         async function save() {
-            if (locked() || !model || model.blocked) return false;
+            if (locked() || !canSaveDraft(model, active)) return false;
             const invalid = root.find("input").filter((_, el) => !el.checkValidity())[0];
             if (invalid) { invalid.reportValidity(); invalid.focus(); return false; }
             const state = model, submitted = clone(state.content), request = ++epoch; setBusy(true); say("Saving personal draft…");
@@ -657,11 +750,13 @@
         }
         async function reconcile() {
             if (locked() || !model) return; setBusy(true); const request = ++epoch;
+            if (model.detailStale) { setBusy(false); say("Return to mappings and reopen the draft to refresh the active definition."); renderDetail(); return; }
             try { const result = await rpc("mapping_draft_read", {definition_id: model.saved.definition_id});
                 if (disposed || request !== epoch) return;
                 if (model.resolve(result.draft, model.content)) say("Personal draft matches your edits. Save status confirmed.");
                 else if (!model.blocked) say("Your changes are not saved. Choose Save draft to try again.");
                 else say("The saved draft differs. Your local edits remain. Reload only if you want to replace them.");
+                if (!hasCurrentDraftBase(model, active)) { model.blocked = true; say("The active mapping changed. Compare active changes before saving."); }
             } catch (error) { say(errorText(error)); }
             finally { if (!disposed && request === epoch) { setBusy(false); renderDetail(); } }
         }
@@ -821,16 +916,22 @@
             panel.append(button("Search rules", () => { ruleStart = 0; loadRules(); }), button("Close field search", () => panel.remove())); query.trigger("focus");
         }
         async function picker(side, panel, row = {}) {
-            const pickerHost = $("<section></section>"); panel.append(pickerHost);
-            const query = field("Search fields by name, full path or type", "", () => {}, pickerHost);
+            panel.find("[data-field-picker]").remove();
+            const pickerHost = $("<section data-field-picker></section>"); panel.append(pickerHost);
+            let seq = 0, fieldStart = 0, frappeCatalog = null;
+            const pickerEpoch = epoch;
+            const currentPicker = (request) => request === seq && pickerEpoch === epoch && pickerHost[0].isConnected;
+            const query = field("Search fields by name, full path or type", "", () => { seq++; results.empty(); }, pickerHost);
             const pickerId = `hero-mapping-picker-${Math.random().toString(36).slice(2)}`;
-            const app = $("<input class='form-control' aria-label='App' autocomplete='off'>").attr("list", `${pickerId}-apps`);
-            const doctype = $("<input class='form-control' aria-label='DocType' autocomplete='off'>").attr("list", `${pickerId}-doctypes`);
+            const app = $("<input class='form-control' aria-label='App' autocomplete='off'>").attr("list", `${pickerId}-apps`).prop("disabled", true);
+            const doctype = $("<input class='form-control' aria-label='DocType' autocomplete='off'>").attr("list", `${pickerId}-doctypes`).prop("disabled", true);
             const appOptions = $("<datalist></datalist>").attr("id", `${pickerId}-apps`);
             const doctypeOptions = $("<datalist></datalist>").attr("id", `${pickerId}-doctypes`);
             const catalogState = $("<p class='text-muted'></p>");
-            const results = $("<div></div>"); let seq = 0, fieldStart = 0, frappeCatalog = null;
-            const source = row.reference ? side === "target" : side === "source"; pickerHost.append(app, appOptions, doctype, doctypeOptions, catalogState, results);
+            const results = $("<div></div>");
+            const mutation = mutationMapping();
+            const source = row.reference ? side === "target" : mutation ? side === "source" : side === "target";
+            pickerHost.append(app, appOptions, doctype, doctypeOptions, catalogState, results);
             const load = async () => {
                 if (source && !doctype.val()) { results.text(text("Choose an app and DocType before searching fields.")); return; }
                 const request = ++seq; results.text(text("Loading fields…"));
@@ -841,32 +942,35 @@
                         fields = available.slice(fieldStart, fieldStart + 50);
                         results.text(`${available.length ? fieldStart + 1 : 0}–${Math.min(fieldStart + fields.length, available.length)} / ${available.length}`);
                         results.append(button("Previous fields", () => { fieldStart = Math.max(0, fieldStart - 50); load(); }).prop("disabled", !fieldStart), button("Next fields", () => { fieldStart += 50; load(); }).prop("disabled", fieldStart + 50 >= available.length));
-                    } else if (source) { const result = await rpc("mapping_target_catalog_page", {app_name: app.val() || "", doctype: doctype.val() || "", search: query.val(), start: fieldStart, page_size: 50}); fields = result.items; if (request !== seq || !pickerHost[0].isConnected) return; results.text(`${result.total ? fieldStart + 1 : 0}–${Math.min(fieldStart + fields.length, result.total)} / ${result.total}`); results.append(button("Previous fields", () => { fieldStart = Math.max(0, fieldStart - 50); load(); }).prop("disabled", !fieldStart), button("Next fields", () => { fieldStart += 50; load(); }).prop("disabled", fieldStart + 50 >= result.total)); }
-                    else if (row.reference) {
+                    } else if (source) { const result = await rpc("mapping_target_catalog_page", {app_name: app.val() || "", doctype: doctype.val() || "", search: query.val(), start: fieldStart, page_size: 50}); fields = result.items; if (!currentPicker(request)) return; results.text(`${result.total ? fieldStart + 1 : 0}–${Math.min(fieldStart + fields.length, result.total)} / ${result.total}`); results.append(button("Previous fields", () => { fieldStart = Math.max(0, fieldStart - 50); load(); }).prop("disabled", !fieldStart), button("Next fields", () => { fieldStart += 50; load(); }).prop("disabled", fieldStart + 50 >= result.total)); }
+                    else if (row.reference || !mutation) {
                         const result = await rpc("mapping_source_picker_page", {snapshot_name: active.schema_snapshot, operation: model.content.target_operation || active.operation_name,
                             search: query.val(), start: fieldStart, page_size: 50});
-                        if (request !== seq || !pickerHost[0].isConnected) return;
+                        if (!currentPicker(request)) return;
                         fields = result.items; results.text(`${result.total ? fieldStart + 1 : 0}–${Math.min(fieldStart + fields.length, result.total)} / ${result.total}`);
                         results.append(button("Previous fields", () => { fieldStart = Math.max(0, fieldStart - 50); load(); }).prop("disabled", !fieldStart),
                             button("Next fields", () => { fieldStart += 50; load(); }).prop("disabled", fieldStart + 50 >= result.total));
                     }
                     else { const catalog = await rpc("schema_operation_catalog", {snapshot_name: active.schema_snapshot, operation_kind: active.operation_kind});
+                        if (!currentPicker(request)) return;
                         const operation = catalog.find((v) => v.operation_name === active.operation_name);
                         const all = Object.entries(operation?.input_fields || {}).flatMap(([argument, list]) => list.map((f) => ({...f, argument, fieldtype: f.type})));
                         const needle = query.val().toLowerCase(); const matched = all.filter((v) => `${v.argument}.${v.path} ${v.type}`.toLowerCase().includes(needle));
                         fields = matched.slice(fieldStart, fieldStart + 50); results.text(`${matched.length ? fieldStart + 1 : 0}–${Math.min(fieldStart + fields.length, matched.length)} / ${matched.length}`);
                         results.append(button("Previous fields", () => { fieldStart = Math.max(0, fieldStart - 50); load(); }).prop("disabled", !fieldStart), button("Next fields", () => { fieldStart += 50; load(); }).prop("disabled", fieldStart + 50 >= matched.length)); }
-                    if (request !== seq || !pickerHost[0].isConnected) return;
+                    if (!currentPicker(request)) return;
                     fields.forEach((f) => results.append(button(`${f.argument ? f.argument + "." : ""}${f.path} · ${f.fieldtype || f.type}${f.nullable === false ? " · required" : ""}${f.select_options?.length ? ` · enum: ${f.select_options.join(", ")}` : ""}${f.selectable === false ? ` · unavailable: ${f.reason || "not permitted"}` : ""}`, () => {
                         if (row.reference) {
-                            if (source) { model.set(["field_rules", row.id, "target_doctype"], f.target_doctype || doctype.val()); model.set(["field_rules", row.id, "target_field"], f.path); }
+                            if (source) { const selectedDoctype = f.target_doctype || doctype.val(); model.referenceApps ||= Object.create(null); model.referenceApps[row.id] = {app: app.val(), doctype: selectedDoctype}; model.set(["field_rules", row.id, "target_doctype"], selectedDoctype); model.set(["field_rules", row.id, "target_field"], f.path); }
                             else { model.set(["field_rules", row.id, "source_path"], f.path); model.set(["field_rules", row.id, "source_type"], f.mapping_type || f.fieldtype); }
                         }
-                        else if (source) { model.setFrappeSource(app.val(), f.target_doctype || doctype.val(), f.path); }
+                        else if (source && mutation) { model.setFrappeSource(app.val(), f.target_doctype || doctype.val(), f.path); }
+                        else if (source) { model.setFrappeTarget(app.val(), f.target_doctype || doctype.val(), f.path); }
+                        else if (!mutation) { model.set(["source", "field"], f.path); if (Object.hasOwn(model.content.source, "path")) model.set(["source", "path"], f.path); }
                         else { model.set(["target", "argument"], f.argument); model.set(["target", "operation"], active.operation_name); model.set(["target", "field"], f.path); if (Object.hasOwn(model.content.target, "field_path")) model.set(["target", "field_path"], f.path); model.set(["target", "graphql_type"], f.type); }
                         renderDetail();
                     }).prop("disabled", f.selectable === false)));
-                } catch (error) { if (request === seq && pickerHost[0].isConnected) results.text(errorText(error)); }
+                } catch (error) { if (currentPicker(request)) results.text(errorText(error)); }
             };
             const searchFields = button("Search fields", () => { fieldStart = 0; load(); }).prop("disabled", source);
             pickerHost.append(searchFields, button("Close field search", () => pickerHost.remove()));
@@ -874,12 +978,13 @@
             if (!source) { app.hide(); doctype.hide(); query.trigger("focus"); return; }
             try { const catalogMethod = mutationMapping() && !row.reference ? "writeback_mapper_catalog" : "mapping_target_catalog";
                 const result = await rpc(catalogMethod, catalogMethod === "writeback_mapper_catalog" ? {snapshot_name: active.schema_snapshot} : {});
-                if (!pickerHost[0].isConnected) return;
+                if (!currentPicker(seq)) return;
                 frappeCatalog = result;
+                app.prop("disabled", false); doctype.prop("disabled", false);
                 result.apps.forEach((item) => appOptions.append($("<option></option>").val(item.app_name || item)));
                 catalogState.text(`${text("Searchable installed-app catalog")}: ${result.apps.length} ${text("apps")}, ${result.doctypes.length} ${text("DocTypes")}.`);
-                app.on("input change", () => { fieldStart = 0; searchFields.prop("disabled", true); doctype.val(""); doctypeOptions.empty(); const matches = result.doctypes.filter((item) => item.app_name === app.val()); matches.forEach((item) => doctypeOptions.append($("<option></option>").val(item.doctype))); catalogState.text(`${text("Searchable DocTypes")}: ${matches.length}. ${text("Unavailable options remain listed and explain why when selected.")}`); });
-                doctype.on("input change", () => { const item = result.doctypes.find((candidate) => candidate.app_name === app.val() && candidate.doctype === doctype.val()); searchFields.prop("disabled", !item?.selectable); catalogState.text(item ? `${item.doctype}: ${item.selectable ? text("available") : item.reason || text("unavailable")}` : text("Choose a listed app and DocType.")); });
+                app.on("input change", () => { seq++; results.empty(); fieldStart = 0; searchFields.prop("disabled", true); doctype.val(""); doctypeOptions.empty(); const matches = result.doctypes.filter((item) => item.app_name === app.val()); matches.forEach((item) => doctypeOptions.append($("<option></option>").val(item.doctype))); catalogState.text(`${text("Searchable DocTypes")}: ${matches.length}. ${text("Unavailable options remain listed and explain why when selected.")}`); });
+                doctype.on("input change", () => { seq++; results.empty(); fieldStart = 0; const item = result.doctypes.find((candidate) => candidate.app_name === app.val() && candidate.doctype === doctype.val()); searchFields.prop("disabled", !item?.selectable); catalogState.text(item ? `${item.doctype}: ${item.selectable ? text("available") : item.reason || text("unavailable")}` : text("Choose a listed app and DocType.")); });
                 query.trigger("focus");
             } catch (error) { results.text(errorText(error)); }
         }
@@ -915,5 +1020,5 @@
         const controller = {beforeLeave: leaveWorkspace, destroy() { shell.removeClass("hero-mapping-shell"); disposed = true; epoch++; window.removeEventListener("beforeunload", unload); if (router.route === guardedRoute) router.route = originalRoute; document.removeEventListener("click", links, true); }};
         current = controller; loadList(); return controller;
     }
-    window.hero_integration_mapping_editor = Object.freeze({mount, DraftState, stable, readActiveRule, exchangeExpectedStates, exchangeCounts, exchangeCanAdopt, isOwnedExportLink, mappingTabs, directionForTab, bindingAccess, tabKeyTarget, MappingTabStates});
+    window.hero_integration_mapping_editor = Object.freeze({mount, DraftState, stable, readActiveRule, exchangeExpectedStates, exchangeCounts, exchangeCanAdopt, isOwnedExportLink, mappingTabs, directionForTab, bindingAccess, selectedPickerApp, hasCurrentDraftBase, canSaveDraft, tabKeyTarget, MappingTabStates});
 })();

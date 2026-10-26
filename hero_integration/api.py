@@ -1066,24 +1066,30 @@ def _sanitized_mapping_definition(raw: object) -> dict[str, object]:
 
 
 @frappe.whitelist(methods=["GET"])
-def frontend_mapping_list(search: str = "", start: int | str = 0, page_size: int | str = 50):
+def frontend_mapping_list(search: str = "", start: int | str = 0, page_size: int | str = 50, direction: str = ""):
     """Read-only, redacted mapping/status projection for Employee and System Manager users."""
     _mapping_reader_authorized()
-    _mapping_request_fields({"search", "start", "page_size"})
+    _mapping_request_fields({"search", "start", "page_size", "direction"})
     search = _mapping_text(search, "search", 120, allow_empty=True)
+    direction = _mapping_text(direction, "direction", 40, allow_empty=True)
+    if direction not in {"", "QUERY_TO_FRAPPE", "FRAPPE_TO_MUTATION"}:
+        frappe.throw("MAPPING_INPUT_INVALID: Invalid direction.")
     start, page_size = _mapping_int(start, "start", 0, 10000), _mapping_int(page_size, "page_size", 1, 100)
+    graphql_filters = {"status": "Active"}
+    if direction:
+        graphql_filters["direction"] = direction
     graphql_search = [[field, "like", "%" + search + "%"] for field in ("name", "operation_name")]
     frappe_search = [[field, "like", "%" + search + "%"] for field in ("name", "definition_id", "operation")]
     graphql_rows = frappe.get_all(
         "HERO GraphQL Mapping",
-        filters={"status": "Active"}, or_filters=graphql_search if search else None,
+        filters=graphql_filters, or_filters=graphql_search if search else None,
         fields=[
             "name", "definition_id", "schema_snapshot", "schema_fingerprint", "source_instance", "operation_kind", "operation_name",
             "direction", "status", "mapping_revision", "mapping_json",
         ],
         order_by="name asc", limit_start=start, limit=page_size,
     )
-    frappe_rows = frappe.get_all(
+    frappe_rows = [] if direction == "FRAPPE_TO_MUTATION" else frappe.get_all(
         "HERO Frappe Mapping",
         filters={"status": "Active"}, or_filters=frappe_search if search else None,
         fields=[
@@ -1124,8 +1130,8 @@ def frontend_mapping_list(search: str = "", start: int | str = 0, page_size: int
         ],
         "pagination": {
             "start": start, "page_size": page_size,
-            "graphql_total": _active_mapping_count("HERO GraphQL Mapping", graphql_search if search else None),
-            "frappe_total": _active_mapping_count("HERO Frappe Mapping", frappe_search if search else None),
+            "graphql_total": _active_mapping_count("HERO GraphQL Mapping", graphql_search if search else None, graphql_filters),
+            "frappe_total": 0 if direction == "FRAPPE_TO_MUTATION" else _active_mapping_count("HERO Frappe Mapping", frappe_search if search else None),
         },
     }
 
@@ -1151,8 +1157,8 @@ def _mapping_int(value, label, minimum=0, maximum=2147483647):
     return value
 
 
-def _active_mapping_count(doctype, or_filters):
-    rows = frappe.get_all(doctype, filters={"status": "Active"}, or_filters=or_filters,
+def _active_mapping_count(doctype, or_filters, filters=None):
+    rows = frappe.get_all(doctype, filters=filters or {"status": "Active"}, or_filters=or_filters,
                           fields=[{"COUNT": "name", "as": "total"}], limit=1)
     return int(_row_value(rows[0], "total", 0)) if rows else 0
 
