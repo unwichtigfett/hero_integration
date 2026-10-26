@@ -80,6 +80,44 @@
     const legacyWritebackCurrent = (admin, viewTab, currentTab, viewEpoch, currentEpoch, serial, currentSerial, snapshot, selected, connected, disposed) =>
         admin && viewTab === "Mutation" && currentTab === viewTab && viewEpoch === currentEpoch && serial === currentSerial &&
         Boolean(snapshot) && snapshot === selected && connected && !disposed;
+    const legacyCandidateArgs = (snapshot, operation, source, doctype, target, sample) => {
+        if (![snapshot, operation, source, doctype, target].every((v) => typeof v === "string" && v.trim()))
+            throw new Error("Choose a validated snapshot, query, source path, target DocType and target field.");
+        let record;
+        try { record = JSON.parse(sample); } catch (_) { throw new Error("Enter a synthetic JSON object."); }
+        if (!object(record)) throw new Error("Enter a synthetic JSON object.");
+        return {snapshot_name: snapshot, operation, source_path: source.trim(), target_doctype: doctype.trim(),
+            target_field: target.trim(), source_record_json: sample};
+    };
+    const legacyCandidateMatches = (result, args) => object(result) && result.writes === false &&
+        result.operation === args.operation && result.source_path === args.source_path &&
+        result.target_doctype === args.target_doctype && result.target_field === args.target_field && object(result.values);
+    const legacyCandidateRawMessage = (raw) => {
+        if (typeof raw !== "string" || typeof JSON.rawJSON !== "function") throw new Error("This browser cannot preserve preview numbers.");
+        let supported = false;
+        JSON.parse("1", (_key, value, context) => { supported = context?.source === "1"; return value; });
+        if (!supported) throw new Error("This browser cannot preserve preview numbers.");
+        const response = JSON.parse(raw, (_key, value, context) => {
+            if (typeof value !== "number") return value;
+            if (typeof context?.source !== "string") throw new Error("This browser cannot preserve preview numbers.");
+            return JSON.rawJSON(context.source);
+        });
+        if (!object(response) || response.exc) throw new Error("Invalid legacy preview response.");
+        return response.message;
+    };
+    async function legacyCandidateRpc(args, call = (options) => frappe.call(options)) {
+        let raw;
+        const response = await call({method: "hero_integration.api.preview_mapping_candidate", type: "POST", args,
+            callback: (_data, responseText) => { raw = responseText; }});
+        if (response?.exc) throw response;
+        return legacyCandidateRawMessage(raw);
+    }
+    const legacyCandidatePreviewText = (result, args) => {
+        if (!legacyCandidateMatches(result, args)) throw new Error("Invalid legacy preview response.");
+        return JSON.stringify({operation: result.operation, source_path: result.source_path,
+            target_doctype: result.target_doctype, target_field: result.target_field, target_app: result.target_app,
+            values: result.values, writes: false}, null, 2);
+    };
     const isOwnedExportLink = (link, ownedLink) => Boolean(ownedLink) && link === ownedLink;
     const mappingTabs = Object.freeze(["Query", "Mutation", "Binding"]);
     async function readSnapshotPages(fetchPage, isCurrent) {
@@ -396,7 +434,7 @@
                 } catch (error) { if (currentView(serial) && suggestionSerial === suggestionRequest) info.text(errorText(error)); }
             });
             async function loadOperations(name, preferred = '') {
-                const serial = ++request; suggestionRequest++; resetOperations(); details.empty();
+                const serial = ++request; suggestionRequest++; section.trigger('hero-mapping-candidate-invalidate'); resetOperations(); details.empty();
                 if (!name) { info.text(text('Choose a validated snapshot.')); return; }
                 info.text(text('Loading schema operations…'));
                 try {
@@ -404,12 +442,12 @@
                     if (!currentView(serial)) return;
                     result.forEach((item) => operations.append($('<option></option>').val(item.operation_name).text(`${item.operation_name} → ${item.return_type || 'unknown'}`)));
                     operations.prop('disabled', false); info.text(text('Choose an operation to inspect its schema.'));
-                    operations.off('change').on('change', () => { suggestionRequest++; const item = result.find((row) => row.operation_name === operations.val()); details.text(item ? JSON.stringify(item, null, 2) : ''); info.text(text('Suggestions are read only; select Show field suggestions to load them.')); });
+                    operations.off('change.schema').on('change.schema', () => { suggestionRequest++; const item = result.find((row) => row.operation_name === operations.val()); details.text(item ? JSON.stringify(item, null, 2) : ''); info.text(text('Suggestions are read only; select Show field suggestions to load them.')); });
                     if (preferred && result.some((item) => item.operation_name === preferred)) operations.val(preferred).trigger('change');
                 } catch (error) { if (currentView(serial)) info.text(errorText(error)); }
             }
             async function loadSnapshots(preferredSnapshot = '', preferredOperation = '') {
-                const serial = ++request; suggestionRequest++; resetSnapshots(); resetOperations(); details.empty();
+                const serial = ++request; suggestionRequest++; section.trigger('hero-mapping-candidate-invalidate'); resetSnapshots(); resetOperations(); details.empty();
                 info.text(text('Loading saved snapshots…')); limitNotice.empty();
                 try {
                     const result = await readSnapshotPages((args) => rpc('schema_snapshot_list', args), () => currentView(serial));
@@ -431,7 +469,44 @@
             snapshot.on('change', () => { packageRequest++; packagePreview.empty(); loadOperations(snapshot.val()); });
             source.add(target).on('input', () => { suggestionRequest++; details.empty(); info.text(text('Select Show field suggestions to load the current inputs.')); });
             section.append(snapshot, operations, info, limitNotice, details);
-            if (viewTab === 'Query') section.append(source, target, suggestions);
+            if (viewTab === 'Query') {
+                section.append(source, target, suggestions);
+                let candidateSerial = 0;
+                const candidateSource = $("<input class='form-control' aria-label='Legacy preview HERO source path'>");
+                const candidateDoctype = $("<input class='form-control' aria-label='Legacy preview target DocType'>");
+                const candidateField = $("<input class='form-control' aria-label='Legacy preview target field'>");
+                const candidateSample = $("<textarea class='form-control' aria-label='Legacy preview synthetic JSON record'></textarea>");
+                const candidateState = $("<p role='status'></p>"), candidateResult = $("<pre></pre>");
+                const clearCandidate = () => { candidateSerial++; candidateResult.empty(); candidateState.text(text('Enter inputs and run the legacy preview.')); };
+                snapshot.add(operations).on('change', clearCandidate);
+                candidateSource.add(candidateDoctype).add(candidateField).add(candidateSample).on('input', clearCandidate);
+                section.on('hero-mapping-picker-resume hero-mapping-candidate-invalidate', clearCandidate);
+                const preview = button('Preview synthetic record (legacy)', async () => {
+                    let args;
+                    try {
+                        if (snapshot.prop('disabled') || operations.prop('disabled')) throw new Error('Choose a validated snapshot and query.');
+                        args = legacyCandidateArgs(snapshot.val(), operations.val(), candidateSource.val(), candidateDoctype.val(), candidateField.val(), candidateSample.val());
+                    } catch (error) { candidateResult.empty(); candidateState.text(text(error.message)); return; }
+                    const serial = ++candidateSerial, viewRequest = request;
+                    candidateResult.empty(); candidateState.text(text('Loading legacy preview…'));
+                    const current = () => currentView(viewRequest) && serial === candidateSerial;
+                    try {
+                        const result = await legacyCandidateRpc(args);
+                        if (!current()) return;
+                        let display;
+                        try { display = legacyCandidatePreviewText(result, args); }
+                        catch (error) { candidateState.text(text(error.message)); return; }
+                        candidateState.text(text('Read-only legacy identity preview. No mapping or document was saved.'));
+                        candidateResult.text(display);
+                    } catch (error) { if (current()) candidateState.text(text(error?.message === 'This browser cannot preserve preview numbers.' ? error.message : errorText(error))); }
+                });
+                section.append($('<h4></h4>').text(text('Legacy synthetic record preview')),
+                    $('<p></p>').text(text('Uses only historical approved source paths and the Identity transformation. This does not preview personal draft rules, save a mapping, or contact HERO. Enter synthetic data only.')),
+                    $('<label></label>').text(text('HERO source path')).append(candidateSource),
+                    $('<label></label>').text(text('Target DocType')).append(candidateDoctype),
+                    $('<label></label>').text(text('Target field')).append(candidateField),
+                    $('<label></label>').text(text('Synthetic JSON record')).append(candidateSample), preview, candidateState, candidateResult);
+            }
             if (viewTab === 'Mutation') {
                 let legacyRequest = 0, detailSerial = 0;
                 const legacyState = $("<p role='status'></p>");
@@ -1234,5 +1309,5 @@
         const controller = {beforeLeave: leaveWorkspace, destroy() { shell.removeClass("hero-mapping-shell"); disposed = true; epoch++; window.removeEventListener("beforeunload", unload); if (router.route === guardedRoute) router.route = originalRoute; document.removeEventListener("click", links, true); }};
         current = controller; loadList(); return controller;
     }
-    window.hero_integration_mapping_editor = Object.freeze({mount, DraftState, stable, readActiveRule, readSnapshotPages, exchangeExpectedStates, exchangeCounts, exchangeCanAdopt, reviewedTargetLabel, writebackContractLabel, legacyWritebackRows, legacyWritebackDetailMatches, legacyWritebackCurrent, isOwnedExportLink, mappingTabs, directionForTab, bindingAccess, selectedPickerApp, hasCurrentDraftBase, canSaveDraft, tabKeyTarget, MappingTabStates, resumePendingView});
+    window.hero_integration_mapping_editor = Object.freeze({mount, DraftState, stable, readActiveRule, readSnapshotPages, exchangeExpectedStates, exchangeCounts, exchangeCanAdopt, reviewedTargetLabel, writebackContractLabel, legacyWritebackRows, legacyWritebackDetailMatches, legacyWritebackCurrent, legacyCandidateArgs, legacyCandidateMatches, legacyCandidateRawMessage, legacyCandidateRpc, legacyCandidatePreviewText, isOwnedExportLink, mappingTabs, directionForTab, bindingAccess, selectedPickerApp, hasCurrentDraftBase, canSaveDraft, tabKeyTarget, MappingTabStates, resumePendingView});
 })();
