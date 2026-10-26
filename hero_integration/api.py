@@ -2196,7 +2196,7 @@ def preview_mapping_package(snapshot_name: str, payload_json: str) -> dict[str, 
 
 @frappe.whitelist(methods=["POST"])
 def adopt_mapping_package(
-    snapshot_name: str, payload_json: str, selected_ids_json: str, confirmed: bool = False,
+    snapshot_name: str, payload_json: str, selected_ids_json: str, confirmed: bool = False, preview_revision: str = "",
 ) -> dict[str, object]:
     """Provision checked HERO-owned schema, then activate the selected mappings."""
     frappe.only_for("System Manager")
@@ -2213,7 +2213,7 @@ def adopt_mapping_package(
         if confirmed not in (True, 1, "1", "true", "True"):
             raise SchemaProvisioningError("Administrator confirmation is required before adoption.")
         from hero_integration.services.adoption import start
-        return start(snapshot_name, payload_json, selected_ids)
+        return start(snapshot_name, payload_json, selected_ids, preview_revision)
     except (MappingExchangeError, SchemaProvisioningError) as error:
         frappe.throw(str(error))
 

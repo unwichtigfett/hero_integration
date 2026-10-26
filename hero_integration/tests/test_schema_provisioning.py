@@ -53,6 +53,10 @@ class TestSchemaProvisioning(unittest.TestCase):
             item.start()
             self.addCleanup(item.stop)
 
+    def adopt(self, snapshot, payload, selected, confirmed):
+        preview = schema_provisioning.preview_package(snapshot, payload)
+        return schema_provisioning.adopt_package(snapshot, payload, selected, confirmed, preview["preview_revision"])
+
     def test_preview_is_non_mutating_and_groups_schema_and_mapping_changes(self):
         preview = schema_provisioning.preview_package("SYNTHETIC", json.dumps(package()))
 
@@ -68,7 +72,7 @@ class TestSchemaProvisioning(unittest.TestCase):
         preview = schema_provisioning.preview_package("SYNTHETIC", json.dumps(package()))
         selected = [item["id"] for item in preview["items"] if item["selectable"]]
 
-        result = schema_provisioning.adopt_package("SYNTHETIC", json.dumps(package()), selected, confirmed=True)
+        result = self.adopt("SYNTHETIC", json.dumps(package()), selected, confirmed=True)
 
         self.assertEqual(result["status"], "COMPLETED")
         self.assertEqual(result["created"]["custom_doctypes"], ["HERO External Detail Row", "HERO External Detail"])
@@ -80,19 +84,19 @@ class TestSchemaProvisioning(unittest.TestCase):
     def test_relation_can_be_selected_separately_from_its_custom_doctype(self):
         preview = schema_provisioning.preview_package("SYNTHETIC", json.dumps(package()))
         doctypes = ["doctype:detail", "doctype:detail-row"]
-        schema_provisioning.adopt_package("SYNTHETIC", json.dumps(package()), doctypes, confirmed=True)
+        self.adopt("SYNTHETIC", json.dumps(package()), doctypes, confirmed=True)
         self.assertIsNone(self.frappe.get_meta("HERO External Detail").get_field("custom_hero_customer"))
 
         follow_up = schema_provisioning.preview_package("SYNTHETIC", json.dumps(package()))
         relations = [item["id"] for item in follow_up["items"] if item["group"] == "Relations / Link Fields"]
-        result = schema_provisioning.adopt_package("SYNTHETIC", json.dumps(package()), relations, confirmed=True)
+        result = self.adopt("SYNTHETIC", json.dumps(package()), relations, confirmed=True)
 
         self.assertEqual(len(result["created"]["custom_fields"]), 2)
         self.assertEqual(self.frappe.get_meta("HERO External Detail").get_field("custom_hero_customer").fieldtype, "Link")
 
     def test_repeated_import_is_unchanged_and_does_not_duplicate_schema(self):
         preview = schema_provisioning.preview_package("SYNTHETIC", json.dumps(package()))
-        schema_provisioning.adopt_package("SYNTHETIC", json.dumps(package()), [item["id"] for item in preview["items"] if item["selectable"]], True)
+        self.adopt("SYNTHETIC", json.dumps(package()), [item["id"] for item in preview["items"] if item["selectable"]], True)
 
         repeated = schema_provisioning.preview_package("SYNTHETIC", json.dumps(package()))
 
@@ -111,7 +115,7 @@ class TestSchemaProvisioning(unittest.TestCase):
         definitions = schema_provisioning._definitions(draft["schema"])
         self.assertEqual(schema_provisioning._PlannedMetadata(definitions).field("Customer", "custom_hero_schema_value").read_only, 1)
 
-        schema_provisioning.adopt_package("SYNTHETIC", json.dumps(draft), [field["id"]], True)
+        self.adopt("SYNTHETIC", json.dumps(draft), [field["id"]], True)
         repeated = schema_provisioning.preview_package("SYNTHETIC", json.dumps(draft))
         field = next(item for item in repeated["items"] if item["id"] == "field:customer-schema-value")
         self.assertEqual(field["state"], "Unchanged")
@@ -119,7 +123,7 @@ class TestSchemaProvisioning(unittest.TestCase):
 
     def test_schema_and_mapping_export_can_fill_a_fresh_site_checklist(self):
         preview = schema_provisioning.preview_package("SYNTHETIC", json.dumps(package()))
-        schema_provisioning.adopt_package("SYNTHETIC", json.dumps(package()), [item["id"] for item in preview["items"] if item["selectable"]], True)
+        self.adopt("SYNTHETIC", json.dumps(package()), [item["id"] for item in preview["items"] if item["selectable"]], True)
 
         exported = json.loads(mapping_exchange.export_json("SYNTHETIC"))
         fresh = _Frappe()
@@ -133,9 +137,9 @@ class TestSchemaProvisioning(unittest.TestCase):
         preview = schema_provisioning.preview_package("SYNTHETIC", json.dumps(package()))
         mapping_id = next(item["id"] for item in preview["items"] if item["kind"] == "mapping")
         with self.assertRaisesRegex(schema_provisioning.SchemaProvisioningError, "confirmation"):
-            schema_provisioning.adopt_package("SYNTHETIC", json.dumps(package()), [mapping_id], False)
+            self.adopt("SYNTHETIC", json.dumps(package()), [mapping_id], False)
         with self.assertRaisesRegex(schema_provisioning.SchemaProvisioningError, "requires"):
-            schema_provisioning.adopt_package("SYNTHETIC", json.dumps(package()), [mapping_id], True)
+            self.adopt("SYNTHETIC", json.dumps(package()), [mapping_id], True)
         self.assertEqual(self.frappe.mutations, [])
 
     def test_foreign_target_conflict_and_executable_payload_are_rejected(self):
@@ -153,7 +157,7 @@ class TestSchemaProvisioning(unittest.TestCase):
         self.frappe.has_permission = lambda doctype, permission, throw=False: (_ for _ in ()).throw(PermissionError(doctype))
 
         with self.assertRaises(PermissionError):
-            schema_provisioning.adopt_package("SYNTHETIC", json.dumps(package()), selected, True)
+            self.adopt("SYNTHETIC", json.dumps(package()), selected, True)
 
         self.assertEqual(self.frappe.mutations, [])
 
@@ -163,7 +167,7 @@ class TestSchemaProvisioning(unittest.TestCase):
         self.frappe.fail_mapping_insert = True
 
         with self.assertRaises(RuntimeError):
-            adoption.start("SYNTHETIC", json.dumps(package()), selected)
+            adoption.start("SYNTHETIC", json.dumps(package()), selected, preview["preview_revision"])
 
         adoption_name = next(iter(self.frappe.adoptions))
         self.assertEqual(self.frappe.adoptions[adoption_name]["status"], "Failed")
@@ -179,6 +183,8 @@ class TestSchemaProvisioning(unittest.TestCase):
 
 class _Frappe:
     def __init__(self):
+        self.session = SimpleNamespace(user="admin@example.test")
+        self.local = SimpleNamespace(site="test.localhost", conf={"encryption_key": "test-key"})
         self.snapshot = SimpleNamespace(analysis_status="Validated", snapshot_json=json.dumps(SCHEMA), schema_fingerprint=FINGERPRINT)
         self.doctypes = {
             "Customer": {"custom": 0, "module": "Selling", "istable": 0, "fields": {"customer_name": _Field("Data")}},
@@ -199,7 +205,7 @@ class _Frappe:
             return (filters["dt"], filters["fieldname"]) in self.custom_fields
         return False
 
-    def get_doc(self, *args):
+    def get_doc(self, *args, **kwargs):
         if args == ("HERO GraphQL Schema Snapshot", "SYNTHETIC"):
             return self.snapshot
         if len(args) == 2 and args[0] == "DocType":
@@ -245,6 +251,9 @@ class _Document:
         self.frappe_api = frappe_api
         self.row = row
 
+    def get(self, key, default=None):
+        return self.row.get(key, default)
+
     def update(self, values):
         self.row.update(values)
 
@@ -262,6 +271,7 @@ class _Document:
 
     def insert(self):
         kind = self.row["doctype"]
+        self.row.setdefault("owner", self.frappe_api.session.user)
         self.frappe_api.mutations.append(kind)
         if kind == "DocType":
             self.frappe_api.doctypes[self.row["name"]] = {

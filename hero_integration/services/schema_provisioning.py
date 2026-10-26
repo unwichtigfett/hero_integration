@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+import hashlib
 import json
 import re
 from types import SimpleNamespace
@@ -78,22 +79,59 @@ def preview_package(snapshot_name: str, payload_json: str) -> dict[str, object]:
     items = _schema_items(definitions)
     items.extend(_mapping_items(package, definitions, items))
     counts = {state: sum(item["state"] == state for item in items) for state in SCHEMA_STATES}
-    return {
+    result = {
         "format_version": mapping_exchange.FORMAT_VERSION,
         "schema_fingerprint": snapshot.schema_fingerprint,
+        "snapshot_binding": _snapshot_binding(snapshot),
         "items": items,
         "counts": counts,
         "selection_requires_confirmation": True,
     }
+    states = {m["definition_id"]: _mapping_state(_mapping_by_definition(m["definition_id"])) for m in package["mappings"]}
+    result["preview_revision"] = _preview_revision(snapshot_name, payload_json, result, states)
+    return result
+
+
+def revalidate_adoption_preview(snapshot_name, payload_json, selected_ids, original):
+    if not isinstance(original, dict) or not isinstance(original.get("preview_revision"), str):
+        raise SchemaProvisioningError("Legacy adoption requires a new preview.")
+    current = preview_package(snapshot_name, payload_json)
+    snapshot = mapping_exchange._validated_snapshot(snapshot_name)
+    package = mapping_exchange._parse_payload(payload_json, snapshot.schema_fingerprint)
+    states = {m["definition_id"]: _mapping_state(_mapping_by_definition(m["definition_id"])) for m in package["mappings"]}
+    baseline = {key: value for key, value in original.items() if key != "preview_revision"}
+    if _preview_revision(snapshot_name, payload_json, baseline, states) != original["preview_revision"]:
+        raise SchemaProvisioningError("Mapping changed since the original preview; preview again.")
+    if any(baseline.get(key) != current.get(key) for key in ("format_version", "schema_fingerprint", "snapshot_binding", "selection_requires_confirmation")):
+        raise SchemaProvisioningError("Snapshot context changed; preview again.")
+    old_items = {item["id"]: item for item in baseline["items"]}
+    new_items = {item["id"]: item for item in current["items"]}
+    if old_items.keys() != new_items.keys():
+        raise SchemaProvisioningError("Package preview changed; preview again.")
+    selected = set(selected_ids)
+    for item_id, old in old_items.items():
+        new = new_items[item_id]
+        if old == new:
+            continue
+        compatible = (item_id in selected and old["kind"] == "schema" and old["state"] == "New"
+                      and new["kind"] == "schema" and new["state"] == "Unchanged"
+                      and old["definition"] == new["definition"] and old["dependencies"] == new["dependencies"])
+        if not compatible:
+            raise SchemaProvisioningError("Package preview changed; preview again.")
+    return current["preview_revision"]
 
 
 def adopt_package(
     snapshot_name: str, payload_json: str, selected_ids: list[str], confirmed: bool,
+    preview_revision: str = "",
 ) -> dict[str, object]:
     """Apply one checked package. DDL may persist, but mappings stay inactive on failure."""
+    frappe.only_for("System Manager")
     if confirmed is not True:
         raise SchemaProvisioningError("Administrator confirmation is required before adoption.")
     preview = preview_package(snapshot_name, payload_json)
+    if not preview_revision or preview_revision != preview["preview_revision"]:
+        raise SchemaProvisioningError("Package preview is stale or missing; preview again.")
     selected = set(selected_ids)
     items = {item["id"]: item for item in preview["items"]}
     if not selected or not selected <= set(items):
@@ -102,6 +140,15 @@ def adopt_package(
     snapshot = mapping_exchange._validated_snapshot(snapshot_name)
     package = mapping_exchange._parse_payload(payload_json, snapshot.schema_fingerprint)
     definitions = _definitions(package["schema"])
+    expected_mappings = {}
+    for mapping in package["mappings"]:
+        if "mapping:" + mapping["definition_id"] in selected:
+            local = _mapping_by_definition(mapping["definition_id"])
+            if local and local.owner != frappe.session.user:
+                raise SchemaProvisioningError("A mapping owned by another user cannot be replaced.")
+            expected_mappings[mapping["definition_id"]] = _mapping_state(local)
+    if preview_package(snapshot_name, payload_json)["preview_revision"] != preview_revision:
+        raise SchemaProvisioningError("Package preview is stale; preview again.")
     _require_schema_permissions(definitions, selected)
     created = {"custom_doctypes": [], "custom_fields": [], "mappings": []}
     relation_fields = _relation_fields(definitions)
@@ -123,11 +170,16 @@ def adopt_package(
             if relation["id"] in selected:
                 _provision_relation(relation, relation_fields, created)
         _validate_selected_relations(definitions, selected)
+        current_schema = {item["id"]: item for item in _schema_items(definitions)}
+        if any(current_schema[item_id]["state"] != "Unchanged" for item_id in selected if item_id in current_schema):
+            raise SchemaProvisioningError("Schema changed during provisioning; reconciliation is required.")
         # MariaDB DDL may commit and invalidate earlier savepoints. All mapping
         # activation belongs to a fresh DML transaction after provisioning.
         frappe.db.savepoint(savepoint)
         mapping_savepoint = True
-        _activate_selected_mappings(snapshot_name, package, selected, created)
+        _lock_and_check_snapshot(snapshot_name, preview["snapshot_binding"])
+        locked = _lock_and_check_mappings(expected_mappings)
+        _activate_selected_mappings(snapshot_name, package, selected, created, locked)
     except Exception:
         if mapping_savepoint:
             frappe.db.rollback(save_point=savepoint)
@@ -338,7 +390,7 @@ def _ordered_doctypes(definitions, selected):
     return ordered
 
 
-def _activate_selected_mappings(snapshot_name, package, selected, created):
+def _activate_selected_mappings(snapshot_name, package, selected, created, locked):
     for mapping in package["mappings"]:
         item_id = f"mapping:{mapping['definition_id']}"
         if item_id not in selected:
@@ -349,10 +401,10 @@ def _activate_selected_mappings(snapshot_name, package, selected, created):
             "doctype": "HERO Frappe Mapping", "schema_snapshot": snapshot_name,
             "schema_manifest": mapping_exchange._canonical_json(package["schema"]), "status": "Draft",
         })
-        local = _mapping_by_definition(mapping["definition_id"])
+        local = locked[mapping["definition_id"]]
         if local and mapping_exchange._definition_hash(mapping_exchange._exportable(local)) == mapping_exchange._definition_hash(mapping):
             continue
-        document = frappe.get_doc("HERO Frappe Mapping", local.name) if local else frappe.get_doc(values)
+        document = local if local else frappe.get_doc(values)
         if local:
             if local.status == "Active":
                 raise SchemaProvisioningError("An active mapping cannot be replaced by bulk adoption.")
@@ -368,8 +420,45 @@ def _activate_selected_mappings(snapshot_name, package, selected, created):
 
 
 def _mapping_by_definition(definition_id):
-    rows = frappe.get_all("HERO Frappe Mapping", filters={"definition_id": definition_id}, fields=["name", "status", *mapping_exchange.EXPORTED_FIELDS])
+    rows = frappe.get_all("HERO Frappe Mapping", filters={"definition_id": definition_id}, fields=["name", "status", "owner", "modified", "schema_snapshot", "schema_fingerprint", "schema_manifest", *mapping_exchange.EXPORTED_FIELDS])
     return rows[0] if rows else None
+
+
+def _snapshot_binding(snapshot):
+    fields = ("source_instance", "endpoint_fingerprint", "schema_version", "modified", "schema_fingerprint", "analysis_status")
+    return {field: None if getattr(snapshot, field, None) is None else str(getattr(snapshot, field)) for field in fields}
+
+
+def _lock_and_check_snapshot(snapshot_name, expected):
+    snapshot = frappe.get_doc("HERO GraphQL Schema Snapshot", snapshot_name, for_update=True)
+    if (_snapshot_binding(snapshot) != expected or snapshot.analysis_status != "Validated"
+            or mapping_exchange.analyze_snapshot(json.loads(snapshot.snapshot_json)).fingerprint != snapshot.schema_fingerprint):
+        raise SchemaProvisioningError("Snapshot context changed during provisioning; preview again.")
+
+
+def _mapping_state(row):
+    if not row:
+        return None
+    fields = ("name", "status", "owner", "modified", "schema_snapshot", "schema_fingerprint",
+              "schema_manifest", *mapping_exchange.EXPORTED_FIELDS)
+    return {field: None if row.get(field) is None else str(row.get(field)) for field in fields}
+
+
+def _preview_revision(snapshot_name, payload_json, preview, states):
+    value = {"snapshot": snapshot_name, "payload": hashlib.sha256(payload_json.encode()).hexdigest(),
+             "actor": frappe.session.user, "preview": preview, "mappings": states}
+    return hashlib.sha256(mapping_exchange._canonical_json(value).encode()).hexdigest()
+
+
+def _lock_and_check_mappings(expected):
+    locked = {}
+    for definition_id in sorted(expected):
+        row = _mapping_by_definition(definition_id)
+        doc = frappe.get_doc("HERO Frappe Mapping", row.name, for_update=True) if row else None
+        if _mapping_state(doc) != expected[definition_id]:
+            raise SchemaProvisioningError("Mapping changed during schema provisioning; preview again.")
+        locked[definition_id] = doc
+    return locked
 
 
 def _create_custom_doctype(definition, selected_relation_fields):
