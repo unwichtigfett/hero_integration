@@ -4,7 +4,21 @@ from __future__ import annotations
 
 import hashlib
 import json
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Mapping
+
+_managed_target = ContextVar("hero_integration_managed_target", default=None)
+
+
+@contextmanager
+def managed_target_update(doctype: str, name: str, link_name: str):
+    """Assign one inbound writer ownership of one link for one target save."""
+    token = _managed_target.set((doctype, name, link_name))
+    try:
+        yield
+    finally:
+        _managed_target.reset(token)
 
 
 def field_hashes(values: Mapping[str, object]) -> dict[str, str]:
@@ -67,6 +81,10 @@ def observe_frappe_target_change(doc, method=None) -> None:
         fields=["name", "source_type", "source_id", "target_field_hashes", "observed_target_hash"],
     )
     for row in links:
+        # The inbound writer owns this link's baseline in the same transaction.
+        # Other links on the document still observe the change normally.
+        if _managed_target.get() == (doc.doctype, doc.name, row.name):
+            continue
         baseline = decode(row.get("target_field_hashes"))
         if not baseline:
             continue

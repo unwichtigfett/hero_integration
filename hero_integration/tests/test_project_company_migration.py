@@ -560,4 +560,4 @@ class _LinkDocument:
         key = (self.values["source_type"], self.values["source_id"])
         if self.values.get("source_instance", "default") != "default":
             key = (*key, self.values["source_instance"])
-        self.frappe_api.links[key] = SimpleNamespace(**self.values)
+        self.frappe_api.links[key] = SimpleNamespace(name=":".join(key), **self.values)
