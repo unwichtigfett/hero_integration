@@ -100,7 +100,16 @@
 
 /* Personal mapping editor: scoped to the mapping surface. */
 .hero-mapping-core .hero-mapping-actions { display:flex; flex-wrap:wrap; gap:8px; align-items:end; margin-block:12px; }
+.hero-mapping-core .btn { background:var(--pc-surfaceRaised, var(--card-bg)); border-color:var(--pc-border, var(--border-color)); color:var(--pc-text, var(--text-color)); }
+.hero-mapping-core .btn:hover:not(:disabled), .hero-mapping-core .btn:active:not(:disabled) { background:var(--pc-surface, var(--control-bg)); border-color:var(--pc-text, var(--text-color)); color:var(--pc-text, var(--text-color)); }
 .hero-mapping-core .hero-mapping-input { display:flex; flex-direction:column; gap:5px; margin-block:8px; min-width:180px; }
+.hero-mapping-core .hero-mapping-context { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:12px; margin:12px 0; }
+.hero-mapping-core .hero-mapping-context > h4 { grid-column:1 / -1; margin:0; }
+.hero-mapping-core .hero-mapping-context-pane { border:1px solid var(--pc-border, var(--border-color)); border-radius:var(--border-radius); background:var(--pc-surface, var(--card-bg)); min-width:0; padding:12px; }
+.hero-mapping-core .hero-mapping-context-pane h5 { margin:0 0 8px; }
+.hero-mapping-core .hero-mapping-context-pane p { margin:4px 0; overflow-wrap:anywhere; }
+.hero-mapping-core .hero-mapping-binding { border:1px solid var(--pc-border, var(--border-color)); border-radius:var(--border-radius); margin-block:8px; padding:10px; }
+.hero-mapping-core .hero-mapping-binding summary { cursor:pointer; overflow-wrap:anywhere; }
 .hero-mapping-core .hero-mapping-editor-grid { display:grid; grid-template-columns:minmax(0, 1.25fr) minmax(260px, 1fr); gap:16px; align-items:start; }
 .hero-mapping-core .hero-mapping-row-detail { padding:16px; border:1px solid var(--border-color); border-radius:var(--border-radius); background:var(--card-bg); min-width:0; overflow-wrap:anywhere; }
 .hero-mapping-core .hero-mapping-operation { margin-block:12px; padding:12px; border:1px solid var(--border-color); border-radius:var(--border-radius); }
@@ -109,11 +118,11 @@
 .hero-mapping-core .hero-mapping-table td button { text-align:left; white-space:normal; overflow-wrap:anywhere; }
 .hero-mapping-core .hero-mapping-table tr.is-selected { background:var(--control-bg); }
 .hero-mapping-core pre { white-space:pre-wrap; overflow-wrap:anywhere; max-height:420px; overflow:auto; }
-.hero-mapping-core button:focus-visible, .hero-mapping-core summary:focus-visible { outline:2px solid var(--primary); outline-offset:3px; }
+.hero-mapping-core button:focus-visible, .hero-mapping-core input:focus-visible, .hero-mapping-core summary:focus-visible { outline:2px solid var(--pc-text, var(--text-color)); outline-offset:3px; }
 .hero-mapping-core .hero-mapping-dialog { background:var(--card-bg); color:var(--text-color); border:1px solid var(--border-color); border-radius:var(--border-radius); max-width:min(560px, 95vw); padding:24px; }
 .hero-mapping-core .hero-mapping-dialog button { margin:6px; }
 .hero-mapping-core .hero-mapping-dialog::backdrop { background:rgba(0,0,0,.4); }
-@media(max-width:900px) { .hero-mapping-core .hero-mapping-editor-grid { grid-template-columns:minmax(0,1fr); } }
+@media(max-width:900px) { .hero-mapping-core .hero-mapping-editor-grid, .hero-mapping-core .hero-mapping-context { grid-template-columns:minmax(0,1fr); } }
 
 .hero-mapping-shell.admin-workspace { padding:16px; box-sizing:border-box; min-width:0; }
 .hero-mapping-shell .hero-unified-content, .hero-mapping-core { min-width:0; }

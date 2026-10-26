@@ -40,6 +40,7 @@ class _Frappe:
         self.mapping = mapping or _Mapping()
         self.only_for_calls = []
         self.get_all_calls = []
+        self.db = SimpleNamespace(count=lambda doctype, filters: 1 if doctype == "HERO Field Binding" else 0)
 
     def only_for(self, role):
         self.only_for_calls.append(role)
@@ -85,6 +86,22 @@ class _Frappe:
                 "target_field": "customer_name", "purpose": "Field", "transformation": "Identity",
                 "relation": "", "priority": 5, "status": "Active", "mapping_revision": 2,
                 "schema_snapshot": "SNAPSHOT", "schema_fingerprint": "f" * 64,
+            }]
+        if doctype == "HERO Field Binding":
+            return [{
+                "identity_key": "field-binding-1", "object_binding": "object-binding-1",
+                "source_instance": "isolated-source", "source_field": "name", "target_app": "erpnext",
+                "target_doctype": "Customer", "target_name": "CUST-0001", "target_field": "customer_name",
+                "mapping_definition_id": "definition-1", "mapping_revision": 2,
+                "direction": "HERO_TO_FRAPPE", "binding_revision": 3, "sync_state": "SYNCHRONIZED",
+                "acknowledged_version": 1,
+            }]
+        if doctype == "HERO Object Binding":
+            return [{
+                "identity_key": "object-binding-1", "source_instance": "isolated-source", "object_type": "Contact",
+                "external_object_id": "hero-contact-1", "target_app": "erpnext", "target_doctype": "Customer",
+                "target_name": "CUST-0001", "mapping_definition_id": "definition-1", "mapping_revision": 2,
+                "binding_revision": 3, "lifecycle": "VALID",
             }]
         raise AssertionError(doctype)
 
@@ -144,6 +161,36 @@ class TestFrontendApiBoundary(unittest.TestCase):
             with self.assertRaises(PermissionError):
                 api.frontend_mapping_list()
         self.assertEqual(frappe.get_all_calls, [])
+
+    def test_active_projection_keeps_mutation_argument_and_input_path_but_not_values(self):
+        projection = api._sanitized_mapping_definition({
+            "source": {"app": "frappe", "doctype": "Customer", "field": "customer_name"},
+            "target": {"operation": "updateCustomer", "argument": "input", "field_path": "name", "input_type": "CustomerInput"},
+            "variables": {"value": "must-not-leak"}, "token": "must-not-leak",
+        })
+        self.assertEqual(projection["source"], {"app": "frappe", "doctype": "Customer", "field": "customer_name"})
+        self.assertEqual(projection["target"], {"operation": "updateCustomer", "argument": "input", "field_path": "name", "input_type": "CustomerInput"})
+        self.assertNotIn("must-not-leak", repr(projection))
+
+    def test_binding_projection_is_system_manager_only_and_uses_existing_binding_identities(self):
+        frappe = _Frappe()
+        with patch.object(api, "frappe", frappe):
+            result = api.frontend_mapping_bindings("definition-1")
+
+        self.assertEqual(result["pagination"]["total"], 1)
+        item = result["items"][0]
+        self.assertEqual(item["identity_key"], "field-binding-1")
+        self.assertEqual(item["object"]["identity_key"], "object-binding-1")
+        self.assertNotIn("reconciliation", repr(result))
+        self.assertEqual(frappe.get_all_calls[0][1]["filters"], {
+            "site_scope": "b9-acceptance-41i.localhost", "mapping_definition_id": "definition-1",
+        })
+
+        employee = _Frappe(roles=("Employee",))
+        with patch.object(api, "frappe", employee):
+            with self.assertRaises(PermissionError):
+                api.frontend_mapping_bindings("definition-1")
+        self.assertEqual(employee.get_all_calls, [])
 
     def test_noop_save_preserves_revision_and_stale_edit_is_rejected(self):
         mapping = _Mapping(revision=3)
