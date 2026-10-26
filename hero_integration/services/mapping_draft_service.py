@@ -144,9 +144,10 @@ class MappingDraftService:
         prior = self._storage.draft(key)
         if prior and prior.state == "OPEN":
             return prior
+        content = self._storage.initial_content(active.content) if hasattr(self._storage, "initial_content") else _copy(active.content)
         value = MappingDraft(
             key, active.site_scope, active.definition_id, actor, 1 if prior is None else prior.generation + 1,
-            "OPEN", _copy(active.content), active.content_hash, 0, active.name, active.revision,
+            "OPEN", content, _hash(content), 0, active.name, active.revision,
             active.content_hash, active.schema_fingerprint,
         )
         self._storage.save_draft(value)
