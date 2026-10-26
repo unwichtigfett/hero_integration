@@ -54,6 +54,8 @@ def execute_run(run_name: str) -> None:
     if not _claim_run(run):
         return
     testing_source = None
+    claim_started_on = run.started_on
+    failed = False
     try:
         validate_run_mappings(run)
         config = get_configuration()
@@ -81,20 +83,20 @@ def execute_run(run_name: str) -> None:
         run.state = "Cancelled"
         run.finished_on = now_datetime()
         run.save()
-    except Exception:
-        run.reload()
-        _mark_running_phase_failed(run)
-        run.state = "Failed"
-        run.error_message = "Migration failed. See Error Log for the redacted server exception."
-        run.finished_on = now_datetime()
-        run.save()
-        _mark_sync_error(run)
-        frappe.log_error(title="HERO Integration migration failed")
+    except Exception as error:
+        failed = True
+        frappe.db.rollback()
+        _finalize_failed_run(run.name, claim_started_on)
+        # Frappe's worker retries these exceptions. A finalized run must not
+        # be retried as a terminal no-op and reported as a successful job.
+        if isinstance(error, (frappe.db.InternalError, frappe.RetryBackgroundJobError)):
+            raise RuntimeError("HERO Integration run failed; see the original exception.") from error
         raise
     finally:
-        if testing_source is not None:
-            _persist_testing_result(run, testing_source)
-        _release_run(run.name)
+        if not failed:
+            if testing_source is not None:
+                _persist_testing_result(run, testing_source)
+            _release_run(run.name)
 
 
 def _source_for_run(run, config):
@@ -170,6 +172,8 @@ def _claim_run(run) -> bool:
         return False
     try:
         active_run = _locked_active_run()
+        if active_run == run.name and frappe.db.get_value("HERO Integration Run", run.name, "state") == "Running":
+            return False
         if active_run and active_run != run.name:
             active_state = frappe.db.get_value("HERO Integration Run", active_run, "state")
             if active_state not in TERMINAL_STATES:
@@ -180,7 +184,7 @@ def _claim_run(run) -> bool:
             (run.name, "HERO Integration Sync State", "active_run"),
         )
         run.state = "Running"
-        run.started_on = run.started_on or now_datetime()
+        run.started_on = now_datetime()
         run.save()
         # Persist the reservation before another connection may inspect it or
         # this worker starts any source I/O.  Releasing the advisory lock
@@ -199,6 +203,23 @@ def _claim_run(run) -> bool:
         return False
     finally:
         _release_active_run_lock()
+
+
+def _finalize_failed_run(run_name: str, claim_started_on) -> None:
+    """Finalize only this still-current claim after its business rollback."""
+    if _locked_active_run() != run_name:
+        return
+    run = frappe.get_doc("HERO Integration Run", run_name)
+    if run.state != "Running" or run.started_on != claim_started_on:
+        return
+    _mark_running_phase_failed(run)
+    run.state = "Failed"
+    run.error_message = "Migration failed. See Error Log for the redacted server exception."
+    run.finished_on = now_datetime()
+    run.save()
+    _mark_sync_error(run)
+    _release_run(run_name)
+    frappe.db.commit()
 
 
 def _release_run(run_name: str) -> None:
