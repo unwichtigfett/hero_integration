@@ -52,6 +52,7 @@
     }, {NEW: 0, REPLACE: 0, UNCHANGED: 0, REMOVE: 0});
     const exchangeCanAdopt = (entry, currentEntry, contextKey, locked) => !locked &&
         entry === currentEntry && entry?.context?.key === contextKey && entry?.preview?.can_save === true;
+    const isOwnedExportLink = (link, ownedLink) => Boolean(ownedLink) && link === ownedLink;
     class DraftState {
         constructor(draft) { this.accept(draft); }
         accept(draft) { this.saved = draftValue(draft); this.verifiedActiveRevision = verifiedActiveRevision(this.saved); this.content = clone(this.saved.content); this.referenceOrder = [...(this.content.mapping_definition_ids || [])]; this.undo = []; this.reconciliation = null; this.blocked = false; }
@@ -162,7 +163,7 @@
         const root = $("<section class='hero-mapping-core'></section>").appendTo(host);
         const shell = host.closest(".admin-workspace").addClass("hero-mapping-shell");
         const admin = Boolean(window.hero_integration_ui?.isSystemManager);
-        let disposed = false, epoch = 0, busy = false, model = null, active = null, mode = "active", selected = 0;
+        let disposed = false, epoch = 0, busy = false, model = null, active = null, mode = "active", selected = 0, ownedDownload = null;
         let search = String(context.mapping_search || ""), start = Number(context.mapping_start || 0), listing;
         let revisionsStart = 0, returnFocus = null, fieldFilter = "", detailRequest = 0, exchangeSequence = 0;
         const exchanges = new Map();
@@ -269,13 +270,25 @@
             } catch (error) { if (request === epoch && !disposed) say(errorText(error)); }
         }
         function content() { return mode === "draft" ? model.content : active.definition || active; }
-        function exchangePreviewDialog(entry) {
+        function exchangePreviewDialog(entry, originalOpener = document.activeElement) {
             if (root.find("dialog").length) return;
-            const opener = document.activeElement, preview = entry.preview, counts = exchangeCounts(preview);
+            const opener = originalOpener, preview = entry.preview, counts = exchangeCounts(preview);
             const canAdopt = () => exchangeCanAdopt(entry, exchanges.get(entry.context.key), exchangeContext()?.key, locked());
             const dialog = $("<dialog class='hero-mapping-dialog'></dialog>");
             const heading = $("<h3 id='hero-mapping-exchange-title'></h3>").text(text(`Import ${exchangeLabel(entry.context)} mappings`));
-            const close = () => { dialog[0].close(); dialog.remove(); if (opener?.isConnected) opener.focus(); };
+            let closed = false;
+            const close = () => {
+                if (closed) return;
+                closed = true;
+                if (dialog[0].open) dialog[0].close();
+                dialog.remove();
+                const replacement = exchangeContext()?.key === entry.context.key
+                    ? root.find("[data-import-direction]").filter((_, el) => el.dataset.importDirection === entry.context.direction)[0] : null;
+                const usable = (element) => element?.isConnected && !element.disabled && element.tabIndex >= 0 && element.getClientRects().length;
+                const target = usable(opener) ? opener : usable(replacement) ? replacement : root.find("h2")[0];
+                if (target?.isConnected && !target.disabled) target.focus();
+            };
+            dialog.on("cancel", (event) => { event.preventDefault(); close(); });
             dialog.attr("aria-labelledby", "hero-mapping-exchange-title").append(heading,
                 $("<p></p>").text(text(`Preview only — no personal drafts or schema were changed. Only ${exchangeLabel(entry.context)} mappings for this source and snapshot can be replaced.`)),
                 $("<p></p>").text(`${text("Definitions")}: ${preview.items.length} · ${text("New")}: ${counts.NEW} · ${text("Changed")}: ${counts.REPLACE} · ${text("Unchanged")}: ${counts.UNCHANGED} · ${text("Removed")}: ${counts.REMOVE}`));
@@ -298,7 +311,7 @@
                 button("Close", close));
             root.append(dialog); dialog[0].showModal(); dialog.find("button").first().trigger("focus");
         }
-        async function previewImport(file) {
+        async function previewImport(file, opener) {
             const context = exchangeContext();
             if (locked() || !context || !file) return;
             const request = ++epoch, sequence = ++exchangeSequence;
@@ -314,20 +327,23 @@
                 exchanges.set(context.key, entry); say("Import preview is ready. No personal drafts or schema were changed.");
             } catch (error) {
                 if (!disposed && request === epoch) say(denied(error) ? errorText(error) : "The import preview failed. Your current work and saved drafts have been kept.");
-            } finally { if (!disposed && request === epoch) { setBusy(false); renderDetail(); if (entry) exchangePreviewDialog(entry); } }
+            } finally { if (!disposed && request === epoch) { setBusy(false); renderDetail(); if (entry) exchangePreviewDialog(entry, opener); } }
         }
         function chooseImport() {
             const context = exchangeContext();
             if (locked() || !context) return;
+            const opener = document.activeElement;
             const input = $("<input type='file' accept='application/json,.json' class='sr-only'>");
-            input.on("change", () => { const file = input[0].files?.[0]; input.remove(); if (file) previewImport(file); });
+            input.on("change", () => { const file = input[0].files?.[0]; input.remove(); if (file) previewImport(file, opener); });
             root.append(input); input.trigger("click");
         }
         function downloadExport(filename, content) {
             if (typeof filename !== "string" || !filename || typeof content !== "string") throw new Error("Invalid directional export response.");
             const href = URL.createObjectURL(new Blob([content], {type: "application/json"}));
             const link = document.createElement("a"); link.href = href; link.download = filename; link.hidden = true;
-            root[0].append(link); link.click(); link.remove(); URL.revokeObjectURL(href);
+            root[0].append(link);
+            try { ownedDownload = link; link.click(); }
+            finally { ownedDownload = null; link.remove(); setTimeout(() => URL.revokeObjectURL(href), 1000); }
         }
         async function exportDirection() {
             const context = exchangeContext();
@@ -375,7 +391,7 @@
                     button("Open my draft", openDraft), button("My saved revisions", () => leave(() => showRevisions(0))));
                 const context = exchangeContext(), imported = context && exchanges.get(context.key);
                 if (context) {
-                    toolbar.append(button(`Import ${exchangeLabel(context)} mappings`, chooseImport),
+                    toolbar.append(button(`Import ${exchangeLabel(context)} mappings`, chooseImport).attr("data-import-direction", context.direction),
                         button(`Export ${exchangeLabel(context)} mappings`, exportDirection));
                     if (imported) toolbar.append(button(`Review imported ${exchangeLabel(context)} package`, () => exchangePreviewDialog(imported)),
                         button(`Save imported ${exchangeLabel(context)} drafts (${imported.preview.items.length})`, saveImportedDirection, true)
@@ -812,6 +828,7 @@
         // Capture links leaving the page before Frappe's delegated router handles them.
         const links = (event) => {
             const link = event.target.closest("a[href]");
+            if (isOwnedExportLink(link, ownedDownload)) return;
             if (link && (model?.dirty || busy) && !event.defaultPrevented && !event.metaKey && !event.ctrlKey && link.origin === location.origin && link.href !== location.href) {
                 event.preventDefault(); event.stopImmediatePropagation(); leave(() => { location.href = link.href; });
             }
@@ -820,5 +837,5 @@
         const controller = {beforeLeave: leave, destroy() { shell.removeClass("hero-mapping-shell"); disposed = true; epoch++; window.removeEventListener("beforeunload", unload); if (router.route === guardedRoute) router.route = originalRoute; document.removeEventListener("click", links, true); }};
         current = controller; loadList(); return controller;
     }
-    window.hero_integration_mapping_editor = Object.freeze({mount, DraftState, stable, readActiveRule, exchangeExpectedStates, exchangeCounts, exchangeCanAdopt});
+    window.hero_integration_mapping_editor = Object.freeze({mount, DraftState, stable, readActiveRule, exchangeExpectedStates, exchangeCounts, exchangeCanAdopt, isOwnedExportLink});
 })();
