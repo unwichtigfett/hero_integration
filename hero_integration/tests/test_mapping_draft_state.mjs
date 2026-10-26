@@ -28,14 +28,46 @@ test('directional adoption requires the current valid preview and idle matching 
 });
 const fixture = () => ({definition_id:'canonical-distinct', generation:2, content_revision:3, base_active_revision:7, state:'OPEN',
  content:{mapping_definition_ids:['a','b','c'],variables:{hidden:['keep',1]},records_path:'things',complex:{other:true}}});
-test('choosing a mutation source updates its app, DocType and field in the local draft', () => {
+test('choosing a mutation source keeps app as UI metadata and preserves saved JSON parameters', () => {
  const state = new DraftState({...fixture(), content:{source:{app:'old-app',doctype:'Old',field:'old', extra:'keep'},target:{operation:'mutate'},additional:{value:0}}});
  state.setFrappeSource('erpnext','Task','subject');
- assert.equal(stable(state.content.source),stable({app:'erpnext',doctype:'Task',field:'subject',extra:'keep'}));
+ assert.equal(stable(state.content.source),stable({app:'old-app',doctype:'Task',field:'subject',extra:'keep'}));
+ assert.equal(stable(state.frappeSelection),stable({side:'source',app:'erpnext',doctype:'Task'}));
  assert.equal(stable(state.content.target),stable({operation:'mutate'}));
  assert.equal(stable(state.content.additional),stable({value:0}));
  assert.equal(state.dirty,true);
  assert.equal(state.saved.content.source.app,'old-app');
+});
+test('picker app is never introduced into a new mutation save payload', () => {
+ const state = new DraftState({...fixture(),content:{source:{doctype:'Customer',field:'name'},target:{operation:'mutate'},complex:{other:true}}});
+ state.setFrappeSource('erpnext','Customer','customer_name');
+ const content=JSON.parse(state.saveArgs().mapping_json);
+ assert.equal(Object.hasOwn(content.source,'app'),false);
+ assert.equal(content.source.field,'customer_name');
+ assert.equal(stable(content.complex),stable({other:true}));
+});
+test('reopened admin picker resolves app from current DocType rather than immutable historical app', () => {
+ const state=new DraftState({...fixture(),content:{source:{app:'old-app',doctype:'Customer',field:'name'}}});
+ const app=window.hero_integration_mapping_editor.selectedPickerApp;
+ assert.equal(app(state,'source',state.content.source,true),'');
+ state.frappeSelection={side:'source',app:'new-app',doctype:'Customer'};
+ assert.equal(app(state,'source',state.content.source,true),'new-app');
+ assert.equal(JSON.parse(state.saveArgs().mapping_json).source.app,'old-app');
+ assert.equal(app(state,'source',{doctype:'Other',app:'old-app'},true),'');
+});
+test('draft save remains fail-closed with stale detail or a newer active revision after a saved-draft read', () => {
+ const state=new DraftState(fixture());
+ const allowed=window.hero_integration_mapping_editor.canSaveDraft;
+ const active={definition_id:'canonical-distinct',name:'mapping',revision:7};
+ assert.equal(allowed(state,active),true);
+ state.detailStale=true;
+ assert.equal(state.resolve(fixture(),state.content),true);
+ assert.equal(allowed(state,active),false);
+ state.detailStale=false;
+ assert.equal(state.resolve(fixture(),state.content),true);
+ assert.equal(allowed(state,{...active,revision:8}),false);
+ state.applyReconciliation(JSON.stringify(state.content),'{}',8,0);
+ assert.equal(allowed(state,{...active,revision:8}),true);
 });
 test('roundtrip retains all parameters and CAS identity', () => {
  const state=new DraftState(fixture()); state.set(['records_path'],'other'); const args=state.saveArgs();

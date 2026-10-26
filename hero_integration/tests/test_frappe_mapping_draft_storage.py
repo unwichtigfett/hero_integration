@@ -214,6 +214,44 @@ class TestFrappeMappingDraftStorage(unittest.TestCase):
         with self.assertRaises(DraftConflict): self.save({}, generation=1)
         self.assertEqual(foreign, self.open(TWO))
 
+    def test_reopen_discarded_draft_uses_changed_active_base_without_erasing_history(self):
+        first = self.open()
+        self.save({'record_path': 'personal-v1'})
+        self.service.discard(self.definition, ONE, 1, 1, confirmed=True)
+        # This disposable fixture simulates a separately changed active base.
+        frappe.db.set_value('HERO GraphQL Mapping', self.mapping_name, {
+            'mapping_json': json.dumps({'record_path': 'new-active'}), 'mapping_revision': 2,
+        })
+        reopened = self.open()
+        self.assertEqual((reopened.generation, reopened.content_revision, reopened.base_active_revision), (2, 0, 2))
+        self.assertEqual(reopened.content, {'record_path': 'new-active'})
+        self.assertEqual(reopened.base_content, {'record_path': 'new-active'})
+        self.assertEqual(1, frappe.db.count('HERO Mapping Revision', {'draft_key': first.key, 'generation': 1}))
+        with self.assertRaises(DraftConflict):
+            self.service.save(self.definition, ONE, 1, 1, {'record_path': 'stale'}, expected_generation=1)
+        saved = self.service.save(self.definition, ONE, 0, 2, {'record_path': 'personal-v2'}, expected_generation=2)
+        self.assertEqual(saved.draft.content_revision, 1)
+        self.assertEqual(2, frappe.db.count('HERO Mapping Revision', {'draft_key': first.key}))
+
+    def test_reopen_cannot_change_identity_or_bypass_generation_and_revision_guards(self):
+        first = self.open()
+        self.service.discard(self.definition, ONE, 1, 0, confirmed=True)
+        with self.storage.transaction(self.definition, ONE):
+            original_base = frappe.db.get_value('HERO Mapping Draft', first.key, 'base_content_json')
+            for base in (original_base, '{"record_path":"changed"}'):
+                for invalid in ({'generation': 3}, {'content_revision': 1},
+                                {'reconciliation_revision': 1}, {'reconciliation_json': '{}'},
+                                {'definition_id': 'different-definition'}, {'site_scope': 'other-site'},
+                                {'owner_user': TWO}, {'draft_key': 'other-key'}):
+                    raw = frappe.get_doc('HERO Mapping Draft', first.key)
+                    raw.update({'state': 'OPEN', 'generation': 2, 'content_revision': 0,
+                                'reconciliation_revision': 0, 'reconciliation_json': '',
+                                'base_content_json': base})
+                    raw.update(invalid)
+                    with self.assertRaises((frappe.ValidationError, frappe.PermissionError)):
+                        raw.save()
+        self.assertEqual('DISCARDED', frappe.db.get_value('HERO Mapping Draft', first.key, 'state'))
+
     def concurrent(self, operations):
         frappe.db.commit()
         context = multiprocessing.get_context('spawn')
