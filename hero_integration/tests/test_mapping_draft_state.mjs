@@ -354,3 +354,29 @@ test('candidate callback uses raw HTTP JSON tokens for integer and decimal outpu
  vm.runInNewContext(readFileSync(new URL('../public/js/hero_mapping_editor.js',import.meta.url),'utf8'),{window:noTokenWindow,JSON:oldParser});
  assert.throws(()=>noTokenWindow.hero_integration_mapping_editor.legacyCandidateRawMessage(raw),/cannot preserve preview numbers/);
 });
+
+test('legacy package adoption requires exact checked schema choices and dependencies', () => {
+ const {legacyPackageSelection}=window.hero_integration_mapping_editor;
+ const preview={preview_revision:'a'.repeat(64),items:[
+  {id:'doctype:a',kind:'schema',state:'New',selectable:true,dependencies:[]},
+  {id:'field:a',kind:'schema',state:'New',selectable:true,dependencies:['doctype:a','already']},
+  {id:'already',kind:'schema',state:'Unchanged',selectable:false,dependencies:[]},
+  {id:'mapping:a',kind:'mapping',state:'New',selectable:true,dependencies:['field:a']},
+  {id:'conflict',kind:'schema',state:'Conflict',selectable:false,dependencies:[]}]};
+ assert.equal(legacyPackageSelection(preview,['doctype:a','field:a']).map(x=>x.id).join(','),'doctype:a,field:a');
+ assert.throws(()=>legacyPackageSelection(preview,['field:a']),/dependencies/);
+ assert.throws(()=>legacyPackageSelection(preview,['conflict']),/unavailable/);
+ assert.throws(()=>legacyPackageSelection(preview,['doctype:a','doctype:a']));
+ assert.throws(()=>legacyPackageSelection({...preview,preview_revision:''},['doctype:a']),/Invalid/);
+ assert.throws(()=>legacyPackageSelection({...preview,items:[...preview.items,preview.items[0]]},['doctype:a']),/Invalid/);
+});
+
+test('schema-only confirmed adoption request binds exact preview and does not select mappings', () => {
+ const {legacyPackageAdoptionArgs}=window.hero_integration_mapping_editor;
+ const preview={preview_revision:'b'.repeat(64),items:[{id:'field:one',kind:'schema',state:'New',selectable:true,dependencies:[]},{id:'mapping:one',kind:'mapping',state:'New',selectable:true,dependencies:['field:one']}]};
+ const args=legacyPackageAdoptionArgs('snapshot-a','{"schema":{}}',preview,['field:one']);
+ assert.equal(args.snapshot_name,'snapshot-a'); assert.equal(args.payload_json,'{"schema":{}}');
+ assert.equal(args.preview_revision,'b'.repeat(64)); assert.equal(args.confirmed,true);
+ assert.equal(args.selected_ids_json,'["field:one"]');
+ assert.throws(()=>legacyPackageAdoptionArgs('snapshot-a','{"schema":{}}',preview,['mapping:one']),/dependencies/);
+});

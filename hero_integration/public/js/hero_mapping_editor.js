@@ -118,6 +118,30 @@
             target_doctype: result.target_doctype, target_field: result.target_field, target_app: result.target_app,
             values: result.values, writes: false}, null, 2);
     };
+    const legacyPackageSelection = (preview, selectedIds) => {
+        if (!Array.isArray(preview?.items) || !/^[a-f0-9]{64}$/.test(preview?.preview_revision || "") || !Array.isArray(selectedIds)) throw new Error("Invalid package preview.");
+        const byId = new Map();
+        for (const item of preview.items) {
+            if (typeof item?.id !== "string" || !item.id || byId.has(item.id) || !["schema", "mapping"].includes(item.kind) ||
+                typeof item.selectable !== "boolean" || typeof item.state !== "string" || !Array.isArray(item.dependencies) ||
+                !item.dependencies.every((id) => typeof id === "string" && id)) throw new Error("Invalid package preview.");
+            byId.set(item.id, item);
+        }
+        const selected = new Set(selectedIds);
+        if (!selected.size || selected.size !== selectedIds.length) throw new Error("Select at least one valid change.");
+        for (const id of selected) {
+            const item = byId.get(id);
+            if (!item?.selectable || !["New", "Changed"].includes(item.state)) throw new Error("The selection contains an unavailable item.");
+            if (item.dependencies.some((dependency) => !selected.has(dependency) && byId.get(dependency)?.state !== "Unchanged"))
+                throw new Error("Select all required dependencies first.");
+        }
+        return selectedIds.map((id) => byId.get(id));
+    };
+    const legacyPackageAdoptionArgs = (snapshot, payload, preview, ids) => {
+        if (typeof snapshot !== "string" || !snapshot || typeof payload !== "string" || !payload) throw new Error("Invalid package context.");
+        legacyPackageSelection(preview, ids);
+        return {snapshot_name: snapshot, payload_json: payload, selected_ids_json: JSON.stringify(ids), confirmed: true, preview_revision: preview.preview_revision};
+    };
     const isOwnedExportLink = (link, ownedLink) => Boolean(ownedLink) && link === ownedLink;
     const mappingTabs = Object.freeze(["Query", "Mutation", "Binding"]);
     async function readSnapshotPages(fetchPage, isCurrent) {
@@ -565,10 +589,46 @@
                     if (!packageCurrent(serial, name)) return;
                     const preview = await rpc('preview_mapping_package', {snapshot_name: name, payload_json: payload}, true);
                     if (!packageCurrent(serial, name)) return;
-                    if (!Array.isArray(preview?.items)) throw new Error('Invalid package preview.');
-                    packageState.text(text('Preview only.'));
-                    preview.items.forEach((item) => packagePreview.append($('<p></p>').text(
-                        `${item.id} · ${item.group}: ${item.state} · ${item.label} · ${item.detail || ''} · ${text('Dependencies')}: ${(item.dependencies || []).join(', ') || '—'}`)));
+                    if (!Array.isArray(preview?.items) || !/^[a-f0-9]{64}$/.test(preview.preview_revision || '')) throw new Error('Invalid package preview.');
+                    const selected = new Set();
+                    let submitted = false;
+                    const update = () => packageState.text(`${text('Preview only; selected changes')}: ${selected.size}.`);
+                    const choices = $('<div></div>');
+                    preview.items.forEach((item) => {
+                        const check = $("<input type='checkbox'>").prop('disabled', item.selectable !== true);
+                        check.on('change', () => { if (check.prop('checked')) selected.add(item.id); else selected.delete(item.id); update(); });
+                        choices.append($('<label class="d-block"></label>').append(check, document.createTextNode(
+                            ` ${item.id} · ${item.group}: ${item.state} · ${item.label} · ${item.detail || ''} · ${text('Dependencies')}: ${(item.dependencies || []).join(', ') || '—'}`)));
+                    });
+                    const apply = button('Review selected adoption', () => {
+                        if (submitted || !packageCurrent(serial, name)) return;
+                        let chosen;
+                        try { chosen = legacyPackageSelection(preview, [...selected]); }
+                        catch (error) { packageState.text(text(error.message)); return; }
+                        const ids = chosen.map((item) => item.id), mappings = chosen.filter((item) => item.kind === 'mapping').length;
+                        modal('Confirm package adoption', `${text('Apply')} ${ids.length} ${text('selected changes')}. ${text('Selected schema changes may create Frappe schema and selected field mappings will be activated')}: ${mappings}. ${text('Schema changes may not be reversible. No HERO data migration is started.')}`, [
+                            ['Confirm selected adoption', async () => {
+                                if (submitted || !packageCurrent(serial, name)) return;
+                                submitted = true;
+                                const disabled = root.find('button,input,select,textarea').map((_, el) => ({el, value: el.disabled})).get();
+                                setBusy(true); packagePreview.empty(); packageState.text(text('Applying selected adoption…'));
+                                try {
+                                    const outcome = await rpc('adopt_mapping_package', legacyPackageAdoptionArgs(name, payload, preview, ids), true);
+                                    if (outcome?.status !== 'COMPLETED') throw new Error('Adoption outcome is incomplete.');
+                                    if (!disposed && epoch === viewEpoch && tab === viewTab && serial === packageRequest && section[0].isConnected) {
+                                        packageState.text(text('Adoption completed. Review the result.'));
+                                        packagePreview.append(safeJson(outcome));
+                                    }
+                                } catch (error) {
+                                    if (!disposed && epoch === viewEpoch && tab === viewTab && serial === packageRequest && section[0].isConnected)
+                                        packageState.text(`${text('Adoption failed or its outcome is unknown. Schema changes may already exist. Inspect the adoption record before starting a new preview; no retry was made.')} ${text('Submitted selection')}: ${ids.join(', ')}.`);
+                                } finally {
+                                    if (!disposed) { setBusy(false); disabled.forEach(({el, value}) => { if (el.isConnected) el.disabled = value; }); }
+                                }
+                            }, true], ['Cancel', () => {}],
+                        ]);
+                    });
+                    packagePreview.append(choices, apply); update();
                 } catch (error) { if (packageCurrent(serial, name)) packageState.text(errorText(error)); }
             });
             const exportPackage = button('Export saved field mapping package', async () => {
@@ -582,7 +642,7 @@
             });
             section.append($('<h4></h4>').text(text('Saved field mapping package')),
                 $('<p></p>').text(text('Export includes saved global field mappings for this snapshot fingerprint, including Active, Draft and Disabled mappings. Personal drafts are not included.')),
-                $('<p role="status"></p>').text(text('Package adoption is unavailable because the preview is not bound to the current target revisions. Preview and export remain available.')),
+                $('<p></p>').text(text('Select changes explicitly. Adoption may create schema and activates selected field mappings; it does not migrate HERO data.')),
                 fileInput, exportPackage, packageState, packagePreview);
             section.append(button('Retry saved schema', () => { packageRequest++; packagePreview.empty(); loadSnapshots(snapshot.val(), operations.val()); }));
             section.append(button('Open Graph Viewer', () => {
@@ -1309,5 +1369,5 @@
         const controller = {beforeLeave: leaveWorkspace, destroy() { shell.removeClass("hero-mapping-shell"); disposed = true; epoch++; window.removeEventListener("beforeunload", unload); if (router.route === guardedRoute) router.route = originalRoute; document.removeEventListener("click", links, true); }};
         current = controller; loadList(); return controller;
     }
-    window.hero_integration_mapping_editor = Object.freeze({mount, DraftState, stable, readActiveRule, readSnapshotPages, exchangeExpectedStates, exchangeCounts, exchangeCanAdopt, reviewedTargetLabel, writebackContractLabel, legacyWritebackRows, legacyWritebackDetailMatches, legacyWritebackCurrent, legacyCandidateArgs, legacyCandidateMatches, legacyCandidateRawMessage, legacyCandidateRpc, legacyCandidatePreviewText, isOwnedExportLink, mappingTabs, directionForTab, bindingAccess, selectedPickerApp, hasCurrentDraftBase, canSaveDraft, tabKeyTarget, MappingTabStates, resumePendingView});
+    window.hero_integration_mapping_editor = Object.freeze({mount, DraftState, stable, readActiveRule, readSnapshotPages, exchangeExpectedStates, exchangeCounts, exchangeCanAdopt, reviewedTargetLabel, writebackContractLabel, legacyWritebackRows, legacyWritebackDetailMatches, legacyWritebackCurrent, legacyPackageSelection, legacyPackageAdoptionArgs, legacyCandidateArgs, legacyCandidateMatches, legacyCandidateRawMessage, legacyCandidateRpc, legacyCandidatePreviewText, isOwnedExportLink, mappingTabs, directionForTab, bindingAccess, selectedPickerApp, hasCurrentDraftBase, canSaveDraft, tabKeyTarget, MappingTabStates, resumePendingView});
 })();
