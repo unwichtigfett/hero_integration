@@ -196,7 +196,20 @@ class _Frappe:
         self.mutations = []
         self.migrations = 0
         self.fail_mapping_insert = False
-        self.db = SimpleNamespace(savepoint=lambda name: None, rollback=lambda save_point: None, exists=self.exists)
+        self.db = SimpleNamespace(savepoint=lambda name: None, rollback=lambda save_point: None, exists=self.exists, sql=self.sql)
+
+    def sql(self, query, args, as_dict=False):
+        assert as_dict and "FOR UPDATE" in query
+        if "`tabProperty Setter`" in query:
+            return []
+        if "`tabCustom Field`" in query:
+            row = self.custom_fields.get(tuple(args))
+            return [_Row(row)] if row else []
+        if "`tabDocField`" in query:
+            doctype, _, fieldname = args
+            field = self.doctypes.get(doctype, {}).get("fields", {}).get(fieldname)
+            return [_Row({"fieldtype": field.fieldtype, "options": field.options, "label": "", "reqd": 0, "unique": 0, "read_only": field.read_only})] if field else []
+        raise AssertionError(query)
 
     def exists(self, doctype, filters):
         if doctype == "DocType":
@@ -210,7 +223,7 @@ class _Frappe:
             return self.snapshot
         if len(args) == 2 and args[0] == "DocType":
             payload = self.doctypes[args[1]]
-            return SimpleNamespace(name=args[1], **payload)
+            return SimpleNamespace(name=args[1], permissions=[], **payload)
         if len(args) == 2 and args[0] == "HERO Frappe Mapping":
             return _Document(self, self.mappings[args[1]])
         if len(args) == 2 and args[0] == "HERO Mapping Adoption":
