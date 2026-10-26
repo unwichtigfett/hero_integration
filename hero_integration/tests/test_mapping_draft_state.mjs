@@ -320,3 +320,37 @@ test('shared inventory retains entries beyond twenty and rejects an invalid resp
  assert.equal(legacyWritebackRows(rows)[44].name,'mapping-44');
  assert.throws(()=>legacyWritebackRows({items:rows}),/Invalid shared mapping list/);
 });
+
+test('legacy candidate preview requires explicit inputs and preserves exact synthetic JSON', () => {
+ const {legacyCandidateArgs,legacyCandidateMatches}=window.hero_integration_mapping_editor;
+ const raw='{ "nested": {"id": 9007199254740993} }';
+ const args=legacyCandidateArgs('snap','HeroCustomers',' id ','Customer',' custom_field ',raw);
+ assert.equal(args.source_record_json,raw); assert.equal(args.source_path,'id'); assert.equal(args.target_field,'custom_field');
+ const valid={operation:'HeroCustomers',source_path:'id',target_doctype:'Customer',target_field:'custom_field',writes:false,values:{custom_field:1}};
+ assert.equal(legacyCandidateMatches(valid,args),true);
+ for (const [key,value] of Object.entries({writes:true,operation:'other',source_path:'other',target_doctype:'Other',target_field:'other',values:[]}))
+  assert.equal(legacyCandidateMatches({...valid,[key]:value},args),false);
+ for (const sample of ['[]','null','42','invalid']) assert.throws(()=>legacyCandidateArgs('s','o','p','d','f',sample));
+ assert.throws(()=>legacyCandidateArgs('s','o','p','','f','{}'));
+});
+
+test('candidate callback uses raw HTTP JSON tokens for integer and decimal output', async () => {
+ const {legacyCandidateArgs,legacyCandidateRpc,legacyCandidatePreviewText}=window.hero_integration_mapping_editor;
+ const args=legacyCandidateArgs('snap','HeroCustomers','id','Customer','custom_field','{"id":9007199254740993}');
+ const raw='{"message":{"operation":"HeroCustomers","source_path":"id","target_doctype":"Customer","target_field":"custom_field","writes":false,"values":{"integer":9007199254740993,"decimal":9007199254740991.1,"exponent":1.234567890123456789e+30,"small":42}}}';
+ const call=async (options)=>{assert.equal(options.method,'hero_integration.api.preview_mapping_candidate'); assert.equal(options.type,'POST'); options.callback(JSON.parse(raw),raw); return JSON.parse(raw);};
+ const result=await legacyCandidateRpc(args,call);
+ const displayed=legacyCandidatePreviewText(result,args);
+ assert.match(displayed, /"integer": 9007199254740993/);
+ assert.match(displayed, /"decimal": 9007199254740991\.1/);
+ assert.match(displayed, /"exponent": 1\.234567890123456789e\+30/);
+ assert.match(displayed, /"small": 42/);
+ await assert.rejects(legacyCandidateRpc(args,async ()=>({message:{}})),/cannot preserve preview numbers/);
+ const olderWindow={};
+ vm.runInNewContext(readFileSync(new URL('../public/js/hero_mapping_editor.js',import.meta.url),'utf8'),{window:olderWindow,JSON:{parse:JSON.parse,stringify:JSON.stringify}});
+ assert.throws(()=>olderWindow.hero_integration_mapping_editor.legacyCandidateRawMessage(raw),/cannot preserve preview numbers/);
+ const noTokenWindow={};
+ const oldParser={rawJSON:JSON.rawJSON,stringify:JSON.stringify,parse:(source,reviver)=>JSON.parse(source,(key,value)=>reviver ? reviver(key,value) : value)};
+ vm.runInNewContext(readFileSync(new URL('../public/js/hero_mapping_editor.js',import.meta.url),'utf8'),{window:noTokenWindow,JSON:oldParser});
+ assert.throws(()=>noTokenWindow.hero_integration_mapping_editor.legacyCandidateRawMessage(raw),/cannot preserve preview numbers/);
+});
