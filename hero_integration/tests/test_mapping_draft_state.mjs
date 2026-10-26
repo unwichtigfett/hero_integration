@@ -66,3 +66,11 @@ test('authoritative unchanged read keeps local edits and permits only an explici
  assert.equal(state.resolve(fixture(),state.content),false); assert.equal(state.blocked,false);
  assert.equal(stable(state.content),local); assert.equal(state.undo.length,1);
 });
+
+test('browser numeric serialization preserves no-op and strict boolean response matching', () => {
+ const draft=fixture(); draft.content.additional_parameter=JSON.parse('{"whole":1.0,"negative_zero":-0.0,"flag":false}');
+ const state=new DraftState(draft); const submitted=JSON.parse(state.saveArgs().mapping_json);
+ assert.equal(state.dirty,false); assert.equal(state.matches(draft.content,submitted),true);
+ const altered=JSON.parse(JSON.stringify(draft.content)); altered.additional_parameter.flag=0;
+ assert.equal(state.matches(altered,submitted),false);
+});
