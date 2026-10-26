@@ -18,7 +18,7 @@ from hero_integration.integrations.erpnext.contact import (
     synchronize_home_phone,
 )
 from hero_integration.sources.hero import GraphQLServiceSource, HeroSource, SourcePage, TestingPreviewSource
-from hero_integration.services.change_detection import changed_fields, decode as decode_hashes, encode as encode_hashes, field_hashes
+from hero_integration.services.change_detection import changed_fields, decode as decode_hashes, encode as encode_hashes, field_hashes, managed_target_update
 from hero_integration.services.conflict_notifications import notify_conflict_once
 from hero_integration.services.integration_events import record_output
 from hero_integration.services.mapping_runtime import MappingPlanError, active_mapping_plan
@@ -722,7 +722,8 @@ def _upsert(
                 for field in changed_source:
                     if field in values:
                         target.set(field, values[field])
-                target.save()
+                with managed_target_update(doctype, target.name, existing.name):
+                    target.save()
                 if after_update:
                     after_update(target)
             except (HomePhoneConflict, CustomerAddressError) as error:

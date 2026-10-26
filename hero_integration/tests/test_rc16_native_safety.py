@@ -105,6 +105,30 @@ class TestRC16NativeSafety(IntegrationTestCase):
         migration._finalize_failed_run(run.name, run.started_on)
         self.assertEqual(frappe.db.get_single_value("HERO Integration Sync State", "active_run"), followup.name)
 
+    def test_linked_inbound_update_keeps_observer_and_baseline_consistent(self):
+        customer = frappe.get_doc({"doctype": "Customer", "customer_name": self.token}).insert(ignore_permissions=True)
+        before = {"customer_name": self.token}
+        link = frappe.get_doc({
+            "doctype": "HERO Integration Link", "source_type": "customer", "source_id": self.token,
+            "source_instance": "default", "target_doctype": "Customer", "target_name": customer.name,
+            "sync_status": "Synchronized", "source_payload_hash": "before", "target_payload_hash": "before",
+            "source_field_hashes": encode(field_hashes(before)), "target_field_hashes": encode(field_hashes(before)),
+            "mapping_version": "rc16-native-test",
+        }).insert(ignore_permissions=True)
+        after = {"customer_name": self.token + "-changed"}
+        args = ("customer", self.token, {"id": self.token}, after, "Customer", "customer_name", "rc16-native-test", SimpleNamespace(mode="Execute"))
+        result = _upsert(*args)
+        self.assertEqual(result.code, "UPDATED")
+        customer.reload(); link.reload()
+        self.assertEqual(customer.customer_name, after["customer_name"])
+        self.assertEqual(link.target_field_hashes, encode(field_hashes(after)))
+        self.assertEqual(_upsert(*args).code, "SKIPPED")
+        old_observation = link.observed_target_hash
+        customer.customer_name = self.token + "-manual"
+        customer.save(ignore_permissions=True)
+        link.reload()
+        self.assertNotEqual(link.observed_target_hash, old_observation)
+
     def test_frappe_dispatcher_rejects_get_for_every_write_rpc(self) -> None:
         previous_request = getattr(frappe.local, "request", None)
         try:
