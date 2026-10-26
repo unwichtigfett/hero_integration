@@ -226,11 +226,30 @@ def _validated_snapshot(snapshot_name: str):
 
 def _exportable(row) -> dict[str, object]:
     result = {field: row.get(field, "") for field in EXPORTED_FIELDS}
-    if isinstance(result["schema_dependencies"], str):
-        try:
-            result["schema_dependencies"] = json.loads(result["schema_dependencies"]).get("ids", [])
-        except (AttributeError, json.JSONDecodeError):
-            result["schema_dependencies"] = []
+    stored = result["schema_dependencies"]
+    if not isinstance(stored, str):
+        raise MappingExchangeError("Mapping has invalid schema dependencies.")
+    def unique_fields(pairs):
+        fields = {}
+        for key, value in pairs:
+            if key in fields:
+                raise MappingExchangeError("Mapping has duplicate schema dependency fields.")
+            fields[key] = value
+        return fields
+
+    try:
+        dependencies = json.loads(stored, object_pairs_hook=unique_fields)
+    except (TypeError, ValueError) as error:
+        raise MappingExchangeError("Mapping has invalid schema dependencies.") from error
+    # The DocType default is the legacy empty JSON array.
+    if dependencies == []:
+        result["schema_dependencies"] = []
+    elif (isinstance(dependencies, dict) and set(dependencies) == {"ids"}
+          and isinstance(dependencies["ids"], list)
+          and all(isinstance(value, str) for value in dependencies["ids"])):
+        result["schema_dependencies"] = dependencies["ids"]
+    else:
+        raise MappingExchangeError("Mapping has invalid or unsupported schema dependencies.")
     return result
 
 
