@@ -61,22 +61,7 @@ class HEROGraphQLMapping(Document):
             )
             if len(contracts) != 1:
                 frappe.throw("Exactly one active schema-bound HERO Mutation Contract is required for writeback activation.")
-            source = mapping["source"]
-            conflicts = frappe.get_all(
-                "HERO GraphQL Mapping",
-                filters={
-                    "direction": "FRAPPE_TO_MUTATION", "status": "Active",
-                    "schema_snapshot": snapshot.name, "name": ["!=", self.name or ""],
-                },
-                fields=["name", "mapping_json"],
-            )
-            for other in conflicts:
-                try:
-                    other_source = json.loads(other.mapping_json).get("source", {})
-                except (TypeError, ValueError):
-                    continue
-                if other_source == source:
-                    frappe.throw("An active writeback mapping already owns this Frappe field.")
+            _check_active_writeback_conflicts(snapshot.name, mapping["source"], self.name or "")
         if not self.definition_id:
             self.definition_id = self.name or ""
         if previous and previous.definition_id and self.definition_id != previous.definition_id:
@@ -98,3 +83,36 @@ class HEROGraphQLMapping(Document):
         if self.status == "Active" and previous and previous.status == "Draft":
             if previous.modified_by != frappe.session.user:
                 frappe.throw("Only the administrator who last changed this Draft may activate it.")
+
+
+def _unique_json_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("Duplicate JSON key")
+        result[key] = value
+    return result
+
+
+def _check_active_writeback_conflicts(snapshot_name, source, name):
+    from hero_integration.hero_integration.doctype.hero_frappe_mapping.hero_frappe_mapping import _lock_active_target
+
+    direction = "FRAPPE_TO_MUTATION"
+    _lock_active_target("writeback:" + snapshot_name, source["doctype"], direction + ":" + source["field"])
+    # This locking read must run after acquiring the shared connection lock.
+    # On a stale snapshot MariaDB may abort instead of returning newer rows.
+    conflicts = frappe.db.sql(
+        "SELECT name, mapping_json FROM `tabHERO GraphQL Mapping` "
+        "WHERE direction = %s AND status = %s AND schema_snapshot = %s AND name != %s FOR UPDATE",
+        (direction, "Active", snapshot_name, name), as_dict=True,
+    )
+    for other in conflicts:
+        try:
+            value = json.loads(other.mapping_json, object_pairs_hook=_unique_json_object)
+            other_source = value.get("source") if isinstance(value, dict) else None
+        except (TypeError, ValueError):
+            other_source = None
+        if not isinstance(other_source, dict) or not all(isinstance(other_source.get(key), str) for key in ("doctype", "field")):
+            frappe.throw("An active writeback source cannot be safely inspected.")
+        if all(other_source[key] == source[key] for key in ("doctype", "field")):
+            frappe.throw("An active writeback mapping already owns this Frappe field.")
