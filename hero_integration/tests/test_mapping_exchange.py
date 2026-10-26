@@ -60,6 +60,28 @@ class TestMappingExchange(unittest.TestCase):
         export_text = json.dumps(exported).lower()
         self.assertTrue(all(marker not in export_text for marker in ("token", "endpoint", "password", "source_payload_hash", "migration_log")))
 
+    def test_export_manifest_integrity(self):
+        schema = {"custom_doctypes": [{"name": "Example"}], "custom_fields": [], "relations": []}
+        def exported(manifests):
+            self.frappe.rows = {
+                str(index): _Row({"definition_id": str(index), "schema_fingerprint": FINGERPRINT,
+                                  "schema_manifest": manifest})
+                for index, manifest in enumerate(manifests)
+            }
+            return json.loads(mapping_exchange.export_json("SYNTHETIC"))["schema"]
+
+        self.assertEqual(exported([None, ""]), mapping_exchange._empty_schema())
+        self.assertEqual(exported([json.dumps(schema), json.dumps(schema, sort_keys=True, indent=2), ""]), schema)
+        for manifests in [
+            ["{"],
+            [json.dumps({"custom_doctypes": [], "custom_fields": []})],
+            [json.dumps(schema), json.dumps(mapping_exchange._empty_schema())],
+            [json.dumps(schema), "{"],
+            [42],
+        ]:
+            with self.subTest(manifests=manifests), self.assertRaises(mapping_exchange.MappingExchangeError):
+                exported(manifests)
+
     def test_identical_import_is_idempotent(self):
         payload = json.dumps(fixture_payload(FINGERPRINT))
         mapping_exchange.import_json("SYNTHETIC", payload)

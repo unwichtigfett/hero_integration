@@ -11,6 +11,7 @@ test('snapshot pagination reaches later pages and never returns partial results 
  const all=await readSnapshotPages(async ({start,page_size})=>{calls.push(start);return data.slice(start,start+page_size)},()=>true);
  assert.equal(all.length,205); assert.equal(all[204].name,'snapshot-204'); assert.equal(calls.join(','),'0,100,200');
  await assert.rejects(readSnapshotPages(async ({start})=>{if(start)throw Error('offline');return data.slice(0,100)},()=>true),/offline/);
+ await assert.rejects(readSnapshotPages(async ({start})=>start ? [data[0]] : data.slice(0,100),()=>true),/changed or contains invalid identities/);
  let current=true;
  const stopped=await readSnapshotPages(async ()=>{current=false;return data.slice(0,100)},()=>current);
  assert.equal(stopped,null);
