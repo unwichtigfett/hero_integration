@@ -111,11 +111,11 @@ def doctypes(metadata, app_name: str = "", search: str = "") -> list[CatalogDocT
     return sorted(result, key=lambda item: (item.app_name.lower(), item.doctype.lower()))
 
 
-def fields(metadata, app_name: str = "", doctype: str = "", search: str = "") -> list[CatalogField]:
+def fields(metadata, app_name: str = "", doctype: str = "", search: str = "", *, targets=None) -> list[CatalogField]:
     """Return target fields from installed apps without bypassing permissions."""
     needle = search.strip().lower()
     result = []
-    for target in doctypes(metadata, app_name):
+    for target in doctypes(metadata, app_name) if targets is None else targets:
         if doctype and target.doctype != doctype:
             continue
         for field in metadata.fields(target.doctype):

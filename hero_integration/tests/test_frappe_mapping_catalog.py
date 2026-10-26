@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from hero_integration.services.frappe_mapping_catalog import catalog, fields, validate_draft_target
 from hero_integration.services.mapping_suggestions import PickerField, picker_page
@@ -11,6 +12,51 @@ from hero_integration.services.mapping_suggestions import suggest_from_source
 class TestFrappeMappingCatalog(unittest.TestCase):
     def setUp(self):
         self.metadata = _Metadata()
+
+    def test_writeback_catalog_filters_before_metadata_and_preserves_all_allowed_pages(self):
+        from hero_integration import api
+
+        class Mixed(_Metadata):
+            def doctypes(self):
+                return [dict(name=name, module='Acme', app_name='secret_app' if name.startswith('Denied') else 'acme_app')
+                        for name in ('Denied A', 'Allowed A', 'Denied B', 'Allowed B')]
+
+            def can_write(self, name):
+                return name.startswith('Allowed')
+
+            def fields(self, name):
+                if not self.can_write(name):
+                    raise PermissionError('denied candidate must not be enumerated')
+                return [_field(f'field_{index:03}', f'Field {index}', 'Data') for index in range(60)]
+
+        actor = SimpleNamespace(only_for=lambda role: None, get_all=lambda *args, **kwargs: [])
+        snapshot = SimpleNamespace(name='synthetic')
+        def call(metadata):
+            with patch.object(api, 'frappe', actor), patch.object(api, '_FrappePickerMetadata', return_value=metadata), patch.object(api, '_validated_snapshot', return_value=(snapshot, {})):
+                return api.writeback_mapper_catalog('synthetic')
+
+        result = call(Mixed())
+        self.assertEqual(result['apps'], ['acme_app'])
+        self.assertEqual([item['doctype'] for item in result['doctypes']], ['Allowed A', 'Allowed B'])
+        paths = [(item['doctype'], item['path']) for item in result['fields']]
+        self.assertEqual(len(paths), 120)
+        self.assertEqual(len(set(paths)), 120)
+        self.assertEqual(paths[0], ('Allowed A', 'field_000'))
+        self.assertEqual(paths[50], ('Allowed A', 'field_050'))
+        self.assertEqual(paths[100], ('Allowed B', 'field_040'))
+        self.assertEqual(paths[-1], ('Allowed B', 'field_059'))
+
+        class Denied(Mixed):
+            def can_write(self, name):
+                return False
+        empty = call(Denied())
+        self.assertEqual((empty['apps'], empty['doctypes'], empty['fields']), ([], [], []))
+
+        class Broken(Mixed):
+            def fields(self, name):
+                raise RuntimeError('unexpected metadata failure')
+        with self.assertRaisesRegex(RuntimeError, 'unexpected metadata failure'):
+            call(Broken())
 
     def test_installed_apps_and_doctypes_are_runtime_metadata_not_an_erpnext_list(self):
         result = catalog(self.metadata)

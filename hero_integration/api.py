@@ -2000,15 +2000,20 @@ def writeback_mapper_catalog(
     """Return independent Frappe source pickers without widening writeback."""
     frappe.only_for("System Manager")
     snapshot, schema = _validated_snapshot(snapshot_name)
-    from hero_integration.services.frappe_mapping_catalog import catalog, fields
+    from hero_integration.services.frappe_mapping_catalog import doctypes as catalog_doctypes, fields
     from hero_integration.services.frappe_writeback import DEFINITIONS, WritebackContractError, reviewed_input_target
 
     metadata = _FrappePickerMetadata()
-    raw_catalog = catalog(metadata, app_name)
-    doctypes = [item for item in raw_catalog["doctypes"] if not source_doctype or item["doctype"] == source_doctype]
-    apps = raw_catalog["apps"]
+    allowed = [item for item in catalog_doctypes(metadata) if item.selectable]
+    apps = sorted({item.app_name for item in allowed if item.app_name})
+    candidates = [item for item in allowed if (not app_name or item.app_name == app_name)
+                  and (not source_doctype or item.doctype == source_doctype)]
+    if source_doctype and not candidates:
+        frappe.throw("The selected source is not available.", frappe.PermissionError)
+    doctypes = [item.__dict__ for item in candidates]
     source_fields: list[dict[str, object]] = []
-    for field in fields(metadata, app_name, source_doctype):
+    source_candidates = (field for field in fields(metadata, targets=candidates) if field.selectable)
+    for field in source_candidates:
         payload = field.__dict__.copy()
         doctype = field.doctype
         fieldname = field.path
@@ -2018,7 +2023,8 @@ def writeback_mapper_catalog(
         except WritebackContractError as error:
             payload["selectable"] = False
             payload["reason"] = str(error)
-        source_fields.append(payload)
+        if payload["selectable"]:
+            source_fields.append(payload)
     contract_rows = frappe.get_all(
         "HERO Mutation Contract",
         filters={"schema_snapshot": snapshot.name, "operation_name": ["in", [item.operation for item in DEFINITIONS.values()]]},
