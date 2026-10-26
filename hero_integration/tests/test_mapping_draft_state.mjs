@@ -272,3 +272,14 @@ test('binding tab restricts the read view to administrators with a definition', 
  assert.equal(access(true,{name:'not-a-definition-id'}),'SELECT_DEFINITION');
  assert.equal(access(true,{definition_id:'query'}),'READ_ONLY');
 });
+
+test('reviewed writeback information is descriptive and fails closed for missing or ambiguous contracts', () => {
+ const {reviewedTargetLabel, writebackContractLabel} = window.hero_integration_mapping_editor;
+ assert.equal(reviewedTargetLabel({target:{operation:'update_contact',argument:'contact',field:'email'}}),'update_contact / contact.email');
+ assert.equal(reviewedTargetLabel({target:{operation:'update_contact',argument:'contact'}}),'');
+ assert.match(writebackContractLabel({contracts:[{operation:'update_contact',activation_ready:true}]},'update_contact'),/separate execution gates/);
+ assert.equal(writebackContractLabel({contracts:[{operation:'update_contact',activation_ready:false,blocker:'Review required'}]},'update_contact'),'Review required');
+ assert.match(writebackContractLabel({contracts:[]},'update_contact'),/unavailable/);
+ assert.match(writebackContractLabel({contracts:[{operation:'update_contact',activation_ready:true},{operation:'update_contact',activation_ready:true}]},'update_contact'),/unavailable/);
+ assert.match(writebackContractLabel({contracts:[{operation:'update_contact',activation_ready:1}]},'update_contact'),/unavailable/);
+});
