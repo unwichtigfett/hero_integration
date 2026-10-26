@@ -5,6 +5,16 @@ import test from 'node:test';
 const window = {};
 vm.runInNewContext(readFileSync(new URL('../public/js/hero_mapping_editor.js', import.meta.url), 'utf8'), {window});
 const {DraftState, stable} = window.hero_integration_mapping_editor;
+test('snapshot pagination reaches later pages and never returns partial results after failure or context change', async () => {
+ const {readSnapshotPages}=window.hero_integration_mapping_editor;
+ const calls=[]; const data=Array.from({length:205},(_,i)=>({name:`snapshot-${i}`}));
+ const all=await readSnapshotPages(async ({start,page_size})=>{calls.push(start);return data.slice(start,start+page_size)},()=>true);
+ assert.equal(all.length,205); assert.equal(all[204].name,'snapshot-204'); assert.equal(calls.join(','),'0,100,200');
+ await assert.rejects(readSnapshotPages(async ({start})=>{if(start)throw Error('offline');return data.slice(0,100)},()=>true),/offline/);
+ let current=true;
+ const stopped=await readSnapshotPages(async ()=>{current=false;return data.slice(0,100)},()=>current);
+ assert.equal(stopped,null);
+});
 test('returning to a pending view repeats only its read and retains its exact identity', () => {
  const {resumePendingView, MappingTabStates} = window.hero_integration_mapping_editor;
  const calls=[];
