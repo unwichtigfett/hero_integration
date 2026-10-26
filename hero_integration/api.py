@@ -1320,6 +1320,59 @@ def mapping_draft_read(definition_id: str):
     return _personal_draft_doc_result(_personal_draft_document(definition_id))
 
 
+@frappe.whitelist(methods=["GET"])
+def mapping_draft_exchange_export(source_instance: str, snapshot_name: str, direction: str) -> dict[str, str]:
+    """Export only the current administrator's OPEN drafts for one direction."""
+    frappe.only_for("System Manager")
+    _mapping_request_fields({"source_instance", "snapshot_name", "direction"})
+    source_instance = _mapping_text(source_instance, "source_instance")
+    snapshot_name = _mapping_text(snapshot_name, "snapshot_name")
+    from hero_integration.services.mapping_draft_exchange import MappingDraftExchangeError, export_package
+
+    try:
+        content = export_package(source_instance, snapshot_name, direction)
+    except MappingDraftExchangeError as error:
+        frappe.throw(str(error))
+    suffix = "query" if direction == "QUERY_TO_FRAPPE" else "mutation"
+    return {"filename": f"hero-personal-{suffix}-drafts.json", "content": content}
+
+
+@frappe.whitelist(methods=["POST"])
+def mapping_draft_exchange_preview(payload_json: str, source_instance: str, snapshot_name: str, direction: str) -> dict[str, object]:
+    """Read-only validation for a directional personal-Draft replacement."""
+    frappe.only_for("System Manager")
+    _mapping_request_fields({"payload_json", "source_instance", "snapshot_name", "direction"})
+    source_instance = _mapping_text(source_instance, "source_instance")
+    snapshot_name = _mapping_text(snapshot_name, "snapshot_name")
+    from hero_integration.services.mapping_draft_exchange import MappingDraftExchangeError, preview_import
+
+    try:
+        return preview_import(payload_json, source_instance, snapshot_name, direction)
+    except MappingDraftExchangeError as error:
+        frappe.throw(str(error))
+
+
+@frappe.whitelist(methods=["POST"])
+def mapping_draft_exchange_save(payload_json: str, source_instance: str, snapshot_name: str, direction: str,
+                                expected_states_json: str, confirmed=False) -> dict[str, object]:
+    """Persist a confirmed directional replacement as the current actor's Drafts only."""
+    frappe.only_for("System Manager")
+    _mapping_request_fields({"payload_json", "source_instance", "snapshot_name", "direction", "expected_states_json", "confirmed"})
+    source_instance = _mapping_text(source_instance, "source_instance")
+    snapshot_name = _mapping_text(snapshot_name, "snapshot_name")
+    try:
+        expected_states = json.loads(expected_states_json)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        frappe.throw("MAPPING_INPUT_INVALID: expected draft states must be JSON.")
+    from hero_integration.services.mapping_draft_exchange import MappingDraftExchangeError, save_import
+
+    try:
+        return save_import(payload_json, source_instance, snapshot_name, direction, expected_states,
+                           confirmed=confirmed in (True, 1, "1", "true", "True"))
+    except MappingDraftExchangeError as error:
+        frappe.throw(str(error))
+
+
 def _personal_draft_content(raw):
     try:
         valid_size = isinstance(raw, str) and len(raw.encode("utf-8")) <= 65536
