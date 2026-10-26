@@ -25,7 +25,7 @@
     // need an explicit release token. JavaScript must stay query-free when it
     // enters frappe.require(): Frappe owns the version parameter and uses the
     // original extension to select its script loader.
-    const ASSET_RELEASE = "20261023.22";
+    const ASSET_RELEASE = "20261026.06c";
     const ASSETS = [
         "/assets/hero_integration/css/hero_tools.css",
         "/assets/hero_integration/css/hero_adapter.css",
@@ -220,7 +220,7 @@
             await ensureAssets();
             if (section === "overview") await window.hero_integration_overview.mount(content);
             else if (section === "settings") await window.hero_integration_settings_ui.mount(content);
-            else if (section === "mapping") window.hero_integration_mapping_editor.mount(sectionPage, context);
+            else if (section === "mapping") controller.workspace = window.hero_integration_mapping_editor.mount(sectionPage, context);
             else if (section === "synchronization") window.hero_integration_migration.mount(sectionPage);
             else {
                 const tool = routeTarget(section, context.hero_tool).tool;
@@ -259,6 +259,10 @@
         return renderRoute(target.section, {...context, hero_section: target.section, hero_tool: target.tool});
     }
     function setRoute(section, params = {}) {
+        if (controller?.workspace?.beforeLeave) return controller.workspace.beforeLeave(() => performSetRoute(section, params));
+        return performSetRoute(section, params);
+    }
+    function performSetRoute(section, params = {}) {
         const target = !isSystemManager && section !== "mapping" ? {section: "mapping", tool: ""} : routeTarget(section, params.hero_tool);
         const context = {...routeOptions()};
         Object.entries(params).forEach(([key, value]) => {
