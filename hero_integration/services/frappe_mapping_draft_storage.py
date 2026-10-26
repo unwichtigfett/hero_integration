@@ -112,7 +112,10 @@ class FrappeMappingDraftStorage:
         return MappingDraft(row.draft_key, row.site_scope, row.definition_id, row.owner_user,
                             int(row.generation), row.state, json.loads(row.content_json), row.content_hash,
                             int(row.content_revision), row.base_active_mapping, int(row.base_active_revision),
-                            row.base_active_hash, row.base_schema_fingerprint)
+                            row.base_active_hash, row.base_schema_fingerprint,
+                            json.loads(row.base_content_json) if row.base_content_json else None,
+                            int(row.reconciliation_revision or 0),
+                            json.loads(row.reconciliation_json) if row.reconciliation_json else None)
 
     def save_draft(self, value: MappingDraft):
         self._scope()
@@ -130,6 +133,11 @@ class FrappeMappingDraftStorage:
             "content_hash": value.content_hash, "content_revision": value.content_revision,
             "base_active_mapping": value.base_active_name, "base_active_revision": value.base_active_revision,
             "base_active_hash": value.base_active_hash, "base_schema_fingerprint": value.base_schema_fingerprint,
+            "base_content_json": json.dumps(value.base_content, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            if value.base_content is not None else "",
+            "reconciliation_revision": value.reconciliation_revision,
+            "reconciliation_json": json.dumps(value.reconciliation, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            if value.reconciliation is not None else "",
         })
         row.save()
 

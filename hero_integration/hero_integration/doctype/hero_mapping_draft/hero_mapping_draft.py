@@ -21,7 +21,7 @@ class HEROMappingDraft(Document):
             if self.owner_user != frappe.session.user:
                 frappe.throw("Draft owner must be the current administrator.")
             return
-        for field in ("draft_key", "site_scope", "definition_id", "owner_user"):
+        for field in ("draft_key", "site_scope", "definition_id", "owner_user", "base_content_json"):
             if self.get(field) != previous.get(field):
                 frappe.throw(f"Personal mapping draft {field} is immutable.")
 

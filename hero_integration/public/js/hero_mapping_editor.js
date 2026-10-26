@@ -27,14 +27,17 @@
     const object = (value) => value && typeof value === "object" && !Array.isArray(value);
     class DraftState {
         constructor(draft) { this.accept(draft); }
-        accept(draft) { this.saved = draftValue(draft); this.content = clone(this.saved.content); this.referenceOrder = [...(this.content.mapping_definition_ids || [])]; this.undo = []; this.blocked = false; }
+        accept(draft) { this.saved = draftValue(draft); this.content = clone(this.saved.content); this.referenceOrder = [...(this.content.mapping_definition_ids || [])]; this.undo = []; this.reconciliation = null; this.blocked = false; }
         get dirty() { return stable(this.content) !== stable(this.saved.content); }
+        invalidateReconciliation() { this.reconciliation = null; }
         set(path, value) {
+            this.invalidateReconciliation();
             let target = this.content;
             path.slice(0, -1).forEach((key) => { if (!Object.hasOwn(target, key) || !object(target[key])) Object.defineProperty(target, key, {value: {}, enumerable: true, configurable: true, writable: true}); target = target[key]; });
             Object.defineProperty(target, path.at(-1), {value, enumerable: true, configurable: true, writable: true});
         }
         remove(index) {
+            this.invalidateReconciliation();
             if (Array.isArray(this.content.mapping_definition_ids)) {
                 this.undo.push({kind: "reference", index, value: this.content.mapping_definition_ids[index]});
                 this.content.mapping_definition_ids.splice(index, 1);
@@ -55,6 +58,7 @@
         addReference(id) {
             const ids = this.content.mapping_definition_ids;
             if (ids.includes(id)) return;
+            this.invalidateReconciliation();
             const index = this.undo.findLastIndex((entry) => entry.kind === "reference" && entry.value === id);
             if (index >= 0) this.restoreReference(this.undo.splice(index, 1)[0]);
             else { this.referenceOrder.push(id); ids.push(id); }
@@ -62,13 +66,26 @@
         restore() {
             const removed = this.undo.pop();
             if (!removed) return;
+            this.invalidateReconciliation();
             if (removed.kind === "reference") this.restoreReference(removed);
             else Object.assign(this.content, removed.value);
+        }
+        applyReconciliation(contentJson, reconciliationJson, activeRevision, reconciliationRevision) {
+            if (typeof reconciliationJson !== "string" || !Number.isInteger(activeRevision) || activeRevision < 1
+                || !Number.isInteger(reconciliationRevision) || reconciliationRevision < 0) {
+                throw new Error("Invalid reconciliation result.");
+            }
+            this.content = parseContent(contentJson);
+            this.reconciliation = {json: reconciliationJson, activeRevision, reconciliationRevision};
+            this.blocked = false;
         }
         saveArgs() {
             const d = this.saved;
             return {definition_id: d.definition_id, expected_generation: d.generation,
-                expected_draft_revision: d.content_revision, expected_active_revision: d.base_active_revision,
+                expected_draft_revision: d.content_revision,
+                expected_active_revision: this.reconciliation?.activeRevision ?? d.base_active_revision,
+                expected_reconciliation_revision: this.reconciliation?.reconciliationRevision ?? (d.reconciliation_revision || 0),
+                reconciliation_json: this.reconciliation?.json || "",
                 mapping_json: JSON.stringify(this.content)};
         }
         matches(current, submitted) {
@@ -227,8 +244,12 @@
                 toolbar.append(button("Active version", () => leave(() => { epoch++; ruleCache.clear(); model = null; mode = "active"; renderDetail(); })),
                     button("Open my draft", openDraft), button("My saved revisions", () => leave(() => showRevisions(0))));
                 if (mode === "draft") {
-                    toolbar.append(button("Save draft", save, true).attr("data-save-draft", ""), button("Discard saved draft", discard));
-                    body.append($("<p data-draft-state></p>"), $("<p class='text-muted'></p>").text(`${text("Personal draft revision")}: ${model.saved.content_revision} · ${text("Generation")}: ${model.saved.generation}`));
+                    toolbar.append(button("Compare active changes", compareActiveChanges), button("Save draft", save, true).attr("data-save-draft", ""), button("Discard saved draft", discard));
+                    const reconciliationState = model.reconciliation ? "Local reconciliation changes — not saved"
+                        : model.saved.reconciliation_json ? "Saved reconciliation evidence is current only for its recorded draft content."
+                            : "No saved reconciliation evidence.";
+                    body.append($("<p data-draft-state></p>"), $("<p class='text-muted'></p>").text(`${text("Personal draft revision")}: ${model.saved.content_revision} · ${text("Generation")}: ${model.saved.generation}`),
+                        $("<p class='text-muted' data-reconciliation-state></p>").text(text(reconciliationState)));
                     if (model.blocked) toolbar.append(button("Check saved draft", reconcile), button("Reload saved draft", reloadDraft));
                 }
             }
@@ -389,6 +410,70 @@
                 else say("The saved draft differs. Your local edits remain. Reload only if you want to replace them.");
             } catch (error) { say(errorText(error)); }
             finally { if (!disposed && request === epoch) { setBusy(false); renderDetail(); } }
+        }
+        async function compareActiveChanges() {
+            if (locked() || !model) return;
+            const state = model, candidateJson = JSON.stringify(state.content), request = ++epoch;
+            setBusy(true); say("Comparing the original base, current active mapping, and your local draft…");
+            try {
+                const result = await rpc("mapping_draft_reconcile_preview", {
+                    definition_id: state.saved.definition_id, expected_generation: state.saved.generation,
+                    expected_draft_revision: state.saved.content_revision, expected_active_revision: active.revision,
+                    expected_reconciliation_revision: state.saved.reconciliation_revision || 0, candidate_json: candidateJson,
+                }, true);
+                if (disposed || request !== epoch || state !== model) return;
+                showReconciliation(result, state, candidateJson);
+            } catch (error) { if (!disposed && request === epoch) say(errorText(error)); }
+            finally { if (!disposed && request === epoch) setBusy(false); }
+        }
+        function showReconciliation(result, state, candidateJson) {
+            const candidate = parseContent(result.candidate_content_json);
+            const differences = result.items.filter((item) => item.state !== "UNCHANGED");
+            const suggestions = result.items.filter((item) => item.state === "ACTIVE_ONLY");
+            const conflicts = result.items.filter((item) => item.state === "CONFLICT");
+            toolbar.empty().append(button("Back to draft", () => renderDetail()));
+            body.empty().append($("<h3></h3>").text(text("Reconcile active changes")),
+                $("<p></p>").text(`${text("Original base")}: ${result.base.name} · ${text("Revision")} ${result.base.revision}`),
+                $("<p></p>").text(`${text("Current active")}: ${result.active.name} · ${text("Revision")} ${result.active.revision}`),
+                $("<p></p>").text(`${text("Your local draft")}: ${text("Revision")} ${result.draft_revision}`));
+            if (!differences.length) body.append($("<p></p>").text(text("No differences from the original base were found. Save draft can record this checked active revision.")));
+            const choices = {};
+            differences.forEach((item) => {
+                const detail = $("<details></details>").append($("<summary></summary>").text(`${item.identifier} · ${item.state}`));
+                detail.append($("<p></p>").text(`${text("Original base")}:`), safeJson(parseContent(item.base_json)),
+                    $("<p></p>").text(`${text("Current active")}:`), safeJson(parseContent(item.active_json)),
+                    $("<p></p>").text(`${text("Your draft")}:`), safeJson(parseContent(item.draft_json)));
+                if (item.identities?.length) detail.append($("<p class='text-muted'></p>").text(`${text("Referenced identities")}: ${item.identities.join(", ")}`));
+                if (item.state === "CONFLICT") {
+                    const select = $("<select class='form-control' aria-label='Conflict resolution'></select>")
+                        .append($("<option value='DRAFT'></option>").text(text("Keep my draft")), $("<option value='ACTIVE'></option>").text(text("Use current active")));
+                    select.on("change", () => { choices[item.identifier] = select.val(); });
+                    choices[item.identifier] = "DRAFT"; detail.append($("<label></label>").text(text("Conflict resolution")).append(select));
+                }
+                body.append(detail);
+            });
+            const apply = button("Apply reconciliation choices locally", async () => {
+                if (locked() || state !== model) return;
+                if (stable(state.content) !== stable(candidate)) { say("Your local draft changed after this comparison. Compare again; your edits have been kept."); return; }
+                const request = ++epoch; setBusy(true); say("Applying reconciliation choices locally…");
+                try {
+                    const applied = await rpc("mapping_draft_reconcile_apply", {
+                        definition_id: state.saved.definition_id, expected_generation: result.generation,
+                        expected_draft_revision: result.draft_revision, expected_active_revision: result.active.revision,
+                        expected_reconciliation_revision: result.reconciliation_revision,
+                        candidate_json: result.candidate_content_json,
+                        accepted_suggestions_json: JSON.stringify({items: suggestions.map((item) => item.identifier)}),
+                        conflict_choices_json: JSON.stringify(choices),
+                    }, true);
+                    if (disposed || request !== epoch || state !== model) return;
+                    state.applyReconciliation(applied.result_content_json, applied.reconciliation_json,
+                        applied.preview.active.revision, applied.preview.reconciliation_revision);
+                    say("Reconciliation choices are local only. Save draft to persist them."); renderDetail();
+                    root.find("[data-save-draft]").trigger("focus");
+                } catch (error) { if (!disposed && request === epoch) say(errorText(error)); }
+                finally { if (!disposed && request === epoch) setBusy(false); }
+            }, true).attr("data-apply-reconciliation", "");
+            body.append(apply); apply.trigger("focus");
         }
         function reloadDraft() {
             modal("Reload saved draft", "Replace local edits and Undo history with your currently saved draft?", [["Reload saved draft", async () => {
