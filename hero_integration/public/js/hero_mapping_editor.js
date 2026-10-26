@@ -759,7 +759,7 @@
                                     }
                                 } catch (error) {
                                     if (!disposed && epoch === viewEpoch && tab === viewTab && serial === packageRequest && section[0].isConnected)
-                                        packageState.text(`${text('Adoption failed or its outcome is unknown. Schema changes may already exist. Inspect the adoption record before starting a new preview; no retry was made.')} ${text('Submitted selection')}: ${ids.join(', ')}.`);
+                                        packageState.text(`${text('Adoption failed or its outcome is unknown. Schema changes may already exist. Check whether an adoption record exists and inspect the schema before starting a new preview; no retry was made.')} ${text('Submitted selection')}: ${ids.join(', ')}.`);
                                 } finally {
                                     if (!disposed) { setBusy(false); disabled.forEach(({el, value}) => { if (el.isConnected) el.disabled = value; }); }
                                 }
