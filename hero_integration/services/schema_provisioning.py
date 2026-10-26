@@ -171,9 +171,7 @@ def adopt_package(
             if relation["id"] in selected:
                 _provision_relation(relation, relation_fields, created)
         _validate_selected_relations(definitions, selected)
-        current_schema = {item["id"]: item for item in _schema_items(definitions)}
-        if any(current_schema.get(item_id, {}).get("state") != "Unchanged" for item_id in required_schema):
-            raise SchemaProvisioningError("Schema changed during provisioning; reconciliation is required.")
+        _recheck_required_schema_current(definitions, required_schema)
         # MariaDB DDL may commit and invalidate earlier savepoints. All mapping
         # activation belongs to a fresh DML transaction after provisioning.
         frappe.db.savepoint(savepoint)
@@ -356,6 +354,108 @@ def _required_schema_closure(items, selected):
             required.add(item_id)
         pending.extend(item["dependencies"])
     return required
+
+
+def _recheck_required_schema_current(definitions, required):
+    # Normal get_all/get_meta reads may use a stale REPEATABLE READ snapshot,
+    # even after metadata cache invalidation. Locking reads use current rows.
+    def fail():
+        raise SchemaProvisioningError("Schema changed during provisioning; reconciliation is required.")
+
+    def current_query(query, values):
+        try:
+            return frappe.db.sql(query, values, as_dict=True)
+        except Exception as error:
+            raise SchemaProvisioningError("Current schema could not be verified; reconciliation is required.") from error
+
+    doctypes = {d["id"]: d for d in definitions["custom_doctypes"] if d["id"] in required}
+    fields = {d["id"]: d for d in definitions["custom_fields"] if d["id"] in required}
+    relations = {d["id"]: d for d in definitions["relations"] if d["id"] in required}
+    if set(doctypes) | set(fields) | set(relations) != required:
+        fail()
+
+    # Only setters for properties this specific required item relies on can
+    # change its verdict. Unrelated customizations remain usable.
+    targets = {}
+    def require_field(doctype, fieldname, properties):
+        targets.setdefault(doctype, {}).setdefault(fieldname, set()).update(properties)
+
+    relation_field_ids = {r["field_id"] for r in definitions["relations"]}
+    required_doctype_names = {d["name"] for d in doctypes.values()}
+    for definition in doctypes.values():
+        targets.setdefault(definition["name"], {})
+        for field in definition["fields"]:
+            if field["id"] not in relation_field_ids:
+                require_field(definition["name"], field["fieldname"],
+                              {"fieldtype", "options"} | {flag for flag in ("reqd", "unique") if flag in field})
+    for field in fields.values():
+        require_field(field["doctype"], field["fieldname"], {"fieldtype", "options", "label"}
+                      | {flag for flag in ("reqd", "unique", "read_only") if flag in field})
+    for relation in relations.values():
+        require_field(relation["doctype"], relation["fieldname"], {"fieldtype", "options"})
+
+    # Relevant overlays need reconciliation rather than guessing Frappe
+    # metadata precedence from a possibly stale transaction snapshot.
+    for doctype in sorted(targets):
+        setters = current_query(
+            "SELECT doctype_or_field, field_name, property FROM `tabProperty Setter` "
+            "WHERE doc_type = %s FOR UPDATE", (doctype,),
+        )
+        for setter in setters:
+            if (doctype in required_doctype_names and setter.doctype_or_field == "DocType"
+                    and setter.property in {"custom", "module", "istable"}) or (
+                setter.doctype_or_field == "DocField"
+                and setter.property in targets[doctype].get(setter.field_name, set())
+            ):
+                fail()
+
+    def current_fields(doctype, fieldname):
+        docfields = current_query(
+            "SELECT fieldtype, options, label, reqd, `unique`, read_only FROM `tabDocField` "
+            "WHERE parent = %s AND parenttype = %s AND fieldname = %s FOR UPDATE",
+            (doctype, "DocType", fieldname),
+        )
+        custom = current_query(
+            "SELECT fieldtype, options, label, reqd, `unique`, read_only FROM `tabCustom Field` "
+            "WHERE dt = %s AND fieldname = %s FOR UPDATE", (doctype, fieldname),
+        )
+        return docfields, custom
+
+    for definition in sorted(doctypes.values(), key=lambda d: d["name"]):
+        try:
+            document = frappe.get_doc("DocType", definition["name"], for_update=True)
+        except Exception as error:
+            raise SchemaProvisioningError("Current schema could not be verified; reconciliation is required.") from error
+        if (not getattr(document, "custom", 0) or getattr(document, "module", "") != "HERO Integration"
+                or bool(getattr(document, "istable", 0)) != definition["is_child"]):
+            fail()
+        if not definition["is_child"] and any(getattr(p, "role", "") != "System Manager" for p in document.permissions):
+            fail()
+        for field in definition["fields"]:
+            if field["id"] in relation_field_ids:
+                continue
+            docfields, custom = current_fields(definition["name"], field["fieldname"])
+            rows = docfields + custom
+            if len(rows) != 1 or rows[0].fieldtype != field["fieldtype"] or (rows[0].options or "") != field["options"]:
+                fail()
+            if any(int(rows[0].get(flag) or 0) != field[flag] for flag in ("reqd", "unique") if flag in field):
+                fail()
+
+    for field in sorted(fields.values(), key=lambda d: (d["doctype"], d["fieldname"])):
+        docfields, rows = current_fields(field["doctype"], field["fieldname"])
+        if docfields or len(rows) != 1:
+            fail()
+        row = rows[0]
+        if any((row.get(key) or "") != field[key] for key in ("fieldtype", "options", "label")):
+            fail()
+        if any(int(row.get(flag) or 0) != field[flag] for flag in ("reqd", "unique", "read_only") if flag in field):
+            fail()
+
+    for relation in sorted(relations.values(), key=lambda d: (d["doctype"], d["fieldname"])):
+        docfields, custom = current_fields(relation["doctype"], relation["fieldname"])
+        rows = docfields + custom
+        if len(rows) != 1 or rows[0].fieldtype != relation["relation_type"] or rows[0].options != relation["target_doctype"]:
+            fail()
 
 
 def _require_schema_permissions(definitions, selected):
