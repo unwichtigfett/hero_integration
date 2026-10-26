@@ -215,17 +215,19 @@ class TestHeroDeskUiContract(unittest.TestCase):
         for forbidden in ("graphql_mapping_save", "workspace_schema_refresh"):
             self.assertNotIn(forbidden, explorer)
 
-    def test_legacy_package_preview_and_export_are_admin_only_and_adoption_is_blocked(self):
+    def test_legacy_package_adoption_requires_admin_checked_preview_and_explicit_confirmation(self):
         source = MAPPING_EDITOR_JS.read_text()
         explorer = source.split("function renderSchemaExplorer()", 1)[1].split("function renderList()", 1)[0]
         for contract in ("if (!admin) return", "export_mapping_json",
                          "downloadExport(result.filename, result.content)", "packageCurrent(serial, name)",
                          "saved global field mappings for this snapshot fingerprint, including Active, Draft and Disabled mappings",
                          "Personal drafts are not included",
-                         "Package adoption is unavailable because the preview is not bound to the current target revisions",
+                         "Review selected adoption", "Confirm selected adoption", "if (submitted || !packageCurrent(serial, name)) return",
+                         "legacyPackageAdoptionArgs(name, payload, preview, ids)", "no retry was made",
                          "rpc('preview_mapping_package', {snapshot_name: name, payload_json: payload}, true)"):
             self.assertIn(contract, explorer)
-        self.assertNotIn("adopt_mapping_package", source)
+        self.assertIn("rpc('adopt_mapping_package'", explorer)
+        self.assertIn("confirmed: true, preview_revision: preview.preview_revision", source)
         self.assertNotIn("Export active mapping package", explorer)
         self.assertIn('type: write ? "POST" : "GET"', source)
 
