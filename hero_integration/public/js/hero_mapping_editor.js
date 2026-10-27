@@ -146,6 +146,10 @@
     const sharedWritebackSaveAccepted = (result, doc) => Boolean(result && typeof result.name === "string" && result.name &&
         result.status === "Draft" && Number.isInteger(result.revision) && result.revision >= 1 && result.unchanged === false &&
         (!doc || (result.name === doc.name && result.revision > doc.mapping_revision)));
+    const finishSharedWritebackSave = async (saved, current, release, refresh) => {
+        release();
+        if (saved && current()) await refresh();
+    };
     const legacyWritebackCurrent = (admin, viewTab, currentTab, viewEpoch, currentEpoch, serial, currentSerial, snapshot, selected, connected, disposed) =>
         admin && viewTab === "Mutation" && currentTab === viewTab && viewEpoch === currentEpoch && serial === currentSerial &&
         Boolean(snapshot) && snapshot === selected && connected && !disposed;
@@ -646,15 +650,18 @@
                         consumed = true;
                         const disabled = root.find('button,input,select,textarea').map((_, el) => ({el, value:el.disabled})).get();
                         setBusy(true); state.text(text('Saving shared draft…'));
+                        let saved = false;
                         try {
                             const result = await rpc('graphql_mapping_save', args, true);
                             if (!currentLegacy(serial, name)) return;
                             if (!sharedWritebackSaveAccepted(result, doc)) throw new Error('Uncertain shared draft result.');
-                            close(); await loadLegacy();
+                            close(); saved = true;
                         } catch (_) {
                             if (currentLegacy(serial, name)) state.text(text('Save failed or its outcome is unknown. Status, owner or revision may have changed. Your inputs are kept; close this editor and reload before trying again. No retry was made.'));
                         } finally {
-                            if (!disposed) { setBusy(false); disabled.forEach(({el,value}) => { if (el.isConnected) el.disabled = value; }); if (dialog[0].isConnected && consumed) saveShared.prop('disabled', true); }
+                            await finishSharedWritebackSave(saved, () => currentLegacy(serial, name), () => {
+                                if (!disposed) { setBusy(false); disabled.forEach(({el,value}) => { if (el.isConnected) el.disabled = value; }); if (dialog[0].isConnected && consumed) saveShared.prop('disabled', true); }
+                            }, loadLegacy);
                         }
                     }, true);
                     dialog.append($('<label></label>').text(text('Transformation')).append(transform), $('<label></label>').text(text('Review reason')).append(reason),
@@ -1507,5 +1514,5 @@
         const controller = {beforeLeave: leaveWorkspace, destroy() { shell.removeClass("hero-mapping-shell"); disposed = true; epoch++; window.removeEventListener("beforeunload", unload); if (router.route === guardedRoute) router.route = originalRoute; document.removeEventListener("click", links, true); }};
         current = controller; loadList(); return controller;
     }
-    window.hero_integration_mapping_editor = Object.freeze({mount, DraftState, stable, readActiveRule, readSnapshotPages, exchangeExpectedStates, exchangeCounts, exchangeCanAdopt, reviewedTargetLabel, writebackContractLabel, legacyWritebackRows, legacyWritebackDetailMatches, sharedWritebackDraftAccess, reviewedWritebackEditable, buildReviewedWriteback, sharedWritebackRequest, sharedWritebackSaveAccepted, legacyWritebackCurrent, legacyPackageSelection, legacyPackageAdoptionArgs, legacyCandidateArgs, legacyCandidateMatches, legacyCandidateRawMessage, legacyCandidateRpc, legacyCandidatePreviewText, isOwnedExportLink, mappingTabs, directionForTab, bindingAccess, selectedPickerApp, hasCurrentDraftBase, canSaveDraft, tabKeyTarget, MappingTabStates, resumePendingView});
+    window.hero_integration_mapping_editor = Object.freeze({mount, DraftState, stable, readActiveRule, readSnapshotPages, exchangeExpectedStates, exchangeCounts, exchangeCanAdopt, reviewedTargetLabel, writebackContractLabel, legacyWritebackRows, legacyWritebackDetailMatches, sharedWritebackDraftAccess, reviewedWritebackEditable, buildReviewedWriteback, sharedWritebackRequest, sharedWritebackSaveAccepted, finishSharedWritebackSave, legacyWritebackCurrent, legacyPackageSelection, legacyPackageAdoptionArgs, legacyCandidateArgs, legacyCandidateMatches, legacyCandidateRawMessage, legacyCandidateRpc, legacyCandidatePreviewText, isOwnedExportLink, mappingTabs, directionForTab, bindingAccess, selectedPickerApp, hasCurrentDraftBase, canSaveDraft, tabKeyTarget, MappingTabStates, resumePendingView});
 })();

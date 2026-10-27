@@ -450,3 +450,14 @@ test('shared save is accepted only for the expected identity and a changed revis
  assert.equal(sharedWritebackSaveAccepted({...result,name:''},null),false);
  assert.equal(sharedWritebackSaveAccepted(result,null),true);
 });
+
+test('shared save releases controls before reloading and skips stale or failed saves', async () => {
+ const {finishSharedWritebackSave}=window.hero_integration_mapping_editor;
+ for (const [saved,current,expected] of [[true,true,'release,refresh'],[false,true,'release'],[true,false,'release']]) {
+  const events=[]; let disabled=true;
+  await finishSharedWritebackSave(saved,()=>current,()=>{events.push('release');disabled=false},async()=>{
+   assert.equal(disabled,false);events.push('refresh');
+  });
+  assert.equal(events.join(','),expected);
+ }
+});
