@@ -383,10 +383,13 @@
         const shell = host.closest(".admin-workspace").addClass("hero-mapping-shell");
         const admin = Boolean(window.hero_integration_ui?.isSystemManager);
         let disposed = false, epoch = 0, busy = false, sharedDirty = false, model = null, active = null, mode = "active", selected = 0, ownedDownload = null;
-        let search = String(context.mapping_search || ""), start = Number(context.mapping_start || 0), listing;
+        let search = String(context.mapping_search || ""), start = Number(context.mapping_start || 0), listing, snapshotFilter = "";
         let revisionsStart = 0, returnFocus = null, fieldFilter = "", detailRequest = 0, exchangeSequence = 0;
         const exchanges = new Map();
+        const browsePaths = new Map();
         const ruleCache = new Map();
+        let appCatalog;
+        const readableApps = () => admin ? appCatalog ||= rpc("mapping_target_catalog", {}).catch((error) => { appCatalog = null; throw error; }) : Promise.resolve(null);
         const button = (label, fn, primary = false) => $("<button type='button'></button>")
             .addClass(primary ? "btn btn-primary btn-sm" : "btn btn-default btn-sm").text(text(label)).on("click", fn);
         const status = $("<p role='status' aria-live='polite'></p>");
@@ -394,9 +397,11 @@
         const body = $("<div class='hero-mapping-body'></div>");
         const tabs = $("<div role='tablist' aria-label='Mapping sections' class='hero-mapping-actions'></div>");
         const panel = $("<section role='tabpanel' id='hero-mapping-tabpanel'></section>").append(toolbar, body);
-        root.append($("<h2 tabindex='-1'></h2>").text(text("Mapping")), tabs, status, panel);
+        const heading = $("<header class='hero-mapping-title'></header>").append($("<h2 tabindex='-1'></h2>").text(text("HERO Mapping Editor")), tabs);
+        root.append(heading, status, panel);
         const tabNames = mappingTabs, tabStates = new MappingTabStates();
-        let tab = "Query", bindingOrigin = "Query", rowChangeHandler = null, pendingView = null;
+        let tab = "Query", bindingOrigin = "Query", rowChangeHandler = null, pendingView = null, entryInteracted = false;
+        root.on("pointerdown keydown", () => { if (pendingView?.kind === "list") entryInteracted = true; });
         const tabButtons = tabNames.map((name) => button(name, () => switchTab(name)).attr({
             role: "tab", id: `hero-mapping-tab-${name.toLowerCase()}`, "aria-controls": "hero-mapping-tabpanel"
         }).appendTo(tabs));
@@ -414,8 +419,9 @@
         function switchTab(next) {
             if (next === tab || locked() || root.find("dialog").length) return;
             const previous = tab;
+            toolbar.detach();
             epoch++; detailRequest++;
-            tabStates.set(previous, {active, model, mode, selected, search, start, listing, revisionsStart, returnFocus, fieldFilter,
+            tabStates.set(previous, {active, model, mode, selected, search, start, listing, revisionsStart, returnFocus, fieldFilter, snapshotFilter,
                 rowChangeHandler, pendingView, status: status.text(), toolbar: toolbar.contents().detach(), body: body.contents().detach()});
             pendingView = null;
             root.off("hero-mapping-content-change"); rowChangeHandler = null;
@@ -424,23 +430,26 @@
             if (next === "Binding") {
                 bindingOrigin = previous === "Binding" ? bindingOrigin : previous;
                 active = bindingActive; model = null; mode = "active";
-                toolbar.empty(); body.empty();
+                toolbar.detach().empty(); body.empty();
                 const access = bindingAccess(admin, active);
                 if (access === "ADMIN_ONLY") { say("Bindings are available to administrators."); body.append($("<p></p>").text(text("Employee read-only view"))); }
-                else if (access === "SELECT_DEFINITION") { say("Select a mapping definition in Query or Mutation to view its bindings."); }
+                else if (access === "SELECT_DEFINITION") { showBindings(0); }
                 else showBindings(0);
                 return;
             }
             const state = tabStates.get(next);
             if (state) {
-                ({active, model, mode, selected, search, start, listing, revisionsStart, returnFocus, fieldFilter, rowChangeHandler} = state);
-                toolbar.empty().append(state.toolbar); body.empty().append(state.body); say(state.status);
+                ({active, model, mode, selected, search, start, listing, revisionsStart, returnFocus, fieldFilter, snapshotFilter, rowChangeHandler} = state);
+                toolbar.empty().append(state.toolbar); body.empty().append(state.body);
+                const anchor = body.find(".hero-mapping-active").first();
+                if (anchor.length) anchor.after(toolbar); else panel.prepend(toolbar);
+                say(state.status);
                 if (rowChangeHandler) root.on("hero-mapping-content-change", rowChangeHandler);
                 body.find("[data-field-picker]").trigger("hero-mapping-picker-resume");
                 resumePendingView(state.pendingView, {list: loadList, detail: open});
             } else {
                 active = null; model = null; mode = "active"; selected = 0; search = ""; start = 0; listing = null;
-                revisionsStart = 0; returnFocus = null; fieldFilter = ""; loadList();
+                revisionsStart = 0; returnFocus = null; fieldFilter = ""; snapshotFilter = ""; loadList();
             }
         }
         updateTabs();
@@ -496,19 +505,16 @@
             root.trigger("hero-mapping-content-change");
         }
         async function loadList(selectFirst = true) {
-            const request = ++epoch; pendingView = {kind: "list", selectFirst}; ruleCache.clear(); active = null; model = null; mode = "active";
+            const request = ++epoch; entryInteracted = false; pendingView = {kind: "list", selectFirst}; ruleCache.clear(); active = null; model = null; mode = "active";
             rowChangeHandler = null; root.off("hero-mapping-content-change"); toolbar.empty(); body.empty(); say("Loading active mappings…");
-            const filter = field("Search active definitions and rules", search, (value) => { search = value; }, toolbar).attr("maxlength", 120);
-            const apply = () => { search = filter.val(); start = 0; loadList(false); };
-            filter.on("keydown", (event) => { if (event.key === "Enter") apply(); });
-            toolbar.append(button("Search", apply));
+            renderList();
             try {
                 const result = await rpc("frontend_mapping_list", {search, start, page_size: 20, direction: directionForTab(tab)});
                 if (disposed || request !== epoch) return;
                 listing = result;
-                const entry = selectFirst && result.graphql_mappings.find((item) => item.direction === directionForTab(tab));
+                const entry = selectFirst && !entryInteracted && result.graphql_mappings.find((item) => item.direction === directionForTab(tab) && (!snapshotFilter || item.schema_snapshot === snapshotFilter));
                 if (entry) { await open(entry, "graphql", false); return; }
-                renderList(); say("");
+                say("");
                 if (returnFocus) { root.find("[data-mapping-name]").filter((_, el) => el.dataset.mappingName === returnFocus).first().trigger("focus"); returnFocus = null; }
             } catch (error) { if (request === epoch && !disposed) { say(errorText(error)); body.append(button("Retry", () => loadList(selectFirst))); } }
             finally { if (request === epoch) pendingView = null; }
@@ -805,41 +811,13 @@
             body.append(section); loadSnapshots();
         }
         function renderList() {
-            body.empty();
-            const p = listing.pagination;
-            const direction = directionForTab(tab);
-            const definitions = listing.graphql_mappings.filter((item) => item.direction === direction);
-            const groups = new Map();
-            definitions.forEach((item) => { const key = `${item.operation_kind} ${item.operation_name}`; if (!groups.has(key)) groups.set(key, []); groups.get(key).push(item); });
-            body.append($("<h3></h3>").text(text("HERO operations and mapping definitions")),
-                $("<p class='text-muted'></p>").text(`${text("Definitions in this direction on this page")}: ${definitions.length} / ${p.graphql_total}`));
-            if (!definitions.length) body.append($("<p></p>").text(text(search ? "No active definitions match your search." : "No active mapping definitions in this direction.")));
-            groups.forEach((items, label) => {
-                const group = $("<details open class='hero-mapping-operation'></details>").append($("<summary></summary>").text(label));
-                items.forEach((item) => group.append(button(`${item.name} · ${text("Active")} · ${text("Revision")} ${item.revision}`, () => open(item, "graphql"))
-                    .attr("data-mapping-name", item.name)));
-                body.append(group);
-            });
-            if (tab === "Query") body.append($("<h3></h3>").text(text("Active field rules")), $("<p class='text-muted'></p>").text(`${text("Rules on this page")}: ${listing.frappe_mappings.length} / ${p.frappe_total}`));
-            if (tab === "Query") listing.frappe_mappings.forEach((item) => body.append(button(`${item.operation} · ${item.source_path} → ${item.target_doctype}.${item.target_field}`, () => open(item, "frappe"))));
-            if (tab === "Query" && !listing.frappe_mappings.length) body.append($("<p></p>").text(text(search ? "No active field rules match your search." : "No active field rules.")));
-            const pager = $("<div class='hero-mapping-actions'></div>");
-            pager.append(button("Previous page", () => { start = Math.max(0, start - 20); loadList(false); }).prop("disabled", start === 0),
-                $("<span></span>").text(`${text("Page")} ${Math.floor(start / 20) + 1}`),
-                button("Next page", () => { start += 20; loadList(false); }).prop("disabled", start + 20 >= Math.max(p.graphql_total, p.frappe_total) || start >= 10000));
-            body.append(pager);
-            if (!definitions.length && !search) {
-                const emptyContext = $("<section class='hero-mapping-context' aria-label='Mapping context'></section>");
-                for (const title of tab === "Mutation" ? ["Source Frappe", "Target HERO"] : ["Source HERO", "Target Frappe"]) {
-                    emptyContext.append($("<section class='hero-mapping-context-pane'></section>").append($("<h5></h5>").text(text(title)), $("<p></p>").text(text("Choose an available definition to inspect its fields."))));
-                }
-                body.prepend(emptyContext);
-            }
+            toolbar.detach().empty(); body.empty(); renderWorkspaceContext(); renderContext({}); renderMappingsTable(body);
+            body.append($("<p class='text-muted'></p>").text(text("Choose an active mapping row or definition to inspect it. Reading and selection do not create a draft.")));
             renderSchemaExplorer();
         }
         async function open(item, kind, focus = true) {
             if (locked()) return;
-            const request = ++epoch; pendingView = {kind: "detail", item, mappingType: kind, focus}; ruleCache.clear(); body.empty(); toolbar.empty(); say("Loading active definition…");
+            const request = ++epoch; pendingView = {kind: "detail", item, mappingType: kind, focus}; ruleCache.clear(); panel.prepend(toolbar.detach()); body.empty(); toolbar.empty(); say("Loading active definition…");
             toolbar.append(button("Back to mappings", () => leave(() => loadList(false))));
             try {
                 const detail = await rpc("frontend_mapping_detail", {mapping_type: kind, name: item.name});
@@ -962,44 +940,158 @@
             if (object(value.source) || object(value.target)) return [{id: "single", index: 0, value}];
             return [];
         }
-        function renderDefinitionChooser() {
-            const chooser = $("<details class='hero-mapping-definition-chooser' data-field-picker></details>")
-                .append($("<summary></summary>").text(`${text("Choose mapping definition")}: ${active.operation_name || active.operation}`));
-            const results = $("<div></div>"), controls = $("<div class='hero-mapping-actions'></div>");
-            const query = $("<input class='form-control' aria-label='Search mapping definitions' maxlength='120'>");
-            let seq = 0, offset = 0, pending = false, chooserEpoch = epoch;
-            const direction = directionForTab(tab);
-            const valid = (request) => !disposed && chooserEpoch === epoch && request === seq && chooser[0].isConnected;
+        function choice(label, value, parent, loader, select) {
+            const control = $("<details class='hero-mapping-select' data-field-picker></details>");
+            const summary = $("<summary></summary>").append($("<span></span>").text(text(label)), $("<strong></strong>").text(value || text("Choose…")));
+            const popup = $("<div class='hero-mapping-select-popup'></div>"), results = $("<div role='list'></div>");
+            const query = $("<input class='form-control' type='search'>").attr("aria-label", `Search ${label}`);
+            let offset = 0, seq = 0, choiceEpoch = epoch, pending = false;
+            const current = (n) => !disposed && choiceEpoch === epoch && n === seq && control[0].isConnected;
             const load = async () => {
-                const request = ++seq; pending = true; results.empty().text(text("Loading mapping definitions…"));
+                const n = ++seq; pending = true; results.empty().text(text("Loading options…"));
                 try {
-                    const data = await rpc("frontend_mapping_list", {search: query.val(), start: offset, page_size: 20, direction});
-                    if (!valid(request)) return;
+                    const result = await loader(query.val().trim(), offset);
+                    if (!current(n)) return;
                     results.empty();
-                    const definitions = data.graphql_mappings.filter((item) => item.direction === direction);
-                    definitions.forEach((item) => results.append(button(`${item.operation_name} · ${item.name}`, () => leave(() => open(item, "graphql")))));
-                    if (direction === "QUERY_TO_FRAPPE") data.frappe_mappings.forEach((item) => results.append(button(`${item.operation} · ${item.source_path} → ${item.target_doctype}.${item.target_field}`, () => leave(() => open(item, "frappe")))));
-                    if (!results.children().length) results.append($("<p></p>").text(text("No active definitions or rules match your search.")));
-                    const total = Math.max(data.pagination.graphql_total, direction === "QUERY_TO_FRAPPE" ? data.pagination.frappe_total : 0);
+                    result.items.forEach((item) => results.append($("<div role='listitem'></div>").append(button(item.label, () => {
+                        control.prop("open", false); select(item);
+                    }).prop("disabled", Boolean(item.disabled)))));
+                    if (!result.items.length) results.append($("<p></p>").text(text("No options match this selection.")));
                     results.append($("<div class='hero-mapping-actions'></div>").append(
-                        button("Previous definitions", () => { offset = Math.max(0, offset - 20); load(); }).prop("disabled", !offset),
-                        $("<span></span>").text(`${text("Page")} ${Math.floor(offset / 20) + 1}`),
-                        button("Next definitions", () => { offset += 20; load(); }).prop("disabled", offset + 20 >= total || offset >= 10000)));
-                } catch (error) { if (valid(request)) results.empty().append($("<p></p>").text(errorText(error)), button("Retry definitions", load)); }
-                finally { if (valid(request)) pending = false; }
+                        button("Previous options", () => { offset = Math.max(0, offset - 20); load(); }).prop("disabled", !offset),
+                        $("<span></span>").text(`${offset + (result.items.length ? 1 : 0)}–${offset + result.items.length} / ${result.total}`),
+                        button("Next options", () => { offset += 20; load(); }).prop("disabled", offset + 20 >= result.total)));
+                } catch (error) { if (current(n)) results.empty().append($("<p></p>").text(errorText(error)), button("Retry options", load)); }
+                finally { if (current(n)) pending = false; }
             };
-            const searchDefinitions = () => { offset = 0; load(); };
-            query.on("input", () => { seq++; pending = false; results.empty(); });
-            query.on("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); searchDefinitions(); } });
-            controls.append(query, button("Search definitions", searchDefinitions));
-            chooser.append(controls, results).on("toggle", () => { if (chooser.prop("open") && !results.children().length) load(); });
-            chooser.on("hero-mapping-picker-resume", () => { chooserEpoch = epoch; seq++; if (pending) { pending = false; load(); } });
-            body.append(chooser);
+            const apply = () => { offset = 0; load(); };
+            query.on("input", () => { seq++; results.empty(); }).on("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); apply(); } });
+            popup.append(query, button("Search options", apply), results); control.append(summary, popup).appendTo(parent);
+            control.on("toggle", () => { if (control.prop("open")) { load(); query.trigger("focus"); } });
+            control.on("keydown", (event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); control.prop("open", false); summary.trigger("focus"); } });
+            control.on("hero-mapping-picker-resume", () => { choiceEpoch = epoch; seq++; if (pending) load(); });
+            return control;
+        }
+        function definitionOptions(direction = directionForTab(tab), snapshot = snapshotFilter) {
+            return async (search, offset) => {
+                // The existing list pages both categories independently. Filter locally without hiding later pages.
+                let all = [];
+                for (let start = 0; start <= 10000; start += 100) {
+                    const data = await rpc("frontend_mapping_list", {search, start, page_size: 100, direction});
+                    all.push(...data.graphql_mappings.map((item) => ({...item, kind: "graphql"})),
+                        ...data.frappe_mappings.map((item) => ({...item, kind: "frappe"})));
+                    if (start + 100 >= Math.max(data.pagination.graphql_total, data.pagination.frappe_total)) break;
+                    if (start === 10000) throw new Error("Readable definition range exceeded");
+                }
+                all = all.filter((item) => !snapshot || item.schema_snapshot === snapshot);
+                return {items: all.slice(offset, offset + 20).map((item) => ({...item, label: `${item.operation_name || item.operation} · ${item.name}`})), total: all.length};
+            };
+        }
+        function renderDefinitionChooser(parent = body, label = "Definition", binding = false) {
+            return choice(label, active?.operation_name || active?.operation, parent,
+                definitionOptions(binding ? "" : directionForTab(tab), binding ? "" : snapshotFilter),
+                (item) => leave(() => {
+                    if (binding) { active = {...item, mapping_type: item.kind}; showBindings(0); }
+                    else open(item, item.kind);
+                }));
+        }
+        function renderWorkspaceContext() {
+            const header = $("<div class='hero-mapping-workspace-context'></div>").appendTo(body);
+            choice("GraphQL schema snapshot", snapshotFilter || "All readable snapshots", header, async (search, offset) => {
+                const currentEpoch = epoch;
+                const snapshots = admin ? await readSnapshotPages((args) => rpc("schema_snapshot_list", args), () => !disposed && epoch === currentEpoch) : [];
+                const options = [{name: "", label: "All readable snapshots"}, ...(snapshots || []).filter((item) => item.analysis_status === "Validated").map((item) => ({name: item.name, label: item.name}))]
+                    .filter((item) => item.label.toLowerCase().includes(search.toLowerCase()));
+                return {items: options.slice(offset, offset + 20), total: options.length};
+            }, (item) => leave(() => { snapshotFilter = item.name; active = null; model = null; renderList(); }));
+            renderDefinitionChooser(header);
+            if (active) header.append($("<span class='text-muted'></span>").text(`${active.schema_snapshot || text("Snapshot not provided")} · ${text("Revision")}: ${active.revision} · ${mode === "draft" ? text("Personal draft") : active.status || text("Active")}`));
+        }
+        function renderMappingsTable(parent) {
+            const section = $("<section class='hero-mapping-active' aria-label='Active Mappings'></section>").appendTo(parent);
+            section.append($("<h3></h3>").text(text("Active Mappings")));
+            const filters = $("<div class='hero-mapping-table-filters'></div>").appendTo(section);
+            const operation = $("<select class='form-control' aria-label='Operation filter'><option value=''>All operations</option></select>");
+            $("<label></label>").append($("<span></span>").text(text("Operation")), operation).appendTo(filters);
+            const searchInput = field("Search active mappings", search, () => {}, filters).attr("maxlength", 120);
+            const fieldSearch = field("Filter field mappings", fieldFilter, () => {}, filters);
+            const tableWrap = $("<div class='hero-mapping-table-wrap'></div>").appendTo(section);
+            const table = $("<table class='table table-sm hero-mapping-table'><thead><tr><th>Status</th><th>Operation</th><th></th><th>App</th><th>Target</th><th>Revision</th></tr></thead><tbody></tbody></table>").appendTo(tableWrap);
+            table.find("th").eq(2).text(tab === "Mutation" ? "Source Frappe" : "Source HERO");
+            const pager = $("<div class='hero-mapping-actions'></div>").appendTo(section);
+            let offset = 0, sequence = 0, tableEpoch = epoch, data, apps = new Map(), pending = false;
+            const valid = (n) => !disposed && epoch === tableEpoch && n === sequence && section[0].isConnected;
+            const draw = () => {
+                table.find("tbody").empty();
+                const entries = [...data.graphql_mappings.map((item) => ({item, kind: "graphql"})), ...data.frappe_mappings.map((item) => ({item, kind: "frappe"}))];
+                const needle = fieldSearch.val().trim().toLowerCase();
+                entries.filter(({item}) => (!snapshotFilter || item.schema_snapshot === snapshotFilter) && (!operation.val() || (item.operation_name || item.operation) === operation.val())).forEach(({item, kind}) => {
+                    const definition = item.definition || item;
+                    const linked = new Map([...ruleCache, ...data.frappe_mappings.map((rule) => [rule.definition_id, rule])]);
+                    const projected = kind === "frappe" ? [{source: item.source_path, target: `${item.target_doctype}.${item.target_field}`, app: "Not provided", index: 0}]
+                        : rows(definition).map((row, index) => {
+                            const rule = row.reference ? linked.get(row.id) || ruleCache.get(row.id) : null, value = row.value;
+                            return row.reference ? {source: rule?.source_path || "Referenced field (details required)", target: rule ? `${rule.target_doctype}.${rule.target_field}` : "Not provided", app: "Not provided", index}
+                                : {source: `${value.source?.doctype || ""}.${value.source?.field || ""}`, target: item.direction === "FRAPPE_TO_MUTATION" ? `${value.target?.operation || item.operation_name} / ${value.target?.argument || ""}.${value.target?.field_path ?? value.target?.field ?? ""}` : `${value.target?.doctype || ""}.${value.target?.field_path ?? value.target?.field ?? ""}`, app: (item.direction === "FRAPPE_TO_MUTATION" ? value.source?.app : value.target?.app) || "Not provided", index};
+                        });
+                    if (!projected.length) projected.push({source: "No configured field", target: "Not provided", app: "Not provided", index: 0});
+                    projected.forEach((row) => {
+                        const targetDoctype = kind === "frappe" ? item.target_doctype : item.direction === "FRAPPE_TO_MUTATION" ? definition.source?.doctype : definition.target?.doctype;
+                        if (row.app === "Not provided") row.app = apps.get(targetDoctype || row.target.split(".")[0]) || row.app;
+                        if (needle && !`${row.source} ${row.target} ${row.app}`.toLowerCase().includes(needle)) return;
+                        const isSelected = active?.name === item.name && active?.mapping_type === kind && selected === row.index;
+                        const select = () => {
+                            if (locked()) return;
+                            if (active?.name === item.name && active?.mapping_type === kind) { selected = row.index; renderDetail(); }
+                            else leave(async () => { await open(item, kind, false); if (active?.name === item.name) { selected = row.index; renderDetail(); } });
+                        };
+                        const tr = $("<tr tabindex='0'></tr>").toggleClass("is-selected", isSelected).attr({"aria-selected": String(isSelected), "aria-label": `${item.operation_name || item.operation}: ${row.source} to ${row.target}`, "data-mapping-name": item.name});
+                        tr.on("click", select).on("keydown", (event) => { if (["Enter", " "].includes(event.key)) { event.preventDefault(); select(); } });
+                        for (const value of [item.status || "Active", item.operation_name || item.operation, row.source, row.app, row.target, item.revision]) tr.append($("<td></td>").text(String(value ?? "Not provided")));
+                        table.find("tbody").append(tr);
+                    });
+                });
+                if (!table.find("tbody").children().length) table.find("tbody").append($("<tr><td colspan='6'></td></tr>").find("td").text(text("No active mappings match this context or filter. Try another snapshot, search or page.")).end());
+            };
+            const load = async () => {
+                const n = ++sequence; pending = true; table.find("tbody").html("<tr><td colspan='6'>Loading active mappings…</td></tr>");
+                try {
+                    const result = await rpc("frontend_mapping_list", {search: searchInput.val(), start: offset, page_size: 20, direction: directionForTab(tab)});
+                    if (!valid(n)) return;
+                    data = result;
+                    const needed = new Set(data.graphql_mappings.flatMap((item) => item.definition?.mapping_definition_ids || []));
+                    data.frappe_mappings.forEach((rule) => ruleCache.set(rule.definition_id, rule));
+                    for (let start = 0; [...needed].some((id) => !ruleCache.has(id)) && start <= 10000; start += 100) {
+                        const rules = await rpc("frontend_mapping_list", {search: "", start, page_size: 100, direction: "QUERY_TO_FRAPPE"});
+                        if (!valid(n)) return;
+                        rules.frappe_mappings.forEach((rule) => ruleCache.set(rule.definition_id, rule));
+                        if (start + 100 >= rules.pagination.frappe_total) break;
+                    }
+                    if (admin) {
+                        try { const catalog = await readableApps(); if (!valid(n)) return; apps = new Map(catalog.doctypes.filter((item) => item.selectable).map((item) => [item.doctype, item.app_name])); }
+                        catch (_) { /* Missing app metadata is explicitly marked, never invented. */ }
+                    }
+                    const chosen = operation.val(); operation.find("option:not(:first)").remove();
+                    [...new Set([...data.graphql_mappings.map((item) => item.operation_name), ...data.frappe_mappings.map((item) => item.operation)])].forEach((name) => operation.append($("<option></option>").val(name).text(name)));
+                    operation.val(chosen || ""); if (operation.val() === null) operation.val(""); draw();
+                    const total = Math.max(data.pagination.graphql_total, data.pagination.frappe_total);
+                    pager.empty().append(button("Previous mappings", () => { offset = Math.max(0, offset - 20); load(); }).prop("disabled", !offset),
+                        $("<span></span>").text(`${text("Definition page")} ${Math.floor(offset / 20) + 1} · ${text("Total definitions / field rules")}: ${data.pagination.graphql_total} / ${data.pagination.frappe_total}`),
+                        button("Next mappings", () => { offset += 20; load(); }).prop("disabled", offset + 20 >= total || offset >= 10000));
+                } catch (error) { if (valid(n)) { table.find("tbody").empty().append($("<tr><td colspan='6'></td></tr>").find("td").text(errorText(error)).append(button("Retry mappings", load)).end()); } }
+                finally { if (valid(n)) pending = false; }
+            };
+            const apply = () => { search = searchInput.val(); fieldFilter = fieldSearch.val(); offset = 0; load(); };
+            filters.append(button("Search mappings", apply)); operation.on("change", draw); fieldSearch.on("input", () => { fieldFilter = fieldSearch.val(); if (data) draw(); });
+            searchInput.on("keydown", (event) => { if (event.key === "Enter") apply(); });
+            section.attr("data-field-picker", "").on("hero-mapping-picker-resume", () => { tableEpoch = epoch; sequence++; if (pending) load(); });
+            load();
+            return section;
         }
         function renderDetail() {
-            toolbar.empty().append(button("Back to mappings", () => leave(() => loadList(false))));
-            body.empty().append($("<h3></h3>").text(`${active.operation_name || active.operation} · ${active.name}`),
-                $("<p></p>").text(`${text("Active revision")}: ${active.revision}`));
+            toolbar.detach().empty().append(button("Browse mappings", () => leave(() => loadList(false))));
+            body.empty();
+            const draftStatus = $("<div class='hero-mapping-draft-status'></div>");
             if (admin && active.mapping_type === "graphql") {
                 toolbar.append(button("Active version", () => leave(() => { epoch++; ruleCache.clear(); model = null; mode = "active"; renderDetail(); })),
                     button("Open my draft", openDraft), button("My saved revisions", () => leave(() => showRevisions(0))));
@@ -1016,14 +1108,18 @@
                     const reconciliationState = model.reconciliation ? "Local reconciliation changes — not saved"
                         : model.saved.reconciliation_json ? "Saved reconciliation evidence is current only for its recorded draft content."
                             : "No saved reconciliation evidence.";
-                    body.append($("<p data-draft-state></p>"), $("<p class='text-muted'></p>").text(`${text("Personal draft revision")}: ${model.saved.content_revision} · ${text("Generation")}: ${model.saved.generation}`),
+                    draftStatus.append($("<p data-draft-state></p>"), $("<p class='text-muted'></p>").text(`${text("Personal draft revision")}: ${model.saved.content_revision} · ${text("Generation")}: ${model.saved.generation}`),
                         $("<p class='text-muted' data-reconciliation-state></p>").text(text(reconciliationState)));
                     if (model.blocked) toolbar.append(button("Check saved draft", reconcile), button("Reload saved draft", reloadDraft));
                 }
             }
-            renderDefinitionChooser();
+            renderWorkspaceContext();
             const value = content();
             renderContext(value);
+            renderMappingsTable(body);
+            body.append(toolbar, draftStatus);
+            toolbar.addClass("hero-mapping-workbench-actions");
+            body.append($("<p class='text-muted hero-mapping-contract-note'></p>").text(text("Activation and direct deletion are unavailable here. No existing action contract is exposed by this editor.")));
             const list = rows(value);
             const grid = $("<div class='hero-mapping-editor-grid'></div>");
             const left = $("<section class='hero-mapping-table-wrap'></section>");
@@ -1031,9 +1127,10 @@
                 .append($("<summary></summary>").text(text("Rule parameters, transformation and additional configuration")));
             const detail = $("<section class='hero-mapping-row-detail' aria-label='Selected field mapping'></section>").appendTo(parameters);
             const table = $("<table class='table table-sm hero-mapping-table'><thead><tr><th>Source</th><th>Target</th><th>Rule</th><th></th></tr></thead><tbody></tbody></table>");
+            left.append($("<h4></h4>").text(text(mode === "draft" ? "Personal draft field mappings" : "Selected definition field mappings")));
             const editable = mode === "draft";
             detail.attr("data-editable", String(editable));
-            const searchInput = field("Filter field mappings", fieldFilter, (value) => { fieldFilter = value; }, left);
+            const searchInput = field("Filter selected field mappings", fieldFilter, (value) => { fieldFilter = value; }, left);
             const drawRows = () => {
                 const focusedRow = table.find(":focus").attr("data-row-selection");
                 table.find("tbody").empty(); const needle = searchInput.val().trim().toLowerCase();
@@ -1070,7 +1167,7 @@
                 else if (!value.source && !value.target && active.direction === "FRAPPE_TO_MUTATION") left.append(button("Add field mapping", () => { model.set(["source"], {}); model.set(["target"], {}); renderDetail(); }).prop("disabled", model.undo.length > 0));
                 left.append(button(`Undo removal (${model.undo.length})`, () => { model.restore(); renderDetail(); }).prop("disabled", !model.undo.length));
             }
-            grid.append(left, parameters); body.append(grid);
+            grid.append(left, parameters); body.append($("<details class='hero-mapping-selected-tools'></details>").prop("open", editable).append($("<summary></summary>").text(text("Selected definition and draft tools")), grid));
             if (list[selected]) renderRow(list[selected], detail);
             for (const key of ["records_path", "record_path", "identity_path", "target_operation"]) {
                 if (!(key in value)) continue;
@@ -1085,114 +1182,102 @@
             if (model && !canSaveDraft(model, active)) root.find("[data-save-draft]").prop("disabled", true);
         }
         function renderContext(value) {
-            const mutation = mutationMapping(value);
-            const sourceTitle = mutation ? "Source Frappe" : "Source HERO";
-            const targetTitle = mutation ? "Target HERO" : "Target Frappe";
-            const frappeSide = mutation ? "source" : "target";
-            const frappeValue = value[frappeSide] || {};
-            const selectedApp = selectedPickerApp(model, frappeSide, frappeValue, admin);
-            const sourceLines = mutation
-                ? [["Installed app", selectedApp || "—"], ["DocType", value.source?.doctype || "—"], ["Field", value.source?.field || "—"]]
-                : [["Validated schema snapshot", active.schema_snapshot || "—"], ["Query / operation", active.operation_name || value.operation_name || "—"], ["Object / path", value.records_path || value.record_path || value.source_path || "—"]];
-            const targetLines = mutation
-                ? [["Mutation", active.operation_name || value.target?.operation || "—"], ["Argument / input path", value.target?.argument || "—"], ["Input field", value.target?.field_path || value.target?.field || "—"]]
-                : [["Installed app", selectedApp || "—"], ["DocType", value.target?.doctype || "—"], ["Field", value.target?.field_path || value.target?.field || value.target_field || "—"]];
-            const context = $("<section class='hero-mapping-context' aria-label='Mapping context'></section>")
-                .append($("<h4></h4>").text(text(mutation ? "Mutation mapping context" : "Query mapping context")));
-            const pane = (title, lines) => {
-                const section = $("<section class='hero-mapping-context-pane'></section>").append($("<h5></h5>").text(text(title)));
-                lines.forEach(([label, value]) => section.append($("<p></p>").append($("<strong></strong>").text(`${text(label)}: `), document.createTextNode(String(value)))));
-                return section;
+            const mutation = tab === "Mutation", frappeSide = mutation ? "source" : "target";
+            const context = $("<section class='hero-mapping-context' aria-label='Map Fields'></section>").append($("<h3></h3>").text(text("Map Fields")));
+            const sourcePane = $("<section class='hero-mapping-context-pane' data-mapping-side='source'></section>").append($("<h4></h4>").text(text(mutation ? "Source Frappe" : "Source HERO")));
+            const targetPane = $("<section class='hero-mapping-context-pane' data-mapping-side='target'></section>").append($("<h4></h4>").text(text(mutation ? "Target HERO" : "Target Frappe")));
+            const heroPane = mutation ? targetPane : sourcePane, frappePane = mutation ? sourcePane : targetPane;
+            const heroControls = $("<div class='hero-mapping-selection-fields'></div>").appendTo(heroPane);
+            const frappeControls = $("<div class='hero-mapping-selection-fields'></div>").appendTo(frappePane);
+            const hosts = new Map();
+            const openPicker = (side, label, focus) => {
+                if (!active || active.mapping_type !== "graphql") { say("Select a GraphQL mapping definition to browse its authorized fields."); return; }
+                let entry = hosts.get(side);
+                if (!entry) { const host = $("<div class='hero-mapping-choice-list' hidden></div>").appendTo(side === "source" ? sourcePane : targetPane); entry = {host}; hosts.set(side, entry); }
+                const expand = entry.host.prop("hidden"); entry.host.prop("hidden", !expand);
+                context.find(`[data-choice-side='${side}']`).attr("aria-expanded", String(expand));
+                if (expand) {
+                    if (!entry.host.children().length) picker(side, entry.host, rows(content())[selected] || {}, side === (mutation ? "target" : "source") ? browsePaths.get(browseKey)?.prefix || "" : "");
+                    if (focus) setTimeout(() => entry.host.find(`[aria-label='${focus}']`).trigger("focus"), 0);
+                }
             };
-            const sourcePane = pane(sourceTitle, sourceLines).attr("data-mapping-side", "source");
-            const targetPane = pane(targetTitle, targetLines).attr("data-mapping-side", "target");
-            sourcePane.append($("<div class='hero-mapping-selection-fields'></div>"));
-            targetPane.append($("<div class='hero-mapping-selection-fields'></div>"));
-            if (Array.isArray(value.mapping_definition_ids)) {
-                const heroPane = mutation ? targetPane : sourcePane;
-                const frappePane = mutation ? sourcePane : targetPane;
-                heroPane.append($('<p></p>').append($('<strong></strong>').text(`${text("Selected field path")}: `), document.createTextNode("—")),
-                    $('<p></p>').append($('<strong></strong>').text(`${text("Selected field type")}: `), document.createTextNode("—")));
-                const showLine = (pane, index, value) => pane.children("p").eq(index).contents().last().replaceWith(document.createTextNode(String(value || "—")));
-                let referenceCatalog;
-                const refreshSummary = () => {
-                    const row = rows(content())[selected];
-                    const rule = row?.reference ? ownRule(content(), row.id) || ruleCache.get(row.id) : null;
-                    const type = rule?.source_type || "", path = rule?.source_path || "";
-                    const doctype = rule?.target_doctype || "", field = rule?.target_field || "";
-                    const savedApp = model?.referenceApps?.[row?.id];
-                    const app = savedApp?.doctype === doctype ? savedApp.app : "";
-                    showLine(heroPane, 3, path); showLine(heroPane, 4, type);
-                    showLine(frappePane, 0, app); showLine(frappePane, 1, doctype); showLine(frappePane, 2, field);
-                    if (!admin || !doctype || app || !row?.id || !context[0].isConnected) return;
-                    const requestEpoch = epoch, rowId = row.id, definition = active, currentModel = model;
-                    referenceCatalog ||= rpc("mapping_target_catalog", {}).catch(() => null);
-                    referenceCatalog.then((catalog) => {
-                        if (!catalog || disposed || epoch !== requestEpoch || active !== definition || model !== currentModel || !context[0].isConnected) return;
-                        const selectedRow = rows(content())[selected];
-                        const currentRule = selectedRow?.reference ? ownRule(content(), selectedRow.id) || ruleCache.get(selectedRow.id) : null;
-                        if (selectedRow?.id !== rowId || currentRule?.target_doctype !== doctype) return;
-                        const entry = catalog.doctypes.find((item) => item.doctype === doctype && item.selectable);
-                        if (!entry) return;
-                        if (model) { model.referenceApps ||= Object.create(null); model.referenceApps[rowId] = {app: entry.app_name, doctype}; }
-                        showLine(frappePane, 0, entry.app_name);
-                    });
-                };
-                context.on("hero-mapping-summary-refresh", refreshSummary);
-            }
-            if (admin && mode === "draft") {
-                const currentRow = () => rows(model.content)[selected] || {};
-                const available = () => !Array.isArray(model.content.mapping_definition_ids) || Boolean(ownRule(model.content, currentRow().id));
-                const choices = (side, pane, label) => {
-                    const id = `hero-mapping-choice-${side}-${Math.random().toString(36).slice(2)}`;
-                    const host = $("<div class='hero-mapping-choice-list' hidden></div>").attr("id", id);
-                    const toggle = button(label, () => {
-                        if (!available()) return;
-                        const expanded = host.prop("hidden");
-                        host.prop("hidden", !expanded); toggle.attr("aria-expanded", String(expanded));
-                        if (expanded && !host.children().length) picker(side, host, currentRow());
-                    }).attr({"aria-expanded": "false", "aria-controls": id});
-                    pane.append(toggle, host);
-                    return toggle;
-                };
-                const sourcePicker = choices("source", sourcePane, "Choose source fields");
-                const targetPicker = choices("target", targetPane, "Choose target fields");
-                const updatePickers = () => { const disabled = !available(); sourcePicker.prop("disabled", disabled); targetPicker.prop("disabled", disabled); };
-                context.on("hero-mapping-selection-change", () => {
-                    context.find(".hero-mapping-choice-list").empty().prop("hidden", true);
-                    sourcePicker.add(targetPicker).attr("aria-expanded", "false"); updatePickers();
-                });
-                updatePickers();
-            }
-            context.append(sourcePane, targetPane);
-            body.append(context);
-            context.trigger("hero-mapping-summary-refresh");
-            if (admin && !selectedApp && frappeValue.doctype && active.mapping_type === "graphql") {
-                const requestEpoch = epoch, definition = active, currentModel = model;
-                const selectedDoctype = frappeValue.doctype;
-                const method = mutation ? "writeback_mapper_catalog" : "mapping_target_catalog";
-                const args = mutation ? {snapshot_name: active.schema_snapshot, source_doctype: selectedDoctype} : {};
-                rpc(method, args).then((result) => {
-                    if (disposed || epoch !== requestEpoch || active !== definition || model !== currentModel || !context[0].isConnected || content()[frappeSide]?.doctype !== selectedDoctype) return;
-                    const entry = result.doctypes.find((item) => item.doctype === selectedDoctype && item.selectable);
-                    if (!entry) return;
-                    if (model) model.frappeSelection = {side: frappeSide, app: entry.app_name, doctype: selectedDoctype};
-                    const pane = mutation ? sourcePane : targetPane;
-                    pane.find("p").first().contents().last().replaceWith(document.createTextNode(String(entry.app_name)));
-                }).catch(() => { /* The picker will display a catalog error when opened. */ });
-            }
+            const control = (label, val, parent, side, focus) => {
+                const wrapper = $("<div class='hero-mapping-selection-control'></div>").append($("<span></span>").text(text(label)));
+                const input = button(val || "Choose…", () => openPicker(side, label, focus)).attr({"aria-label": label, "aria-expanded": "false", "data-choice-side": side});
+                wrapper.append(input).appendTo(parent); return input;
+            };
+            renderDefinitionChooser(heroControls, mutation ? "Mutation" : "Operation");
+            const browseKey = `${tab}:${active?.definition_id || ""}:${selected}`;
+            const path = choice(mutation ? "Argument / Input" : "Object / Path", "", heroControls, async (search, offset) => {
+                if (!active || !admin) return {items: [], total: 0};
+                const definition = active, mapped = content();
+                let paths;
+                if (mutation) {
+                    const catalog = await rpc("schema_operation_catalog", {snapshot_name: definition.schema_snapshot, operation_kind: "MUTATION"});
+                    const operation = catalog.find((item) => item.operation_name === definition.operation_name);
+                    paths = Object.entries(operation?.input_fields || {}).map(([argument, fields]) => ({label: `${argument} / ${fields[0]?.input_type || mapped.target?.input_type || "Input"}`, prefix: argument + "."}));
+                } else {
+                    const pathsByName = new Map([[mapped.records_path || mapped.record_path || definition.operation_name, ""]]);
+                    for (let start = 0; start <= 10000; start += 100) {
+                        const result = await rpc("mapping_source_picker_page", {snapshot_name: definition.schema_snapshot, operation: mapped.target_operation || definition.operation_name, search: "", start, page_size: 100});
+                        result.items.forEach((field) => { const parent = field.path.split(".").slice(0, -1).join("."); if (parent) pathsByName.set(parent, parent + "."); });
+                        if (start + 100 >= result.total) break;
+                        if (start === 10000) throw new Error("Readable path range exceeded");
+                    }
+                    paths = [...pathsByName].map(([label, prefix]) => ({label, prefix}));
+                }
+                paths = paths.filter((item) => item.label.toLowerCase().includes(search.toLowerCase()));
+                return {items: paths.slice(offset, offset + 20), total: paths.length};
+            }, (item) => {
+                browsePaths.set(browseKey, item); path.find("summary strong").text(item.label);
+                hosts.forEach(({host}) => host.empty().prop("hidden", true));
+                say("Path selected for browsing. Mapping content is unchanged; choose a field in your personal draft to edit it.");
+            });
+            const heroField = control("HERO Field", "", heroControls, mutation ? "target" : "source");
+            const app = control("App", "", frappeControls, frappeSide, "App");
+            const doctype = control("DocType", "", frappeControls, frappeSide, "DocType");
+            const frappeField = control("Frappe Field", "", frappeControls, frappeSide);
+            const metadata = (pane) => {
+                const dl = $("<dl class='hero-mapping-metadata'></dl>").appendTo(pane), fields = {};
+                for (const label of ["ID", "Name", "Type", "Node", "Revision", "Status"]) { fields[label] = $("<dd></dd>").text(text("Not provided")); dl.append($("<dt></dt>").text(text(label)), fields[label]); }
+                return fields;
+            };
+            const heroMeta = metadata(heroPane), frappeMeta = metadata(frappePane);
+            let appNames = new Map();
+            const refresh = () => {
+                const value = active ? content() : {}, row = rows(value)[selected], rule = row?.reference ? ownRule(value, row.id) || ruleCache.get(row.id) : null;
+                const frappeValue = value[frappeSide] || {};
+                app.text(selectedPickerApp(model, frappeSide, frappeValue, admin) || appNames.get(rule?.target_doctype || frappeValue.doctype) || (!admin && frappeValue.app) || text("Not provided"));
+                doctype.text(rule?.target_doctype || frappeValue.doctype || text("Choose…")); frappeField.text(rule?.target_field || frappeValue.field_path || frappeValue.field || text("Choose…"));
+                heroField.text(rule?.source_path || (mutation ? value.target?.field_path || value.target?.field : value.source?.field) || text("Choose…"));
+                path.find("summary strong").text(browsePaths.get(browseKey)?.label || (mutation ? [value.target?.argument, value.target?.input_type].filter(Boolean).join(" / ") : value.records_path || value.record_path || value.source?.path || value.source?.doctype) || text("Not provided"));
+                heroMeta.ID.text(rule?.definition_id || active?.definition_id || text("Not provided"));
+                heroMeta.Name.text(active?.operation_name || active?.operation || text("Not provided"));
+                heroMeta.Type.text(rule?.source_type || (mutation ? value.target?.graphql_type || value.target?.input_type : value.source?.type) || text("Not provided"));
+                heroMeta.Node.text(rule?.source_path || (mutation ? value.target?.argument : value.records_path || value.record_path) || text("Not provided"));
+                for (const fields of [heroMeta, frappeMeta]) { fields.Revision.text(active ? `${text("Mapping")} ${active.revision}` : text("Not provided")); fields.Status.text(active ? mode === "draft" ? text("Personal draft") : active.status || text("Active") : text("No selection")); }
+                frappeMeta.ID.text(text("Not provided")); frappeMeta.Name.text(rule?.target_field || frappeValue.field_path || frappeValue.field || text("Not provided"));
+                frappeMeta.Type.text(frappeValue.fieldtype || text("Not provided")); frappeMeta.Node.text(rule?.target_doctype || frappeValue.doctype || text("Not provided"));
+            };
+            context.on("hero-mapping-summary-refresh", refresh).on("hero-mapping-selection-change", () => { hosts.forEach(({host}) => host.empty().prop("hidden", true)); refresh(); });
+            context.append(sourcePane, $("<span class='hero-mapping-arrow' aria-hidden='true'>→</span>"), targetPane).appendTo(body); refresh();
+            if (admin && active) { const requestEpoch = epoch; readableApps().then((catalog) => {
+                if (disposed || requestEpoch !== epoch || !context[0].isConnected) return;
+                appNames = new Map(catalog.doctypes.filter((item) => item.selectable).map((item) => [item.doctype, item.app_name])); refresh();
+            }).catch(() => {}); }
+            if (!active) context.append($("<p class='text-muted hero-mapping-context-note'></p>").text(text("Choose a definition or mapping row. Unavailable metadata is marked Not provided.")));
         }
         async function renderRow(row, panel) {
             const selectionRequest = ++detailRequest;
             panel.empty(); panel.attr("data-row-id", row.id);
-            const sourceFields = body.find('[data-mapping-side="source"] .hero-mapping-selection-fields').empty();
-            const targetFields = body.find('[data-mapping-side="target"] .hero-mapping-selection-fields').empty();
+
             if (row.reference && mode === "draft" && ownRule(model.content, row.id)) {
                 const rule = model.content.field_rules[row.id];
                 panel.append($("<h4></h4>").text(text("Personal field rule")));
                 for (const [label, key] of [["Source path", "source_path"], ["Source type", "source_type"], ["Target DocType", "target_doctype"],
                     ["Target field", "target_field"], ["Transformation", "transformation"], ["Purpose", "purpose"], ["Relation", "relation"]]) {
-                    const destination = key.startsWith("source_") ? sourceFields : key.startsWith("target_") ? targetFields : panel;
+                    if (key.startsWith("source_") || key.startsWith("target_")) continue;
+                    const destination = panel;
                     field(label, rule[key] ?? "", (next) => model.set(["field_rules", row.id, key], next), destination);
                 }
                 const priority = field("Priority", rule.priority ?? "", (next) => model.set(["field_rules", row.id, "priority"], next === "" ? null : Number(next)), panel);
@@ -1230,7 +1315,8 @@
             for (const [label, path, advanced] of descriptors) {
                 const v = path.reduce((a, key) => a?.[key], value);
                 if (v !== undefined && typeof v !== "string") { panel.append($("<p></p>").text(`${label}: ${text("Configured special rule; preserved unchanged")}`)); continue; }
-                const destination = advanced ? panel : path[0] === "source" ? sourceFields : targetFields;
+                if (!advanced) continue;
+                const destination = panel;
                 field(label, v || "", (next) => { model.set(path, next); if (path[0] === "target" && path[1] === "field_path" && Object.hasOwn(value.target, "field")) model.set(["target", "field"], next); }, destination).prop("readOnly", !advanced && ["doctype", "argument"].includes(path[1]));
             }
             panel.append(button("Search source fields", () => picker("source", panel)), button("Search target fields", () => picker("target", panel)));
@@ -1336,6 +1422,7 @@
             const differences = result.items.filter((item) => item.state !== "UNCHANGED");
             const suggestions = result.items.filter((item) => item.state === "ACTIVE_ONLY");
             const conflicts = result.items.filter((item) => item.state === "CONFLICT");
+            panel.prepend(toolbar.detach());
             toolbar.empty().append(button("Back to draft", () => renderDetail()));
             body.empty().append($("<h3></h3>").text(text("Reconcile active changes")),
                 $("<p></p>").text(`${text("Original base")}: ${result.base.name} · ${text("Revision")} ${result.base.revision}`),
@@ -1408,6 +1495,7 @@
             const request = ++epoch; revisionsStart = offset; say("Loading your saved revisions…");
             try { const result = await rpc("mapping_draft_revisions", {definition_id: active.definition_id, start: revisionsStart, page_size: 20});
                 if (disposed || request !== epoch) return;
+                panel.prepend(toolbar.detach());
                 toolbar.empty().append(button("Back to definition", () => { mode = model ? "draft" : "active"; renderDetail(); }));
                 body.empty().append($("<h3></h3>").text(text("My saved revisions — read only")));
                 if (!result.items.length) body.append($("<p></p>").text(text("No saved personal revisions.")));
@@ -1417,33 +1505,32 @@
             } catch (error) { if (!disposed && request === epoch) say(errorText(error)); }
         }
         async function showBindings(offset) {
-            if (!admin || !active?.definition_id) return;
+            if (!admin) return;
             const request = ++epoch; pendingView = {kind: "binding"};
-            toolbar.empty().append(button("Back to definition", () => switchTab(bindingOrigin)));
-            body.empty().append($("<h3></h3>").text(text("Bindings — read only")),
-                $("<p class='text-muted'></p>").text(text("Existing binding identities, mappings and status. This view cannot create, update, synchronize or activate a binding.")));
-            say("Loading bindings…");
+            toolbar.detach().empty(); body.empty();
+            const header = $("<div class='hero-mapping-workspace-context'></div>").appendTo(body);
+            renderDefinitionChooser(header, "Binding definition", true);
+            body.append($("<h3></h3>").text(text("Bindings — read only")), $("<p class='text-muted'></p>").text(text("Existing binding identities, mappings and status. No write actions are available.")));
+            const wrap = $("<div class='hero-mapping-table-wrap'></div>").appendTo(body);
+            const table = $("<table class='table table-sm hero-mapping-table'><thead><tr><th>Status</th><th>Direction</th><th>Source HERO</th><th>App</th><th>Target</th><th>Mapping revision</th><th>Binding revision</th><th>Identity</th></tr></thead><tbody></tbody></table>").appendTo(wrap);
+            const message = (value) => table.find("tbody").empty().append($("<tr><td colspan='8'></td></tr>").find("td").text(text(value)).end());
+            if (!active?.definition_id) { message("Choose a binding definition above to load existing bindings."); say(""); pendingView = null; return; }
+            message("Loading bindings…"); say("");
             try {
                 const result = await rpc("frontend_mapping_bindings", {definition_id: active.definition_id, start: offset, page_size: 20});
                 if (disposed || request !== epoch) return;
-                if (!result.items.length) body.append($("<p></p>").text(text("No existing bindings use this mapping definition.")));
+                table.find("tbody").empty();
+                if (!result.items.length) message("No existing bindings use this mapping definition.");
                 result.items.forEach((item) => {
-                    const summary = `${item.direction} · ${item.source_instance}.${item.source_field} → ${item.target_doctype}.${item.target_field} · ${item.sync_state || "UNACKNOWLEDGED"}`;
-                    const detail = $("<details class='hero-mapping-binding'></details>").append($("<summary></summary>").text(summary));
-                    detail.append(safeJson({identity_key: item.identity_key, object_binding: item.object_binding,
-                        mapping_definition_id: item.mapping_definition_id, mapping_revision: item.mapping_revision,
-                        binding_revision: item.binding_revision, acknowledged_version: item.acknowledged_version,
-                        object: item.object || null}));
-                    body.append(detail);
+                    const row = $("<tr></tr>");
+                    for (const value of [item.sync_state || "UNACKNOWLEDGED", item.direction, `${item.source_instance}.${item.source_field}`, item.target_app, `${item.target_doctype}.${item.target_name}.${item.target_field}`, item.mapping_revision, item.binding_revision, item.identity_key]) row.append($("<td></td>").text(String(value ?? text("Not provided"))));
+                    table.find("tbody").append(row);
                 });
                 const p = result.pagination;
-                body.append($("<div class='hero-mapping-actions'></div>").append(
-                    button("Previous bindings", () => showBindings(Math.max(0, p.start - p.page_size))).prop("disabled", !p.start),
+                body.append($("<div class='hero-mapping-actions'></div>").append(button("Previous bindings", () => showBindings(Math.max(0, p.start - p.page_size))).prop("disabled", !p.start),
                     $("<span></span>").text(`${text("Bindings")} ${p.total ? p.start + 1 : 0}–${Math.min(p.start + p.page_size, p.total)} / ${p.total}`),
-                    button("Next bindings", () => showBindings(p.start + p.page_size)).prop("disabled", p.start + p.page_size >= p.total),
-                ));
-                say("");
-            } catch (error) { if (!disposed && request === epoch) { say(errorText(error)); body.append(button("Retry", () => showBindings(offset))); } }
+                    button("Next bindings", () => showBindings(p.start + p.page_size)).prop("disabled", p.start + p.page_size >= p.total)));
+            } catch (error) { if (!disposed && request === epoch) { message(errorText(error)); body.append(button("Retry bindings", () => showBindings(offset))); } }
             finally { if (request === epoch) pendingView = null; }
         }
         async function addReference() {
@@ -1471,13 +1558,13 @@
             };
             panel.append(button("Search rules", () => { ruleStart = 0; loadRules(); }), button("Close field search", () => panel.remove())); query.trigger("focus");
         }
-        async function picker(side, panel, row = {}) {
+        async function picker(side, panel, row = {}, initialSearch = "") {
             panel.find("[data-field-picker]").remove();
             const pickerHost = $("<section data-field-picker></section>"); panel.append(pickerHost);
             let seq = 0, fieldStart = 0, frappeCatalog = null, fieldsPending = false, catalogPending = false;
             let pickerEpoch = epoch;
             const currentPicker = (request) => request === seq && pickerEpoch === epoch && pickerHost[0].isConnected;
-            const query = field("Search fields by name, full path or type", "", () => { seq++; results.empty(); }, pickerHost);
+            const query = field("Search fields by name, full path or type", initialSearch, () => { seq++; results.empty(); }, pickerHost);
             const pickerId = `hero-mapping-picker-${Math.random().toString(36).slice(2)}`;
             const app = $("<input class='form-control' aria-label='App' autocomplete='off'>").attr("list", `${pickerId}-apps`).prop("disabled", true);
             const doctype = $("<input class='form-control' aria-label='DocType' autocomplete='off'>").attr("list", `${pickerId}-doctypes`).prop("disabled", true);
@@ -1504,7 +1591,7 @@
                         results.append(button("Previous fields", () => { fieldStart = Math.max(0, fieldStart - 50); load(); }).prop("disabled", !fieldStart), button("Next fields", () => { fieldStart += 50; load(); }).prop("disabled", fieldStart + 50 >= available.length));
                     } else if (source) { const result = await rpc("mapping_target_catalog_page", {app_name: app.val() || "", doctype: doctype.val() || "", search: query.val(), start: fieldStart, page_size: 50}); fields = result.items; if (!currentPicker(request)) return; results.text(`${result.total ? fieldStart + 1 : 0}–${Math.min(fieldStart + fields.length, result.total)} / ${result.total}`); results.append(button("Previous fields", () => { fieldStart = Math.max(0, fieldStart - 50); load(); }).prop("disabled", !fieldStart), button("Next fields", () => { fieldStart += 50; load(); }).prop("disabled", fieldStart + 50 >= result.total)); }
                     else if (row.reference || !mutation) {
-                        const result = await rpc("mapping_source_picker_page", {snapshot_name: active.schema_snapshot, operation: model.content.target_operation || active.operation_name,
+                        const result = await rpc("mapping_source_picker_page", {snapshot_name: active.schema_snapshot, operation: content().target_operation || active.operation_name,
                             search: query.val(), start: fieldStart, page_size: 50});
                         if (!currentPicker(request)) return;
                         fields = result.items; results.text(`${result.total ? fieldStart + 1 : 0}–${Math.min(fieldStart + fields.length, result.total)} / ${result.total}`);
@@ -1521,6 +1608,8 @@
                     if (!currentPicker(request)) return;
                     if (!fields.length) results.append($("<p></p>").text(text("No fields match this selection.")));
                     fields.forEach((f) => results.append(button(`${f.argument ? f.argument + "." : ""}${f.path} · ${f.fieldtype || f.type}${f.nullable === false ? " · required" : ""}${f.select_options?.length ? ` · enum: ${f.select_options.join(", ")}` : ""}${source && mutation && !row.reference && reviewedTargetLabel(f) ? ` · ${text("Reviewed HERO target")}: ${reviewedTargetLabel(f)}` : ""}${f.selectable === false ? ` · unavailable: ${f.reason || "not permitted"}` : ""}`, () => {
+                        if (mode !== "draft" || !model) { say("Open my draft before changing a field. Browsing has not saved or created anything."); return; }
+                        if (row.reference && !ownRule(model.content, row.id)) { say("This referenced active rule is read-only. Its existing personal-rule contract is required before editing."); return; }
                         if (row.reference) {
                             if (source) { const selectedDoctype = f.target_doctype || doctype.val(); model.referenceApps ||= Object.create(null); model.referenceApps[row.id] = {app: app.val(), doctype: selectedDoctype}; model.set(["field_rules", row.id, "target_doctype"], selectedDoctype); model.set(["field_rules", row.id, "target_field"], f.path); }
                             else { model.set(["field_rules", row.id, "source_path"], f.path); model.set(["field_rules", row.id, "source_type"], f.mapping_type || f.fieldtype); }
@@ -1535,7 +1624,8 @@
                 finally { if (currentPicker(request)) fieldsPending = false; }
             };
             const searchFields = button("Search fields", () => { fieldStart = 0; load(); }).prop("disabled", source);
-            pickerHost.append(searchFields, button("Close field search", () => pickerHost.remove()));
+            pickerHost.append(searchFields, button("Close field search", () => { if (panel.hasClass("hero-mapping-choice-list")) { panel.prop("hidden", true); body.find(`[data-choice-side="${side}"]`).attr("aria-expanded", "false"); } else pickerHost.remove(); }));
+            if (mode !== "draft") pickerHost.append($("<p class='text-muted'></p>").text(text("Read-only catalog. Open my draft to change a field.")));
             const loadCatalog = async () => {
                 const request = ++seq; catalogPending = true;
                 catalogState.text(text("Loading installed-app catalog…"));
@@ -1550,7 +1640,7 @@
                 catalogState.text(`${text("Searchable installed-app catalog")}: ${result.apps.length} ${text("apps")}, ${result.doctypes.length} ${text("DocTypes")}.`);
                 app.on("input change", () => { seq++; results.empty(); fieldStart = 0; searchFields.prop("disabled", true); doctype.val(""); doctypeOptions.empty(); const matches = result.doctypes.filter((item) => item.app_name === app.val()); matches.forEach((item) => doctypeOptions.append($("<option></option>").val(item.doctype))); catalogState.text(`${text("Searchable DocTypes")}: ${matches.length}. ${text("Unavailable options remain listed and explain why when selected.")}`); });
                 doctype.on("input change", () => { seq++; results.empty(); fieldStart = 0; const item = result.doctypes.find((candidate) => candidate.app_name === app.val() && candidate.doctype === doctype.val()); searchFields.prop("disabled", !item?.selectable); catalogState.text(item ? `${item.doctype}: ${item.selectable ? text("available") : item.reason || text("unavailable")}` : text("Choose a listed app and DocType.")); });
-                const configured = row.reference ? {doctype: ownRule(model.content, row.id)?.target_doctype} : model.content[mutationMapping() ? "source" : "target"] || {};
+                const configured = row.reference ? {doctype: (ownRule(content(), row.id) || ruleCache.get(row.id))?.target_doctype} : content()[mutationMapping() ? "source" : "target"] || {};
                 const selected = result.doctypes.find((item) => item.doctype === configured.doctype && item.selectable);
                 catalogPending = false;
                 if (selected) { app.val(selected.app_name).trigger("change"); doctype.val(selected.doctype).trigger("change"); load(); }
