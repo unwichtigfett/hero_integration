@@ -65,4 +65,7 @@ def protect_managed_mapping(doc):
     if not frappe.db.exists("HERO Mapping Draft", {"definition_id": definition}):
         return
     if changed:
+        from hero_integration.services.frappe_mapping_draft_storage import is_personal_publication
+        if is_personal_publication(doc):
+            return
         frappe.throw("PERSONAL_DRAFT_REQUIRED: Use the personal mapping draft API.", frappe.PermissionError)

@@ -365,6 +365,7 @@ def _mapping_plan_for_run(run, target_operation: str):
         service.operation_name,
         definition_ids=contract.definition_ids,
         target_operation=contract.target_operation,
+        mapping_name=contract.mapping_name,
     )
 
 

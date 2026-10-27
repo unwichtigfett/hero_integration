@@ -13,8 +13,24 @@ from hero_integration.services.graphql_graph import analyze_snapshot
 
 
 class HEROFrappeMapping(Document):
+    def on_trash(self):
+        if self.personal_graphql_mapping:
+            frappe.throw('Published rule versions must be retained.', frappe.PermissionError)
+
+    def before_rename(self, *_args, **_kwargs):
+        if self.personal_graphql_mapping:
+            frappe.throw('Published rule versions cannot be renamed.', frappe.PermissionError)
+
     def validate(self) -> None:
         frappe.only_for("System Manager")
+        from hero_integration.services.frappe_mapping_draft_storage import personal_publication_parent
+        scope = getattr(self, 'personal_graphql_mapping', None) or ''
+        previous = self.get_doc_before_save() if not self.is_new() else None
+        old_scope = (previous.personal_graphql_mapping or '') if previous else ''
+        if scope != old_scope and (not self.is_new() or not scope or personal_publication_parent() != scope):
+            frappe.throw('Published mapping scope is immutable and service-managed.', frappe.PermissionError)
+        if scope and personal_publication_parent() != scope:
+            frappe.throw('Published rule versions are immutable.', frappe.PermissionError)
         snapshot = frappe.get_doc("HERO GraphQL Schema Snapshot", self.schema_snapshot)
         if snapshot.analysis_status != "Validated":
             frappe.throw("A validated GraphQL schema snapshot is required.")
@@ -32,17 +48,19 @@ class HEROFrappeMapping(Document):
         else:
             validate_spec(spec, _FrappeMetadata())
         if self.status == "Active" and self.purpose != PURPOSE_RECORD_NAME:
-            _lock_active_target(self.operation, self.target_doctype, self.target_field)
+            _lock_active_target((f'personal:{scope}:' if scope else '') + self.operation, self.target_doctype, self.target_field)
             # A locking read sees committed state or MariaDB aborts a stale
             # REPEATABLE READ transaction; neither may accept an old snapshot.
-            conflicts = frappe.db.sql(
-                "SELECT name FROM `tabHERO Frappe Mapping` "
-                "WHERE operation = %s AND target_doctype = %s AND target_field = %s "
-                "AND status = %s AND name != %s LIMIT 1 FOR UPDATE",
-                (self.operation, self.target_doctype, self.target_field, "Active", self.name or ""),
-            )
-            if conflicts:
-                frappe.throw("An active mapping already owns this target field.")
+            if not scope:
+                conflicts = frappe.db.sql(
+                    "SELECT name FROM `tabHERO Frappe Mapping` "
+                    "WHERE operation = %s AND target_doctype = %s AND target_field = %s "
+                    "AND status = %s AND name != %s "
+                    "AND COALESCE(personal_graphql_mapping, '') = %s LIMIT 1 FOR UPDATE",
+                    (self.operation, self.target_doctype, self.target_field, "Active", self.name or "", scope),
+                )
+                if conflicts:
+                    frappe.throw("An active mapping already owns this target field.")
             self.validation_summary = "Validated against current Frappe metadata."
         revision_fields = (
             "operation", "source_path", "source_type", "target_doctype", "target_field", "purpose",

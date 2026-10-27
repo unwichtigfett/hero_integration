@@ -521,6 +521,8 @@
         }
         function updateDirty() {
             root.find("[data-draft-state]").text(text(model?.dirty ? "Local changes — not saved" : "Saved personal draft"));
+            root.find('[data-activate-draft]').prop('disabled', !model || model.dirty || Boolean(model.reconciliation)
+                || !model.saved.content_revision || !canSaveDraft(model, active) || busy);
             root.trigger("hero-mapping-content-change");
         }
         async function loadList(selectFirst = false) {
@@ -1156,7 +1158,7 @@
             renderMappingsTable(body);
             body.append(toolbar, draftStatus);
             toolbar.addClass("hero-mapping-workbench-actions");
-            body.append($("<p class='text-muted hero-mapping-contract-note'></p>").text(text("Activation and direct deletion are unavailable here. No existing action contract is exposed by this editor.")));
+            body.append($("<p class='text-muted hero-mapping-contract-note'></p>").text(text("Delete changes the personal draft only. Activation publishes a saved valid draft and does not start synchronization.")));
             const list = rows(value);
             const grid = $("<div class='hero-mapping-editor-grid'></div>");
             const left = $("<section class='hero-mapping-table-wrap'></section>");
@@ -1175,7 +1177,8 @@
                 else root.find("button").filter((_, el) => el.textContent.startsWith(text("Undo removal"))).trigger("focus");
                 say("Mapping removed locally. Undo is available until a successful save.");
             };
-            if (editable) heading.append(button("Delete selected mapping", () => removeRow(list[selected])).prop("disabled", !list[selected]));
+            if (editable) heading.append(button("Delete selected mapping", () => removeRow(list[selected])).prop("disabled", !list[selected]),
+                button('Activate', activateDraft).attr('data-activate-draft', ''));
             left.append(heading);
             detail.attr("data-editable", String(editable));
             const searchInput = field("Filter selected field mappings", fieldFilter, (value) => { fieldFilter = value; }, left);
@@ -1515,6 +1518,42 @@
                 }
                 return false;
             } finally { if (!disposed && request === epoch) { setBusy(false); renderDetail(); } }
+        }
+        function activateDraft() {
+            if (locked() || !model || model.dirty || model.reconciliation || !model.saved.content_revision || !canSaveDraft(model, active)) return;
+            const state = model, selectedActive = active, d = state.saved;
+            const warning = d.warning_fingerprint || '';
+            if (warning && (!Array.isArray(d.warnings) || !d.warnings.length)) {
+                say('The current warnings are unavailable. Reload the saved draft before activation.'); return;
+            }
+            modal('Activate personal draft', warning
+                ? `Publish the saved draft and acknowledge these warnings: ${d.warnings.join('; ')}. No HERO synchronization will be started.`
+                : 'Publish the saved personal draft? No HERO synchronization will be started.', [
+                ['Activate saved draft', async () => {
+                    if (locked() || model !== state || state.dirty || state.reconciliation || !canSaveDraft(state, active)) return;
+                    const request = ++epoch; setBusy(true); let detail = null;
+                    try {
+                        const result = await rpc('mapping_draft_publish', {definition_id: d.definition_id,
+                            expected_generation: d.generation, expected_draft_revision: d.content_revision,
+                            expected_active_revision: state.verifiedActiveRevision ?? d.base_active_revision,
+                            expected_reconciliation_revision: d.reconciliation_revision || 0,
+                            warning_fingerprint: warning, confirmed: true}, true);
+                        if (disposed || request !== epoch) return;
+                        if (result.name !== selectedActive.name || !Number.isInteger(result.revision) || result.revision < 1) throw new Error('Invalid publication result.');
+                        const observed = await rpc('frontend_mapping_detail', {mapping_type: 'graphql', name: selectedActive.name});
+                        if (disposed || request !== epoch) return;
+                        if (observed.name !== selectedActive.name || observed.definition_id !== d.definition_id ||
+                            observed.revision !== result.revision || observed.status !== 'Active') throw new Error('Active readback differs from publication.');
+                        detail = observed; model = null; mode = 'active';
+                    } catch (error) {
+                        if (!disposed && request === epoch) { state.blocked = true; say('Publication failed or its outcome is unknown. Check the active version before trying again.'); }
+                    } finally { if (!disposed && request === epoch) setBusy(false); }
+                    if (!disposed && request === epoch) {
+                        if (detail) { active = {...detail, mapping_type: 'graphql'}; ruleCache.clear(); selected = 0; renderDetail(); say('Saved personal draft published.'); }
+                        else renderDetail();
+                    }
+                }, true], ['Cancel', () => {}],
+            ]);
         }
         async function reconcile() {
             if (locked() || !model) return; setBusy(true); const request = ++epoch;

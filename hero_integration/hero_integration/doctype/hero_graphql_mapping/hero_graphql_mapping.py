@@ -78,7 +78,8 @@ class HEROGraphQLMapping(Document):
                                     and previous.modified_by != self.modified_by)
         if content_changed or review_changed or status_changed or draft_editor_changed:
             self.mapping_revision = int(previous.mapping_revision or 0) + 1
-        if content_changed:
+        from hero_integration.services.frappe_mapping_draft_storage import is_personal_publication
+        if content_changed and not is_personal_publication(self):
             self.status = "Draft"
         if self.status == "Active" and previous and previous.status == "Draft":
             if previous.modified_by != frappe.session.user:
