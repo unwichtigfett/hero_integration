@@ -67,6 +67,37 @@ def observe(key, queue):
 
 
 class TestPersonalRulesRequest(base.TestMappingDraftAPIRequest):
+    def test_activation_revision_has_distinct_identity_and_rejects_repetition(self):
+        from hero_integration.services.mapping_draft_service import MappingDraftRevision, draft_key
+
+        self.prepare_rules()
+        draft = self.create()
+        content = deepcopy(draft['content'])
+        content['field_rules'][self.rule_id]['target_field'] = 'personal_target'
+        status, result = self.rpc('a', 'mapping_draft_save', self.args_for(draft, content), 'POST')
+        self.assertEqual(200, status, result)
+        saved = result['message']['draft']
+        base.connect(); frappe.set_user(self.users['a'])
+        storage = FrappeMappingDraftStorage()
+        try:
+            with storage.transaction(self.definition, frappe.session.user):
+                current = storage.draft(draft_key(frappe.local.site, self.definition, frappe.session.user))
+                revision = MappingDraftRevision(
+                    current.key, current.generation, current.content_revision, 'ACTIVE_ACTIVATION', current.owner,
+                    current.content, current.content_hash, current.base_active_name, current.base_active_revision,
+                    current.base_active_hash, current.base_schema_fingerprint,
+                )
+                storage.append_revision(revision)
+                with self.assertRaises(DraftConflict):
+                    storage.append_revision(revision)
+                rows = frappe.get_all('HERO Mapping Revision', filters={
+                    'draft_key': current.key, 'generation': current.generation, 'revision': current.content_revision,
+                }, fields=['kind'])
+                self.assertCountEqual(['DRAFT_SAVE', 'ACTIVE_ACTIVATION'], [row.kind for row in rows])
+                self.assertEqual(saved['content_revision'], current.content_revision)
+        finally:
+            frappe.db.rollback(); frappe.destroy()
+
     def prepare_rules(self):
         base.connect()
         self.rule_id='synthetic-rule-'+uuid4().hex
