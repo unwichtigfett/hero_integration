@@ -1218,7 +1218,7 @@
             let fieldCatalog;
             const catalogEpoch = epoch, contractState = $("<p class='text-muted' role='status'></p>").appendTo(frappePane);
             const getFieldCatalog = async () => {
-                if (!admin || !active || active.mapping_type !== "graphql") throw new Error("Catalog unavailable");
+                if (!admin || !active || active.mapping_type !== "graphql") return {apps: [], doctypes: [], fields: []};
                 if (!fieldCatalog) {
                     const method = mutation && !row.reference ? "writeback_mapper_catalog" : "mapping_target_catalog";
                     fieldCatalog = rpc(method, method === "writeback_mapper_catalog" ? {snapshot_name: active.schema_snapshot} : {}).then((result) => {
