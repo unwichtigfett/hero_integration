@@ -25,7 +25,7 @@
     // need an explicit release token. JavaScript must stay query-free when it
     // enters frappe.require(): Frappe owns the version parameter and uses the
     // original extension to select its script loader.
-    const ASSET_RELEASE = "20261026.06c";
+    const ASSET_RELEASE = "20261027.28ui";
     const ASSETS = [
         "/assets/hero_integration/css/hero_tools.css",
         "/assets/hero_integration/css/hero_adapter.css",
@@ -112,7 +112,10 @@
     // Frappe owns script URL versioning. Its compatibility loader resolves even
     // after an onerror, so verify the public module contract afterwards instead
     // of appending a second script tag or adding a manual JavaScript query string.
-    const loadScript = (path) => frappe.require(path);
+    const loadScript = (path) => {
+        const globalName = REQUIRED_ASSET_GLOBALS.find(([asset]) => path.endsWith(`/${asset}`))?.[1];
+        return globalName && window[globalName] ? Promise.resolve() : frappe.require(path);
+    };
     const assertLoadedAssets = () => {
         const missing = REQUIRED_ASSET_GLOBALS
             .filter(([, globalName]) => !window[globalName])

@@ -461,3 +461,18 @@ test('shared save releases controls before reloading and skips stale or failed s
   assert.equal(events.join(','),expected);
  }
 });
+
+test('resuming an interrupted definition browser does not replace it with an automatic selection', () => {
+ const {resumePendingView}=window.hero_integration_mapping_editor;
+ const reads=[];
+ resumePendingView({kind:'list',selectFirst:false},{list:(selectFirst)=>reads.push(selectFirst)});
+ resumePendingView({kind:'list',selectFirst:true},{list:(selectFirst)=>reads.push(selectFirst)});
+ assert.deepEqual(reads,[false,true]);
+});
+
+test('resuming automatic directional entry preserves keyboard focus on its tab', () => {
+ const {resumePendingView}=window.hero_integration_mapping_editor;
+ const reads=[];
+ resumePendingView({kind:'detail',item:{name:'query'},mappingType:'graphql',focus:false},{detail:(item,kind,focus)=>reads.push([item.name,kind,focus])});
+ assert.deepEqual(reads,[['query','graphql',false]]);
+});
