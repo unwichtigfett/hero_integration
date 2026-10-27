@@ -233,6 +233,8 @@
         }
     }
     const directionForTab = (tab) => tab === "Query" ? "QUERY_TO_FRAPPE" : tab === "Mutation" ? "FRAPPE_TO_MUTATION" : null;
+    const definitionChoice = (item) => ({...item, label: item.operation_name || item.operation || "",
+        context: [item.kind, item.target_doctype, item.schema_snapshot, item.revision == null ? "" : `Revision ${item.revision}`, item.definition_id].filter(Boolean).join(" · ")});
     const bindingAccess = (admin, definition) => !admin ? "ADMIN_ONLY" : definition?.definition_id ? "READ_ONLY" : "SELECT_DEFINITION";
     const resumePendingView = (pending, handlers) => {
         if (pending?.kind === "list") return handlers.list(pending.selectFirst ?? true);
@@ -955,7 +957,7 @@
                     results.empty();
                     result.items.forEach((item) => results.append($("<div role='listitem'></div>").append(button(item.label, () => {
                         control.prop("open", false); select(item);
-                    }).prop("disabled", Boolean(item.disabled)))));
+                    }).attr("title", item.label).prop("disabled", Boolean(item.disabled)), item.context ? $("<small></small>").text(item.context) : null)));
                     if (!result.items.length) results.append($("<p></p>").text(text("No options match this selection.")));
                     results.append($("<div class='hero-mapping-actions'></div>").append(
                         button("Previous options", () => { offset = Math.max(0, offset - 20); load(); }).prop("disabled", !offset),
@@ -984,7 +986,7 @@
                     if (start === 10000) throw new Error("Readable definition range exceeded");
                 }
                 all = all.filter((item) => !snapshot || item.schema_snapshot === snapshot);
-                return {items: all.slice(offset, offset + 20).map((item) => ({...item, label: `${item.operation_name || item.operation} · ${item.name}`})), total: all.length};
+                return {items: all.slice(offset, offset + 20).map(definitionChoice), total: all.length};
             };
         }
         function renderDefinitionChooser(parent = body, label = "Definition", binding = false) {
@@ -1688,5 +1690,5 @@
         const controller = {beforeLeave: leaveWorkspace, destroy() { shell.removeClass("hero-mapping-shell"); disposed = true; epoch++; window.removeEventListener("beforeunload", unload); if (router.route === guardedRoute) router.route = originalRoute; document.removeEventListener("click", links, true); }};
         current = controller; loadList(); return controller;
     }
-    window.hero_integration_mapping_editor = Object.freeze({mount, DraftState, stable, readActiveRule, readSnapshotPages, exchangeExpectedStates, exchangeCounts, exchangeCanAdopt, reviewedTargetLabel, writebackContractLabel, legacyWritebackRows, legacyWritebackDetailMatches, sharedWritebackDraftAccess, reviewedWritebackEditable, buildReviewedWriteback, sharedWritebackRequest, sharedWritebackSaveAccepted, finishSharedWritebackSave, legacyWritebackCurrent, legacyPackageSelection, legacyPackageAdoptionArgs, legacyCandidateArgs, legacyCandidateMatches, legacyCandidateRawMessage, legacyCandidateRpc, legacyCandidatePreviewText, isOwnedExportLink, mappingTabs, directionForTab, bindingAccess, selectedPickerApp, hasCurrentDraftBase, canSaveDraft, tabKeyTarget, MappingTabStates, resumePendingView});
+    window.hero_integration_mapping_editor = Object.freeze({mount, DraftState, stable, readActiveRule, readSnapshotPages, exchangeExpectedStates, exchangeCounts, exchangeCanAdopt, reviewedTargetLabel, writebackContractLabel, legacyWritebackRows, legacyWritebackDetailMatches, sharedWritebackDraftAccess, reviewedWritebackEditable, buildReviewedWriteback, sharedWritebackRequest, sharedWritebackSaveAccepted, finishSharedWritebackSave, legacyWritebackCurrent, legacyPackageSelection, legacyPackageAdoptionArgs, legacyCandidateArgs, legacyCandidateMatches, legacyCandidateRawMessage, legacyCandidateRpc, legacyCandidatePreviewText, isOwnedExportLink, mappingTabs, directionForTab, definitionChoice, bindingAccess, selectedPickerApp, hasCurrentDraftBase, canSaveDraft, tabKeyTarget, MappingTabStates, resumePendingView});
 })();
