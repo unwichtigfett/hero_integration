@@ -248,7 +248,7 @@
         active.definition_id === model.saved.definition_id &&
         (!model.saved.base_active_name || active.name === model.saved.base_active_name) &&
         active.revision === (model.reconciliation?.activeRevision ?? model.verifiedActiveRevision ?? model.saved.base_active_revision));
-    const canSaveDraft = (model, active) => Boolean(model && !model.blocked && hasCurrentDraftBase(model, active));
+    const canSaveDraft = (model, active) => Boolean(model && !model.creation && !model.blocked && hasCurrentDraftBase(model, active));
     function tabKeyTarget(tab, key) {
         const index = mappingTabs.indexOf(tab);
         if (index < 0) return null;
@@ -265,8 +265,23 @@
     }
     class DraftState {
         constructor(draft) { this.accept(draft); }
-        accept(draft) { this.saved = draftValue(draft); this.verifiedActiveRevision = verifiedActiveRevision(this.saved); this.content = clone(this.saved.content); this.referenceOrder = [...(this.content.mapping_definition_ids || [])]; this.undo = []; this.reconciliation = null; this.blocked = false; }
-        get dirty() { return stable(this.content) !== stable(this.saved.content); }
+        accept(draft) { this.saved = draftValue(draft); this.verifiedActiveRevision = verifiedActiveRevision(this.saved); this.content = clone(this.saved.content); this.referenceOrder = [...(this.content.mapping_definition_ids || [])]; this.undo = []; this.reconciliation = null; this.blocked = false; this.creation = null; }
+        get dirty() { return Boolean(this.creation) || stable(this.content) !== stable(this.saved.content); }
+        createAdditional() {
+            const value = this.creation;
+            if (!value?.source?.field || !value?.target?.field) throw new Error('Choose both source and target fields first.');
+            const items = this.content.additional_mappings || [];
+            if (items.some((item) => stable(item.source) === stable(value.source) && stable(item.target) === stable(value.target))) throw new Error('This field mapping already exists in your draft.');
+            this.invalidateReconciliation();
+            this.content.additional_mappings = [...items, {id: window.crypto.randomUUID(), source: clone(value.source), target: clone(value.target), transformation: 'Identity'}];
+            this.creation = null;
+        }
+        removeAdditional(index) {
+            this.invalidateReconciliation();
+            this.undo.push({kind: 'additional', index, value: this.content.additional_mappings[index]});
+            this.content.additional_mappings.splice(index, 1);
+            if (!this.content.additional_mappings.length && !Object.hasOwn(this.saved.content, 'additional_mappings')) delete this.content.additional_mappings;
+        }
         invalidateReconciliation() { this.reconciliation = null; }
         set(path, value) {
             this.invalidateReconciliation();
@@ -317,6 +332,7 @@
             if (!removed) return;
             this.invalidateReconciliation();
             if (removed.kind === "reference") this.restoreReference(removed);
+            else if (removed.kind === 'additional') { this.content.additional_mappings ||= []; this.content.additional_mappings.splice(removed.index, 0, removed.value); }
             else Object.assign(this.content, removed.value);
         }
         applyReconciliation(contentJson, reconciliationJson, activeRevision, reconciliationRevision) {
@@ -494,7 +510,7 @@
             if (!model?.dirty) return action();
             modal("Unsaved changes", "Save your personal draft before leaving, discard local changes, or continue editing.", [
                 ["Save and leave", async () => { if (await save()) action(); else cancel(); }, true],
-                ["Discard changes", () => { model.content = clone(model.saved.content); model.undo = []; action(); }],
+                ["Discard changes", () => { model.content = clone(model.saved.content); model.undo = []; model.creation = null; action(); }],
                 ["Continue editing", cancel],
             ], cancel);
         }
@@ -939,9 +955,10 @@
             } finally { if (!disposed && request === epoch) { setBusy(false); renderDetail(); } }
         }
         function rows(value) {
-            if (Array.isArray(value.mapping_definition_ids)) return value.mapping_definition_ids.map((id, index) => ({id, index, reference: true}));
-            if (object(value.source) || object(value.target)) return [{id: "single", index: 0, value}];
-            return [];
+            let result = [];
+            if (Array.isArray(value.mapping_definition_ids)) result = value.mapping_definition_ids.map((id, index) => ({id, index, reference: true}));
+            else if (object(value.source) || object(value.target)) result = [{id: "single", index: 0, value}];
+            return result.concat((value.additional_mappings || []).map((entry, index) => ({id: entry.id, index, additional: true, value: entry})));
         }
         let openedChoice = null;
         const closeChoice = (focus = false) => {
@@ -1151,7 +1168,8 @@
             const heading = $("<div class='hero-mapping-actions'></div>").append($("<h4></h4>").text(text(editable ? "Personal draft field mappings" : "Selected definition field mappings")));
             const removeRow = (row) => {
                 if (!row) return;
-                model.remove(row.index); selected = 0; renderDetail();
+                if (row.additional) model.removeAdditional(row.index); else model.remove(row.index);
+                selected = 0; renderDetail();
                 const next = root.find("[data-row-selection]").eq(Math.min(row.index, rows(model.content).length - 1));
                 if (next.length) next.trigger("focus");
                 else root.find("button").filter((_, el) => el.textContent.startsWith(text("Undo removal"))).trigger("focus");
@@ -1228,13 +1246,23 @@
             const sourcePane = $("<section class='hero-mapping-context-pane' data-mapping-side='source'></section>").append($("<h4></h4>").text(text(mutation ? "Source Frappe" : "Source HERO")));
             const targetPane = $("<section class='hero-mapping-context-pane' data-mapping-side='target'></section>").append($("<h4></h4>").text(text(mutation ? "Target HERO" : "Target Frappe")));
             const heroPane = mutation ? targetPane : sourcePane, frappePane = mutation ? sourcePane : targetPane;
+            if (mode === 'draft' && model) {
+                if (!model.creation) targetPane.append(button('New mapping', () => { model.creation = {}; renderDetail(); }));
+                else {
+                    targetPane.append($('<p></p>').text(text('Choose source and target for the new mapping; existing mappings remain unchanged.')),
+                        button('Create', () => {
+                            try { model.createAdditional(); selected = rows(model.content).length - 1; renderDetail(); say('New mapping added locally. Save the draft to keep it.'); }
+                            catch (error) { fieldNotice.text(error.message); }
+                        }), button('Cancel new mapping', () => { model.creation = null; renderDetail(); }));
+                }
+            }
             const heroControls = $("<div class='hero-mapping-selection-fields'></div>").appendTo(heroPane);
             const frappeControls = $("<div class='hero-mapping-selection-fields'></div>").appendTo(frappePane);
             const browseKey = `${tab}:${active?.definition_id || ""}:${selected}`;
             const row = rows(value)[selected] || {};
             const existingRule = row.reference ? ownRule(value, row.id) || ruleCache.get(row.id) : null;
-            const configured = value[frappeSide] || {};
-            let browseApp = selectedPickerApp(model, frappeSide, configured, admin) || "";
+            const configured = model?.creation ? (model.creation[frappeSide] || {}) : row.additional ? row.value[frappeSide] || {} : value[frappeSide] || {};
+            let browseApp = model?.creation?.app || selectedPickerApp(model, frappeSide, configured, admin) || "";
             let browseDoctype = existingRule?.target_doctype || configured.doctype || "", browseChanged = false;
             let fieldCatalog;
             const catalogEpoch = epoch, contractState = $("<p class='text-muted' role='status'></p>").appendTo(frappePane);
@@ -1259,6 +1287,15 @@
                     const message = "Open my draft before changing a field. Browsing has not saved or created anything.";
                     fieldNotice.text(text(message)); say(message); openFieldDraft?.trigger("focus"); return;
                 }
+                if (model.creation) {
+                    if (isFrappe) {
+                        model.creation[frappeSide] = {doctype: f.target_doctype || browseDoctype, field: f.path};
+                        model.creation.app = browseApp;
+                    } else if (mutation) model.creation.target = {operation: active.operation_name, argument: f.argument, input_type: f.argument_input_type, field: f.path, graphql_type: f.type};
+                    else model.creation.source = {field: f.path};
+                    renderDetail(); return;
+                }
+                if (row.additional) { fieldNotice.text(text('Use New mapping to add another assignment.')); return; }
                 if (row.reference && !ownRule(model.content, row.id)) { say("This referenced active rule is read-only. Its existing personal-rule contract is required before editing."); return; }
                 if (row.reference) {
                     if (isFrappe) { const target = f.target_doctype || browseDoctype; model.referenceApps ||= Object.create(null); model.referenceApps[row.id] = {app: browseApp, doctype: target}; model.set(["field_rules", row.id, "target_doctype"], target); model.set(["field_rules", row.id, "target_field"], f.path); }
@@ -1303,7 +1340,7 @@
                 }
                 const catalog = await rpc("schema_operation_catalog", {snapshot_name: active.schema_snapshot, operation_kind: active.operation_kind});
                 const operation = catalog.find((v) => v.operation_name === active.operation_name);
-                const items = Object.entries(operation?.input_fields || {}).flatMap(([argument, list]) => list.map((f) => ({...f, argument, fieldtype: f.type, label: `${argument}.${f.path}`, context: `${f.type || ""}${f.nullable === false ? " · required" : ""}${f.select_options?.length ? ` · enum: ${f.select_options.join(", ")}` : ""}`, disabled: f.selectable === false})));
+                const items = Object.entries(operation?.input_fields || {}).flatMap(([argument, list]) => list.map((f) => ({...f, argument, argument_input_type: operation.arguments?.find((a) => a.name === argument)?.type?.replace(/!$/, '') || '', fieldtype: f.type, label: `${argument}.${f.path}`, context: `${f.type || ""}${f.nullable === false ? " · required" : ""}${f.select_options?.length ? ` · enum: ${f.select_options.join(", ")}` : ""}`, disabled: f.selectable === false})));
                 return page(items, search, offset);
             }, (item) => setField(item, false));
             const app = choice("App", "", frappeControls, async (search, offset) => {
@@ -1332,13 +1369,14 @@
             let appNames = new Map();
             const refresh = () => {
                 const value = active ? content() : {}, row = rows(value)[selected], rule = row?.reference ? ownRule(value, row.id) || ruleCache.get(row.id) : null;
-                const frappeValue = value[frappeSide] || {};
+                const assignment = model?.creation || (row?.additional ? row.value : value);
+                const frappeValue = assignment[frappeSide] || {};
                 if (!browseApp && browseDoctype) browseApp = appNames.get(browseDoctype) || (!admin && frappeValue.app) || "";
                 const setChoiceValue = (element, label) => element.find("summary strong").text(label).attr("title", label);
                 setChoiceValue(app, browseApp || text("Choose…"));
                 setChoiceValue(doctype, browseDoctype || text("Choose…"));
                 setChoiceValue(frappeField, browseChanged ? text("Choose…") : rule?.target_field || frappeValue.field_path || frappeValue.field || text("Choose…"));
-                setChoiceValue(heroField, rule?.source_path || (mutation ? value.target?.field_path || value.target?.field : value.source?.field) || text("Choose…"));
+                setChoiceValue(heroField, rule?.source_path || (mutation ? assignment.target?.field_path || assignment.target?.field : assignment.source?.field) || text("Choose…"));
                 setChoiceValue(path, browsePaths.get(browseKey)?.label || (mutation ? [value.target?.argument, value.target?.input_type].filter(Boolean).join(" / ") : value.records_path || value.record_path || value.source?.path || value.source?.doctype) || text("Not provided"));
                 heroMeta.ID.text(rule?.definition_id || active?.definition_id || text("Not provided"));
                 heroMeta.Name.text(active?.operation_name || active?.operation || text("Not provided"));
@@ -1388,6 +1426,7 @@
             }
             const value = row.value;
             panel.append($("<h4></h4>").text(text("Field mapping details")));
+            if (row.additional) { panel.append(safeJson(value)); return; }
             if (mode !== "draft" || panel.attr("data-editable") !== "true") { panel.append(safeJson(value)); return; }
             const mutation = mutationMapping(value);
             const descriptors = mutation ? [

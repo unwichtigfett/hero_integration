@@ -5,6 +5,19 @@ from hero_integration.services.personal_mapping_content import bounded, validate
 from hero_integration.services.mapping_draft_service import MappingDraftError
 
 class TestPersonalMappingContent(unittest.TestCase):
+    def test_new_assignments_have_bounded_explicit_shape_and_unique_identity(self):
+        prior = {'source': {'field': 'existing'}, 'extra': {'keep': 3}}
+        item = {'id': '8a6c58ba-08fb-4da4-87e6-684bb1b16e19',
+                'source': {'doctype': 'Customer', 'field': 'customer_name'},
+                'target': {'operation': 'update_contact', 'argument': 'contact', 'input_type': 'CustomerInput', 'field': 'full_name'},
+                'transformation': 'Identity'}
+        submitted = {**deepcopy(prior), 'additional_mappings': [item]}
+        self.assertEqual(submitted, validate_edits(prior, submitted))
+        for invalid in ([item, item], [{**item, 'actor': 'Administrator'}], [{**item, 'id': 'not-an-id'}],
+                        [{**item, 'source': {'doctype': 'Customer', 'field': ''}}]):
+            with self.assertRaises(MappingDraftError):
+                validate_edits(prior, {**deepcopy(prior), 'additional_mappings': invalid})
+
     def test_canonical_utf8_size_boundary(self):
         value={'x':'a'*65528}
         self.assertEqual(65536,len(json.dumps(value,separators=(',', ':')).encode()))
