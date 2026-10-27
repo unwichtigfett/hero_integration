@@ -1147,8 +1147,18 @@
                 .append($("<summary></summary>").text(text("Rule parameters, transformation and additional configuration")));
             const detail = $("<section class='hero-mapping-row-detail' aria-label='Selected field mapping'></section>").appendTo(parameters);
             const table = $("<table class='table table-sm hero-mapping-table'><thead><tr><th>Source</th><th>Target</th><th>Rule</th><th></th></tr></thead><tbody></tbody></table>");
-            left.append($("<h4></h4>").text(text(mode === "draft" ? "Personal draft field mappings" : "Selected definition field mappings")));
             const editable = mode === "draft";
+            const heading = $("<div class='hero-mapping-actions'></div>").append($("<h4></h4>").text(text(editable ? "Personal draft field mappings" : "Selected definition field mappings")));
+            const removeRow = (row) => {
+                if (!row) return;
+                model.remove(row.index); selected = 0; renderDetail();
+                const next = root.find("[data-row-selection]").eq(Math.min(row.index, rows(model.content).length - 1));
+                if (next.length) next.trigger("focus");
+                else root.find("button").filter((_, el) => el.textContent.startsWith(text("Undo removal"))).trigger("focus");
+                say("Mapping removed locally. Undo is available until a successful save.");
+            };
+            if (editable) heading.append(button("Delete selected mapping", () => removeRow(list[selected])).prop("disabled", !list[selected]));
+            left.append(heading);
             detail.attr("data-editable", String(editable));
             const searchInput = field("Filter selected field mappings", fieldFilter, (value) => { fieldFilter = value; }, left);
             const drawRows = () => {
@@ -1164,7 +1174,7 @@
                     const tr = $("<tr></tr>").toggleClass("is-selected", selected === index);
                     tr.append($("<td></td>").append(button(source, () => { selected = index; drawRows(); renderRow(row, detail); body.find(".hero-mapping-context").trigger("hero-mapping-selection-change"); }).attr("data-row-selection", index)), $("<td></td>").text(target), $("<td></td>").text(typeof rule === "string" ? rule : text("Configured special rule")));
                     const actions = $("<td></td>");
-                    if (editable) actions.append(button("Remove", () => { model.remove(row.index); selected = 0; renderDetail(); const next = root.find("[data-row-selection]").eq(Math.min(row.index, rows(model.content).length - 1)); if (next.length) next.trigger("focus"); else root.find("button").filter((_, el) => el.textContent.startsWith(text("Undo removal"))).trigger("focus"); say("Mapping removed locally. Undo is available until a successful save."); }));
+                    if (editable) actions.append(button("Remove", () => removeRow(row)));
                     tr.append(actions); table.find("tbody").append(tr);
                 });
                 if (list.length && !table.find("tbody").children().length) table.find("tbody").append($("<tr><td colspan='4'></td></tr>").find("td").text(text("No field mappings match this filter.")).end());
