@@ -971,7 +971,7 @@
                     result.items.forEach((item) => results.append($("<div role='listitem'></div>").append(button(item.label, () => {
                         closeChoice(true); select(item);
                     }).attr("title", item.label).prop("disabled", Boolean(item.disabled)), item.context ? $("<small></small>").text(item.context) : null)));
-                    if (!result.items.length) results.append($("<p></p>").text(text("No options match this selection.")));
+                    if (!result.items.length) results.append($("<p></p>").text(text(result.emptyMessage || "No options match this selection.")));
                     results.append($("<div class='hero-mapping-actions'></div>").append(
                         button("Previous", () => { offset = Math.max(0, offset - 20); load(); }).attr("aria-label", "Previous options").prop("disabled", !offset),
                         $("<span></span>").text(`${offset + (result.items.length ? 1 : 0)}–${offset + result.items.length} / ${result.total}`),
@@ -1214,6 +1214,17 @@
         function renderContext(value) {
             const mutation = tab === "Mutation", frappeSide = mutation ? "source" : "target";
             const context = $("<section class='hero-mapping-context' aria-label='Map Fields'></section>").append($("<h3></h3>").text(text("Map Fields")));
+            const fieldNotice = $("<p role='status'></p>");
+            let openFieldDraft;
+            if (admin && active && active.mapping_type === "graphql") {
+                const guidance = $("<div class='hero-mapping-context-note' data-field-edit-mode></div>");
+                if (mode === "draft" && model) guidance.append($("<p></p>").text(text("Personal draft: selecting a field changes this draft locally. Save draft to keep the changes.")));
+                else {
+                    openFieldDraft = button("Open my draft to edit fields", openDraft);
+                    guidance.append($("<p></p>").text(text("Active mapping is read-only. Open your personal draft to change either field.")), openFieldDraft);
+                }
+                context.append(guidance.append(fieldNotice));
+            }
             const sourcePane = $("<section class='hero-mapping-context-pane' data-mapping-side='source'></section>").append($("<h4></h4>").text(text(mutation ? "Source Frappe" : "Source HERO")));
             const targetPane = $("<section class='hero-mapping-context-pane' data-mapping-side='target'></section>").append($("<h4></h4>").text(text(mutation ? "Target HERO" : "Target Frappe")));
             const heroPane = mutation ? targetPane : sourcePane, frappePane = mutation ? sourcePane : targetPane;
@@ -1244,7 +1255,10 @@
                 return {items: filtered.slice(offset, offset + 20), total: filtered.length};
             };
             const setField = (f, isFrappe) => {
-                if (mode !== "draft" || !model) { say("Open my draft before changing a field. Browsing has not saved or created anything."); return; }
+                if (mode !== "draft" || !model) {
+                    const message = "Open my draft before changing a field. Browsing has not saved or created anything.";
+                    fieldNotice.text(text(message)); say(message); openFieldDraft?.trigger("focus"); return;
+                }
                 if (row.reference && !ownRule(model.content, row.id)) { say("This referenced active rule is read-only. Its existing personal-rule contract is required before editing."); return; }
                 if (row.reference) {
                     if (isFrappe) { const target = f.target_doctype || browseDoctype; model.referenceApps ||= Object.create(null); model.referenceApps[row.id] = {app: browseApp, doctype: target}; model.set(["field_rules", row.id, "target_doctype"], target); model.set(["field_rules", row.id, "target_field"], f.path); }
@@ -1303,7 +1317,7 @@
             const frappeField = choice("Frappe Field", "", frappeControls, async (search, offset) => {
                 const catalog = await getFieldCatalog();
                 const selectedDoc = catalog.doctypes.find((item) => item.app_name === browseApp && item.doctype === browseDoctype && item.selectable);
-                if (!selectedDoc) return {items: [], total: 0};
+                if (!selectedDoc) return {items: [], total: 0, emptyMessage: "Choose an available App and DocType before choosing a Frappe field."};
                 if (mutation && !row.reference) return page((catalog.fields || []).filter((f) => f.app_name === browseApp && f.doctype === browseDoctype).map((f) => ({...f, label: f.path, searchText: f.description || "", context: `${f.label || ""} · ${f.fieldtype || ""}${reviewedTargetLabel(f) ? ` · ${text("Reviewed HERO target")}: ${reviewedTargetLabel(f)}` : ""}${f.selectable === false ? ` · ${f.reason || "not permitted"}` : ""}`, disabled: f.selectable === false})), search, offset);
                 const result = await rpc("mapping_target_catalog_page", {app_name: browseApp, doctype: browseDoctype, search, start: offset, page_size: 20});
                 return {items: result.items.map((f) => ({...f, label: f.path, context: `${f.fieldtype || f.type || ""}${f.selectable === false ? ` · ${f.reason || "not permitted"}` : ""}`, disabled: f.selectable === false})), total: result.total};
