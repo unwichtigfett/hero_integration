@@ -156,7 +156,7 @@
 .hero-mapping-core .hero-mapping-workspace-context { display:flex; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:14px; }
 .hero-mapping-core .hero-mapping-workspace-context > .hero-mapping-select { flex:0 1 360px; }
 .hero-mapping-core .hero-mapping-select { min-width:0; position:relative; }
-.hero-mapping-core .hero-mapping-select > summary { list-style:none; display:flex; flex-direction:column; gap:4px; cursor:pointer; }
+.hero-mapping-core .hero-mapping-select > summary { list-style:none; display:flex; flex-direction:column; gap:4px; cursor:pointer; scroll-margin-top:100px; }
 .hero-mapping-core .hero-mapping-select > summary strong { display:block; padding:7px 24px 7px 10px; border:1px solid var(--border-color); border-radius:var(--border-radius); font-weight:400; background:var(--control-bg); min-height:34px; overflow-wrap:anywhere; }
 .hero-mapping-core .hero-mapping-select > summary strong::after { content:'▾'; position:absolute; right:10px; }
 .hero-mapping-core .hero-mapping-select-popup { position:absolute; z-index:30; width:max(100%, 300px); max-width:min(540px, 82vw); max-height:360px; overflow:auto; padding:12px; border:1px solid var(--border-color); border-radius:var(--border-radius); background:var(--card-bg); box-shadow:var(--shadow-md, 0 3px 12px #0002); }
@@ -171,7 +171,7 @@
 .hero-mapping-core .hero-mapping-context h3, .hero-mapping-core .hero-mapping-active h3 { font-size:18px; margin:0 0 8px; }
 .hero-mapping-core .hero-mapping-context-pane { padding:14px; }
 .hero-mapping-core .hero-mapping-context-pane h4 { font-size:16px; margin:0 0 10px; }
-.hero-mapping-core .hero-mapping-arrow { align-self:center; text-align:center; font-size:28px; }
+.hero-mapping-core .hero-mapping-arrow { align-self:center; justify-self:center; width:28px; height:28px; line-height:28px; text-align:center; font-size:28px; pointer-events:none; }
 .hero-mapping-core .hero-mapping-selection-fields { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; align-items:start; }
 .hero-mapping-core .hero-mapping-selection-control { display:flex; flex-direction:column; gap:4px; min-width:0; }
 .hero-mapping-core .hero-mapping-selection-control > button { width:100%; min-height:34px; white-space:normal; overflow-wrap:anywhere; text-align:left; padding:7px 10px; }
