@@ -5,6 +5,18 @@ import test from 'node:test';
 const window = {};
 vm.runInNewContext(readFileSync(new URL('../public/js/hero_mapping_editor.js', import.meta.url), 'utf8'), {window});
 const {DraftState, stable} = window.hero_integration_mapping_editor;
+test('same operation names retain distinct definition identity and context', () => {
+ const {definitionChoice}=window.hero_integration_mapping_editor;
+ const first={operation_name:'contacts',name:'HERO-GQL-MAP-1',definition_id:'id-1',kind:'graphql',schema_snapshot:'snapshot-a',revision:2};
+ const second={...first,name:'HERO-GQL-MAP-2',definition_id:'id-2',revision:3};
+ const a=definitionChoice(first), b=definitionChoice(second);
+ assert.equal(a.label,'contacts'); assert.equal(b.label,'contacts');
+ assert.equal(a.name,first.name); assert.equal(b.name,second.name);
+ assert.equal(a.definition_id,'id-1'); assert.equal(b.definition_id,'id-2');
+ assert.match(a.context,/snapshot-a.*Revision 2.*id-1/);
+ assert.match(b.context,/Revision 3.*id-2/);
+ assert.equal(definitionChoice({operation:'project_matches'}).label,'project_matches');
+});
 test('snapshot pagination reaches later pages and never returns partial results after failure or context change', async () => {
  const {readSnapshotPages}=window.hero_integration_mapping_editor;
  const calls=[]; const data=Array.from({length:205},(_,i)=>({name:`snapshot-${i}`}));

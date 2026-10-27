@@ -161,6 +161,7 @@
 .hero-mapping-core .hero-mapping-select > summary strong::after { content:' ▾'; }
 .hero-mapping-core .hero-mapping-select-popup { position:absolute; z-index:30; width:max(100%, 300px); max-width:min(540px, 82vw); max-height:360px; overflow:auto; padding:12px; border:1px solid var(--border-color); border-radius:var(--border-radius); background:var(--card-bg); box-shadow:var(--shadow-md, 0 3px 12px #0002); }
 .hero-mapping-core .hero-mapping-select-popup [role=listitem] > button { display:block; width:100%; margin-top:6px; white-space:normal; text-align:left; }
+.hero-mapping-core .hero-mapping-select-popup [role=listitem] > small { display:block; padding:2px 10px 4px; overflow-wrap:anywhere; color:var(--text-muted); }
 .hero-mapping-core .hero-mapping-context { grid-template-columns:minmax(0,1fr) 28px minmax(0,1fr); gap:12px; margin:0 0 14px; align-items:stretch; }
 .hero-mapping-core .hero-mapping-context > h3, .hero-mapping-core .hero-mapping-context-note { grid-column:1 / -1; margin:0; }
 .hero-mapping-core .hero-mapping-context h3, .hero-mapping-core .hero-mapping-active h3 { font-size:18px; margin:0 0 8px; }
