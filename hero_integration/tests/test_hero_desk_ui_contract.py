@@ -57,7 +57,8 @@ class TestHeroDeskUiContract(unittest.TestCase):
         self.assertIn("hero-unified-navigation", source)
         self.assertIn("hero_workspace.css", source)
         self.assertIn("ASSET_RELEASE", source)
-        self.assertIn("const loadScript = (path) => frappe.require(path);", source)
+        self.assertIn("const loadScript = (path) => {", source)
+        self.assertIn("globalName && window[globalName] ? Promise.resolve() : frappe.require(path)", source)
         self.assertNotIn("frappe.require(assetUrl(path)", source)
         for endpoint in (
             "workspace_context", "workspace_schema", "workspace_graph", "workspace_service_save",
@@ -195,7 +196,7 @@ class TestHeroDeskUiContract(unittest.TestCase):
 
     def test_mapping_editor_bounds_collections_and_preserves_server_identity(self):
         source = MAPPING_EDITOR_JS.read_text()
-        for contract in ("graphql_total", "frappe_total", "Definitions in this direction on this page", "HERO operations and mapping definitions",
+        for contract in ("graphql_total", "frappe_total", "Active Mappings", "Total definitions / field rules", "offset >= 10000",
                          "definition_id: active.definition_id", "mapping_type: kind, name: item.name", "page_size: 20"):
             self.assertIn(contract, source)
         for excluded in ("import_mapping_json", "runtime_plan_approve"):
