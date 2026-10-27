@@ -25,6 +25,18 @@ class TestMappingDraftService(unittest.TestCase):
         self.storage.put_active(self.active)
         self.service = MappingDraftService(self.storage)
 
+    def test_reconciliation_reports_competing_additional_mappings_as_conflict(self):
+        draft = self.service.open_draft(self.active.definition_id, 'owner@example.invalid')
+        candidate = dict(draft.content, additional_mappings=[{'id': 'mine'}])
+        changed = ActiveMapping(self.active.site_scope, self.active.definition_id, self.active.name, 4,
+                                self.active.schema_fingerprint,
+                                dict(self.active.content, additional_mappings=[{'id': 'theirs'}]))
+        self.storage.put_active(changed)
+        preview = self.service.reconcile_preview(self.active.definition_id, draft.owner, 0, 4, candidate,
+                                                  expected_generation=1, expected_reconciliation_revision=0)
+        self.assertTrue(any(item.identifier == 'root:additional_mappings' and item.state == 'CONFLICT'
+                            for item in preview.items))
+
     def test_administrators_receive_separate_open_drafts(self) -> None:
         first = self.service.open_draft(self.active.definition_id, "admin.one@example.invalid")
         second = self.service.open_draft(self.active.definition_id, "admin.two@example.invalid")

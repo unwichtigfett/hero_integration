@@ -77,6 +77,19 @@ class TestMappingDraftExchange(unittest.TestCase):
         self.assertEqual(["UNCHANGED"], [item["state"] for item in preview["items"]])
         self.assertEqual(9007199254740993, package["mappings"][0]["content"]["value"])
 
+    def test_additional_assignment_and_large_number_survive_export_and_preview(self):
+        row = self.frappe.drafts[0]
+        value = json.loads(row['content_json'])
+        value['additional_mappings'] = [{'id': '8a6c58ba-08fb-4da4-87e6-684bb1b16e19',
+            'source': {'field': 'nr'}, 'target': {'doctype': 'Customer', 'field': 'alias'},
+            'transformation': 'Identity'}]
+        row['content_json'] = json.dumps(value)
+        row['content_hash'] = exchange._hash(value)
+        exported = self.package()
+        self.assertEqual(value, json.loads(exported)['mappings'][0]['content'])
+        preview = exchange.preview_import(exported, 'source-1', 'SNAPSHOT', 'QUERY_TO_FRAPPE')
+        self.assertEqual(['UNCHANGED'], [item['state'] for item in preview['items']])
+
     def test_preview_reports_omitted_own_drafts_without_touching_other_direction_or_owner(self):
         package = json.loads(self.package())
         package["mappings"] = []

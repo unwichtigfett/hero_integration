@@ -1,6 +1,7 @@
 """Structural personal-draft content, never an executable mapping normalizer."""
 from copy import deepcopy
 import json
+from uuid import UUID
 
 from hero_integration.services.mapping_draft_service import MappingDraftError
 
@@ -63,6 +64,9 @@ def validate_edits(prior, submitted):
     """Validate edits and retain exact stored values at immutable paths."""
     result = deepcopy(submitted)
     for key in set(prior) | set(submitted):
+        if key == 'additional_mappings':
+            validate_additional_mappings(submitted.get(key, []))
+            continue
         if key in {'field_rules', 'field_rule_bases', 'mapping_definition_ids'}:
             continue
         if key in TEXT_FIELDS:
@@ -95,6 +99,32 @@ def validate_edits(prior, submitted):
             result[key] = deepcopy(prior[key])
     references(submitted)
     return result
+
+
+def validate_additional_mappings(items):
+    if not isinstance(items, list) or len(items) > 100:
+        raise MappingDraftError('Additional mappings must be a bounded list.')
+    seen = set()
+    for item in items:
+        if not isinstance(item, dict) or set(item) != {'id', 'source', 'target', 'transformation'}:
+            raise MappingDraftError('Invalid additional mapping shape.')
+        try:
+            identity = str(UUID(item['id']))
+        except (ValueError, TypeError, AttributeError):
+            raise MappingDraftError('Invalid additional mapping identity.') from None
+        if identity != item['id'] or identity in seen:
+            raise MappingDraftError('Additional mapping identities must be unique canonical UUIDs.')
+        seen.add(identity)
+        if not isinstance(item['transformation'], str) or item['transformation'] not in {'Identity', 'Trim'}:
+            raise MappingDraftError('Unsupported additional mapping transformation.')
+        for side in ('source', 'target'):
+            value = item[side]
+            if not isinstance(value, dict) or not value or set(value) - EDITABLE[side]:
+                raise MappingDraftError('Invalid additional mapping assignment.')
+            if any(not isinstance(v, str) or not v or len(v) > 4096 for v in value.values()):
+                raise MappingDraftError('Additional mapping fields must be nonempty text.')
+        if 'field' not in item['source'] or 'field' not in item['target']:
+            raise MappingDraftError('Both additional mapping fields are required.')
 
 
 def validate_rule(rule):

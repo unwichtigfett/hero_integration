@@ -5,6 +5,16 @@ import test from 'node:test';
 const window = {};
 vm.runInNewContext(readFileSync(new URL('../public/js/hero_mapping_editor.js', import.meta.url), 'utf8'), {window});
 const {DraftState, stable} = window.hero_integration_mapping_editor;
+test('new mapping preserves the existing assignment and supports undo', () => {
+ window.crypto = {randomUUID: () => '8a6c58ba-08fb-4da4-87e6-684bb1b16e19'};
+ const initial = {source: {doctype: 'Customer', field: 'customer_name'}, target: {field: 'full_name'}};
+ const state = new DraftState({content: initial});
+ state.creation = {source: {doctype:'Customer',field:'alias'}, target:{field:'nr'}};
+ assert.equal(state.dirty,true); state.createAdditional();
+ assert.equal(state.content.source.field,'customer_name'); assert.equal(state.content.additional_mappings[0].source.field,'alias');
+ state.removeAdditional(0); assert.equal(state.content.source.field,'customer_name'); state.restore();
+ assert.equal(state.content.additional_mappings[0].target.field,'nr');
+});
 test('same operation names retain distinct definition identity and context', () => {
  const {definitionChoice}=window.hero_integration_mapping_editor;
  const first={operation_name:'contacts',name:'HERO-GQL-MAP-1',definition_id:'id-1',kind:'graphql',schema_snapshot:'snapshot-a',revision:2};

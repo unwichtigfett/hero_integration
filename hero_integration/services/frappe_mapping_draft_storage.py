@@ -208,6 +208,8 @@ class FrappeMappingDraftStorage:
         key = draft_key(self.frappe.local.site, self._definition.definition_id, self.frappe.session.user)
         prior = self.draft(key).content
         value = validate_edits(prior, content)
+        if value.get('additional_mappings'):
+            self._validate_additional_mappings(value['additional_mappings'])
         rules, bases = value.get("field_rules", {}), value.get("field_rule_bases", {})
         if not isinstance(rules, dict) or not isinstance(bases, dict) or not same(bases, prior.get("field_rule_bases", {})):
             raise MappingDraftError("Field-rule provenance is server-managed.")
@@ -229,3 +231,46 @@ class FrappeMappingDraftStorage:
         # Personal drafts store structural content losslessly. Executable
         # writeback normalization remains solely at its existing execution gate.
         return bounded(value)
+
+    def _validate_additional_mappings(self, mappings):
+        from hero_integration.api import _validated_snapshot
+        from hero_integration.services.frappe_mapping_catalog import (
+            FrappePickerMetadata, validate_draft_target, validate_draft_writeback_source,
+        )
+        from hero_integration.services.frappe_writeback import (
+            WritebackContractError, draft_source_type_compatible, normalise_draft_mapping,
+        )
+        from hero_integration.services.mapping_suggestions import source_fields
+
+        parent = self._definition
+        snapshot, schema = _validated_snapshot(parent.schema_snapshot)
+        if snapshot.schema_fingerprint != parent.schema_fingerprint:
+            raise DraftConflict('Mapping schema changed.')
+        metadata = FrappePickerMetadata()
+        existing = json.loads(parent.mapping_json)
+        operation = existing.get('target_operation') or parent.operation_name
+        sources = {item.path: item for item in source_fields(operation, schema) if item.selectable} if parent.direction == 'QUERY_TO_FRAPPE' else {}
+        for item in mappings:
+            source, target = item['source'], item['target']
+            try:
+                if parent.direction == 'QUERY_TO_FRAPPE':
+                    if set(source) != {'field'} or set(target) != {'doctype', 'field'}:
+                        raise MappingDraftError('Invalid query assignment shape.')
+                    chosen = sources.get(source['field'])
+                    if chosen is None or not chosen.mapping_type:
+                        raise MappingDraftError('Source field is not approved for this query.')
+                    validate_draft_target(operation, chosen.mapping_type, target.get('doctype', ''), target['field'], metadata)
+                elif parent.direction == 'FRAPPE_TO_MUTATION':
+                    if set(source) != {'doctype', 'field'} or set(target) != {'operation', 'argument', 'input_type', 'field', 'graphql_type'}:
+                        raise MappingDraftError('Invalid mutation assignment shape.')
+                    normalized = normalise_draft_mapping(item, schema)
+                    actual = normalized['target']
+                    if actual['operation'] != parent.operation_name or any(actual.get(k) != v for k, v in target.items()):
+                        raise MappingDraftError('Mutation target does not match the snapshot.')
+                    field = validate_draft_writeback_source(source.get('doctype', ''), source['field'], metadata)
+                    if not draft_source_type_compatible(field.fieldtype, actual['graphql_type']):
+                        raise MappingDraftError('Source and mutation field types are incompatible.')
+                else:
+                    raise MappingDraftError('Unsupported mapping direction.')
+            except (ValueError, WritebackContractError) as error:
+                raise MappingDraftError('Invalid additional mapping.') from error
