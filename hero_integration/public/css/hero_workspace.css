@@ -158,10 +158,14 @@
 .hero-mapping-core .hero-mapping-select { min-width:0; position:relative; }
 .hero-mapping-core .hero-mapping-select > summary { list-style:none; display:flex; flex-direction:column; gap:4px; cursor:pointer; }
 .hero-mapping-core .hero-mapping-select > summary strong { display:block; padding:7px 24px 7px 10px; border:1px solid var(--border-color); border-radius:var(--border-radius); font-weight:400; background:var(--control-bg); min-height:34px; overflow-wrap:anywhere; }
-.hero-mapping-core .hero-mapping-select > summary strong::after { content:' ▾'; }
+.hero-mapping-core .hero-mapping-select > summary strong::after { content:'▾'; position:absolute; right:10px; }
 .hero-mapping-core .hero-mapping-select-popup { position:absolute; z-index:30; width:max(100%, 300px); max-width:min(540px, 82vw); max-height:360px; overflow:auto; padding:12px; border:1px solid var(--border-color); border-radius:var(--border-radius); background:var(--card-bg); box-shadow:var(--shadow-md, 0 3px 12px #0002); }
+.hero-mapping-core .hero-mapping-context-pane:last-of-type .hero-mapping-select-popup { right:0; }
 .hero-mapping-core .hero-mapping-select-popup [role=listitem] > button { display:block; width:100%; margin-top:6px; white-space:normal; text-align:left; }
 .hero-mapping-core .hero-mapping-select-popup [role=listitem] > small { display:block; padding:2px 10px 4px; overflow-wrap:anywhere; color:var(--text-muted); }
+.hero-mapping-core .hero-mapping-select-popup .hero-mapping-actions { display:flex; gap:6px; align-items:center; margin-top:8px; flex-wrap:wrap; }
+.hero-integration-ui .hero-mapping-core :is(button, input, select, summary, textarea):focus { outline:2px solid var(--text-color) !important; outline-offset:2px; box-shadow:none !important; }
+.hero-integration-ui .hero-mapping-core .hero-mapping-select-popup .form-control:focus { border-color:var(--text-color) !important; }
 .hero-mapping-core .hero-mapping-context { grid-template-columns:minmax(0,1fr) 28px minmax(0,1fr); gap:12px; margin:0 0 14px; align-items:stretch; }
 .hero-mapping-core .hero-mapping-context > h3, .hero-mapping-core .hero-mapping-context-note { grid-column:1 / -1; margin:0; }
 .hero-mapping-core .hero-mapping-context h3, .hero-mapping-core .hero-mapping-active h3 { font-size:18px; margin:0 0 8px; }
@@ -185,6 +189,7 @@
 .hero-mapping-core .hero-mapping-contract-note { font-size:12px; margin:6px 0 12px; }
 @media(max-width:900px) {
  .hero-mapping-core .hero-mapping-context { grid-template-columns:minmax(0,1fr); }
+ .hero-mapping-core .hero-mapping-context-pane .hero-mapping-select-popup { right:0; }
  .hero-mapping-core .hero-mapping-arrow { transform:rotate(90deg); }
  .hero-mapping-core .hero-mapping-table-filters { grid-template-columns:repeat(2,minmax(0,1fr)); }
 }
