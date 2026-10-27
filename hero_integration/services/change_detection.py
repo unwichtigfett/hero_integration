@@ -74,6 +74,9 @@ def observe_frappe_target_change(doc, method=None) -> None:
     # the Link fields introduced by the same synchronization.
     if frappe.flags.in_migrate:
         return
+    from hero_integration.services.frappe_mapping_draft_storage import personal_publication_active
+    if personal_publication_active():
+        return
 
     links = frappe.get_all(
         "HERO Integration Link",

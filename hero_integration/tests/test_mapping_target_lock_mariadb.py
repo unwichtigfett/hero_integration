@@ -41,7 +41,7 @@ class TestMappingTargetLockMariaDB(unittest.TestCase):
         for item in self.patches:
             item.start()
         self.admin = self.connect()
-        self.admin.sql("CREATE TABLE `tabHERO Frappe Mapping` (name VARCHAR(100) PRIMARY KEY, operation VARCHAR(100), target_doctype VARCHAR(100), target_field VARCHAR(100), status VARCHAR(30)) ENGINE=InnoDB")
+        self.admin.sql("CREATE TABLE `tabHERO Frappe Mapping` (name VARCHAR(100) PRIMARY KEY, operation VARCHAR(100), target_doctype VARCHAR(100), target_field VARCHAR(100), status VARCHAR(30), personal_graphql_mapping VARCHAR(140)) ENGINE=InnoDB")
         self.admin.commit()
 
     def tearDown(self):
@@ -97,7 +97,7 @@ class TestMappingTargetLockMariaDB(unittest.TestCase):
         if stale_snapshot:
             self.assertEqual(second.sql("SELECT COUNT(*) FROM `tabHERO Frappe Mapping`")[0][0], 0)
         self.module.HEROFrappeMapping.validate(self.doc("first"))
-        first.sql("INSERT INTO `tabHERO Frappe Mapping` VALUES (%s,%s,%s,%s,%s)",
+        first.sql("INSERT INTO `tabHERO Frappe Mapping` (name,operation,target_doctype,target_field,status) VALUES (%s,%s,%s,%s,%s)",
                   ("first", "HeroCustomers", "Customer", "custom_hero_x", "Active"))
         entered, done, results = threading.Event(), threading.Event(), []
         def competing():

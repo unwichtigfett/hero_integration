@@ -67,6 +67,24 @@ def observe(key, queue):
 
 
 class TestPersonalRulesRequest(base.TestMappingDraftAPIRequest):
+    def test_publication_request_rejects_foreign_employee_and_stale_revisions(self):
+        self.prepare_rules()
+        draft = self.create('a')
+        content = deepcopy(draft['content'])
+        content['field_rules'][self.rule_id]['target_field'] = 'personal_target'
+        status, result = self.rpc('a', 'mapping_draft_save', self.args_for(draft, content), 'POST')
+        self.assertEqual(200, status, result)
+        saved = result['message']['draft']
+        args = {'definition_id': self.definition, 'expected_generation': saved['generation'],
+                'expected_draft_revision': saved['content_revision'], 'expected_active_revision': saved['base_active_revision'],
+                'expected_reconciliation_revision': saved['reconciliation_revision'], 'confirmed': True}
+        before = self.state()
+        self.assertEqual(403, self.rpc('employee', 'mapping_draft_publish', args, 'POST')[0])
+        self.assertIn(self.rpc('b', 'mapping_draft_publish', args, 'POST')[0], (403, 417))
+        self.assertEqual(417, self.rpc('a', 'mapping_draft_publish', {**args, 'expected_draft_revision': 2}, 'POST')[0])
+        self.assertEqual(417, self.rpc('a', 'mapping_draft_publish', {**args, 'expected_active_revision': 2}, 'POST')[0])
+        self.assertEqual(before, self.state())
+
     def test_activation_revision_has_distinct_identity_and_rejects_repetition(self):
         from hero_integration.services.mapping_draft_service import MappingDraftRevision, draft_key
 

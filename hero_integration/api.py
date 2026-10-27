@@ -1273,6 +1273,17 @@ def _personal_draft_document(definition_id):
     return doc
 
 
+def _personal_draft_warnings(raw):
+    try:
+        value = json.loads(raw) if raw else {}
+        warnings = value.get('warnings') if isinstance(value, dict) else None
+        if isinstance(warnings, list) and 0 < len(warnings) <= 100 and all(isinstance(w, str) and 0 < len(w) <= 1000 for w in warnings):
+            return warnings
+    except (ValueError, TypeError):
+        pass
+    return []
+
+
 def _personal_draft_result(value):
     from dataclasses import asdict
     result = asdict(value)
@@ -1281,6 +1292,9 @@ def _personal_draft_result(value):
     result["content_json"] = json.dumps(value.content, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
     result["base_content_json"] = json.dumps(value.base_content, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False) if value.base_content is not None else None
     result["reconciliation_json"] = json.dumps(value.reconciliation, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False) if value.reconciliation is not None else None
+    warning, diagnostics = frappe.db.get_value("HERO Mapping Draft", value.key, ["warning_fingerprint", "diagnostics_json"])
+    result["warning_fingerprint"] = warning or ""
+    result["warnings"] = _personal_draft_warnings(diagnostics)
     return result
 
 
@@ -1297,6 +1311,8 @@ def _personal_draft_doc_result(doc):
         "base_content_json": doc.base_content_json or None,
         "reconciliation_revision": int(doc.reconciliation_revision or 0),
         "reconciliation_json": doc.reconciliation_json or None,
+        "warning_fingerprint": doc.warning_fingerprint or "",
+        "warnings": _personal_draft_warnings(doc.diagnostics_json),
     }}
 
 
@@ -1483,6 +1499,26 @@ def mapping_draft_save(definition_id: str, expected_generation: int | str,
                                                           reconciliation=proof)
     return {"draft": _personal_draft_result(result.draft), "unchanged": result.unchanged,
             "reconciliation_updated": result.reconciliation_updated}
+
+
+@frappe.whitelist(methods=['POST'])
+def mapping_draft_publish(definition_id: str, expected_generation: int | str,
+                          expected_draft_revision: int | str, expected_active_revision: int | str,
+                          expected_reconciliation_revision: int | str, confirmed=False, warning_fingerprint: str = ''):
+    _mapping_request_fields({'definition_id', 'expected_generation', 'expected_draft_revision',
+                             'expected_active_revision', 'expected_reconciliation_revision', 'confirmed', 'warning_fingerprint'})
+    definition_id, _ = _personal_draft_identity(definition_id)
+    generation = _mapping_int(expected_generation, 'expected_generation', 1)
+    revision = _mapping_int(expected_draft_revision, 'expected_draft_revision', 1)
+    active = _mapping_int(expected_active_revision, 'expected_active_revision', 1)
+    reconciliation_revision = _mapping_int(expected_reconciliation_revision, 'expected_reconciliation_revision')
+    if not isinstance(warning_fingerprint, str) or len(warning_fingerprint) > 140:
+        frappe.throw('MAPPING_INPUT_INVALID: Invalid warning fingerprint.')
+    from hero_integration.services.frappe_mapping_draft_storage import FrappeMappingDraftStorage
+    with _personal_draft_errors():
+        return FrappeMappingDraftStorage().publish(definition_id, frappe.session.user, generation, revision, active,
+            reconciliation_revision, confirmed=confirmed in (True, 1, '1', 'true', 'True'),
+            warning_fingerprint=warning_fingerprint)
 
 
 def _reconciliation_request(definition_id, expected_generation, expected_draft_revision,
@@ -2646,8 +2682,9 @@ class _FrappeMetadata:
         return frappe.get_meta(doctype).get_field(fieldname)
 
 
-def _validated_snapshot(snapshot_name: str):
-    snapshot = frappe.get_doc("HERO GraphQL Schema Snapshot", snapshot_name)
+def _validated_snapshot(snapshot_name: str, *, for_update=False):
+    snapshot = (frappe.get_doc("HERO GraphQL Schema Snapshot", snapshot_name, for_update=True) if for_update
+                else frappe.get_doc("HERO GraphQL Schema Snapshot", snapshot_name))
     if snapshot.analysis_status != "Validated":
         frappe.throw("The GraphQL schema snapshot is not valid.")
     from hero_integration.services.graphql_graph import analyze_snapshot

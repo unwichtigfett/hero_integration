@@ -10,6 +10,7 @@
   {"fieldname":"relation","label":"Relationship","fieldtype":"Data"}, {"fieldname":"priority","label":"Priority (0 first, 10 last)","fieldtype":"Int","default":"5","description":"Whole number from 0 through 10. Priority never replaces dependency or conflict checks."},
   {"fieldname":"schema_dependencies","label":"Schema Dependencies","fieldtype":"Small Text","default":"[]","read_only":1},
   {"fieldname":"schema_manifest","label":"Schema Manifest","fieldtype":"Code","options":"JSON","read_only":1,"hidden":1},
+  {"fieldname":"personal_graphql_mapping","label":"Published Mapping Scope","fieldtype":"Link","options":"HERO GraphQL Mapping","read_only":1,"hidden":1},
   {"fieldname":"schema_snapshot","label":"HERO Schema Snapshot","fieldtype":"Link","options":"HERO GraphQL Schema Snapshot","reqd":1},
   {"fieldname":"schema_fingerprint","label":"Schema Fingerprint","fieldtype":"Data","reqd":1,"read_only":1}, {"fieldname":"mapping_revision","label":"Mapping Revision","fieldtype":"Int","default":"1","read_only":1},
   {"fieldname":"status","label":"Status","fieldtype":"Select","options":"Draft\nActive\nDisabled\nRejected","default":"Draft","reqd":1,"in_list_view":1},

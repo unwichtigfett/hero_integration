@@ -29,6 +29,13 @@ class TestMappingExchange(unittest.TestCase):
         self.assertEqual(self.frappe.count(), 0)
         self.assertEqual(self.frappe.count(), 0)
 
+    def test_scoped_publication_cannot_be_imported_as_shared_rule(self):
+        item = fixture_payload(FINGERPRINT)['mappings'][0]
+        local = SimpleNamespace(personal_graphql_mapping='mapping-a', status='Active')
+        with patch.object(mapping_exchange, 'validate_spec'):
+            result = mapping_exchange._preview_item(item, {item['definition_id']: local}, set())
+        self.assertEqual('Conflict', result['state'])
+
     def test_migration_is_blocked_before_enqueue_when_active_mapping_is_missing(self):
         calls = []
         fake_api_frappe = SimpleNamespace(

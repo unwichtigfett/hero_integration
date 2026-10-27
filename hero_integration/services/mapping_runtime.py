@@ -211,7 +211,7 @@ def plan_from_definitions(operation: str, definitions: list[MappingSpec] | tuple
     return plan
 
 
-def active_mapping_plan(operation: str, *, definition_ids: tuple[str, ...] = (), target_operation: str = "") -> MappingPlan:
+def active_mapping_plan(operation: str, *, definition_ids: tuple[str, ...] = (), target_operation: str = "", mapping_name: str = "") -> MappingPlan:
     import frappe
 
     rows = frappe.get_all(
@@ -219,7 +219,7 @@ def active_mapping_plan(operation: str, *, definition_ids: tuple[str, ...] = (),
         filters={"operation": target_operation or operation, "status": "Active"},
         fields=[
             "operation", "source_path", "source_type", "target_doctype", "target_field", "purpose",
-            "transformation", "relation", "priority", "definition_id",
+            "transformation", "relation", "priority", "definition_id", "personal_graphql_mapping",
         ],
         order_by="priority asc, creation asc",
     )
@@ -228,4 +228,8 @@ def active_mapping_plan(operation: str, *, definition_ids: tuple[str, ...] = (),
         rows = [row for row in rows if row["definition_id"] in expected]
         if {row["definition_id"] for row in rows} != expected:
             raise MappingPlanError("The selected active mapping definitions are unavailable or changed.")
-    return plan_from_definitions(operation, [MappingSpec(**row) for row in rows], target_operation=target_operation)
+        if any(row.get('personal_graphql_mapping') and row.get('personal_graphql_mapping') != mapping_name for row in rows):
+            raise MappingPlanError('A selected rule version belongs to another read mapping.')
+    else:
+        rows = [row for row in rows if not row.get('personal_graphql_mapping')]
+    return plan_from_definitions(operation, [MappingSpec(**{k: v for k, v in row.items() if k != 'personal_graphql_mapping'}) for row in rows], target_operation=target_operation)

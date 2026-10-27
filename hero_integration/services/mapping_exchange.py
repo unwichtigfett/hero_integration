@@ -30,9 +30,10 @@ def export_json(snapshot_name: str) -> str:
     mappings = frappe.get_all(
         "HERO Frappe Mapping",
         filters={"schema_fingerprint": snapshot.schema_fingerprint},
-        fields=[*EXPORTED_FIELDS, "schema_manifest"],
+        fields=[*EXPORTED_FIELDS, "schema_manifest", "personal_graphql_mapping"],
         order_by="operation asc, priority asc, definition_id asc",
     )
+    mappings = [row for row in mappings if not row.get('personal_graphql_mapping')]
     schema = _merge_export_schemas(mappings)
     exported = [_exportable(row) for row in mappings]
     from hero_integration.services.schema_provisioning import _target_dependency
@@ -105,7 +106,7 @@ def preview_import_from_package(payload: dict[str, object], fingerprint: str | N
         row.definition_id: row
         for row in frappe.get_all(
             "HERO Frappe Mapping",
-            fields=["name", "definition_id", "status", "mapping_revision", *EXPORTED_FIELDS[1:-1]],
+            fields=["name", "definition_id", "status", "mapping_revision", "personal_graphql_mapping", *EXPORTED_FIELDS[1:-1]],
         )
     }
     rows = []
@@ -113,7 +114,7 @@ def preview_import_from_package(payload: dict[str, object], fingerprint: str | N
     claimed_targets: dict[tuple[str, str, str], str] = {}
     active_targets = {
         (row.operation, row.target_doctype, row.target_field): row.definition_id
-        for row in existing.values() if row.status == "Active"
+        for row in existing.values() if row.status == "Active" and not getattr(row, 'personal_graphql_mapping', None)
     }
     for item in payload["mappings"]:
         result = _preview_item(item, existing, seen, metadata)
@@ -141,7 +142,7 @@ def import_json(snapshot_name: str, payload_json: str) -> dict[str, object]:
         row.definition_id: row
         for row in frappe.get_all(
             "HERO Frappe Mapping",
-            fields=["name", "definition_id", "status", "mapping_revision", *EXPORTED_FIELDS[1:-1]],
+            fields=["name", "definition_id", "status", "mapping_revision", "personal_graphql_mapping", *EXPORTED_FIELDS[1:-1]],
         )
     }
     savepoint = "hero_mapping_import"
@@ -190,6 +191,8 @@ def _preview_item(item: dict[str, object], existing: dict[str, object], seen: se
     local = existing.get(definition_id)
     if not local:
         return {"definition_id": definition_id, "state": "New", "detail": "Validated import definition."}
+    if getattr(local, 'personal_graphql_mapping', None):
+        return {"definition_id": definition_id, "state": "Conflict", "detail": "A scoped published rule cannot be replaced by a shared mapping import."}
     if _definition_hash(_exportable(local)) == _definition_hash(item):
         return {"definition_id": definition_id, "state": "Unchanged", "detail": "Definition is already present."}
     if local.status == "Active":
