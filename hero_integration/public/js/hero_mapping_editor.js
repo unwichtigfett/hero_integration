@@ -1260,7 +1260,7 @@
             const frappeControls = $("<div class='hero-mapping-selection-fields'></div>").appendTo(frappePane);
             const browseKey = `${tab}:${active?.definition_id || ""}:${selected}`;
             const row = rows(value)[selected] || {};
-            const existingRule = row.reference ? ownRule(value, row.id) || ruleCache.get(row.id) : null;
+            const existingRule = !model?.creation && row.reference ? ownRule(value, row.id) || ruleCache.get(row.id) : null;
             const configured = model?.creation ? (model.creation[frappeSide] || {}) : row.additional ? row.value[frappeSide] || {} : value[frappeSide] || {};
             let browseApp = model?.creation?.app || selectedPickerApp(model, frappeSide, configured, admin) || "";
             let browseDoctype = existingRule?.target_doctype || configured.doctype || "", browseChanged = false;
@@ -1368,7 +1368,7 @@
             const heroMeta = metadata(heroPane), frappeMeta = metadata(frappePane);
             let appNames = new Map();
             const refresh = () => {
-                const value = active ? content() : {}, row = rows(value)[selected], rule = row?.reference ? ownRule(value, row.id) || ruleCache.get(row.id) : null;
+                const value = active ? content() : {}, row = rows(value)[selected], rule = !model?.creation && row?.reference ? ownRule(value, row.id) || ruleCache.get(row.id) : null;
                 const assignment = model?.creation || (row?.additional ? row.value : value);
                 const frappeValue = assignment[frappeSide] || {};
                 if (!browseApp && browseDoctype) browseApp = appNames.get(browseDoctype) || (!admin && frappeValue.app) || "";
