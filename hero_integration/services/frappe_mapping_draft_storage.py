@@ -152,13 +152,25 @@ class FrappeMappingDraftStorage:
         if (current is None or current.generation != value.generation
                 or current.content_revision != value.revision or current.content_hash != value.content_hash):
             raise DraftConflict("Revision does not describe the current saved personal draft.")
+        if value.kind not in {"DRAFT_SAVE", "ACTIVE_ACTIVATION"}:
+            raise MappingDraftError("Unsupported personal mapping revision kind.")
+        # Frappe retries primary-key collisions on hash-autonamed DocTypes with
+        # a random name, even when insert(set_name=...) specified an identity.
+        # The parent definition and this personal draft are already locked.
+        if self.frappe.db.sql(
+            "select name from `tabHERO Mapping Revision` "
+            "where draft_key=%s and generation=%s and revision=%s and kind=%s limit 1 for update",
+            (value.draft_key, value.generation, value.revision, value.kind),
+        ):
+            raise DraftConflict("This personal mapping revision is already recorded.")
         values = asdict(value)
         values.pop("content")
         values["content_json"] = json.dumps(value.content, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         values["base_active_mapping"] = values.pop("base_active_name")
         values["doctype"] = self.REVISION
-        # A deterministic primary key protects immutable generation/revision identity.
-        values["name"] = f"{value.draft_key}-{value.generation}-{value.revision}"
+        # Preserve existing draft revision names; activation has its own kind.
+        suffix = "-activation" if value.kind == "ACTIVE_ACTIVATION" else ""
+        values["name"] = f"{value.draft_key}-{value.generation}-{value.revision}{suffix}"
         self.frappe.get_doc(values).insert(set_name=values["name"])
 
     def _rule_snapshot(self, identity):
