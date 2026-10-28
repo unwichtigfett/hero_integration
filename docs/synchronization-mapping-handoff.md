@@ -32,6 +32,13 @@ complete current context must be exported and previewed before importing, with
 no unintended removal or replacement. Schema provisioning is separately
 guarded and must be included in a package when actually needed.
 
+The personal Draft exchange validates selected field-rule identities against
+the target and retains target-managed provenance. An authenticated preview
+binds the package and observed references to the site and owner; it is not a
+runtime grant. Registry instances, acknowledgements and execution state are
+not imported. Concurrent metadata changes and conflicting new rule identities
+still require a complete serialization and acceptance proof before delivery.
+
 Calendar uses the existing native Event projection and the source-instance /
 CalendarEvent identity. A non-null `project_match_id` resolves exclusively via
 the existing Project integration link and Project read permission; a missing or
@@ -50,8 +57,8 @@ is inferred from a Project or Partner identifier.
 Still missing or unverified: Task assignment and ToDo transfer, external
 deadlines and their source NULL/time-zone semantics, calendar source time,
 recurrence, customer and participant/resource relationships,
-product identity and version history, price-list/currency/UOM/tax semantics,
-binding and action import, and external execution. No automatic unassignment,
+binding and action import, and external execution. Articles, versions, prices,
+inventory and accounting are outside the current mapping scope. No automatic unassignment,
 completion, deletion or clearing follows from unproven NULL semantics. Full
 mapping acceptance requires evidence for every agreed mandatory area and the
 actual target execution and recovery gates.

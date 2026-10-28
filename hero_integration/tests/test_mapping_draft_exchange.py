@@ -10,7 +10,7 @@ from hero_integration.services import mapping_draft_exchange as exchange
 
 class _Frappe:
     def __init__(self):
-        self.local = SimpleNamespace(site="draft-exchange.test")
+        self.local = SimpleNamespace(site="draft-exchange.test", conf={'encryption_key': 'test-only-key'})
         self.session = SimpleNamespace(user="owner@example.invalid")
         self.db = SimpleNamespace(savepoint=lambda _name: None, rollback=lambda **_kwargs: None)
         self.active = [
@@ -64,6 +64,10 @@ class TestMappingDraftExchange(unittest.TestCase):
         self.schema = patch.object(exchange, "preview_schema", side_effect=_schema_preview)
         self.schema_mock = self.schema.start()
         self.addCleanup(self.schema.stop)
+        self.preparation = patch.object(exchange, '_prepare_item', side_effect=lambda item, row, local: {
+            'content': item['content'], 'references': [], 'conflicts': [], 'can_save': True})
+        self.preparation_mock = self.preparation.start()
+        self.addCleanup(self.preparation.stop)
 
     def package(self):
         return exchange.export_package("source-1", "SNAPSHOT", "QUERY_TO_FRAPPE")
@@ -138,7 +142,8 @@ class TestMappingDraftExchange(unittest.TestCase):
         with patch.object(exchange, "FrappeMappingDraftStorage", Storage), patch.object(
             exchange, "provision_schema", return_value={"status": "UNCHANGED", "created": {"custom_doctypes": [], "custom_fields": []}}
         ):
-            result = exchange.save_import(json.dumps(package), "source-1", "SNAPSHOT", "QUERY_TO_FRAPPE", expected, confirmed=True)
+            result = exchange.save_import(json.dumps(package), "source-1", "SNAPSHOT", "QUERY_TO_FRAPPE", expected, confirmed=True,
+                                          preview_fingerprint=preview['preview_fingerprint'])
         self.assertEqual(["query-one"], result["drafts"]["discarded"])
         self.assertEqual("discard", calls[0][0])
         self.assertEqual("query-one", calls[0][1][0])
@@ -149,5 +154,23 @@ class TestMappingDraftExchange(unittest.TestCase):
         expected[0]["draft_revision"] += 1
         with patch.object(exchange, "provision_schema") as provision:
             with self.assertRaisesRegex(exchange.MappingDraftExchangeError, "state changed"):
-                exchange.save_import(self.package(), "source-1", "SNAPSHOT", "QUERY_TO_FRAPPE", expected, confirmed=True)
+                exchange.save_import(self.package(), "source-1", "SNAPSHOT", "QUERY_TO_FRAPPE", expected, confirmed=True,
+                                     preview_fingerprint=preview['preview_fingerprint'])
+        provision.assert_not_called()
+
+    def test_changed_payload_or_reference_invalidates_preview_before_schema(self):
+        raw = self.package()
+        preview = exchange.preview_import(raw, 'source-1', 'SNAPSHOT', 'QUERY_TO_FRAPPE')
+        expected = [{'definition_id': item['definition_id'], **item['expected']} for item in preview['items']]
+        package = json.loads(raw)
+        package['mappings'][0]['content']['source']['field'] = 'changed'
+        with patch.object(exchange, 'provision_schema') as provision:
+            with self.assertRaisesRegex(exchange.MappingDraftExchangeError, 'preview changed'):
+                exchange.save_import(json.dumps(package), 'source-1', 'SNAPSHOT', 'QUERY_TO_FRAPPE', expected,
+                                     confirmed=True, preview_fingerprint=preview['preview_fingerprint'])
+            self.preparation_mock.side_effect = lambda item, row, local: {
+                'content': item['content'], 'references': [{'identity': 'changed'}], 'conflicts': [], 'can_save': True}
+            with self.assertRaisesRegex(exchange.MappingDraftExchangeError, 'preview changed'):
+                exchange.save_import(raw, 'source-1', 'SNAPSHOT', 'QUERY_TO_FRAPPE', expected,
+                                     confirmed=True, preview_fingerprint=preview['preview_fingerprint'])
         provision.assert_not_called()

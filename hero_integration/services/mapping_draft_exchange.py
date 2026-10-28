@@ -7,6 +7,7 @@ create, activate or execute a GraphQL mapping.
 from __future__ import annotations
 
 from hashlib import sha256
+import hmac
 import json
 from pathlib import Path
 from uuid import uuid4
@@ -15,7 +16,8 @@ import frappe
 
 from hero_integration.services.frappe_mapping_draft_storage import FrappeMappingDraftStorage
 from hero_integration.services.mapping_draft_service import DraftConflict, MappingDraftError
-from hero_integration.services.personal_mapping_content import bounded
+from hero_integration.services.personal_mapping_content import bounded, prepare_exchange_content
+from hero_integration.services.mapping_draft_service import draft_key
 from hero_integration.services.schema_provisioning import (
     SchemaProvisioningError,
     preview_schema,
@@ -113,10 +115,13 @@ def preview_import(payload_json: str, source_instance: str, snapshot_name: str, 
         _assert_base(item, row)
         local = drafts.get(definition_id)
         local_content = _content(_value(local, "content_json")) if local else None
+        prepared = _prepare_item(item, row, local_content)
         state = "NEW" if local is None else "UNCHANGED" if _same(local_content, item["content"]) else "REPLACE"
         items.append({
             "definition_id": definition_id, "state": state, "content_hash": _hash(item["content"]),
-            "expected": _expected(row, local), "removal": False,
+            "expected": _expected(row, local), "removal": False, "references": prepared['references'],
+            "metadata": prepared.get('metadata', {}),
+            "conflicts": prepared['conflicts'],
         })
     for definition_id, local in sorted(drafts.items()):
         if definition_id not in incoming:
@@ -126,16 +131,67 @@ def preview_import(payload_json: str, source_instance: str, snapshot_name: str, 
             })
     schema = preview_schema(package["schema"])
     invalid_schema = [item for item in schema["items"] if item["state"] in {"Conflict", "Invalid"}]
-    return {
+    result = {
         "format_version": FORMAT_VERSION, "direction": direction, "source_instance": source_instance,
         "snapshot_name": snapshot_name, "schema_fingerprint": package["schema_fingerprint"],
         "items": items, "schema": schema, "persisted": False,
-        "can_save": not invalid_schema,
+        "can_save": not invalid_schema and not any(item.get('conflicts') for item in items),
     }
+    result['preview_fingerprint'] = _preview_binding(package, result)
+    return result
+
+
+def _prepare_item(item, row, local_content):
+    storage = FrappeMappingDraftStorage()
+    try:
+        with storage.transaction(item['definition_id'], frappe.session.user):
+            active = storage.active(item['definition_id'])
+            _assert_base(item, row)
+            if (active.name, active.revision, active.content_hash, active.schema_fingerprint) != (
+                    item['base_active_name'], item['base_active_revision'], item['base_active_hash'],
+                    item['base_schema_fingerprint']):
+                raise DraftConflict('Active mapping changed during preview.')
+            draft = storage.draft(draft_key(frappe.local.site, item['definition_id'], frappe.session.user))
+            if local_content is None:
+                if draft is not None and draft.state == 'OPEN':
+                    raise DraftConflict('Draft changed during preview.')
+                local_content = storage.initial_content(active.content)
+            elif draft is None or draft.state != 'OPEN' or not _same(draft.content, local_content):
+                raise DraftConflict('Draft changed during preview.')
+            # Hold every extant version for these identities until the outer
+            # transaction ends. Re-read the scoped rule only after locking it.
+            identities = item['content'].get('field_rules', {})
+            if isinstance(identities, dict) and all(isinstance(key, str) for key in identities):
+                for identity in sorted(identities):
+                    frappe.db.sql('select name from `tabHERO Frappe Mapping` where definition_id=%s for update',
+                                  (identity,))
+            prepared = prepare_exchange_content(item['content'], local_content, storage._rule_snapshot)
+            if prepared['content'].get('additional_mappings'):
+                storage._validate_additional_mappings(prepared['content']['additional_mappings'])
+                prepared['metadata'] = _assignment_metadata(storage, prepared['content']['additional_mappings'])
+            return prepared
+    except (MappingDraftError, ValueError) as error:
+        raise MappingDraftExchangeError(str(error)) from error
+
+
+def _assignment_metadata(storage, mappings):
+    from hero_integration.api import _validated_snapshot
+    snapshot, schema = _validated_snapshot(storage._definition.schema_snapshot)
+    fields = []
+    for item in mappings:
+        side = item['target'] if storage._definition.direction == 'QUERY_TO_FRAPPE' else item['source']
+        field = frappe.get_meta(side['doctype']).get_field(side['field'])
+        if field is None:
+            raise MappingDraftExchangeError('Assigned Frappe field no longer exists.')
+        fields.append({'doctype': side['doctype'], 'field': side['field'],
+                       **{key: field.get(key) for key in ('fieldtype', 'options', 'reqd', 'read_only',
+                                                          'hidden', 'permlevel', 'is_virtual')}})
+    return {'snapshot': snapshot.name, 'schema_fingerprint': snapshot.schema_fingerprint,
+            'schema_hash': _hash(schema), 'fields': sorted(fields, key=lambda value: (value['doctype'], value['field']))}
 
 
 def save_import(payload_json: str, source_instance: str, snapshot_name: str, direction: str,
-                expected_states: object, *, confirmed: bool) -> dict[str, object]:
+                expected_states: object, *, confirmed: bool, preview_fingerprint: str) -> dict[str, object]:
     """Persist a previewed replacement after optional schema provisioning.
 
     Schema DDL intentionally runs before the Draft-only DML savepoint.  If a
@@ -146,6 +202,8 @@ def save_import(payload_json: str, source_instance: str, snapshot_name: str, dir
         raise MappingDraftExchangeError("Explicit import save confirmation is required.")
     package = _parse(payload_json, source_instance, snapshot_name, direction)
     preview = preview_import(payload_json, source_instance, snapshot_name, direction)
+    if not isinstance(preview_fingerprint, str) or not hmac.compare_digest(preview_fingerprint, preview['preview_fingerprint']):
+        raise MappingDraftExchangeError('Draft import preview changed; preview again before saving.')
     if not preview["can_save"]:
         raise MappingDraftExchangeError("Schema preview contains conflicts or invalid definitions.")
     expected = _expected_states(expected_states, preview["items"])
@@ -154,21 +212,37 @@ def save_import(payload_json: str, source_instance: str, snapshot_name: str, dir
     frappe.db.savepoint(savepoint)
     created = {"drafts": [], "discarded": [], "unchanged": []}
     try:
+        # DDL may implicitly commit and release every earlier lock. Obtain a
+        # fresh preview under new locks before performing any Draft DML.
+        post_schema = preview_import(payload_json, source_instance, snapshot_name, direction)
+        if not post_schema['can_save'] or not _same(post_schema['items'], preview['items']):
+            raise DraftConflict('Draft or referenced configuration changed during schema provisioning.')
         for item in package["mappings"]:
             definition_id = item["definition_id"]
             state = expected[definition_id]
+            active = _active_definitions(source_instance, snapshot_name, direction)[definition_id]
+            local = _open_drafts({definition_id}).get(definition_id)
+            prepared = _prepare_item(item, active, _content(_value(local, 'content_json')) if local else None)
+            if not prepared['can_save']:
+                raise DraftConflict('Imported field-rule reference changed.')
+            expected_refs = next(row['references'] for row in preview['items'] if row['definition_id'] == definition_id)
+            if not _same(prepared['references'], expected_refs):
+                raise DraftConflict('Imported field-rule reference changed after preview.')
+            expected_metadata = next(row['metadata'] for row in preview['items'] if row['definition_id'] == definition_id)
+            if not _same(prepared.get('metadata', {}), expected_metadata):
+                raise DraftConflict('Assignment metadata changed after preview.')
             service = FrappeMappingDraftStorage().service()
             if state["generation"] == 0:
                 draft = service.open_draft(definition_id, frappe.session.user)
                 _assert_opened_base(item, draft)
-                result = service.save(definition_id, frappe.session.user, 0, state["active_revision"], item["content"],
+                result = service.save(definition_id, frappe.session.user, 0, state["active_revision"], prepared['content'],
                                       expected_generation=draft.generation, expected_reconciliation_revision=0)
                 created["drafts"].append(definition_id)
             else:
-                result = service.save(definition_id, frappe.session.user, state["draft_revision"], state["active_revision"], item["content"],
+                result = service.save(definition_id, frappe.session.user, state["draft_revision"], state["active_revision"], prepared['content'],
                                       expected_generation=state["generation"],
                                       expected_reconciliation_revision=state["reconciliation_revision"])
-            (created["unchanged"] if result.unchanged else created["drafts"]).append(definition_id)
+                (created["unchanged"] if result.unchanged else created["drafts"]).append(definition_id)
         for item in preview["items"]:
             if not item["removal"]:
                 continue
@@ -326,6 +400,15 @@ def _same(left: object, right: object) -> bool:
 
 def _hash(value: object) -> str:
     return sha256(_json(value).encode("utf-8")).hexdigest()
+
+
+def _preview_binding(package, preview):
+    key = frappe.local.conf.get('encryption_key')
+    if not isinstance(key, str) or not key:
+        raise MappingDraftExchangeError('Site encryption key is required for import preview.')
+    body = _json({'site': frappe.local.site, 'owner': frappe.session.user,
+                  'package': package, 'preview': preview}).encode('utf-8')
+    return hmac.new(key.encode('utf-8'), b'hero-draft-import-preview-v1\0' + body, sha256).hexdigest()
 
 
 def _json(value: object) -> str:

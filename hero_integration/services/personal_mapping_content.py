@@ -148,3 +148,58 @@ def validate_rule(rule):
                 raise MappingDraftError('Invalid field-rule priority.')
         elif value is not None and (not isinstance(value, str) or len(value) > 4096):
             raise MappingDraftError('Invalid field-rule text.')
+
+
+def prepare_exchange_content(incoming, local, resolve_rule):
+    """Prepare imported draft configuration using only target-side rule provenance.
+
+    ``resolve_rule`` must read the current, scoped rule and return its rule and
+    provenance snapshots.  The caller must bind ``references`` to its preview
+    and repeat this operation before saving; these snapshots are evidence for
+    optimistic concurrency, not grants of execution or identity authority.
+    """
+    if not isinstance(incoming, dict) or not isinstance(local, dict):
+        raise MappingDraftError('Draft content must be an object.')
+    proposed = deepcopy(incoming)
+    ids = references(proposed)
+    rules = proposed.get('field_rules', {})
+    imported_bases = proposed.get('field_rule_bases', {})
+    local_rules = local.get('field_rules', {})
+    local_bases = local.get('field_rule_bases', {})
+    if not all(isinstance(x, dict) for x in (rules, imported_bases, local_rules, local_bases)):
+        raise MappingDraftError('Invalid field-rule snapshots.')
+    if set(rules) != set(imported_bases) or set(local_rules) != set(local_bases):
+        raise MappingDraftError('Field-rule snapshots require matching provenance.')
+    if (any(not isinstance(identity, str) or not identity for identity in rules)
+            or set(ids) - set(rules)):
+        raise MappingDraftError('Every selected rule requires a named snapshot.')
+    if set(local_rules) - set(rules) or set(rules) - (set(ids) | set(local_rules)):
+        raise MappingDraftError('Field-rule snapshots have unexpected identities.')
+    # Onboarding is an explicit local confirmation, never an import grant.
+    if not same_value(proposed.get('native_task_onboarding'), local.get('native_task_onboarding')):
+        raise MappingDraftError('Native Task onboarding must be confirmed locally.')
+    evidence, conflicts = [], []
+    for identity in sorted(rules):
+        validate_rule(rules[identity])
+        try:
+            current_rule, current_base = resolve_rule(identity)
+            if not isinstance(current_rule, dict) or not isinstance(current_base, dict):
+                raise ValueError('Invalid target rule snapshot.')
+        except (ValueError, LookupError) as error:
+            conflicts.append({'identity': identity, 'state': 'UNRESOLVED', 'detail': str(error)})
+            continue
+        entry = {'identity': identity, 'base': deepcopy(current_base), 'rule': deepcopy(current_rule)}
+        evidence.append(entry)
+        if not same(imported_bases[identity], current_base):
+            conflicts.append({'identity': identity, 'state': 'CONFLICT', 'detail': 'Target provenance differs.'})
+        if identity in local_bases and not same(local_bases[identity], current_base):
+            conflicts.append({'identity': identity, 'state': 'CONFLICT', 'detail': 'Local provenance is stale.'})
+    # New reference bases are filled by canonicalize from _rule_snapshot;
+    # existing local bases are retained verbatim and never taken from the file.
+    proposed['field_rule_bases'] = deepcopy(local_bases)
+    if 'field_rules' not in incoming and 'field_rules' not in local:
+        proposed.pop('field_rules', None)
+        proposed.pop('field_rule_bases', None)
+    validate_edits(local, proposed)
+    return {'content': bounded(proposed), 'references': evidence, 'conflicts': conflicts,
+            'can_save': not conflicts}

@@ -874,9 +874,11 @@
             const items = $("<table class='table table-sm hero-mapping-table'><thead><tr><th>Definition</th><th>Result</th></tr></thead><tbody></tbody></table>");
             preview.items.forEach((item) => items.find("tbody").append($("<tr></tr>").append($("<td></td>").text(item.definition_id), $("<td></td>").text(item.state))));
             dialog.append(items);
+            const conflicts = preview.items.flatMap((item) => (item.conflicts || []).map((conflict) => ({definition_id: item.definition_id, ...conflict})));
+            if (conflicts.length) dialog.append($("<details open></details>").append($("<summary></summary>").text(text("Unresolved references and conflicts")), safeJson(conflicts)));
             const schema = preview.schema?.items || [];
             dialog.append($("<details></details>").append($("<summary></summary>").text(`${text("Schema provisioning preview")} (${schema.length})`), safeJson(preview.schema || {})));
-            if (!preview.can_save) dialog.append($("<p role='alert'></p>").text(text("This package cannot be saved because the schema preview has a conflict or invalid definition.")));
+            if (!preview.can_save) dialog.append($("<p role='alert'></p>").text(text("This package cannot be saved until its conflicts and invalid definitions are resolved.")));
             const adopt = async () => {
                 const adoptEntry = () => { if (!canAdopt()) return; exchanges.set(entry.context.key, {...entry, adopted: true}); say(`Imported ${exchangeLabel(entry.context)} package adopted locally. Save imported ${exchangeLabel(entry.context)} drafts to persist this direction.`); renderDetail(); };
                 if (!model?.dirty) return adoptEntry();
@@ -945,7 +947,7 @@
             try {
                 const result = await rpc("mapping_draft_exchange_save", {payload_json: entry.payload,
                     source_instance: context.source_instance, snapshot_name: context.snapshot_name, direction: context.direction,
-                    expected_states_json: JSON.stringify(expectedStates), confirmed: true}, true);
+                    expected_states_json: JSON.stringify(expectedStates), preview_fingerprint: entry.preview.preview_fingerprint, confirmed: true}, true);
                 if (disposed || request !== epoch || context.key !== exchangeContext()?.key) return;
                 exchanges.delete(context.key); model = null; mode = "active";
                 const created = result.schema?.created || {};
