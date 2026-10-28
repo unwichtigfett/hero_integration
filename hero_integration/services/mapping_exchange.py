@@ -226,6 +226,11 @@ def _parse_payload(payload_json: str, fingerprint: str) -> dict[str, object]:
         raise MappingExchangeError(f"Mapping import is not valid JSON: {error.msg}") from error
     if not isinstance(payload, dict) or payload.get("format_version") not in {FORMAT_VERSION, LEGACY_FORMAT_VERSION}:
         raise MappingExchangeError("Mapping import format version is not supported.")
+    expected_keys = {"format_version", "schema_fingerprint", "mappings"}
+    if payload["format_version"] == FORMAT_VERSION:
+        expected_keys.add("schema")
+    if set(payload) != expected_keys:
+        raise MappingExchangeError("Mapping import has unknown or missing package fields.")
     if payload.get("schema_fingerprint") != fingerprint:
         raise MappingExchangeError("Mapping import schema fingerprint does not match the selected snapshot.")
     schema = _empty_schema() if payload.get("format_version") == LEGACY_FORMAT_VERSION else payload.get("schema")

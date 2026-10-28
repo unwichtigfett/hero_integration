@@ -9,6 +9,11 @@ from hero_integration.services.projection_contracts import CONTRACTS as PROJECTI
 SOURCE_CONTRACTS = {
     "HeroCustomers": {
         "target_doctype": "Customer",
+        # Reviewed bindings are shipped with the server contract, never read
+        # from a mapping, import payload, site configuration, or client.
+        # Tuple: source path, source type, target DocType, target field,
+        # expected field type, transformation. No business approvals yet.
+        "native_field_bindings": frozenset(),
         "paths": {
             "id": "int", "nr": "string|null", "first_name": "string|null",
             "last_name": "string|null", "full_name": "string|null", "email": "string|null",
@@ -220,17 +225,11 @@ def _validate_custom_field(spec: MappingSpec, metadata) -> None:
     if field is None or field.fieldtype not in ALLOWED_TARGET_TYPES or (field.read_only and not is_native):
         raise DirectMappingError("Target field is not a writable supported Frappe field.")
     if not getattr(field, "is_custom_field", False):
-        # Reviewed native query destinations are explicit operation/source/field
-        # bindings. Runtime writes still go through the target DocType controller.
+        binding = (spec.source_path, spec.source_type, spec.target_doctype,
+                   spec.target_field, field.fieldtype, spec.transformation)
         allowed_native = (
-            spec.operation == "HeroCustomers"
-            and spec.target_doctype == "Customer"
-            and spec.target_field == "alias"
-            and spec.source_path in {"full_name", "company_name"}
-            and spec.source_type == "string|null"
-            and spec.transformation in {TRANSFORM_IDENTITY, TRANSFORM_TRIM}
+            binding in contract.get("native_field_bindings", frozenset())
             and not spec.relation
-            and field.fieldtype == "Data"
             and not any(getattr(field, key, None) for key in ("hidden", "fetch_from", "is_virtual"))
         )
         if not allowed_native:
