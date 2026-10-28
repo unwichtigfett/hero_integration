@@ -32,8 +32,22 @@ complete current context must be exported and previewed before importing, with
 no unintended removal or replacement. Schema provisioning is separately
 guarded and must be included in a package when actually needed.
 
+Calendar uses the existing native Event projection and the source-instance /
+CalendarEvent identity. A non-null `project_match_id` resolves exclusively via
+the existing Project integration link and Project read permission; a missing or
+NULL value does not remove an existing relationship. Nullable omitted fields do
+not clear values or their acknowledged baselines. Local edits remain visible to
+subsequent conflict checks even after an independent source-field update. An
+unknown recurrence flag is blocked; explicit recurrence is also held pending a
+reviewed rule. A validated schema alone does not confirm the source timezone,
+all-day boundary or participant identity. The private editor Draft carries
+unconfirmed time options and does not authorize execution. Raw partner/resource
+observations are not native participant relationships; no Customer association
+is inferred from a Project or Partner identifier.
+
 Still missing or unverified: Task assignment and ToDo transfer, external
-deadlines and their source NULL/time-zone semantics, calendar behavior,
+deadlines and their source NULL/time-zone semantics, calendar source time,
+recurrence, customer and participant/resource relationships,
 product identity and version history, price-list/currency/UOM/tax semantics,
 binding and action import, and external execution. No automatic unassignment,
 completion, deletion or clearing follows from unproven NULL semantics. Full

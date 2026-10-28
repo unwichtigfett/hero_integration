@@ -671,7 +671,8 @@ def _migrate_projection(record, run, plan) -> Result:
         return Result('BLOCKED_RECORD', str(error))
     return _upsert(contract['source_type'], source_id, record, values, contract['target_doctype'],
                    'item_code' if contract['target_doctype'] == 'Item' else 'custom_hero_key', plan.mapping_version, run, source_instance=instance,
-                   target_snapshot=lambda target: _projection_target_values(target, values, contract), creation_values=defaults)
+                   target_snapshot=lambda target: _projection_target_values(target, values, contract), creation_values=defaults,
+                   preserve_omitted=contract.get('native_kind') == 'event')
 
 
 def _native_lookup(doctype, name):
@@ -694,6 +695,8 @@ def _projection_target_values(target, values, contract):
     for binding in contract['bindings'].values():
         if binding['fieldtype'] == 'Table':
             field = binding['field']
+            if field not in values:
+                continue
             keys = ('custom_hero_source_id', 'custom_hero_resource_name', 'custom_hero_resource_type', 'custom_hero_type_id') if field == 'custom_hero_resources' else ('custom_hero_source_id', 'custom_hero_partner_name')
             snapshot[field] = [{key: row.get(key) for key in keys} for row in snapshot.get(field) or []]
             continue
@@ -815,6 +818,7 @@ def _upsert(
     target_snapshot=None,
     source_instance: str = "default",
     creation_values: dict | None = None,
+    preserve_omitted: bool = False,
 ) -> Result:
     if not _target_available(doctype):
         return Result("UNAVAILABLE", f"{doctype} is not installed on this site.")
@@ -823,6 +827,8 @@ def _upsert(
     if existing:
         if existing.target_doctype != doctype:
             return Result('CONFLICT', 'Stored binding has an incompatible target DocType.')
+        if preserve_omitted and existing.mapping_version != mapping_version:
+            return Result('CONFLICT', 'Event binding or approved mapping version requires review.', doctype, existing.target_name)
         if not frappe.db.exists(existing.target_doctype, existing.target_name):
             if run.mode != "Preview":
                 _mark_link_conflict(existing, "Stored target reference no longer exists.")
@@ -847,8 +853,10 @@ def _upsert(
                 _mark_link_conflict(existing, "HERO source changed; legacy link has no field baseline.")
                 return Result("CONFLICT", "HERO source changed; legacy link has no field baseline.", doctype, target.name)
             return Result("SKIPPED", "Record is already synchronized.", doctype, target.name)
-        changed_source = changed_fields(prior_source, source_field_hashes)
-        changed_target = changed_fields(prior_target, target_field_hashes)
+        compared_source = {field: prior_source[field] for field in source_field_hashes if field in prior_source} if preserve_omitted else prior_source
+        compared_target = {field: prior_target[field] for field in target_field_hashes if field in prior_target} if preserve_omitted else prior_target
+        changed_source = changed_fields(compared_source, source_field_hashes)
+        changed_target = changed_fields(compared_target, target_field_hashes)
         same_field_changes = changed_source & changed_target
         if same_field_changes:
             detail = f"Field conflict requires review: {', '.join(sorted(same_field_changes))}."
@@ -877,12 +885,18 @@ def _upsert(
                 return Result("CONFLICT", str(error), doctype, target.name)
             target_values = snapshot(target)
             target_field_hashes = field_hashes(target_values)
-            _update_link_baseline(existing, source_hash, _digest(target_values), source_field_hashes, target_field_hashes, mapping_version)
+            _update_link_baseline(existing, source_hash, _digest(target_values),
+                                  {**prior_source, **source_field_hashes} if preserve_omitted else source_field_hashes,
+                                  {**prior_target, **{key: target_field_hashes[key] for key in changed_source if key in target_field_hashes}}
+                                  if preserve_omitted else target_field_hashes, mapping_version)
             return Result("UPDATED", "Non-conflicting HERO field changes were applied through native Frappe validation.", doctype, target.name)
         # A local-only change is observed but never becomes an outbound HERO
         # mutation.  Keep it as the target baseline for a later comparison.
         if changed_target:
-            _update_link_baseline(existing, source_hash, _digest(target_values), source_field_hashes, target_field_hashes, mapping_version)
+            if preserve_omitted:
+                return Result("OBSERVED", "Local field change observed; its acknowledged baseline is preserved.", doctype, target.name)
+            _update_link_baseline(existing, source_hash, _digest(target_values),
+                                  source_field_hashes, target_field_hashes, mapping_version)
             return Result("OBSERVED", "Local field change observed; no outbound HERO mutation was prepared.", doctype, target.name)
         return Result("SKIPPED", "Record is already synchronized.", doctype, target.name)
     duplicate = frappe.db.exists(doctype, {name_field: values[name_field]})
