@@ -31,6 +31,13 @@ class TestBindingRegistry(unittest.TestCase):
         self.assertNotEqual(first.identity_key, self.obj(target_name="CUST-2").identity_key)
         self.assertNotEqual(first.identity_key, self.obj(mapping_revision=2).identity_key)
 
+    def test_user_binding_accepts_canonical_email_identifier(self):
+        user = self.obj(object_type='User', target_app='frappe', target_doctype='User', target_name='person@example.invalid')
+        self.assertEqual(user.target_name, 'person@example.invalid')
+        self.assertEqual(self.field(user).target_name, user.target_name)
+        with self.assertRaises(BindingRegistryError):
+            self.obj(object_type='User', target_app='frappe', target_doctype='User', target_name='not a user')
+
     def test_object_and_field_creation_are_idempotent_and_site_scoped(self):
         parent = self.obj()
         self.assertIs(parent, self.obj())

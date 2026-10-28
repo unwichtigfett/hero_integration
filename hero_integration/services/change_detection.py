@@ -21,6 +21,27 @@ def managed_target_update(doctype: str, name: str, link_name: str):
         _managed_target.reset(token)
 
 
+def managed_target_update_active(doctype: str, name: str | None) -> bool:
+    current = _managed_target.get()
+    return bool(current and current[0] == doctype and current[1] in (None, name))
+
+
+def protect_external_task_deadline(doc, method=None) -> None:
+    """Only the guarded inbound adapter may change the separate HERO deadline."""
+    del method
+    import frappe
+    from frappe.utils import get_datetime
+
+    if frappe.flags.in_migrate or managed_target_update_active('Task', doc.name):
+        return
+    current = doc.get('custom_hero_due_date')
+    previous = doc.get_doc_before_save()
+    old = previous.get('custom_hero_due_date') if previous else None
+    normalize = lambda value: get_datetime(value) if value else None
+    if normalize(current) != normalize(old):
+        frappe.throw('The external HERO deadline is managed by HERO Integration.', frappe.PermissionError)
+
+
 def field_hashes(values: Mapping[str, object]) -> dict[str, str]:
     """Hash normalised field values without retaining unrestricted payloads."""
 

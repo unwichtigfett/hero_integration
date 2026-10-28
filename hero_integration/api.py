@@ -336,6 +336,24 @@ def approve_read_service(
     }
 
 
+@frappe.whitelist(methods=['POST'])
+def task_assignment_policy_create(payload_json: str):
+    from hero_integration.services.task_assignment_policy import create_policy
+    return {'name': create_policy(json.loads(payload_json))}
+
+
+@frappe.whitelist(methods=['POST'])
+def task_assignment_policy_approve(name: str, expected_revision: int):
+    from hero_integration.services.task_assignment_policy import approve_policy
+    return {'name': approve_policy(name, expected_revision)}
+
+
+@frappe.whitelist(methods=['POST'])
+def task_assignment_policy_revoke(name: str, expected_revision: int):
+    from hero_integration.services.task_assignment_policy import revoke_policy
+    return {'name': revoke_policy(name, expected_revision)}
+
+
 @frappe.whitelist(methods=["POST"])
 def cancel_run(run_name: str) -> dict[str, str]:
     frappe.only_for("System Manager")

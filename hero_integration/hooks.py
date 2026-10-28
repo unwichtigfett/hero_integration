@@ -40,6 +40,8 @@ _HERO_OWNED_DOCTYPES = (
     "HERO Mutation Audit",
     "HERO Mutation Contract",
     "HERO Polling Event",
+    "HERO Task Assignment Policy",
+    "HERO Task Assignment State",
 )
 doc_events = {
     doctype: {"on_trash": "hero_integration.services.guards.assert_app_document_deletion_allowed"}
@@ -49,6 +51,16 @@ doc_events = {
 # when an app-owned Integration Link identifies this document as a mapped
 # target; it never starts polling, queues work, or sends a HERO request.
 doc_events["*"] = {"on_update": "hero_integration.services.change_detection.observe_frappe_target_change"}
+doc_events["ToDo"] = {
+    "on_update": "hero_integration.services.task_assignment_state.observe_local_todo",
+    "on_trash": "hero_integration.services.task_assignment_state.observe_local_todo",
+}
+doc_events["Task"] = {"validate": "hero_integration.services.change_detection.protect_external_task_deadline"}
+
+# Requires the separately distributed Frappe assignment-intent v2 patch.
+assignment_intent_before = ["hero_integration.services.task_assignment_state.before_native_assignment"]
+assignment_intent_after = ["hero_integration.services.task_assignment_state.after_native_assignment"]
+assignment_intent_guard = ["hero_integration.services.task_assignment_state.guard_native_assignment"]
 
 # This app ships DocTypes as source and has no site-specific fixtures.
 fixtures = []

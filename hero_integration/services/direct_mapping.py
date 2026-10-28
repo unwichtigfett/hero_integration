@@ -105,6 +105,9 @@ NATIVE_TASK_RULES = {
     'id': ('int', 'HERO Integration Link', 'source_id', PURPOSE_SOURCE_IDENTITY, TRANSFORM_POSITIVE_INT_TO_TEXT, 'Data'),
     'title': ('string|null', 'Task', 'subject', PURPOSE_RECORD_NAME, TRANSFORM_TRIM, 'Data'),
     'comment': ('string|null', 'Task', 'description', PURPOSE_NATIVE_BINDING, 'Native Adapter', 'Text Editor'),
+    'target_user_id': ('int|null', 'ToDo', 'allocated_to', PURPOSE_NATIVE_BINDING, 'Native Adapter', 'Link'),
+    'target_project_match_id': ('int|null', 'Task', 'project', PURPOSE_NATIVE_BINDING, 'Native Adapter', 'Link'),
+    'due_date': ('string|null', 'Task', 'custom_hero_due_date', PURPOSE_NATIVE_BINDING, 'Native Adapter', 'Datetime'),
 }
 
 
@@ -116,8 +119,14 @@ def validate_native_task_rule(spec: MappingSpec, metadata=None) -> None:
     if metadata is not None:
         metadata.ensure_write(spec.target_doctype)
         field = metadata.field(spec.target_doctype, spec.target_field)
-        if field is None or field.fieldtype != rule[5] or (spec.source_path != 'id' and getattr(field, 'read_only', 0)):
+        if field is None or field.fieldtype != rule[5] or (spec.source_path not in {'id', 'due_date'} and getattr(field, 'read_only', 0)):
             raise DirectMappingError('Native Task field is unavailable or incompatible.')
+        if spec.source_path == 'due_date' and not getattr(field, 'read_only', 0):
+            raise DirectMappingError('Native Task external deadline must be read-only.')
+        if spec.source_path == 'target_user_id' and (field.options or '') != 'User':
+            raise DirectMappingError('Native ToDo assignment must reference a User.')
+        if spec.source_path == 'target_project_match_id' and (field.options or '') != 'Project':
+            raise DirectMappingError('Native Task project must reference a Project.')
 
 
 def validate_spec(spec: MappingSpec, metadata) -> None:
@@ -133,7 +142,7 @@ def validate_spec(spec: MappingSpec, metadata) -> None:
     ensure_write = getattr(metadata, "ensure_write", None)
     if ensure_write:
         ensure_write(spec.target_doctype)
-    if spec.operation == 'HeroTasks' and spec.target_doctype in {'Task', 'HERO Integration Link'}:
+    if spec.operation == 'HeroTasks' and spec.target_doctype in {'Task', 'HERO Integration Link', 'ToDo'}:
         validate_native_task_rule(spec, metadata)
         return
     if spec.operation in PROJECTIONS:
