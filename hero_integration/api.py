@@ -1405,10 +1405,10 @@ def mapping_draft_exchange_preview(payload_json: str, source_instance: str, snap
 
 @frappe.whitelist(methods=["POST"])
 def mapping_draft_exchange_save(payload_json: str, source_instance: str, snapshot_name: str, direction: str,
-                                expected_states_json: str, confirmed=False) -> dict[str, object]:
+                                expected_states_json: str, preview_fingerprint: str = "", confirmed=False) -> dict[str, object]:
     """Persist a confirmed directional replacement as the current actor's Drafts only."""
     frappe.only_for("System Manager")
-    _mapping_request_fields({"payload_json", "source_instance", "snapshot_name", "direction", "expected_states_json", "confirmed"})
+    _mapping_request_fields({"payload_json", "source_instance", "snapshot_name", "direction", "expected_states_json", "preview_fingerprint", "confirmed"})
     source_instance = _mapping_text(source_instance, "source_instance")
     snapshot_name = _mapping_text(snapshot_name, "snapshot_name")
     try:
@@ -1419,7 +1419,7 @@ def mapping_draft_exchange_save(payload_json: str, source_instance: str, snapsho
 
     try:
         return save_import(payload_json, source_instance, snapshot_name, direction, expected_states,
-                           confirmed=confirmed in (True, 1, "1", "true", "True"))
+                           confirmed=confirmed in (True, 1, "1", "true", "True"), preview_fingerprint=preview_fingerprint)
     except MappingDraftExchangeError as error:
         frappe.throw(str(error))
 
