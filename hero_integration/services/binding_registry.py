@@ -12,6 +12,7 @@ from typing import Protocol
 from hero_integration.services.mapping_registry_model import MappingDirection
 
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
+_USER_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,139}$")
 _HASH = re.compile(r"^[0-9a-f]{64}$")
 
 class BindingRegistryError(ValueError): pass
@@ -28,6 +29,9 @@ class BindingState(StrEnum):
 def _id(value: object, label: str) -> str:
     if not isinstance(value, str) or not _ID.fullmatch(value): raise BindingRegistryError(f"{label} must be a stable non-secret identifier.")
     return value
+def _target_id(value: object, doctype: str) -> str:
+    if doctype == 'User' and isinstance(value, str) and _USER_ID.fullmatch(value): return value
+    return _id(value, 'target document')
 def _hash(value: object, label: str) -> str:
     if not isinstance(value, str) or not _HASH.fullmatch(value): raise BindingRegistryError(f"{label} must be a SHA-256 fingerprint.")
     return value
@@ -46,7 +50,8 @@ class ObjectBinding:
     def create(cls, *, site_scope: str, source_instance: str, object_type: str, external_object_id: str, target_app: str, target_doctype: str, target_name: str, mapping_definition_id: str, mapping_revision: int) -> "ObjectBinding":
         return cls(_key("hero-object-binding-v1", site=site_scope, source=source_instance, object_type=object_type, external=external_object_id, app=target_app, doctype=target_doctype, name=target_name, definition=mapping_definition_id, mapping_revision=mapping_revision), site_scope, source_instance, object_type, external_object_id, target_app, target_doctype, target_name, mapping_definition_id, mapping_revision)
     def __post_init__(self) -> None:
-        for label, value in zip(("identity", "site", "source", "object type", "external object", "target app", "target DocType", "target document", "mapping definition"), (self.identity_key, self.site_scope, self.source_instance, self.object_type, self.external_object_id, self.target_app, self.target_doctype, self.target_name, self.mapping_definition_id)): _id(value, label)
+        for label, value in zip(("identity", "site", "source", "object type", "external object", "target app", "target DocType", "mapping definition"), (self.identity_key, self.site_scope, self.source_instance, self.object_type, self.external_object_id, self.target_app, self.target_doctype, self.mapping_definition_id)): _id(value, label)
+        _target_id(self.target_name, self.target_doctype)
         if not isinstance(self.mapping_revision, int) or self.mapping_revision < 1 or not isinstance(self.revision, int) or self.revision < 1: raise BindingRegistryError("Binding revisions must be positive.")
 
 @dataclass(frozen=True, slots=True)
@@ -56,7 +61,8 @@ class FieldBinding:
     def create(cls, parent: ObjectBinding, *, source_field: str, target_field: str, mapping_definition_id: str, mapping_revision: int, direction: MappingDirection) -> "FieldBinding":
         return cls(_key("hero-field-binding-v1", parent=parent.identity_key, source_field=source_field, target_field=target_field, definition=mapping_definition_id, mapping_revision=mapping_revision, direction=direction.value), parent.identity_key, parent.site_scope, parent.source_instance, source_field, parent.target_app, parent.target_doctype, parent.target_name, target_field, mapping_definition_id, mapping_revision, direction)
     def __post_init__(self) -> None:
-        for label, value in zip(("identity", "object binding", "site", "source", "source field", "target app", "target DocType", "target document", "target field", "mapping definition"), (self.identity_key, self.object_binding_key, self.site_scope, self.source_instance, self.source_field, self.target_app, self.target_doctype, self.target_name, self.target_field, self.mapping_definition_id)): _id(value, label)
+        for label, value in zip(("identity", "object binding", "site", "source", "source field", "target app", "target DocType", "target field", "mapping definition"), (self.identity_key, self.object_binding_key, self.site_scope, self.source_instance, self.source_field, self.target_app, self.target_doctype, self.target_field, self.mapping_definition_id)): _id(value, label)
+        _target_id(self.target_name, self.target_doctype)
         if not isinstance(self.mapping_revision, int) or self.mapping_revision < 1 or not isinstance(self.revision, int) or self.revision < 1 or self.acknowledged_version < 0: raise BindingRegistryError("Field binding revisions are invalid.")
         for value in (self.acknowledged_source_fingerprint, self.acknowledged_target_fingerprint):
             if value is not None: _hash(value, "Acknowledged state")

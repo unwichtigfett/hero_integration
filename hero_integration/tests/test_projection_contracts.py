@@ -72,12 +72,26 @@ class TestProjectionContracts(unittest.TestCase):
         identity = MappingSpec('HeroTasks', 'id', 'HERO Integration Link', 'source_id', 'int', 'Source Identity', 'Positive Int To Text', definition_id='native-id')
         title = MappingSpec('HeroTasks', 'title', 'Task', 'subject', 'string|null', 'Record Name', 'Trim', definition_id='native-title')
         comment = MappingSpec('HeroTasks', 'comment', 'Task', 'description', 'string|null', 'Native Binding', 'Native Adapter', definition_id='native-comment')
+        project = MappingSpec('HeroTasks', 'target_project_match_id', 'Task', 'project', 'int|null', 'Native Binding', 'Native Adapter', definition_id='native-project')
+        deadline = MappingSpec('HeroTasks', 'due_date', 'Task', 'custom_hero_due_date', 'string|null', 'Native Binding', 'Native Adapter', definition_id='native-deadline')
+        assignment = MappingSpec('HeroTasks', 'target_user_id', 'ToDo', 'allocated_to', 'int|null', 'Native Binding', 'Native Adapter', definition_id='native-assignment')
         plan = plan_from_definitions('tasks', [identity, title], target_operation='HeroTasks', native_task=True)
         self.assertEqual(plan.source_identity({'id': 17}), '17')
         self.assertEqual(len(plan_from_definitions('tasks', [identity, title, comment], target_operation='HeroTasks', native_task=True).definitions), 3)
+        self.assertEqual(len(plan_from_definitions('tasks', [identity, title, comment, project, deadline, assignment], target_operation='HeroTasks', native_task=True).definitions), 6)
         for rules in ([identity], [title], [identity, title, definitions('HeroTasks')[-1]]):
             with self.assertRaises(ValueError):
                 plan_from_definitions('tasks', rules, target_operation='HeroTasks', native_task=True)
+
+    def test_native_task_assignment_rule_is_optional_and_cannot_write_raw_id(self):
+        identity = MappingSpec('HeroTasks', 'id', 'HERO Integration Link', 'source_id', 'int', 'Source Identity', 'Positive Int To Text', definition_id='native-id')
+        title = MappingSpec('HeroTasks', 'title', 'Task', 'subject', 'string|null', 'Record Name', 'Trim', definition_id='native-title')
+        assignment = MappingSpec('HeroTasks', 'target_user_id', 'ToDo', 'allocated_to', 'int|null', 'Native Binding', 'Native Adapter', definition_id='native-assignment')
+        plan = plan_from_definitions('tasks', [identity, title, assignment], target_operation='HeroTasks', native_task=True)
+        self.assertEqual({item.source_path for item in plan.definitions}, {'id', 'title', 'target_user_id'})
+        unsafe = MappingSpec('HeroTasks', 'target_user_id', 'ToDo', 'allocated_to', 'int|null', 'Field', 'Identity', definition_id='unsafe')
+        with self.assertRaises(ValueError):
+            plan_from_definitions('tasks', [identity, title, unsafe], target_operation='HeroTasks', native_task=True)
 
     def test_task_onboarding_is_bound_to_reviewed_source_and_type(self):
         service, mapping, snapshot = documents()

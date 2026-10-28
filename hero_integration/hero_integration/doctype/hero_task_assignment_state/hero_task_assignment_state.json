@@ -1,0 +1,16 @@
+{
+ "doctype":"DocType", "name":"HERO Task Assignment State", "module":"HERO Integration", "autoname":"hash", "track_changes":1,
+ "fields":[
+  {"fieldname":"task_link","fieldtype":"Link","options":"HERO Integration Link","label":"Task Source Binding","reqd":1,"unique":1,"read_only":1},
+  {"fieldname":"task_name","fieldtype":"Data","label":"Task","reqd":1,"read_only":1},
+  {"fieldname":"todo","fieldtype":"Data","label":"Managed ToDo","reqd":1,"read_only":1},
+  {"fieldname":"user_binding","fieldtype":"Link","options":"HERO Object Binding","label":"Acknowledged User Binding","reqd":1,"read_only":1},
+  {"fieldname":"user_binding_revision","fieldtype":"Int","label":"Acknowledged User Binding Revision","read_only":1},
+  {"fieldname":"policy","fieldtype":"Link","options":"HERO Task Assignment Policy","label":"Policy","reqd":1,"read_only":1},
+  {"fieldname":"policy_revision","fieldtype":"Int","label":"Policy Revision","reqd":1,"read_only":1},
+  {"fieldname":"mapping_revision","fieldtype":"Int","label":"Mapping Revision","reqd":1,"read_only":1},
+  {"fieldname":"todo_modified","fieldtype":"Datetime","label":"Confirmed ToDo Version","reqd":1,"read_only":1},
+  {"fieldname":"state","fieldtype":"Select","options":"SYSTEM\nLOCAL","label":"Ownership","reqd":1,"read_only":1},
+  {"fieldname":"state_revision","fieldtype":"Int","label":"State Revision","reqd":1,"read_only":1}
+ ], "permissions":[{"role":"System Manager","read":1,"write":1,"create":1}], "modified":"2026-10-28 00:00:00.000000"
+}

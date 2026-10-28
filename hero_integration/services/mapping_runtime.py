@@ -216,8 +216,8 @@ def plan_from_definitions(operation: str, definitions: list[MappingSpec] | tuple
     plan = MappingPlan(operation, selected, target_operation)
     if native_task:
         from hero_integration.services.direct_mapping import validate_native_task_rule
-        if target_operation != 'HeroTasks' or len(selected) not in {2, 3}:
-            raise MappingPlanError('Native Task requires identity, title, and optionally comment rules.')
+        if target_operation != 'HeroTasks' or len(selected) not in {2, 3, 4, 5, 6}:
+            raise MappingPlanError('Native Task requires identity, title, and optional comment, assignment, project and deadline rules.')
         paths = [item.source_path for item in selected]
         if len(set(paths)) != len(paths) or not {'id', 'title'} <= set(paths):
             raise MappingPlanError('Native Task requires exactly one identity and title rule.')
