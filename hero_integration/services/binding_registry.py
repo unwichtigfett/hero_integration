@@ -130,6 +130,36 @@ class BindingRegistryService:
         if target_fingerprint != binding.acknowledged_target_fingerprint: return BindingState.LOCAL_CHANGED
         return BindingState.SYNCHRONIZED
 
+    @staticmethod
+    def inbound_reconciliation(binding: FieldBinding, *, active_mapping_revision: int | None, source_fingerprint: str | None, target_fingerprint: str) -> str:
+        """Classify an inbound comparison without changing acknowledged or observed state.
+
+        Both fingerprints must represent values normalized under the same
+        active mapping. None means the source field was omitted, not NULL;
+        callers must separately hold values whose null semantics are unknown.
+        Applying a value and recording its acknowledgment remain transactional
+        responsibilities of the calling writer.
+        """
+        if binding.direction is not MappingDirection.HERO_TO_FRAPPE:
+            raise BindingRegistryError("Inbound comparison requires an inbound field binding.")
+        if active_mapping_revision != binding.mapping_revision:
+            return "MAPPING_CHANGED"
+        if source_fingerprint is None:
+            return "OMITTED"
+        _hash(source_fingerprint, "source state")
+        _hash(target_fingerprint, "target state")
+        source_base = binding.acknowledged_source_fingerprint
+        target_base = binding.acknowledged_target_fingerprint
+        if source_base is None or target_base is None:
+            return "UNACKNOWLEDGED"
+        if source_fingerprint == target_fingerprint:
+            return "CONFIRM_EQUAL"
+        if source_fingerprint == source_base:
+            return "KEEP_LOCAL"
+        if target_fingerprint == target_base:
+            return "APPLY_SOURCE"
+        return "CONFLICT"
+
 
 class FrappeBindingStorage:
     """Narrow source-only adapter; it uses no DDL, commits, or public API."""
