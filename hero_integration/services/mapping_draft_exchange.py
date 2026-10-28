@@ -198,8 +198,8 @@ def _rule_target_metadata(content, schema):
         doctype, field = rule.get('target_doctype'), rule.get('target_field')
         if doctype and field:
             targets.setdefault(doctype, set()).add(field)
-    planned = {(field.get('doctype'), field.get('fieldname'))
-               for field in schema.get('custom_fields', []) if isinstance(field, dict)} if isinstance(schema, dict) else set()
+    planned = {(field.get('doctype'), field.get('fieldname')): field
+               for field in schema.get('custom_fields', []) if isinstance(field, dict)} if isinstance(schema, dict) else {}
     result = {}
     for doctype in sorted(targets):
         docs = frappe.db.sql('select name, module, custom, istable, issingle, is_virtual from `tabDocType` '
@@ -213,6 +213,22 @@ def _rule_target_metadata(content, schema):
                                 'force index (doc_type) where doc_type=%s for update', (doctype,), as_dict=True)
         if len(docs) != 1:
             raise MappingDraftExchangeError('Selected rule target DocType is missing.')
+        for fieldname in sorted(targets[doctype]):
+            definition = planned.get((doctype, fieldname))
+            if not definition:
+                continue
+            existing = [row for row in list(fields) + list(custom) if row['fieldname'] == fieldname]
+            overrides = [row for row in setters if row['field_name'] == fieldname and row['property'] in {
+                'fieldtype', 'options', 'reqd', 'read_only', 'hidden', 'permlevel', 'is_virtual'}]
+            if len(existing) > 1 or overrides:
+                raise MappingDraftExchangeError('Declared rule target metadata requires reconciliation.')
+            if existing:
+                row = existing[0]
+                if ((row['fieldtype'] or '') != (definition.get('fieldtype') or '')
+                        or (row['options'] or '') != (definition.get('options') or '')
+                        or any(int(row[key] or 0) != int(definition.get(key) or 0) for key in ('reqd', 'read_only'))
+                        or any(int(row[key] or 0) for key in ('hidden', 'permlevel', 'is_virtual'))):
+                    raise MappingDraftExchangeError('Declared rule target metadata differs from the schema contract.')
         selected = [dict(row) for row in list(fields) + list(custom)
                     if row['fieldname'] in targets[doctype] and (doctype, row['fieldname']) not in planned]
         overlays = [dict(row) for row in setters if row['doctype_or_field'] == 'DocType'
