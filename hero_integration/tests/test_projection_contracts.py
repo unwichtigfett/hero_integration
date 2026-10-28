@@ -90,6 +90,16 @@ class TestProjectionContracts(unittest.TestCase):
         config['native_task_onboarding'] = {'confirmed': True, 'source_instance': 'hero-one', 'source_type': 'Task'}
         mapping.mapping_json = json.dumps(config)
         self.assertEqual(from_documents(service, mapping, snapshot).target_operation, 'HeroTasks')
+        service.operation_name = 'HeroTasks'
+        self.assertEqual(from_documents(service, mapping, snapshot).target_operation, 'HeroTasks')
+        service.operation_name = 'unreviewed-name'
+        with self.assertRaises(ValueError):
+            from_documents(service, mapping, snapshot)
+        service.operation_name = 'HeroTasks'
+        mapping.operation_name = 'HeroTasks'
+        with self.assertRaises(ValueError):
+            from_documents(service, mapping, snapshot)
+        mapping.operation_name = 'tasks'
         service.execution_status = 'Pending Approval'
         with self.assertRaises(ValueError):
             from_documents(service, mapping, snapshot)
