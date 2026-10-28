@@ -150,6 +150,31 @@ def validate_rule(rule):
             raise MappingDraftError('Invalid field-rule text.')
 
 
+def validate_exchange_action(content, schema, operation_name):
+    """Project a primary mutation Draft onto the existing reviewed action contract.
+
+    The projection contains configuration only. Runtime identities, release
+    decisions and acknowledgements remain exclusively target-owned.
+    """
+    from hero_integration.services.frappe_writeback import (
+        WritebackContractError, normalise_mapping, reviewed_input_target,
+    )
+    try:
+        action = normalise_mapping(content, schema)
+        source, target = action['source'], action['target']
+        reviewed = reviewed_input_target(source['doctype'], source['field'], schema)
+        incoming_target = content['target']
+        if target['operation'] != operation_name:
+            raise WritebackContractError('Action operation does not match the selected definition.')
+        if 'field_path' in incoming_target and incoming_target['field_path'] != target['field']:
+            raise WritebackContractError('Action input path conflicts with the reviewed field.')
+        if 'graphql_type' in incoming_target and incoming_target['graphql_type'] != reviewed['graphql_type']:
+            raise WritebackContractError('Action input type conflicts with the saved schema.')
+    except (WritebackContractError, KeyError, TypeError) as error:
+        raise MappingDraftError('Imported action does not match the reviewed target contract.') from error
+    return {'mapping': action, 'graphql_type': reviewed['graphql_type']}
+
+
 def prepare_exchange_content(incoming, local, resolve_rule):
     """Prepare imported draft configuration using only target-side rule provenance.
 

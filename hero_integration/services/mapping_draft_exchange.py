@@ -16,7 +16,7 @@ import frappe
 
 from hero_integration.services.frappe_mapping_draft_storage import FrappeMappingDraftStorage
 from hero_integration.services.mapping_draft_service import DraftConflict, MappingDraftError
-from hero_integration.services.personal_mapping_content import bounded, prepare_exchange_content
+from hero_integration.services.personal_mapping_content import bounded, prepare_exchange_content, references, RULE_FIELDS, validate_exchange_action
 from hero_integration.services.mapping_draft_service import draft_key
 from hero_integration.services.schema_provisioning import (
     SchemaProvisioningError,
@@ -97,11 +97,12 @@ def _export_schema(mappings, direction):
 def preview_import(payload_json: str, source_instance: str, snapshot_name: str, direction: str) -> dict[str, object]:
     """Validate a proposed replacement without persisting drafts or schema."""
     package = _parse(payload_json, source_instance, snapshot_name, direction)
-    active = _active_definitions(source_instance, snapshot_name, direction)
+    active = _lock_active_definitions(_active_definitions(source_instance, snapshot_name, direction),
+                                      source_instance, snapshot_name, direction)
     fingerprints = {str(_value(row, "schema_fingerprint")) for row in active.values()}
     if fingerprints != {package["schema_fingerprint"]}:
         raise MappingDraftExchangeError("The import schema fingerprint does not match the selected active context.")
-    drafts = _open_drafts(set(active))
+    drafts = _lock_open_drafts(set(active))
     incoming = {item["definition_id"]: item for item in package["mappings"]}
     if len(incoming) != len(package["mappings"]):
         raise MappingDraftExchangeError("Import contains duplicate mapping definition identities.")
@@ -115,7 +116,7 @@ def preview_import(payload_json: str, source_instance: str, snapshot_name: str, 
         _assert_base(item, row)
         local = drafts.get(definition_id)
         local_content = _content(_value(local, "content_json")) if local else None
-        prepared = _prepare_item(item, row, local_content)
+        prepared = _prepare_item(item, row, local_content, package['schema'])
         state = "NEW" if local is None else "UNCHANGED" if _same(local_content, item["content"]) else "REPLACE"
         items.append({
             "definition_id": definition_id, "state": state, "content_hash": _hash(item["content"]),
@@ -141,7 +142,7 @@ def preview_import(payload_json: str, source_instance: str, snapshot_name: str, 
     return result
 
 
-def _prepare_item(item, row, local_content):
+def _prepare_item(item, row, local_content, schema):
     storage = FrappeMappingDraftStorage()
     try:
         with storage.transaction(item['definition_id'], frappe.session.user):
@@ -155,7 +156,7 @@ def _prepare_item(item, row, local_content):
             if local_content is None:
                 if draft is not None and draft.state == 'OPEN':
                     raise DraftConflict('Draft changed during preview.')
-                local_content = storage.initial_content(active.content)
+                local_content = _initial_locked_content(active.content, storage)
             elif draft is None or draft.state != 'OPEN' or not _same(draft.content, local_content):
                 raise DraftConflict('Draft changed during preview.')
             # Hold every extant version for these identities until the outer
@@ -165,29 +166,157 @@ def _prepare_item(item, row, local_content):
                 for identity in sorted(identities):
                     frappe.db.sql('select name from `tabHERO Frappe Mapping` where definition_id=%s for update',
                                   (identity,))
-            prepared = prepare_exchange_content(item['content'], local_content, storage._rule_snapshot)
+            prepared = prepare_exchange_content(item['content'], local_content,
+                                                lambda identity: _current_rule_snapshot(storage, identity))
+            if storage._definition.direction == 'QUERY_TO_FRAPPE':
+                prepared['metadata'] = {'rule_targets': _rule_target_metadata(prepared['content'], schema)}
+            assignments = list(prepared['content'].get('additional_mappings') or [])
+            if storage._definition.direction == 'FRAPPE_TO_MUTATION':
+                assignments.append(prepared['content'])
+            if assignments:
+                prepared.setdefault('metadata', {})['assignments'] = _assignment_metadata(storage, assignments)
+            if storage._definition.direction == 'FRAPPE_TO_MUTATION':
+                prepared['metadata']['primary_action'] = validate_exchange_action(
+                    prepared['content'], storage._publication_snapshot[1], storage._definition.operation_name)
             if prepared['content'].get('additional_mappings'):
                 storage._validate_additional_mappings(prepared['content']['additional_mappings'])
-                prepared['metadata'] = _assignment_metadata(storage, prepared['content']['additional_mappings'])
             return prepared
     except (MappingDraftError, ValueError) as error:
         raise MappingDraftExchangeError(str(error)) from error
 
 
+def _rule_target_metadata(content, schema):
+    """Lock and fingerprint selected rule targets, excluding declared schema creations.
+
+    Declared fields are instead checked by the schema preview and rechecked
+    after provisioning; their metadata ranges are still locked here.
+    """
+    rules = content.get('field_rules', {})
+    targets = {}
+    for identity in references(content):
+        rule = rules.get(identity, {})
+        doctype, field = rule.get('target_doctype'), rule.get('target_field')
+        if doctype and field:
+            targets.setdefault(doctype, set()).add(field)
+    planned = {(field.get('doctype'), field.get('fieldname'))
+               for field in schema.get('custom_fields', []) if isinstance(field, dict)} if isinstance(schema, dict) else set()
+    result = {}
+    for doctype in sorted(targets):
+        docs = frappe.db.sql('select name, module, custom, istable, issingle, is_virtual from `tabDocType` '
+                             'where name=%s for update', (doctype,), as_dict=True)
+        fields = frappe.db.sql('select name, fieldname, fieldtype, options, reqd, read_only, hidden, permlevel, is_virtual '
+                               'from `tabDocField` force index (parent) where parent=%s and parenttype=%s for update',
+                               (doctype, 'DocType'), as_dict=True)
+        custom = frappe.db.sql('select name, fieldname, fieldtype, options, reqd, read_only, hidden, permlevel, is_virtual '
+                               'from `tabCustom Field` force index (dt) where dt=%s for update', (doctype,), as_dict=True)
+        setters = frappe.db.sql('select name, doctype_or_field, field_name, property, value from `tabProperty Setter` '
+                                'force index (doc_type) where doc_type=%s for update', (doctype,), as_dict=True)
+        if len(docs) != 1:
+            raise MappingDraftExchangeError('Selected rule target DocType is missing.')
+        selected = [dict(row) for row in list(fields) + list(custom)
+                    if row['fieldname'] in targets[doctype] and (doctype, row['fieldname']) not in planned]
+        overlays = [dict(row) for row in setters if row['doctype_or_field'] == 'DocType'
+                    or (row['field_name'] in targets[doctype] and (doctype, row['field_name']) not in planned)]
+        result[doctype] = {'doctype': dict(docs[0]), 'fields': sorted(selected, key=lambda x: x['name']),
+                           'setters': sorted(overlays, key=lambda x: x['name'])}
+    return result
+
+
+def _current_rule_snapshot(storage, identity):
+    """Read the unique rule by a current, locking read, never a stale MVCC snapshot."""
+    rows = frappe.db.sql('select * from `tabHERO Frappe Mapping` where definition_id=%s for update',
+                         (identity,), as_dict=True)
+    parent = storage._definition
+    config = json.loads(parent.mapping_json)
+    if len(rows) != 1:
+        raise MappingDraftError('Exactly one visible active field-rule template in this definition scope is required.')
+    rule = frappe.get_doc(dict(rows[0], doctype='HERO Frappe Mapping'))
+    rule.check_permission('read')
+    if (rule.status != 'Active' or rule.schema_snapshot != parent.schema_snapshot
+            or rule.schema_fingerprint != parent.schema_fingerprint
+            or rule.operation != config.get('target_operation', parent.operation_name)
+            or (rule.personal_graphql_mapping and rule.personal_graphql_mapping != parent.name)):
+        raise MappingDraftError('The field-rule version is outside this mapping scope.')
+    return ({field: rule.get(field) for field in RULE_FIELDS},
+            {'name': rule.name, 'revision': int(rule.mapping_revision), 'operation': rule.operation,
+             'schema_snapshot': rule.schema_snapshot, 'schema_fingerprint': rule.schema_fingerprint})
+
+
+def _initial_locked_content(content, storage):
+    value = _object(content)
+    ids = references(value)
+    if not ids:
+        return bounded(value)
+    if 'field_rules' in value or 'field_rule_bases' in value:
+        raise MappingDraftError('Active content already uses reserved personal snapshot fields.')
+    value['field_rules'], value['field_rule_bases'] = {}, {}
+    for identity in sorted(ids):
+        value['field_rules'][identity], value['field_rule_bases'][identity] = _current_rule_snapshot(storage, identity)
+    return bounded(value)
+
+
 def _assignment_metadata(storage, mappings):
     from hero_integration.api import _validated_snapshot
-    snapshot, schema = _validated_snapshot(storage._definition.schema_snapshot)
+    snapshot, schema = _validated_snapshot(storage._definition.schema_snapshot, for_update=True)
+    storage._publication_snapshot = (snapshot, schema)
+    # Lock only the referenced DocTypes and their field/overlay index ranges.
+    # RR next-key locks on the parent indexes also protect against a new field
+    # or property setter for the same DocType until Draft DML commits.
+    targets = {}
+    for item in mappings:
+        side = item['target'] if storage._definition.direction == 'QUERY_TO_FRAPPE' else item['source']
+        targets.setdefault(side['doctype'], set()).add(side['field'])
+    locked = {}
+    for doctype in sorted(targets):
+        doc = frappe.db.sql('select name, module, custom, istable, issingle, is_virtual from `tabDocType` '
+                            'where name=%s for update', (doctype,), as_dict=True)
+        docfields = frappe.db.sql('select name, fieldname, fieldtype, options, reqd, read_only, hidden, '
+                                  'permlevel, is_virtual from `tabDocField` force index (parent) '
+                                  'where parent=%s and parenttype=%s for update', (doctype, 'DocType'), as_dict=True)
+        custom = frappe.db.sql('select name, fieldname, fieldtype, options, reqd, read_only, hidden, '
+                               'permlevel, is_virtual from `tabCustom Field` force index (dt) '
+                               'where dt=%s for update', (doctype,), as_dict=True)
+        setters = frappe.db.sql('select name, doctype_or_field, field_name, property, value from `tabProperty Setter` '
+                                'force index (doc_type) where doc_type=%s for update', (doctype,), as_dict=True)
+        if len(doc) != 1:
+            raise MappingDraftExchangeError('Assigned Frappe DocType no longer exists.')
+        selected = [dict(row) for row in list(docfields) + list(custom) if row['fieldname'] in targets[doctype]]
+        doctype_properties = {'module', 'custom', 'istable', 'issingle', 'is_virtual'}
+        field_properties = {'fieldtype', 'options', 'reqd', 'read_only', 'hidden', 'permlevel', 'is_virtual'}
+        overlays = [dict(row) for row in setters if
+                    (row['doctype_or_field'] == 'DocType' and row['property'] in doctype_properties)
+                    or (row['field_name'] in targets[doctype] and row['property'] in field_properties)]
+        # A property override changes effective metadata. Do not infer its
+        # precedence from a possibly old transaction snapshot or cache.
+        if overlays:
+            raise MappingDraftExchangeError('Assigned field has metadata overrides requiring reconciliation.')
+        locked[doctype] = {'doctype': dict(doc[0]), 'fields': sorted(selected, key=lambda row: row['name']),
+                           'setters': sorted(overlays, key=lambda row: row['name'])}
     fields = []
     for item in mappings:
         side = item['target'] if storage._definition.direction == 'QUERY_TO_FRAPPE' else item['source']
-        field = frappe.get_meta(side['doctype']).get_field(side['field'])
+        meta = frappe.get_meta(side['doctype'])
+        current_doctype = locked[side['doctype']]['doctype']
+        if ((meta.get('module') or '') != (current_doctype.get('module') or '')
+                or any(int(meta.get(key) or 0) != int(current_doctype.get(key) or 0)
+                       for key in ('custom', 'istable', 'issingle', 'is_virtual'))):
+            raise MappingDraftExchangeError('Cached Frappe DocType metadata is stale; retry the import.')
+        field = meta.get_field(side['field'])
         if field is None:
             raise MappingDraftExchangeError('Assigned Frappe field no longer exists.')
+        current = [row for row in locked[side['doctype']]['fields'] if row['fieldname'] == side['field']]
+        if len(current) != 1:
+            raise MappingDraftExchangeError('Assigned Frappe field metadata is ambiguous.')
+        flags = ('reqd', 'read_only', 'hidden', 'permlevel', 'is_virtual')
+        if (any((field.get(key) or '') != (current[0].get(key) or '') for key in ('fieldtype', 'options'))
+                or any(int(field.get(key) or 0) != int(current[0].get(key) or 0) for key in flags)):
+            raise MappingDraftExchangeError('Cached Frappe field metadata is stale; retry the import.')
         fields.append({'doctype': side['doctype'], 'field': side['field'],
                        **{key: field.get(key) for key in ('fieldtype', 'options', 'reqd', 'read_only',
                                                           'hidden', 'permlevel', 'is_virtual')}})
     return {'snapshot': snapshot.name, 'schema_fingerprint': snapshot.schema_fingerprint,
-            'schema_hash': _hash(schema), 'fields': sorted(fields, key=lambda value: (value['doctype'], value['field']))}
+            'schema_hash': _hash(schema), 'fields': sorted(fields, key=lambda value: (value['doctype'], value['field'])),
+            'locked_metadata': locked}
 
 
 def save_import(payload_json: str, source_instance: str, snapshot_name: str, direction: str,
@@ -222,7 +351,7 @@ def save_import(payload_json: str, source_instance: str, snapshot_name: str, dir
             state = expected[definition_id]
             active = _active_definitions(source_instance, snapshot_name, direction)[definition_id]
             local = _open_drafts({definition_id}).get(definition_id)
-            prepared = _prepare_item(item, active, _content(_value(local, 'content_json')) if local else None)
+            prepared = _prepare_item(item, active, _content(_value(local, 'content_json')) if local else None, package['schema'])
             if not prepared['can_save']:
                 raise DraftConflict('Imported field-rule reference changed.')
             expected_refs = next(row['references'] for row in preview['items'] if row['definition_id'] == definition_id)
@@ -318,6 +447,49 @@ def _open_drafts(definition_ids: set[str]) -> dict[str, object]:
     result = {str(_value(row, "definition_id")): row for row in rows}
     if len(result) != len(rows):
         raise MappingDraftExchangeError("Personal draft identities are not unique.")
+    return result
+
+
+def _lock_active_definitions(active, source_instance, snapshot_name, direction):
+    """Lock observed parent identities in stable order and read their latest state.
+
+    This deliberately does not table-lock an administrator's ability to add a
+    different definition to the context. Such a definition is never included
+    in the set of Drafts this preview can remove.
+    """
+    result = {}
+    for identity in sorted(active):
+        rows = frappe.db.sql(
+            'select name, definition_id, schema_fingerprint, operation_kind, operation_name, direction, '
+            'mapping_revision, mapping_json, status, source_instance, schema_snapshot '
+            'from `tabHERO GraphQL Mapping` where definition_id=%s for update', (identity,), as_dict=True)
+        if len(rows) != 1:
+            raise MappingDraftExchangeError('Mapping context changed; preview again before saving.')
+        row = rows[0]
+        if (row['status'], row['source_instance'], row['schema_snapshot'], row['direction'], row['operation_kind']) != (
+                'Active', source_instance, snapshot_name, direction, _DIRECTIONS[direction]):
+            raise MappingDraftExchangeError('Mapping context changed; preview again before saving.')
+        result[identity] = row
+    return result
+
+
+def _lock_open_drafts(definition_ids):
+    """Current owner Draft reads under the already-held parent locks."""
+    result = {}
+    for identity in sorted(definition_ids):
+        key = draft_key(frappe.local.site, identity, frappe.session.user)
+        rows = frappe.db.sql('select * from `tabHERO Mapping Draft` where draft_key=%s for update',
+                             (key,), as_dict=True)
+        if len(rows) > 1:
+            raise MappingDraftExchangeError('Personal draft identities are not unique.')
+        if not rows:
+            continue
+        row = rows[0]
+        if (row['site_scope'], row['owner_user'], row['definition_id']) != (
+                frappe.local.site, frappe.session.user, identity):
+            raise MappingDraftExchangeError('Personal draft identity or ownership is invalid.')
+        if row['state'] == 'OPEN':
+            result[identity] = row
     return result
 
 

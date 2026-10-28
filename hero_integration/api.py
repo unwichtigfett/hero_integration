@@ -1416,11 +1416,12 @@ def mapping_draft_exchange_save(payload_json: str, source_instance: str, snapsho
     except (TypeError, ValueError, json.JSONDecodeError):
         frappe.throw("MAPPING_INPUT_INVALID: expected draft states must be JSON.")
     from hero_integration.services.mapping_draft_exchange import MappingDraftExchangeError, save_import
+    from hero_integration.services.schema_provisioning import SchemaProvisioningError
 
     try:
         return save_import(payload_json, source_instance, snapshot_name, direction, expected_states,
                            confirmed=confirmed in (True, 1, "1", "true", "True"), preview_fingerprint=preview_fingerprint)
-    except MappingDraftExchangeError as error:
+    except (MappingDraftExchangeError, SchemaProvisioningError) as error:
         frappe.throw(str(error))
 
 
