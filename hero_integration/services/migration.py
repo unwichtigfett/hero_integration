@@ -366,6 +366,7 @@ def _mapping_plan_for_run(run, target_operation: str):
         definition_ids=contract.definition_ids,
         target_operation=contract.target_operation,
         mapping_name=contract.mapping_name,
+        native_task=json.loads(mapping.mapping_json).get('native_task_onboarding') is not None,
     )
 
 
@@ -508,8 +509,11 @@ def _process_projection(run, source) -> None:
             if index < index_start:
                 continue
             _cancel_if_requested(run)
-            result = (_migrate_native_task(record, run, plan, task_scope)
-                      if task_scope is not None else _migrate_projection(record, run, plan))
+            if task_scope is not None:
+                task_record = record if any(item.source_path == 'comment' for item in plan.definitions) else {k: v for k, v in record.items() if k != 'comment'}
+                result = _migrate_native_task(task_record, run, plan, task_scope)
+            else:
+                result = _migrate_projection(record, run, plan)
             _record_result(run, PROJECTIONS[operation]['source_type'], record, result)
             run.resume_phase = operation
             run.resume_offset, run.resume_record_index = offset, index + 1
@@ -546,7 +550,10 @@ def _migrate_native_task(record, run, plan, scope) -> Result:
     version = f"native-task-v1:{int(run.mapping_revision)}:{plan.mapping_version}"
     key = ':'.join(('HERO', instance, 'Task', source_id))
     from hero_integration.hero_integration.doctype.hero_frappe_mapping.hero_frappe_mapping import _lock_active_target
-    _lock_active_target('native-task-intake', 'Task', key)
+    database = getattr(frappe.conf, 'db_name', None)
+    if not isinstance(database, str) or not database:
+        raise MappingPlanError('Native Task intake requires the current database identity.')
+    _lock_active_target('native-task-intake:' + database, 'Task', key)
     rows = frappe.db.sql('SELECT name FROM `tabHERO Integration Link` WHERE source_key=%s FOR UPDATE', (key,), as_dict=True)
     if len(rows) > 1:
         raise MappingPlanError('Task source identity is not unique.')

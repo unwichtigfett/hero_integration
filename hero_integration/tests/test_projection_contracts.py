@@ -68,13 +68,40 @@ def record(operation="HeroTasks"):
 
 
 class TestProjectionContracts(unittest.TestCase):
+    def test_native_task_plan_requires_only_explicit_native_rules(self):
+        identity = MappingSpec('HeroTasks', 'id', 'HERO Integration Link', 'source_id', 'int', 'Source Identity', 'Positive Int To Text', definition_id='native-id')
+        title = MappingSpec('HeroTasks', 'title', 'Task', 'subject', 'string|null', 'Record Name', 'Trim', definition_id='native-title')
+        comment = MappingSpec('HeroTasks', 'comment', 'Task', 'description', 'string|null', 'Native Binding', 'Native Adapter', definition_id='native-comment')
+        plan = plan_from_definitions('tasks', [identity, title], target_operation='HeroTasks', native_task=True)
+        self.assertEqual(plan.source_identity({'id': 17}), '17')
+        self.assertEqual(len(plan_from_definitions('tasks', [identity, title, comment], target_operation='HeroTasks', native_task=True).definitions), 3)
+        for rules in ([identity], [title], [identity, title, definitions('HeroTasks')[-1]]):
+            with self.assertRaises(ValueError):
+                plan_from_definitions('tasks', rules, target_operation='HeroTasks', native_task=True)
+
     def test_task_onboarding_is_bound_to_reviewed_source_and_type(self):
         service, mapping, snapshot = documents()
         snapshot.source_instance = 'hero-one'
+        snapshot.analysis_status = 'Validated'
+        service.operation_name = mapping.operation_name = 'tasks'
+        mapping.operation_kind = 'QUERY'
+        mapping.direction = 'QUERY_TO_FRAPPE'
         config = json.loads(mapping.mapping_json)
         config['native_task_onboarding'] = {'confirmed': True, 'source_instance': 'hero-one', 'source_type': 'Task'}
         mapping.mapping_json = json.dumps(config)
         self.assertEqual(from_documents(service, mapping, snapshot).target_operation, 'HeroTasks')
+        service.execution_status = 'Pending Approval'
+        with self.assertRaises(ValueError):
+            from_documents(service, mapping, snapshot)
+        service.execution_status = 'Approved'
+        mapping.mapping_revision = 2
+        with self.assertRaises(ValueError):
+            from_documents(service, mapping, snapshot)
+        mapping.mapping_revision = 1
+        snapshot.analysis_status = 'Draft'
+        with self.assertRaises(ValueError):
+            from_documents(service, mapping, snapshot)
+        snapshot.analysis_status = 'Validated'
         config['native_task_onboarding']['source_instance'] = 'hero-two'
         mapping.mapping_json = json.dumps(config)
         with self.assertRaises(ValueError):

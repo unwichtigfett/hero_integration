@@ -320,6 +320,14 @@ def approve_read_service(
     service.execution_status = "Approved"
     service.approved_service_revision = service.service_revision
     service.approved_mapping_revision = mapping.mapping_revision
+    config = json.loads(mapping.mapping_json)
+    if config.get('native_task_onboarding') is not None:
+        from hero_integration.services.mapping_runtime import active_mapping_plan
+        from hero_integration.services.read_contract import from_documents
+        snapshot = frappe.get_doc('HERO GraphQL Schema Snapshot', service.schema_snapshot)
+        contract = from_documents(service, mapping, snapshot)
+        active_mapping_plan(service.operation_name, definition_ids=contract.definition_ids,
+                            target_operation=contract.target_operation, mapping_name=mapping.name, native_task=True)
     service.save()
     return {
         "status": service.execution_status,
