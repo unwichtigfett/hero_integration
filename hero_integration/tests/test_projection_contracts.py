@@ -68,6 +68,23 @@ def record(operation="HeroTasks"):
 
 
 class TestProjectionContracts(unittest.TestCase):
+    def test_task_onboarding_is_bound_to_reviewed_source_and_type(self):
+        service, mapping, snapshot = documents()
+        snapshot.source_instance = 'hero-one'
+        config = json.loads(mapping.mapping_json)
+        config['native_task_onboarding'] = {'confirmed': True, 'source_instance': 'hero-one', 'source_type': 'Task'}
+        mapping.mapping_json = json.dumps(config)
+        self.assertEqual(from_documents(service, mapping, snapshot).target_operation, 'HeroTasks')
+        config['native_task_onboarding']['source_instance'] = 'hero-two'
+        mapping.mapping_json = json.dumps(config)
+        with self.assertRaises(ValueError):
+            from_documents(service, mapping, snapshot)
+        config['native_task_onboarding']['source_instance'] = 'hero-one'
+        config['native_task_onboarding']['source_type'] = 'Other'
+        mapping.mapping_json = json.dumps(config)
+        with self.assertRaises(ValueError):
+            from_documents(service, mapping, snapshot)
+
     def test_only_calendar_and_tasks_are_registered(self):
         self.assertEqual(set(CONTRACTS), {"HeroCalendarEvents", "HeroTasks"})
 
