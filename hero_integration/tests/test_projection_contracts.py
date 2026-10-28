@@ -168,6 +168,35 @@ class TestProjectionContracts(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_projection_record("HeroCalendarEvents", row)
 
+    def test_calendar_optional_null_and_omission_do_not_clear_native_values(self):
+        from hero_integration.services.native_projections import values as native_values
+        plan = plan_from_definitions('HeroCalendarEvents', definitions('HeroCalendarEvents'))
+        for absent in (False, True):
+            row = record('HeroCalendarEvents')
+            for field in ('project_match_id', 'description', 'full_address', 'partners', 'resources'):
+                if absent:
+                    row.pop(field)
+                else:
+                    row[field] = None
+            validate_projection_record('HeroCalendarEvents', row)
+            native = native_values(CONTRACTS['HeroCalendarEvents'], row, '9', 'fixture',
+                                   native_options('HeroCalendarEvents'), lookup=lambda *args: None)
+            values = plan.values(row, project_link=lambda value: self.fail('unexpected project resolution'),
+                                 native_value=lambda field: native[field])
+            for field in ('custom_hero_project', 'custom_hero_project_match_id', 'description', 'location',
+                          'custom_hero_partners', 'custom_hero_resources'):
+                self.assertNotIn(field, values)
+
+    def test_calendar_project_uses_verified_resolver(self):
+        from hero_integration.services.native_projections import values as native_values
+        plan = plan_from_definitions('HeroCalendarEvents', definitions('HeroCalendarEvents'))
+        row = record('HeroCalendarEvents'); row['project_match_id'] = 41
+        native = native_values(CONTRACTS['HeroCalendarEvents'], row, '9', 'fixture',
+                               native_options('HeroCalendarEvents'), lookup=lambda *args: None)
+        values = plan.values(row, project_link=lambda source_id: 'PROJECT-VERIFIED' if source_id == 41 else None,
+                             native_value=lambda field: native[field])
+        self.assertEqual(values['custom_hero_project'], 'PROJECT-VERIFIED')
+
     def test_read_contract_requires_current_approval_and_exact_query(self):
         service, mapping, snapshot = documents()
         self.assertEqual(from_documents(service, mapping, snapshot).target_operation, "HeroTasks")

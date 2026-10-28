@@ -101,6 +101,13 @@ class MappingPlan:
                 raise MappingPlanError(str(error)) from error
         for definition in self.definitions:
             value = source_value(record, definition.source_path)
+            if (self.target_operation or self.operation) == 'HeroCalendarEvents' and (
+                value is None or (definition.source_path in {'description', 'full_address'}
+                                  and isinstance(value, str) and not value.strip())
+                or (definition.source_path in {'partners', 'resources'} and value == [])
+            ):
+                # Missing, NULL and unconfirmed empty values do not clear Event fields.
+                continue
             if definition.purpose in {PURPOSE_FIELD, PURPOSE_RECORD_NAME, PURPOSE_CUSTOMER_TYPE, PURPOSE_CUSTOMER_CONTACT, PURPOSE_SOURCE_IDENTITY}:
                 if definition.purpose == PURPOSE_RECORD_NAME and (self.target_operation or self.operation) == "HeroProjectMatches":
                     transformed = project_title(record) if project_title is not None else transformed_value(definition, value)

@@ -94,7 +94,9 @@ def values(contract, record, identity, instance, options, *, lookup, item_link=N
                 'item_name': _text(record.get('name'), 'Item name', required=True, limit=140),
                 'description': _html(_text(record.get('description'), 'Item description')),
                 'stock_uom': uom_name, 'item_group': options['item_group']}
-    if record.get('is_recurring') is True:
+    if type(record.get('is_recurring')) is not bool:
+        raise ValueError('Calendar recurrence flag must be explicit; null is not false.')
+    if record['is_recurring']:
         raise ValueError('Recurring HERO event has no reviewed recurrence rule; native recurrence is blocked.')
     if type(record.get('all_day')) is not bool:
         raise ValueError('Calendar all_day must be explicit; null is not false.')

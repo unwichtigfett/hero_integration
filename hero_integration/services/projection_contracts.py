@@ -52,6 +52,8 @@ def validate_projection_record(operation, record):
     contract = CONTRACTS[operation]
     for path, declared in contract['paths'].items():
         if path not in record:
+            if operation == 'HeroCalendarEvents' and '|null' in declared and path not in {'start', 'all_day', 'is_recurring'}:
+                continue
             raise ValueError('Projection response omits a selected field: ' + path)
         value = record[path]
         if value is None and '|null' in declared:

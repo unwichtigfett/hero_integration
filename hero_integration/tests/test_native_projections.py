@@ -35,7 +35,7 @@ class TestNativeProjections(unittest.TestCase):
 
     def test_event_dst_recurrence_and_null_boolean_block(self):
         for change in ({"start": "2026-10-25T02:30:00"}, {"start": "2026-03-29T02:30:00"},
-                       {"is_recurring": True}, {"all_day": None}):
+                       {"is_recurring": True}, {"is_recurring": None}, {"all_day": None}):
             row = event()
             row.update(change)
             with self.assertRaises(ValueError):
