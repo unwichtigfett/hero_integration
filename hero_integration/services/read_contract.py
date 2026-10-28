@@ -48,7 +48,7 @@ def from_documents(service, mapping, snapshot) -> ReadContract:
                 or not onboarding['source_instance'].strip()
                 or onboarding['source_instance'] != getattr(snapshot, 'source_instance', '')
                 or getattr(snapshot, 'analysis_status', '') != 'Validated'
-                or getattr(service, 'operation_name', '') != 'tasks'
+                or getattr(service, 'operation_name', '') not in {'HeroTasks', 'tasks'}
                 or getattr(mapping, 'operation_name', '') != 'tasks'
                 or getattr(mapping, 'operation_kind', '') != 'QUERY'
                 or getattr(mapping, 'direction', '') != 'QUERY_TO_FRAPPE'):
