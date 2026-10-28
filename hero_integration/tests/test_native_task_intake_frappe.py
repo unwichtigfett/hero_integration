@@ -2,6 +2,7 @@
 from types import SimpleNamespace
 import json
 import os
+import threading
 from unittest import TestCase
 from unittest.mock import patch
 
@@ -168,9 +169,10 @@ class TestNativeTaskIntake(TestCase):
         class Source:
             contract = SimpleNamespace(target_operation='HeroTasks')
             source_instance = 'default'
+            row = {'id': 982012, 'title': 'Full path synthetic 32A',
+                   'comment': 'Test', '_hero_source_instance': 'default'}
             def projection(self, offset):
-                return SimpleNamespace(records=({'id': 982012, 'title': 'Full path synthetic 32A',
-                    'comment': 'Test', '_hero_source_instance': 'default'},), next_offset=None)
+                return SimpleNamespace(records=(self.row,), next_offset=None)
 
         run = Run(graphql_mapping=mapping.name, graphql_service=service.name, service_revision=1,
             mapping_revision=1, source_instance='default', mode='Execute', resume_offset=0,
@@ -182,8 +184,49 @@ class TestNativeTaskIntake(TestCase):
         with self.assertRaises(ValueError):
             _mapping_plan_for_run(run, 'HeroTasks')
         frappe.db.set_value('HERO Frappe Mapping', identity_rule, 'schema_fingerprint', snapshot.schema_fingerprint)
-        _process_projection(run, Source())
+        source = Source()
+        _process_projection(run, source)
         link = frappe.get_doc('HERO Integration Link', {'source_key': 'HERO:default:Task:982012'})
         self.assertEqual((run.created_records, link.target_doctype), (1, 'Task'))
         self.assertEqual(frappe.get_doc('Task', link.target_name).subject, 'Full path synthetic 32A')
         self.assertFalse(frappe.get_doc('Task', link.target_name).description)
+        task_name = link.target_name
+        baseline = (link.source_field_hashes, link.target_field_hashes)
+        run.resume_record_index = 0
+        _process_projection(run, source)
+        self.assertEqual(frappe.db.count('HERO Integration Link', {'source_key': 'HERO:default:Task:982012'}), 1)
+        task = frappe.get_doc('Task', task_name); task.subject = 'Local protected text'; task.save()
+        source.row = {**source.row, 'title': 'Remote conflicting text'}
+        run.resume_record_index = 0
+        _process_projection(run, source)
+        source.row = {'id': 982012, '_hero_source_instance': 'default'}
+        run.resume_record_index = 0
+        _process_projection(run, source)
+        link.reload()
+        self.assertEqual((link.source_field_hashes, link.target_field_hashes), baseline)
+        self.assertEqual(frappe.get_doc('Task', task_name).subject, 'Local protected text')
+        frappe.db.commit()
+        readback = []
+        def independent():
+            frappe.init(site=os.environ['HERO_TEST_PRIVATE_SITE']); frappe.connect(); frappe.set_user('Administrator')
+            try:
+                saved = frappe.get_doc('HERO Integration Link', {'source_key': 'HERO:default:Task:982012'})
+                readback.append((saved.target_name, frappe.get_doc('Task', saved.target_name).subject,
+                                 saved.source_field_hashes, saved.target_field_hashes))
+            finally: frappe.destroy()
+        thread = threading.Thread(target=independent); thread.start(); thread.join(timeout=20)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(readback, [(task_name, 'Local protected text', *baseline)])
+        source.row = {'id': 982013, 'title': 'Registered rollback 33', '_hero_source_instance': 'default'}
+        run.resume_record_index = 0
+        original = frappe.get_doc
+        def inject(*args, **kwargs):
+            if args and isinstance(args[0], dict) and args[0].get('doctype') == 'HERO Integration Link':
+                raise RuntimeError('registered link failure')
+            return original(*args, **kwargs)
+        with patch.object(frappe, 'get_doc', side_effect=inject):
+            with self.assertRaisesRegex(RuntimeError, 'registered link failure'):
+                _process_projection(run, source)
+        self.assertFalse(frappe.db.exists('HERO Integration Link', {'source_key': 'HERO:default:Task:982013'}))
+        self.assertFalse(frappe.db.exists('Task', {'subject': 'Registered rollback 33'}))
+        print('REGISTERED_REPLAY_CONFLICT_OMISSION_READBACK_ROLLBACK=PASS', flush=True)

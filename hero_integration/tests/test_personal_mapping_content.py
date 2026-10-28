@@ -5,6 +5,20 @@ from hero_integration.services.personal_mapping_content import bounded, validate
 from hero_integration.services.mapping_draft_service import MappingDraftError
 
 class TestPersonalMappingContent(unittest.TestCase):
+    def test_native_task_onboarding_is_explicit_and_bounded(self):
+        prior = {'target_operation': 'HeroTasks'}
+        scope = {'source_instance': 'default', 'source_type': 'Task', 'confirmed': True}
+        self.assertEqual(validate_edits(prior, {**prior, 'native_task_onboarding': scope})['native_task_onboarding'], scope)
+        for invalid in ({**scope, 'confirmed': 1}, {**scope, 'source_type': 'Project'},
+                        {**scope, 'source_instance': ' default'}, {**scope, 'extra': True}):
+            with self.assertRaises(MappingDraftError):
+                validate_edits(prior, {**prior, 'native_task_onboarding': invalid})
+        with self.assertRaises(MappingDraftError):
+            validate_edits({'target_operation': 'HeroCustomers'},
+                           {'target_operation': 'HeroCustomers', 'native_task_onboarding': scope})
+        with self.assertRaises(MappingDraftError):
+            validate_edits(prior, {'target_operation': 'HeroCustomers', 'native_task_onboarding': scope})
+
     def test_new_assignments_have_bounded_explicit_shape_and_unique_identity(self):
         prior = {'source': {'field': 'existing'}, 'extra': {'keep': 3}}
         item = {'id': '8a6c58ba-08fb-4da4-87e6-684bb1b16e19',

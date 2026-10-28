@@ -323,6 +323,11 @@ class FrappeMappingDraftStorage:
         key = draft_key(self.frappe.local.site, self._definition.definition_id, self.frappe.session.user)
         prior = self.draft(key).content
         value = validate_edits(prior, content)
+        scope = value.get('native_task_onboarding')
+        if scope is not None and (self._definition.direction != 'QUERY_TO_FRAPPE'
+                or self._definition.operation_name != 'tasks'
+                or scope['source_instance'] != self._definition.source_instance):
+            raise MappingDraftError('Native Task onboarding is outside the current source and mapping.')
         if value.get('additional_mappings'):
             self._validate_additional_mappings(value['additional_mappings'])
         rules, bases = value.get("field_rules", {}), value.get("field_rule_bases", {})
@@ -488,7 +493,8 @@ class FrappeMappingDraftStorage:
         targets = [(spec.target_doctype, spec.target_field) for spec in specifications if spec.purpose != 'Record Name']
         if len(set(targets)) != len(targets):
             raise MappingDraftError('The published mapping contains duplicate target fields.')
-        plan_from_definitions(parent.operation_name, specifications, target_operation=operation)
+        plan_from_definitions(parent.operation_name, specifications, target_operation=operation,
+                              native_task=content.get('native_task_onboarding') is not None)
         self._validate_publication_read_contract(content)
         return content, created
 
