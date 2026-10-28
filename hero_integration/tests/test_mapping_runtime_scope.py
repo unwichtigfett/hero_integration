@@ -44,6 +44,10 @@ class TestMappingRuntimeScope(unittest.TestCase):
             with patch.dict(SOURCE_CONTRACTS['HeroCustomers'], {'native_field_bindings': frozenset({binding})}):
                 result = mapping_runtime.active_mapping_plan('HeroCustomers', definition_ids=('fixture-rule',), mapping_name='fixture-mapping')
                 self.assertEqual(result[0].target_field, 'alias')
+                shared = dict(row, personal_graphql_mapping=None)
+                with patch.object(fake, 'get_all', return_value=[shared]):
+                    with self.assertRaises(mapping_runtime.MappingPlanError):
+                        mapping_runtime.active_mapping_plan('HeroCustomers')
             with patch.dict(SOURCE_CONTRACTS['HeroCustomers'], {'native_field_bindings': frozenset()}):
                 with self.assertRaises(mapping_runtime.MappingPlanError):
                     mapping_runtime.active_mapping_plan('HeroCustomers', definition_ids=('fixture-rule',), mapping_name='fixture-mapping')

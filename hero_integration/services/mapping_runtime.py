@@ -243,6 +243,8 @@ def active_mapping_plan(operation: str, *, definition_ids: tuple[str, ...] = (),
         if spec.operation in {'HeroCustomers', 'HeroProjectMatches'} and spec.purpose == PURPOSE_FIELD:
             field = metadata.field(spec.target_doctype, spec.target_field)
             if field is None or not getattr(field, 'is_custom_field', False):
+                if not definition_ids or not mapping_name:
+                    raise MappingPlanError('Native field mappings require an explicit approved read mapping.')
                 try:
                     validate_spec(spec, metadata)
                 except ValueError as error:
