@@ -15,6 +15,7 @@ from hero_integration.services.direct_mapping import MappingSpec
 
 class _Plan:
     mapping_version = 'fixture-v1'
+    definitions = [SimpleNamespace(source_path=path) for path in ('id', 'title', 'comment')]
 
     def source_identity(self, record):
         return str(record['id'])
@@ -69,6 +70,22 @@ class TestNativeTaskIntake(TestCase):
         self.assertFalse(frappe.db.exists('Task', {'subject': self.record['title']}))
         self.assertFalse(frappe.db.exists('HERO Integration Link', {'source_key': 'HERO:fixture-task32a:Task:982011'}))
 
+    def test_unselected_description_is_never_written_or_marked_pending(self):
+        plan = _Plan()
+        plan.definitions = [SimpleNamespace(source_path=path) for path in ('id', 'title')]
+        created = _migrate_native_task(self.record, self.run, plan, self.scope)
+        task = frappe.get_doc('Task', created.target_name)
+        self.assertFalse(task.description)
+        link = frappe.get_doc('HERO Integration Link', {'source_key': 'HERO:fixture-task32a:Task:982011'})
+        self.assertEqual(link.sync_status, 'Synchronized')
+        task.description = 'Local description'
+        task.save()
+        result = _migrate_native_task({**self.record, 'comment': None}, self.run, plan, self.scope)
+        task.reload(); link.reload()
+        self.assertEqual(task.description, 'Local description')
+        self.assertEqual(link.sync_status, 'Synchronized')
+        self.assertNotEqual(result.code, 'CONFLICT')
+
     def test_remote_update_and_empty_comment_hold(self):
         created = self.apply(self.record)
         changed = self.apply({**self.record, 'title': 'Remote update'})
@@ -77,6 +94,9 @@ class TestNativeTaskIntake(TestCase):
         self.assertEqual(task.subject, 'Remote update')
         link = frappe.get_doc('HERO Integration Link', {'source_key': 'HERO:fixture-task32a:Task:982011'})
         old_source, old_target = link.source_field_hashes, link.target_field_hashes
+        self.run.mode = 'Preview'
+        self.assertEqual(self.apply({**self.record, 'title': 'Remote update', 'comment': ''}).code, 'CONFLICT')
+        self.run.mode = 'Execute'
         held = self.apply({**self.record, 'title': 'Remote update', 'comment': ''})
         self.assertEqual(held.code, 'CONFLICT')
         task.reload(); link.reload()
