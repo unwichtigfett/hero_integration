@@ -64,6 +64,18 @@ def validate_edits(prior, submitted):
     """Validate edits and retain exact stored values at immutable paths."""
     result = deepcopy(submitted)
     for key in set(prior) | set(submitted):
+        if key == 'native_task_onboarding':
+            if key not in submitted:
+                continue
+            scope = submitted[key]
+            if (prior.get('target_operation') != 'HeroTasks' or submitted.get('target_operation') != 'HeroTasks'
+                    or not isinstance(scope, dict)
+                    or set(scope) != {'source_instance', 'source_type', 'confirmed'}
+                    or scope.get('confirmed') is not True or scope.get('source_type') != 'Task'
+                    or not isinstance(scope.get('source_instance'), str)
+                    or not scope['source_instance'].strip() or scope['source_instance'] != scope['source_instance'].strip()):
+                raise MappingDraftError('Native Task onboarding requires an explicit Task source scope.')
+            continue
         if key == 'additional_mappings':
             validate_additional_mappings(submitted.get(key, []))
             continue
