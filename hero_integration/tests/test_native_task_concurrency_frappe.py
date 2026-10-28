@@ -14,6 +14,7 @@ from hero_integration.services.migration import _migrate_native_task
 
 class _Plan:
     mapping_version = 'concurrency-fixture-v1'
+    definitions = [SimpleNamespace(source_path=path) for path in ('id', 'title', 'comment')]
 
     def source_identity(self, row):
         return str(row['id'])

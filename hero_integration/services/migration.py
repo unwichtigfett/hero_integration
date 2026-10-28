@@ -537,13 +537,14 @@ def _migrate_native_task(record, run, plan, scope) -> Result:
     if scope != {'confirmed': True, 'source_instance': instance, 'source_type': 'Task'}:
         raise MappingPlanError('Native Task intake source scope is not approved.')
     source_id = plan.source_identity(record)
+    selected_paths = {definition.source_path for definition in plan.definitions}
     if record.get('is_deleted') is True:
         return Result('SKIPPED_SOURCE_DELETED', 'Source deletion does not delete or close a Task.')
     values = {}
     try:
         if 'title' in record and record['title'] is not None:
             values['subject'] = _text(record['title'], 'Task title', required=True, limit=140)
-        if 'comment' in record and record['comment'] is not None and (not isinstance(record['comment'], str) or record['comment'].strip()):
+        if 'comment' in selected_paths and 'comment' in record and record['comment'] is not None and (not isinstance(record['comment'], str) or record['comment'].strip()):
             values['description'] = _html(_text(record['comment'], 'Task comment'))
     except ValueError as error:
         return Result('BLOCKED_RECORD', str(error))
@@ -567,7 +568,7 @@ def _migrate_native_task(record, run, plan, scope) -> Result:
             task = frappe.get_doc({'doctype': 'Task', **values}).insert()
             source_fields = field_hashes(values)
             target_fields = field_hashes({field: task.get(field) for field in values})
-            pending_comment = 'comment' in record and 'description' not in values
+            pending_comment = 'comment' in selected_paths and 'comment' in record and 'description' not in values
             frappe.get_doc({
                 'doctype': 'HERO Integration Link', 'source_system': 'HERO', 'source_type': 'Task',
                 'source_id': source_id, 'source_instance': instance, 'sync_status': 'Conflict' if pending_comment else 'Synchronized',
@@ -594,6 +595,8 @@ def _migrate_native_task(record, run, plan, scope) -> Result:
         return Result('CONFLICT', 'Task binding lacks a confirmed field baseline.', 'Task', task.name)
     pending, conflicts, updates, omitted = [], [], {}, []
     for field in ('subject', 'description'):
+        if field == 'description' and 'comment' not in selected_paths:
+            continue
         source_hash = field_hashes({field: values[field]})[field] if field in values else None
         target_hash = field_hashes({field: task.get(field)})[field]
         binding = SimpleNamespace(direction=MappingDirection.HERO_TO_FRAPPE, mapping_revision=int(run.mapping_revision),
@@ -609,7 +612,7 @@ def _migrate_native_task(record, run, plan, scope) -> Result:
             omitted.append(field)
             if ('title' if field == 'subject' else 'comment') in record: pending.append(field)
     if run.mode == 'Preview':
-        return Result('CONFLICT' if conflicts else 'PREVIEW_OK', 'Native Task field comparison completed.', 'Task', task.name)
+        return Result('CONFLICT' if conflicts or pending else 'PREVIEW_OK', 'Native Task field comparison completed.', 'Task', task.name)
     if updates:
         for field, value in updates.items(): task.set(field, value)
         with managed_target_update('Task', task.name, link.name): task.save()
