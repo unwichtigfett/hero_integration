@@ -91,12 +91,13 @@ class MappingPlan:
         project_title: Callable[[dict[str, object]], str] | None = None,
         project_link: Callable[[object], str] | None = None,
         native_value: Callable[[str], object] | None = None,
+        allow_partial: bool = False,
     ) -> dict[str, object]:
         values: dict[str, object] = {}
         projection = (self.target_operation or self.operation) in PROJECTIONS
         if projection:
             try:
-                validate_projection_record(self.target_operation or self.operation, record)
+                validate_projection_record(self.target_operation or self.operation, record, allow_partial=allow_partial)
             except ValueError as error:
                 raise MappingPlanError(str(error)) from error
         for definition in self.definitions:
@@ -129,7 +130,12 @@ class MappingPlan:
                     continue
                 if native_value is None:
                     raise MappingPlanError('The native field resolver is unavailable.')
-                values[definition.target_field] = native_value(definition.target_field)
+                try:
+                    values[definition.target_field] = native_value(definition.target_field)
+                except KeyError:
+                    if not (allow_partial and (self.target_operation or self.operation) == 'HeroCalendarEvents'
+                            and definition.target_field in {'starts_on', 'ends_on', 'all_day', 'custom_hero_original_start', 'custom_hero_original_end'}):
+                        raise
             elif definition.purpose == 'Project Relation':
                 if value is None:
                     values[definition.target_field] = None

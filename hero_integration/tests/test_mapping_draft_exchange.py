@@ -90,6 +90,19 @@ class TestMappingDraftExchange(unittest.TestCase):
         preview = exchange.preview_import(exported, 'source-1', 'SNAPSHOT', 'QUERY_TO_FRAPPE')
         self.assertEqual(['UNCHANGED'], [item['state'] for item in preview['items']])
 
+    def test_only_selected_native_deadline_carries_the_fixed_schema(self):
+        rule = {'source_path': 'due_date', 'target_doctype': 'Task', 'target_field': 'custom_hero_due_date',
+                'purpose': 'Native Binding', 'transformation': 'Native Adapter'}
+        item = {'content': {'target_operation': 'HeroTasks', 'native_task_onboarding': {'confirmed': True},
+                            'mapping_definition_ids': ['due'], 'field_rules': {'due': rule}}}
+        schema = exchange._export_schema([item], 'QUERY_TO_FRAPPE')
+        self.assertEqual(schema['custom_fields'][0]['fieldname'], 'custom_hero_due_date')
+        self.assertEqual(schema['custom_fields'][0]['read_only'], 1)
+        item['content']['mapping_definition_ids'] = []
+        self.assertEqual(exchange._export_schema([item], 'QUERY_TO_FRAPPE')['custom_fields'], [])
+        item['content']['mapping_definition_ids'] = ['due']
+        self.assertEqual(exchange._export_schema([item], 'FRAPPE_TO_MUTATION')['custom_fields'], [])
+
     def test_preview_reports_omitted_own_drafts_without_touching_other_direction_or_owner(self):
         package = json.loads(self.package())
         package["mappings"] = []

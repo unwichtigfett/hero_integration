@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from hashlib import sha256
 import json
+from pathlib import Path
 from uuid import uuid4
 
 import frappe
@@ -67,9 +68,28 @@ def export_package(source_instance: str, snapshot_name: str, direction: str) -> 
         "snapshot_name": snapshot_name,
         "schema_fingerprint": next(iter(fingerprints)),
         "direction": direction,
-        "schema": {"custom_doctypes": [], "custom_fields": [], "relations": []},
+        "schema": _export_schema(mappings, direction),
         "mappings": mappings,
     })
+
+
+def _export_schema(mappings, direction):
+    """Carry the fixed external-deadline schema only for a selected native rule."""
+    empty = {"custom_doctypes": [], "custom_fields": [], "relations": []}
+    if direction != 'QUERY_TO_FRAPPE':
+        return empty
+    for item in mappings:
+        content = item['content']
+        if content.get('target_operation') != 'HeroTasks' or not content.get('native_task_onboarding'):
+            continue
+        rules = content.get('field_rules', {})
+        for identity in content.get('mapping_definition_ids', []):
+            rule = rules.get(identity, {})
+            if (rule.get('source_path'), rule.get('target_doctype'), rule.get('target_field'),
+                    rule.get('purpose'), rule.get('transformation')) == (
+                    'due_date', 'Task', 'custom_hero_due_date', 'Native Binding', 'Native Adapter'):
+                return json.loads(Path(__file__).with_name('task_external_deadline_schema.json').read_text())
+    return empty
 
 
 def preview_import(payload_json: str, source_instance: str, snapshot_name: str, direction: str) -> dict[str, object]:
