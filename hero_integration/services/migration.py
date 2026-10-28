@@ -474,6 +474,18 @@ def _process_projection(run, source) -> None:
     """Reuse the existing run, read service, mapping plan and conflict-safe writer."""
     operation = source.contract.target_operation
     plan = _mapping_plan_for_run(run, operation)
+    from hero_integration.services.read_contract import from_documents
+    service = frappe.get_doc('HERO GraphQL Service', run.graphql_service)
+    mapping = frappe.get_doc('HERO GraphQL Mapping', run.graphql_mapping)
+    snapshot = frappe.get_doc('HERO GraphQL Schema Snapshot', service.schema_snapshot)
+    reviewed = from_documents(service, mapping, snapshot)
+    if (reviewed.target_operation != operation or reviewed.service_revision != int(run.service_revision)
+            or reviewed.mapping_revision != int(run.mapping_revision)):
+        raise MappingPlanError('The projection contract changed before processing.')
+    task_scope = json.loads(mapping.mapping_json).get('native_task_onboarding')
+    if task_scope is not None and (operation != 'HeroTasks' or source.source_instance != task_scope['source_instance']
+                                   or getattr(run, 'source_instance', '') != task_scope['source_instance']):
+        raise MappingPlanError('Native Task onboarding source does not match the approved run.')
     offset = int(run.resume_offset or 0)
     index_start = int(run.resume_record_index or 0)
     seen_pages = set()
@@ -496,7 +508,8 @@ def _process_projection(run, source) -> None:
             if index < index_start:
                 continue
             _cancel_if_requested(run)
-            result = _migrate_projection(record, run, plan)
+            result = (_migrate_native_task(record, run, plan, task_scope)
+                      if task_scope is not None else _migrate_projection(record, run, plan))
             _record_result(run, PROJECTIONS[operation]['source_type'], record, result)
             run.resume_phase = operation
             run.resume_offset, run.resume_record_index = offset, index + 1
@@ -506,6 +519,107 @@ def _process_projection(run, source) -> None:
         offset, index_start = page.next_offset, 0
         run.resume_offset, run.resume_record_index = offset, 0
         run.save()
+
+
+def _migrate_native_task(record, run, plan, scope) -> Result:
+    """Apply the explicitly approved Task intake using the existing Link identity."""
+    from types import SimpleNamespace
+    from hero_integration.services.binding_registry import BindingRegistryService
+    from hero_integration.services.mapping_registry_model import MappingDirection
+    from hero_integration.services.native_projections import _html, _text
+
+    frappe.only_for('System Manager')
+    instance = _source_instance(record)
+    if scope != {'confirmed': True, 'source_instance': instance, 'source_type': 'Task'}:
+        raise MappingPlanError('Native Task intake source scope is not approved.')
+    source_id = plan.source_identity(record)
+    if record.get('is_deleted') is True:
+        return Result('SKIPPED_SOURCE_DELETED', 'Source deletion does not delete or close a Task.')
+    values = {}
+    try:
+        if 'title' in record and record['title'] is not None:
+            values['subject'] = _text(record['title'], 'Task title', required=True, limit=140)
+        if 'comment' in record and record['comment'] is not None and (not isinstance(record['comment'], str) or record['comment'].strip()):
+            values['description'] = _html(_text(record['comment'], 'Task comment'))
+    except ValueError as error:
+        return Result('BLOCKED_RECORD', str(error))
+    version = f"native-task-v1:{int(run.mapping_revision)}:{plan.mapping_version}"
+    key = ':'.join(('HERO', instance, 'Task', source_id))
+    from hero_integration.hero_integration.doctype.hero_frappe_mapping.hero_frappe_mapping import _lock_active_target
+    _lock_active_target('native-task-intake', 'Task', key)
+    rows = frappe.db.sql('SELECT name FROM `tabHERO Integration Link` WHERE source_key=%s FOR UPDATE', (key,), as_dict=True)
+    if len(rows) > 1:
+        raise MappingPlanError('Task source identity is not unique.')
+    if not rows:
+        if not values.get('subject'):
+            return Result('BLOCKED_RECORD', 'A nonempty Task title is required for intake.')
+        if run.mode == 'Preview':
+            return Result('PREVIEW_OK', 'A native Task would be created.', 'Task')
+        frappe.db.savepoint('hero_native_task_insert')
+        try:
+            task = frappe.get_doc({'doctype': 'Task', **values}).insert()
+            source_fields = field_hashes(values)
+            target_fields = field_hashes({field: task.get(field) for field in values})
+            pending_comment = 'comment' in record and 'description' not in values
+            frappe.get_doc({
+                'doctype': 'HERO Integration Link', 'source_system': 'HERO', 'source_type': 'Task',
+                'source_id': source_id, 'source_instance': instance, 'sync_status': 'Conflict' if pending_comment else 'Synchronized',
+                'conflict_detail': 'Task description requires review.' if pending_comment else '',
+                'target_doctype': 'Task', 'target_name': task.name, 'source_payload_hash': _digest(record),
+                'target_payload_hash': _digest({field: task.get(field) for field in values}),
+                'source_field_hashes': encode_hashes(source_fields), 'target_field_hashes': encode_hashes(target_fields),
+                'mapping_version': version, 'last_synced_on': now_datetime(),
+            }).insert()
+        except Exception:
+            frappe.db.rollback(save_point='hero_native_task_insert')
+            raise
+        return Result('CREATED', 'Native Task and source binding created.', 'Task', task.name)
+    link = frappe.get_doc('HERO Integration Link', rows[0].name)
+    if link.target_doctype != 'Task' or link.mapping_version != version:
+        return Result('CONFLICT', 'Task binding or approved mapping version requires review.')
+    frappe.db.sql('SELECT name FROM `tabTask` WHERE name=%s FOR UPDATE', (link.target_name,))
+    if not frappe.db.exists('Task', link.target_name):
+        return Result('CONFLICT', 'Bound Task no longer exists.')
+    task = frappe.get_doc('Task', link.target_name)
+    source_base = decode_hashes(link.source_field_hashes)
+    target_base = decode_hashes(link.target_field_hashes)
+    if source_base is None or target_base is None:
+        return Result('CONFLICT', 'Task binding lacks a confirmed field baseline.', 'Task', task.name)
+    pending, conflicts, updates, omitted = [], [], {}, []
+    for field in ('subject', 'description'):
+        source_hash = field_hashes({field: values[field]})[field] if field in values else None
+        target_hash = field_hashes({field: task.get(field)})[field]
+        binding = SimpleNamespace(direction=MappingDirection.HERO_TO_FRAPPE, mapping_revision=int(run.mapping_revision),
+                                  acknowledged_source_fingerprint=source_base.get(field),
+                                  acknowledged_target_fingerprint=target_base.get(field))
+        decision = BindingRegistryService.inbound_reconciliation(binding, active_mapping_revision=int(run.mapping_revision),
+                                                                  source_fingerprint=source_hash, target_fingerprint=target_hash)
+        if decision == 'APPLY_SOURCE': updates[field] = values[field]
+        elif decision == 'CONFIRM_EQUAL':
+            source_base[field], target_base[field] = source_hash, target_hash
+        elif decision in {'CONFLICT', 'UNACKNOWLEDGED', 'MAPPING_CHANGED'}: conflicts.append(field)
+        elif decision == 'OMITTED':
+            omitted.append(field)
+            if ('title' if field == 'subject' else 'comment') in record: pending.append(field)
+    if run.mode == 'Preview':
+        return Result('CONFLICT' if conflicts else 'PREVIEW_OK', 'Native Task field comparison completed.', 'Task', task.name)
+    if updates:
+        for field, value in updates.items(): task.set(field, value)
+        with managed_target_update('Task', task.name, link.name): task.save()
+        for field, value in updates.items():
+            source_base[field] = field_hashes({field: value})[field]
+            target_base[field] = field_hashes({field: task.get(field)})[field]
+    link.source_field_hashes = encode_hashes(source_base)
+    link.target_field_hashes = encode_hashes(target_base)
+    if conflicts or pending:
+        link.sync_status = 'Conflict'
+        link.conflict_detail = 'Task fields require review: ' + ', '.join(sorted(conflicts + pending))
+    elif not omitted:
+        link.sync_status = 'Synchronized'
+        link.conflict_detail = ''
+    link.save()
+    return Result('CONFLICT' if conflicts or pending or link.sync_status == 'Conflict' else ('UPDATED' if updates else 'SKIPPED'),
+                  link.conflict_detail or 'Native Task field comparison completed.', 'Task', task.name)
 
 
 def _migrate_projection(record, run, plan) -> Result:

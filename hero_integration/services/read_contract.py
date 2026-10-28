@@ -38,6 +38,16 @@ def from_documents(service, mapping, snapshot) -> ReadContract:
     target = contract.target_operation
     records_path, identity_path = contract.records_path, contract.identity_path
     variables, definition_ids = contract.variables, contract.definition_ids
+    onboarding = config.get('native_task_onboarding')
+    if onboarding is not None:
+        if (target != 'HeroTasks' or not isinstance(onboarding, dict)
+                or set(onboarding) != {'source_instance', 'source_type', 'confirmed'}
+                or onboarding.get('confirmed') is not True
+                or onboarding.get('source_type') != 'Task'
+                or not isinstance(onboarding.get('source_instance'), str)
+                or not onboarding['source_instance'].strip()
+                or onboarding['source_instance'] != getattr(snapshot, 'source_instance', '')):
+            raise ReadContractError('Native Task onboarding requires an explicit matching source and Task type.')
     if target in PROJECTIONS:
         projection = PROJECTIONS[target]
         from hero_integration.services.native_projections import validate_options
