@@ -39,7 +39,9 @@ NULL value does not remove an existing relationship. Nullable omitted fields do
 not clear values or their acknowledged baselines. Local edits remain visible to
 subsequent conflict checks even after an independent source-field update. An
 unknown recurrence flag is blocked; explicit recurrence is also held pending a
-reviewed rule. A validated schema alone does not confirm the source timezone,
+reviewed rule. For an existing bound Event the whole time group is held and a
+review conflict recorded while independent field changes are considered; a new
+Event still requires the necessary validated inputs. A validated schema alone does not confirm the source timezone,
 all-day boundary or participant identity. The private editor Draft carries
 unconfirmed time options and does not authorize execution. Raw partner/resource
 observations are not native participant relationships; no Customer association

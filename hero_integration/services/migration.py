@@ -824,7 +824,8 @@ def _migrate_projection(record, run, plan) -> Result:
     instance = _source_instance(record)
     try:
         source_id = plan.source_identity(record)
-        validate_projection_record(operation, record)
+        existing = _link(contract['source_type'], source_id, instance) if contract.get('native_kind') == 'event' else None
+        validate_projection_record(operation, record, allow_partial=bool(existing))
         if record.get('is_deleted') is True or record.get('deleted') is True:
             if run.mode != 'Preview':
                 _mark_source_deleted(_link(contract['source_type'], source_id, instance))
@@ -833,32 +834,39 @@ def _migrate_projection(record, run, plan) -> Result:
         # held before resolving the saved native options.  This makes Preview
         # fail closed even when it is invoked with a minimal test/run context,
         # and guarantees the protected target is never updated.
-        existing = _link(contract['source_type'], source_id, instance) if contract.get('native_kind') == 'event' else None
         if existing:
             if existing.target_doctype != 'Event':
                 return Result('CONFLICT', 'Stored calendar binding is not a native Event.')
             target = _native_lookup('Event', existing.target_name)
             if target.get('event_type') != 'Private' or any(target.get(f) for f in ('event_participants', 'send_reminder', 'sync_with_google_calendar', 'add_video_conferencing')):
                 return Result('CONFLICT', 'Event sharing or outbound settings changed; native calendar update requires review.')
-        native_values, defaults = {}, {}
+        native_values, defaults, review = {}, {}, []
         if contract.get('native_kind') or contract.get('native_bindings'):
             from hero_integration.services.native_projections import values as native_resolve, creation_defaults
             config = json.loads(frappe.get_doc('HERO GraphQL Mapping', run.graphql_mapping).mapping_json)
             options = config.get('native_options')
             native_values = native_resolve(contract, record, source_id, instance, options, lookup=_native_lookup,
-                                          item_link=lambda identity: _item_name_for_source(identity, instance))
+                                          item_link=lambda identity: _item_name_for_source(identity, instance),
+                                          allow_partial=bool(existing), review=review)
             if contract.get('native_kind') == 'event' and options['target_timezone'] != frappe.db.get_single_value('System Settings', 'time_zone'):
                 raise MappingPlanError('Configured event target timezone differs from the native System Settings timezone.')
             defaults = creation_defaults(contract, options)
-        values = plan.values(record, project_link=lambda value: _project_name_for_source(value, instance), native_value=lambda target: native_values[target])
+        values = plan.values(record, project_link=lambda value: _project_name_for_source(value, instance),
+                             native_value=lambda target: native_values[target], allow_partial=bool(existing))
         values['custom_hero_key'] = _digest([instance, contract['source_type'], source_id])
         values['custom_hero_source_instance'] = instance
     except (ValueError, MappingPlanError) as error:
         return Result('BLOCKED_RECORD', str(error))
-    return _upsert(contract['source_type'], source_id, record, values, contract['target_doctype'],
+    result = _upsert(contract['source_type'], source_id, record, values, contract['target_doctype'],
                    'item_code' if contract['target_doctype'] == 'Item' else 'custom_hero_key', plan.mapping_version, run, source_instance=instance,
                    target_snapshot=lambda target: _projection_target_values(target, values, contract), creation_values=defaults,
                    preserve_omitted=contract.get('native_kind') == 'event')
+    if review and result.code in {'UPDATED', 'SKIPPED', 'OBSERVED', 'PREVIEW_OK'}:
+        detail = 'Event time or recurrence requires review; unrelated field changes were considered. ' + review[0]
+        if run.mode != 'Preview':
+            _mark_link_conflict(frappe.get_doc('HERO Integration Link', existing.name), detail)
+        return Result('CONFLICT', detail, result.target_doctype, result.target_name)
+    return result
 
 
 def _native_lookup(doctype, name):

@@ -46,13 +46,13 @@ def validate_projection_spec(spec, metadata):
         raise ValueError('Projection field is not writable.')
 
 
-def validate_projection_record(operation, record):
+def validate_projection_record(operation, record, *, allow_partial=False):
     """Missing selections and wrong scalar types fail before target writes."""
     import math
     contract = CONTRACTS[operation]
     for path, declared in contract['paths'].items():
         if path not in record:
-            if operation == 'HeroCalendarEvents' and '|null' in declared and path not in {'start', 'all_day', 'is_recurring'}:
+            if operation == 'HeroCalendarEvents' and '|null' in declared and (allow_partial or path not in {'start', 'all_day', 'is_recurring'}):
                 continue
             raise ValueError('Projection response omits a selected field: ' + path)
         value = record[path]
