@@ -51,23 +51,34 @@ def provision_schema(schema: object) -> dict[str, object]:
         return {"status": "UNCHANGED", "created": {"custom_doctypes": [], "custom_fields": []}}
     _validate_selection({item["id"]: item for item in items}, selected)
     _require_schema_permissions(definitions, selected)
+    # Frappe's sql_ddl() explicitly commits before DDL.  Do not let this
+    # operation commit earlier application writes belonging to the caller.
+    if getattr(frappe.db, 'transaction_writes', 0):
+        raise SchemaProvisioningError('Schema provisioning requires a clean transaction; previous writes were not committed.')
     created = {"custom_doctypes": [], "custom_fields": []}
     relation_fields = _relation_fields(definitions)
     selected_relation_fields = {
         relation["field_id"] for relation in definitions["relations"] if relation["id"] in selected
     }
-    for definition in _ordered_doctypes(definitions, selected):
-        if _doctype_is_new(definition):
-            _create_custom_doctype(definition, selected_relation_fields)
-            created["custom_doctypes"].append(definition["name"])
-    for definition in definitions["custom_fields"]:
-        if definition["id"] in selected and _custom_field_is_new(definition):
-            _create_custom_field(definition)
-            created["custom_fields"].append(f"{definition['doctype']}.{definition['fieldname']}")
-    for relation in definitions["relations"]:
-        if relation["id"] in selected:
-            _provision_relation(relation, relation_fields, created)
-    _validate_selected_relations(definitions, selected)
+    try:
+        for definition in _ordered_doctypes(definitions, selected):
+            if _doctype_is_new(definition):
+                _create_custom_doctype(definition, selected_relation_fields)
+                created["custom_doctypes"].append(definition["name"])
+        for definition in definitions["custom_fields"]:
+            if definition["id"] in selected and _custom_field_is_new(definition):
+                _create_custom_field(definition)
+                created["custom_fields"].append(f"{definition['doctype']}.{definition['fieldname']}")
+        for relation in definitions["relations"]:
+            if relation["id"] in selected:
+                _provision_relation(relation, relation_fields, created)
+        _validate_selected_relations(definitions, selected)
+    except Exception as error:
+        detail = json.dumps(created, sort_keys=True, separators=(',', ':'))
+        raise SchemaProvisioningError(
+            'Schema provisioning failed before Draft import. Completed creation calls: ' + detail
+            + '. Schema changes may persist, including a partially completed call; inspect schema and preview again.'
+        ) from error
     return {"status": "COMPLETED", "created": created,
             "schema_note": "Frappe DDL rollback is not promised."}
 

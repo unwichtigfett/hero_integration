@@ -393,6 +393,15 @@
     const denied = (error) => [401, 403].includes(error?.status) || /PermissionError|SessionExpired/.test(error?.responseJSON?.exc_type || error?.exc_type || "");
     const errorText = (error) => denied(error) ? text("You do not have permission to view or change this mapping.")
         : text("The request failed. Your changes have been kept.");
+    const exchangeFailureText = (error) => {
+        if (denied(error)) return errorText(error);
+        try {
+            const messages = JSON.parse(error?.responseJSON?._server_messages || error?._server_messages || "[]");
+            const first = typeof messages[0] === "string" ? JSON.parse(messages[0]) : messages[0];
+            if (typeof first?.message === "string" && first.message.length <= 1500) return first.message;
+        } catch (_) { /* Keep the safe generic message for malformed responses. */ }
+        return errorText(error);
+    };
     let current;
     function mount(page, context = {}) {
         current?.destroy();
@@ -955,7 +964,7 @@
                 say(`Imported ${exchangeLabel(context)} drafts saved. ${createdCount ? `${createdCount} schema element(s) created.` : "Existing schema was reused; no schema elements were created."} Active mappings were not changed.`);
                 ruleCache.clear();
             } catch (error) {
-                if (!disposed && request === epoch) say("Import save failed or conflicted. The imported local package and current editor context have been kept. Check the saved drafts before retrying.");
+                if (!disposed && request === epoch) say(`Import save failed or conflicted. ${exchangeFailureText(error)} Check Drafts and schema before previewing again.`);
             } finally { if (!disposed && request === epoch) { setBusy(false); renderDetail(); } }
         }
         function rows(value) {

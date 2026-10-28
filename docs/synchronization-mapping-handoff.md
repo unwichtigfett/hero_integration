@@ -36,8 +36,11 @@ The personal Draft exchange validates selected field-rule identities against
 the target and retains target-managed provenance. An authenticated preview
 binds the package and observed references to the site and owner; it is not a
 runtime grant. Registry instances, acknowledgements and execution state are
-not imported. Concurrent metadata changes and conflicting new rule identities
-still require a complete serialization and acceptance proof before delivery.
+not imported. Existing rule identities and the referenced metadata are locked
+for the bounded exchange; unobserved new context definitions and arbitrary
+administrator DDL remain outside that boundary. Primary Customer and Project
+field-action parameters are checked against the existing reviewed writeback
+contract. The target-side integration link remains the authority for identity.
 
 Calendar uses the existing native Event projection and the source-instance /
 CalendarEvent identity. A non-null `project_match_id` resolves exclusively via

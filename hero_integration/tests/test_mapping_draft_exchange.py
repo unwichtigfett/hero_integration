@@ -55,6 +55,36 @@ def _schema_preview(_schema):
     return {"items": [], "counts": {state: 0 for state in ("New", "Unchanged", "Changed", "Conflict", "Invalid")}}
 
 
+class TestCurrentExchangeLocks(unittest.TestCase):
+    def test_parent_reads_are_ordered_and_reject_changed_scope(self):
+        calls = []
+        def sql(query, args, as_dict=False):
+            calls.append((query, args[0]))
+            return [{'definition_id': args[0], 'status': 'Active', 'source_instance': 'src',
+                     'schema_snapshot': 'snap', 'direction': 'QUERY_TO_FRAPPE', 'operation_kind': 'QUERY'}]
+        fake = SimpleNamespace(db=SimpleNamespace(sql=sql))
+        with patch.object(exchange, 'frappe', fake):
+            rows = exchange._lock_active_definitions({'z': {}, 'a': {}}, 'src', 'snap', 'QUERY_TO_FRAPPE')
+            self.assertEqual(list(rows), ['a', 'z'])
+            self.assertTrue(all('for update' in query for query, _ in calls))
+            self.assertEqual([identity for _, identity in calls], ['a', 'z'])
+            with self.assertRaisesRegex(exchange.MappingDraftExchangeError, 'context changed'):
+                exchange._lock_active_definitions({'a': {}}, 'other', 'snap', 'QUERY_TO_FRAPPE')
+
+    def test_owner_draft_keys_are_read_in_definition_order(self):
+        calls = []
+        def sql(query, args, as_dict=False):
+            calls.append((query, args[0]))
+            return []
+        fake = SimpleNamespace(db=SimpleNamespace(sql=sql), local=SimpleNamespace(site='site'),
+                               session=SimpleNamespace(user='owner'))
+        with patch.object(exchange, 'frappe', fake):
+            self.assertEqual(exchange._lock_open_drafts({'z', 'a'}), {})
+        self.assertEqual([key for _, key in calls], [exchange.draft_key('site', identity, 'owner')
+                                                     for identity in ('a', 'z')])
+        self.assertTrue(all('for update' in query for query, _ in calls))
+
+
 class TestMappingDraftExchange(unittest.TestCase):
     def setUp(self):
         self.frappe = _Frappe()
@@ -64,10 +94,17 @@ class TestMappingDraftExchange(unittest.TestCase):
         self.schema = patch.object(exchange, "preview_schema", side_effect=_schema_preview)
         self.schema_mock = self.schema.start()
         self.addCleanup(self.schema.stop)
-        self.preparation = patch.object(exchange, '_prepare_item', side_effect=lambda item, row, local: {
+        self.preparation = patch.object(exchange, '_prepare_item', side_effect=lambda item, row, local, schema: {
             'content': item['content'], 'references': [], 'conflicts': [], 'can_save': True})
         self.preparation_mock = self.preparation.start()
         self.addCleanup(self.preparation.stop)
+        self.parent_locks = patch.object(exchange, '_lock_active_definitions',
+                                         side_effect=lambda active, *_args: active)
+        self.parent_locks.start()
+        self.addCleanup(self.parent_locks.stop)
+        self.draft_locks = patch.object(exchange, '_lock_open_drafts', side_effect=exchange._open_drafts)
+        self.draft_locks.start()
+        self.addCleanup(self.draft_locks.stop)
 
     def package(self):
         return exchange.export_package("source-1", "SNAPSHOT", "QUERY_TO_FRAPPE")
@@ -168,7 +205,7 @@ class TestMappingDraftExchange(unittest.TestCase):
             with self.assertRaisesRegex(exchange.MappingDraftExchangeError, 'preview changed'):
                 exchange.save_import(json.dumps(package), 'source-1', 'SNAPSHOT', 'QUERY_TO_FRAPPE', expected,
                                      confirmed=True, preview_fingerprint=preview['preview_fingerprint'])
-            self.preparation_mock.side_effect = lambda item, row, local: {
+            self.preparation_mock.side_effect = lambda item, row, local, schema: {
                 'content': item['content'], 'references': [{'identity': 'changed'}], 'conflicts': [], 'can_save': True}
             with self.assertRaisesRegex(exchange.MappingDraftExchangeError, 'preview changed'):
                 exchange.save_import(raw, 'source-1', 'SNAPSHOT', 'QUERY_TO_FRAPPE', expected,
