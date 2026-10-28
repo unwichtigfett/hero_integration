@@ -76,6 +76,30 @@ class TestBindingRegistry(unittest.TestCase):
         self.assertEqual(self.service.change_state(field, active_mapping_revision=2, mapping_available=True, source_fingerprint=None, target_fingerprint=None), BindingState.MAPPING_CHANGED)
         self.assertEqual(self.service.change_state(field, active_mapping_revision=1, mapping_available=False, source_fingerprint=None, target_fingerprint=None), BindingState.RECONCILIATION_REQUIRED)
 
+    def test_inbound_reconciliation_preserves_local_baseline_and_omissions(self):
+        field = self.field(self.obj())
+        base = state_fingerprint("base", present=True)
+        field = self.service.record_verified_acknowledgment(field, expected_revision=1, mapping_definition_id="contact-name", mapping_revision=1, source_fingerprint=base, target_fingerprint=base, evidence_id="initial", version=1)
+        local = state_fingerprint("local", present=True)
+        remote = state_fingerprint("remote", present=True)
+        compare = self.service.inbound_reconciliation
+        self.assertEqual(compare(field, active_mapping_revision=1, source_fingerprint=base, target_fingerprint=local), "KEEP_LOCAL")
+        self.assertEqual(compare(field, active_mapping_revision=1, source_fingerprint=remote, target_fingerprint=local), "CONFLICT")
+        self.assertEqual(compare(field, active_mapping_revision=1, source_fingerprint=None, target_fingerprint=local), "OMITTED")
+        self.assertEqual(compare(field, active_mapping_revision=1, source_fingerprint=remote, target_fingerprint=base), "APPLY_SOURCE")
+        self.assertEqual(compare(field, active_mapping_revision=1, source_fingerprint=local, target_fingerprint=local), "CONFIRM_EQUAL")
+        self.assertEqual(compare(field, active_mapping_revision=2, source_fingerprint=base, target_fingerprint=base), "MAPPING_CHANGED")
+        self.assertEqual(field.acknowledged_target_fingerprint, base)
+
+    def test_inbound_reconciliation_requires_confirmed_base_and_direction(self):
+        parent = self.obj()
+        field = self.field(parent)
+        value = state_fingerprint("same", present=True)
+        self.assertEqual(self.service.inbound_reconciliation(field, active_mapping_revision=1, source_fingerprint=value, target_fingerprint=value), "UNACKNOWLEDGED")
+        outbound = self.field(parent, source_field="other", target_field="other", mapping_definition_id="outbound", direction=MappingDirection.FRAPPE_TO_HERO)
+        with self.assertRaises(BindingRegistryError):
+            self.service.inbound_reconciliation(outbound, active_mapping_revision=1, source_fingerprint=value, target_fingerprint=value)
+
     def test_concurrent_same_request_creates_one_logical_binding(self):
         values = []
         threads = [threading.Thread(target=lambda: values.append(self.obj())) for _ in range(8)]
