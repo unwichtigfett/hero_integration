@@ -232,4 +232,19 @@ def active_mapping_plan(operation: str, *, definition_ids: tuple[str, ...] = (),
             raise MappingPlanError('A selected rule version belongs to another read mapping.')
     else:
         rows = [row for row in rows if not row.get('personal_graphql_mapping')]
-    return plan_from_definitions(operation, [MappingSpec(**{k: v for k, v in row.items() if k != 'personal_graphql_mapping'}) for row in rows], target_operation=target_operation)
+    definitions = [MappingSpec(**{k: v for k, v in row.items() if k != 'personal_graphql_mapping'}) for row in rows]
+    # Recheck native Field grants against the currently installed server
+    # contract before executing a previously approved mapping revision.
+    # Revoking a binding must not leave an executable stale rule behind.
+    from hero_integration.services.direct_mapping import validate_spec
+    from hero_integration.hero_integration.doctype.hero_frappe_mapping.hero_frappe_mapping import _FrappeMetadata
+    metadata = _FrappeMetadata()
+    for spec in definitions:
+        if spec.operation in {'HeroCustomers', 'HeroProjectMatches'} and spec.purpose == PURPOSE_FIELD:
+            field = metadata.field(spec.target_doctype, spec.target_field)
+            if field is None or not getattr(field, 'is_custom_field', False):
+                try:
+                    validate_spec(spec, metadata)
+                except ValueError as error:
+                    raise MappingPlanError('Native field authorization is no longer valid.') from error
+    return plan_from_definitions(operation, definitions, target_operation=target_operation)

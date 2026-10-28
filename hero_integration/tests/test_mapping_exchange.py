@@ -29,6 +29,16 @@ class TestMappingExchange(unittest.TestCase):
         self.assertEqual(self.frappe.count(), 0)
         self.assertEqual(self.frappe.count(), 0)
 
+    def test_package_cannot_smuggle_server_write_authority(self):
+        payload = fixture_payload(FINGERPRINT)
+        payload['native_field_bindings'] = [['HeroCustomers', 'website']]
+        with self.assertRaises(mapping_exchange.MappingExchangeError):
+            mapping_exchange._parse_payload(json.dumps(payload), FINGERPRINT)
+        payload.pop('native_field_bindings')
+        payload['mappings'][0]['approved'] = True
+        with self.assertRaises(mapping_exchange.MappingExchangeError):
+            mapping_exchange._parse_payload(json.dumps(payload), FINGERPRINT)
+
     def test_scoped_publication_cannot_be_imported_as_shared_rule(self):
         item = fixture_payload(FINGERPRINT)['mappings'][0]
         local = SimpleNamespace(personal_graphql_mapping='mapping-a', status='Active')
@@ -144,7 +154,8 @@ class TestMappingExchange(unittest.TestCase):
         for row in self.frappe.rows.values():
             row["status"] = "Active"
 
-        with patch.dict(sys.modules, {"frappe": self.frappe}):
+        from hero_integration.hero_integration.doctype.hero_frappe_mapping import hero_frappe_mapping as controller
+        with patch.dict(sys.modules, {"frappe": self.frappe}), patch.object(controller, "frappe", self.frappe):
             customer = mapping_runtime.active_mapping_plan("HeroCustomers")
             project = mapping_runtime.active_mapping_plan("HeroProjectMatches")
 
