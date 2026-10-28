@@ -8,6 +8,8 @@ from hero_integration.services import mapping_runtime
 
 class TestMappingRuntimeScope(unittest.TestCase):
     def test_personal_versions_require_their_mapping_and_do_not_change_global_plan(self):
+        from hero_integration.hero_integration.doctype.hero_frappe_mapping import hero_frappe_mapping as controller
+
         def row(identity, scope):
             return {'definition_id': identity, 'personal_graphql_mapping': scope, 'operation': 'HeroCustomers',
                     'source_path': 'nr', 'source_type': 'string|null', 'target_doctype': 'Customer',
@@ -15,7 +17,8 @@ class TestMappingRuntimeScope(unittest.TestCase):
                     'relation': '', 'priority': 5}
         fake = SimpleNamespace(get_all=lambda *_args, **_kwargs: [row('shared', None), row('version', 'mapping-a')],
                                get_meta=lambda _name: SimpleNamespace(get_field=lambda _field: SimpleNamespace(is_custom_field=True)))
-        with patch.dict(sys.modules, {'frappe': fake}), patch.object(
+        metadata = SimpleNamespace(field=lambda *_args: SimpleNamespace(is_custom_field=True))
+        with patch.dict(sys.modules, {'frappe': fake}), patch.object(controller, '_FrappeMetadata', return_value=metadata), patch.object(
             mapping_runtime, 'plan_from_definitions', side_effect=lambda _operation, values, **_kwargs: values
         ):
             global_plan = mapping_runtime.active_mapping_plan('HeroCustomers')
