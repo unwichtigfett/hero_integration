@@ -199,7 +199,7 @@ class MappingPlan:
         return tuple(definition for definition in self.definitions if definition.purpose == purpose)
 
 
-def plan_from_definitions(operation: str, definitions: list[MappingSpec] | tuple[MappingSpec, ...], *, target_operation: str = "") -> MappingPlan:
+def plan_from_definitions(operation: str, definitions: list[MappingSpec] | tuple[MappingSpec, ...], *, target_operation: str = "", native_task: bool = False) -> MappingPlan:
     target_operation = target_operation or operation
     if target_operation not in {"HeroCustomers", "HeroProjectMatches", *PROJECTIONS}:
         raise MappingPlanError("The selected target adapter is not supported.")
@@ -207,19 +207,32 @@ def plan_from_definitions(operation: str, definitions: list[MappingSpec] | tuple
     if not selected:
         raise MappingPlanError("No active mapping definitions exist for this operation.")
     plan = MappingPlan(operation, selected, target_operation)
-    plan.require_complete()
+    if native_task:
+        from hero_integration.services.direct_mapping import validate_native_task_rule
+        if target_operation != 'HeroTasks' or len(selected) not in {2, 3}:
+            raise MappingPlanError('Native Task requires identity, title, and optionally comment rules.')
+        paths = [item.source_path for item in selected]
+        if len(set(paths)) != len(paths) or not {'id', 'title'} <= set(paths):
+            raise MappingPlanError('Native Task requires exactly one identity and title rule.')
+        for item in selected:
+            validate_native_task_rule(item)
+    else:
+        plan.require_complete()
     return plan
 
 
-def active_mapping_plan(operation: str, *, definition_ids: tuple[str, ...] = (), target_operation: str = "", mapping_name: str = "") -> MappingPlan:
+def active_mapping_plan(operation: str, *, definition_ids: tuple[str, ...] = (), target_operation: str = "", mapping_name: str = "", native_task: bool = False) -> MappingPlan:
     import frappe
 
+    if native_task and (not definition_ids or not mapping_name or len(set(definition_ids)) != len(definition_ids)):
+        raise MappingPlanError('Native Task requires explicitly selected approved rules.')
     rows = frappe.get_all(
         "HERO Frappe Mapping",
         filters={"operation": target_operation or operation, "status": "Active"},
         fields=[
             "operation", "source_path", "source_type", "target_doctype", "target_field", "purpose",
             "transformation", "relation", "priority", "definition_id", "personal_graphql_mapping",
+            "schema_snapshot", "schema_fingerprint",
         ],
         order_by="priority asc, creation asc",
     )
@@ -232,7 +245,11 @@ def active_mapping_plan(operation: str, *, definition_ids: tuple[str, ...] = (),
             raise MappingPlanError('A selected rule version belongs to another read mapping.')
     else:
         rows = [row for row in rows if not row.get('personal_graphql_mapping')]
-    definitions = [MappingSpec(**{k: v for k, v in row.items() if k != 'personal_graphql_mapping'}) for row in rows]
+    if native_task:
+        mapping = frappe.get_doc('HERO GraphQL Mapping', mapping_name)
+        if any(row.get('schema_snapshot') != mapping.schema_snapshot or row.get('schema_fingerprint') != mapping.schema_fingerprint for row in rows):
+            raise MappingPlanError('Native Task rule snapshot does not match the approved read mapping.')
+    definitions = [MappingSpec(**{k: v for k, v in row.items() if k not in {'personal_graphql_mapping', 'schema_snapshot', 'schema_fingerprint'}}) for row in rows]
     # Recheck native Field grants against the currently installed server
     # contract before executing a previously approved mapping revision.
     # Revoking a binding must not leave an executable stale rule behind.
@@ -240,6 +257,11 @@ def active_mapping_plan(operation: str, *, definition_ids: tuple[str, ...] = (),
     from hero_integration.hero_integration.doctype.hero_frappe_mapping.hero_frappe_mapping import _FrappeMetadata
     metadata = _FrappeMetadata()
     for spec in definitions:
+        if native_task:
+            try:
+                validate_spec(spec, metadata)
+            except ValueError as error:
+                raise MappingPlanError('Native Task field authorization is no longer valid.') from error
         if spec.operation in {'HeroCustomers', 'HeroProjectMatches'} and spec.purpose == PURPOSE_FIELD:
             field = metadata.field(spec.target_doctype, spec.target_field)
             if field is None or not getattr(field, 'is_custom_field', False):
@@ -249,4 +271,4 @@ def active_mapping_plan(operation: str, *, definition_ids: tuple[str, ...] = (),
                     validate_spec(spec, metadata)
                 except ValueError as error:
                     raise MappingPlanError('Native field authorization is no longer valid.') from error
-    return plan_from_definitions(operation, definitions, target_operation=target_operation)
+    return plan_from_definitions(operation, definitions, target_operation=target_operation, native_task=native_task)

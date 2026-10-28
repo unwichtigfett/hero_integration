@@ -9,7 +9,7 @@ import frappe
 
 from hero_integration.services.migration import _migrate_native_task, _process_projection
 from hero_integration.services.projection_contracts import CONTRACTS, approved_query
-from hero_integration.tests.test_projection_contracts import definitions
+from hero_integration.services.direct_mapping import MappingSpec
 
 
 class _Plan:
@@ -100,36 +100,66 @@ class TestNativeTaskIntake(TestCase):
             frappe.set_user('Administrator')
         self.assertFalse(frappe.db.exists('HERO Integration Link', {'source_key': 'HERO:fixture-task32a:Task:982011'}))
 
+    def test_optional_comment_rule_is_a_valid_native_binding(self):
+        snapshot = frappe.get_all('HERO GraphQL Schema Snapshot', filters={
+            'schema_fingerprint': CONTRACTS['HeroTasks']['fingerprint'],
+            'analysis_status': 'Validated', 'source_instance': 'default'}, pluck='name')[0]
+        rule = frappe.get_doc({'doctype': 'HERO Frappe Mapping', 'schema_snapshot': snapshot,
+            'operation': 'HeroTasks', 'source_path': 'comment', 'source_type': 'string|null',
+            'target_doctype': 'Task', 'target_field': 'description', 'purpose': 'Native Binding',
+            'transformation': 'Native Adapter', 'definition_id': 'task32a-native-comment',
+            'priority': 5, 'status': 'Active'}).insert()
+        self.assertEqual(rule.status, 'Active')
+
     def test_registered_projection_reaches_native_task_with_saved_contract(self):
         snapshots = frappe.get_all('HERO GraphQL Schema Snapshot', filters={
             'schema_fingerprint': CONTRACTS['HeroTasks']['fingerprint'],
             'analysis_status': 'Validated', 'source_instance': 'default'}, pluck='name')
         self.assertEqual(len(snapshots), 1)
         snapshot = frappe.get_doc('HERO GraphQL Schema Snapshot', snapshots[0])
-        specs = definitions('HeroTasks')
+        from hero_integration.api import graphql_mapping_save, workspace_service_save, workspace_service_validate, approve_read_service
+        specs = [
+            MappingSpec('HeroTasks', 'id', 'HERO Integration Link', 'source_id', 'int', 'Source Identity', 'Positive Int To Text', definition_id='task32a-native-id'),
+            MappingSpec('HeroTasks', 'title', 'Task', 'subject', 'string|null', 'Record Name', 'Trim', definition_id='task32a-native-title'),
+        ]
+        for spec in specs:
+            frappe.get_doc({'doctype': 'HERO Frappe Mapping', 'schema_snapshot': snapshot.name,
+                'operation': spec.operation, 'source_path': spec.source_path, 'source_type': spec.source_type,
+                'target_doctype': spec.target_doctype, 'target_field': spec.target_field, 'purpose': spec.purpose,
+                'transformation': spec.transformation, 'relation': spec.relation, 'definition_id': spec.definition_id,
+                'priority': spec.priority, 'status': 'Active'}).insert()
         config = {'target_operation': 'HeroTasks', 'records_path': 'tasks', 'identity_path': 'id',
                   'mapping_definition_ids': [spec.definition_id for spec in specs],
                   'variables': {'first': '$page_size', 'offset': '$offset'}, 'page_size': 2,
                   'native_task_onboarding': {'confirmed': True, 'source_instance': 'default', 'source_type': 'Task'}}
-        mapping = frappe.get_doc({'doctype': 'HERO GraphQL Mapping', 'name': 'task32a-fixture-map',
-            'schema_snapshot': snapshot.name, 'schema_fingerprint': snapshot.schema_fingerprint,
-            'definition_id': 'task32a-fixture-map', 'source_instance': 'default', 'operation_kind': 'QUERY',
-            'operation_name': 'tasks', 'direction': 'QUERY_TO_FRAPPE', 'mapping_json': json.dumps(config),
-            'status': 'Active', 'mapping_revision': 1})
-        mapping.db_insert()
-        service = frappe.get_doc({'doctype': 'HERO GraphQL Service', 'name': 'task32a-fixture-service',
-            'service_name': 'task32a fixture', 'operation_name': 'tasks', 'query_document': approved_query('HeroTasks'),
-            'schema_snapshot': snapshot.name, 'schema_fingerprint': snapshot.schema_fingerprint,
-            'service_revision': 1, 'read_mapping': mapping.name, 'execution_status': 'Approved',
-            'approved_service_revision': 1, 'approved_mapping_revision': 1, 'status': 'Validated'})
-        service.db_insert()
-        for index, spec in enumerate(specs):
-            frappe.get_doc({'doctype': 'HERO Frappe Mapping', 'name': f'task32a-fixture-{index}',
-                'schema_snapshot': snapshot.name, 'schema_fingerprint': snapshot.schema_fingerprint,
-                'operation': spec.operation, 'source_path': spec.source_path, 'source_type': spec.source_type,
-                'target_doctype': spec.target_doctype, 'target_field': spec.target_field, 'purpose': spec.purpose,
-                'transformation': spec.transformation, 'relation': spec.relation, 'definition_id': spec.definition_id,
-                'priority': spec.priority, 'mapping_revision': 1, 'status': 'Active'}).db_insert()
+        saved = graphql_mapping_save(snapshot.name, 'QUERY', 'tasks', 'QUERY_TO_FRAPPE', json.dumps(config), activate=1)
+        mapping = frappe.get_doc('HERO GraphQL Mapping', saved['name'])
+        payload = json.dumps({'name': 'task32a fixture', 'operation_name': 'tasks', 'query': approved_query('HeroTasks')})
+        service_info = workspace_service_save(snapshot.name, payload)['query']
+        workspace_service_validate(snapshot.name, query_id=service_info['query_id'], expected_revision=service_info['revision'])
+        service = frappe.get_doc('HERO GraphQL Service', service_info['query_id'])
+        service.read_mapping = mapping.name
+        service.save()
+        frappe.set_user('Guest')
+        try:
+            with self.assertRaises(frappe.PermissionError):
+                approve_read_service(service.name, mapping.name, service.service_revision, mapping.mapping_revision)
+        finally:
+            frappe.set_user('Administrator')
+        with self.assertRaises(ValueError):
+            from hero_integration.services.read_contract import from_documents
+            from_documents(service, mapping, snapshot)
+        incomplete = {**config, 'mapping_definition_ids': [specs[0].definition_id]}
+        rejected = graphql_mapping_save(snapshot.name, 'QUERY', 'tasks', 'QUERY_TO_FRAPPE', json.dumps(incomplete), activate=1)
+        with self.assertRaises(ValueError):
+            approve_read_service(service.name, rejected['name'], service.service_revision, rejected['revision'])
+        service.reload()
+        self.assertNotEqual(service.execution_status, 'Approved')
+        approval = approve_read_service(service.name, mapping.name, service.service_revision, mapping.mapping_revision)
+        self.assertEqual(approval['status'], 'Approved')
+        service.reload()
+        self.assertEqual(service.execution_status, 'Approved')
+        print('NORMAL_APPROVAL native_rules=2 project_relation=absent service=Approved', flush=True)
 
         class Run(SimpleNamespace):
             def save(self): pass
@@ -146,7 +176,14 @@ class TestNativeTaskIntake(TestCase):
             mapping_revision=1, source_instance='default', mode='Execute', resume_offset=0,
             resume_record_index=0, state='Running', name=None, processed=0, created_records=0,
             conflict_records=0, skipped_records=0)
+        from hero_integration.services.migration import _mapping_plan_for_run
+        identity_rule = frappe.db.get_value('HERO Frappe Mapping', {'definition_id': specs[0].definition_id}, 'name')
+        frappe.db.set_value('HERO Frappe Mapping', identity_rule, 'schema_fingerprint', '0' * 64)
+        with self.assertRaises(ValueError):
+            _mapping_plan_for_run(run, 'HeroTasks')
+        frappe.db.set_value('HERO Frappe Mapping', identity_rule, 'schema_fingerprint', snapshot.schema_fingerprint)
         _process_projection(run, Source())
         link = frappe.get_doc('HERO Integration Link', {'source_key': 'HERO:default:Task:982012'})
         self.assertEqual((run.created_records, link.target_doctype), (1, 'Task'))
         self.assertEqual(frappe.get_doc('Task', link.target_name).subject, 'Full path synthetic 32A')
+        self.assertFalse(frappe.get_doc('Task', link.target_name).description)
