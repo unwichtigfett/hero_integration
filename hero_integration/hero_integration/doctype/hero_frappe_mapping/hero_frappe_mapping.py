@@ -8,7 +8,7 @@ import frappe
 from frappe.model.document import Document
 
 from hero_integration.services.direct_mapping import MappingSpec, PURPOSE_FIELD, PURPOSE_RECORD_NAME, validate_spec
-from hero_integration.services.frappe_mapping_catalog import validate_draft_spec
+from hero_integration.services.frappe_mapping_catalog import FrappePickerMetadata, validate_draft_spec
 from hero_integration.services.graphql_graph import analyze_snapshot
 
 
@@ -40,7 +40,7 @@ class HEROFrappeMapping(Document):
         self.definition_id = self.definition_id or uuid4().hex
         spec = _spec(self)
         if self.status == "Draft" and self.purpose == PURPOSE_FIELD:
-            target = validate_draft_spec(spec, _FrappeMetadata())
+            target = validate_draft_spec(spec, FrappePickerMetadata())
             self.validation_summary = (
                 "Draft proposal only; activation requires an app-owned integration."
                 if not target.activation_allowed else "Draft proposal validated against current Frappe metadata."

@@ -220,7 +220,21 @@ def _validate_custom_field(spec: MappingSpec, metadata) -> None:
     if field is None or field.fieldtype not in ALLOWED_TARGET_TYPES or (field.read_only and not is_native):
         raise DirectMappingError("Target field is not a writable supported Frappe field.")
     if not getattr(field, "is_custom_field", False):
-        raise DirectMappingError("A site-specific mapping may only write a Custom Field.")
+        # Reviewed native query destinations are explicit operation/source/field
+        # bindings. Runtime writes still go through the target DocType controller.
+        allowed_native = (
+            spec.operation == "HeroCustomers"
+            and spec.target_doctype == "Customer"
+            and spec.target_field == "alias"
+            and spec.source_path in {"full_name", "company_name"}
+            and spec.source_type == "string|null"
+            and spec.transformation in {TRANSFORM_IDENTITY, TRANSFORM_TRIM}
+            and not spec.relation
+            and field.fieldtype == "Data"
+            and not any(getattr(field, key, None) for key in ("hidden", "fetch_from", "is_virtual"))
+        )
+        if not allowed_native:
+            raise DirectMappingError("A site-specific mapping requires an approved native field or a Custom Field.")
     if field.fieldtype == "Link":
         raise DirectMappingError("Link targets require an approved entity resolver.")
 
