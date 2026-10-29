@@ -200,6 +200,7 @@ def _monitor_observer(operation: str, record: dict[str, object]) -> None:
 def _count_pages(reader, offset: int, max_pages: int, minimum_interval: float, record_observer=None, operation: str = "") -> _PageCount:
     count = pages = 0
     seen_offsets: set[int] = set()
+    seen_identities: set[str] = set()
     current_offset = max(int(offset or 0), 0)
     last_request = 0.0
     while pages < max_pages:
@@ -212,14 +213,23 @@ def _count_pages(reader, offset: int, max_pages: int, minimum_interval: float, r
         page = reader(current_offset)
         last_request = time.monotonic()
         pages += 1
+        if page.next_offset is not None and (type(page.next_offset) is not int or page.next_offset <= current_offset or not page.records):
+            raise PaginationProgressError("HERO pagination did not advance; monitoring stopped safely.")
+        identities = []
+        for record in page.records:
+            identity = record.get('id') if isinstance(record, dict) else None
+            if not isinstance(identity, (int, str)) or isinstance(identity, bool) or not str(identity).strip():
+                raise PaginationProgressError("HERO source identity is missing or invalid; monitoring stopped safely.")
+            identities.append(str(identity))
+        if len(set(identities)) != len(identities) or seen_identities.intersection(identities):
+            raise PaginationProgressError("HERO source identity repeated across pages; monitoring stopped safely.")
+        seen_identities.update(identities)
         count += len(page.records)
         if record_observer:
             for record in page.records:
                 record_observer(operation, record)
         if page.next_offset is None:
             return _PageCount(count, 0, False)
-        if not isinstance(page.next_offset, int) or page.next_offset <= current_offset:
-            raise PaginationProgressError("HERO pagination did not advance; monitoring stopped safely.")
         current_offset = page.next_offset
     return _PageCount(count, current_offset, True)
 
