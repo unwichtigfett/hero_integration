@@ -30,7 +30,7 @@ class TestMappingRuntimeScope(unittest.TestCase):
                     'relation': '', 'priority': 5, 'schema_snapshot':'snapshot', 'schema_fingerprint':'fingerprint'}
         fake = SimpleNamespace(db=lineage_db(row('version', 'mapping-a')), get_all=lambda *_args, **_kwargs: [row('shared', None), row('version', 'mapping-a')],
                                get_doc=lambda *_args: SimpleNamespace(status='Active', direction='QUERY_TO_FRAPPE', schema_snapshot='snapshot', schema_fingerprint='fingerprint',
-                                   mapping_json=json.dumps({'mapping_definition_ids':['shared','version']})),
+                                   mapping_json=json.dumps({'target_operation':'HeroCustomers', 'mapping_definition_ids':['shared','version']})),
                                get_meta=lambda _name: SimpleNamespace(get_field=lambda _field: SimpleNamespace(is_custom_field=True)))
         metadata = SimpleNamespace(field=lambda *_args: SimpleNamespace(is_custom_field=True))
         with patch.dict(sys.modules, {'frappe': fake}), patch.object(controller, '_FrappeMetadata', return_value=metadata), patch.object(
@@ -55,7 +55,7 @@ class TestMappingRuntimeScope(unittest.TestCase):
                'schema_snapshot':'snapshot', 'schema_fingerprint':'fingerprint'}
         fake = SimpleNamespace(db=lineage_db(row), get_all=lambda *_args, **_kwargs: [row],
                                get_doc=lambda *_args: SimpleNamespace(status='Active', direction='QUERY_TO_FRAPPE', schema_snapshot='snapshot', schema_fingerprint='fingerprint',
-                                   mapping_json=json.dumps({'mapping_definition_ids':['fixture-rule']})))
+                                   mapping_json=json.dumps({'target_operation':'HeroCustomers', 'mapping_definition_ids':['fixture-rule']})))
         field = SimpleNamespace(fieldtype='Data', read_only=0, is_custom_field=0, hidden=0, fetch_from='', is_virtual=0)
         metadata = SimpleNamespace(field=lambda *_args: field, ensure_write=lambda _doctype: None)
         binding = ('full_name', 'string|null', 'Customer', 'alias', 'Data', 'Identity')
@@ -80,7 +80,7 @@ class TestMappingRuntimeScope(unittest.TestCase):
                'schema_snapshot':'other', 'schema_fingerprint':'other-fingerprint'}
         fake = SimpleNamespace(get_all=lambda *_args, **_kwargs: [row],
                                get_doc=lambda *_args: SimpleNamespace(status='Active', direction='QUERY_TO_FRAPPE', schema_snapshot='snapshot', schema_fingerprint='fingerprint',
-                                   mapping_json=json.dumps({'mapping_definition_ids':['shared']})))
+                                   mapping_json=json.dumps({'target_operation':'HeroCustomers', 'mapping_definition_ids':['shared']})))
         with patch.dict(sys.modules, {'frappe':fake}):
             with self.assertRaisesRegex(mapping_runtime.MappingPlanError, 'snapshot'):
                 mapping_runtime.active_mapping_plan('HeroCustomers', definition_ids=('shared',), mapping_name='mapping-a')
@@ -106,9 +106,25 @@ class TestMappingRuntimeScope(unittest.TestCase):
         fake = SimpleNamespace(get_all=lambda *_args, **_kwargs: [row, dict(row)],
                                get_doc=lambda *_: SimpleNamespace(status='Active', direction='QUERY_TO_FRAPPE',
                                    schema_snapshot='snapshot', schema_fingerprint='fingerprint',
-                                   mapping_json=json.dumps({'mapping_definition_ids':['shared']})))
+                                   mapping_json=json.dumps({'target_operation':'HeroCustomers', 'mapping_definition_ids':['shared']})))
         with patch.dict(sys.modules, {'frappe':fake}):
             with self.assertRaisesRegex(mapping_runtime.MappingPlanError, 'unavailable or changed'):
+                mapping_runtime.active_mapping_plan('HeroCustomers', definition_ids=('shared',), mapping_name='mapping-a')
+
+    def test_explicit_binding_rejects_a_different_target_operation(self):
+        row = {'definition_id':'shared', 'personal_graphql_mapping':None, 'operation':'HeroCustomers',
+               'source_path':'nr', 'source_type':'string|null', 'target_doctype':'Customer', 'target_field':'email',
+               'purpose':'Field', 'transformation':'Identity', 'relation':'', 'priority':5,
+               'schema_snapshot':'snapshot', 'schema_fingerprint':'fingerprint'}
+        mapping = SimpleNamespace(status='Active', direction='QUERY_TO_FRAPPE', schema_snapshot='snapshot',
+            schema_fingerprint='fingerprint', mapping_json=json.dumps({'mapping_definition_ids':['shared'],
+                                                                        'target_operation':'HeroProjectMatches'}))
+        fake = SimpleNamespace(get_all=lambda *_args, **_kwargs: [row], get_doc=lambda *_: mapping,
+            get_meta=lambda *_: SimpleNamespace(get_field=lambda *_: SimpleNamespace(is_custom_field=True)))
+        with patch.dict(sys.modules, {'frappe':fake}), patch.object(
+            mapping_runtime, 'plan_from_definitions', return_value=object()
+        ):
+            with self.assertRaisesRegex(mapping_runtime.MappingPlanError, 'target operation'):
                 mapping_runtime.active_mapping_plan('HeroCustomers', definition_ids=('shared',), mapping_name='mapping-a')
 
     def test_duplicate_json_binding_is_rejected(self):
@@ -147,7 +163,7 @@ class TestMappingRuntimeScope(unittest.TestCase):
         fake = SimpleNamespace(db=db, get_all=lambda *_args, **_kwargs: [tampered],
             get_doc=lambda *_args: SimpleNamespace(status='Active', direction='QUERY_TO_FRAPPE',
                 schema_snapshot='snapshot', schema_fingerprint='fingerprint',
-                mapping_json=json.dumps({'mapping_definition_ids':['version']})))
+                mapping_json=json.dumps({'target_operation':'HeroCustomers', 'mapping_definition_ids':['version']})))
         with patch.dict(sys.modules, {'frappe':fake}), patch.object(controller, '_FrappeMetadata'):
             with self.assertRaisesRegex(mapping_runtime.MappingPlanError, 'lineage is missing or inconsistent'):
                 mapping_runtime.active_mapping_plan('HeroCustomers', definition_ids=('version',), mapping_name='mapping-a')
