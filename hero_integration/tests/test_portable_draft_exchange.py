@@ -1142,6 +1142,30 @@ class TestPortableDraftExchange(unittest.TestCase):
         with self.assertRaisesRegex(exchange.MappingDraftExchangeError, 'dependency is missing'):
             exchange._parse_portable(json.dumps(package), 'QUERY_TO_FRAPPE')
 
+    def test_portable_relation_dependency_can_reference_nested_doctype_field(self):
+        schema = {'custom_doctypes':[{'id':'doctype:detail', 'name':'HERO Detail', 'label':'Detail',
+            'is_child':False, 'fields':[{'id':'field:customer', 'fieldname':'custom_hero_customer',
+            'label':'Customer', 'fieldtype':'Link', 'options':'Customer'}]}], 'custom_fields':[],
+            'relations':[{'id':'relation:customer', 'doctype':'HERO Detail', 'field_id':'field:customer',
+            'fieldname':'custom_hero_customer', 'relation_type':'Link', 'target_doctype':'Customer',
+            'dependencies':['doctype:detail']}]}
+        package = {'format_version':exchange.PORTABLE_FORMAT_VERSION, 'schema_fingerprint':analyze_snapshot(SCHEMA).fingerprint,
+            'direction':'QUERY_TO_FRAPPE', 'schema':schema, 'mappings':[{'definition_id':IDENTITY,
+            'operation_kind':'QUERY', 'operation_name':'customers', 'direction':'QUERY_TO_FRAPPE',
+            'content':{'records_path':'customers', 'identity_path':'id', 'mapping_definition_ids':[], 'field_rules':{}},
+            'dependencies':['relation:customer']}]}
+        with self.context(Fake('target.test', 'source-B', 'snapshot-B')):
+            self.assertEqual(schema_provisioning._definitions(schema), schema)
+        self.assertEqual(exchange._parse_portable(json.dumps(package), 'QUERY_TO_FRAPPE')['schema'], schema)
+        package['schema']['relations'][0]['field_id'] = 'field:missing'
+        with self.assertRaisesRegex(exchange.MappingDraftExchangeError, 'dependency is missing'):
+            exchange._parse_portable(json.dumps(package), 'QUERY_TO_FRAPPE')
+        package['schema']['relations'][0]['field_id'] = 'field:customer'
+        package['schema']['custom_doctypes'][0]['fields'].append(
+            {'id':'field:customer', 'fieldname':'custom_hero_other', 'label':'Other', 'fieldtype':'Data', 'options':''})
+        with self.assertRaisesRegex(exchange.MappingDraftExchangeError, 'duplicated'):
+            exchange._parse_portable(json.dumps(package), 'QUERY_TO_FRAPPE')
+
     def test_second_draft_failure_rolls_back_first_draft_and_revision(self):
         source, target = Fake('source.test', 'source-A', 'snapshot-A'), Fake('target.test', 'source-B', 'snapshot-B')
         identities = [IDENTITY, 'bd850de8-a445-4d13-9aa6-8dd086047d5a']
