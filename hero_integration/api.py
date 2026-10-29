@@ -2461,10 +2461,17 @@ def workspace_analyzer_service_draft(snapshot_name: str, schema_node_id: str) ->
     return {**draft, "schema_snapshot": snapshot.name, "schema_fingerprint": snapshot.schema_fingerprint}
 
 
+SERVICE_DRAFT_ORIGINS = ("API Analyzer", "Graph Viewer")
+
+
 @frappe.whitelist(methods=["POST"])
-def workspace_analyzer_service_save(snapshot_name: str, schema_node_id: str, payload_json: str) -> dict[str, object]:
-    """Save an API Analyzer draft as a GraphQL service; this never contacts HERO."""
+def workspace_analyzer_service_save(
+    snapshot_name: str, schema_node_id: str, payload_json: str, origin: str = "API Analyzer",
+) -> dict[str, object]:
+    """Save an API Analyzer or Graph Viewer operation draft as a GraphQL service; this never contacts HERO."""
     frappe.only_for("System Manager")
+    if origin not in SERVICE_DRAFT_ORIGINS:
+        frappe.throw("Unknown service draft origin.")
     snapshot, schema = _validated_snapshot(snapshot_name)
     from hero_integration.services.schema_operations import SchemaOperationError, operation_service_draft
 
@@ -2487,7 +2494,7 @@ def workspace_analyzer_service_save(snapshot_name: str, schema_node_id: str, pay
             frappe.throw(str(error))
     if selected != [draft["operation_name"]]:
         frappe.throw("The analyzer draft must keep exactly the selected operation as its root field.")
-    return _save_workspace_service(snapshot.name, payload, "", 0, "API Analyzer")
+    return _save_workspace_service(snapshot.name, payload, "", 0, origin)
 
 
 def _page(base: dict[str, object], rows: list[object], start: int | str, page_size: int | str) -> dict[str, object]:

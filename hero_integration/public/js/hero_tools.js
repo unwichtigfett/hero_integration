@@ -773,52 +773,64 @@
             const store=window.hero_integration_bookmarks;if(!store||!node?.node_id||!scope?.schema_fingerprint)return null;
             const identity={snapshot_name:scope.connection_id,schema_fingerprint:scope.schema_fingerprint,node_id:node.node_id,node_name:node.name,node_kind:node.kind};
             const b=button('Remember for Mapping',()=>{if(this.scopeKey(scope)!==this.scopeKey()){this.notice.textContent=errors.SCHEMA_CHANGED;return;}store.remember(identity);});
-            b.classList.add('ht-remember');b.title='Remember this node under your own alias for the Mapping Editor. No mapping is created.';return b;
+            b.className='btn btn-sm ht-node-action ht-node-action--remember ht-remember';b.title='Remember this node under your own alias for the Mapping Editor. No mapping is created.';return b;
+        }
+        serviceOperationId(data){
+            // Operation nodes are saved directly; a Query/Mutation root field uses the operation that owns it (OPERATION_FIELD edge).
+            const operation=/^operation:(query|mutation):/;
+            if(operation.test(data.node?.node_id||''))return data.node.node_id;
+            const edge=(data.incoming||[]).find(e=>e.kind==='OPERATION_FIELD'&&operation.test(e.source_id||''));
+            return edge?edge.source_id:null;
         }
         detailContents(target,data,scope,navigate){
-            target.replaceChildren($('h3','',data.node.name),$('p','',data.node.node_id),$('p','',data.node.description||''),$('pre','ht-data',JSON.stringify(data.node,null,2)));
-            const remember=this.rememberButton(data.node,scope);if(remember)target.insertBefore(remember,target.children[2]);
-            if(this.tool==='analyzer')this.appendAnalyzerService(target,data.node,scope);
-            for(const [title,edges,key] of [['Incoming',data.incoming,'source_id'],['Outgoing',data.outgoing,'target_id']]){target.append($('h4','',`${title} (${edges.length})`));for(const edge of edges)target.append(button(`${edge.kind}${edge.label?' · '+edge.label:''} · ${edge[key]}`,()=>navigate(edge[key])));}
-        }
-        appendAnalyzerService(target,node,scope){
-            this.analyzerServiceForm=null;this.analyzerCreateButton=null;
-            if(!['QUERY_OPERATION','MUTATION_OPERATION'].includes(node.kind))return;
-            const button= this.analyzerCreateButton = document.createElement('button');
-            button.className='btn btn-default';button.type='button';button.textContent='Save as GraphQL Service';
-            button.title='Creates an unsaved service draft from this operation. No HERO operation is executed.';
-            const box=$('section','ht-analyzer-service');target.append(button,box);
-            button.addEventListener('click',()=>this.run(()=>this.openAnalyzerService(box,node,scope)));
+            // API Analyzer, Graph Viewer inspector and the Node Focus pop-up share this renderer. Each target keeps its own
+            // service state, so the inspector and the pop-up never overwrite each other.
+            const generation=target._heroDetailGeneration=(target._heroDetailGeneration||0)+1;
+            const actions=$('section','ht-node-actions');actions.setAttribute('role','group');actions.setAttribute('aria-label','Node actions');
+            const buttons=$('div','ht-node-actions-buttons');
+            const remember=this.rememberButton(data.node,scope);if(remember)buttons.append(remember);
+            const operationId=this.serviceOperationId(data),box=$('div','ht-node-service');
+            const save=button('Save as GraphQL Service',()=>this.run(()=>this.openNodeService(target,generation,scope)));
+            save.className='btn btn-sm ht-node-action ht-node-action--service';save.disabled=!operationId;
+            save.title=operationId?'Creates an unsaved service draft from this operation. No HERO operation is executed.':'Available for Query and Mutation operations and their root fields.';
+            buttons.append(save);
+            actions.append($('h4','ht-node-actions-title','Actions'),buttons);
+            if(!operationId)actions.append($('p','ht-context','Save as GraphQL Service is available for Query and Mutation operations and their root fields.'));
+            actions.append(box);
+            target._heroService={generation,operationId,save,box,form:null,origin:target===this.typeDetail?'API Analyzer':'Graph Viewer'};
+            target.replaceChildren($('h3','',data.node.name),$('p','ht-node-id',data.node.node_id),actions,$('p','',data.node.description||''),$('pre','ht-data',JSON.stringify(data.node,null,2)));
+            for(const [title,edges,key] of [['Incoming',data.incoming,'source_id'],['Outgoing',data.outgoing,'target_id']]){target.append($('h4','',`${title} (${edges.length})`));for(const edge of edges){const b=button(`${edge.kind}${edge.label?' · '+edge.label:''} · ${edge[key]}`,()=>navigate(edge[key]));b.classList.add('ht-relation');target.append(b);}}
             this.updateActions();
         }
-        async openAnalyzerService(target,node,scope){
-            const serial=this.sequence,generation=this.analyzerDetailGeneration;
-            const draft=await call('get_analyzer_service_draft',{...scope,schema_node_id:node.node_id});
-            if(serial!==this.sequence||generation!==this.analyzerDetailGeneration||this.scopeKey(scope)!==this.scopeKey())return;
+        async openNodeService(target,generation,scope){
+            const state=target._heroService;if(!state||state.generation!==generation||!state.operationId||state.form)return;
+            const draft=await call('get_analyzer_service_draft',{...scope,schema_node_id:state.operationId});
+            if(target._heroService!==state||target._heroDetailGeneration!==generation||this.scopeKey(scope)!==this.scopeKey())return;
             const name=input(),query=$('textarea','form-control');
             name.value=draft.payload.name;query.value=draft.payload.query;query.rows=12;
             name.setAttribute('aria-label','Service name');query.setAttribute('aria-label','GraphQL draft');
-            const save=button('Save Service',()=>this.run(()=>this.saveAnalyzerService()));
-            this.analyzerServiceForm={target,scope,nodeId:node.node_id,draft,name,query,save,saved:false};
-            target.replaceChildren($('h3','',draft.operation_kind==='mutation'?'Save Mutation':'Save Query'),$('p','','Provenance=API Analyzer'),
+            const save=button('Save Service',()=>this.run(()=>this.saveNodeService(target,state)));save.className='btn btn-sm ht-node-action ht-node-action--service';
+            state.form={scope,nodeId:state.operationId,draft,name,query,save,saved:false};
+            state.box.replaceChildren($('h4','',draft.operation_kind==='mutation'?'Save Mutation':'Save Query'),$('p','','Provenance='+state.origin),
                 $('p','ht-context','Saves a service without executing it. For object results, __typename is preselected; add the required fields.'),
                 $('p','ht-context',draft.required_variables.length?'Required variables: '+draft.required_variables.map(v=>v.name+' ('+v.type+')').join(', ')+'. Enter their values in GraphQL Services → Variables; values are never stored with the service.':'No required variables.'),
                 field('Service name',name),field('GraphQL',query),save);
             this.updateActions();
         }
-        async saveAnalyzerService(){
-            const form=this.analyzerServiceForm;if(!form||form.saved)return;
+        async saveNodeService(target,state){
+            const form=state.form;if(!form||form.saved)return;
             if(this.scopeKey(form.scope)!==this.scopeKey())throw new Error(errors.BINDING_CHANGED);
             // Variable values are runtime input only and are not part of the saved service definition.
             const {variables:_runtimeOnly,...draftPayload}=form.draft.payload;
             const payload={...draftPayload,name:form.name.value,query:form.query.value};
-            const result=await call('save_analyzer_service',{...form.scope,schema_node_id:form.nodeId,payload},true);
+            const result=await call('save_analyzer_service',{...form.scope,schema_node_id:form.nodeId,payload,origin:state.origin},true);
             form.saved=true;form.save.disabled=true;
-            if(this.analyzerServiceForm!==form)return;
-            const link=$('a','btn btn-default','Open in GraphQL Services');link.href=this.serviceUrl(result.query.service_kind,result.query.query_id);
-            link.addEventListener('click',event=>{if(this.openService(result.query.service_kind,result.query.query_id)===false)event.preventDefault();});
-            form.target.replaceChildren($('p','',result.query.name+' saved · Provenance='+result.query.provenance),link);
-            this.notice.textContent='Service saved. No HERO operation was executed.';
+            if(target._heroService!==state)return;
+            const link=$('a','btn btn-sm ht-node-action ht-node-action--service','Open in GraphQL Services');link.href=this.serviceUrl(result.query.service_kind,result.query.query_id);
+            link.addEventListener('click',event=>{if(target===this.focusDetail)this.focusDialog?.hide?.();if(this.openService(result.query.service_kind,result.query.query_id)===false)event.preventDefault();});
+            state.box.replaceChildren($('p','',result.query.name+' saved · Provenance='+result.query.provenance),link);
+            if(this.notice)this.notice.textContent='Service saved. No HERO operation was executed.';
+            this.updateActions();
         }
         async inspectNode(id,serial=this.sequence,open=true){
             const scope=this.scope(true),key=this.scopeKey(scope),generation=this.inspectionGeneration=(this.inspectionGeneration||0)+1;
@@ -1018,8 +1030,7 @@
         async deleteQuery(){if(!this.query||!window.confirm(this.dirty?'Delete the saved service and discard the unsaved draft?':'Delete the saved service?'))return;await call('delete_query',{...this.serviceScope(),query_id:this.query.query_id,expected_revision:this.query.revision},true);this.setQuery();await this.loadQueries();}
         updateActions(){if(!this.saveButton)return;
             const analyzerAllowed=!!this.context?.can_write&&!this.context.needs_binding_update&&!this.busy;
-            if(this.analyzerCreateButton)this.analyzerCreateButton.disabled=!analyzerAllowed||!!this.analyzerServiceForm;
-            if(this.analyzerServiceForm)this.analyzerServiceForm.save.disabled=!analyzerAllowed||this.analyzerServiceForm.saved;
+            for(const target of [this.typeDetail,this.nodeDetail,this.focusDetail]){const state=target?._heroService;if(!state)continue;state.save.disabled=!analyzerAllowed||!state.operationId||!!state.form;if(state.form)state.form.save.disabled=!analyzerAllowed||state.form.saved;}
             if(this.queryProvenance)this.queryProvenance.textContent='Provenance='+(this.query?.provenance||this.draftProvenance||'GraphQL-Services');
             const gate=this.mutationExecution;
             if(this.serviceHint)this.serviceHint.textContent=this.serviceKind==='mutation'
