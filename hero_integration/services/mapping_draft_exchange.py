@@ -404,6 +404,7 @@ def _export_portable(source_instance, snapshot_name, direction):
             content = _object(content)
             check_locked(content)
             dependencies = []
+            mapping_schema, own_dependencies = None, None
             manifest = parent.get('portable_schema_manifest') or ''
             declared_dependencies = parent.get('portable_schema_dependencies') or ''
             if manifest or declared_dependencies:
@@ -417,9 +418,10 @@ def _export_portable(source_instance, snapshot_name, direction):
                     from hero_integration.services.schema_provisioning import _definitions, _recheck_required_schema_current
                     definitions = _definitions(mapping_schema)
                     declared = {entry['id'] for group in definitions.values() for entry in group}
-                    if not declared or len(dependencies) != len(set(dependencies)) or set(dependencies) != declared:
+                    if not declared or len(dependencies) != len(set(dependencies)):
                         raise ValueError
                     _recheck_required_schema_current(definitions, declared)
+                    own_dependencies = list(dependencies)
                     manifests.append({'schema_manifest': _json(mapping_schema)})
                 except (ValueError, TypeError):
                     raise MappingDraftExchangeError('Stored mapping schema provenance is invalid.') from None
@@ -457,6 +459,12 @@ def _export_portable(source_instance, snapshot_name, direction):
                 content['field_rules'] = {rule_ids[identity]: rule for identity, rule in rules.items()}
             content.pop('field_rule_bases', None)
             content = _portable_content(content, direction)
+            if mapping_schema is not None:
+                _parse_portable(_json({'format_version':PORTABLE_FORMAT_VERSION,
+                    'schema_fingerprint':snapshot.schema_fingerprint, 'direction':direction, 'schema':mapping_schema,
+                    'mappings':[{'definition_id':portable_id, 'operation_kind':parent.operation_kind,
+                    'operation_name':parent.operation_name, 'direction':direction, 'content':content,
+                    'dependencies':own_dependencies}]}), direction)
             definition = {'site_scope': frappe.local.site, 'definition_id': portable_id,
                           'source_instance': source_instance, 'snapshot_name': snapshot_name,
                           'schema_fingerprint': snapshot.schema_fingerprint, 'direction': direction,

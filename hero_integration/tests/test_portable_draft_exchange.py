@@ -523,12 +523,19 @@ class TestPortableDraftExchange(unittest.TestCase):
         extra_id = '606f69ed-b738-48af-a4d8-bf4245b87799'
         package['schema']['custom_fields'].append({'id':'field:email', 'doctype':'Customer',
             'fieldname':'custom_hero_email', 'label':'Email', 'fieldtype':'Data', 'options':'', 'insert_after':''})
-        package['mappings'][0]['dependencies'] = ['field:email']
+        package['schema']['custom_fields'].append({'id':'field:related', 'doctype':'Customer',
+            'fieldname':'custom_hero_related', 'label':'Related', 'fieldtype':'Link', 'options':'Customer', 'insert_after':''})
+        package['schema']['relations'].append({'id':'relation:related', 'doctype':'Customer', 'field_id':'field:related',
+            'fieldname':'custom_hero_related', 'relation_type':'Link', 'target_doctype':'Customer',
+            'dependencies':['field:email', 'field:related']})
+        package['mappings'][0]['dependencies'] = ['relation:related']
         package['mappings'][0]['content']['mapping_definition_ids'].append(extra_id)
         package['mappings'][0]['content']['field_rules'][extra_id] = {'source_path':'email', 'source_type':'string|null',
             'target_doctype':'Customer', 'target_field':'custom_hero_email', 'purpose':'Field',
             'transformation':'Trim', 'relation':'', 'priority':5}
         target.schema_fields[('Customer','custom_hero_email')] = {'fieldtype':'Data', 'options':'', 'label':'Email',
+            'reqd':0, 'unique':0, 'read_only':0, 'hidden':0, 'permlevel':0, 'is_virtual':0}
+        target.schema_fields[('Customer','custom_hero_related')] = {'fieldtype':'Link', 'options':'Customer', 'label':'Related',
             'reqd':0, 'unique':0, 'read_only':0, 'hidden':0, 'permlevel':0, 'is_virtual':0}
         with self.context(target), patch.object(hero_frappe_mapping, '_FrappeMetadata', Metadata), \
              patch.dict(sys.modules, {'frappe':target}), patch.object(hero_mapping_draft, 'frappe', target), \
@@ -550,6 +557,11 @@ class TestPortableDraftExchange(unittest.TestCase):
                 api.mapping_draft_publish(IDENTITY, imported.generation, imported.content_revision, 0, 0, confirmed=True)
             self.assertEqual(target.active, [])
             target.schema_fields[('Customer','custom_hero_email')]['label'] = 'Email'
+            relation_field = target.schema_fields.pop(('Customer','custom_hero_related'))
+            with self.assertRaisesRegex(ValueError, 'MAPPING_DRAFT_INVALID'):
+                api.mapping_draft_publish(IDENTITY, imported.generation, imported.content_revision, 0, 0, confirmed=True)
+            self.assertEqual(target.active, [])
+            target.schema_fields[('Customer','custom_hero_related')] = relation_field
             has_column = target.db.has_column
             target.db.has_column = lambda doctype, column: False if column == 'portable_schema_manifest' else has_column(doctype, column)
             with self.assertRaisesRegex(ValueError, 'MAPPING_DRAFT_INVALID'):
@@ -560,13 +572,18 @@ class TestPortableDraftExchange(unittest.TestCase):
                                                        0, 0, confirmed=True)['revision'], 1)
             self.assertEqual(target.active[0]['source_instance'], 'source-C')
             self.assertEqual(json.loads(target.active[0]['portable_schema_manifest']), package['schema'])
-            self.assertEqual(json.loads(target.active[0]['portable_schema_dependencies']), ['field:email'])
+            self.assertEqual(json.loads(target.active[0]['portable_schema_dependencies']), ['relation:related'])
             self.assertTrue(api.mapping_draft_publish(IDENTITY, imported.generation, imported.content_revision,
                                                        0, 0, confirmed=True)['unchanged'])
             exported = json.loads(exchange.export_package('source-C', 'snapshot-C', 'QUERY_TO_FRAPPE',
                                                            format_version=exchange.PORTABLE_FORMAT_VERSION))
             self.assertEqual(exported['schema'], package['schema'])
-            self.assertEqual(exported['mappings'][0]['dependencies'], ['field:email'])
+            self.assertEqual(exported['mappings'][0]['dependencies'], ['relation:related'])
+            target.schema_fields[('Customer','custom_hero_related')]['options'] = 'Other'
+            with self.assertRaisesRegex(exchange.MappingDraftExchangeError, 'schema provenance is invalid'):
+                exchange.export_package('source-C', 'snapshot-C', 'QUERY_TO_FRAPPE',
+                                        format_version=exchange.PORTABLE_FORMAT_VERSION)
+            target.schema_fields[('Customer','custom_hero_related')]['options'] = 'Customer'
             target.schema_fields[('Customer','custom_hero_email')]['label'] = 'Changed'
             with self.assertRaisesRegex(exchange.MappingDraftExchangeError, 'schema provenance is invalid'):
                 exchange.export_package('source-C', 'snapshot-C', 'QUERY_TO_FRAPPE',
