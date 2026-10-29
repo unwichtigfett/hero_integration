@@ -66,6 +66,16 @@ class TestPollingContract(unittest.TestCase):
         with self.assertRaises(PaginationProgressError):
             monitor(RepeatingSource(), {"sources": ["HeroCustomers"], "max_pages": 3, "rate_limit": 10000})
 
+    def test_full_terminal_window_is_incomplete_without_terminal_evidence(self):
+        class FullWindow:
+            source_instance = 'synthetic'
+            @staticmethod
+            def customers(_offset): return SourcePage(({'id':1}, {'id':2}), None)
+        result = monitor(FullWindow(), {'sources':['HeroCustomers'], 'page_size':2, 'max_pages':1, 'rate_limit':10000})
+        self.assertEqual(result.customer_records, 2)
+        self.assertEqual(result.incomplete_sources, ('HeroCustomers',))
+        self.assertEqual(result.customer_next_offset, 0)
+
     def test_monitor_rejects_duplicate_identities_before_observing_bad_page(self):
         class RepeatingSource:
             source_instance = "synthetic"
