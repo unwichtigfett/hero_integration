@@ -488,26 +488,17 @@ def _export_portable(source_instance, snapshot_name, direction):
     return payload
 
 
-def _parse_portable(payload, direction):
-    if not _portable_version(payload) or direction not in _DIRECTIONS:
-        raise MappingDraftExchangeError('Unsupported portable format or direction.')
-    package = json.loads(payload, object_pairs_hook=_unique_json_fields)
-    if set(package) != {'format_version', 'schema_fingerprint', 'direction', 'schema', 'mappings'}:
-        raise MappingDraftExchangeError('Portable package has unknown or missing fields.')
-    fingerprint = package['schema_fingerprint']
-    if (package['direction'] != direction or not isinstance(fingerprint, str) or len(fingerprint) != 64
-            or any(c not in '0123456789abcdef' for c in fingerprint)):
-        raise MappingDraftExchangeError('Portable package direction or schema fingerprint is invalid.')
+def _portable_schema_graph(schema):
     from hero_integration.services.mapping_exchange import _validate_schema
-    _validate_schema(package['schema'])
+    _validate_schema(schema)
     declarations = {}
-    for group in package['schema'].values():
+    for group in schema.values():
         for entry in group:
             if not isinstance(entry, dict) or not isinstance(entry.get('id'), str) or not entry['id'] or entry['id'] in declarations:
                 raise MappingDraftExchangeError('Portable schema declaration identity is invalid or duplicated.')
             declarations[entry['id']] = entry
     nested_field_owner = {}
-    for doctype in package['schema']['custom_doctypes']:
+    for doctype in schema['custom_doctypes']:
         fields = doctype.get('fields')
         if not isinstance(fields, list):
             raise MappingDraftExchangeError('Portable DocType fields are invalid.')
@@ -516,15 +507,15 @@ def _parse_portable(payload, direction):
             if not isinstance(identity, str) or not identity or identity in declarations or identity in nested_field_owner:
                 raise MappingDraftExchangeError('Portable schema field identity is invalid or duplicated.')
             nested_field_owner[identity] = doctype['id']
-    for entry in package['schema']['relations']:
+    for entry in schema['relations']:
         if not isinstance(entry.get('dependencies'), list) or any(not isinstance(dep, str) for dep in entry['dependencies']):
             raise MappingDraftExchangeError('Portable relationship dependencies are invalid.')
-    doctype_ids = {entry.get('name'): entry['id'] for entry in package['schema']['custom_doctypes']}
+    doctype_ids = {entry.get('name'): entry['id'] for entry in schema['custom_doctypes']}
     edges = {identity: [] for identity in declarations}
-    for entry in package['schema']['custom_fields']:
+    for entry in schema['custom_fields']:
         if entry.get('doctype') in doctype_ids:
             edges[entry['id']].append(doctype_ids[entry['doctype']])
-    for entry in package['schema']['relations']:
+    for entry in schema['relations']:
         edges[entry['id']].extend(entry['dependencies'])
         edges[entry['id']].append(entry.get('field_id'))
         if entry.get('target_doctype') in doctype_ids:
@@ -541,6 +532,20 @@ def _parse_portable(payload, direction):
             visited.add(identity)
             pending.extend(edges[identity])
         return visited
+    return declarations, closure
+
+
+def _parse_portable(payload, direction):
+    if not _portable_version(payload) or direction not in _DIRECTIONS:
+        raise MappingDraftExchangeError('Unsupported portable format or direction.')
+    package = json.loads(payload, object_pairs_hook=_unique_json_fields)
+    if set(package) != {'format_version', 'schema_fingerprint', 'direction', 'schema', 'mappings'}:
+        raise MappingDraftExchangeError('Portable package has unknown or missing fields.')
+    fingerprint = package['schema_fingerprint']
+    if (package['direction'] != direction or not isinstance(fingerprint, str) or len(fingerprint) != 64
+            or any(c not in '0123456789abcdef' for c in fingerprint)):
+        raise MappingDraftExchangeError('Portable package direction or schema fingerprint is invalid.')
+    declarations, closure = _portable_schema_graph(package['schema'])
     mappings = package['mappings']
     if not isinstance(mappings, list) or not mappings or len(mappings) > 100:
         raise MappingDraftExchangeError('Portable mappings must be a nonempty bounded list.')

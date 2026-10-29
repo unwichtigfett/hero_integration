@@ -772,21 +772,33 @@ class FrappeMappingDraftStorage:
 
     def _first_publication_schema(self, context, content, envelope):
         """Bind complete mapping-level portable provenance after current locked revalidation."""
-        from hero_integration.services.mapping_draft_exchange import PORTABLE_FORMAT_VERSION, _parse_portable
-        from hero_integration.services.schema_provisioning import _definitions, _recheck_required_schema_current
+        from hero_integration.services.mapping_draft_exchange import PORTABLE_FORMAT_VERSION, _parse_portable, _portable_schema_graph
+        from hero_integration.services.schema_provisioning import _definitions, _recheck_required_schema_current, _target_dependency
         f = self.frappe
         if context['direction'] != 'QUERY_TO_FRAPPE' or not isinstance(envelope, dict) or set(envelope) != {'schema', 'dependencies'}:
             raise MappingDraftError('Portable schema provenance is unsupported or invalid.')
-        if not all(f.db.has_column('HERO GraphQL Mapping', name) for name in
-                   ('portable_schema_manifest', 'portable_schema_dependencies')):
-            raise MappingDraftError('Portable mapping schema provenance is not installed; migrate the app before publication.')
         try:
             schema, dependencies = envelope['schema'], envelope['dependencies']
+            if (not isinstance(dependencies, list) or any(not isinstance(v, str) or not v for v in dependencies)
+                    or len(dependencies) != len(set(dependencies))):
+                raise MappingDraftError('Portable mapping dependencies are invalid.')
+            _, closure = _portable_schema_graph(schema)
+            required = closure(dependencies)
+            for rule in content.get('field_rules', {}).values():
+                target = _target_dependency(schema, rule)
+                if target and target not in required:
+                    raise MappingDraftError('A selected rule target is missing from the schema dependency closure.')
+            schema = {group:[entry for entry in entries if entry['id'] in required] for group, entries in schema.items()}
             package = {'format_version':PORTABLE_FORMAT_VERSION, 'schema_fingerprint':context['schema_fingerprint'],
                 'direction':context['direction'], 'schema':schema, 'mappings':[{'definition_id':context['definition_id'],
                 'operation_kind':context['operation_kind'], 'operation_name':context['operation_name'],
                 'direction':context['direction'], 'content':content, 'dependencies':dependencies}]}
             _parse_portable(json.dumps(package, ensure_ascii=False, sort_keys=True, separators=(',', ':')), context['direction'])
+            if not required:
+                return {}
+            if not all(f.db.has_column('HERO GraphQL Mapping', name) for name in
+                       ('portable_schema_manifest', 'portable_schema_dependencies')):
+                raise MappingDraftError('Portable mapping schema provenance is not installed; migrate the app before publication.')
             definitions = _definitions(schema)
             declared = {entry['id'] for group in definitions.values() for entry in group}
             if not declared:
