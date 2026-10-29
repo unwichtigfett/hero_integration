@@ -9,6 +9,11 @@ from hero_integration.services.projection_contracts import CONTRACTS as PROJECTI
 SOURCE_CONTRACTS = {
     "HeroCustomers": {
         "target_doctype": "Customer",
+        # Reviewed bindings are shipped with the server contract, never read
+        # from a mapping, import payload, site configuration, or client.
+        # Tuple: source path, source type, target DocType, target field,
+        # expected field type, transformation. No business approvals yet.
+        "native_field_bindings": frozenset(),
         "paths": {
             "id": "int", "nr": "string|null", "first_name": "string|null",
             "last_name": "string|null", "full_name": "string|null", "email": "string|null",
@@ -96,6 +101,34 @@ class MappingSpec:
     definition_id: str = ""
 
 
+NATIVE_TASK_RULES = {
+    'id': ('int', 'HERO Integration Link', 'source_id', PURPOSE_SOURCE_IDENTITY, TRANSFORM_POSITIVE_INT_TO_TEXT, 'Data'),
+    'title': ('string|null', 'Task', 'subject', PURPOSE_RECORD_NAME, TRANSFORM_TRIM, 'Data'),
+    'comment': ('string|null', 'Task', 'description', PURPOSE_NATIVE_BINDING, 'Native Adapter', 'Text Editor'),
+    'target_user_id': ('int|null', 'ToDo', 'allocated_to', PURPOSE_NATIVE_BINDING, 'Native Adapter', 'Link'),
+    'target_project_match_id': ('int|null', 'Task', 'project', PURPOSE_NATIVE_BINDING, 'Native Adapter', 'Link'),
+    'due_date': ('string|null', 'Task', 'custom_hero_due_date', PURPOSE_NATIVE_BINDING, 'Native Adapter', 'Datetime'),
+}
+
+
+def validate_native_task_rule(spec: MappingSpec, metadata=None) -> None:
+    rule = NATIVE_TASK_RULES.get(spec.source_path)
+    actual = (spec.source_type, spec.target_doctype, spec.target_field, spec.purpose, spec.transformation)
+    if spec.operation != 'HeroTasks' or not rule or actual != rule[:5] or spec.relation:
+        raise DirectMappingError('Task rule is not a server-approved native field binding.')
+    if metadata is not None:
+        metadata.ensure_write(spec.target_doctype)
+        field = metadata.field(spec.target_doctype, spec.target_field)
+        if field is None or field.fieldtype != rule[5] or (spec.source_path not in {'id', 'due_date'} and getattr(field, 'read_only', 0)):
+            raise DirectMappingError('Native Task field is unavailable or incompatible.')
+        if spec.source_path == 'due_date' and not getattr(field, 'read_only', 0):
+            raise DirectMappingError('Native Task external deadline must be read-only.')
+        if spec.source_path == 'target_user_id' and (field.options or '') != 'User':
+            raise DirectMappingError('Native ToDo assignment must reference a User.')
+        if spec.source_path == 'target_project_match_id' and (field.options or '') != 'Project':
+            raise DirectMappingError('Native Task project must reference a Project.')
+
+
 def validate_spec(spec: MappingSpec, metadata) -> None:
     contract = SOURCE_CONTRACTS.get(spec.operation)
     if not contract or spec.source_path not in contract["paths"]:
@@ -109,6 +142,9 @@ def validate_spec(spec: MappingSpec, metadata) -> None:
     ensure_write = getattr(metadata, "ensure_write", None)
     if ensure_write:
         ensure_write(spec.target_doctype)
+    if spec.operation == 'HeroTasks' and spec.target_doctype in {'Task', 'HERO Integration Link', 'ToDo'}:
+        validate_native_task_rule(spec, metadata)
+        return
     if spec.operation in PROJECTIONS:
         validate_projection_spec(spec, metadata)
         return
@@ -220,7 +256,15 @@ def _validate_custom_field(spec: MappingSpec, metadata) -> None:
     if field is None or field.fieldtype not in ALLOWED_TARGET_TYPES or (field.read_only and not is_native):
         raise DirectMappingError("Target field is not a writable supported Frappe field.")
     if not getattr(field, "is_custom_field", False):
-        raise DirectMappingError("A site-specific mapping may only write a Custom Field.")
+        binding = (spec.source_path, spec.source_type, spec.target_doctype,
+                   spec.target_field, field.fieldtype, spec.transformation)
+        allowed_native = (
+            binding in contract.get("native_field_bindings", frozenset())
+            and not spec.relation
+            and not any(getattr(field, key, None) for key in ("hidden", "fetch_from", "is_virtual"))
+        )
+        if not allowed_native:
+            raise DirectMappingError("A site-specific mapping requires an approved native field or a Custom Field.")
     if field.fieldtype == "Link":
         raise DirectMappingError("Link targets require an approved entity resolver.")
 

@@ -79,6 +79,73 @@ class TestRC16NativeSafety(IntegrationTestCase):
         self.run_names.append(run.name)
         return run
 
+    def test_failed_job_rolls_back_business_change_and_releases_own_claim(self):
+        from frappe.utils.background_jobs import execute_job
+        from hero_integration.services import migration
+
+        customer = frappe.get_doc({"doctype": "Customer", "customer_name": self.token}).insert(ignore_permissions=True)
+        run = self._run()
+        frappe.db.commit()
+
+        def fail_after_write(_run, _source):
+            frappe.db.set_value("Customer", customer.name, "customer_name", self.token + "-uncommitted")
+            raise RuntimeError("synthetic job failure")
+
+        with patch.object(migration, "validate_run_mappings"), patch.object(migration, "get_configuration"), \
+                patch.object(migration, "_source_for_run"), patch.object(migration, "_process_requested_phases", side_effect=fail_after_write):
+            with self.assertRaisesRegex(RuntimeError, "synthetic job failure"):
+                execute_job(frappe.local.site, migration.execute_run, None, self.token, {"run_name": run.name}, user="Administrator", is_async=False)
+
+        self.assertEqual(frappe.db.get_value("Customer", customer.name, "customer_name"), self.token)
+        self.assertEqual(frappe.db.get_value("HERO Integration Run", run.name, "state"), "Failed")
+        self.assertFalse(frappe.db.get_single_value("HERO Integration Sync State", "active_run"))
+        followup = self._run()
+        frappe.db.commit()
+        self.assertTrue(_claim_run(followup))
+        migration._finalize_failed_run(run.name, run.started_on)
+        self.assertEqual(frappe.db.get_single_value("HERO Integration Sync State", "active_run"), followup.name)
+
+    def test_linked_inbound_update_keeps_observer_and_baseline_consistent(self):
+        customer = frappe.get_doc({"doctype": "Customer", "customer_name": self.token}).insert(ignore_permissions=True)
+        before = {"customer_name": self.token}
+        link = frappe.get_doc({
+            "doctype": "HERO Integration Link", "source_type": "customer", "source_id": self.token,
+            "source_instance": "default", "target_doctype": "Customer", "target_name": customer.name,
+            "sync_status": "Synchronized", "source_payload_hash": "before", "target_payload_hash": "before",
+            "source_field_hashes": encode(field_hashes(before)), "target_field_hashes": encode(field_hashes(before)),
+            "mapping_version": "rc16-native-test",
+        }).insert(ignore_permissions=True)
+        after = {"customer_name": self.token + "-changed"}
+        args = ("customer", self.token, {"id": self.token}, after, "Customer", "customer_name", "rc16-native-test", SimpleNamespace(mode="Execute"))
+        result = _upsert(*args)
+        self.assertEqual(result.code, "UPDATED")
+        customer.reload(); link.reload()
+        self.assertEqual(customer.customer_name, after["customer_name"])
+        self.assertEqual(link.target_field_hashes, encode(field_hashes(after)))
+        self.assertEqual(_upsert(*args).code, "SKIPPED")
+        old_observation = link.observed_target_hash
+        customer.customer_name = self.token + "-manual"
+        customer.save(ignore_permissions=True)
+        link.reload()
+        self.assertNotEqual(link.observed_target_hash, old_observation)
+
+    def test_stale_failed_finalizer_does_not_release_reclaimed_same_run(self):
+        from hero_integration.services import migration
+
+        run = self._run()
+        frappe.db.commit()
+        self.assertTrue(_claim_run(run))
+        first_claim = run.started_on
+        migration._finalize_failed_run(run.name, first_claim)
+        frappe.db.set_value("HERO Integration Run", run.name, "state", "Queued")
+        frappe.db.commit()
+        requeued = frappe.get_doc("HERO Integration Run", run.name)
+        self.assertTrue(_claim_run(requeued))
+        self.assertGreater(requeued.started_on, first_claim)
+        migration._finalize_failed_run(run.name, first_claim)
+        self.assertEqual(frappe.db.get_value("HERO Integration Run", run.name, "state"), "Running")
+        self.assertEqual(frappe.db.get_single_value("HERO Integration Sync State", "active_run"), run.name)
+
     def test_frappe_dispatcher_rejects_get_for_every_write_rpc(self) -> None:
         previous_request = getattr(frappe.local, "request", None)
         try:

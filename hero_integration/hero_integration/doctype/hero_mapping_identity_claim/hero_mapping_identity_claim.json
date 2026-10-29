@@ -1,0 +1,14 @@
+{
+ "doctype": "DocType",
+ "name": "HERO Mapping Identity Claim",
+ "module": "HERO Integration",
+ "autoname": "field:claim_key",
+ "track_changes": 0,
+ "fields": [
+  {"fieldname":"claim_key","label":"Claim Key","fieldtype":"Data","reqd":1,"unique":1,"read_only":1},
+  {"fieldname":"claim_json","label":"Canonical Claim","fieldtype":"Code","options":"JSON","reqd":1,"read_only":1},
+  {"fieldname":"claim_hash","label":"Claim Hash","fieldtype":"Data","reqd":1,"read_only":1}
+ ],
+ "permissions": [{"role":"System Manager","read":1,"create":1}],
+ "modified": "2026-10-29 00:00:00.000000"
+}

@@ -3,9 +3,10 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
+from datetime import timedelta
 
 import frappe
-from frappe.utils import now_datetime
+from frappe.utils import get_datetime, now_datetime
 
 from hero_integration.client.graphql import HeroGraphQLClient
 from hero_integration.client.settings import get_configuration
@@ -17,8 +18,8 @@ from hero_integration.integrations.erpnext.contact import (
     synchronize_primary_contact,
     synchronize_home_phone,
 )
-from hero_integration.sources.hero import GraphQLServiceSource, HeroSource, SourcePage
-from hero_integration.services.change_detection import changed_fields, decode as decode_hashes, encode as encode_hashes, field_hashes
+from hero_integration.sources.hero import GraphQLServiceSource, HeroSource, SourcePage, TestingPreviewSource
+from hero_integration.services.change_detection import changed_fields, decode as decode_hashes, encode as encode_hashes, field_hashes, managed_target_update
 from hero_integration.services.conflict_notifications import notify_conflict_once
 from hero_integration.services.integration_events import record_output
 from hero_integration.services.mapping_runtime import MappingPlanError, active_mapping_plan
@@ -46,6 +47,10 @@ class CustomerAddressError(ValueError):
     pass
 
 
+class RepeatedProjectionPageError(MappingPlanError):
+    """The current projection attempt cannot continue without duplicating a page."""
+
+
 def execute_run(run_name: str) -> None:
     run = frappe.get_doc("HERO Integration Run", run_name)
     frappe.set_user(run.owner)
@@ -53,10 +58,16 @@ def execute_run(run_name: str) -> None:
         return
     if not _claim_run(run):
         return
+    testing_source = None
+    claim_started_on = run.started_on
+    failed = False
     try:
         validate_run_mappings(run)
         config = get_configuration()
         source = _source_for_run(run, config)
+        if _testing_preview_enabled(run):
+            testing_source = TestingPreviewSource(source, int(run.testing_max_actions or 0))
+            source = testing_source
         _process_requested_phases(run, source)
         run.reload()
         if run.state == "Running":
@@ -64,6 +75,10 @@ def execute_run(run_name: str) -> None:
             run.finished_on = now_datetime()
             run.save()
             _mark_sync_success(run)
+    except RepeatedProjectionPageError as error:
+        failed = True
+        frappe.db.rollback()
+        _finalize_blocked_run(run.name, claim_started_on, str(error))
     except MappingPlanError as error:
         run.reload()
         _mark_running_phase_failed(run)
@@ -77,18 +92,20 @@ def execute_run(run_name: str) -> None:
         run.state = "Cancelled"
         run.finished_on = now_datetime()
         run.save()
-    except Exception:
-        run.reload()
-        _mark_running_phase_failed(run)
-        run.state = "Failed"
-        run.error_message = "Migration failed. See Error Log for the redacted server exception."
-        run.finished_on = now_datetime()
-        run.save()
-        _mark_sync_error(run)
-        frappe.log_error(title="HERO Integration migration failed")
+    except Exception as error:
+        failed = True
+        frappe.db.rollback()
+        _finalize_failed_run(run.name, claim_started_on)
+        # Frappe's worker retries these exceptions. A finalized run must not
+        # be retried as a terminal no-op and reported as a successful job.
+        if isinstance(error, (frappe.db.InternalError, frappe.RetryBackgroundJobError)):
+            raise RuntimeError("HERO Integration run failed; see the original exception.") from error
         raise
     finally:
-        _release_run(run.name)
+        if not failed:
+            if testing_source is not None:
+                _persist_testing_result(run, testing_source)
+            _release_run(run.name)
 
 
 def _source_for_run(run, config):
@@ -96,7 +113,10 @@ def _source_for_run(run, config):
     if not getattr(run, "graphql_service", ""):
         # Historical runs keep their recorded legacy behavior; new API calls
         # never create this form.
-        return HeroSource(HeroGraphQLClient(config.endpoint, lambda: config.api_token, config.timeout_seconds), config.source_instance)
+        return HeroSource(HeroGraphQLClient(
+            config.endpoint, lambda: config.api_token, config.timeout_seconds,
+            max_retries=0 if _testing_preview_enabled(run) else 2,
+        ), config.source_instance)
     from hero_integration.services.read_contract import ReadContractError, from_documents
 
     service = frappe.get_doc("HERO GraphQL Service", run.graphql_service)
@@ -105,7 +125,26 @@ def _source_for_run(run, config):
     contract = from_documents(service, mapping, snapshot)
     if int(run.service_revision or 0) != contract.service_revision or int(run.mapping_revision or 0) != contract.mapping_revision:
         raise MappingPlanError("The queued run no longer matches its approved service or mapping revision.")
-    source = GraphQLServiceSource(HeroGraphQLClient(config.endpoint, lambda: config.api_token, config.timeout_seconds), service, contract, getattr(snapshot, "source_instance", "") or config.source_instance)
+    def revalidate_generated():
+        observed = frappe.get_doc('HERO GraphQL Mapping', run.graphql_mapping)
+        scope = (observed.source_instance or '', observed.schema_snapshot, observed.direction)
+        from hero_integration.hero_integration.doctype.hero_graphql_mapping.hero_graphql_mapping import lock_exchange_context
+        lock_exchange_context(*scope)
+        current_mapping = frappe.get_doc('HERO GraphQL Mapping', run.graphql_mapping, for_update=True)
+        if (current_mapping.source_instance or '', current_mapping.schema_snapshot, current_mapping.direction) != scope:
+            raise MappingPlanError('The generated mapping context changed before execution.')
+        current_service = frappe.get_doc('HERO GraphQL Service', run.graphql_service, for_update=True)
+        current_snapshot = frappe.get_doc('HERO GraphQL Schema Snapshot', current_service.schema_snapshot, for_update=True)
+        current = from_documents(current_service, current_mapping, current_snapshot)
+        if (current.service_revision != int(run.service_revision) or current.mapping_revision != int(run.mapping_revision)
+                or current_snapshot.source_instance != getattr(run, 'source_instance', '')):
+            raise MappingPlanError('The approved generated read context changed before execution.')
+        return current
+    source = GraphQLServiceSource(HeroGraphQLClient(
+        config.endpoint, lambda: config.api_token, config.timeout_seconds,
+        max_retries=0 if _testing_preview_enabled(run) else 2,
+    ), service, contract, getattr(snapshot, "source_instance", "") or config.source_instance,
+       revalidate=revalidate_generated if getattr(contract, 'materialized_request', None) is not None else None)
     if contract.target_operation == 'HeroProjectMatches':
         customer_service, customer_mapping, customer_snapshot = _customer_read_documents(run)
         customer_contract = from_documents(customer_service, customer_mapping, customer_snapshot)
@@ -158,6 +197,8 @@ def _claim_run(run) -> bool:
         return False
     try:
         active_run = _locked_active_run()
+        if active_run == run.name and frappe.db.get_value("HERO Integration Run", run.name, "state") == "Running":
+            return False
         if active_run and active_run != run.name:
             active_state = frappe.db.get_value("HERO Integration Run", active_run, "state")
             if active_state not in TERMINAL_STATES:
@@ -168,7 +209,10 @@ def _claim_run(run) -> bool:
             (run.name, "HERO Integration Sync State", "active_run"),
         )
         run.state = "Running"
-        run.started_on = run.started_on or now_datetime()
+        started_on = now_datetime()
+        if run.started_on:
+            started_on = max(started_on, get_datetime(run.started_on) + timedelta(microseconds=1))
+        run.started_on = started_on
         run.save()
         # Persist the reservation before another connection may inspect it or
         # this worker starts any source I/O.  Releasing the advisory lock
@@ -187,6 +231,32 @@ def _claim_run(run) -> bool:
         return False
     finally:
         _release_active_run_lock()
+
+
+def _finalize_failed_run(run_name: str, claim_started_on) -> None:
+    """Finalize only this still-current claim after its business rollback."""
+    _finalize_rolled_back_run(run_name, claim_started_on, "Failed", "Migration failed. See Error Log for the redacted server exception.")
+
+
+def _finalize_blocked_run(run_name: str, claim_started_on, detail: str) -> None:
+    """Persist the repeated-page diagnosis after discarding the attempt's writes."""
+    _finalize_rolled_back_run(run_name, claim_started_on, "Blocked", detail)
+
+
+def _finalize_rolled_back_run(run_name: str, claim_started_on, state: str, detail: str) -> None:
+    if _locked_active_run() != run_name:
+        return
+    run = frappe.get_doc("HERO Integration Run", run_name)
+    if run.state != "Running" or run.started_on != claim_started_on:
+        return
+    _mark_running_phase_failed(run)
+    run.state = state
+    run.error_message = detail
+    run.finished_on = now_datetime()
+    run.save()
+    _mark_sync_error(run)
+    _release_run(run_name)
+    frappe.db.commit()
 
 
 def _release_run(run_name: str) -> None:
@@ -311,7 +381,26 @@ def _mapping_plan_for_run(run, target_operation: str):
         service.operation_name,
         definition_ids=contract.definition_ids,
         target_operation=contract.target_operation,
+        mapping_name=contract.mapping_name,
+        native_task=json.loads(mapping.mapping_json).get('native_task_onboarding') is not None,
+        lock_rules=getattr(contract, 'materialized_request', None) is not None,
     )
+
+
+def _validate_enumeration_page(page: SourcePage, offset: int, seen_ids: set[str]) -> None:
+    """Reject invalid pagination before applying any records from the page."""
+    if page.next_offset is not None and (type(page.next_offset) is not int
+            or page.next_offset <= offset or not page.records):
+        raise MappingPlanError('Source pagination did not advance safely.')
+    identities = []
+    for row in page.records:
+        identity = row.get('id') if isinstance(row, dict) else None
+        if not isinstance(identity, (str, int)) or isinstance(identity, bool) or not str(identity).strip():
+            raise MappingPlanError('Source identity is missing or invalid.')
+        identities.append(str(identity))
+    if len(set(identities)) != len(identities) or seen_ids.intersection(identities):
+        raise MappingPlanError('Source identity repeated during enumeration.')
+    seen_ids.update(identities)
 
 
 def _process_phase(run, phase: str, reader) -> bool:
@@ -320,9 +409,27 @@ def _process_phase(run, phase: str, reader) -> bool:
     _set_phase_state(run, phase, "Running")
     offset = int(run.resume_offset or 0) if run.resume_phase == phase else 0
     record_index = int(run.resume_record_index or 0) if run.resume_phase == phase else 0
+    if offset or record_index:
+        # Offset continuation requires a stable source snapshot; mid-page
+        # continuation additionally requires persisted page identity evidence.
+        _set_phase_state(run, phase, "Blocked")
+        _block_run(run, "Cannot resume without a verified source snapshot and page identity evidence.")
+        return False
+    seen_ids: set[str] = set()
     while True:
         _cancel_if_requested(run)
         page: SourcePage = reader(offset)
+        testing_source = getattr(reader, "__self__", None)
+        if isinstance(testing_source, TestingPreviewSource) and testing_source.status in {"BLOCKED", "LIMIT_REACHED"}:
+            _set_phase_state(run, phase, "Blocked")
+            detail = (
+                "Testing preview blocked because newest-first ordering is not verified for the selected HERO source."
+                if testing_source.status == "BLOCKED"
+                else "Testing preview reached its shared HERO request budget; no resume is permitted."
+            )
+            _block_run(run, detail)
+            return False
+        _validate_enumeration_page(page, offset, seen_ids)
         for index, record in enumerate(page.records):
             if index < record_index:
                 continue
@@ -353,6 +460,24 @@ def _cancel_if_requested(run) -> None:
     run.reload()
     if run.state == "Cancelled":
         raise _Cancelled()
+
+
+def _testing_preview_enabled(run) -> bool:
+    return getattr(run, "mode", "") == "Preview" and bool(int(getattr(run, "testing_enabled", 0) or 0))
+
+
+def _persist_testing_result(run, source: TestingPreviewSource) -> None:
+    """Store only technical counters and source outcomes for the finished test run."""
+    try:
+        run.reload()
+        status = "FAILED" if run.state == "Failed" else source.status
+        run.testing_executed_actions = source.executed_actions
+        run.testing_records_received = source.records_received
+        run.testing_status = status
+        run.testing_results_json = json.dumps(source.results, ensure_ascii=False, sort_keys=True)
+        run.save()
+    except Exception:
+        frappe.log_error(title="HERO testing preview metadata could not be recorded")
 
 
 def _migrate_customer(record: dict[str, object], run) -> Result:
@@ -391,21 +516,52 @@ def _process_projection(run, source) -> None:
     """Reuse the existing run, read service, mapping plan and conflict-safe writer."""
     operation = source.contract.target_operation
     plan = _mapping_plan_for_run(run, operation)
+    from hero_integration.services.read_contract import from_documents
+    service = frappe.get_doc('HERO GraphQL Service', run.graphql_service)
+    mapping = frappe.get_doc('HERO GraphQL Mapping', run.graphql_mapping)
+    snapshot = frappe.get_doc('HERO GraphQL Schema Snapshot', service.schema_snapshot)
+    reviewed = from_documents(service, mapping, snapshot)
+    if (reviewed.target_operation != operation or reviewed.service_revision != int(run.service_revision)
+            or reviewed.mapping_revision != int(run.mapping_revision)):
+        raise MappingPlanError('The projection contract changed before processing.')
+    task_scope = json.loads(mapping.mapping_json).get('native_task_onboarding')
+    if task_scope is not None and (operation != 'HeroTasks' or source.source_instance != task_scope['source_instance']
+                                   or getattr(run, 'source_instance', '') != task_scope['source_instance']):
+        raise MappingPlanError('Native Task onboarding source does not match the approved run.')
     offset = int(run.resume_offset or 0)
     index_start = int(run.resume_record_index or 0)
-    seen_pages = set()
+    if offset or index_start:
+        _block_run(run, 'Cannot resume without a verified source snapshot and page identity evidence.')
+        return
+    seen_ids: set[str] = set()
     while True:
         _cancel_if_requested(run)
         page = source.projection(offset)
-        page_ids = tuple(record.get('id') for record in page.records)
-        if page_ids and page_ids in seen_pages:
-            raise MappingPlanError('Projection pagination returned a repeated page.')
-        seen_pages.add(page_ids)
+        if isinstance(source, TestingPreviewSource) and source.status in {"BLOCKED", "LIMIT_REACHED"}:
+            detail = (
+                "Testing preview blocked because newest-first ordering is not verified for the selected HERO source."
+                if source.status == "BLOCKED"
+                else "Testing preview reached its shared HERO request budget; no resume is permitted."
+            )
+            _block_run(run, detail)
+            return
+        try:
+            _validate_enumeration_page(page, offset, seen_ids)
+        except MappingPlanError as error:
+            raise RepeatedProjectionPageError(str(error)) from error
         for index, record in enumerate(page.records):
             if index < index_start:
                 continue
             _cancel_if_requested(run)
-            result = _migrate_projection(record, run, plan)
+            if task_scope is not None:
+                task_record = record if any(item.source_path == 'comment' for item in plan.definitions) else {k: v for k, v in record.items() if k != 'comment'}
+                result = _migrate_native_task(task_record, run, plan, task_scope)
+                if (result.code in {'CREATED', 'UPDATED', 'SKIPPED', 'PREVIEW_OK'}
+                        and result.target_doctype == 'Task'
+                        and any(item.source_path == 'target_user_id' for item in plan.definitions)):
+                    _record_task_assignment_pending(run, record, result.target_name, task_scope['source_instance'])
+            else:
+                result = _migrate_projection(record, run, plan)
             _record_result(run, PROJECTIONS[operation]['source_type'], record, result)
             run.resume_phase = operation
             run.resume_offset, run.resume_record_index = offset, index + 1
@@ -417,13 +573,335 @@ def _process_projection(run, source) -> None:
         run.save()
 
 
+@dataclass(frozen=True)
+class TaskAssignmentDecision:
+    action: str
+    detail: str
+    task_name: str = ''
+    recipient: str = ''
+    existing: tuple[str, ...] = ()
+    binding: str = ''
+    policy: str = ''
+    proposed: str = ''
+    date_rule: str = ''
+
+
+def _plan_task_assignment(run, record, task_name: str, source_instance: str) -> TaskAssignmentDecision:
+    """Read authoritative assignment state without writing or granting authority.
+
+    The locks are held through execution by the caller's transaction. A plan is
+    an observation, never a capability to execute later.
+    """
+    def decision(action, detail, **values):
+        return TaskAssignmentDecision(action, detail, task_name or '', **values)
+
+    target = record.get('target_user_id')
+    if 'target_user_id' not in record:
+        return decision('NO_OP', 'PENDING_SOURCE_SEMANTICS: assignee was omitted; existing assignments are preserved.')
+    if target is None:
+        return decision('NO_OP', 'PENDING_SOURCE_SEMANTICS: explicit NULL never removes a native assignment.')
+    if not isinstance(target, int) or isinstance(target, bool) or target <= 0:
+        return decision('PENDING_IDENTITY', 'PENDING_IDENTITY: source User identity is invalid.')
+    if 'author_user_id' not in record:
+        return decision('BLOCKED', 'PENDING_AUTHORITY: source author was not included in the read.')
+    if record.get('author_user_id') is not None:
+        return decision('BLOCKED', 'PENDING_AUTHORITY: source author has no verified system, peer or supervisor authority.')
+    candidates = frappe.db.sql('''SELECT name, target_name FROM `tabHERO Object Binding`
+        WHERE site_scope=%s AND source_instance=%s AND object_type=%s AND external_object_id=%s
+          AND target_doctype=%s AND lifecycle=%s ORDER BY name LIMIT 2 FOR UPDATE''',
+        (frappe.local.site, source_instance, 'User', str(target), 'User', 'VALID'), as_dict=True)
+    if len(candidates) != 1 or not frappe.db.exists('User', candidates[0].target_name):
+        return decision('PENDING_IDENTITY', 'PENDING_IDENTITY: source User has no unique existing User binding.')
+    recipient = candidates[0].target_name
+    if not frappe.db.get_value('User', recipient, 'enabled'):
+        return decision('PENDING_IDENTITY', 'PENDING_IDENTITY: bound User is inactive.')
+    details = {'recipient': recipient, 'binding': candidates[0].name}
+    if not task_name:
+        return decision('BLOCKED', 'PENDING_TASK: a new Task has no persisted identity or verified local permissions yet.', **details)
+    from hero_integration.services.task_assignment_policy import approved_initial_policy, task_has_policy_company, PolicyError
+    try:
+        policy = approved_initial_policy(source_instance, candidates[0].name) if frappe.db.exists('DocType', 'HERO Task Assignment Policy') else None
+    except PolicyError:
+        policy = None
+    if not policy:
+        return decision('BLOCKED', 'PENDING_AUTHORITY: no current matching system assignment policy.', **details)
+    details['policy'] = policy.name
+    task = frappe.get_doc('Task', task_name, for_update=True)
+    if not task_has_policy_company(task, policy):
+        return decision('BLOCKED', 'PENDING_AUTHORITY: Task has no verified project in the policy company.', **details)
+    if task.status in {'Completed', 'Cancelled'}:
+        return decision('BLOCKED', 'PENDING_AUTHORITY: Task lifecycle does not permit assignment.', **details)
+    if not frappe.has_permission('Task', 'write', doc=task, user=frappe.session.user):
+        return decision('BLOCKED', 'BLOCKED_PERMISSION: actor cannot write the Task.', **details)
+    if not frappe.has_permission('Task', 'read', doc=task, user=recipient):
+        return decision('BLOCKED', 'BLOCKED_PERMISSION: recipient has no Task read access; sharing is forbidden.', **details)
+    if not frappe.has_permission('ToDo', 'create'):
+        return decision('BLOCKED', 'BLOCKED_PERMISSION: integration actor cannot create ToDo.', **details)
+    if not frappe.get_system_settings('disable_document_sharing'):
+        return decision('BLOCKED', 'BLOCKED_PERMISSION: native assignment requires sharing disabled.', **details)
+    from hero_integration.services.task_assignment_state import assignment_boundary_available
+    if not assignment_boundary_available():
+        return decision('BLOCKED', 'PENDING_AUTHORITY: native assignment boundary is unavailable.', **details)
+    link = _link('Task', str(record['id']), source_instance)
+    if not link or link.target_doctype != 'Task' or link.target_name != task_name:
+        return decision('CONFLICT', 'Task assignment requires its unique source binding.', **details)
+    if not frappe.db.exists('DocType', 'HERO Task Assignment State'):
+        return decision('BLOCKED', 'PENDING_AUTHORITY: managed assignment state is unavailable.', **details)
+    states = frappe.db.sql('SELECT name FROM `tabHERO Task Assignment State` WHERE task_link=%s FOR UPDATE',
+                           (link.name,), as_dict=True)
+    if len(states) > 1:
+        return decision('CONFLICT', 'Multiple assignment provenance records require review.', **details)
+    state = frappe.get_doc('HERO Task Assignment State', states[0].name, for_update=True) if states else None
+    history = frappe.db.sql('SELECT name FROM `tabToDo` WHERE reference_type=%s AND reference_name=%s FOR UPDATE',
+                            ('Task', task_name), as_dict=True)
+    active = [frappe.get_doc('ToDo', row.name, for_update=True) for row in history]
+    active = [item for item in active if item.status == 'Open']
+    details['existing'] = tuple(item.name for item in active)
+    if len(active) > 1:
+        return decision('CONFLICT', 'Multiple open assignments require local review.', **details)
+    if state:
+        valid = (state.state == 'SYSTEM' and state.task_name == task_name
+                 and state.policy == policy.name and int(state.policy_revision) == int(policy.policy_revision)
+                 and int(state.mapping_revision) == int(run.mapping_revision) and len(active) == 1
+                 and active[0].name == state.todo and str(active[0].modified) == str(state.todo_modified)
+                 and active[0].assigned_by == frappe.session.user)
+        if valid:
+            old_binding = frappe.get_doc('HERO Object Binding', state.user_binding, for_update=True)
+            valid = (active[0].allocated_to == old_binding.target_name
+                     and int(state.user_binding_revision or 0) == int(old_binding.binding_revision or 0)
+                     and int(state.user_binding_revision or 0) > 0 and old_binding.lifecycle == 'VALID')
+        if not valid:
+            return decision('CONFLICT', 'PENDING_AUTHORITY: local ownership or assignment baseline changed.', **details)
+        if state.user_binding == candidates[0].name:
+            return decision('KEEP', 'Current managed assignment is unchanged.', **details)
+        return decision('BLOCKED', 'PENDING_SOURCE_ORDER: transfer requires verified source ordering and authority.', **details)
+    if active:
+        return decision('CONFLICT', 'PENDING_AUTHORITY: an existing local assignment is preserved.', **details)
+    if history:
+        return decision('BLOCKED', 'PENDING_AUTHORITY: historical assignments require local review.', **details)
+    effects = json.loads(policy.policy_json).get('native_effects')
+    if not effects:
+        return decision('BLOCKED', 'POLICY_REQUIRED: approve local ToDo date and native notification/follow effects.',
+                        proposed='CREATE', **details)
+    if recipient != frappe.session.user and not effects['allow_notifications']:
+        return decision('BLOCKED', 'POLICY_REQUIRED: native assignment notification is not authorized.',
+                        proposed='CREATE', **details)
+    if frappe.get_cached_value('User', recipient, 'follow_assigned_documents') and not effects['allow_follow']:
+        return decision('BLOCKED', 'POLICY_REQUIRED: native document following is not authorized.',
+                        proposed='CREATE', **details)
+    return decision('CREATE', 'Authorized native initial assignment; local date is today.',
+                    proposed='CREATE', date_rule=effects['date_rule'], **details)
+
+
+def _execute_initial_task_assignment(run, record, task_name, source_instance, observed):
+    """Revalidate under the same transaction immediately before native effects."""
+    current = _plan_task_assignment(run, record, task_name, source_instance)
+    if current != observed or current.action != 'CREATE':
+        raise RuntimeError('Task assignment admission changed before execution.')
+    from frappe.desk.form import assign_to
+    from frappe.utils import nowdate
+    from hero_integration.services.task_assignment_state import managed_assignment
+    date = nowdate()
+    try:
+        with managed_assignment():
+            assign_to.add({'doctype': 'Task', 'name': task_name, 'assign_to': [current.recipient], 'date': date})
+            rows = frappe.get_all('ToDo', filters={'reference_type': 'Task', 'reference_name': task_name,
+                                  'status': 'Open'}, fields=['name', 'allocated_to'], limit=2)
+            if len(rows) != 1 or rows[0].allocated_to != current.recipient:
+                raise RuntimeError('Native assignment did not produce one verified recipient.')
+            todo = frappe.get_doc('ToDo', rows[0].name, for_update=True)
+            if (todo.reference_type != 'Task' or todo.reference_name != task_name
+                    or todo.allocated_to != current.recipient or todo.assigned_by != frappe.session.user
+                    or str(todo.date) != str(date)):
+                raise RuntimeError('Native assignment does not match the approved Task, actor, recipient and date.')
+            binding = frappe.get_doc('HERO Object Binding', current.binding, for_update=True)
+            policy = frappe.get_doc('HERO Task Assignment Policy', current.policy, for_update=True)
+            link = _link('Task', str(record['id']), source_instance)
+            frappe.get_doc({'doctype': 'HERO Task Assignment State', 'task_link': link.name,
+                'task_name': task_name, 'todo': todo.name, 'user_binding': binding.name,
+                'user_binding_revision': binding.binding_revision, 'policy': policy.name,
+                'policy_revision': policy.policy_revision, 'mapping_revision': int(run.mapping_revision),
+                'todo_modified': todo.modified, 'state': 'SYSTEM', 'state_revision': 1}).insert()
+        return todo.name
+    except Exception:
+        # Savepoint rollback does not clear Frappe's after-commit callbacks.
+        frappe.db.rollback()
+        raise
+
+
+def _record_task_assignment_pending(run, record, task_name: str, source_instance: str) -> None:
+    """Use the same locked admission decision for Preview and execution."""
+    plan = _plan_task_assignment(run, record, task_name, source_instance)
+    if plan.action == 'CREATE' and getattr(run, 'mode', '') == 'Execute':
+        todo_name = _execute_initial_task_assignment(run, record, task_name, source_instance, plan)
+        record_output(run=run.name, source_type='Task', source_id=str(record['id']), result='CREATED',
+                      action='task_assignment_created', target_doctype='Task', target_name=task_name,
+                      correlation_id=todo_name, detail='Approved native assignment created.')
+        return
+    detail = json.dumps({'decision': plan.action, 'proposed': plan.proposed, 'reason': plan.detail, 'recipient': plan.recipient,
+                         'existing_todos': list(plan.existing), 'local_date': plan.date_rule or 'POLICY_REQUIRED'}, sort_keys=True)
+    record_output(run=run.name, source_type='Task', source_id=str(record['id']),
+                  result='CONFLICT' if plan.action in {'BLOCKED', 'CONFLICT', 'PENDING_IDENTITY'} else 'SKIPPED',
+                  action='task_assignment_review', detail=detail, target_doctype='Task', target_name=task_name)
+    if plan.action in {'BLOCKED', 'CONFLICT', 'PENDING_IDENTITY'} and hasattr(run, 'conflict_records'):
+        run.conflict_records = int(run.conflict_records or 0) + 1
+
+
+def _migrate_native_task(record, run, plan, scope) -> Result:
+    """Apply the explicitly approved Task intake using the existing Link identity."""
+    from types import SimpleNamespace
+    from hero_integration.services.binding_registry import BindingRegistryService
+    from hero_integration.services.mapping_registry_model import MappingDirection
+    from hero_integration.services.native_projections import _html, _text
+
+    frappe.only_for('System Manager')
+    instance = _source_instance(record)
+    if scope != {'confirmed': True, 'source_instance': instance, 'source_type': 'Task'}:
+        raise MappingPlanError('Native Task intake source scope is not approved.')
+    source_id = plan.source_identity(record)
+    selected_paths = {definition.source_path for definition in plan.definitions}
+    if record.get('is_deleted') is True:
+        return Result('SKIPPED_SOURCE_DELETED', 'Source deletion does not delete or close a Task.')
+    values = {}
+    try:
+        if ('title' in record and record['title'] is not None
+                and (not isinstance(record['title'], str) or record['title'].strip())):
+            values['subject'] = _text(record['title'], 'Task title', required=True, limit=140)
+        if 'comment' in selected_paths and 'comment' in record and record['comment'] is not None and (not isinstance(record['comment'], str) or record['comment'].strip()):
+            values['description'] = _html(_text(record['comment'], 'Task comment'))
+        if 'target_project_match_id' in selected_paths and record.get('target_project_match_id') is not None:
+            values['project'] = _project_name_for_source(record['target_project_match_id'], instance)
+        if 'due_date' in selected_paths and record.get('due_date') is not None:
+            deadline = _external_task_deadline(record['due_date'])
+            if deadline is not None:
+                values['custom_hero_due_date'] = deadline
+    except ValueError as error:
+        return Result('BLOCKED_RECORD', str(error))
+    selected = getattr(plan, 'definitions', ())
+    assignment_selected = any(item.source_path == 'target_user_id' for item in selected)
+    if assignment_selected:
+        from dataclasses import replace
+        core_plan = replace(plan, definitions=tuple(item for item in selected if item.source_path != 'target_user_id'))
+        plan_version = core_plan.mapping_version
+    else:
+        plan_version = plan.mapping_version
+    version = f"native-task-v1:{int(run.mapping_revision)}:{plan_version}"
+    key = ':'.join(('HERO', instance, 'Task', source_id))
+    from hero_integration.hero_integration.doctype.hero_frappe_mapping.hero_frappe_mapping import _lock_active_target
+    database = getattr(frappe.conf, 'db_name', None)
+    if not isinstance(database, str) or not database:
+        raise MappingPlanError('Native Task intake requires the current database identity.')
+    _lock_active_target('native-task-intake:' + database, 'Task', key)
+    rows = frappe.db.sql('SELECT name FROM `tabHERO Integration Link` WHERE source_key=%s FOR UPDATE', (key,), as_dict=True)
+    if len(rows) > 1:
+        raise MappingPlanError('Task source identity is not unique.')
+    if not rows:
+        if not values.get('subject'):
+            return Result('BLOCKED_RECORD', 'A nonempty Task title is required for intake.')
+        if run.mode == 'Preview':
+            return Result('PREVIEW_OK', 'A native Task would be created.', 'Task')
+        frappe.db.savepoint('hero_native_task_insert')
+        try:
+            with managed_target_update('Task', None, None):
+                task = frappe.get_doc({'doctype': 'Task', **values}).insert()
+            source_fields = field_hashes(values)
+            target_fields = field_hashes({field: task.get(field) for field in values})
+            pending_comment = 'comment' in selected_paths and 'comment' in record and 'description' not in values
+            pending_project = ('target_project_match_id' in selected_paths and 'target_project_match_id' in record
+                               and 'project' not in values)
+            pending_deadline = 'due_date' in selected_paths and 'due_date' in record and 'custom_hero_due_date' not in values
+            frappe.get_doc({
+                'doctype': 'HERO Integration Link', 'source_system': 'HERO', 'source_type': 'Task',
+                'source_id': source_id, 'source_instance': instance, 'sync_status': 'Conflict' if pending_comment or pending_project or pending_deadline else 'Synchronized',
+                'conflict_detail': 'Task optional fields require review.' if pending_comment or pending_project or pending_deadline else '',
+                'target_doctype': 'Task', 'target_name': task.name, 'source_payload_hash': _digest(record),
+                'target_payload_hash': _digest({field: task.get(field) for field in values}),
+                'source_field_hashes': encode_hashes(source_fields), 'target_field_hashes': encode_hashes(target_fields),
+                'mapping_version': version, 'last_synced_on': now_datetime(),
+            }).insert()
+        except Exception:
+            frappe.db.rollback(save_point='hero_native_task_insert')
+            raise
+        return Result('CREATED', 'Native Task and source binding created.', 'Task', task.name)
+    link = frappe.get_doc('HERO Integration Link', rows[0].name, for_update=True)
+    prior_version = str(link.mapping_version or '').split(':')
+    same_core = (assignment_selected and len(prior_version) == 3 and prior_version[0] == 'native-task-v1'
+                 and prior_version[1].isdigit() and prior_version[2] == plan_version)
+    if link.target_doctype != 'Task' or (link.mapping_version != version and not same_core):
+        return Result('CONFLICT', 'Task binding or approved mapping version requires review.')
+    frappe.db.sql('SELECT name FROM `tabTask` WHERE name=%s FOR UPDATE', (link.target_name,))
+    if not frappe.db.exists('Task', link.target_name):
+        return Result('CONFLICT', 'Bound Task no longer exists.')
+    task = frappe.get_doc('Task', link.target_name, for_update=True)
+    source_base = decode_hashes(link.source_field_hashes)
+    target_base = decode_hashes(link.target_field_hashes)
+    if source_base is None or target_base is None:
+        return Result('CONFLICT', 'Task binding lacks a confirmed field baseline.', 'Task', task.name)
+    pending, conflicts, updates, omitted = [], [], {}, []
+    for field, source_path in (('subject', 'title'), ('description', 'comment'), ('project', 'target_project_match_id'),
+                               ('custom_hero_due_date', 'due_date')):
+        if source_path not in selected_paths:
+            continue
+        source_hash = field_hashes({field: values[field]})[field] if field in values else None
+        target_hash = field_hashes({field: task.get(field)})[field]
+        binding = SimpleNamespace(direction=MappingDirection.HERO_TO_FRAPPE, mapping_revision=int(run.mapping_revision),
+                                  acknowledged_source_fingerprint=source_base.get(field),
+                                  acknowledged_target_fingerprint=target_base.get(field))
+        decision = BindingRegistryService.inbound_reconciliation(binding, active_mapping_revision=int(run.mapping_revision),
+                                                                  source_fingerprint=source_hash, target_fingerprint=target_hash)
+        if decision == 'APPLY_SOURCE': updates[field] = values[field]
+        elif decision == 'CONFIRM_EQUAL':
+            source_base[field], target_base[field] = source_hash, target_hash
+        elif decision in {'CONFLICT', 'UNACKNOWLEDGED', 'MAPPING_CHANGED'}: conflicts.append(field)
+        elif decision == 'OMITTED':
+            omitted.append(field)
+            if source_path in record: pending.append(field)
+    if run.mode == 'Preview':
+        return Result('CONFLICT' if conflicts or pending else 'PREVIEW_OK', 'Native Task field comparison completed.', 'Task', task.name)
+    if updates:
+        for field, value in updates.items(): task.set(field, value)
+        with managed_target_update('Task', task.name, link.name): task.save()
+        for field, value in updates.items():
+            source_base[field] = field_hashes({field: value})[field]
+            target_base[field] = field_hashes({field: task.get(field)})[field]
+    link.source_field_hashes = encode_hashes(source_base)
+    link.target_field_hashes = encode_hashes(target_base)
+    link.mapping_version = version
+    if conflicts or pending:
+        link.sync_status = 'Conflict'
+        link.conflict_detail = 'Task fields require review: ' + ', '.join(sorted(conflicts + pending))
+    elif not omitted:
+        link.sync_status = 'Synchronized'
+        link.conflict_detail = ''
+    link.save()
+    return Result('CONFLICT' if conflicts or pending or link.sync_status == 'Conflict' else ('UPDATED' if updates else 'SKIPPED'),
+                  link.conflict_detail or 'Native Task field comparison completed.', 'Task', task.name)
+
+
+def _external_task_deadline(value):
+    """Convert only offset-bearing instants to the configured site timezone."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        instant = datetime.fromisoformat(value.strip().replace('Z', '+00:00'))
+        zone = frappe.db.get_single_value('System Settings', 'time_zone')
+        if instant.tzinfo is None or instant.utcoffset() is None or not isinstance(zone, str) or not zone:
+            return None
+        return instant.astimezone(ZoneInfo(zone)).replace(tzinfo=None)
+    except (ValueError, OverflowError, ZoneInfoNotFoundError):
+        return None
+
+
 def _migrate_projection(record, run, plan) -> Result:
     operation = plan.target_operation or plan.operation
     contract = PROJECTIONS[operation]
     instance = _source_instance(record)
     try:
         source_id = plan.source_identity(record)
-        validate_projection_record(operation, record)
+        existing = _link(contract['source_type'], source_id, instance) if contract.get('native_kind') == 'event' else None
+        validate_projection_record(operation, record, allow_partial=bool(existing))
         if record.get('is_deleted') is True or record.get('deleted') is True:
             if run.mode != 'Preview':
                 _mark_source_deleted(_link(contract['source_type'], source_id, instance))
@@ -432,31 +910,39 @@ def _migrate_projection(record, run, plan) -> Result:
         # held before resolving the saved native options.  This makes Preview
         # fail closed even when it is invoked with a minimal test/run context,
         # and guarantees the protected target is never updated.
-        existing = _link(contract['source_type'], source_id, instance) if contract.get('native_kind') == 'event' else None
         if existing:
             if existing.target_doctype != 'Event':
                 return Result('CONFLICT', 'Stored calendar binding is not a native Event.')
             target = _native_lookup('Event', existing.target_name)
             if target.get('event_type') != 'Private' or any(target.get(f) for f in ('event_participants', 'send_reminder', 'sync_with_google_calendar', 'add_video_conferencing')):
                 return Result('CONFLICT', 'Event sharing or outbound settings changed; native calendar update requires review.')
-        native_values, defaults = {}, {}
+        native_values, defaults, review = {}, {}, []
         if contract.get('native_kind') or contract.get('native_bindings'):
             from hero_integration.services.native_projections import values as native_resolve, creation_defaults
             config = json.loads(frappe.get_doc('HERO GraphQL Mapping', run.graphql_mapping).mapping_json)
             options = config.get('native_options')
             native_values = native_resolve(contract, record, source_id, instance, options, lookup=_native_lookup,
-                                          item_link=lambda identity: _item_name_for_source(identity, instance))
+                                          item_link=lambda identity: _item_name_for_source(identity, instance),
+                                          allow_partial=bool(existing), review=review)
             if contract.get('native_kind') == 'event' and options['target_timezone'] != frappe.db.get_single_value('System Settings', 'time_zone'):
                 raise MappingPlanError('Configured event target timezone differs from the native System Settings timezone.')
             defaults = creation_defaults(contract, options)
-        values = plan.values(record, project_link=lambda value: _project_name_for_source(value, instance), native_value=lambda target: native_values[target])
+        values = plan.values(record, project_link=lambda value: _project_name_for_source(value, instance),
+                             native_value=lambda target: native_values[target], allow_partial=bool(existing))
         values['custom_hero_key'] = _digest([instance, contract['source_type'], source_id])
         values['custom_hero_source_instance'] = instance
     except (ValueError, MappingPlanError) as error:
         return Result('BLOCKED_RECORD', str(error))
-    return _upsert(contract['source_type'], source_id, record, values, contract['target_doctype'],
+    result = _upsert(contract['source_type'], source_id, record, values, contract['target_doctype'],
                    'item_code' if contract['target_doctype'] == 'Item' else 'custom_hero_key', plan.mapping_version, run, source_instance=instance,
-                   target_snapshot=lambda target: _projection_target_values(target, values, contract), creation_values=defaults)
+                   target_snapshot=lambda target: _projection_target_values(target, values, contract), creation_values=defaults,
+                   preserve_omitted=contract.get('native_kind') == 'event')
+    if review and result.code in {'UPDATED', 'SKIPPED', 'OBSERVED', 'PREVIEW_OK'}:
+        detail = 'Event time or recurrence requires review; unrelated field changes were considered. ' + review[0]
+        if run.mode != 'Preview':
+            _mark_link_conflict(frappe.get_doc('HERO Integration Link', existing.name), detail)
+        return Result('CONFLICT', detail, result.target_doctype, result.target_name)
+    return result
 
 
 def _native_lookup(doctype, name):
@@ -479,6 +965,8 @@ def _projection_target_values(target, values, contract):
     for binding in contract['bindings'].values():
         if binding['fieldtype'] == 'Table':
             field = binding['field']
+            if field not in values:
+                continue
             keys = ('custom_hero_source_id', 'custom_hero_resource_name', 'custom_hero_resource_type', 'custom_hero_type_id') if field == 'custom_hero_resources' else ('custom_hero_source_id', 'custom_hero_partner_name')
             snapshot[field] = [{key: row.get(key) for key in keys} for row in snapshot.get(field) or []]
             continue
@@ -600,6 +1088,7 @@ def _upsert(
     target_snapshot=None,
     source_instance: str = "default",
     creation_values: dict | None = None,
+    preserve_omitted: bool = False,
 ) -> Result:
     if not _target_available(doctype):
         return Result("UNAVAILABLE", f"{doctype} is not installed on this site.")
@@ -608,6 +1097,8 @@ def _upsert(
     if existing:
         if existing.target_doctype != doctype:
             return Result('CONFLICT', 'Stored binding has an incompatible target DocType.')
+        if preserve_omitted and existing.mapping_version != mapping_version:
+            return Result('CONFLICT', 'Event binding or approved mapping version requires review.', doctype, existing.target_name)
         if not frappe.db.exists(existing.target_doctype, existing.target_name):
             if run.mode != "Preview":
                 _mark_link_conflict(existing, "Stored target reference no longer exists.")
@@ -632,8 +1123,10 @@ def _upsert(
                 _mark_link_conflict(existing, "HERO source changed; legacy link has no field baseline.")
                 return Result("CONFLICT", "HERO source changed; legacy link has no field baseline.", doctype, target.name)
             return Result("SKIPPED", "Record is already synchronized.", doctype, target.name)
-        changed_source = changed_fields(prior_source, source_field_hashes)
-        changed_target = changed_fields(prior_target, target_field_hashes)
+        compared_source = {field: prior_source[field] for field in source_field_hashes if field in prior_source} if preserve_omitted else prior_source
+        compared_target = {field: prior_target[field] for field in target_field_hashes if field in prior_target} if preserve_omitted else prior_target
+        changed_source = changed_fields(compared_source, source_field_hashes)
+        changed_target = changed_fields(compared_target, target_field_hashes)
         same_field_changes = changed_source & changed_target
         if same_field_changes:
             detail = f"Field conflict requires review: {', '.join(sorted(same_field_changes))}."
@@ -653,7 +1146,8 @@ def _upsert(
                 for field in changed_source:
                     if field in values:
                         target.set(field, values[field])
-                target.save()
+                with managed_target_update(doctype, target.name, existing.name):
+                    target.save()
                 if after_update:
                     after_update(target)
             except (HomePhoneConflict, CustomerAddressError) as error:
@@ -661,12 +1155,18 @@ def _upsert(
                 return Result("CONFLICT", str(error), doctype, target.name)
             target_values = snapshot(target)
             target_field_hashes = field_hashes(target_values)
-            _update_link_baseline(existing, source_hash, _digest(target_values), source_field_hashes, target_field_hashes, mapping_version)
+            _update_link_baseline(existing, source_hash, _digest(target_values),
+                                  {**prior_source, **source_field_hashes} if preserve_omitted else source_field_hashes,
+                                  {**prior_target, **{key: target_field_hashes[key] for key in changed_source if key in target_field_hashes}}
+                                  if preserve_omitted else target_field_hashes, mapping_version)
             return Result("UPDATED", "Non-conflicting HERO field changes were applied through native Frappe validation.", doctype, target.name)
         # A local-only change is observed but never becomes an outbound HERO
         # mutation.  Keep it as the target baseline for a later comparison.
         if changed_target:
-            _update_link_baseline(existing, source_hash, _digest(target_values), source_field_hashes, target_field_hashes, mapping_version)
+            if preserve_omitted:
+                return Result("OBSERVED", "Local field change observed; its acknowledged baseline is preserved.", doctype, target.name)
+            _update_link_baseline(existing, source_hash, _digest(target_values),
+                                  source_field_hashes, target_field_hashes, mapping_version)
             return Result("OBSERVED", "Local field change observed; no outbound HERO mutation was prepared.", doctype, target.name)
         return Result("SKIPPED", "Record is already synchronized.", doctype, target.name)
     duplicate = frappe.db.exists(doctype, {name_field: values[name_field]})

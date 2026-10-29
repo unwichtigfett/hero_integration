@@ -153,6 +153,7 @@
     const field = (label, input) => { const n = $('label', 'ht-field', label); n.append(input); input.setAttribute('aria-label', label); return n; };
     const input = (placeholder = '') => { const n = $('input', 'form-control'); n.placeholder = placeholder; return n; };
     const button = (label, action) => { const b = $('button', 'btn btn-default btn-sm', label); b.type = 'button'; b.addEventListener('click', action); return b; };
+    const renderTokens = (target, tokens) => target.replaceChildren(...tokens.map(([type, text]) => $('span', 'ht-tok ht-tok-' + type.replace(/\./g, '-'), text)));
     const errors = {CONFIGURATION_REQUIRED:'The HERO connection is not configured completely.', PERMISSION_DENIED:'You do not have permission to use this tool action.',
         BINDING_CHANGED:'The connection changed. Reload the context and accept the change deliberately.', REVISION_CONFLICT:'The record changed in the meantime. Reload it; your draft is retained.',
         SCHEMA_CHANGED:'The current schema changed. Validate again.', SCHEMA_NOT_FOUND:'No schema is available for this connection and revision.',
@@ -162,6 +163,168 @@
         INVALID_SERVICE_KIND:'Select Query or Mutation.', SUBSCRIPTION_NOT_SUPPORTED:'Subscriptions are not supported as services.',
         HERO_MUTATIONS_DISABLED:'HERO mutations are disabled in the connection settings.', MUTATION_APPROVAL_REQUIRED:'The exact mutation must be confirmed before execution.',
         CONNECTOR_DISABLED:'The HERO connection is disabled.', TOOL_INTERNAL_ERROR:'The tool action could not be completed on the server.'};
+    /*
+     * GraphQL text helpers. Pure functions without DOM access, so they can be tested in isolation.
+     * Variables use one `name := value;` line each (the closing semicolon is optional); every value is parsed
+     * with JSON.parse only (never eval).
+     */
+    const GRAPHQL_NAME = /^[_A-Za-z][_0-9A-Za-z]*$/;
+    function checkJsonNumbers(value, where) {
+        if (typeof value === 'number') {
+            if (!Number.isFinite(value)) throw new Error(`${where}: the number is out of range.`);
+            if (Number.isInteger(value) && !Number.isSafeInteger(value)) throw new Error(`${where}: the integer is too large to keep exactly; write it as a string in double quotes.`);
+        } else if (Array.isArray(value)) value.forEach((item) => checkJsonNumbers(item, where));
+        else if (value && typeof value === 'object') Object.values(value).forEach((item) => checkJsonNumbers(item, where));
+    }
+    function parseVariablesText(text) {
+        const source = String(text ?? '');
+        const trimmed = source.trim();
+        if (!trimmed) return {};
+        if (trimmed.startsWith('{')) {
+            // Compatibility: an existing JSON variables object is still accepted as input.
+            let value;
+            try { value = JSON.parse(trimmed); } catch (error) { throw new Error('Variables: the JSON object is invalid: ' + error.message); }
+            if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Variables: JSON input must be an object.');
+            for (const name of Object.keys(value)) if (!GRAPHQL_NAME.test(name)) throw new Error(`Variables: "${name}" is not a valid GraphQL variable name.`);
+            checkJsonNumbers(value, 'Variables');
+            return value;
+        }
+        const entries = [], seen = new Set(), problems = [];
+        source.split(/\r?\n/).forEach((line, index) => {
+            if (!line.trim()) return;
+            const where = `Line ${index + 1}`, at = line.indexOf(':=');
+            if (at < 0) { problems.push(`${where}: expected "name := value;".`); return; }
+            const name = line.slice(0, at).trim();
+            // One closing ";" ends the assignment. It is optional, so "id := 5" and "id := 5;" are equal.
+            // A ";" inside a quoted string is part of the value, because such a line ends with the closing quote.
+            let raw = line.slice(at + 2).trim();
+            if (raw.endsWith(';')) raw = raw.slice(0, -1).trimEnd();
+            if (name.startsWith('$')) { problems.push(`${where}: write the variable name without "$".`); return; }
+            if (!GRAPHQL_NAME.test(name)) { problems.push(`${where}: "${name}" is not a valid GraphQL variable name.`); return; }
+            if (seen.has(name)) { problems.push(`${where}: variable "${name}" is defined more than once.`); return; }
+            seen.add(name);
+            if (!raw) { problems.push(`${where}: "${name}" has no value.`); return; }
+            let value;
+            try { value = JSON.parse(raw); } catch (error) {
+                problems.push(`${where}: invalid value for "${name}". Strings need double quotes; numbers, true, false and null are written without quotes; arrays and objects use JSON.`);
+                return;
+            }
+            try { checkJsonNumbers(value, where); } catch (error) { problems.push(error.message); return; }
+            entries.push([name, value]);
+        });
+        if (problems.length) throw new Error(problems.join('\n'));
+        // fromEntries creates own data properties, also for unusual names such as "__proto__".
+        return Object.fromEntries(entries);
+    }
+    function formatVariablesText(variables) {
+        if (!variables || typeof variables !== 'object' || Array.isArray(variables)) return '';
+        return Object.entries(variables).map(([name, value]) => `${name} := ${JSON.stringify(value)};`).join('\n');
+    }
+    function resultKey(path, key) {
+        if (GRAPHQL_NAME.test(key)) return path ? `${path}.${key}` : key;
+        return `${path}[${JSON.stringify(key)}]`;
+    }
+    function readableResultEntries(value, path = '', entries = []) {
+        const label = path || '(root)';
+        if (Array.isArray(value)) {
+            if (!value.length) { entries.push({path: label, text: '[]', type: 'empty'}); return entries; }
+            value.forEach((item, index) => {
+                // A blank line separates structured list items; the order of the list is kept.
+                if (index && item && typeof item === 'object') entries.push(null);
+                readableResultEntries(item, `${path}[${index}]`, entries);
+            });
+            return entries;
+        }
+        if (value && typeof value === 'object') {
+            const keys = Object.keys(value);
+            if (!keys.length) { entries.push({path: label, text: '{}', type: 'empty'}); return entries; }
+            for (const key of keys) readableResultEntries(value[key], resultKey(path, key), entries);
+            return entries;
+        }
+        // JSON.stringify keeps the delivered type: strings get double quotes and escapes, numbers, booleans and null do not.
+        const missing = value === undefined || value === null;
+        entries.push({path: label, text: missing ? 'null' : JSON.stringify(value), type: missing ? 'null' : typeof value});
+        return entries;
+    }
+    function readableResult(value) { return readableResultEntries(value).map((entry) => entry ? `${entry.path} = ${entry.text}` : '').join('\n'); }
+    /*
+     * Colour tokens: [type, text] pairs whose texts concatenate to exactly the input, so copying and parsing never change.
+     */
+    const JSON_TOKEN = /("(?:[^"\\\n]|\\.)*")(\s*:)?|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)|\b(true|false)\b|\b(null)\b|([{}\[\],:;])|(\s+)|([\s\S])/g;
+    function jsonTokens(text) {
+        const tokens = [];
+        for (const match of String(text).matchAll(JSON_TOKEN)) {
+            if (match[1] !== undefined) { tokens.push([match[2] ? 'key' : 'string', match[1]]); if (match[2]) tokens.push(['punctuation', match[2]]); }
+            else if (match[3] !== undefined) tokens.push(['number', match[3]]);
+            else if (match[4] !== undefined) tokens.push(['boolean', match[4]]);
+            else if (match[5] !== undefined) tokens.push(['null', match[5]]);
+            else if (match[6] !== undefined) tokens.push(['punctuation', match[6]]);
+            else if (match[7] !== undefined) tokens.push(['plain', match[7]]);
+            else tokens.push(['error', match[8]]);
+        }
+        return tokens;
+    }
+    function variableTokens(text) {
+        const source = String(text ?? '');
+        if (source.trim().startsWith('{')) return jsonTokens(source);
+        const tokens = [];
+        source.split('\n').forEach((line, index) => {
+            if (index) tokens.push(['plain', '\n']);
+            const at = line.indexOf(':=');
+            if (!line.trim()) { if (line) tokens.push(['plain', line]); return; }
+            if (at < 0) { tokens.push(['error', line]); return; }
+            const [, before, name, after] = /^(\s*)(.*?)(\s*)$/.exec(line.slice(0, at));
+            if (before) tokens.push(['plain', before]);
+            if (name) tokens.push([GRAPHQL_NAME.test(name) ? 'variable' : 'error', name]);
+            if (after) tokens.push(['plain', after]);
+            tokens.push(['operator', ':=']);
+            tokens.push(...jsonTokens(line.slice(at + 2)));
+        });
+        return tokens;
+    }
+    function readableTokens(value) {
+        const tokens = [];
+        readableResultEntries(value).forEach((entry, index) => {
+            if (index) tokens.push(['plain', '\n']);
+            if (entry) tokens.push(['key', entry.path], ['operator', ' = '], [entry.type, entry.text]);
+        });
+        return tokens;
+    }
+    // GraphQL highlighting rules for the Ace editor; regexes avoid capture groups as Ace requires.
+    const GRAPHQL_HIGHLIGHT_RULES = Object.freeze([
+        ['comment', '#.*$'],
+        ['string', '"(?:[^"\\\\]|\\\\.)*"'],
+        ['variable', '\\$[_A-Za-z][_0-9A-Za-z]*'],
+        ['keyword', '@[_A-Za-z][_0-9A-Za-z]*'],
+        ['keyword', '\\b(?:query|mutation|subscription|fragment|on)\\b'],
+        ['constant.language.boolean', '\\b(?:true|false)\\b'],
+        ['constant.language.null', '\\bnull\\b'],
+        ['constant.numeric', '-?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?\\b'],
+        ['support.type', '\\b[A-Z][_0-9A-Za-z]*\\b'],
+        ['identifier', '[_a-z][_0-9A-Za-z]*'],
+        ['punctuation.operator', '\\.\\.\\.|[{}()\\[\\]:!=,|&]'],
+    ]);
+    function graphqlAceMode(ace) {
+        // Built from Ace core modules only, so no mode file has to be fetched at runtime.
+        const TextMode = ace.require('ace/mode/text').Mode, TextRules = ace.require('ace/mode/text_highlight_rules').TextHighlightRules;
+        function Rules() {
+            this.$rules = {start: GRAPHQL_HIGHLIGHT_RULES.map(([token, regex]) => ({token, regex})).concat([
+                {token: 'string', regex: '"""', next: 'block'}]).sort((a, b) => (b.regex === '"""') - (a.regex === '"""')),
+                block: [{token: 'string', regex: '"""', next: 'start'}, {defaultToken: 'string'}]};
+            this.normalizeRules();
+        }
+        Rules.prototype = Object.create(TextRules.prototype);
+        function Mode() { TextMode.call(this); this.HighlightRules = Rules; }
+        Mode.prototype = Object.create(TextMode.prototype);
+        Mode.prototype.$id = 'hero/graphql';
+        Mode.prototype.lineCommentStart = '#';
+        return new Mode();
+    }
+    const MAX_COLORED_LINES = 20000;
+    function resultSummary(data) {
+        if (!data || typeof data !== 'object' || Array.isArray(data)) return [];
+        return Object.entries(data).map(([key, value]) => `${key}: ${Array.isArray(value) ? `${value.length} ${value.length === 1 ? 'item' : 'items'}` : value === null ? 'null' : typeof value === 'object' ? 'object' : 'value'}`);
+    }
     async function call(method, args = {}, write = false, signal) {
         return window.hero_integration_rpc.call(method, args, {write, signal});
     }
@@ -172,7 +335,7 @@
             // Keep the existing state/action objects available for shared logic without rendering a duplicate toolbar.
             this.status = $('p', 'ht-context'); this.status.hidden = true; this.notice = $('div', 'ht-notice'); this.notice.setAttribute('role','status');
             this.bindButton = button('Apply Connection',()=>this.run(async()=>{await call('synchronize_connection',{expected_generation:this.context?.binding_generation || 0},true);await this.show(true);}));
-            this.refreshButton = button('Refresh Schema',()=>this.run(async()=>{const r=await call('refresh_schema',this.scope(),true);this.schema=r.schema_fingerprint;this.validation=null;await this.show(true);}));
+            this.refreshButton = button('Refresh Schema',()=>this.run(async()=>{const r=await call('refresh_schema',this.scope(),true);this.schema=r.schema_fingerprint;this.validation=null;await this.show(true);const inherited=r.inheritance;if(inherited?.status==='COMPLETED'){const c=inherited.counts||{};this.notice.textContent=`New snapshot captured. Inherited ${c['Draft Created']||0} parent mapping(s) as personal drafts (${c.Incompatible||0} incompatible, ${c.Skipped||0} skipped). Nothing was activated.`;}else if(inherited&&inherited.status!=='NO_PARENT')this.notice.textContent='New snapshot captured; mapping inheritance did not complete. Retry it in the Mapping Editor.';}));
             this.bindButton.hidden = true; this.refreshButton.hidden = true;
             this.tabs = $('nav','pc-shell-nav');this.tabs.setAttribute('aria-label','HERO Tools');
             this.panels = Object.fromEntries(['analyzer','graph','services'].map(k=>[k,$('section','ht-panel')]));
@@ -189,7 +352,7 @@
         }
         async run(action) {if(this.busy)return;this.busy=true;this.updateActions();this.notice.classList.remove('text-danger');try{this.notice.textContent='Loading …';await action();if(this.notice.textContent==='Loading …')this.notice.textContent='';}catch(e){this.notice.textContent=e.message;this.notice.classList.add('text-danger');if(this.tool==='services'){this.validation=null;this.queryOutput.textContent=e.message;}}finally{this.busy=false;this.updateActions();}}
         scope(schema=false) {return {connection_id:this.context.connection_id,binding_generation:this.context.binding_generation,...(schema?{schema_fingerprint:this.schema}: {})};}
-        snapshotLabel(snapshot){const coverage=snapshot.coverage||{},counts=Number.isInteger(coverage.types)?`${coverage.types} types · ${coverage.nodes} nodes`:'no valid graph';return `${snapshot.kind||'Saved snapshot'} · ${snapshot.name} · ${counts}`;}
+        snapshotLabel(snapshot){const coverage=snapshot.coverage||{},counts=Number.isInteger(coverage.types)?`${coverage.types} types · ${coverage.nodes} nodes`:'no valid graph';return `${snapshot.kind||'Saved snapshot'} · ${snapshot.display_name||snapshot.name} · ${counts}`;}
         updateSnapshotSelector(coverage){
             if(!this.snapshotPicker)return;
             const snapshots=Array.isArray(this.context?.snapshots)?this.context.snapshots:[];
@@ -200,7 +363,7 @@
             const selected=this.context?.selected_snapshot_metadata,selectedCoverage=coverage||selected?.coverage||{};
             if(!selected){this.snapshotMeta.textContent='No validated saved GraphQL snapshot is available.';return;}
             const counts=Number.isInteger(selectedCoverage.types)?`${selectedCoverage.types} types · ${selectedCoverage.nodes} nodes · ${selectedCoverage.edges} relations`:'graph analysis unavailable';
-            this.snapshotMeta.textContent=`${selected.kind} · Snapshot ${selected.name} · ${selected.modified||'date unavailable'} · ${selected.schema_fingerprint} · ${counts}`;
+            this.snapshotMeta.textContent=`${selected.kind} · Snapshot ${selected.display_name||selected.name} · ${selected.modified||'date unavailable'} · ${selected.schema_fingerprint} · ${counts}`;
         }
         selectSnapshot(name){
             const snapshot=(this.context?.snapshots||[]).find(item=>item.name===name);
@@ -605,47 +768,69 @@
             }
             return call('get_graph',{...scope,node_id:id});
         }
+        rememberButton(node,scope){
+            // Only rendered for a real, single node detail; overview class cards never reach detailContents.
+            const store=window.hero_integration_bookmarks;if(!store||!node?.node_id||!scope?.schema_fingerprint)return null;
+            const identity={snapshot_name:scope.connection_id,snapshot_label:this.context?.selected_snapshot_metadata?.display_name||scope.connection_id,schema_fingerprint:scope.schema_fingerprint,node_id:node.node_id,node_name:node.name,node_kind:node.kind};
+            const b=button('Remember for Mapping',()=>{if(this.scopeKey(scope)!==this.scopeKey()){this.notice.textContent=errors.SCHEMA_CHANGED;return;}store.remember(identity);});
+            b.className='btn btn-sm ht-node-action ht-node-action--remember ht-remember';b.title='Remember this node under your own alias for the Mapping Editor. No mapping is created.';return b;
+        }
+        serviceOperationId(data){
+            // Operation nodes are saved directly; a Query/Mutation root field uses the operation that owns it (OPERATION_FIELD edge).
+            const operation=/^operation:(query|mutation):/;
+            if(operation.test(data.node?.node_id||''))return data.node.node_id;
+            const edge=(data.incoming||[]).find(e=>e.kind==='OPERATION_FIELD'&&operation.test(e.source_id||''));
+            return edge?edge.source_id:null;
+        }
         detailContents(target,data,scope,navigate){
-            target.replaceChildren($('h3','',data.node.name),$('p','',data.node.node_id),$('p','',data.node.description||''),$('pre','ht-data',JSON.stringify(data.node,null,2)));
-            if(this.tool==='analyzer')this.appendAnalyzerService(target,data.node,scope);
-            for(const [title,edges,key] of [['Incoming',data.incoming,'source_id'],['Outgoing',data.outgoing,'target_id']]){target.append($('h4','',`${title} (${edges.length})`));for(const edge of edges)target.append(button(`${edge.kind}${edge.label?' · '+edge.label:''} · ${edge[key]}`,()=>navigate(edge[key])));}
-        }
-        appendAnalyzerService(target,node,scope){
-            this.analyzerServiceForm=null;this.analyzerCreateButton=null;
-            if(!['QUERY_OPERATION','MUTATION_OPERATION'].includes(node.kind))return;
-            const button= this.analyzerCreateButton = document.createElement('button');
-            button.className='btn btn-default';button.type='button';button.textContent='Save as GraphQL Service';
-            button.disabled=true;button.title='Service drafts from analyzer operations require legacy transport state and are unavailable here.';
-            const box=$('section','ht-analyzer-service');target.append(button,box);
-            button.addEventListener('click',()=>this.run(()=>this.openAnalyzerService(box,node,scope)));
+            // API Analyzer, Graph Viewer inspector and the Node Focus pop-up share this renderer. Each target keeps its own
+            // service state, so the inspector and the pop-up never overwrite each other.
+            const generation=target._heroDetailGeneration=(target._heroDetailGeneration||0)+1;
+            const actions=$('section','ht-node-actions');actions.setAttribute('role','group');actions.setAttribute('aria-label','Node actions');
+            const buttons=$('div','ht-node-actions-buttons');
+            const remember=this.rememberButton(data.node,scope);if(remember)buttons.append(remember);
+            const operationId=this.serviceOperationId(data),box=$('div','ht-node-service');
+            const save=button('Save as GraphQL Service',()=>this.run(()=>this.openNodeService(target,generation,scope)));
+            save.className='btn btn-sm ht-node-action ht-node-action--service';save.disabled=!operationId;
+            save.title=operationId?'Creates an unsaved service draft from this operation. No HERO operation is executed.':'Available for Query and Mutation operations and their root fields.';
+            buttons.append(save);
+            actions.append($('h4','ht-node-actions-title','Actions'),buttons);
+            if(!operationId)actions.append($('p','ht-context','Save as GraphQL Service is available for Query and Mutation operations and their root fields.'));
+            actions.append(box);
+            target._heroService={generation,operationId,save,box,form:null,origin:target===this.typeDetail?'API Analyzer':'Graph Viewer'};
+            target.replaceChildren($('h3','',data.node.name),$('p','ht-node-id',data.node.node_id),actions,$('p','',data.node.description||''),$('pre','ht-data',JSON.stringify(data.node,null,2)));
+            for(const [title,edges,key] of [['Incoming',data.incoming,'source_id'],['Outgoing',data.outgoing,'target_id']]){target.append($('h4','',`${title} (${edges.length})`));for(const edge of edges){const b=button(`${edge.kind}${edge.label?' · '+edge.label:''} · ${edge[key]}`,()=>navigate(edge[key]));b.classList.add('ht-relation');target.append(b);}}
             this.updateActions();
         }
-        async openAnalyzerService(target,node,scope){
-            const serial=this.sequence,generation=this.analyzerDetailGeneration;
-            const draft=await call('get_analyzer_service_draft',{...scope,schema_node_id:node.node_id});
-            if(serial!==this.sequence||generation!==this.analyzerDetailGeneration||this.scopeKey(scope)!==this.scopeKey())return;
-            const name=input(),query=$('textarea','form-control'),variables=$('textarea','form-control');
-            name.value=draft.payload.name;query.value=draft.payload.query;query.rows=12;variables.value=JSON.stringify(draft.payload.variables,null,2);variables.rows=5;
-            name.setAttribute('aria-label','Service name');query.setAttribute('aria-label','GraphQL draft');variables.setAttribute('aria-label','Service variables (JSON)');
-            const save=button('Save Service',()=>this.run(()=>this.saveAnalyzerService()));
-            this.analyzerServiceForm={target,scope,nodeId:node.node_id,draft,name,query,variables,save,saved:false};
-            target.replaceChildren($('h3','',draft.operation_kind==='mutation'?'Save Mutation':'Save Query'),$('p','','Provenance=API Analyzer'),
+        async openNodeService(target,generation,scope){
+            const state=target._heroService;if(!state||state.generation!==generation||!state.operationId||state.form)return;
+            const draft=await call('get_analyzer_service_draft',{...scope,schema_node_id:state.operationId});
+            if(target._heroService!==state||target._heroDetailGeneration!==generation||this.scopeKey(scope)!==this.scopeKey())return;
+            const name=input(),query=$('textarea','form-control');
+            name.value=draft.payload.name;query.value=draft.payload.query;query.rows=12;
+            name.setAttribute('aria-label','Service name');query.setAttribute('aria-label','GraphQL draft');
+            const save=button('Save Service',()=>this.run(()=>this.saveNodeService(target,state)));save.className='btn btn-sm ht-node-action ht-node-action--service';
+            state.form={scope,nodeId:state.operationId,draft,name,query,save,saved:false};
+            state.box.replaceChildren($('h4','',draft.operation_kind==='mutation'?'Save Mutation':'Save Query'),$('p','','Provenance='+state.origin),
                 $('p','ht-context','Saves a service without executing it. For object results, __typename is preselected; add the required fields.'),
-                $('p','ht-context',draft.required_variables.length?'Add required variables before validation: '+draft.required_variables.map(v=>v.name+' ('+v.type+')').join(', '):'No required variables.'),
-                field('Service name',name),field('GraphQL',query),field('Variables (JSON)',variables),save);
+                $('p','ht-context',draft.required_variables.length?'Required variables: '+draft.required_variables.map(v=>v.name+' ('+v.type+')').join(', ')+'. Enter their values in GraphQL Services → Variables; values are never stored with the service.':'No required variables.'),
+                field('Service name',name),field('GraphQL',query),save);
             this.updateActions();
         }
-        async saveAnalyzerService(){
-            const form=this.analyzerServiceForm;if(!form||form.saved)return;
+        async saveNodeService(target,state){
+            const form=state.form;if(!form||form.saved)return;
             if(this.scopeKey(form.scope)!==this.scopeKey())throw new Error(errors.BINDING_CHANGED);
-            const payload={...form.draft.payload,name:form.name.value,query:form.query.value,variables:JSON.parse(form.variables.value)};
-            const result=await call('save_analyzer_service',{...form.scope,schema_node_id:form.nodeId,payload},true);
+            // Variable values are runtime input only and are not part of the saved service definition.
+            const {variables:_runtimeOnly,...draftPayload}=form.draft.payload;
+            const payload={...draftPayload,name:form.name.value,query:form.query.value};
+            const result=await call('save_analyzer_service',{...form.scope,schema_node_id:form.nodeId,payload,origin:state.origin},true);
             form.saved=true;form.save.disabled=true;
-            if(this.analyzerServiceForm!==form)return;
-            const link=$('a','btn btn-default','Open in GraphQL Services');link.href=this.serviceUrl(result.query.service_kind,result.query.query_id);
-            link.addEventListener('click',event=>{if(this.openService(result.query.service_kind,result.query.query_id)===false)event.preventDefault();});
-            form.target.replaceChildren($('p','',result.query.name+' saved · Provenance='+result.query.provenance),link);
-            this.notice.textContent='Service saved. No HERO operation was executed.';
+            if(target._heroService!==state)return;
+            const link=$('a','btn btn-sm ht-node-action ht-node-action--service','Open in GraphQL Services');link.href=this.serviceUrl(result.query.service_kind,result.query.query_id);
+            link.addEventListener('click',event=>{if(target===this.focusDetail)this.focusDialog?.hide?.();if(this.openService(result.query.service_kind,result.query.query_id)===false)event.preventDefault();});
+            state.box.replaceChildren($('p','',result.query.name+' saved · Provenance='+result.query.provenance),link);
+            if(this.notice)this.notice.textContent='Service saved. No HERO operation was executed.';
+            this.updateActions();
         }
         async inspectNode(id,serial=this.sequence,open=true){
             const scope=this.scope(true),key=this.scopeKey(scope),generation=this.inspectionGeneration=(this.inspectionGeneration||0)+1;
@@ -703,11 +888,15 @@
                 if(kind===this.serviceKind)link.setAttribute('aria-current','page');
                 link.addEventListener('click',e=>{if(this.openService(kind)===false)e.preventDefault();});views.append(link);
             }
-            this.editorHost=$('div','ht-editor');this.variables=$('textarea','form-control ht-variables');this.variables.value='{}';this.queryOutput=$('pre','ht-data');this.queryOutput.setAttribute('aria-live','polite');this.queryStatus=$('p','ht-query-status');this.queryStatus.setAttribute('role','status');
-            const bar=$('div','ht-toolbar');this.newButton=button('New '+this.serviceLabel(),()=>this.newQuery());this.copyButton=button('Duplicate',()=>this.run(async()=>this.newQuery(true)));this.saveButton=button('Save',()=>this.run(()=>this.saveQuery()));this.validateButton=button('Validate',()=>this.run(()=>this.validateQuery()));this.executeButton=button('Execute Saved '+this.serviceLabel(),()=>this.run(()=>this.executeQuery()));this.deleteButton=button('Delete',()=>this.run(()=>this.deleteQuery()));bar.append(this.newButton,this.copyButton,this.saveButton,this.validateButton,this.executeButton,this.deleteButton);
+            this.editorHost=$('div','ht-editor');this.variables=$('textarea','form-control ht-variables');this.variables.value='';this.variables.rows=6;this.variables.spellcheck=false;this.variables.setAttribute('wrap','off');this.variablesHighlight=$('pre','ht-variables-highlight');this.variablesHighlight.setAttribute('aria-hidden','true');const variablesBox=$('div','ht-variables-box');variablesBox.append(this.variablesHighlight,this.variables);this.variables.setAttribute('aria-label','Variables');this.variables.placeholder='id := 5;\noffset := 5;\norderBy := "id";';this.queryOutput=$('pre','ht-data');this.queryOutput.setAttribute('aria-live','polite');this.queryStatus=$('p','ht-query-status');this.queryStatus.setAttribute('role','status');
+            const bar=$('div','ht-toolbar');this.newButton=button('New '+this.serviceLabel(),()=>this.newQuery());this.copyButton=button('Duplicate',()=>this.run(async()=>this.newQuery(true)));this.saveButton=button('Save',()=>this.run(()=>this.saveQuery()));this.validateButton=button('Validate',()=>this.run(()=>this.validateQuery()));this.executeButton=button(this.serviceKind==='mutation'?'Execute Mutation':'Execute Query',()=>this.run(()=>this.executeQuery()));this.deleteButton=button('Delete',()=>this.run(()=>this.deleteQuery()));bar.append(this.newButton,this.copyButton,this.saveButton,this.validateButton,this.executeButton,this.deleteButton);
             this.serviceHint=$('p','ht-service-hint');this.queryProvenance=$('p','ht-query-provenance');
-            editor.append(this.queryStatus,this.queryProvenance,field('Name',this.name),field('Category',this.category),field('Description',this.description),field('operationName',this.operation),$('h3','','GraphQL'),this.editorHost,field('Variables (JSON)',this.variables),bar,this.queryOutput);grid.append(this.queryList,editor);this.queryPager=this.pager('services',()=>this.loadQueries());p.append(views,$('h2','','GraphQL Services · '+this.serviceLabel()),this.serviceHint,grid,this.queryPager.root);
-            for(const n of [this.name,this.category,this.description,this.operation,this.variables])n.addEventListener('input',()=>this.queryChanged());
+            // Variables are runtime input: one "name := value;" line each, converted to a JSON object before a request.
+            // No preview is shown below the field; invalid input marks the field and explains the problem in its tooltip.
+            this.variablesHelp=$('p','ht-context','One variable per line: name := value; (the semicolon is optional). Strings use double quotes; numbers, true, false and null have no quotes; arrays and objects use JSON. Values are not stored with the service.');
+            editor.append(this.queryStatus,this.queryProvenance,field('Name',this.name),field('Category',this.category),field('Description',this.description),field('operationName',this.operation),$('h3','','GraphQL'),this.editorHost,$('label','ht-field','Variables'),variablesBox,this.variablesHelp,bar,this.queryOutput);grid.append(this.queryList,editor);this.queryPager=this.pager('services',()=>this.loadQueries());p.append(views,$('h2','','GraphQL Services · '+this.serviceLabel()),this.serviceHint,grid,this.queryPager.root);
+            for(const n of [this.name,this.category,this.description,this.operation])n.addEventListener('input',()=>this.queryChanged());
+            this.variables.addEventListener('input',()=>{this.markVariables();this.updateActions();});this.variables.addEventListener('scroll',()=>{this.variablesHighlight.scrollTop=this.variables.scrollTop;this.variablesHighlight.scrollLeft=this.variables.scrollLeft;});this.markVariables();
         }
         async initializeEditor(){
             if(window.hero_integration_platform?.loadAce){
@@ -727,25 +916,28 @@
                 useSoftTabs:true
             });
             this.editor.session.setUseWorker(false);
+            try{this.editor.session.setMode(graphqlAceMode(window.ace));}catch(error){/* Without the mode the editor stays plain text. */}
             this.editor.session.on(
                 'change',
                 ()=>this.queryChanged()
             );
             this.base=this.draftString();
         }
-        queryChanged(){this.validation=null;this.queryOutput.textContent='';this.updateActions();}
-        queryString(q, variables) {
-            const canonical=value=>Array.isArray(value)?value.map(canonical):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(key=>[key,canonical(value[key])])):value;
-            // Match SavedQuery's text normalization; JSON whitespace/key order is not a change.
-            return JSON.stringify([(q.name||'').trim(),(q.category||'').trim()||(this.serviceKind==='mutation'?'Custom Mutations':'Custom Queries'),(q.description||'').trim(),(q.operation_name||'').trim(),(q.query||'').trim(),variables||['json',canonical(q.variables===undefined?{}:q.variables)]]);
+        queryChanged(){this.validation=null;this.queryOutput.textContent='';delete this.queryOutput.dataset.state;this.updateActions();}
+        queryString(q) {
+            // Match SavedQuery's text normalization. Variable values are runtime input and never part of the saved definition,
+            // so they do not mark the service as changed.
+            return JSON.stringify([(q.name||'').trim(),(q.category||'').trim()||(this.serviceKind==='mutation'?'Custom Mutations':'Custom Queries'),(q.description||'').trim(),(q.operation_name||'').trim(),(q.query||'').trim()]);
         }
-        draftString(){let variables;try{variables=JSON.parse(this.variables.value);}catch(e){return this.queryString({name:this.name.value,category:this.category.value,description:this.description.value,operation_name:this.operation.value,query:this.editor?.getValue()||''},['invalid-json',this.variables.value]);}return this.queryString({name:this.name.value,category:this.category.value,description:this.description.value,operation_name:this.operation.value,query:this.editor?.getValue()||'',variables});}
+        draftString(){return this.queryString({name:this.name.value,category:this.category.value,description:this.description.value,operation_name:this.operation.value,query:this.editor?.getValue()||''});}
+        variablesValue(){return parseVariablesText(this.variables.value);}
+        markVariables(){if(!this.variables)return;if(this.variablesHighlight){/* A trailing space keeps the last empty line as tall as in the textarea. */renderTokens(this.variablesHighlight,[...variableTokens(this.variables.value),['plain',' ']]);}try{this.variablesValue();this.variables.removeAttribute('aria-invalid');this.variables.title='';}catch(error){this.variables.setAttribute('aria-invalid','true');this.variables.title=error.message;}}
         get dirty(){return this.base!==undefined&&this.base!==this.draftString();}
         confirmReplace(){return !this.dirty||window.confirm('Discard the unsaved service draft?');}
-        payload(){return {name:this.name.value,category:this.category.value.trim()||(this.serviceKind==='mutation'?'Custom Mutations':'Custom Queries'),description:this.description.value,operation_name:this.operation.value||null,query:this.editor.getValue(),variables:JSON.parse(this.variables.value)};}
-        setQuery(q={}){this.copiedFrom=q.copied_from||'';this.draftProvenance=q.provenance||'GraphQL-Services';this.queryEpoch=(this.queryEpoch||0)+1;this.query=q.query_id?q:null;this.name.value=q.name||'';this.category.value=q.category||(this.serviceKind==='mutation'?'Custom Mutations':'Custom Queries');this.description.value=q.description||'';this.operation.value=q.operation_name||'';this.editor.setValue(q.query||'',-1);this.variables.value=JSON.stringify(q.variables||{},null,2);this.base=this.draftString();this.validation=null;this.queryOutput.textContent=q.query_id?`${this.serviceLabel()} ${q.query_id} · Revision ${q.revision}`:'New unsaved draft';this.updateActions();}
-        newQuery(copy=false){if(!copy&&!this.confirmReplace())return;const q=copy?{...this.payload(),name:this.name.value+' (Copy)',copied_from:this.query?.query_id||this.copiedFrom,provenance:this.query?.provenance||this.draftProvenance}:{};this.setQuery(q);if(copy)this.base='';}
-        async loadQueries(serial=this.sequence){const data=await call('list_services',{...this.serviceScope(),start:this.starts.services,page_size:50});if(serial!==this.sequence)return;this.queryList.replaceChildren($('h3','',this.serviceKind==='mutation'?'Saved Mutations':'Saved Queries'));for(const q of data.rows)this.queryList.append(button(`${q.name} · r${q.revision} · Provenance=${q.provenance||'Legacy (unbekannt)'}`,()=>{if(!this.busy&&this.confirmReplace())this.setQuery(q);}));this.queryPager.update(data.has_more);
+        payload(){return {name:this.name.value,category:this.category.value.trim()||(this.serviceKind==='mutation'?'Custom Mutations':'Custom Queries'),description:this.description.value,operation_name:this.operation.value||null,query:this.editor.getValue()};}
+        setQuery(q={}){this.copiedFrom=q.copied_from||'';this.draftProvenance=q.provenance||'GraphQL-Services';this.queryEpoch=(this.queryEpoch||0)+1;this.query=q.query_id?q:null;this.name.value=q.name||'';this.category.value=q.category||(this.serviceKind==='mutation'?'Custom Mutations':'Custom Queries');this.description.value=q.description||'';this.operation.value=q.operation_name||'';this.editor.setValue(q.query||'',-1);if(!q.keep_variables)this.variables.value=formatVariablesText(q.variables);this.markVariables();this.base=this.draftString();this.validation=null;this.queryOutput.textContent=q.query_id?`${this.serviceLabel()} ${q.query_id} · Revision ${q.revision}`:'New unsaved draft';this.updateActions();}
+        newQuery(copy=false){if(!copy&&!this.confirmReplace())return;const q=copy?{...this.payload(),name:this.name.value+' (Copy)',copied_from:this.query?.query_id||this.copiedFrom,provenance:this.query?.provenance||this.draftProvenance,keep_variables:true}:{};this.setQuery(q);if(copy)this.base='';}
+        async loadQueries(serial=this.sequence){const data=await call('list_services',{...this.serviceScope(),start:this.starts.services,page_size:50});if(serial!==this.sequence)return;this.mutationExecution=data.mutation_execution||null;this.queryList.replaceChildren($('h3','',this.serviceKind==='mutation'?'Saved Mutations':'Saved Queries'));for(const q of data.rows)this.queryList.append(button(`${q.name} · r${q.revision} · Provenance=${q.provenance||'Legacy (unbekannt)'}`,()=>{if(!this.busy&&this.confirmReplace())this.setQuery(q);}));this.queryPager.update(data.has_more);
             const queryId=new URLSearchParams(location.search).get('query');
             if(queryId && queryId!==this.loadedQueryId && queryId!==this.query?.query_id && !this.dirty) {const result=await call('get_query',{...this.scope(),query_id:queryId});if(serial===this.sequence){if(result.query.service_kind!==this.serviceKind){this.openService(result.query.service_kind,queryId);return;}this.setQuery(result.query);this.loadedQueryId=queryId;}}
         }
@@ -760,23 +952,95 @@
             this.queryOutput.textContent=`Saved · Revision ${data.query.revision}${this.dirty?' · Additional local changes are not saved.':''}`;
             await this.loadQueries();
         }
-        async validateQuery(){const stamp=this.draftString();const data=this.query&&!this.dirty?await call('validate_saved_query',{...this.serviceScope(true),query_id:this.query.query_id,expected_revision:this.query.revision},true):await call('preview_query',{...this.serviceScope(true),payload:this.payload()},true);if(stamp!==this.draftString())return;this.validation=data;this.queryOutput.textContent=JSON.stringify(data,null,2);}
+        async validateQuery(){
+            // Non-empty variables are checked locally against the document's declarations; nothing is sent to HERO.
+            const variables=this.variables.value.trim()?{variables:this.variablesValue()}:{};
+            const stamp=this.draftString(),queryId=this.query?.query_id||'';
+            const data=this.query&&!this.dirty?await call('validate_saved_query',{...this.serviceScope(true),query_id:this.query.query_id,expected_revision:this.query.revision,...variables},true):await call('preview_query',{...this.serviceScope(true),payload:this.payload(),...variables},true);
+            if(stamp!==this.draftString()||queryId!==(this.query?.query_id||''))return;
+            if(data.query&&this.query)this.query={...this.query,status:data.query.status};this.validation=data;this.queryOutput.textContent=JSON.stringify(data,null,2);this.updateActions();
+        }
+        canExecuteQuery(){return this.serviceKind==='query'&&!!this.schema;}
         async executeQuery(){
-            throw new Error('HERO_MUTATION_EXECUTION_DISABLED');
+            // Mutations stay blocked here regardless of the global gate: HERO_MUTATION_EXECUTION_DISABLED.
+            if(this.serviceKind!=='query')throw new Error(errors.HERO_MUTATIONS_DISABLED+' (HERO_MUTATION_EXECUTION_DISABLED)');
+            const variables=this.variablesValue();
+            // Never run an older saved revision silently: unsaved editor content is saved and validated first, on request only.
+            if(!this.query||this.dirty){
+                if(!window.confirm('The editor has unsaved changes. Save them as a new revision, validate the query and then execute it once?'))return;
+                const before=this.queryEpoch;await this.saveQuery();
+                if(before!==this.queryEpoch||!this.query||this.dirty)throw new Error('The editor changed while saving. Nothing was executed.');
+            }
+            const epoch=this.queryEpoch,stamp=this.draftString(),queryId=this.query.query_id,revision=this.query.revision;
+            if(this.query.status!=='Validated'){
+                const checked=await call('validate_saved_query',{...this.serviceScope(true),query_id:queryId,expected_revision:revision},true);
+                if(epoch!==this.queryEpoch||queryId!==this.query?.query_id||revision!==this.query?.revision)return;
+                if(checked?.query?.status!=='Validated')throw new Error('The saved query could not be validated. Nothing was executed.');
+                this.query={...this.query,status:checked.query.status};this.validation=checked;
+            }
+            if(stamp!==this.draftString())throw new Error('The editor changed during validation. Nothing was executed.');
+            this.queryOutput.textContent=`Executing ${this.serviceLabel()} ${queryId} · Revision ${revision} once against HERO …`;
+            const result=await call('execute_service',{...this.serviceScope(true),query_id:queryId,expected_revision:revision,variables},true);
+            if(epoch!==this.queryEpoch||queryId!==this.query?.query_id)return;
+            this.renderExecution(result);
+        }
+        renderExecution(result){
+            // Text only: HERO data is never interpreted as HTML. The full result opens in its own dialog.
+            const head=`${result.operation||''} · Revision ${result.revision} · Schema ${String(result.schema_fingerprint||'').slice(0,12)}…`;
+            const label={OK:'HERO response',PARTIAL:'Partial HERO response with GraphQL errors',TOO_LARGE:'HERO response too large to display'}[result.status]
+                ||{GRAPHQL:'GraphQL error returned by HERO',TRANSPORT:'HTTP/transport error',RESPONSE:'Invalid HERO response'}[result.error_kind]||'HERO request failed';
+            this.queryOutput.textContent=`${label} (${result.status}${result.error_code?' · '+result.error_code:''}) · ${head}${result.size_bytes!==undefined?' · '+result.size_bytes+' bytes':''}\nThe result is shown in the GraphQL Query Result window and is not stored.`;
+            this.queryOutput.dataset.state=result.status;
+            this.showQueryResult(result,label,head);
+        }
+        showQueryResult(result,label,head){
+            this.resultDialog?.hide?.();
+            const hasData=(result.status==='OK'||result.status==='PARTIAL')&&result.data!==undefined;
+            const views={readable:hasData?readableResult(result.data):'',raw:hasData?JSON.stringify(result.data,null,2):''};
+            // Very large results are shown without colours so the dialog stays responsive; the text is identical.
+            const colored=hasData&&views.readable.split('\n',MAX_COLORED_LINES+1).length<=MAX_COLORED_LINES;
+            const tokens={readable:()=>readableTokens(result.data),raw:()=>jsonTokens(views.raw)};
+            const body=$('div','ht-result');
+            const status=$('div','ht-result-status');status.dataset.state=result.status;status.setAttribute('role','status');
+            status.append($('strong','',label),$('div','',head));
+            if(result.size_bytes!==undefined)status.append($('div','',`Response size: ${result.size_bytes} bytes${result.limit_bytes?' (display limit '+result.limit_bytes+' bytes)':''}`));
+            const summary=hasData?resultSummary(result.data):[];
+            if(summary.length)status.append($('div','','Delivered: '+summary.join(' · ')));
+            if(hasData&&!colored)status.append($('div','','Colours are turned off for this large result; the text is complete.'));
+            body.append(status);
+            // HTTP/transport failures and GraphQL errors are labelled separately; partial data stays visible below.
+            if(result.status==='ERROR'||result.status==='PARTIAL'||result.status==='TOO_LARGE'){
+                const errorsBox=$('div','ht-result-errors');errorsBox.setAttribute('role','alert');
+                errorsBox.append($('strong','',result.error_kind==='GRAPHQL'?'GraphQL errors':result.error_kind==='TRANSPORT'?'HTTP/transport error':result.error_kind==='RESPONSE'?'Invalid response':'Not displayed'),$('div','',result.message||''));
+                const list=$('ul','');for(const message of result.graphql_errors||[])list.append($('li','',message));if(list.childElementCount)errorsBox.append(list);
+                body.append(errorsBox);
+            }
+            const toolbar=$('div','ht-toolbar ht-result-views');const output=$('pre','ht-result-output');output.setAttribute('tabindex','0');
+            let view='readable';
+            const show=next=>{view=next;if(colored)renderTokens(output,tokens[next]());else output.textContent=hasData?views[next]:(result.status==='TOO_LARGE'?'The response was not displayed because it exceeds the display limit. Nothing was truncated silently.':'No data was delivered.');for(const [key,b] of buttons)b.setAttribute('aria-pressed',String(key===next));};
+            const buttons=[['readable',button('Readable',()=>show('readable'))],['raw',button('Raw JSON',()=>show('raw'))]];
+            for(const [,b] of buttons){b.disabled=!hasData;toolbar.append(b);}
+            const copy=button('Copy Result',()=>{const text=output.textContent;if(window.frappe?.utils?.copy_to_clipboard)frappe.utils.copy_to_clipboard(text);else navigator.clipboard?.writeText(text);});
+            toolbar.append(copy);output.setAttribute('aria-label','GraphQL Query Result');body.append(toolbar,output);show('readable');
+            const dialog=new frappe.ui.Dialog({title:'GraphQL Query Result',size:'extra-large',fields:[{fieldtype:'HTML',fieldname:'result'}],primary_action_label:'Close',primary_action:()=>dialog.hide()});
+            dialog.$wrapper.addClass('admin-compat-modal ht-result-dialog');
+            dialog.fields_dict.result.$wrapper[0].replaceChildren(body);
+            this.resultDialog=dialog;dialog.show();
         }
         async deleteQuery(){if(!this.query||!window.confirm(this.dirty?'Delete the saved service and discard the unsaved draft?':'Delete the saved service?'))return;await call('delete_query',{...this.serviceScope(),query_id:this.query.query_id,expected_revision:this.query.revision},true);this.setQuery();await this.loadQueries();}
         updateActions(){if(!this.saveButton)return;
             const analyzerAllowed=!!this.context?.can_write&&!this.context.needs_binding_update&&!this.busy;
-            if(this.analyzerCreateButton)this.analyzerCreateButton.disabled=!analyzerAllowed||!!this.analyzerServiceForm;
-            if(this.analyzerServiceForm)this.analyzerServiceForm.save.disabled=!analyzerAllowed||this.analyzerServiceForm.saved;
+            for(const target of [this.typeDetail,this.nodeDetail,this.focusDetail]){const state=target?._heroService;if(!state)continue;state.save.disabled=!analyzerAllowed||!state.operationId||!!state.form;if(state.form)state.form.save.disabled=!analyzerAllowed||state.form.saved;}
             if(this.queryProvenance)this.queryProvenance.textContent='Provenance='+(this.query?.provenance||this.draftProvenance||'GraphQL-Services');
+            const gate=this.mutationExecution;
             if(this.serviceHint)this.serviceHint.textContent=this.serviceKind==='mutation'
-                ? 'Mutation drafts are local-only, stored locally, and validated only against the saved schema. HERO execution remains disabled.'
-                : 'Saved Queries read data from HERO. Results are not stored automatically.';
-this.queryStatus.textContent=this.query?`${this.serviceLabel()} ${this.query.query_id} · Revision ${this.query.revision}${this.dirty?' · Unsaved changes':''}`:'New unsaved draft';const allowed=!!this.context?.can_write&&!this.context.needs_binding_update&&!this.busy&&!!this.schema;for(const b of [this.newButton,this.copyButton])b.disabled=!allowed;this.saveButton.disabled=!allowed;this.saveButton.title=this.serviceKind==='mutation'?'Stores a local-only disabled mutation draft.':' ';this.validateButton.disabled=!allowed;this.executeButton.disabled=true;this.executeButton.title='HERO_MUTATION_EXECUTION_DISABLED';this.deleteButton.disabled=!allowed||!this.query;this.bindButton.disabled=!this.context?.can_write||this.busy;}
+                ? `Mutation drafts are local-only, stored locally, and validated only against the saved schema. Execution from this editor is blocked. Server mutation gate: ${gate?.mutation_execution_status||'unknown'}${gate?.mutation_execution_reason?' · '+gate.mutation_execution_reason:''}`
+                : 'Execute Query reads data from HERO once on an explicit click, using the saved and validated revision. Results open in a separate window and are never stored, synchronized or written to Frappe.';
+this.queryStatus.textContent=this.query?`${this.serviceLabel()} ${this.query.query_id} · Revision ${this.query.revision}${this.dirty?' · Unsaved changes':''}`:'New unsaved draft';const allowed=!!this.context?.can_write&&!this.context.needs_binding_update&&!this.busy&&!!this.schema;for(const b of [this.newButton,this.copyButton])b.disabled=!allowed;this.saveButton.disabled=!allowed;this.saveButton.title=this.serviceKind==='mutation'?'Stores a local-only disabled mutation draft.':' ';this.validateButton.disabled=!allowed;this.executeButton.disabled=!allowed||!this.canExecuteQuery();this.executeButton.title=this.serviceKind==='mutation'?'HERO_MUTATION_EXECUTION_DISABLED':this.dirty||!this.query?'Asks to save and validate the changes, then runs that revision once, read-only.':'Runs the saved revision once, read-only.';this.deleteButton.disabled=!allowed||!this.query;this.bindButton.disabled=!this.context?.can_write||this.busy;}
         destroy(){
             this.cancelGraph?.();
             this.focusDialog?.hide?.();
+            this.resultDialog?.hide?.();
             this.resize?.disconnect?.();
             this.editor?.destroy?.();
             this.editor=null;
@@ -786,5 +1050,5 @@ this.queryStatus.textContent=this.query?`${this.serviceLabel()} ${this.query.que
             this.root?.remove?.();
         }
     }
-    window.hero_workspace_tools={Workspace};
+    window.hero_workspace_tools={Workspace,graphqlText:Object.freeze({parseVariablesText,formatVariablesText,readableResult,resultSummary,jsonTokens,variableTokens,readableTokens,GRAPHQL_HIGHLIGHT_RULES})};
 })();

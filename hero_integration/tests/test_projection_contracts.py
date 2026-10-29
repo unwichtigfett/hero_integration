@@ -39,14 +39,16 @@ def native_options(operation):
 
 def documents(operation="HeroTasks"):
     contract = CONTRACTS[operation]
-    snapshot = SimpleNamespace(name="S", schema_fingerprint=contract["fingerprint"])
+    snapshot = SimpleNamespace(name="S", schema_fingerprint=contract["fingerprint"], source_instance="instance-a")
     config = {"target_operation": operation, "records_path": contract["root"], "identity_path": "id",
               "mapping_definition_ids": [row.definition_id for row in definitions(operation)],
               "variables": {"first": "$page_size", "offset": "$offset"}, "page_size": 2}
     if native_options(operation):
         config["native_options"] = native_options(operation)
+    # The read contract also binds direction, operation kind and source instance (see read_contract._common_contract).
     mapping = SimpleNamespace(name="M", status="Active", mapping_revision=1, schema_snapshot="S",
-                              schema_fingerprint=snapshot.schema_fingerprint, mapping_json=json.dumps(config))
+                              schema_fingerprint=snapshot.schema_fingerprint, mapping_json=json.dumps(config),
+                              direction="QUERY_TO_FRAPPE", operation_kind="QUERY", source_instance="instance-a")
     service = SimpleNamespace(name="R", status="Validated", execution_status="Approved", service_revision=1,
                               approved_service_revision=1, read_mapping="M", approved_mapping_revision=1,
                               schema_snapshot="S", schema_fingerprint=snapshot.schema_fingerprint,
@@ -68,6 +70,79 @@ def record(operation="HeroTasks"):
 
 
 class TestProjectionContracts(unittest.TestCase):
+    def test_native_task_plan_requires_only_explicit_native_rules(self):
+        identity = MappingSpec('HeroTasks', 'id', 'HERO Integration Link', 'source_id', 'int', 'Source Identity', 'Positive Int To Text', definition_id='native-id')
+        title = MappingSpec('HeroTasks', 'title', 'Task', 'subject', 'string|null', 'Record Name', 'Trim', definition_id='native-title')
+        comment = MappingSpec('HeroTasks', 'comment', 'Task', 'description', 'string|null', 'Native Binding', 'Native Adapter', definition_id='native-comment')
+        project = MappingSpec('HeroTasks', 'target_project_match_id', 'Task', 'project', 'int|null', 'Native Binding', 'Native Adapter', definition_id='native-project')
+        deadline = MappingSpec('HeroTasks', 'due_date', 'Task', 'custom_hero_due_date', 'string|null', 'Native Binding', 'Native Adapter', definition_id='native-deadline')
+        assignment = MappingSpec('HeroTasks', 'target_user_id', 'ToDo', 'allocated_to', 'int|null', 'Native Binding', 'Native Adapter', definition_id='native-assignment')
+        plan = plan_from_definitions('tasks', [identity, title], target_operation='HeroTasks', native_task=True)
+        self.assertEqual(plan.source_identity({'id': 17}), '17')
+        self.assertEqual(len(plan_from_definitions('tasks', [identity, title, comment], target_operation='HeroTasks', native_task=True).definitions), 3)
+        self.assertEqual(len(plan_from_definitions('tasks', [identity, title, comment, project, deadline, assignment], target_operation='HeroTasks', native_task=True).definitions), 6)
+        for rules in ([identity], [title], [identity, title, definitions('HeroTasks')[-1]]):
+            with self.assertRaises(ValueError):
+                plan_from_definitions('tasks', rules, target_operation='HeroTasks', native_task=True)
+
+    def test_native_task_assignment_rule_is_optional_and_cannot_write_raw_id(self):
+        identity = MappingSpec('HeroTasks', 'id', 'HERO Integration Link', 'source_id', 'int', 'Source Identity', 'Positive Int To Text', definition_id='native-id')
+        title = MappingSpec('HeroTasks', 'title', 'Task', 'subject', 'string|null', 'Record Name', 'Trim', definition_id='native-title')
+        assignment = MappingSpec('HeroTasks', 'target_user_id', 'ToDo', 'allocated_to', 'int|null', 'Native Binding', 'Native Adapter', definition_id='native-assignment')
+        plan = plan_from_definitions('tasks', [identity, title, assignment], target_operation='HeroTasks', native_task=True)
+        self.assertEqual({item.source_path for item in plan.definitions}, {'id', 'title', 'target_user_id'})
+        unsafe = MappingSpec('HeroTasks', 'target_user_id', 'ToDo', 'allocated_to', 'int|null', 'Field', 'Identity', definition_id='unsafe')
+        with self.assertRaises(ValueError):
+            plan_from_definitions('tasks', [identity, title, unsafe], target_operation='HeroTasks', native_task=True)
+
+    def test_task_onboarding_is_bound_to_reviewed_source_and_type(self):
+        service, mapping, snapshot = documents()
+        snapshot.source_instance = 'hero-one'
+        mapping.source_instance = 'hero-one'
+        snapshot.analysis_status = 'Validated'
+        service.operation_name = mapping.operation_name = 'tasks'
+        mapping.operation_kind = 'QUERY'
+        mapping.direction = 'QUERY_TO_FRAPPE'
+        config = json.loads(mapping.mapping_json)
+        config['native_task_onboarding'] = {'confirmed': True, 'source_instance': 'hero-one', 'source_type': 'Task'}
+        mapping.mapping_json = json.dumps(config)
+        self.assertEqual(from_documents(service, mapping, snapshot).target_operation, 'HeroTasks')
+        mapping.source_instance = 'hero-other'
+        with self.assertRaises(ValueError):
+            from_documents(service, mapping, snapshot)
+        mapping.source_instance = 'hero-one'
+        service.operation_name = 'HeroTasks'
+        self.assertEqual(from_documents(service, mapping, snapshot).target_operation, 'HeroTasks')
+        service.operation_name = 'unreviewed-name'
+        with self.assertRaises(ValueError):
+            from_documents(service, mapping, snapshot)
+        service.operation_name = 'HeroTasks'
+        mapping.operation_name = 'HeroTasks'
+        with self.assertRaises(ValueError):
+            from_documents(service, mapping, snapshot)
+        mapping.operation_name = 'tasks'
+        service.execution_status = 'Pending Approval'
+        with self.assertRaises(ValueError):
+            from_documents(service, mapping, snapshot)
+        service.execution_status = 'Approved'
+        mapping.mapping_revision = 2
+        with self.assertRaises(ValueError):
+            from_documents(service, mapping, snapshot)
+        mapping.mapping_revision = 1
+        snapshot.analysis_status = 'Draft'
+        with self.assertRaises(ValueError):
+            from_documents(service, mapping, snapshot)
+        snapshot.analysis_status = 'Validated'
+        config['native_task_onboarding']['source_instance'] = 'hero-two'
+        mapping.mapping_json = json.dumps(config)
+        with self.assertRaises(ValueError):
+            from_documents(service, mapping, snapshot)
+        config['native_task_onboarding']['source_instance'] = 'hero-one'
+        config['native_task_onboarding']['source_type'] = 'Other'
+        mapping.mapping_json = json.dumps(config)
+        with self.assertRaises(ValueError):
+            from_documents(service, mapping, snapshot)
+
     def test_only_calendar_and_tasks_are_registered(self):
         self.assertEqual(set(CONTRACTS), {"HeroCalendarEvents", "HeroTasks"})
 
@@ -113,6 +188,35 @@ class TestProjectionContracts(unittest.TestCase):
         row["partners"] = [{"id": 1, "full_name": "A"}, {"id": 1, "full_name": "B"}]
         with self.assertRaises(ValueError):
             validate_projection_record("HeroCalendarEvents", row)
+
+    def test_calendar_optional_null_and_omission_do_not_clear_native_values(self):
+        from hero_integration.services.native_projections import values as native_values
+        plan = plan_from_definitions('HeroCalendarEvents', definitions('HeroCalendarEvents'))
+        for absent in (False, True):
+            row = record('HeroCalendarEvents')
+            for field in ('project_match_id', 'description', 'full_address', 'partners', 'resources'):
+                if absent:
+                    row.pop(field)
+                else:
+                    row[field] = None
+            validate_projection_record('HeroCalendarEvents', row)
+            native = native_values(CONTRACTS['HeroCalendarEvents'], row, '9', 'fixture',
+                                   native_options('HeroCalendarEvents'), lookup=lambda *args: None)
+            values = plan.values(row, project_link=lambda value: self.fail('unexpected project resolution'),
+                                 native_value=lambda field: native[field])
+            for field in ('custom_hero_project', 'custom_hero_project_match_id', 'description', 'location',
+                          'custom_hero_partners', 'custom_hero_resources'):
+                self.assertNotIn(field, values)
+
+    def test_calendar_project_uses_verified_resolver(self):
+        from hero_integration.services.native_projections import values as native_values
+        plan = plan_from_definitions('HeroCalendarEvents', definitions('HeroCalendarEvents'))
+        row = record('HeroCalendarEvents'); row['project_match_id'] = 41
+        native = native_values(CONTRACTS['HeroCalendarEvents'], row, '9', 'fixture',
+                               native_options('HeroCalendarEvents'), lookup=lambda *args: None)
+        values = plan.values(row, project_link=lambda source_id: 'PROJECT-VERIFIED' if source_id == 41 else None,
+                             native_value=lambda field: native[field])
+        self.assertEqual(values['custom_hero_project'], 'PROJECT-VERIFIED')
 
     def test_read_contract_requires_current_approval_and_exact_query(self):
         service, mapping, snapshot = documents()

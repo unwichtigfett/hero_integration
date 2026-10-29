@@ -1,0 +1,18 @@
+{
+ "doctype": "DocType",
+ "name": "HERO Schema Provisioning Approval",
+ "module": "HERO Integration",
+ "autoname": "hash",
+ "track_changes": 1,
+ "fields": [
+  {"fieldname":"site_scope","label":"Site Scope","fieldtype":"Data","reqd":1,"read_only":1,"in_list_view":1},
+  {"fieldname":"approval_state","label":"Approval State","fieldtype":"Select","options":"APPROVED\nCONSUMED","reqd":1,"read_only":1,"in_list_view":1},
+  {"fieldname":"actor","label":"Actor","fieldtype":"Link","options":"User","reqd":1,"read_only":1},
+  {"fieldname":"correlation_id","label":"Correlation ID","fieldtype":"Data","reqd":1,"read_only":1},
+  {"fieldname":"expires_at_epoch","label":"Expires At Epoch","fieldtype":"Float","reqd":1,"read_only":1},
+  {"fieldname":"consumed_at_epoch","label":"Consumed At Epoch","fieldtype":"Float","read_only":1},
+  {"fieldname":"approval_payload_json","label":"Approval Payload","fieldtype":"Code","options":"JSON","reqd":1,"read_only":1}
+ ],
+ "permissions":[{"role":"System Manager","read":1,"write":1,"create":1}],
+ "modified":"2026-10-24 00:00:00.000000"
+}

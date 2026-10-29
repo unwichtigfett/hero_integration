@@ -6,7 +6,7 @@ targets as Draft proposals until that app supplies an explicit integration.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from hero_integration.services.direct_mapping import (
     ALLOWED_TARGET_TYPES, PROTECTED_FIELDS, PURPOSE_FIELD, SOURCE_CONTRACTS, SYSTEM_FIELDS,
 )
@@ -42,6 +42,44 @@ class CatalogField:
 CANONICAL_TARGETS = frozenset({"Customer", "Project"})
 
 
+class FrappePickerMetadata:
+    """Site metadata adapter shared by both mapping picker directions."""
+
+    def doctypes(self):
+        import frappe
+        from frappe.modules.utils import get_module_app
+
+        installed = set(frappe.get_installed_apps())
+        rows = frappe.get_all(
+            "DocType", fields=["name", "module", "istable", "issingle", "is_virtual", "custom"],
+            order_by="module asc, name asc",
+        )
+        result = []
+        for row in rows:
+            item = dict(row)
+            module = str(item.get("module") or "")
+            try:
+                app_name = get_module_app(module) if module else ""
+            except Exception:
+                app_name = "Custom" if item.get("custom") else ""
+            if app_name and app_name not in installed and app_name != "Custom":
+                continue
+            item["app_name"] = app_name or ("Custom" if item.get("custom") else "")
+            result.append(item)
+        return result
+
+    def can_write(self, doctype: str) -> bool:
+        import frappe
+
+        return bool(frappe.has_permission(doctype, "write"))
+
+    def fields(self, doctype: str):
+        import frappe
+
+        frappe.has_permission(doctype, "write", throw=True)
+        return frappe.get_meta(doctype).fields
+
+
 def validate_draft_spec(spec, metadata) -> CatalogField:
     """Validate a non-executable proposal without widening the active mapper."""
     contract = SOURCE_CONTRACTS.get(spec.operation)
@@ -73,11 +111,11 @@ def doctypes(metadata, app_name: str = "", search: str = "") -> list[CatalogDocT
     return sorted(result, key=lambda item: (item.app_name.lower(), item.doctype.lower()))
 
 
-def fields(metadata, app_name: str = "", doctype: str = "", search: str = "") -> list[CatalogField]:
+def fields(metadata, app_name: str = "", doctype: str = "", search: str = "", *, targets=None) -> list[CatalogField]:
     """Return target fields from installed apps without bypassing permissions."""
     needle = search.strip().lower()
     result = []
-    for target in doctypes(metadata, app_name):
+    for target in doctypes(metadata, app_name) if targets is None else targets:
         if doctype and target.doctype != doctype:
             continue
         for field in metadata.fields(target.doctype):
@@ -114,6 +152,45 @@ def validate_draft_target(operation: str, source_type: str, target_doctype: str,
     if target_doctype not in CANONICAL_TARGETS and target.activation_allowed:
         raise AssertionError("Only canonical targets may be activated by this app.")
     return target
+
+
+def validate_draft_writeback_source(doctype: str, fieldname: str, metadata) -> CatalogField:
+    """Validate a source without relaxing any incoming target protection."""
+    source = next((item for item in writeback_fields(metadata, doctype=doctype) if item.path == fieldname), None)
+    if source is None:
+        raise ValueError("The Frappe source field is not available in the current site metadata.")
+    if not source.selectable:
+        raise ValueError(source.reason)
+    return source
+
+
+def writeback_fields(metadata, doctype: str = '', *, targets=None) -> list[CatalogField]:
+    """Expose reviewed readable source fields separately from inbound targets.
+
+    Only explicit existing writeback definitions can cross the inbound
+    protected-target boundary, and only at the public field permission level.
+    This grants neither mutation execution nor access to a specific record.
+    """
+    from hero_integration.services.frappe_writeback import DEFINITIONS
+    candidates = doctypes(metadata) if targets is None else targets
+    result = []
+    for target in candidates:
+        if doctype and target.doctype != doctype:
+            continue
+        if not target.selectable:
+            continue
+        reviewed = DEFINITIONS.get(target.doctype)
+        for field in metadata.fields(target.doctype):
+            item = _field(target, field, metadata)
+            if (not item.selectable and reviewed and item.path in reviewed.fields
+                    and item.path in PROTECTED_FIELDS.get(target.doctype, set())
+                    and item.path not in SYSTEM_FIELDS and item.fieldtype in ALLOWED_TARGET_TYPES | {'Long Text', 'Text', 'Code', 'Select'}
+                    and item.fieldtype not in {'Link', 'Table'}
+                    and not getattr(field, 'read_only', 0) and not getattr(field, 'hidden', 0)
+                    and not getattr(field, 'is_virtual', 0) and not int(getattr(field, 'permlevel', 0) or 0)):
+                item = replace(item, selectable=True, reason='Reviewed writeback source; execution requires separate approval.')
+            result.append(item)
+    return sorted(result, key=lambda item: (item.app_name.lower(), item.doctype.lower(), item.path.lower()))
 
 
 def types_compatible(source_type: str, target_type: str) -> bool:

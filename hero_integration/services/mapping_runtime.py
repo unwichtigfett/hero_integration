@@ -91,16 +91,24 @@ class MappingPlan:
         project_title: Callable[[dict[str, object]], str] | None = None,
         project_link: Callable[[object], str] | None = None,
         native_value: Callable[[str], object] | None = None,
+        allow_partial: bool = False,
     ) -> dict[str, object]:
         values: dict[str, object] = {}
         projection = (self.target_operation or self.operation) in PROJECTIONS
         if projection:
             try:
-                validate_projection_record(self.target_operation or self.operation, record)
+                validate_projection_record(self.target_operation or self.operation, record, allow_partial=allow_partial)
             except ValueError as error:
                 raise MappingPlanError(str(error)) from error
         for definition in self.definitions:
             value = source_value(record, definition.source_path)
+            if (self.target_operation or self.operation) == 'HeroCalendarEvents' and (
+                value is None or (definition.source_path in {'description', 'full_address'}
+                                  and isinstance(value, str) and not value.strip())
+                or (definition.source_path in {'partners', 'resources'} and value == [])
+            ):
+                # Missing, NULL and unconfirmed empty values do not clear Event fields.
+                continue
             if definition.purpose in {PURPOSE_FIELD, PURPOSE_RECORD_NAME, PURPOSE_CUSTOMER_TYPE, PURPOSE_CUSTOMER_CONTACT, PURPOSE_SOURCE_IDENTITY}:
                 if definition.purpose == PURPOSE_RECORD_NAME and (self.target_operation or self.operation) == "HeroProjectMatches":
                     transformed = project_title(record) if project_title is not None else transformed_value(definition, value)
@@ -122,7 +130,12 @@ class MappingPlan:
                     continue
                 if native_value is None:
                     raise MappingPlanError('The native field resolver is unavailable.')
-                values[definition.target_field] = native_value(definition.target_field)
+                try:
+                    values[definition.target_field] = native_value(definition.target_field)
+                except KeyError:
+                    if not (allow_partial and (self.target_operation or self.operation) == 'HeroCalendarEvents'
+                            and definition.target_field in {'starts_on', 'ends_on', 'all_day', 'custom_hero_original_start', 'custom_hero_original_end'}):
+                        raise
             elif definition.purpose == 'Project Relation':
                 if value is None:
                     values[definition.target_field] = None
@@ -199,7 +212,7 @@ class MappingPlan:
         return tuple(definition for definition in self.definitions if definition.purpose == purpose)
 
 
-def plan_from_definitions(operation: str, definitions: list[MappingSpec] | tuple[MappingSpec, ...], *, target_operation: str = "") -> MappingPlan:
+def plan_from_definitions(operation: str, definitions: list[MappingSpec] | tuple[MappingSpec, ...], *, target_operation: str = "", native_task: bool = False) -> MappingPlan:
     target_operation = target_operation or operation
     if target_operation not in {"HeroCustomers", "HeroProjectMatches", *PROJECTIONS}:
         raise MappingPlanError("The selected target adapter is not supported.")
@@ -207,25 +220,114 @@ def plan_from_definitions(operation: str, definitions: list[MappingSpec] | tuple
     if not selected:
         raise MappingPlanError("No active mapping definitions exist for this operation.")
     plan = MappingPlan(operation, selected, target_operation)
-    plan.require_complete()
+    if native_task:
+        from hero_integration.services.direct_mapping import validate_native_task_rule
+        if target_operation != 'HeroTasks' or len(selected) not in {2, 3, 4, 5, 6}:
+            raise MappingPlanError('Native Task requires identity, title, and optional comment, assignment, project and deadline rules.')
+        paths = [item.source_path for item in selected]
+        if len(set(paths)) != len(paths) or not {'id', 'title'} <= set(paths):
+            raise MappingPlanError('Native Task requires exactly one identity and title rule.')
+        for item in selected:
+            validate_native_task_rule(item)
+    else:
+        plan.require_complete()
     return plan
 
 
-def active_mapping_plan(operation: str, *, definition_ids: tuple[str, ...] = (), target_operation: str = "") -> MappingPlan:
+def active_mapping_plan(operation: str, *, definition_ids: tuple[str, ...] = (), target_operation: str = "", mapping_name: str = "", native_task: bool = False, lock_rules: bool = False) -> MappingPlan:
     import frappe
 
+    if definition_ids and (not mapping_name or len(set(definition_ids)) != len(definition_ids)):
+        raise MappingPlanError('Explicit rule IDs require an explicit active mapping and unique bindings.')
+    if native_task and (not definition_ids or not mapping_name or len(set(definition_ids)) != len(definition_ids)):
+        raise MappingPlanError('Native Task requires explicitly selected approved rules.')
+    if lock_rules and not native_task:
+        raise MappingPlanError('Locking rule reads are restricted to the native Task contract.')
     rows = frappe.get_all(
         "HERO Frappe Mapping",
         filters={"operation": target_operation or operation, "status": "Active"},
         fields=[
             "operation", "source_path", "source_type", "target_doctype", "target_field", "purpose",
-            "transformation", "relation", "priority", "definition_id",
+            "transformation", "relation", "priority", "definition_id", "personal_graphql_mapping",
+            "schema_snapshot", "schema_fingerprint",
         ],
         order_by="priority asc, creation asc",
-    )
+    ) if not lock_rules else []
+    if lock_rules:
+        for identity in sorted(definition_ids):
+            current = frappe.db.sql(
+                'select operation, source_path, source_type, target_doctype, target_field, purpose, '
+                'transformation, relation, priority, definition_id, personal_graphql_mapping, '
+                'schema_snapshot, schema_fingerprint, status from `tabHERO Frappe Mapping` '
+                'where definition_id=%s for update', (identity,), as_dict=True)
+            if len(current) != 1 or current[0]['status'] != 'Active' or current[0]['operation'] != (target_operation or operation):
+                raise MappingPlanError('A selected active Task rule is unavailable or changed.')
+            rows.append({key: value for key, value in current[0].items() if key != 'status'})
     if definition_ids:
         expected = set(definition_ids)
         rows = [row for row in rows if row["definition_id"] in expected]
-        if {row["definition_id"] for row in rows} != expected:
+        if len(rows) != len(expected) or {row["definition_id"] for row in rows} != expected:
             raise MappingPlanError("The selected active mapping definitions are unavailable or changed.")
-    return plan_from_definitions(operation, [MappingSpec(**row) for row in rows], target_operation=target_operation)
+        if any(row.get('personal_graphql_mapping') and row.get('personal_graphql_mapping') != mapping_name for row in rows):
+            raise MappingPlanError('A selected rule version belongs to another read mapping.')
+    else:
+        rows = [row for row in rows if not row.get('personal_graphql_mapping')]
+    if mapping_name and definition_ids:
+        mapping = frappe.get_doc('HERO GraphQL Mapping', mapping_name)
+        if mapping.status != 'Active' or mapping.direction != 'QUERY_TO_FRAPPE':
+            raise MappingPlanError('The selected read mapping is not an active Query definition.')
+        try:
+            from hero_integration.services.personal_mapping_content import unique_json_object
+            config = json.loads(mapping.mapping_json, object_pairs_hook=unique_json_object)
+        except (ValueError, TypeError, AttributeError):
+            raise MappingPlanError('The approved mapping binding is invalid.') from None
+        if not isinstance(config, dict) or config.get('target_operation') != (target_operation or operation):
+            raise MappingPlanError('The selected mapping target operation does not match the requested plan.')
+        selected = config.get('mapping_definition_ids') if isinstance(config, dict) else None
+        if (not isinstance(selected, list) or any(not isinstance(value, str) or not value for value in selected)
+                or len(set(selected)) != len(selected) or tuple(selected) != tuple(definition_ids)):
+            raise MappingPlanError('Selected rules do not match the approved mapping binding.')
+        if any(row.get('schema_snapshot') != mapping.schema_snapshot or row.get('schema_fingerprint') != mapping.schema_fingerprint for row in rows):
+            raise MappingPlanError('Selected rule snapshot does not match the approved read mapping.')
+        scoped = [row for row in rows if row.get('personal_graphql_mapping')]
+        has_column = getattr(frappe.db, 'has_column', None) if scoped else None
+        if scoped and callable(has_column) and has_column('HERO Frappe Mapping', 'portable_lineage_json'):
+            from hero_integration.services.mapping_rule_lineage import parse_lineage, semantic_fingerprint
+            from hero_integration.services.personal_mapping_content import RULE_FIELDS
+            for row in scoped:
+                metadata = frappe.db.get_value('HERO Frappe Mapping', {'definition_id':row['definition_id']},
+                                               ['portable_definition_id', 'portable_lineage_json', 'schema_manifest', 'schema_dependencies'], as_dict=True)
+                if metadata and not metadata.get('portable_lineage_json'):
+                    continue  # Pre-lineage scoped revisions retain their explicit legacy binding.
+                try:
+                    lineage = parse_lineage(metadata.get('portable_lineage_json') if metadata else None)
+                    fields = {key:row.get(key) for key in RULE_FIELDS}
+                    if (lineage['revision_id'] != metadata.get('portable_definition_id')
+                            or lineage['content_hash'] != semantic_fingerprint(row['operation'], row['schema_fingerprint'], fields,
+                                schema_manifest=metadata.get('schema_manifest'), schema_dependencies=metadata.get('schema_dependencies'))):
+                        raise ValueError
+                except (ValueError, TypeError, AttributeError):
+                    raise MappingPlanError('Scoped rule lineage is missing or inconsistent; reconcile the revision.') from None
+    definitions = [MappingSpec(**{k: v for k, v in row.items() if k not in {'personal_graphql_mapping', 'schema_snapshot', 'schema_fingerprint'}}) for row in rows]
+    # Recheck native Field grants against the currently installed server
+    # contract before executing a previously approved mapping revision.
+    # Revoking a binding must not leave an executable stale rule behind.
+    from hero_integration.services.direct_mapping import validate_spec
+    from hero_integration.hero_integration.doctype.hero_frappe_mapping.hero_frappe_mapping import _FrappeMetadata
+    metadata = _FrappeMetadata()
+    for spec in definitions:
+        if native_task:
+            try:
+                validate_spec(spec, metadata)
+            except ValueError as error:
+                raise MappingPlanError('Native Task field authorization is no longer valid.') from error
+        if spec.operation in {'HeroCustomers', 'HeroProjectMatches'} and spec.purpose == PURPOSE_FIELD:
+            field = metadata.field(spec.target_doctype, spec.target_field)
+            if field is None or not getattr(field, 'is_custom_field', False):
+                if not definition_ids or not mapping_name:
+                    raise MappingPlanError('Native field mappings require an explicit approved read mapping.')
+                try:
+                    validate_spec(spec, metadata)
+                except ValueError as error:
+                    raise MappingPlanError('Native field authorization is no longer valid.') from error
+    return plan_from_definitions(operation, definitions, target_operation=target_operation, native_task=native_task)

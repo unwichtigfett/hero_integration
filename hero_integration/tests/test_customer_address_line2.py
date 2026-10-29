@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import unittest
+import sys
+from unittest.mock import patch
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -123,6 +125,19 @@ def verify_persisted_drafts(
 
 
 class TestCustomerAddressLine2Contract(unittest.TestCase):
+    def setUp(self):
+        def rule(_doctype, filters, **_kwargs):
+            value = {'definition_id':filters['definition_id'], 'personal_graphql_mapping':'', 'status':'Active',
+                     'operation':'HeroCustomers', 'schema_snapshot':'S', 'schema_fingerprint':'f'*64}
+            if value['definition_id'] == LINE2_DEFINITION_ID:
+                value.update(source_path='address.line_2', source_type='string|null', target_doctype='Address',
+                    target_field='address_line2', purpose='Native Binding', transformation='Trim', relation='Customer Primary Address')
+            return [value]
+        fake = SimpleNamespace(db=SimpleNamespace(has_column=lambda *_: False),
+                               get_all=rule)
+        patcher = patch.dict(sys.modules, {'frappe':fake})
+        patcher.start()
+        self.addCleanup(patcher.stop)
     def test_native_binding_is_closed_to_customer_primary_address_line2(self):
         valid = _line2_spec()
         validate_spec(valid, _Metadata())
@@ -175,7 +190,7 @@ class TestCustomerAddressLine2Contract(unittest.TestCase):
         self.assertEqual(_customer_primary_address(record, "  Suite 2 ")["line_2"], "Suite 2")
 
     def test_v2_read_contract_requires_the_selected_native_binding_while_v1_stays_unchanged(self):
-        snapshot = SimpleNamespace(name="S", schema_fingerprint="f" * 64)
+        snapshot = SimpleNamespace(name="S", schema_fingerprint="f" * 64, source_instance='source')
         v1_mapping = _mapping(CUSTOMER_QUERY_V1, [item["definition_id"] for item in fixture_payload()["mappings"]])
         v1_service = _service(CUSTOMER_QUERY_V1, "M")
         self.assertEqual(from_documents(v1_service, v1_mapping, snapshot).mapping_revision, 1)
@@ -191,7 +206,7 @@ class TestCustomerAddressLine2Contract(unittest.TestCase):
             from_documents(v1_service, _mapping(CUSTOMER_QUERY_V1, [*json_definition_ids(), LINE2_DEFINITION_ID]), snapshot)
 
     def test_stale_approval_is_rejected(self):
-        snapshot = SimpleNamespace(name="S", schema_fingerprint="f" * 64)
+        snapshot = SimpleNamespace(name="S", schema_fingerprint="f" * 64, source_instance='source')
         service = _service(CUSTOMER_QUERY_V1, "M")
         mapping = _mapping(CUSTOMER_QUERY_V1, json_definition_ids())
         service.approved_service_revision = 0
@@ -322,7 +337,7 @@ def _mapping(query: str, definition_ids: list[str], version: str = "v1"):
     import json
 
     return SimpleNamespace(
-        name="M", status="Active", mapping_revision=1, schema_snapshot="S", schema_fingerprint="f" * 64,
+        name="M", status="Active", direction="QUERY_TO_FRAPPE", operation_kind="QUERY", source_instance='source', mapping_revision=1, schema_snapshot="S", schema_fingerprint="f" * 64,
         mapping_json=json.dumps({
             "target_operation": "HeroCustomers", "records_path": "contacts", "identity_path": "id",
             "mapping_definition_ids": definition_ids,

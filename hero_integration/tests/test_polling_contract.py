@@ -66,6 +66,53 @@ class TestPollingContract(unittest.TestCase):
         with self.assertRaises(PaginationProgressError):
             monitor(RepeatingSource(), {"sources": ["HeroCustomers"], "max_pages": 3, "rate_limit": 10000})
 
+    def test_full_terminal_window_is_incomplete_without_terminal_evidence(self):
+        class FullWindow:
+            source_instance = 'synthetic'
+            @staticmethod
+            def customers(_offset): return SourcePage(({'id':1}, {'id':2}), None)
+        result = monitor(FullWindow(), {'sources':['HeroCustomers'], 'page_size':2, 'max_pages':1, 'rate_limit':10000})
+        self.assertEqual(result.customer_records, 2)
+        self.assertEqual(result.incomplete_sources, ('HeroCustomers',))
+        self.assertEqual(result.customer_next_offset, 0)
+
+    def test_monitor_rejects_duplicate_identities_before_observing_bad_page(self):
+        class RepeatingSource:
+            source_instance = "synthetic"
+            @staticmethod
+            def customers(offset):
+                return SourcePage(({"id":1}, {"id":2}), 2) if offset == 0 else SourcePage(({"id":2}, {"id":3}), None)
+        observed = []
+        with self.assertRaisesRegex(PaginationProgressError, 'identity'):
+            monitor(RepeatingSource(), {"sources":["HeroCustomers"], "max_pages":3, "rate_limit":10000},
+                    record_observer=lambda operation, row: observed.append(row['id']))
+        self.assertEqual(observed, [1, 2])
+
+    def test_monitor_rejects_duplicate_and_missing_identities_within_page(self):
+        class InvalidSource:
+            source_instance = "synthetic"
+            rows = ()
+            def customers(self, _offset): return SourcePage(self.rows, None)
+        source = InvalidSource()
+        for rows in (({"id":1}, {"id":"1"}), ({"id":None},), ({"id":True},)):
+            source.rows = rows
+            observed = []
+            with self.assertRaisesRegex(PaginationProgressError, 'identity'):
+                monitor(source, {"sources":["HeroCustomers"], "max_pages":1, "rate_limit":10000},
+                        record_observer=lambda *_: observed.append(True))
+            self.assertEqual(observed, [])
+
+    def test_monitor_rejects_invalid_page_progress_before_observer(self):
+        class InvalidSource:
+            source_instance = "synthetic"
+            @staticmethod
+            def customers(offset): return SourcePage(({"id":1},), offset)
+        observed = []
+        with self.assertRaises(PaginationProgressError):
+            monitor(InvalidSource(), {"sources":["HeroCustomers"], "max_pages":2, "rate_limit":10000},
+                    record_observer=lambda *_: observed.append(True))
+        self.assertEqual(observed, [])
+
     def test_runtime_plan_exposes_the_effective_reader_controls(self):
         settings = SimpleNamespace(
             polling_mode="MONITOR", scheduled_sync_enabled=0, polling_data_sources="HeroCustomers",

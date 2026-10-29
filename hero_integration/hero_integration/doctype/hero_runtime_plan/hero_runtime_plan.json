@@ -1,0 +1,28 @@
+{
+  "doctype": "DocType",
+  "name": "HERO Runtime Plan",
+  "module": "HERO Integration",
+  "autoname": "field:plan_key",
+  "track_changes": 1,
+  "fields": [
+    {"fieldname":"plan_key","fieldtype":"Data","reqd":1,"unique":1,"read_only":1},
+    {"fieldname":"site_scope","fieldtype":"Data","reqd":1,"read_only":1},
+    {"fieldname":"source_instance","fieldtype":"Data","reqd":1,"read_only":1},
+    {"fieldname":"state","fieldtype":"Select","options":"DRAFT\nAPPROVED\nDISABLED","reqd":1,"read_only":1},
+    {"fieldname":"plan_revision","fieldtype":"Int","reqd":1,"read_only":1},
+    {"fieldname":"generation","fieldtype":"Int","reqd":1,"read_only":1},
+    {"fieldname":"semantic_hash","fieldtype":"Data","reqd":1,"read_only":1},
+    {"fieldname":"graphql_service","fieldtype":"Link","options":"HERO GraphQL Service","reqd":1,"read_only":1},
+    {"fieldname":"service_revision","fieldtype":"Int","reqd":1,"read_only":1},
+    {"fieldname":"operation_revision","fieldtype":"Int","reqd":1,"read_only":1},
+    {"fieldname":"graphql_mapping","fieldtype":"Link","options":"HERO GraphQL Mapping","reqd":1,"read_only":1},
+    {"fieldname":"mapping_revision","fieldtype":"Int","reqd":1,"read_only":1},
+    {"fieldname":"schema_snapshot","fieldtype":"Link","options":"HERO GraphQL Schema Snapshot","reqd":1,"read_only":1},
+    {"fieldname":"schema_fingerprint","fieldtype":"Data","reqd":1,"read_only":1},
+    {"fieldname":"operation_name","fieldtype":"Data","reqd":1,"read_only":1},
+    {"fieldname":"execution_mode","fieldtype":"Select","options":"AUTO_SYNC","reqd":1,"read_only":1},
+    {"fieldname":"approved_by","fieldtype":"Link","options":"User","read_only":1}
+  ],
+  "permissions": [{"role":"System Manager","read":1,"write":1,"create":1}],
+  "modified": "2026-10-25 00:00:00.000000"
+}

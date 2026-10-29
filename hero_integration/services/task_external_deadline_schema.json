@@ -1,0 +1,16 @@
+{
+  "custom_doctypes": [],
+  "custom_fields": [
+    {
+      "id": "task-external-deadline",
+      "doctype": "Task",
+      "fieldname": "custom_hero_due_date",
+      "label": "HERO External Deadline",
+      "fieldtype": "Datetime",
+      "options": "",
+      "insert_after": "exp_end_date",
+      "read_only": 1
+    }
+  ],
+  "relations": []
+}

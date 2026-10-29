@@ -13,6 +13,8 @@
         synchronization: "Synchronization",
         settings: "Settings",
     });
+    const userRoles = new Set(frappe.boot?.user?.roles || frappe.user_roles || []);
+    const isSystemManager = userRoles.has("System Manager");
     const API_TOOLS = Object.freeze({
         analyzer: "API Analyzer",
         graph: "Graph Viewer",
@@ -23,16 +25,18 @@
     // need an explicit release token. JavaScript must stay query-free when it
     // enters frappe.require(): Frappe owns the version parameter and uses the
     // original extension to select its script loader.
-    const ASSET_RELEASE = "20261021.14";
+    const ASSET_RELEASE = "20261029.36a";
     const ASSETS = [
         "/assets/hero_integration/css/hero_tools.css",
         "/assets/hero_integration/css/hero_adapter.css",
         "/assets/hero_integration/css/hero_workspace.css",
         "/assets/hero_integration/css/hero_overview.css",
         "/assets/hero_integration/css/hero_settings.css",
+        "/assets/hero_integration/css/hero_api_summary.css",
         "/assets/hero_integration/js/hero_tools.js",
         "/assets/hero_integration/js/hero_overview.js",
         "/assets/hero_integration/js/hero_settings.js",
+        "/assets/hero_integration/js/hero_api_summary.js",
         "/assets/hero_integration/js/hero_mapping_editor.js",
         "/assets/hero_integration/js/hero_migration.js",
     ];
@@ -40,16 +44,17 @@
         ["hero_tools.js", "hero_workspace_tools"],
         ["hero_overview.js", "hero_integration_overview"],
         ["hero_settings.js", "hero_integration_settings_ui"],
+        ["hero_api_summary.js", "hero_integration_api_summary"],
         ["hero_mapping_editor.js", "hero_integration_mapping_editor"],
         ["hero_migration.js", "hero_integration_migration"],
     ]);
     const unsupported = new Set([
-        "synchronize_connection", "list_candidates", "mark_candidate",
-        "remove_candidate", "execute_service", "get_analyzer_service_draft", "save_analyzer_service",
+        "synchronize_connection", "list_candidates", "mark_candidate", "remove_candidate",
     ]);
 
     const nativeMethods = new Set([
         "integration_overview", "workspace_context", "workspace_settings_get", "workspace_settings_save",
+        "workspace_testing_settings_save", "workspace_erpnext_company_save", "workspace_erpnext_company_confirm",
         "workspace_mutation_execution_set", "workspace_sync_status", "workspace_schema_refresh",
     ]);
     const errorMessage = (error) => {
@@ -72,8 +77,13 @@
 
     async function rpc(method, args = {}) {
         if (method === "execute_service") {
-            throw new Error("HERO_MUTATION_EXECUTION_DISABLED");
+            // Mutations never run from the workspace editor; only the saved,
+            // validated read-only query path is wired here.
+            if (args.operation_kind !== "query") throw new Error("HERO_MUTATION_EXECUTION_DISABLED");
+            return request("workspace_service_execute", {snapshot_name: snapshotName(args), query_id: args.query_id, expected_revision: args.expected_revision || 0, variables_json: JSON.stringify(args.variables || {})});
         }
+        if (method === "get_analyzer_service_draft") return request("workspace_analyzer_service_draft", {snapshot_name: snapshotName(args), schema_node_id: args.schema_node_id});
+        if (method === "save_analyzer_service") return request("workspace_analyzer_service_save", {snapshot_name: snapshotName(args), schema_node_id: args.schema_node_id, payload_json: JSON.stringify(args.payload || {}), origin: args.origin || "API Analyzer"});
         if (unsupported.has(method)) {
             throw new Error("This historic action is intentionally unavailable in the native workspace. Use the ERPNext Mapping Editor or saved read-only service definitions.");
         }
@@ -88,9 +98,11 @@
         if (method === "list_services") return request("workspace_service_list", {snapshot_name, operation_kind: args.operation_kind || "query", start: args.start || 0, page_size: args.page_size || 50});
         if (method === "get_query") return request("workspace_service_detail", {query_id: args.query_id});
         if (method === "save_query") return request("workspace_service_save", {snapshot_name, query_id: args.query_id || "", expected_revision: args.expected_revision || 0, payload_json: JSON.stringify({...args.payload, operation_kind: args.operation_kind || "query"})});
-        if (method === "validate_saved_query") return request("workspace_service_validate", {snapshot_name, query_id: args.query_id || "", expected_revision: args.expected_revision || 0});
-        if (method === "preview_query" && args.operation_kind === "mutation") return request("workspace_mutation_draft_validate", {snapshot_name, payload_json: JSON.stringify(args.payload)});
-        if (method === "preview_query") return request("workspace_service_validate", {snapshot_name, payload_json: JSON.stringify({...args.payload, operation_kind: args.operation_kind || "query"})});
+        // Variables are runtime input: validated locally against the declarations, never part of the saved payload.
+        const variablesJson = args.variables ? {variables_json: JSON.stringify(args.variables)} : {};
+        if (method === "validate_saved_query") return request("workspace_service_validate", {snapshot_name, query_id: args.query_id || "", expected_revision: args.expected_revision || 0, ...variablesJson});
+        if (method === "preview_query" && args.operation_kind === "mutation") return request("workspace_mutation_draft_validate", {snapshot_name, payload_json: JSON.stringify(args.payload), ...variablesJson});
+        if (method === "preview_query") return request("workspace_service_validate", {snapshot_name, payload_json: JSON.stringify({...args.payload, operation_kind: args.operation_kind || "query"}), ...variablesJson});
         if (method === "delete_query") return request("workspace_service_delete", {query_id: args.query_id, expected_revision: args.expected_revision || 0});
         throw new Error("This historic action has no native compatibility mapping.");
     }
@@ -106,7 +118,10 @@
     // Frappe owns script URL versioning. Its compatibility loader resolves even
     // after an onerror, so verify the public module contract afterwards instead
     // of appending a second script tag or adding a manual JavaScript query string.
-    const loadScript = (path) => frappe.require(path);
+    const loadScript = (path) => {
+        const globalName = REQUIRED_ASSET_GLOBALS.find(([asset]) => path.endsWith(`/${asset}`))?.[1];
+        return globalName && window[globalName] ? Promise.resolve() : frappe.require(path);
+    };
     const assertLoadedAssets = () => {
         const missing = REQUIRED_ASSET_GLOBALS
             .filter(([, globalName]) => !window[globalName])
@@ -126,7 +141,7 @@
     function routeTarget(section = "", tool = "") {
         if (LEGACY_SECTION_TO_TOOL[section]) return {section: "api", tool: LEGACY_SECTION_TO_TOOL[section]};
         if (section === "migration") return {section: "synchronization", tool: ""};
-        return {section: SECTION_NAMES[section] ? section : "overview", tool: API_TOOLS[tool] ? tool : "analyzer"};
+        return {section: SECTION_NAMES[section] ? section : "overview", tool: API_TOOLS[tool] ? tool : ""};
     }
     function routeUrl(section, params = {}) {
         const target = routeTarget(section, params.hero_tool);
@@ -135,7 +150,7 @@
             if (value !== undefined && value !== null && value !== "") query.set(key, String(value));
         });
         query.set("hero_section", target.section);
-        if (target.section === "api") query.set("hero_tool", target.tool);
+        if (target.section === "api" && target.tool) query.set("hero_tool", target.tool);
         else query.delete("hero_tool");
         return `/app/${CANONICAL_PAGE}?${query.toString()}`;
     }
@@ -160,6 +175,59 @@
     });
     window.hero_integration_rpc = Object.freeze({call: (method, args) => rpc(method, args)});
 
+    // One canonical "Remember for Mapping" store for API Analyzer, Graph Viewer
+    // and the Mapping Editor. The server validates node identity and owner.
+    const bookmarkCall = (method, args, write = false) =>
+        frappe.call({method: `${API}.${method}`, type: write ? "POST" : "GET", args}).then((response) => {
+            if (response?.exc) throw new Error(String(response.exc));
+            return response?.message;
+        }).catch((error) => { throw new Error(errorMessage(error)); });
+    const bookmarks = {
+        list: (search = "") => bookmarkCall("workspace_node_bookmark_list", {search}),
+        save: (identity, alias) => bookmarkCall("workspace_node_bookmark_save", {
+            snapshot_name: identity.snapshot_name, node_id: identity.node_id, alias, schema_fingerprint: identity.schema_fingerprint,
+        }, true),
+        rename: (bookmark, alias) => bookmarkCall("workspace_node_bookmark_rename", {bookmark, alias}, true),
+        remove: (bookmark) => bookmarkCall("workspace_node_bookmark_delete", {bookmark}, true),
+        resolve: (bookmark) => bookmarkCall("workspace_node_bookmark_resolve", {bookmark}),
+        remember(selection) {
+            // The identity is frozen when the dialog opens, so a selection change
+            // during the dialog cannot store a different node under this alias.
+            const identity = Object.freeze({...selection});
+            return new Promise((resolve) => {
+                const dialog = new frappe.ui.Dialog({
+                    title: "Remember for Mapping",
+                    fields: [
+                        {fieldname: "node_name", fieldtype: "Data", label: "Original node", read_only: 1, default: identity.node_name},
+                        {fieldname: "node_kind", fieldtype: "Data", label: "Node type", read_only: 1, default: identity.node_kind},
+                        {fieldname: "node_id", fieldtype: "Data", label: "GraphQL node ID", read_only: 1, default: identity.node_id},
+                        // The label is display only; the internal snapshot name is what gets saved.
+                        {fieldname: "snapshot_label", fieldtype: "Data", label: "Snapshot", read_only: 1, default: identity.snapshot_label || identity.snapshot_name},
+                        {fieldname: "alias", fieldtype: "Data", label: "Alias", reqd: 1,
+                            description: "A readable name for the Mapping Editor. It never replaces the technical node identity."},
+                    ],
+                    primary_action_label: "Save",
+                    primary_action: async (values) => {
+                        dialog.disable_primary_action();
+                        try {
+                            const result = await bookmarks.save(identity, values.alias);
+                            dialog.hide();
+                            frappe.show_alert({message: result.existing ? "This node is already remembered under this alias." : "Node remembered for mapping. No mapping was created.", indicator: "green"});
+                            resolve(result);
+                        } catch (error) {
+                            dialog.enable_primary_action();
+                            frappe.msgprint({title: "Remember for Mapping", message: frappe.utils.escape_html(error.message), indicator: "red"});
+                        }
+                    },
+                });
+                dialog.set_secondary_action_label("Cancel");
+                dialog.set_secondary_action(() => { dialog.hide(); resolve(null); });
+                dialog.show();
+            });
+        },
+    };
+    window.hero_integration_bookmarks = Object.freeze(bookmarks);
+
     let controller;
     function resetPage(page) {
         ["clear_primary_action", "clear_secondary_action", "clear_menu", "clear_actions", "clear_actions_menu"].forEach((name) => page[name]?.());
@@ -168,7 +236,7 @@
         const root = document.createElement("nav");
         root.className = "hero-unified-navigation";
         root.setAttribute("aria-label", "HERO Integration sections");
-        Object.entries(SECTION_NAMES).forEach(([section, label]) => {
+        Object.entries(SECTION_NAMES).filter(([section]) => isSystemManager || section === "mapping").forEach(([section, label]) => {
             const button = document.createElement("button");
             button.type = "button";
             button.className = "btn btn-default btn-sm";
@@ -199,6 +267,9 @@
     }
     async function render(section, context) {
         if (!controller) return;
+        if (!isSystemManager && section !== "mapping") {
+            section = "mapping"; context = {...context, hero_section: "mapping", hero_tool: ""};
+        }
         const {page, shell, content} = controller;
         resetPage(page);
         controller.workspace?.destroy?.();
@@ -211,39 +282,61 @@
             await ensureAssets();
             if (section === "overview") await window.hero_integration_overview.mount(content);
             else if (section === "settings") await window.hero_integration_settings_ui.mount(content);
-            else if (section === "mapping") window.hero_integration_mapping_editor.mount(sectionPage, context);
+            else if (section === "mapping") controller.workspace = window.hero_integration_mapping_editor.mount(sectionPage, context);
             else if (section === "synchronization") window.hero_integration_migration.mount(sectionPage);
             else {
                 const tool = routeTarget(section, context.hero_tool).tool;
-                content.append(apiNavigation(tool));
-                const toolHost = document.createElement("div");
-                toolHost.className = "admin-hero-tool-host";
-                content.append(toolHost);
-                const workspace = new window.hero_workspace_tools.Workspace(toolHost, {tool, operationKind: context.operation_kind || "query"});
-                controller.workspace = workspace;
-                await workspace.show(true);
+                if (!tool) await window.hero_integration_api_summary.mount(content, context);
+                else {
+                    content.append(apiNavigation(tool));
+                    const toolHost = document.createElement("div");
+                    toolHost.className = "admin-hero-tool-host";
+                    content.append(toolHost);
+                    const workspace = new window.hero_workspace_tools.Workspace(toolHost, {tool, operationKind: context.operation_kind || "query"});
+                    controller.workspace = workspace;
+                    await workspace.show(true);
+                }
             }
         } catch (error) {
             failure(content, error);
         }
     }
+    function routeKey(section, context) {
+        return JSON.stringify([section, ...Object.entries(context).sort(([left], [right]) => left.localeCompare(right))]);
+    }
+    function renderRoute(section, context) {
+        if (!controller) return Promise.resolve();
+        const key = routeKey(section, context);
+        if (controller.routeKey === key && controller.routeRender) return controller.routeRender;
+        const routeRender = render(section, context).finally(() => {
+            if (controller?.routeKey === key) controller.routeRender = null;
+        });
+        controller.routeKey = key;
+        controller.routeRender = routeRender;
+        return routeRender;
+    }
     function showRoute() {
         const context = routeOptions();
         const target = routeTarget(context.hero_section, context.hero_tool);
-        return render(target.section, {...context, hero_section: target.section, hero_tool: target.tool});
+        return renderRoute(target.section, {...context, hero_section: target.section, hero_tool: target.tool});
     }
     function setRoute(section, params = {}) {
-        const target = routeTarget(section, params.hero_tool);
+        if (controller?.workspace?.beforeLeave) return controller.workspace.beforeLeave(() => performSetRoute(section, params));
+        return performSetRoute(section, params);
+    }
+    function performSetRoute(section, params = {}) {
+        const target = !isSystemManager && section !== "mapping" ? {section: "mapping", tool: ""} : routeTarget(section, params.hero_tool);
         const context = {...routeOptions()};
         Object.entries(params).forEach(([key, value]) => {
             if (value === null || value === "") delete context[key];
             else context[key] = value;
         });
         context.hero_section = target.section;
-        if (target.section === "api") context.hero_tool = target.tool;
+        if (target.section === "api" && target.tool) context.hero_tool = target.tool;
         else delete context.hero_tool;
-        frappe.set_route(CANONICAL_PAGE, context);
-        return render(target.section, context);
+        frappe.route_options = {...context};
+        frappe.set_route(CANONICAL_PAGE);
+        return renderRoute(target.section, context);
     }
     async function mount(wrapper) {
         if (!controller) {
@@ -259,5 +352,5 @@
         await showRoute();
     }
 
-    window.hero_integration_ui = Object.freeze({ensureStyles: ensureAssets, mount, showRoute, setRoute, routeOptions});
+    window.hero_integration_ui = Object.freeze({ensureStyles: ensureAssets, mount, showRoute, setRoute, routeOptions, isSystemManager});
 })();

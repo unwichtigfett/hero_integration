@@ -35,11 +35,28 @@ class TestNativeProjections(unittest.TestCase):
 
     def test_event_dst_recurrence_and_null_boolean_block(self):
         for change in ({"start": "2026-10-25T02:30:00"}, {"start": "2026-03-29T02:30:00"},
-                       {"is_recurring": True}, {"all_day": None}):
+                       {"is_recurring": True}, {"is_recurring": None}, {"all_day": None}):
             row = event()
             row.update(change)
             with self.assertRaises(ValueError):
                 values(CONTRACTS["HeroCalendarEvents"], row, "9", "a", EVENT_OPTIONS, lookup=lambda *a: {})
+
+    def test_existing_event_holds_the_whole_time_group_for_review(self):
+        for change in ({'is_recurring': True}, {'is_recurring': None}, {'end': None}):
+            row = event(); row.update(change)
+            review = []
+            out = values(CONTRACTS['HeroCalendarEvents'], row, '9', 'a', EVENT_OPTIONS,
+                         lookup=lambda *args: {}, allow_partial=True, review=review)
+            self.assertTrue(review)
+            self.assertEqual(out['subject'], 'Installation')
+            for field in ('starts_on', 'ends_on', 'all_day', 'custom_hero_original_start', 'custom_hero_original_end'):
+                self.assertNotIn(field, out)
+
+    def test_optional_end_is_not_invented_for_a_new_event(self):
+        row = event(); row['end'] = None
+        out = values(CONTRACTS['HeroCalendarEvents'], row, '9', 'a', EVENT_OPTIONS, lookup=lambda *args: {})
+        self.assertNotIn('ends_on', out)
+        self.assertNotIn('custom_hero_original_end', out)
 
     def test_all_day_exclusive_end_becomes_native_inclusive_date(self):
         row = event()

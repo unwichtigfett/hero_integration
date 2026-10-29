@@ -71,7 +71,7 @@ def _instant(value, zone):
     return first
 
 
-def values(contract, record, identity, instance, options, *, lookup, item_link=None):
+def values(contract, record, identity, instance, options, *, lookup, item_link=None, allow_partial=False, review=None):
     """Resolve native values before _upsert; lookup must enforce native read permission."""
     kind = contract.get('native_kind')
     validate_options(contract, options)
@@ -94,36 +94,51 @@ def values(contract, record, identity, instance, options, *, lookup, item_link=N
                 'item_name': _text(record.get('name'), 'Item name', required=True, limit=140),
                 'description': _html(_text(record.get('description'), 'Item description')),
                 'stock_uom': uom_name, 'item_group': options['item_group']}
-    if record.get('is_recurring') is True:
-        raise ValueError('Recurring HERO event has no reviewed recurrence rule; native recurrence is blocked.')
-    if type(record.get('all_day')) is not bool:
-        raise ValueError('Calendar all_day must be explicit; null is not false.')
-    source_zone, target_zone = ZoneInfo(options['source_timezone']), ZoneInfo(options['target_timezone'])
-    start = _instant(record.get('start'), source_zone)
-    end = _instant(record['end'], source_zone) if record.get('end') is not None else None
-    if end is not None and (end < start or (end == start and not record['all_day'])):
-        raise ValueError('Calendar end must be after start.')
-    if record['all_day']:
-        start_date = start.astimezone(source_zone).date()
-        end_date = end.astimezone(source_zone).date() if end else start_date
-        if end and options['all_day_end'] == 'exclusive':
-            end_date -= timedelta(days=1)
-        if end_date < start_date:
-            raise ValueError('All-day event range is empty after applying end semantics.')
-        starts_on = str(datetime.combine(start_date, time.min))
-        ends_on = str(datetime.combine(end_date, time(23, 59, 59)))
-    else:
-        starts_on = str(start.astimezone(target_zone).replace(tzinfo=None))
-        ends_on = str(end.astimezone(target_zone).replace(tzinfo=None)) if end else None
+    times = {}
+    try:
+        if type(record.get('is_recurring')) is not bool:
+            raise ValueError('Calendar recurrence flag must be explicit; null is not false.')
+        if record['is_recurring']:
+            raise ValueError('Recurring HERO event has no reviewed recurrence rule; native recurrence is blocked.')
+        if type(record.get('all_day')) is not bool:
+            raise ValueError('Calendar all_day must be explicit; null is not false.')
+        if allow_partial and record.get('end') is None:
+            raise ValueError('Calendar time group is incomplete; existing time values are preserved.')
+        source_zone, target_zone = ZoneInfo(options['source_timezone']), ZoneInfo(options['target_timezone'])
+        start = _instant(record.get('start'), source_zone)
+        end = _instant(record['end'], source_zone) if record.get('end') is not None else None
+        if end is not None and (end < start or (end == start and not record['all_day'])):
+            raise ValueError('Calendar end must be after start.')
+        if record['all_day']:
+            start_date = start.astimezone(source_zone).date()
+            end_date = end.astimezone(source_zone).date() if end else start_date
+            if end and options['all_day_end'] == 'exclusive':
+                end_date -= timedelta(days=1)
+            if end_date < start_date:
+                raise ValueError('All-day event range is empty after applying end semantics.')
+            starts_on = str(datetime.combine(start_date, time.min))
+            ends_on = str(datetime.combine(end_date, time(23, 59, 59)))
+        else:
+            starts_on = str(start.astimezone(target_zone).replace(tzinfo=None))
+            ends_on = str(end.astimezone(target_zone).replace(tzinfo=None)) if end else None
+        times = {'starts_on': starts_on, 'ends_on': ends_on, 'all_day': int(record['all_day']),
+                 'custom_hero_original_start': record.get('start'), 'custom_hero_original_end': record.get('end')}
+        if end is None:
+            times.pop('ends_on')
+            times.pop('custom_hero_original_end')
+    except ValueError as error:
+        if not allow_partial:
+            raise
+        if review is not None:
+            review.append(str(error))
     resources = [{'custom_hero_source_id': str(r['id']), 'custom_hero_resource_name': _text(r.get('name'), 'Resource name', limit=140),
                   'custom_hero_resource_type': _text(r.get('type'), 'Resource type', limit=140), 'custom_hero_type_id': str(r['type_id']) if r.get('type_id') is not None else None}
                  for r in record.get('resources') or []]
     partners = [{'custom_hero_source_id': str(r['id']), 'custom_hero_partner_name': _text(r.get('full_name'), 'Partner name', limit=140)} for r in record.get('partners') or []]
-    return {'subject': _text(record.get('title'), 'Event title', required=True), 'description': _html(_text(record.get('description'), 'Event description')),
-            'starts_on': starts_on, 'ends_on': ends_on, 'all_day': int(record['all_day']),
+    return {'subject': _text(record.get('title'), 'Event title', required=not allow_partial), 'description': _html(_text(record.get('description'), 'Event description')),
             'location': _text(record.get('full_address'), 'Event location', limit=140),
             'custom_hero_resources': resources, 'custom_hero_partners': partners,
-            'custom_hero_original_start': record.get('start'), 'custom_hero_original_end': record.get('end')}
+            **times}
 
 
 def creation_defaults(contract, options):
