@@ -13,9 +13,16 @@ from hero_integration.sources.hero import CUSTOMER_CONTRACT_V1, customer_query, 
 
 class TestSavedReadContract(unittest.TestCase):
     def setUp(self):
+        # Synthetic metadata boundary: ordinary legacy rules are unscoped.
+        fake = SimpleNamespace(db=SimpleNamespace(has_column=lambda *_: False),
+            get_all=lambda _doctype, filters, **_kwargs: [{'definition_id':filters['definition_id'], 'personal_graphql_mapping':'',
+                'status':'Active', 'operation':'HeroCustomers', 'schema_snapshot':'SNAP', 'schema_fingerprint':'fp'}])
+        patcher = patch.dict(sys.modules, {'frappe':fake})
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.snapshot = SimpleNamespace(name="SNAP", schema_fingerprint="fp", source_instance="synthetic")
         self.mapping = SimpleNamespace(
-            name="MAP", status="Active", schema_snapshot="SNAP", schema_fingerprint="fp", mapping_revision=3,
+            name="MAP", status="Active", direction="QUERY_TO_FRAPPE", operation_kind="QUERY", source_instance="synthetic", schema_snapshot="SNAP", schema_fingerprint="fp", mapping_revision=3,
             mapping_json=json.dumps({"target_operation": "HeroCustomers", "records_path": "contacts", "identity_path": "id", "mapping_definition_ids": ["customer-id"], "variables": {"first": "$page_size", "offset": "$offset", "orderBy": "id", "showDeleted": True}, "page_size": 2, "customer_contract_version": CUSTOMER_CONTRACT_V1}),
         )
         self.service = SimpleNamespace(
@@ -39,6 +46,15 @@ class TestSavedReadContract(unittest.TestCase):
         self.service.execution_status = "Approved"
         self.service.approved_mapping_revision = 2
         with self.assertRaisesRegex(ReadContractError, "mapping approval is stale"):
+            from_documents(self.service, self.mapping, self.snapshot)
+
+    def test_other_source_is_rejected_before_transport(self):
+        self.mapping.source_instance = 'other-source'
+        with self.assertRaisesRegex(ReadContractError, 'snapshot source'):
+            from_documents(self.service, self.mapping, self.snapshot)
+        self.mapping.source_instance = ''
+        self.snapshot.source_instance = ''
+        with self.assertRaisesRegex(ReadContractError, 'snapshot source'):
             from_documents(self.service, self.mapping, self.snapshot)
 
     def test_missing_selected_identity_path_is_rejected_before_effect(self):
@@ -166,7 +182,7 @@ class TestGeneratedTaskRead(unittest.TestCase):
             from_documents(self.service, self.mapping, self.snapshot)
         self.service.execution_status = 'Approved'
         self.mapping.source_instance = 'other'
-        with self.assertRaisesRegex(ReadContractError, 'onboarding requires'):
+        with self.assertRaisesRegex(ReadContractError, 'snapshot source'):
             from_documents(self.service, self.mapping, self.snapshot)
         self.mapping.source_instance = 'synthetic'
         self.rows['title']['transformation'] = 'Identity'

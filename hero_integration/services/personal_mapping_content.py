@@ -18,6 +18,15 @@ TEXT_FIELDS = frozenset({'record_path', 'records_path', 'identity_path', 'target
                          'transformation', 'transform', 'purpose', 'relation'})
 
 
+def unique_json_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError('Mapping JSON contains duplicate object keys.')
+        result[key] = value
+    return result
+
+
 def same(left, right):
     return json.dumps(left, sort_keys=True, ensure_ascii=False, allow_nan=False) == json.dumps(right, sort_keys=True, ensure_ascii=False, allow_nan=False)
 
@@ -29,6 +38,32 @@ def references(content):
     if any(not isinstance(v, str) or not v or len(v) > 140 for v in values):
         raise MappingDraftError('Invalid field reference.')
     return values
+
+
+def identity_sets(content, direction):
+    """Return local rule identities and child-definition identities for one direction."""
+    if direction not in {'QUERY_TO_FRAPPE', 'FRAPPE_TO_MUTATION'}:
+        raise MappingDraftError('Draft direction is required to resolve mapping identities.')
+    rules = set(references(content))
+    snapshots = content.get('field_rules', {})
+    if not isinstance(snapshots, dict) or any(not isinstance(key, str) or not key for key in snapshots):
+        raise MappingDraftError('Personal Draft field-rule snapshots are invalid.')
+    rules.update(snapshots)
+    additions = content.get('additional_mappings') or []
+    validate_additional_mappings(additions)
+    additional_ids = {item['id'] for item in additions}
+    if direction == 'QUERY_TO_FRAPPE':
+        canonical_rules = set()
+        for identity in rules:
+            try:
+                canonical_rules.add(str(UUID(identity)))
+            except (TypeError, ValueError, AttributeError):
+                continue
+        if canonical_rules & additional_ids:
+            raise MappingDraftError('Additional mapping identity duplicates a selected field rule.')
+        rules.update(additional_ids)
+        return rules, set()
+    return rules, additional_ids
 
 
 def bounded(content):

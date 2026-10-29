@@ -5,6 +5,16 @@ import test from 'node:test';
 const window = {};
 vm.runInNewContext(readFileSync(new URL('../public/js/hero_mapping_editor.js', import.meta.url), 'utf8'), {window});
 const {DraftState, stable} = window.hero_integration_mapping_editor;
+test('parentless saved draft uses zero active revision for CAS without an active parent', () => {
+ const {canSaveDraft} = window.hero_integration_mapping_editor;
+ const draft = new DraftState({definition_id:'id-1',generation:1,content_revision:1,
+  base_active_name:'',base_active_revision:0,reconciliation_revision:0,content:{identity_path:'id'}});
+ const context = {definition_id:'id-1',name:'',revision:0,parentless:true};
+ assert.equal(canSaveDraft(draft,context),true);
+ draft.set(['identity_path'],'email');
+ assert.equal(draft.saveArgs().expected_active_revision,0);
+ assert.equal(canSaveDraft(draft,{...context,definition_id:'other'}),false);
+});
 test('new mapping preserves the existing assignment and supports undo', () => {
  window.crypto = {randomUUID: () => '8a6c58ba-08fb-4da4-87e6-684bb1b16e19'};
  const initial = {source: {doctype: 'Customer', field: 'customer_name'}, target: {field: 'full_name'}};

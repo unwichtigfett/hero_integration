@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import frappe
 from frappe.model.document import Document
@@ -16,6 +16,10 @@ class HEROFrappeMapping(Document):
     def on_trash(self):
         if self.personal_graphql_mapping:
             frappe.throw('Published rule versions must be retained.', frappe.PermissionError)
+        # GraphQL mapping JSON and personal Draft snapshots reference rule IDs
+        # without Frappe Link fields. Until those writers share a deletion
+        # serialization boundary, normal Link checks cannot prove safety.
+        frappe.throw('Field-rule deletion is unavailable until all mapping references are reconciled.', frappe.PermissionError)
 
     def before_rename(self, *_args, **_kwargs):
         if self.personal_graphql_mapping:
@@ -27,6 +31,14 @@ class HEROFrappeMapping(Document):
         scope = getattr(self, 'personal_graphql_mapping', None) or ''
         previous = self.get_doc_before_save() if not self.is_new() else None
         old_scope = (previous.personal_graphql_mapping or '') if previous else ''
+        active_fields = ('status', 'operation', 'schema_snapshot', 'source_path', 'source_type', 'target_doctype',
+                         'target_field', 'purpose', 'transformation', 'relation', 'priority',
+                         'schema_dependencies', 'schema_manifest', 'definition_id', 'owner')
+        if (previous and previous.status == 'Draft' and previous.owner != frappe.session.user
+                and any(self.has_value_changed(field) for field in active_fields)):
+            frappe.throw('Only the owner may change a shared field-rule Draft.', frappe.PermissionError)
+        if previous and previous.status == 'Active' and any(self.has_value_changed(field) for field in active_fields):
+            frappe.throw('Active field rules cannot be changed directly; use a personal draft and publication.')
         if scope != old_scope and (not self.is_new() or not scope or personal_publication_parent() != scope):
             frappe.throw('Published mapping scope is immutable and service-managed.', frappe.PermissionError)
         if scope and personal_publication_parent() != scope:
@@ -38,6 +50,57 @@ class HEROFrappeMapping(Document):
             frappe.throw("The selected GraphQL schema snapshot is stale.")
         self.schema_fingerprint = snapshot.schema_fingerprint
         self.definition_id = self.definition_id or uuid4().hex
+        if previous and previous.definition_id and self.definition_id != previous.definition_id:
+            frappe.throw('Field-rule definition identity is immutable.')
+        portable = self.get('portable_definition_id') or ''
+        lineage = self.get('portable_lineage_json') or ''
+        if previous:
+            if portable != (previous.get('portable_definition_id') or '') or lineage != (previous.get('portable_lineage_json') or ''):
+                frappe.throw('Portable rule identity and lineage are immutable.')
+        elif portable or lineage:
+            if not scope or personal_publication_parent() != scope or not portable or not lineage:
+                frappe.throw('Portable rule identity and lineage are service-managed.')
+            from hero_integration.services.mapping_rule_lineage import next_lineage, parse_lineage
+            from hero_integration.services.personal_mapping_content import RULE_FIELDS
+            try:
+                declared = parse_lineage(lineage)
+                rows = frappe.get_all('HERO Frappe Mapping', filters={'portable_definition_id':declared['predecessor_id']},
+                                      fields=['name'], limit=2)
+                if len(rows) != 1 or portable != self.definition_id:
+                    raise ValueError
+                original = frappe.get_doc('HERO Frappe Mapping', rows[0].name, for_update=True)
+                original.check_permission('read')
+                if (original.status != 'Active' or original.schema_snapshot != self.schema_snapshot
+                        or original.schema_fingerprint != self.schema_fingerprint
+                        or original.operation != self.operation
+                        or original.schema_manifest != self.schema_manifest
+                        or original.schema_dependencies != self.schema_dependencies
+                        or (original.personal_graphql_mapping and original.personal_graphql_mapping != scope)):
+                    raise ValueError
+                expected = next_lineage(original, portable, {field:self.get(field) for field in RULE_FIELDS})
+                if json.loads(expected) != declared:
+                    raise ValueError
+            except (ValueError, TypeError, KeyError):
+                frappe.throw('Portable rule lineage does not match the authorized preceding revision.')
+        if self.is_new():
+            if self.status == 'Active' and self.purpose != PURPOSE_RECORD_NAME:
+                _lock_active_target((f'personal:{scope}:' if scope else '') + self.operation,
+                                    self.target_doctype, self.target_field)
+            try:
+                portable_candidate = str(UUID(self.definition_id))
+            except (ValueError, TypeError, AttributeError):
+                portable_candidate = ''
+            if portable_candidate:
+                _lock_active_target('portable-field-rule', frappe.local.site, portable_candidate)
+                if frappe.db.sql('select name from `tabHERO Frappe Mapping` where portable_definition_id=%s '
+                                 'or definition_id in (%s,%s) for update',
+                                 (portable_candidate, portable_candidate, UUID(portable_candidate).hex)):
+                    frappe.throw('Field-rule identity is already enrolled by another mapping.')
+                from hero_integration.services.frappe_mapping_draft_storage import lock_identity_drafts
+                for row in lock_identity_drafts(frappe, [portable_candidate], 'rule'):
+                    if not (scope and personal_publication_parent() == scope and row.owner_user == frappe.session.user
+                            and row.base_active_mapping == scope):
+                        frappe.throw('Field-rule identity is already used by a personal draft.')
         spec = _spec(self)
         if self.status == "Draft" and self.purpose == PURPOSE_FIELD:
             target = validate_draft_spec(spec, FrappePickerMetadata())
@@ -48,10 +111,18 @@ class HEROFrappeMapping(Document):
         else:
             validate_spec(spec, _FrappeMetadata())
         if self.status == "Active" and self.purpose != PURPOSE_RECORD_NAME:
-            _lock_active_target((f'personal:{scope}:' if scope else '') + self.operation, self.target_doctype, self.target_field)
+            lock_scope = (f'personal:{scope}:' if scope else '') + self.operation
+            same_active_target = bool(previous and previous.status == 'Active'
+                and previous.operation == self.operation and previous.target_doctype == self.target_doctype
+                and previous.target_field == self.target_field and previous.purpose == self.purpose
+                and old_scope == scope)
+            if previous and not same_active_target:
+                _require_active_target(lock_scope, self.target_doctype, self.target_field)
+            elif not previous:
+                _lock_active_target(lock_scope, self.target_doctype, self.target_field)
             # A locking read sees committed state or MariaDB aborts a stale
             # REPEATABLE READ transaction; neither may accept an old snapshot.
-            if not scope:
+            if not scope and not same_active_target:
                 conflicts = frappe.db.sql(
                     "SELECT name FROM `tabHERO Frappe Mapping` "
                     "WHERE operation = %s AND target_doctype = %s AND target_field = %s "
@@ -70,13 +141,24 @@ class HEROFrappeMapping(Document):
             self.mapping_revision = int(self.mapping_revision or 0) + 1
 
 
+def _target_lock_name(operation, target_doctype, target_field):
+    key = json.dumps([frappe.local.site, operation, target_doctype, target_field],
+                     ensure_ascii=False, separators=(",", ":"))
+    return "hero-map:" + hashlib.sha256(key.encode()).hexdigest()[:52]
+
+
+def _require_active_target(operation, target_doctype, target_field):
+    name = _target_lock_name(operation, target_doctype, target_field)
+    if name not in (getattr(frappe.db, '_hero_mapping_target_locks', None) or set()):
+        frappe.throw('Mapping target must be locked before activating or retargeting an existing rule.')
+    _lock_active_target(operation, target_doctype, target_field)
+
+
 def _lock_active_target(operation, target_doctype, target_field):
     # GET_LOCK survives transaction commits, so keep it only on the database
     # connection and release it through both transaction completion hooks.
     db = frappe.db
-    key = json.dumps([frappe.local.site, operation, target_doctype, target_field],
-                     ensure_ascii=False, separators=(",", ":"))
-    lock_name = "hero-map:" + hashlib.sha256(key.encode()).hexdigest()[:52]
+    lock_name = _target_lock_name(operation, target_doctype, target_field)
     held = getattr(db, "_hero_mapping_target_locks", None)
     if held is not None and lock_name in held:
         if db.sql("SELECT IS_USED_LOCK(%s) = CONNECTION_ID()", (lock_name,))[0][0] != 1:

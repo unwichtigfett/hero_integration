@@ -3,6 +3,8 @@
  "fields": [
   {"fieldname":"operation","label":"HERO Operation","fieldtype":"Select","options":"HeroCustomers\nHeroProjectMatches\nHeroCalendarEvents\nHeroTasks","reqd":1,"in_list_view":1},
   {"fieldname":"definition_id","label":"Definition ID","fieldtype":"Data","reqd":1,"unique":1,"read_only":1,"in_list_view":1},
+  {"fieldname":"portable_definition_id","label":"Portable Definition ID","fieldtype":"Data","unique":1,"read_only":1},
+  {"fieldname":"portable_lineage_json","label":"Portable Rule Lineage","fieldtype":"Code","options":"JSON","read_only":1,"hidden":1},
   {"fieldname":"source_path","label":"HERO Source Path","fieldtype":"Data","reqd":1,"in_list_view":1}, {"fieldname":"source_type","label":"HERO Source Type","fieldtype":"Data","reqd":1},
   {"fieldname":"target_doctype","label":"Target DocType","fieldtype":"Data","reqd":1,"in_list_view":1}, {"fieldname":"target_field","label":"Target Field","fieldtype":"Data","reqd":1,"in_list_view":1},
   {"fieldname":"purpose","label":"Mapping Purpose","fieldtype":"Select","options":"Field\nSource Identity\nRecord Name\nCustomer Type\nCustomer Primary Contact\nCustomer Home Phone\nLifecycle Flag\nCustomer Relation\nConfirmed Company\nProject Relation\nNative Binding","default":"Field","reqd":1,"in_list_view":1},

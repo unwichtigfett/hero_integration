@@ -66,6 +66,20 @@ class TestMappingDraftService(unittest.TestCase):
         self.assertEqual((reopened.generation, reopened.content_revision), (2, 1))
         self.assertEqual(len(self.storage.revisions()), 2)
 
+    def test_reopen_after_parentless_generation_retains_history(self):
+        definition = {'site_scope':'site', 'definition_id':'a16b15fa-7ca8-4722-b63c-ac60cc46629a',
+            'source_instance':'source', 'snapshot_name':'snapshot', 'schema_fingerprint':'a'*64,
+            'direction':'QUERY_TO_FRAPPE', 'operation_kind':'QUERY', 'operation_name':'customers'}
+        owner = 'owner@example.invalid'
+        content = {'records_path':'customers', 'identity_path':'id'}
+        draft = self.service.open_new_draft(definition, owner, content)
+        self.service.discard(draft.definition_id, owner, 1, 1, confirmed=True)
+        self.storage.put_active(ActiveMapping('site', draft.definition_id, 'new-active', 1, 'a'*64, content))
+        reopened = self.service.open_draft(draft.definition_id, owner)
+        self.assertEqual((reopened.generation, reopened.content_revision, reopened.base_active_revision), (2, 0, 1))
+        self.assertIsNone(reopened.new_definition)
+        self.assertEqual(self.storage.revisions()[0].content, content)
+
     def test_new_definition_rejects_invalid_identity_and_direction(self):
         definition = {'site_scope': 'site', 'definition_id': 'HERO-GQL-MAP-00001', 'source_instance': 'source',
             'snapshot_name': 'snapshot', 'schema_fingerprint': 'a' * 64, 'direction': 'QUERY_TO_FRAPPE',

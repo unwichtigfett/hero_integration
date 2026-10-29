@@ -43,11 +43,13 @@ def package():
 
 class TestSchemaProvisioning(unittest.TestCase):
     def setUp(self):
+        from hero_integration.hero_integration.doctype.hero_frappe_mapping import hero_frappe_mapping
         self.frappe = _Frappe()
         self.patches = [
             patch.object(mapping_exchange, "frappe", self.frappe),
             patch.object(schema_provisioning, "frappe", self.frappe),
             patch.object(adoption, "frappe", self.frappe),
+            patch.object(hero_frappe_mapping, '_lock_active_target'),
         ]
         for item in self.patches:
             item.start()
