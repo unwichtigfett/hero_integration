@@ -50,6 +50,58 @@ class _UnverifiedSource(_VerifiedSource):
 
 
 class TestTestingPreviewContract(unittest.TestCase):
+    def test_legacy_midpage_resume_blocks_before_read_without_page_evidence(self):
+        run = SimpleNamespace(resume_phase='customer', resume_offset=0, resume_record_index=1,
+                              state='Running', reload=lambda:None, save=lambda:None)
+        calls = []
+        def reader(offset):
+            calls.append(offset)
+            return SourcePage(({'id':2}, {'id':3}), None)
+        with patch.object(migration, '_phase_state', return_value='Pending'), \
+             patch.object(migration, '_set_phase_state') as phase, patch.object(migration, '_block_run') as block, \
+             patch.object(migration, '_migrate_customer'), patch.object(migration, '_record_result'), \
+             patch.object(migration, '_record_phase_result'), patch.object(migration, '_phase_has_blockers', return_value=False):
+            result = migration._process_phase(run, 'customer', reader)
+        self.assertFalse(result)
+        self.assertEqual(calls, [])
+        self.assertEqual(phase.call_args_list[-1].args, (run, 'customer', 'Blocked'))
+        self.assertIn('page', block.call_args.args[1].lower())
+
+    def test_legacy_page_boundary_resume_blocks_without_stable_snapshot(self):
+        run = SimpleNamespace(resume_phase='customer', resume_offset=2, resume_record_index=0,
+                              state='Running', reload=lambda:None, save=lambda:None)
+        calls = []
+        def reader(offset):
+            calls.append(offset)
+            return SourcePage((), None)
+        with patch.object(migration, '_phase_state', return_value='Pending'), \
+             patch.object(migration, '_set_phase_state'), patch.object(migration, '_block_run') as block, \
+             patch.object(migration, '_phase_has_blockers', return_value=False):
+            result = migration._process_phase(run, 'customer', reader)
+        self.assertFalse(result)
+        self.assertEqual(calls, [])
+        self.assertIn('snapshot', block.call_args.args[1].lower())
+
+    def test_projection_resume_blocks_without_snapshot_before_read(self):
+        from hero_integration.services import read_contract
+        for operation in ('HeroTasks', 'HeroCalendarEvents'):
+            run = SimpleNamespace(graphql_service='service', graphql_mapping='mapping', service_revision=1,
+                                  mapping_revision=1, resume_offset=1, resume_record_index=0)
+            service = SimpleNamespace(schema_snapshot='snapshot')
+            mapping = SimpleNamespace(mapping_json='{}')
+            fake = SimpleNamespace(get_doc=lambda doctype, _name: {'HERO GraphQL Service':service,
+                'HERO GraphQL Mapping':mapping, 'HERO GraphQL Schema Snapshot':object()}[doctype])
+            calls = []
+            source = SimpleNamespace(contract=SimpleNamespace(target_operation=operation),
+                                     projection=lambda offset: calls.append(offset))
+            reviewed = SimpleNamespace(target_operation=operation, service_revision=1, mapping_revision=1)
+            with patch.object(migration, 'frappe', fake), patch.object(migration, '_mapping_plan_for_run'), \
+                 patch.object(read_contract, 'from_documents', return_value=reviewed), \
+                 patch.object(migration, '_block_run') as block:
+                migration._process_projection(run, source)
+            self.assertEqual(calls, [])
+            self.assertIn('snapshot', block.call_args.args[1].lower())
+
     def test_shared_budget_limits_multiple_sources_and_pagination(self):
         source = _VerifiedSource()
         limited = TestingPreviewSource(source, 2)

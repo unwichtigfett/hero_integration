@@ -393,6 +393,12 @@ def _process_phase(run, phase: str, reader) -> bool:
     _set_phase_state(run, phase, "Running")
     offset = int(run.resume_offset or 0) if run.resume_phase == phase else 0
     record_index = int(run.resume_record_index or 0) if run.resume_phase == phase else 0
+    if offset or record_index:
+        # Offset continuation requires a stable source snapshot; mid-page
+        # continuation additionally requires persisted page identity evidence.
+        _set_phase_state(run, phase, "Blocked")
+        _block_run(run, "Cannot resume without a verified source snapshot and page identity evidence.")
+        return False
     while True:
         _cancel_if_requested(run)
         page: SourcePage = reader(offset)
@@ -506,6 +512,9 @@ def _process_projection(run, source) -> None:
         raise MappingPlanError('Native Task onboarding source does not match the approved run.')
     offset = int(run.resume_offset or 0)
     index_start = int(run.resume_record_index or 0)
+    if offset or index_start:
+        _block_run(run, 'Cannot resume without a verified source snapshot and page identity evidence.')
+        return
     seen_pages = set()
     while True:
         _cancel_if_requested(run)
