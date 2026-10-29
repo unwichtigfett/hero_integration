@@ -100,11 +100,14 @@ def monitor(source, plan: dict[str, object] | None = None, *, customer_offset: i
     plan = plan or {"sources": ["HeroCustomers", "HeroProjectMatches"], "max_pages": MAX_FULL_INVENTORY_PAGES, "rate_limit": 10000}
     minimum_interval = 60 / max(int(plan.get("rate_limit", 10000)), 1)
     max_pages = max(int(plan.get("max_pages", MAX_FULL_INVENTORY_PAGES)), 1)
+    page_size = plan.get("page_size")
+    if type(page_size) is not int or not 1 <= page_size <= 1000:
+        page_size = None
     counts: dict[str, _PageCount] = {}
     if "HeroCustomers" in plan["sources"]:
-        counts["HeroCustomers"] = _count_pages(source.customers, customer_offset, max_pages, minimum_interval, record_observer, "HeroCustomers")
+        counts["HeroCustomers"] = _count_pages(source.customers, customer_offset, max_pages, minimum_interval, record_observer, "HeroCustomers", page_size)
     if "HeroProjectMatches" in plan["sources"]:
-        counts["HeroProjectMatches"] = _count_pages(source.projects, project_offset, max_pages, minimum_interval, record_observer, "HeroProjectMatches")
+        counts["HeroProjectMatches"] = _count_pages(source.projects, project_offset, max_pages, minimum_interval, record_observer, "HeroProjectMatches", page_size)
     incomplete = tuple(name for name, item in counts.items() if item.incomplete)
     customers = counts.get("HeroCustomers", _PageCount(0, 0, False))
     projects = counts.get("HeroProjectMatches", _PageCount(0, 0, False))
@@ -197,7 +200,7 @@ def _monitor_observer(operation: str, record: dict[str, object]) -> None:
     )
 
 
-def _count_pages(reader, offset: int, max_pages: int, minimum_interval: float, record_observer=None, operation: str = "") -> _PageCount:
+def _count_pages(reader, offset: int, max_pages: int, minimum_interval: float, record_observer=None, operation: str = "", page_size: int | None = None) -> _PageCount:
     count = pages = 0
     seen_offsets: set[int] = set()
     seen_identities: set[str] = set()
@@ -213,6 +216,8 @@ def _count_pages(reader, offset: int, max_pages: int, minimum_interval: float, r
         page = reader(current_offset)
         last_request = time.monotonic()
         pages += 1
+        if page_size is not None and len(page.records) > page_size:
+            raise PaginationProgressError("HERO response exceeds the configured page size.")
         if page.next_offset is not None and (type(page.next_offset) is not int or page.next_offset <= current_offset or not page.records):
             raise PaginationProgressError("HERO pagination did not advance; monitoring stopped safely.")
         identities = []
@@ -229,6 +234,8 @@ def _count_pages(reader, offset: int, max_pages: int, minimum_interval: float, r
             for record in page.records:
                 record_observer(operation, record)
         if page.next_offset is None:
+            if page_size is not None and len(page.records) == page_size:
+                return _PageCount(count, current_offset, True)
             return _PageCount(count, 0, False)
         current_offset = page.next_offset
     return _PageCount(count, current_offset, True)
