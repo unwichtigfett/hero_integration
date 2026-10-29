@@ -164,7 +164,8 @@
         CONNECTOR_DISABLED:'The HERO connection is disabled.', TOOL_INTERNAL_ERROR:'The tool action could not be completed on the server.'};
     /*
      * GraphQL text helpers. Pure functions without DOM access, so they can be tested in isolation.
-     * Variables use one `name := value` line each; every value is parsed with JSON.parse only (never eval).
+     * Variables use one `name := value;` line each (the closing semicolon is optional); every value is parsed
+     * with JSON.parse only (never eval).
      */
     const GRAPHQL_NAME = /^[_A-Za-z][_0-9A-Za-z]*$/;
     function checkJsonNumbers(value, where) {
@@ -191,8 +192,12 @@
         source.split(/\r?\n/).forEach((line, index) => {
             if (!line.trim()) return;
             const where = `Line ${index + 1}`, at = line.indexOf(':=');
-            if (at < 0) { problems.push(`${where}: expected "name := value".`); return; }
-            const name = line.slice(0, at).trim(), raw = line.slice(at + 2).trim();
+            if (at < 0) { problems.push(`${where}: expected "name := value;".`); return; }
+            const name = line.slice(0, at).trim();
+            // One closing ";" ends the assignment. It is optional, so "id := 5" and "id := 5;" are equal.
+            // A ";" inside a quoted string is part of the value, because such a line ends with the closing quote.
+            let raw = line.slice(at + 2).trim();
+            if (raw.endsWith(';')) raw = raw.slice(0, -1).trimEnd();
             if (name.startsWith('$')) { problems.push(`${where}: write the variable name without "$".`); return; }
             if (!GRAPHQL_NAME.test(name)) { problems.push(`${where}: "${name}" is not a valid GraphQL variable name.`); return; }
             if (seen.has(name)) { problems.push(`${where}: variable "${name}" is defined more than once.`); return; }
@@ -212,7 +217,7 @@
     }
     function formatVariablesText(variables) {
         if (!variables || typeof variables !== 'object' || Array.isArray(variables)) return '';
-        return Object.entries(variables).map(([name, value]) => `${name} := ${JSON.stringify(value)}`).join('\n');
+        return Object.entries(variables).map(([name, value]) => `${name} := ${JSON.stringify(value)};`).join('\n');
     }
     function resultKey(path, key) {
         if (GRAPHQL_NAME.test(key)) return path ? `${path}.${key}` : key;
@@ -795,15 +800,15 @@
                 if(kind===this.serviceKind)link.setAttribute('aria-current','page');
                 link.addEventListener('click',e=>{if(this.openService(kind)===false)e.preventDefault();});views.append(link);
             }
-            this.editorHost=$('div','ht-editor');this.variables=$('textarea','form-control ht-variables');this.variables.value='';this.variables.rows=6;this.variables.spellcheck=false;this.variables.placeholder='id := 5\nsearch := "Photovoltaik"\nactive := true';this.queryOutput=$('pre','ht-data');this.queryOutput.setAttribute('aria-live','polite');this.queryStatus=$('p','ht-query-status');this.queryStatus.setAttribute('role','status');
+            this.editorHost=$('div','ht-editor');this.variables=$('textarea','form-control ht-variables');this.variables.value='';this.variables.rows=6;this.variables.spellcheck=false;this.variables.placeholder='id := 5;\noffset := 5;\norderBy := "id";';this.queryOutput=$('pre','ht-data');this.queryOutput.setAttribute('aria-live','polite');this.queryStatus=$('p','ht-query-status');this.queryStatus.setAttribute('role','status');
             const bar=$('div','ht-toolbar');this.newButton=button('New '+this.serviceLabel(),()=>this.newQuery());this.copyButton=button('Duplicate',()=>this.run(async()=>this.newQuery(true)));this.saveButton=button('Save',()=>this.run(()=>this.saveQuery()));this.validateButton=button('Validate',()=>this.run(()=>this.validateQuery()));this.executeButton=button(this.serviceKind==='mutation'?'Execute Mutation':'Execute Query',()=>this.run(()=>this.executeQuery()));this.deleteButton=button('Delete',()=>this.run(()=>this.deleteQuery()));bar.append(this.newButton,this.copyButton,this.saveButton,this.validateButton,this.executeButton,this.deleteButton);
             this.serviceHint=$('p','ht-service-hint');this.queryProvenance=$('p','ht-query-provenance');
-            // Variables are runtime input: one "name := value" line each, converted to a JSON object before a request.
-            this.variablesHelp=$('p','ht-context','One variable per line: name := value. Strings use double quotes; numbers, true, false and null have no quotes; arrays and objects use JSON. Values are not stored with the service.');
-            this.variablesJson=$('pre','ht-data ht-variables-json');const advanced=$('details','ht-variables-advanced');advanced.append($('summary','','Advanced: JSON variables'),this.variablesJson);
-            editor.append(this.queryStatus,this.queryProvenance,field('Name',this.name),field('Category',this.category),field('Description',this.description),field('operationName',this.operation),$('h3','','GraphQL'),this.editorHost,field('Variables',this.variables),this.variablesHelp,advanced,bar,this.queryOutput);grid.append(this.queryList,editor);this.queryPager=this.pager('services',()=>this.loadQueries());p.append(views,$('h2','','GraphQL Services · '+this.serviceLabel()),this.serviceHint,grid,this.queryPager.root);
+            // Variables are runtime input: one "name := value;" line each, converted to a JSON object before a request.
+            // No preview is shown below the field; invalid input marks the field and explains the problem in its tooltip.
+            this.variablesHelp=$('p','ht-context','One variable per line: name := value; (the semicolon is optional). Strings use double quotes; numbers, true, false and null have no quotes; arrays and objects use JSON. Values are not stored with the service.');
+            editor.append(this.queryStatus,this.queryProvenance,field('Name',this.name),field('Category',this.category),field('Description',this.description),field('operationName',this.operation),$('h3','','GraphQL'),this.editorHost,field('Variables',this.variables),this.variablesHelp,bar,this.queryOutput);grid.append(this.queryList,editor);this.queryPager=this.pager('services',()=>this.loadQueries());p.append(views,$('h2','','GraphQL Services · '+this.serviceLabel()),this.serviceHint,grid,this.queryPager.root);
             for(const n of [this.name,this.category,this.description,this.operation])n.addEventListener('input',()=>this.queryChanged());
-            this.variables.addEventListener('input',()=>{this.renderVariablesJson();this.updateActions();});this.renderVariablesJson();
+            this.variables.addEventListener('input',()=>{this.markVariables();this.updateActions();});this.markVariables();
         }
         async initializeEditor(){
             if(window.hero_integration_platform?.loadAce){
@@ -837,11 +842,11 @@
         }
         draftString(){return this.queryString({name:this.name.value,category:this.category.value,description:this.description.value,operation_name:this.operation.value,query:this.editor?.getValue()||''});}
         variablesValue(){return parseVariablesText(this.variables.value);}
-        renderVariablesJson(){if(!this.variablesJson)return;try{this.variablesJson.textContent=JSON.stringify(this.variablesValue(),null,2);this.variables.removeAttribute('aria-invalid');}catch(error){this.variablesJson.textContent=error.message;this.variables.setAttribute('aria-invalid','true');}}
+        markVariables(){if(!this.variables)return;try{this.variablesValue();this.variables.removeAttribute('aria-invalid');this.variables.title='';}catch(error){this.variables.setAttribute('aria-invalid','true');this.variables.title=error.message;}}
         get dirty(){return this.base!==undefined&&this.base!==this.draftString();}
         confirmReplace(){return !this.dirty||window.confirm('Discard the unsaved service draft?');}
         payload(){return {name:this.name.value,category:this.category.value.trim()||(this.serviceKind==='mutation'?'Custom Mutations':'Custom Queries'),description:this.description.value,operation_name:this.operation.value||null,query:this.editor.getValue()};}
-        setQuery(q={}){this.copiedFrom=q.copied_from||'';this.draftProvenance=q.provenance||'GraphQL-Services';this.queryEpoch=(this.queryEpoch||0)+1;this.query=q.query_id?q:null;this.name.value=q.name||'';this.category.value=q.category||(this.serviceKind==='mutation'?'Custom Mutations':'Custom Queries');this.description.value=q.description||'';this.operation.value=q.operation_name||'';this.editor.setValue(q.query||'',-1);if(!q.keep_variables)this.variables.value=formatVariablesText(q.variables);this.renderVariablesJson();this.base=this.draftString();this.validation=null;this.queryOutput.textContent=q.query_id?`${this.serviceLabel()} ${q.query_id} · Revision ${q.revision}`:'New unsaved draft';this.updateActions();}
+        setQuery(q={}){this.copiedFrom=q.copied_from||'';this.draftProvenance=q.provenance||'GraphQL-Services';this.queryEpoch=(this.queryEpoch||0)+1;this.query=q.query_id?q:null;this.name.value=q.name||'';this.category.value=q.category||(this.serviceKind==='mutation'?'Custom Mutations':'Custom Queries');this.description.value=q.description||'';this.operation.value=q.operation_name||'';this.editor.setValue(q.query||'',-1);if(!q.keep_variables)this.variables.value=formatVariablesText(q.variables);this.markVariables();this.base=this.draftString();this.validation=null;this.queryOutput.textContent=q.query_id?`${this.serviceLabel()} ${q.query_id} · Revision ${q.revision}`:'New unsaved draft';this.updateActions();}
         newQuery(copy=false){if(!copy&&!this.confirmReplace())return;const q=copy?{...this.payload(),name:this.name.value+' (Copy)',copied_from:this.query?.query_id||this.copiedFrom,provenance:this.query?.provenance||this.draftProvenance,keep_variables:true}:{};this.setQuery(q);if(copy)this.base='';}
         async loadQueries(serial=this.sequence){const data=await call('list_services',{...this.serviceScope(),start:this.starts.services,page_size:50});if(serial!==this.sequence)return;this.mutationExecution=data.mutation_execution||null;this.queryList.replaceChildren($('h3','',this.serviceKind==='mutation'?'Saved Mutations':'Saved Queries'));for(const q of data.rows)this.queryList.append(button(`${q.name} · r${q.revision} · Provenance=${q.provenance||'Legacy (unbekannt)'}`,()=>{if(!this.busy&&this.confirmReplace())this.setQuery(q);}));this.queryPager.update(data.has_more);
             const queryId=new URLSearchParams(location.search).get('query');

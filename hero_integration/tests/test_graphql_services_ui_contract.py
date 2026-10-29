@@ -30,6 +30,11 @@ class TestGraphQLServicesUiContract(unittest.TestCase):
     def test_variables_are_runtime_input_in_name_value_lines(self):
         self.assertIn("field('Variables',this.variables)", TOOLS)
         self.assertNotIn("Variables (JSON)", TOOLS)
+        # No JSON preview below the Variables field; problems are flagged on the field itself.
+        for preview in ("variablesJson", "Advanced: JSON variables", "ht-variables-json"):
+            self.assertNotIn(preview, TOOLS)
+        self.assertIn("this.variables.setAttribute('aria-invalid','true')", TOOLS)
+        self.assertIn('id := 5;\\noffset := 5;\\norderBy := \"id\";', TOOLS)
         self.assertIn("JSON.parse(raw)", TOOLS)
         for forbidden in ("eval(", "new Function", "Function("):
             self.assertNotIn(forbidden, TOOLS)
