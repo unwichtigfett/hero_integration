@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import copy
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -258,10 +259,11 @@ def variables_by_argument(request):
 
 
 def read_documents():
-    snapshot_document = SimpleNamespace(name="READ-SNAPSHOT", schema_fingerprint="read-fingerprint")
+    snapshot_document = SimpleNamespace(name="READ-SNAPSHOT", schema_fingerprint="read-fingerprint", source_instance='hero-primary')
     mapping = SimpleNamespace(
         name="READ-MAPPING",
         status="Active",
+        direction='QUERY_TO_FRAPPE', operation_kind='QUERY', source_instance='hero-primary',
         schema_snapshot=snapshot_document.name,
         schema_fingerprint=snapshot_document.schema_fingerprint,
         mapping_revision=3,
@@ -358,8 +360,14 @@ def test_query_adapter_requires_bound_pagination_and_ordering_values():
         QueryAdapter().materialize(snapshot(), draft(pagination="cursor"))
 
 
-def test_read_contract_rejects_stale_revisions_and_identity_or_ordering_drift():
+def test_read_contract_rejects_stale_revisions_and_identity_or_ordering_drift(monkeypatch):
     service, mapping, read_snapshot = read_documents()
+    rule = {'definition_id':'customer-id', 'status':'Active', 'operation':'HeroCustomers',
+            'schema_snapshot':mapping.schema_snapshot, 'schema_fingerprint':mapping.schema_fingerprint,
+            'personal_graphql_mapping':'', 'source_path':'id'}
+    fake_frappe = SimpleNamespace(db=SimpleNamespace(has_column=lambda *_: True),
+        get_all=lambda _doctype, filters, **_kwargs: [rule] if filters.get('definition_id') == 'customer-id' else [])
+    monkeypatch.setitem(sys.modules, 'frappe', fake_frappe)
     service.approved_service_revision = 6
     with pytest.raises(ReadContractError, match="service approval is stale"):
         from_documents(service, mapping, read_snapshot)
@@ -391,6 +399,39 @@ def test_mutation_draft_is_never_executable_and_blocks_partial_or_unapproved_col
     ):
         with pytest.raises(MappingContractError):
             MutationAdapter().materialize(snapshot(), draft_value)
+
+
+def test_mutation_plan_rejects_wrong_source_and_ambiguous_or_collection_paths():
+    raw = copy.deepcopy(RAW_SCHEMA)
+    input_type = next(t for t in raw['__schema']['types'] if t['name'] == 'CaseUpdateInput')
+    input_type['inputFields'].append({'name':'children', 'defaultValue':None,
+        'type':listed(named('INPUT_OBJECT', 'CaseChild'))})
+    input_type['inputFields'].append({'name':'details', 'defaultValue':None,
+        'type':named('INPUT_OBJECT', 'CaseChild')})
+    raw['__schema']['types'].append({'kind':'INPUT_OBJECT', 'name':'CaseChild',
+        'inputFields':[{'name':'title', 'defaultValue':None, 'type':non_null(named('SCALAR','String'))}]})
+    adapted = SnapshotAdapter().adapt(StoredSnapshot('snapshot', raw, analyze_snapshot(raw).fingerprint, 'hero-primary'))
+    plan = MutationAdapter().materialize(adapted, MutationDraft('updateCase', (('input','title'),), 'hero-primary', 1))
+    assert plan['input_types'] == [{'path':['input','title'], 'type':'String', 'nullable':True}]
+    assert plan['null_mode'] == 'missing_is_unchanged'
+    assert plan['executable'] is False
+    nested = MutationAdapter().materialize(adapted, MutationDraft('updateCase', (('input','details','title'),), 'hero-primary', 1))
+    assert nested['input_types'] == [{'path':['input','details','title'], 'type':'String!', 'nullable':False}]
+    collection = MutationAdapter().materialize(adapted, MutationDraft('updateCase', (('input','children'),),
+        'hero-primary', 1, relation_mode=RelationMode.COLLECTION, resolver_approved=True))
+    assert collection['input_types'][0]['type'] == '[CaseChild]'
+    for value in (
+        MutationDraft('updateCase', (('input','title'),), 'another-source', 1),
+        MutationDraft('updateCase', (('input','title'),), 'hero-primary', True),
+        MutationDraft('updateCase', (('input','title'), ('input','title')), 'hero-primary', 1),
+        MutationDraft('updateCase', (('input',), ('input','title')), 'hero-primary', 1),
+        MutationDraft('updateCase', (('input','children'),), 'hero-primary', 1),
+        MutationDraft('updateCase', (('input','children','title'),), 'hero-primary', 1),
+        MutationDraft('updateCase', (('input','children','title'),), 'hero-primary', 1,
+                      relation_mode=RelationMode.COLLECTION, resolver_approved=True),
+    ):
+        with pytest.raises(MappingContractError):
+            MutationAdapter().materialize(adapted, value)
 
 READ_QUERY = """query SearchCases($v1: CaseFilter!, $v2: Boolean, $v3: Int!, $v4: CaseOrder) {
   cases: searchCases(filter: $v1, includeDeleted: $v2, offset: $v3, orderBy: $v4) {
