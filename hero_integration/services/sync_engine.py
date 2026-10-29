@@ -243,7 +243,7 @@ class SyncEngine:
                 return self._incomplete(state,SyncStatus.RECONCILIATION_REQUIRED if caps.bounded_comparison else SyncStatus.INCOMPLETE,"provider cannot prove complete cursor discovery")
             fields=tuple(self.index.fields(run.site_scope,state.configuration.source_instance))
             if any(f.binding.mapping_revision!=state.configuration.mapping_revision for f in fields): return self._incomplete(state,SyncStatus.RECONCILIATION_REQUIRED,"bound field mapping revision changed")
-            page=self._changes(state.cursor); seen=set(); coverage=set(state.coverage)
+            cursor=state.cursor; page=self._changes(cursor); seen=set(); seen_cursors={cursor}; coverage=set(state.coverage)
             while True:
                 marker=_page_marker(page)
                 if marker in seen: return self._incomplete(state,SyncStatus.PARTIAL,"duplicate change page")
@@ -260,10 +260,11 @@ class SyncEngine:
                     if not page.complete: return self._incomplete(state,SyncStatus.INCOMPLETE,"provider reported incomplete changes")
                     if not page.watermark: return self._incomplete(state,SyncStatus.INCOMPLETE,"provider supplied no committed watermark")
                     return self.ledger.save_state(replace(state,cursor=page.watermark,coverage=tuple(sorted(coverage)),status=SyncStatus.SUCCEEDED,generation=state.generation+1,diagnostic=""),state.generation)
-                if page.next_cursor==state.cursor: return self._incomplete(state,SyncStatus.PARTIAL,"non-advancing cursor")
-                state=replace(state,cursor=page.next_cursor)
-                # Cursor is intentionally not saved between pages: no partial batch can advance it.
-                page=self._changes(page.next_cursor)
+                if page.next_cursor in seen_cursors: return self._incomplete(state,SyncStatus.PARTIAL,"repeated cursor")
+                seen_cursors.add(page.next_cursor)
+                cursor=page.next_cursor
+                # Keep the committed state unchanged until the entire batch succeeds.
+                page=self._changes(cursor)
         except SyncError: raise
         except Exception: return self._incomplete(state,SyncStatus.FAILED,"redacted provider or local failure")
         finally: self.ledger.release(run)

@@ -51,6 +51,31 @@ class TestSync(unittest.TestCase):
   partial=engine.pending_sync(SyncRun("m","site","admin",state.generation,False)); self.assertEqual((partial.status,partial.cursor),(SyncStatus.PARTIAL,None))
   self.ledger=InMemorySyncLedger(); provider=Provider({None:ChangePage(({"id":"1","name":"Ada"},),None,True,None)}); engine=self.engine(provider); state=self.configured(engine)
   incomplete=engine.pending_sync(SyncRun("m2","site","admin",state.generation,False)); self.assertEqual((incomplete.status,incomplete.cursor),(SyncStatus.INCOMPLETE,None))
+ def test_second_page_failure_does_not_persist_intermediate_cursor(self):
+  class FailsSecond(Processor):
+   def process(self,row,fields):
+    self.rows.append((row,fields)); return len(self.rows)==1
+  provider=Provider({None:ChangePage(({"id":"1","name":"Ada"},),"c1",False),
+                     "c1":ChangePage(({"id":"1","name":"changed"},),None,True,"w1")})
+  processor=FailsSecond(); engine=self.engine(provider,processor); state=self.configured(engine)
+  result=engine.pending_sync(SyncRun("partial-two","site","admin",state.generation,False))
+  self.assertEqual((result.status,result.cursor,result.coverage),(SyncStatus.PARTIAL,None,()))
+  self.assertEqual(provider.calls,[None,"c1"])
+  self.assertEqual(self.ledger.state("site").cursor,None)
+ def test_second_page_exception_does_not_persist_intermediate_cursor(self):
+  provider=Provider({None:ChangePage(({"id":"1","name":"Ada"},),"c1",False)})
+  engine=self.engine(provider); state=self.configured(engine)
+  result=engine.pending_sync(SyncRun("failed-two","site","admin",state.generation,False))
+  self.assertEqual((result.status,result.cursor),(SyncStatus.FAILED,None))
+ def test_cursor_cycle_preserves_preexisting_committed_watermark(self):
+  from dataclasses import replace
+  provider=Provider({"w0":ChangePage((),"c1",False), "c1":ChangePage((),"c2",False),
+                     "c2":ChangePage((),"c1",False)})
+  engine=self.engine(provider); state=self.configured(engine)
+  state=self.ledger.save_state(replace(state,cursor="w0",generation=state.generation+1),state.generation)
+  result=engine.pending_sync(SyncRun("cycle","site","admin",state.generation,False))
+  self.assertEqual((result.status,result.cursor),(SyncStatus.PARTIAL,"w0"))
+  self.assertEqual(provider.calls,["w0","c1","c2"])
  def test_capability_limits_and_revision_change_require_reconciliation(self):
   provider=Provider({None:ChangePage((),None,True,"w")},ChangeCapabilities(False,False,True)); engine=self.engine(provider); state=self.configured(engine)
   self.assertEqual(engine.pending_sync(SyncRun("m","site","admin",state.generation,False)).status,SyncStatus.RECONCILIATION_REQUIRED)
