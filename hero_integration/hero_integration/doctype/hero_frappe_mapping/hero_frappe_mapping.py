@@ -27,7 +27,7 @@ class HEROFrappeMapping(Document):
 
     def validate(self) -> None:
         frappe.only_for("System Manager")
-        from hero_integration.services.frappe_mapping_draft_storage import personal_publication_parent
+        from hero_integration.services.frappe_mapping_draft_storage import personal_publication_parent, first_publication_admits
         scope = getattr(self, 'personal_graphql_mapping', None) or ''
         previous = self.get_doc_before_save() if not self.is_new() else None
         old_scope = (previous.personal_graphql_mapping or '') if previous else ''
@@ -57,6 +57,8 @@ class HEROFrappeMapping(Document):
         if previous:
             if portable != (previous.get('portable_definition_id') or '') or lineage != (previous.get('portable_lineage_json') or ''):
                 frappe.throw('Portable rule identity and lineage are immutable.')
+        elif portable and not lineage and portable == self.definition_id and scope and first_publication_admits('rule', portable):
+            pass  # A first publication creates a root without inventing a predecessor.
         elif portable or lineage:
             if not scope or personal_publication_parent() != scope or not portable or not lineage:
                 frappe.throw('Portable rule identity and lineage are service-managed.')
@@ -98,8 +100,8 @@ class HEROFrappeMapping(Document):
                     frappe.throw('Field-rule identity is already enrolled by another mapping.')
                 from hero_integration.services.frappe_mapping_draft_storage import lock_identity_drafts
                 for row in lock_identity_drafts(frappe, [portable_candidate], 'rule'):
-                    if not (scope and personal_publication_parent() == scope and row.owner_user == frappe.session.user
-                            and row.base_active_mapping == scope):
+                    if not ((scope and personal_publication_parent() == scope and row.owner_user == frappe.session.user
+                             and row.base_active_mapping == scope) or first_publication_admits('rule', portable_candidate, row)):
                         frappe.throw('Field-rule identity is already used by a personal draft.')
         spec = _spec(self)
         if self.status == "Draft" and self.purpose == PURPOSE_FIELD:

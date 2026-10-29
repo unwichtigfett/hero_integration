@@ -16,6 +16,21 @@ from hero_integration.services.mapping_draft_service import (
 _write_scope = ContextVar("hero_mapping_draft_write_scope", default=None)
 _publication_scope = ContextVar("hero_mapping_publication_scope", default=None)
 _publication_operation = ContextVar("hero_mapping_publication_operation", default=None)
+_first_publication = ContextVar("hero_mapping_first_publication", default=None)
+
+
+def first_publication_admits(kind, identity, row=None):
+    """Admit only identities owned by the locked draft in this publication."""
+    import frappe
+    scope = _first_publication.get()
+    if not scope or scope['site'] != frappe.local.site or scope['actor'] != frappe.session.user:
+        return False
+    allowed = scope['definitions'] if kind == 'definition' else scope['rules'] if kind == 'rule' else ()
+    if identity not in allowed:
+        return False
+    return row is None or (row.draft_key == scope['key'] and row.owner_user == scope['actor']
+                           and row.definition_id == scope['definition_id']
+                           and int(row.generation) == scope['generation'])
 
 
 def assert_draft_identity_index(f):
@@ -38,6 +53,18 @@ def assert_portable_identity_schema(f):
         if not any(sum(row.get('Key_name') == name for row in rows) == 1 for name in names):
             raise MappingDraftError('Portable identity unique index is not installed; migrate the app before using this operation.')
     assert_draft_identity_index(f)
+
+
+def assert_first_publication_identity_schema(f):
+    """Require database-enforced uniqueness for the local definition identity."""
+    assert_portable_identity_schema(f)
+    for doctype in ('HERO GraphQL Mapping', 'HERO Frappe Mapping'):
+        rows = f.db.sql(f'show index from `tab{doctype}`', as_dict=True)
+        keys = {row.get('Key_name') for row in rows if row.get('Column_name') == 'definition_id'
+                and int(row.get('Seq_in_index') or 0) == 1 and row.get('Non_unique') in (0, '0')
+                and row.get('Sub_part') is None and row.get('Key_name')}
+        if not any(sum(row.get('Key_name') == key for row in rows) == 1 for key in keys):
+            raise MappingDraftError('Definition identity unique index is not installed; migrate the app before publication.')
 
 
 def _fresh_identity_candidates(f, identity):
@@ -434,6 +461,9 @@ class FrappeMappingDraftStorage:
         if confirmed is not True:
             raise MappingDraftError('Explicit publication confirmation is required.')
         self._authorize(actor)
+        if type(active_revision) is int and active_revision == 0:
+            return self._publish_parentless(definition_id, actor, generation, revision, reconciliation_revision,
+                                            warning_fingerprint=warning_fingerprint)
         # Use the same lock order as directional exchange: context before
         # parent. The initial lookup identifies only the lock to acquire; the
         # current, locked parent is checked again below before publication.
@@ -567,6 +597,168 @@ class FrappeMappingDraftStorage:
             row.diagnostics_json = json.dumps(diagnostics, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
             row.save()
             return {'name': current.name, 'revision': current.revision, 'unchanged': False}
+
+    def _publish_parentless(self, definition_id, actor, generation, revision, reconciliation_revision, *, warning_fingerprint):
+        """Publish a saved parentless draft, or verify an identical prior publication."""
+        from hero_integration.services.mapping_draft_service import _hash, _new_definition
+        from hero_integration.hero_integration.doctype.hero_graphql_mapping.hero_graphql_mapping import lock_exchange_context
+
+        f = self.frappe
+        key = draft_key(f.local.site, definition_id, actor)
+        observed = f.db.sql('select content_json, new_definition_json from `tabHERO Mapping Draft` '
+                            'where draft_key=%s and site_scope=%s and owner_user=%s',
+                            (key, f.local.site, actor), as_dict=True)
+        if len(observed) != 1:
+            raise DraftConflict('The personal draft is not open.')
+        try:
+            content = _object(json.loads(observed[0].content_json))
+            context = _new_definition(json.loads(observed[0].new_definition_json))
+        except (ValueError, TypeError, KeyError, AttributeError):
+            raise DraftConflict('New-definition draft cannot be safely inspected.') from None
+        if context['site_scope'] != f.local.site or context['definition_id'] != definition_id:
+            raise DraftConflict('New-definition draft context changed.')
+        lock_exchange_context(context['source_instance'], context['snapshot_name'], context['direction'])
+        assert_first_publication_identity_schema(f)
+        self.lock_draft_identities(actor, definition_id, content, direction=context['direction'])
+        with self.transaction(definition_id, actor):
+            active = self.active_or_none(definition_id)
+            self.assert_locked_draft_identities(definition_id, actor)
+            draft = self.draft(key)
+            if (draft is None or draft.owner != actor or draft.new_definition != context
+                    or _hash(content) != draft.content_hash or _hash(draft.content) != draft.content_hash):
+                raise DraftConflict('New-definition draft changed while locks were acquired.')
+            if (type(generation) is not int or generation != draft.generation
+                    or type(revision) is not int or revision < 1 or revision != draft.content_revision
+                    or type(reconciliation_revision) is not int or reconciliation_revision != draft.reconciliation_revision):
+                raise DraftConflict('The personal draft revision is stale.')
+            row = f.get_doc(self.DRAFT, key, for_update=True)
+            row.check_permission('write')
+            if row.modified_by != actor:
+                raise PermissionError('Only the last author may publish this draft.')
+            try:
+                diagnostics = json.loads(row.diagnostics_json) if row.diagnostics_json else {}
+            except (ValueError, TypeError) as error:
+                raise MappingDraftError('Draft diagnostics are invalid.') from error
+            if not isinstance(diagnostics, dict):
+                raise MappingDraftError('Draft diagnostics are invalid.')
+            if active is not None:
+                receipt = diagnostics.get('personal_publication')
+                if (draft.state == 'DISCARDED' and isinstance(receipt, dict)
+                        and receipt.get('actor') == actor and receipt.get('definition_id') == definition_id
+                        and receipt.get('generation') == generation and receipt.get('revision') == revision
+                        and receipt.get('draft_hash') == draft.content_hash and receipt.get('expected_active_revision') == 0
+                        and receipt.get('active_name') == active.name and receipt.get('active_revision') == active.revision
+                        and receipt.get('active_hash') == active.content_hash
+                        and receipt.get('objects') == self._publication_objects(
+                            [('HERO GraphQL Mapping', active.name)], active.content)):
+                    return {'name': active.name, 'revision': active.revision, 'unchanged': True}
+                raise DraftConflict('Expected mapping absence no longer holds.')
+            if draft.state != 'OPEN':
+                raise DraftConflict('The personal draft is not open.')
+            if row.warning_fingerprint:
+                warnings = diagnostics.get('warnings')
+                if (warning_fingerprint != row.warning_fingerprint or not isinstance(warnings, list) or not warnings
+                        or len(warnings) > 100 or any(not isinstance(w, str) or not w or len(w) > 1000 for w in warnings)):
+                    raise MappingDraftError('Current warnings must be available and acknowledged.')
+            self.service()._assert_current(None, draft, revision, 0)
+            saved = f.db.sql('select content_hash from `tabHERO Mapping Revision` where draft_key=%s and generation=%s '
+                             'and revision=%s and kind=%s for update',
+                             (key, generation, revision, 'DRAFT_SAVE'), as_dict=True)
+            if len(saved) != 1 or saved[0].content_hash != draft.content_hash:
+                raise DraftConflict('Saved draft history does not match the requested revision.')
+            from hero_integration.services.mapping_draft_exchange import _portable_target_metadata
+            try:
+                locked_metadata = _portable_target_metadata(draft.content, context['direction'])
+                for doctype, item in locked_metadata.items():
+                    meta = f.get_meta(doctype)
+                    for stored in item['fields']:
+                        field = meta.get_field(stored['fieldname'])
+                        if (field is None or any((field.get(k) or '') != (stored.get(k) or '')
+                                                 for k in ('fieldtype', 'options'))
+                                or any(int(field.get(k) or 0) != int(stored.get(k) or 0)
+                                       for k in ('reqd', 'read_only', 'hidden', 'permlevel', 'is_virtual'))):
+                            raise MappingDraftError('Cached target metadata differs from the locked metadata.')
+            except ValueError as error:
+                raise MappingDraftError('Target metadata is unavailable or unsafe for publication.') from error
+            if self.canonicalize(draft.content) != draft.content:
+                raise MappingDraftError('Saved personal content is not canonical.')
+            from hero_integration.api import _validated_snapshot
+            snapshot, schema = _validated_snapshot(context['snapshot_name'], for_update=True)
+            if snapshot.source_instance != context['source_instance'] or snapshot.schema_fingerprint != context['schema_fingerprint']:
+                raise DraftConflict('New-definition schema context changed.')
+            snapshot.check_permission('read')
+            if draft.content.get('_portable_exchange_schema'):
+                raise MappingDraftError('Portable schema dependencies require publication provenance support.')
+            value = _object(draft.content)
+            value.pop('_portable_exchange_schema', None)
+            created = []
+            if context['direction'] == 'QUERY_TO_FRAPPE':
+                from hero_integration.services.mapping_draft_exchange import _portable_content, _validate_portable_query
+                from hero_integration.services.direct_mapping import MappingSpec
+                from hero_integration.services.mapping_runtime import plan_from_definitions
+                try:
+                    value = _portable_content(value, context['direction'])
+                    _validate_portable_query(value, context['operation_name'], schema)
+                    operation = value.get('target_operation') or context['operation_name']
+                    specs = [MappingSpec(operation=operation, definition_id=identity, **value['field_rules'][identity])
+                             for identity in value['mapping_definition_ids']]
+                    plan_from_definitions(context['operation_name'], specs, target_operation=operation)
+                except (ValueError, TypeError, KeyError) as error:
+                    raise MappingDraftError('The query mapping is incomplete or incompatible with its schema.') from error
+                targets = [(spec.target_doctype, spec.target_field) for spec in specs if spec.purpose != 'Record Name']
+                if len(targets) != len(set(targets)):
+                    raise MappingDraftError('The published mapping contains duplicate target fields.')
+                active_content = dict(value)
+                active_content.pop('field_rules')
+            else:
+                from hero_integration.services.frappe_writeback import normalise_mapping
+                from hero_integration.api import _mapping_values_preserved
+                if value.get('additional_mappings'):
+                    raise MappingDraftError('First publication of multiple mutation assignments is not supported.')
+                value.pop('additional_mappings', None)
+                try:
+                    active_content = normalise_mapping(value, schema)
+                except ValueError as error:
+                    raise MappingDraftError('Mutation mapping is not approved for activation.') from error
+                if not _mapping_values_preserved(value, active_content):
+                    raise MappingDraftError('Active writeback normalization would lose draft parameters.')
+            rule_ids = set(value.get('mapping_definition_ids', [])) if context['direction'] == 'QUERY_TO_FRAPPE' else set()
+            token = _first_publication.set({'site':f.local.site, 'actor':actor, 'key':key, 'generation':generation,
+                'definition_id':definition_id, 'definitions':{definition_id}, 'rules':rule_ids})
+            try:
+                parent = f.get_doc({'doctype':'HERO GraphQL Mapping', 'definition_id':definition_id,
+                    'portable_definition_id':definition_id, 'schema_snapshot':context['snapshot_name'],
+                    'schema_fingerprint':context['schema_fingerprint'], 'source_instance':context['source_instance'],
+                    'operation_kind':context['operation_kind'], 'operation_name':context['operation_name'],
+                    'direction':context['direction'], 'status':'Active', 'mapping_revision':1,
+                    'mapping_json':json.dumps(active_content, ensure_ascii=False, sort_keys=True, separators=(',', ':'))})
+                parent.insert()
+                self._definition, self._parentless_identity = parent, None
+                with _publication_operation_scope(f.local.site, actor, parent.name):
+                    for identity in sorted(rule_ids):
+                        rule = f.get_doc({'doctype':'HERO Frappe Mapping', 'definition_id':identity,
+                            'portable_definition_id':identity, 'operation':operation,
+                            'schema_snapshot':context['snapshot_name'], 'schema_fingerprint':context['schema_fingerprint'],
+                            'status':'Active', 'mapping_revision':1,
+                            'personal_graphql_mapping':parent.name, **value['field_rules'][identity]})
+                        rule.insert()
+                        created.append(('HERO Frappe Mapping', rule.name))
+                current = self.active(definition_id)
+                if current.revision != 1 or current.schema_fingerprint != context['schema_fingerprint']:
+                    raise MappingDraftError('First publication did not produce the expected active revision.')
+                self.append_revision(MappingDraftRevision(key, generation, revision, 'ACTIVE_ACTIVATION', actor,
+                    draft.content, draft.content_hash, '', 0, '', draft.base_schema_fingerprint))
+                receipt = {'actor':actor, 'definition_id':definition_id, 'generation':generation, 'revision':revision,
+                    'draft_hash':draft.content_hash, 'expected_active_revision':0, 'active_name':current.name,
+                    'active_revision':current.revision, 'active_hash':current.content_hash,
+                    'objects':self._publication_objects(created + [('HERO GraphQL Mapping', parent.name)], active_content)}
+                diagnostics['personal_publication'] = receipt
+                row.diagnostics_json = json.dumps(diagnostics, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+                row.state = 'DISCARDED'
+                row.save()
+                return {'name':current.name, 'revision':current.revision, 'unchanged':False}
+            finally:
+                _first_publication.reset(token)
 
     def _lock_mutation_child_identities(self, draft):
         """Reject historical child-ID collisions before creating any child definition."""

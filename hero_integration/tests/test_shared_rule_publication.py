@@ -57,6 +57,22 @@ class Fake:
 
 
 class TestSharedRulePublication(unittest.TestCase):
+    def test_scoped_portable_root_keeps_reserved_customer_semantics_closed(self):
+        from hero_integration.services.mapping_rule_lineage import customer_legacy_literals
+        identity = 'a16b15fa-7ca8-4722-b63c-ac60cc46629a'
+        mapping = SimpleNamespace(name='mapping-a', schema_snapshot='snapshot', schema_fingerprint='fingerprint')
+        root = {'definition_id':identity, 'portable_definition_id':identity, 'portable_lineage_json':'',
+                'personal_graphql_mapping':'mapping-a', 'status':'Active', 'operation':'HeroCustomers',
+                'schema_snapshot':'snapshot', 'schema_fingerprint':'fingerprint', 'source_path':'email'}
+        lookup = lambda value: [root] if value == identity else []
+        self.assertEqual(customer_legacy_literals([identity], mapping, lookup, lookup), set())
+        root['source_path'] = 'company_legal_form'
+        with self.assertRaisesRegex(ValueError, 'legacy rule identity'):
+            customer_legacy_literals([identity], mapping, lookup, lookup)
+        root['source_path'], root['portable_definition_id'] = 'email', ''
+        with self.assertRaisesRegex(ValueError, 'lineage is missing'):
+            customer_legacy_literals([identity], mapping, lookup, lookup)
+
     def test_rule_controller_rejects_predecessor_from_stale_schema(self):
         from hero_integration.services import frappe_mapping_draft_storage
         revision = '09a2bc52-4b21-46b7-9a11-3a62bf5a6348'

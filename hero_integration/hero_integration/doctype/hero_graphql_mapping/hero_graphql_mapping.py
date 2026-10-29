@@ -98,18 +98,22 @@ class HEROGraphQLMapping(Document):
                 if matches:
                     frappe.throw('Definition identity is already enrolled by another mapping.')
                 from hero_integration.services.frappe_mapping_draft_storage import (
-                    lock_definition_drafts, lock_identity_drafts, personal_publication_parent,
+                    lock_definition_drafts, lock_identity_drafts, personal_publication_parent, first_publication_admits,
                 )
-                if lock_definition_drafts(frappe, [portable_candidate]):
+                drafts = lock_definition_drafts(frappe, [portable_candidate])
+                if any(not first_publication_admits('definition', portable_candidate, row) for row in drafts):
                     frappe.throw('Definition identity is already used by a personal draft.')
                 for row in lock_identity_drafts(frappe, [portable_candidate], 'child'):
                     parent = personal_publication_parent()
-                    if not (parent and row.owner_user == frappe.session.user and row.base_active_mapping == parent):
+                    if not ((parent and row.owner_user == frappe.session.user and row.base_active_mapping == parent)
+                            or first_publication_admits('definition', portable_candidate, row)):
                         frappe.throw('Definition identity is already used by a personal draft.')
         if previous and previous.definition_id and self.definition_id != previous.definition_id:
             frappe.throw("GraphQL mapping definition identity is immutable.")
         portable = self.get('portable_definition_id') or ''
-        if portable != ((previous.get('portable_definition_id') or '') if previous else ''):
+        from hero_integration.services.frappe_mapping_draft_storage import first_publication_admits
+        if portable != ((previous.get('portable_definition_id') or '') if previous else '') and not (
+                not previous and portable == self.definition_id and first_publication_admits('definition', portable)):
             frappe.throw('Portable identity may only be enrolled through the identity service.')
         self.content_hash = hashlib.sha256(
             json.dumps(mapping, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
