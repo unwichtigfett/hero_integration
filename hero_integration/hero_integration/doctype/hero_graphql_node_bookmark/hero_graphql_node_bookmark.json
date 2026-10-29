@@ -1,0 +1,17 @@
+{
+ "doctype":"DocType", "name":"HERO GraphQL Node Bookmark", "module":"HERO Integration", "autoname":"field:bookmark_key", "track_changes":0,
+ "description":"A remembered saved-schema GraphQL node with a personal alias. The alias is a label only; it never replaces the technical node identity.",
+ "fields":[
+  {"fieldname":"alias","label":"Alias","fieldtype":"Data","reqd":1,"in_list_view":1},
+  {"fieldname":"alias_key","label":"Alias Key","fieldtype":"Data","read_only":1,"hidden":1},
+  {"fieldname":"node_name","label":"Original Node Name","fieldtype":"Data","read_only":1,"in_list_view":1},
+  {"fieldname":"node_kind","label":"Node Kind","fieldtype":"Data","read_only":1,"in_list_view":1},
+  {"fieldname":"node_id","label":"GraphQL Node ID","fieldtype":"Data","reqd":1,"read_only":1},
+  {"fieldname":"schema_snapshot","label":"HERO Schema Snapshot","fieldtype":"Link","options":"HERO GraphQL Schema Snapshot","reqd":1,"read_only":1},
+  {"fieldname":"schema_fingerprint","label":"Schema Fingerprint","fieldtype":"Data","reqd":1,"read_only":1},
+  {"fieldname":"source_instance","label":"HERO Source Instance","fieldtype":"Data","read_only":1},
+  {"fieldname":"bookmark_key","label":"Bookmark Key","fieldtype":"Data","reqd":1,"unique":1,"read_only":1,"hidden":1}
+ ],
+ "permissions":[{"role":"System Manager","read":1,"write":1,"create":1,"delete":1,"if_owner":1}],
+ "modified":"2026-10-29 00:00:00.000000"
+}

@@ -1,0 +1,16 @@
+{
+ "doctype": "DocType", "name": "HERO Task Assignment Policy", "module": "HERO Integration", "autoname": "hash", "track_changes": 1,
+ "fields": [
+  {"fieldname":"site_scope","fieldtype":"Data","label":"Site Scope","reqd":1,"read_only":1},
+  {"fieldname":"source_instance","fieldtype":"Data","label":"Source Instance","reqd":1,"read_only":1},
+  {"fieldname":"issuer","fieldtype":"Link","options":"User","label":"System Issuer","reqd":1,"read_only":1},
+  {"fieldname":"state","fieldtype":"Select","label":"State","options":"DRAFT\nAPPROVED\nREVOKED","reqd":1,"read_only":1},
+  {"fieldname":"policy_revision","fieldtype":"Int","label":"Revision","reqd":1,"read_only":1},
+  {"fieldname":"approved_revision","fieldtype":"Int","label":"Approved Revision","read_only":1},
+  {"fieldname":"approved_by","fieldtype":"Link","options":"User","label":"Approved By","read_only":1},
+  {"fieldname":"revoked_by","fieldtype":"Link","options":"User","label":"Revoked By","read_only":1},
+  {"fieldname":"policy_json","fieldtype":"Code","options":"JSON","label":"Policy","reqd":1,"read_only":1},
+  {"fieldname":"policy_fingerprint","fieldtype":"Data","label":"Policy Fingerprint","reqd":1,"read_only":1}
+ ],
+ "permissions":[{"role":"System Manager","read":1,"write":1,"create":1}], "modified":"2026-10-28 00:00:00.000000"
+}

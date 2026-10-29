@@ -30,24 +30,68 @@ def export_json(snapshot_name: str) -> str:
     mappings = frappe.get_all(
         "HERO Frappe Mapping",
         filters={"schema_fingerprint": snapshot.schema_fingerprint},
-        fields=[*EXPORTED_FIELDS, "schema_manifest"],
+        fields=[*EXPORTED_FIELDS, "schema_manifest", "personal_graphql_mapping"],
         order_by="operation asc, priority asc, definition_id asc",
     )
-    manifests = {row.get("schema_manifest") for row in mappings if row.get("schema_manifest")}
-    schema = _empty_schema()
-    if len(manifests) == 1:
-        try:
-            schema = json.loads(manifests.pop())
-        except json.JSONDecodeError:
-            # A damaged local Draft must not make a safe export invent schema.
-            schema = _empty_schema()
+    mappings = [row for row in mappings if not row.get('personal_graphql_mapping')]
+    schema = _merge_export_schemas(mappings)
+    exported = [_exportable(row) for row in mappings]
+    from hero_integration.services.schema_provisioning import _target_dependency
+    checklist_ids = {item["id"] for group in schema.values() for item in group}
+    for item in exported:
+        dependencies = item["schema_dependencies"]
+        required = _target_dependency(schema, item)
+        if any(dependency not in checklist_ids for dependency in dependencies) or (required and required not in dependencies):
+            raise MappingExchangeError("Mapping export contains invalid schema dependencies.")
     payload = {
         "format_version": FORMAT_VERSION,
         "schema_fingerprint": snapshot.schema_fingerprint,
         "schema": schema,
-        "mappings": [_exportable(row) for row in mappings],
+        "mappings": exported,
     }
     return _canonical_json(payload)
+
+
+def _merge_export_schemas(mappings) -> dict[str, list[object]]:
+    """Union identical declarations, then validate the complete exported schema."""
+    from hero_integration.services.schema_provisioning import SchemaProvisioningError, _definitions
+
+    groups = {key: {} for key in _empty_schema()}
+    global_ids = {}
+    for row in mappings:
+        manifest = row.get("schema_manifest")
+        if manifest is None or manifest == "":
+            continue
+        if not isinstance(manifest, str):
+            raise MappingExchangeError("Mapping export contains an invalid schema manifest.")
+        try:
+            def unique_fields(pairs):
+                result = {}
+                for key, value in pairs:
+                    if key in result:
+                        raise ValueError("Duplicate JSON field")
+                    result[key] = value
+                return result
+            parsed = json.loads(manifest, object_pairs_hook=unique_fields)
+            _validate_schema(parsed)
+            for key, entries in parsed.items():
+                for entry in entries:
+                    if not isinstance(entry, dict) or not isinstance(entry.get("id"), str) or not entry["id"]:
+                        raise ValueError("Invalid schema definition ID")
+                    identity = entry["id"]
+                    canonical = _canonical_json(entry)
+                    if identity in global_ids and global_ids[identity] != (key, canonical):
+                        raise ValueError("Conflicting schema definition ID")
+                    global_ids[identity] = (key, canonical)
+                    groups[key][identity] = entry
+        except (TypeError, ValueError, MappingExchangeError) as error:
+            raise MappingExchangeError("Mapping export contains an invalid or conflicting schema manifest.") from error
+    schema = {key: [entries[identity] for identity in sorted(entries)] for key, entries in groups.items()}
+    try:
+        _definitions(schema)
+    except (SchemaProvisioningError, KeyError, TypeError, ValueError) as error:
+        raise MappingExchangeError("Mapping export contains invalid or conflicting schema definitions.") from error
+    return schema
 
 
 def preview_import(snapshot_name: str, payload_json: str) -> dict[str, object]:
@@ -62,7 +106,7 @@ def preview_import_from_package(payload: dict[str, object], fingerprint: str | N
         row.definition_id: row
         for row in frappe.get_all(
             "HERO Frappe Mapping",
-            fields=["name", "definition_id", "status", "mapping_revision", *EXPORTED_FIELDS[1:-1]],
+            fields=["name", "definition_id", "status", "mapping_revision", "personal_graphql_mapping", *EXPORTED_FIELDS[1:-1]],
         )
     }
     rows = []
@@ -70,7 +114,7 @@ def preview_import_from_package(payload: dict[str, object], fingerprint: str | N
     claimed_targets: dict[tuple[str, str, str], str] = {}
     active_targets = {
         (row.operation, row.target_doctype, row.target_field): row.definition_id
-        for row in existing.values() if row.status == "Active"
+        for row in existing.values() if row.status == "Active" and not getattr(row, 'personal_graphql_mapping', None)
     }
     for item in payload["mappings"]:
         result = _preview_item(item, existing, seen, metadata)
@@ -98,7 +142,7 @@ def import_json(snapshot_name: str, payload_json: str) -> dict[str, object]:
         row.definition_id: row
         for row in frappe.get_all(
             "HERO Frappe Mapping",
-            fields=["name", "definition_id", "status", "mapping_revision", *EXPORTED_FIELDS[1:-1]],
+            fields=["name", "definition_id", "status", "mapping_revision", "personal_graphql_mapping", *EXPORTED_FIELDS[1:-1]],
         )
     }
     savepoint = "hero_mapping_import"
@@ -147,6 +191,8 @@ def _preview_item(item: dict[str, object], existing: dict[str, object], seen: se
     local = existing.get(definition_id)
     if not local:
         return {"definition_id": definition_id, "state": "New", "detail": "Validated import definition."}
+    if getattr(local, 'personal_graphql_mapping', None):
+        return {"definition_id": definition_id, "state": "Conflict", "detail": "A scoped published rule cannot be replaced by a shared mapping import."}
     if _definition_hash(_exportable(local)) == _definition_hash(item):
         return {"definition_id": definition_id, "state": "Unchanged", "detail": "Definition is already present."}
     if local.status == "Active":
@@ -180,6 +226,11 @@ def _parse_payload(payload_json: str, fingerprint: str) -> dict[str, object]:
         raise MappingExchangeError(f"Mapping import is not valid JSON: {error.msg}") from error
     if not isinstance(payload, dict) or payload.get("format_version") not in {FORMAT_VERSION, LEGACY_FORMAT_VERSION}:
         raise MappingExchangeError("Mapping import format version is not supported.")
+    expected_keys = {"format_version", "schema_fingerprint", "mappings"}
+    if payload["format_version"] == FORMAT_VERSION:
+        expected_keys.add("schema")
+    if set(payload) != expected_keys:
+        raise MappingExchangeError("Mapping import has unknown or missing package fields.")
     if payload.get("schema_fingerprint") != fingerprint:
         raise MappingExchangeError("Mapping import schema fingerprint does not match the selected snapshot.")
     schema = _empty_schema() if payload.get("format_version") == LEGACY_FORMAT_VERSION else payload.get("schema")
@@ -212,11 +263,30 @@ def _validated_snapshot(snapshot_name: str):
 
 def _exportable(row) -> dict[str, object]:
     result = {field: row.get(field, "") for field in EXPORTED_FIELDS}
-    if isinstance(result["schema_dependencies"], str):
-        try:
-            result["schema_dependencies"] = json.loads(result["schema_dependencies"]).get("ids", [])
-        except (AttributeError, json.JSONDecodeError):
-            result["schema_dependencies"] = []
+    stored = result["schema_dependencies"]
+    if not isinstance(stored, str):
+        raise MappingExchangeError("Mapping has invalid schema dependencies.")
+    def unique_fields(pairs):
+        fields = {}
+        for key, value in pairs:
+            if key in fields:
+                raise MappingExchangeError("Mapping has duplicate schema dependency fields.")
+            fields[key] = value
+        return fields
+
+    try:
+        dependencies = json.loads(stored, object_pairs_hook=unique_fields)
+    except (TypeError, ValueError) as error:
+        raise MappingExchangeError("Mapping has invalid schema dependencies.") from error
+    # The DocType default is the legacy empty JSON array.
+    if dependencies == []:
+        result["schema_dependencies"] = []
+    elif (isinstance(dependencies, dict) and set(dependencies) == {"ids"}
+          and isinstance(dependencies["ids"], list)
+          and all(isinstance(value, str) for value in dependencies["ids"])):
+        result["schema_dependencies"] = dependencies["ids"]
+    else:
+        raise MappingExchangeError("Mapping has invalid or unsupported schema dependencies.")
     return result
 
 

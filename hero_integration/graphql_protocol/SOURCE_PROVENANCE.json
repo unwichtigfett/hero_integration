@@ -1,0 +1,25 @@
+{
+  "adapted_file_hashes": {
+    "graphql_api_graph.py": "f15080dcef55c5271a403c7f9083dc09aa0a004b4356f633a001d52cdb052bf8",
+    "graphql_argument_values.py": "e8f7b38360fb7cd68347daa1cc1a1133dde13bff1cf2ebf0dcfc0fa6cc6244cb",
+    "graphql_operation_materializer.py": "33ef16f6bbd3614a67ae873f864e3f8a5946b38c161f1e094f4a82b2b8a72cf8",
+    "graphql_query_composer.py": "2a70e8d8ed5d19f9e6f49bc574d07f34f6cadb017fb1f3d19d77e32e84d5cdbb",
+    "graphql_readonly.py": "dc764cc755fd6eeba00b388ddcd0afbabff6c4fb3465cbbde79aaad236ec3645",
+    "graphql_response.py": "f36c158d1fba58b6e2fb8d9b2a1251532cf00bb78402717b594d873ae7a50003",
+    "graphql_result_decoder.py": "5713cdc38721c75eaf98a1ea92d1c431d34badf090c1d06cf4be9cb52a0a3ca7",
+    "graphql_selection_set.py": "2e54adc01214ccdb247fde2f1887f97259c5e603defb8f7e100ef2877b7ae031",
+    "graphql_semantic_structure.py": "bab102d7b412de066caf8f7cb95a0a9bb9b57999f9c6bf511a5ec86a83271600",
+    "graphql_write_safety.py": "eeac292844797f93dafe9eb8f9494f43e5e8c0747e6b056501f363259b8d7d88",
+    "operation_kind.py": "5cec420aa43b170b5746611839cb924fc6168dbb71fb714b10990b7a93c418ac",
+    "schema.py": "7c19b0d638c99610f22414853d8208c270148dad1c521c7236aef86f007fea50",
+    "schema_snapshot.py": "6d3d10634f4dd6fece9cf09a345ece72737e078156cd42f3bf6c0b000e79f23e",
+    "source_api_classification.py": "8bac7a78c61d52cb3dcaafad9feff9dc63d6d59f9774d6eb54d63998c765f71c",
+    "source_proposals.py": "7a2947cba29d823f56820929e01dea87290a72a484d2ceaf78afd57b127fa4de",
+    "transport.py": "ee4a729d360c274600161d533a1b1bf16993b1e8c75212cca8b44b0703557bd0"
+  },
+  "license": "MIT",
+  "package": "hero_integration.graphql_protocol",
+  "source_repository": "hero_connector",
+  "source_revision": "6908a5acf7fe00726cc379c9b1d72824bc7a601d",
+  "version": "1.0.0"
+}

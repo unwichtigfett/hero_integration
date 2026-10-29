@@ -26,11 +26,30 @@
         return node;
     }
 
+    const metricPresentation = Object.freeze({
+        "Connector": ["⌁", "HERO integration availability"],
+        "API Endpoint": ["⌘", "Configured GraphQL endpoint"],
+        "Credential": ["◇", "Stored credential state"],
+        "Timeout": ["◷", "Request timeout"],
+        "Connection ID": ["▣", "Selected connection identity"],
+        "Binding Generation": ["⌘", "Current binding generation"],
+        "Binding": ["▤", "Schema binding state"],
+        "Schema": ["▦", "Saved schema state"],
+        "Local Configuration Access": ["⌑", "Local configuration permission"],
+        "HERO Mutation Execution": ["▷", "Server-side mutation gate"],
+        "Automatic Synchronization": ["⟳", "Polling configuration"],
+    });
+
     function metric(label, value, state = "") {
         const card = el("div", "hero-overview-metric");
+        const [icon, description] = metricPresentation[label] || ["·", label];
+        const iconNode = el("span", "hero-overview-icon", icon);
+        iconNode.setAttribute("aria-hidden", "true");
+        const content = el("div", "hero-overview-metric-content");
         const v = el("div", "hero-overview-value", value);
         if (state) v.dataset.state = state;
-        card.append(el("div", "hero-overview-label", label), v);
+        content.append(el("div", "hero-overview-label", label), v, el("div", "hero-overview-description", description));
+        card.append(iconNode, content);
         return card;
     }
 
@@ -79,12 +98,19 @@
         );
     }
 
+    // Mappings of the parent snapshot are inherited as personal drafts; nothing is activated.
+    function inheritanceMessage(inheritance) {
+        if (!inheritance || inheritance.status === "NO_PARENT") return "";
+        if (inheritance.status !== "COMPLETED") return " Mapping inheritance did not complete; retry it in the Mapping Editor.";
+        const counts = inheritance.counts || {};
+        return ` Inherited ${counts["Draft Created"] || 0} mapping(s) from the parent as personal drafts (${counts.Incompatible || 0} incompatible, ${counts.Skipped || 0} skipped). Nothing was activated.`;
+    }
+
     function refreshResultMessage(result) {
         const snapshot = result?.snapshot_name || "saved snapshot";
         const types = Number.isInteger(result?.type_count) ? " (" + result.type_count + " types)" : "";
-        return result?.status === "UNCHANGED"
-            ? "Schema is unchanged: " + snapshot + types + "."
-            : "Schema refresh succeeded: " + snapshot + types + ".";
+        if (result?.status === "UNCHANGED") return "Schema is unchanged: " + snapshot + types + ".";
+        return "Schema refresh succeeded: " + snapshot + types + "." + inheritanceMessage(result?.inheritance);
     }
 
     async function mount(workspace) {

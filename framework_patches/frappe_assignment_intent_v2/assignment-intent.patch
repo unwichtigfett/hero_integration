@@ -1,0 +1,84 @@
+--- a/frappe/desk/form/assign_to.py
++++ b/frappe/desk/form/assign_to.py
+@@ -19,6 +19,9 @@
+ from frappe.utils.data import strip_html
+ 
+ 
++ASSIGNMENT_INTENT_HOOK_VERSION = 2
++
++
+ class DuplicateToDoError(frappe.ValidationError):
+ 	pass
+ 
+@@ -56,11 +59,39 @@
+ 
+ 
+ def _add(args=None, *, ignore_permissions=False):
++	args = args or frappe.local.form_dict
++	guarded = any(frappe.get_attr(hook)(args) for hook in frappe.get_hooks("assignment_intent_guard"))
++	if not guarded:
++		return _add_with_intent_hooks(args, ignore_permissions=ignore_permissions)
++
++	# A caught native exception must not commit a partially recorded intent.
++	# Preserve callbacks registered before this call; discard callbacks registered by it.
++	callbacks = (frappe.db.before_commit, frappe.db.after_commit, frappe.db.before_rollback, frappe.db.after_rollback)
++	counts = [len(callback) for callback in callbacks]
++	savepoint = "assignment_intent_" + frappe.generate_hash(length=12)
++	frappe.db.savepoint(savepoint)
++	try:
++		result = _add_with_intent_hooks(args, ignore_permissions=ignore_permissions)
++		frappe.db.release_savepoint(savepoint)
++		return result
++	except Exception:
++		try:
++			frappe.db.rollback(save_point=savepoint)
++		except Exception:
++			frappe.db.rollback()
++		else:
++			for callback, count in zip(callbacks, counts):
++				callback.cut(count)
++		raise
++
++
++def _add_with_intent_hooks(args=None, *, ignore_permissions=False):
+ 	if not args:
+ 		args = frappe.local.form_dict
+ 
+ 	users_with_duplicate_todo = []
+ 	shared_with_users = []
++	completed_intents = []
+ 
+ 	for assign_to in frappe.parse_json(args.get("assign_to")):
+ 		filters = {
+@@ -71,6 +102,9 @@
+ 		}
+ 		if not ignore_permissions:
+ 			frappe.get_doc(args["doctype"], args["name"]).check_permission()
++
++		for hook in frappe.get_hooks("assignment_intent_before"):
++			frappe.get_attr(hook)(args, assign_to, ignore_permissions=ignore_permissions)
+ 
+ 		if frappe.get_all("ToDo", filters=filters):
+ 			users_with_duplicate_todo.append(assign_to)
+@@ -131,6 +165,8 @@
+ 				description=args.get("description"),
+ 			)
+ 
++		completed_intents.append(assign_to)
++
+ 	if shared_with_users:
+ 		user_list = format_message_for_assign_to(shared_with_users)
+ 		frappe.msgprint(
+@@ -141,7 +177,11 @@
+ 		user_list = format_message_for_assign_to(users_with_duplicate_todo)
+ 		frappe.msgprint(_("Already in the following Users ToDo list:{0}").format(user_list, alert=True))
+ 
+-	return get(args)
++	result = get(args)
++	for assign_to in completed_intents:
++		for hook in frappe.get_hooks("assignment_intent_after"):
++			frappe.get_attr(hook)(args, assign_to, ignore_permissions=ignore_permissions)
++	return result
+ 
+ 
+ @frappe.whitelist()

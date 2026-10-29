@@ -1,1 +1,7 @@
+[pre_model_sync]
 hero_integration.patches.v0_1.normalize_mapping_priorities
+hero_integration.patches.v0_1.normalize_empty_graphql_definition_ids
+
+[post_model_sync]
+hero_integration.patches.v0_1.backfill_graphql_definition_ids
+hero_integration.patches.v0_1.backfill_snapshot_parents

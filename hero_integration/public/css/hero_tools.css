@@ -18,6 +18,53 @@
 .ht-editor .ace_text-layer span,.ht-editor .ace_gutter-cell,.ht-editor .ace_placeholder {color:var(--pc-text)!important;}
 .ht-editor.ace_focus {border-color:var(--pc-focus)!important;box-shadow:inset 0 0 0 1px var(--pc-focus),0 0 0 3px color-mix(in srgb,var(--pc-focus) 55%,transparent)!important;}
 .ht-variables {min-height:110px;font-family:monospace;resize:vertical;}
+.ht-variables[aria-invalid="true"] {border-color:var(--hero-field-error);}
+/* Variables: a coloured layer under a transparent textarea with identical metrics; the textarea stays the real input. */
+.ht-variables-box {position:relative;margin:4px 0 6px;}
+.ht-variables-box textarea.ht-variables.form-control, .ht-variables-highlight {box-sizing:border-box;font-family:var(--font-family-monospace, monospace);font-size:13px;line-height:1.5;letter-spacing:normal;word-spacing:normal;tab-size:2;padding:8px 10px;margin:0;border:2px solid transparent;border-radius:6px;white-space:pre;overflow-wrap:normal;}
+.ht-variables-highlight {position:absolute;inset:0;overflow:hidden;pointer-events:none;background:var(--hero-field-bg);color:var(--pc-text);}
+.ht-variables-box textarea.ht-variables.form-control {position:relative;display:block;width:100%;overflow:auto;background:transparent!important;color:transparent!important;-webkit-text-fill-color:transparent;caret-color:var(--pc-text);border-color:var(--hero-field-border);}
+.ht-variables-box textarea.ht-variables.form-control::placeholder {color:var(--pc-textSecondary);-webkit-text-fill-color:var(--pc-textSecondary);opacity:.65;}
+.ht-variables-box textarea.ht-variables.form-control[aria-invalid="true"] {border-color:var(--hero-state-error);}
+.ht-variables-box textarea.ht-variables.form-control:focus {border-color:var(--pc-focus);box-shadow:0 0 0 3px color-mix(in srgb,var(--pc-focus) 45%,transparent);}
+/* Token colours shared by Variables, Readable and Raw JSON. */
+.ht-tok-key {color:var(--hero-syntax-key);}
+.ht-tok-variable {color:var(--hero-syntax-variable);}
+.ht-tok-operator, .ht-tok-punctuation {color:var(--hero-syntax-punctuation);}
+.ht-tok-string {color:var(--hero-syntax-string);}
+.ht-tok-number {color:var(--hero-syntax-number);}
+.ht-tok-boolean {color:var(--hero-syntax-boolean);}
+.ht-tok-null, .ht-tok-empty {color:var(--hero-syntax-null);font-style:italic;}
+.ht-tok-error {color:var(--hero-syntax-error);text-decoration:underline wavy var(--hero-syntax-error);text-underline-offset:3px;}
+/* GraphQL editor tokens: more specific than the monochrome default above, so only real tokens are coloured. */
+.ht-editor .ace_text-layer .ace_keyword {color:var(--hero-syntax-keyword)!important;font-weight:600;}
+.ht-editor .ace_text-layer .ace_support.ace_type {color:var(--hero-syntax-type)!important;}
+.ht-editor .ace_text-layer .ace_identifier {color:var(--hero-syntax-key)!important;}
+.ht-editor .ace_text-layer .ace_variable {color:var(--hero-syntax-variable)!important;}
+.ht-editor .ace_text-layer .ace_string {color:var(--hero-syntax-string)!important;}
+.ht-editor .ace_text-layer .ace_constant.ace_numeric {color:var(--hero-syntax-number)!important;}
+.ht-editor .ace_text-layer .ace_constant.ace_boolean {color:var(--hero-syntax-boolean)!important;}
+.ht-editor .ace_text-layer .ace_constant.ace_null {color:var(--hero-syntax-null)!important;font-style:italic;}
+.ht-editor .ace_text-layer .ace_punctuation {color:var(--hero-syntax-punctuation)!important;}
+.ht-editor .ace_text-layer .ace_comment {color:var(--hero-syntax-comment)!important;font-style:italic;}
+/* Execution state colours: green OK, amber partial or too large, red error. */
+.ht-data[data-state] {border-left:4px solid var(--hero-state-error);}
+.ht-data[data-state="OK"] {border-left-color:var(--hero-state-ok);}
+.ht-data[data-state="PARTIAL"], .ht-data[data-state="TOO_LARGE"] {border-left-color:var(--hero-state-warning);}
+/* GraphQL Query Result dialog: scoped to the HERO dialog wrapper, theme tokens come from .admin-compat-modal. */
+.ht-result-dialog .modal-dialog {width:calc(100vw - 24px);max-width:1400px;}
+.ht-result-dialog .modal-content {background:var(--pc-surface);color:var(--pc-text);}
+.ht-result-status, .ht-result-errors {border:1px solid var(--pc-border);border-left-width:4px;padding:8px 12px;margin-bottom:8px;color:var(--pc-text);background:var(--pc-surface);overflow-wrap:anywhere;}
+.ht-result-errors ul {margin:6px 0 0;padding-left:20px;}
+.ht-result-status[data-state="OK"] {border-left-color:var(--hero-state-ok);}
+.ht-result-status[data-state="OK"] > strong {color:var(--hero-state-ok);}
+.ht-result-status[data-state="PARTIAL"], .ht-result-status[data-state="TOO_LARGE"] {border-left-color:var(--hero-state-warning);}
+.ht-result-status[data-state="PARTIAL"] > strong, .ht-result-status[data-state="TOO_LARGE"] > strong {color:var(--hero-state-warning);}
+.ht-result-status[data-state="ERROR"], .ht-result-errors {border-left-color:var(--hero-state-error);}
+.ht-result-status[data-state="ERROR"] > strong, .ht-result-errors > strong {color:var(--hero-state-error);}
+.ht-result-views .btn[aria-pressed="true"] {border-color:var(--pc-primary);box-shadow:inset 0 -2px 0 var(--pc-primary);}
+.ht-result-output {font-family:var(--font-family-monospace, monospace);font-size:13px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere;tab-size:2;margin:8px 0 0;padding:12px;min-height:240px;max-height:65vh;overflow:auto;background:var(--pc-surfaceRaised);color:var(--pc-text);border:1px solid var(--pc-border);}
+@media(max-width:900px){.ht-result-dialog .modal-dialog{width:calc(100vw - 16px);margin:8px;}.ht-result-output{max-height:60vh;}}
 .ht-data {white-space:pre-wrap;overflow-wrap:anywhere;background:var(--pc-surfaceRaised);color:var(--pc-text);padding:12px;max-height:560px;overflow:auto;}
 .ht-notice {padding:10px 0;overflow-wrap:anywhere;}
 .ht-graph {flex:1;min-width:300px;height:650px;background:var(--pc-surface);border:2px solid var(--pc-border);border-radius:8px;}
@@ -153,3 +200,19 @@
 .ht-analyzer-fingerprint {min-width:0;justify-self:end;font-size:11px;font-weight:500;color:var(--pc-textSecondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .ht-analyzer-type.is-selected .ht-analyzer-type-name {font-weight:750;}
 @media(max-width:1280px){.ht-analyzer-top{grid-template-columns:1fr;}.ht-analyzer-summary{margin:0;}.ht-analyzer-stats{grid-template-columns:repeat(3,minmax(105px,1fr));}.hero-tools.is-analyzer .ht-header{grid-template-columns:1fr auto;}.hero-tools.is-analyzer .ht-header > .ht-context{grid-column:1/-1;grid-row:2;}.hero-tools.is-analyzer .ht-header > .ht-toolbar{grid-column:2;grid-row:1;}}
+/* Node actions: one bordered group under the node identity, separated from description, JSON and relations.
+   Selectors are specific enough to override the shared .btn and .ht-inspector button styles, also in the Node Focus pop-up. */
+.ht-node-id {font-family:var(--font-family-monospace, monospace);font-size:12px;overflow-wrap:anywhere;margin:0 0 4px;}
+.ht-node-actions {margin:12px 0 16px;padding:12px;border:2px solid var(--pc-border);border-radius:8px;background:var(--pc-surface);color:var(--pc-text);}
+.ht-node-actions .ht-node-actions-title {margin:0 0 8px;font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;}
+.ht-node-actions .ht-node-actions-buttons {display:flex;flex-wrap:wrap;gap:8px;align-items:stretch;}
+.ht-node-actions .ht-context {margin:8px 0 0;}
+.ht-node-actions .btn.ht-node-action, .ht-node-service .btn.ht-node-action {display:inline-flex;align-items:center;justify-content:center;width:auto;margin:0;min-height:34px;padding:6px 14px;border:2px solid;border-radius:6px;font-weight:600;text-align:center;white-space:normal;text-decoration:none;cursor:pointer;}
+.ht-node-actions .btn.ht-node-action--service {background:var(--hero-action-primary-bg);border-color:var(--hero-action-primary-bg);color:var(--hero-action-primary-text);}
+.ht-node-actions .btn.ht-node-action--service:hover:not(:disabled) {background:color-mix(in srgb,var(--hero-action-primary-bg) 85%,#000);border-color:color-mix(in srgb,var(--hero-action-primary-bg) 85%,#000);color:var(--hero-action-primary-text);}
+.ht-node-actions .btn.ht-node-action--remember {background:var(--pc-surface);border-color:var(--hero-action-secondary);color:var(--hero-action-secondary);}
+.ht-node-actions .btn.ht-node-action--remember:hover:not(:disabled) {background:color-mix(in srgb,var(--hero-action-secondary) 12%,var(--pc-surface));color:var(--hero-action-secondary);}
+.ht-node-actions .btn.ht-node-action:disabled {opacity:.5;cursor:not-allowed;}
+.ht-node-actions .btn.ht-node-action:focus-visible {outline:3px solid var(--pc-focus);outline-offset:2px;}
+.ht-node-service:not(:empty) {margin-top:12px;padding-top:12px;border-top:1px solid var(--pc-border);}
+.ht-node-service h4 {margin:0 0 6px;}

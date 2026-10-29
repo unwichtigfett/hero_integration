@@ -15,6 +15,21 @@ SCHEMA = {"__schema": {"queryType": {"name": "Query"}, "mutationType": {"name": 
 
 
 class TestGraphQLContract(unittest.TestCase):
+    def test_root_argument_binding_requires_compatible_declared_variable_type(self):
+        invalid = parse_mutation('mutation Demo($input: String!) { changeCustomer(input: $input) { id } }')
+        with self.assertRaises(GraphQLContractError):
+            validate_mutation(SCHEMA, invalid, {'input':'not-an-object'})
+        valid = parse_mutation('mutation Demo($value: CustomerInput!) { changeCustomer(input: $value) { id } }')
+        self.assertEqual(validate_mutation(SCHEMA, valid, {'value':{'name':'Ada'}}), {'value':{'name':'Ada'}})
+        for document in ('mutation Demo($value: CustomerInput) { changeCustomer(input: $value) { id } }',
+                         'mutation Demo($value: CustomerInput!) { changeCustomer(other: $value) { id } }',
+                         'mutation Demo($value: CustomerInput!) { changeCustomer(input: $missing) { id } }'):
+            with self.assertRaises(GraphQLContractError):
+                validate_mutation(SCHEMA, parse_mutation(document), {'value':{'name':'Ada'}})
+        with self.assertRaises(GraphQLContractError):
+            parse_mutation('mutation Demo { changeCustomer(input: {name:"Ada"}) { id } }')
+        with self.assertRaisesRegex(GraphQLContractError, 'Duplicate mutation argument'):
+            parse_mutation('mutation Demo($value: CustomerInput!) { changeCustomer(input: $value, input: $value) { id } }')
     def test_ast_contract_accepts_one_mutation_and_validates_nested_input(self):
         contract = parse_mutation("mutation Change($input: CustomerInput!) { changeCustomer(input: $input) { id } }")
         self.assertEqual(contract.root_field, "changeCustomer")

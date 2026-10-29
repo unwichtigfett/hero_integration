@@ -1,0 +1,152 @@
+"""Canonical B8 runtime entrypoints with fail-closed preflight ownership.
+
+This boundary resolves the persisted runtime plan before a provider exists.
+It intentionally does not compile a second GraphQL request or treat an offset
+reader as a change provider while B7 materialized runtime persistence is absent.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from uuid import uuid4
+
+
+BLOCKED_NO_B7_MATERIALIZED_RUNTIME = "BLOCKED_NO_B7_MATERIALIZED_RUNTIME"
+
+
+class RuntimeBridgeError(ValueError):
+    """The scheduler cannot safely enter the B8 runtime."""
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimePreflight:
+    status: str
+    plan_key: str
+    generation: int
+    source_instance: str
+
+
+def _frappe(frappe_module=None):
+    if frappe_module is not None:
+        return frappe_module
+    import frappe
+    return frappe
+
+
+def _runtime_plan_service(frappe_module):
+    from hero_integration.services.runtime_plan import (
+        FrappeRuntimePlanAudit,
+        FrappeRuntimePlanAuthority,
+        FrappeRuntimePlanReferences,
+        FrappeRuntimePlanStorage,
+        RuntimePlanService,
+    )
+    return RuntimePlanService(
+        FrappeRuntimePlanStorage(frappe_module),
+        FrappeRuntimePlanReferences(frappe_module),
+        FrappeRuntimePlanAudit(frappe_module),
+        FrappeRuntimePlanAuthority(frappe_module),
+    )
+
+
+def _scheduler_actor(frappe_module) -> str:
+    actor = getattr(getattr(frappe_module, "session", None), "user", "")
+    if actor != "Administrator":
+        raise PermissionError("B8 scheduler execution requires the Administrator service identity.")
+    return actor
+
+
+def run_scheduled_auto_sync(*, frappe_module=None) -> RuntimePreflight:
+    """Revalidate the selected AUTO_SYNC plan before any provider construction.
+
+    The blocked status is not an execution success. It says only that the
+    canonical plan remains valid while its B7 materialized runtime is missing.
+    """
+    frappe = _frappe(frappe_module)
+    settings = frappe.get_single("HERO Integration Settings")
+    from hero_integration.services.polling import effective_mode
+    from hero_integration.services.runtime_plan import RUNTIME_EXECUTION_MODE
+
+    if effective_mode(settings) != "AUTO_SYNC":
+        raise RuntimeBridgeError("Canonical scheduled sync requires AUTO_SYNC mode.")
+    site_scope = getattr(getattr(frappe, "local", None), "site", "")
+    source_instance = str(getattr(settings, "hero_source_instance", "default") or "default").strip()
+    if not site_scope or not source_instance:
+        raise RuntimeBridgeError("Canonical scheduled sync requires current site and source identities.")
+    actor = _scheduler_actor(frappe)
+    service = _runtime_plan_service(frappe)
+    plan = service.current_approved(site_scope, source_instance)
+    if plan is None:
+        raise RuntimeBridgeError("No approved canonical runtime plan exists for this site/source instance.")
+    executable = service.resolve_executable_plan(
+        site_scope, source_instance, plan.generation, True, actor
+    )
+    if executable.selection.execution_mode != RUNTIME_EXECUTION_MODE:
+        raise RuntimeBridgeError("Runtime plan execution mode is not AUTO_SYNC.")
+    return _run(executable, frappe, automatic=True)
+
+
+def run_pending_sync(expected_plan_generation: int, *, frappe_module=None, provider=None) -> RuntimePreflight:
+    """Run an explicitly requested bound-only reconciliation while polling is OFF.
+
+    The caller must supply the generation observed in its reviewed plan.  This
+    is intentionally not a global cursor claim: an unproven provider returns
+    an explicit incomplete/reconciliation status before any read is made.
+    """
+    frappe = _frappe(frappe_module)
+    settings = frappe.get_single("HERO Integration Settings")
+    site_scope = getattr(getattr(frappe, "local", None), "site", "")
+    source_instance = str(getattr(settings, "hero_source_instance", "default") or "default").strip()
+    if not site_scope or not source_instance:
+        raise RuntimeBridgeError("Pending Sync requires current site and source identities.")
+    actor = getattr(getattr(frappe, "session", None), "user", "")
+    service = _runtime_plan_service(frappe)
+    executable = service.resolve_executable_plan(site_scope, source_instance, expected_plan_generation, False, actor)
+    return _run(executable, frappe, automatic=False, provider=provider)
+
+
+def _run(executable, frappe, *, automatic: bool, provider=None) -> RuntimePreflight:
+    from hero_integration.services.b8_runtime import reconstruct_materialized_read_plan
+    from hero_integration.services.polling import effective_mode
+    from hero_integration.services.sync_engine import (
+        ChangeCapabilities,
+        FrappeBoundIndex,
+        FrappeBoundProcessor,
+        FrappeSyncLedger,
+        PollingConfiguration,
+        SyncEngine,
+        SyncRun,
+    )
+
+    if executable.selection.operation_revision != executable.selection.service_revision:
+        raise RuntimeBridgeError("Runtime plan operation revision is stale.")
+    materialized = reconstruct_materialized_read_plan(executable.selection, frappe_module=frappe)
+    settings = frappe.get_single("HERO Integration Settings")
+    configuration = PollingConfiguration(
+        executable.selection.site_scope,
+        effective_mode(settings) == "AUTO_SYNC",
+        max(60, int(getattr(settings, "polling_interval_minutes", 60) or 60) * 60),
+        executable.selection.source_instance,
+        executable.selection.mapping_revision,
+        executable.selection.schema_fingerprint,
+    )
+    engine = SyncEngine(
+        FrappeSyncLedger(frappe), materialized, provider or _UnprovenProvider(),
+        FrappeBoundIndex(frappe),
+        FrappeBoundProcessor(materialized.sealed.contract.mapping_revision, materialized.sealed.contract.definition_ids, frappe),
+    )
+    state = engine.configure(configuration)
+    run = SyncRun(uuid4().hex, executable.selection.site_scope, executable.actor, state.generation, automatic)
+    result = engine.poll(run) if automatic else engine.pending_sync(run)
+    return RuntimePreflight(result.status.value, executable.plan_key, result.generation, executable.selection.source_instance)
+
+
+class _UnprovenProvider:
+    """No generic/offset reader can claim a complete B8 delta cursor."""
+    capabilities = None
+
+    def __init__(self):
+        from hero_integration.services.sync_engine import ChangeCapabilities
+        self.capabilities = ChangeCapabilities(False, False, False)
+
+    def changes(self, cursor):
+        raise AssertionError("An unproven provider must not be read.")

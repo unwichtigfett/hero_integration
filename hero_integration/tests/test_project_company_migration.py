@@ -63,6 +63,7 @@ class TestProjectCompanyMigration(unittest.TestCase):
         frappe_module.log_error = lambda **kwargs: None
         utils_module = types.ModuleType("frappe.utils")
         utils_module.now_datetime = lambda: "2026-10-16 00:00:00"
+        utils_module.get_datetime = lambda value: value
         sys.modules["frappe"] = frappe_module
         sys.modules["frappe.utils"] = utils_module
 
@@ -563,4 +564,4 @@ class _LinkDocument:
         key = (self.values["source_type"], self.values["source_id"])
         if self.values.get("source_instance", "default") != "default":
             key = (*key, self.values["source_instance"])
-        self.frappe_api.links[key] = SimpleNamespace(**self.values)
+        self.frappe_api.links[key] = SimpleNamespace(name=":".join(key), **self.values)

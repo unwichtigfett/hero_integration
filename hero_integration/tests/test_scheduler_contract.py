@@ -63,18 +63,26 @@ class TestSchedulerContract(unittest.TestCase):
         frappe_module.whitelist = lambda *args, **kwargs: lambda function: function
         frappe_module.get_single = lambda _doctype: SimpleNamespace(scheduled_sync_enabled=1)
         frappe_module.utils = SimpleNamespace(now_datetime=lambda: datetime(2026, 10, 21, 10, 0))
-        previous = sys.modules.get("frappe")
+        adapter = types.ModuleType("hero_integration.services.sync_runtime_adapter")
+        calls: list[str] = []
+        adapter.run_scheduled_auto_sync = lambda: calls.append("canonical")
+        previous_frappe = sys.modules.get("frappe")
+        previous_adapter = sys.modules.get("hero_integration.services.sync_runtime_adapter")
         sys.modules.pop("hero_integration.tasks", None)
         sys.modules["frappe"] = frappe_module
+        sys.modules["hero_integration.services.sync_runtime_adapter"] = adapter
         try:
-            with patch("hero_integration.api.start_scheduled_sync", return_value={"status": "QUEUED"}) as start:
-                tasks = importlib.import_module("hero_integration.tasks")
-                tasks.run_scheduled_sync()
+            tasks = importlib.import_module("hero_integration.tasks")
+            tasks.run_scheduled_sync()
         finally:
             sys.modules.pop("hero_integration.tasks", None)
-            if previous is None:
+            if previous_frappe is None:
                 sys.modules.pop("frappe", None)
             else:
-                sys.modules["frappe"] = previous
+                sys.modules["frappe"] = previous_frappe
+            if previous_adapter is None:
+                sys.modules.pop("hero_integration.services.sync_runtime_adapter", None)
+            else:
+                sys.modules["hero_integration.services.sync_runtime_adapter"] = previous_adapter
 
-        start.assert_called_once_with()
+        self.assertEqual(calls, ["canonical"])

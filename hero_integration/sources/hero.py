@@ -115,11 +115,26 @@ class HeroSource:
             raise ValueError("HeroProjectMatches has no approved V1 filter variables.")
         return self._page(PROJECT_QUERY_V1, "project_matches", offset)
 
+    @staticmethod
+    def testing_ordering(operation: str) -> dict[str, object]:
+        """Native V1 readers have no verified descending HERO order contract."""
+        return {
+            "verified": False,
+            "order": "id",
+            "reason": "The native V1 reader's id order is not evidence of newest-first ordering.",
+        }
+
     def _page(self, query: str, root: str, offset: int, **extra: object) -> SourcePage:
+        if not isinstance(offset, int) or isinstance(offset, bool) or not 0 <= offset <= 10_000_000:
+            raise ValueError("HERO read offset is invalid or exceeds the reviewed run bound.")
         data = self.client.query(query, {"first": self.page_size, "offset": offset, "orderBy": "id", **extra})
+        if not isinstance(data, dict):
+            raise ValueError(f"HERO {root} response does not match the V1 contract.")
         records = data.get(root)
         if not isinstance(records, list) or not all(isinstance(row, dict) for row in records):
             raise ValueError(f"HERO {root} response does not match the V1 contract.")
+        if len(records) > self.page_size:
+            raise ValueError("HERO response exceeds the approved page size.")
         annotated = tuple(
             {**row, "_hero_source_instance": self.source_instance} if self.source_instance != "default" else dict(row)
             for row in records
@@ -129,9 +144,10 @@ class HeroSource:
 
 class GraphQLServiceSource:
     """Read one approved saved service without creating a second mapper."""
-    def __init__(self, client: HeroGraphQLClient, service, contract: ReadContract, source_instance: str):
+    def __init__(self, client: HeroGraphQLClient, service, contract: ReadContract, source_instance: str, *, revalidate=None):
         self.client, self.service, self.contract = client, service, contract
         self.source_instance = source_instance.strip() or "default"
+        self.revalidate = revalidate
 
     def customers(self, offset: int = 0) -> SourcePage:
         if getattr(self, 'customer_source', None) is not None:
@@ -147,16 +163,40 @@ class GraphQLServiceSource:
             raise ReadContractError('The selected read contract is not a projection.')
         return self._page(offset, self.contract.target_operation)
 
+    @staticmethod
+    def testing_ordering(operation: str) -> dict[str, object]:
+        """Saved contracts must opt in with a reviewed descending order first."""
+        return {
+            "verified": False,
+            "order": "UNVERIFIED",
+            "reason": "The approved saved read contract does not prove newest-first ordering.",
+        }
+
     def _page(self, offset: int, operation: str) -> SourcePage:
         if not isinstance(offset, int) or isinstance(offset, bool) or not 0 <= offset <= 10_000_000:
             raise ReadContractError('Read offset is invalid or exceeds the reviewed run bound.')
         if operation != self.contract.target_operation:
             return SourcePage((), None)
-        variables = dict(self.contract.variables)
-        for name, value in tuple(variables.items()):
-            if value == "$offset": variables[name] = offset
-            elif value == "$page_size": variables[name] = self.contract.page_size
+        request = getattr(self.contract, 'materialized_request', None)
+        if request is not None:
+            if not callable(self.revalidate) or self.revalidate() != self.contract:
+                raise ReadContractError('Generated read approval changed before execution.')
+            variables = request.variables
+            offsets = [binding.variable_name for binding in request.argument_bindings if binding.argument_name == 'offset']
+            if len(offsets) != 1:
+                raise ReadContractError('Generated read has no unique offset binding.')
+            variables[offsets[0]] = offset
+        else:
+            variables = dict(self.contract.variables)
+            for name, value in tuple(variables.items()):
+                if value == "$offset": variables[name] = offset
+                elif value == "$page_size": variables[name] = self.contract.page_size
         data = self.client.query(self.service.query_document, variables)
+        if request is not None:
+            import json
+            from hero_integration.graphql_protocol.graphql_result_decoder import decode_graphql_result
+            from hero_integration.graphql_protocol.transport import Response
+            decode_graphql_result(request, Response(True, json.dumps({'data': data}), True))
         records = value_at(data, self.contract.records_path)
         if not isinstance(records, list) or not all(isinstance(row, dict) for row in records):
             raise ReadContractError("The selected result path is not a list of objects.")
@@ -166,3 +206,78 @@ class GraphQLServiceSource:
             value_at(row, self.contract.identity_path)
         annotated = tuple({**row, "_hero_source_instance": self.source_instance} for row in records)
         return SourcePage(annotated, offset + len(records) if len(records) == self.contract.page_size else None)
+
+
+class TestingPreviewSource:
+    """One shared, fail-closed request budget for a manual Preview run.
+
+    It is deliberately a source wrapper, not a second sync path: it only
+    forwards to an existing approved reader after that reader explicitly proves
+    its newest-first ordering.  The caller constructs its GraphQL client with
+    zero retries, so one forwarded page is exactly one external request.
+    """
+
+    def __init__(self, source, max_actions: int):
+        if not isinstance(max_actions, int) or isinstance(max_actions, bool) or not 1 <= max_actions <= 100:
+            raise ValueError("Testing Max. Actions must be between 1 and 100.")
+        self.source = source
+        self.source_instance = source.source_instance
+        self.max_actions = max_actions
+        self.executed_actions = 0
+        self.records_received = 0
+        self.results: dict[str, dict[str, object]] = {}
+        self.status = "COMPLETED"
+
+    def customers(self, offset: int = 0) -> SourcePage:
+        return self._page("HeroCustomers", self.source.customers, offset)
+
+    def projects(self, offset: int = 0) -> SourcePage:
+        return self._page("HeroProjectMatches", self.source.projects, offset)
+
+    def projection(self, offset: int = 0) -> SourcePage:
+        operation = getattr(getattr(self.source, "contract", None), "target_operation", "Projection")
+        return self._page(operation, self.source.projection, offset)
+
+    def _page(self, operation: str, reader, offset: int) -> SourcePage:
+        ordering = self._ordering(operation)
+        if not ordering.get("verified"):
+            self.status = "BLOCKED"
+            self.results[operation] = {
+                "status": "BLOCKED_ORDER_UNVERIFIED", "ordering": ordering.get("order", "UNVERIFIED"),
+                "requests": 0, "records_received": 0, "reason": ordering.get("reason", "Newest-first ordering is unverified."),
+            }
+            return SourcePage((), None)
+        if self.executed_actions >= self.max_actions:
+            self.status = "LIMIT_REACHED"
+            prior = self.results.get(operation, {})
+            self.results[operation] = {
+                **prior, "status": "SKIPPED_LIMIT" if not prior.get("requests") else "LIMIT_REACHED",
+                "ordering": ordering.get("order", "VERIFIED"), "requests": int(prior.get("requests", 0)),
+                "records_received": int(prior.get("records_received", 0)), "reason": "Shared testing request budget exhausted.",
+            }
+            return SourcePage((), None)
+        self.executed_actions += 1
+        try:
+            page = reader(offset)
+        except Exception:
+            self.status = "FAILED"
+            raise
+        records = len(page.records)
+        self.records_received += records
+        prior = self.results.get(operation, {})
+        self.results[operation] = {
+            "status": "COMPLETED", "ordering": ordering.get("order", "VERIFIED"),
+            "requests": int(prior.get("requests", 0)) + 1,
+            "records_received": int(prior.get("records_received", 0)) + records,
+        }
+        return page
+
+    def _ordering(self, operation: str) -> dict[str, object]:
+        provider = getattr(self.source, "testing_ordering", None)
+        value = provider(operation) if callable(provider) else None
+        if not isinstance(value, dict):
+            return {"verified": False, "order": "UNVERIFIED"}
+        order = str(value.get("order", "")).strip()
+        if not value.get("verified") or order.lower() not in {"created desc", "id desc"}:
+            return {**value, "verified": False, "order": order or "UNVERIFIED"}
+        return {**value, "order": order}

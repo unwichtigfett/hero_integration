@@ -40,6 +40,11 @@ class _FrappeSnapshotSelectionMock:
     def only_for(self, role: str) -> None:
         self.permission_calls.append(role)
 
+    def get_single(self, doctype: str):
+        if doctype != "HERO Integration Settings":
+            raise AssertionError(doctype)
+        return SimpleNamespace(hero_source_instance="default")
+
     def get_all(self, doctype: str, **_kwargs):
         self.assert_doctype(doctype, "HERO GraphQL Schema Snapshot")
         return self.rows
@@ -85,8 +90,11 @@ class TestWorkspaceSnapshotSelection(unittest.TestCase):
         self.assertEqual(context["selected_snapshot"], "FULL")
         self.assertEqual(context["selected_snapshot_metadata"]["coverage"]["types"], 300)
         self.assertEqual(context["selected_snapshot_metadata"]["kind"], "Full schema")
-        self.assertEqual(default_context["connection_id"], "")
-        self.assertEqual(default_context["selected_snapshot"], "")
+        # Without an explicit choice the newest usable snapshot is selected (newest by creation, here by modified time).
+        self.assertEqual(default_context["connection_id"], "SYNTHETIC")
+        self.assertEqual(default_context["selected_snapshot"], "SYNTHETIC")
+        self.assertEqual({item["name"]: item["display_name"] for item in context["snapshots"]},
+                         {"FULL": "S-191026-01", "SYNTHETIC": "S-191026-02"})
         self.assertEqual(
             [(item["name"], item["kind"], item["coverage"]["types"]) for item in context["snapshots"]],
             [("SYNTHETIC", "Synthetic/test schema", 3), ("FULL", "Full schema", 300)],

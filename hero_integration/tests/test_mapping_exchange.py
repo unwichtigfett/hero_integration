@@ -29,12 +29,30 @@ class TestMappingExchange(unittest.TestCase):
         self.assertEqual(self.frappe.count(), 0)
         self.assertEqual(self.frappe.count(), 0)
 
+    def test_package_cannot_smuggle_server_write_authority(self):
+        payload = fixture_payload(FINGERPRINT)
+        payload['native_field_bindings'] = [['HeroCustomers', 'website']]
+        with self.assertRaises(mapping_exchange.MappingExchangeError):
+            mapping_exchange._parse_payload(json.dumps(payload), FINGERPRINT)
+        payload.pop('native_field_bindings')
+        payload['mappings'][0]['approved'] = True
+        with self.assertRaises(mapping_exchange.MappingExchangeError):
+            mapping_exchange._parse_payload(json.dumps(payload), FINGERPRINT)
+
+    def test_scoped_publication_cannot_be_imported_as_shared_rule(self):
+        item = fixture_payload(FINGERPRINT)['mappings'][0]
+        local = SimpleNamespace(personal_graphql_mapping='mapping-a', status='Active')
+        with patch.object(mapping_exchange, 'validate_spec'):
+            result = mapping_exchange._preview_item(item, {item['definition_id']: local}, set())
+        self.assertEqual('Conflict', result['state'])
+
     def test_migration_is_blocked_before_enqueue_when_active_mapping_is_missing(self):
         calls = []
         fake_api_frappe = SimpleNamespace(
             only_for=lambda role: calls.append(("only_for", role)),
             enqueue=lambda *args, **kwargs: calls.append(("enqueue", args, kwargs)),
             throw=lambda message: (_ for _ in ()).throw(ValueError(message)),
+            get_single=lambda doctype: SimpleNamespace(testing_enabled=0, testing_max_actions=5) if doctype == "HERO Integration Settings" else (_ for _ in ()).throw(AssertionError(f"Unexpected singleton: {doctype}")),
         )
         service = SimpleNamespace(name="SERVICE", service_revision=1)
         mapping = SimpleNamespace(name="MAPPING", mapping_revision=1)
@@ -59,6 +77,67 @@ class TestMappingExchange(unittest.TestCase):
         export_text = json.dumps(exported).lower()
         self.assertTrue(all(marker not in export_text for marker in ("token", "endpoint", "password", "source_payload_hash", "migration_log")))
 
+    def test_export_manifest_integrity(self):
+        def field(identity, name):
+            return {"id": identity, "doctype": "Customer", "fieldname": name, "label": "Synthetic", "fieldtype": "Data", "options": "", "insert_after": ""}
+        a, b = field("field:a", "custom_hero_a"), field("field:b", "custom_hero_b")
+        schema = lambda *items: {"custom_doctypes": [], "custom_fields": list(items), "relations": []}
+        def exported(manifests, dependencies="[]", target=""):
+            self.frappe.rows = {
+                str(index): _Row({"definition_id": str(index), "schema_fingerprint": FINGERPRINT,
+                                  "schema_manifest": manifest, "schema_dependencies": dependencies,
+                                  "target_doctype": "Customer", "target_field": target})
+                for index, manifest in enumerate(manifests)
+            }
+            return json.loads(mapping_exchange.export_json("SYNTHETIC"))["schema"]
+
+        self.assertEqual(exported([None, ""]), mapping_exchange._empty_schema())
+        self.assertEqual(exported([json.dumps(schema(a)), json.dumps(schema(a), sort_keys=True, indent=2)]), schema(a))
+        self.assertEqual(exported([json.dumps(schema(a)), json.dumps(schema(b))]), schema(a, b))
+        self.assertEqual(exported([json.dumps(schema(b, a)), json.dumps(schema(a))]), schema(a, b))
+        self.assertEqual(exported([json.dumps(schema(a, b))], '{"ids":["field:a"]}', "custom_hero_a"), schema(a, b))
+        conflicts = [
+            ["{"], [json.dumps({"custom_doctypes": [], "custom_fields": []})],
+            [json.dumps(schema(a)), json.dumps(schema({**a, "label": "changed"}))],
+            [json.dumps(schema(a, {**b, "fieldname": a["fieldname"]}))],
+            [json.dumps(schema(a)), "{"], [42],
+        ]
+        for manifests in conflicts:
+            with self.subTest(manifests=manifests), self.assertRaises(mapping_exchange.MappingExchangeError):
+                exported(manifests)
+        duplicate_key = '{"custom_doctypes":[],"custom_fields":[],"relations":[],"relations":[]}'
+        with self.assertRaises(mapping_exchange.MappingExchangeError):
+            exported([duplicate_key])
+        cross_group_id = {"id": "field:a", "name": "HERO Test", "label": "Test", "is_child": False, "fields": []}
+        with self.assertRaises(mapping_exchange.MappingExchangeError):
+            exported([json.dumps({**schema(a), "custom_doctypes": [cross_group_id]})])
+        link = {**a, "fieldtype": "Link", "options": "Customer"}
+        valid_relation = {"id": "relation:a", "doctype": "Customer", "field_id": "field:a", "fieldname": "custom_hero_a", "relation_type": "Link", "target_doctype": "Customer", "dependencies": ["field:a"]}
+        linked_schema = {**schema(link), "relations": [valid_relation]}
+        with patch("hero_integration.services.schema_provisioning._doctype_exists", return_value=True):
+            self.assertEqual(exported([json.dumps(schema(link)), json.dumps({**schema(), "relations": [valid_relation]})]), linked_schema)
+            with self.assertRaises(mapping_exchange.MappingExchangeError):
+                exported([json.dumps({**linked_schema, "relations": [{**valid_relation, "dependencies": ["field:missing"]}]})])
+        with self.assertRaises(mapping_exchange.MappingExchangeError):
+            exported([json.dumps(schema(a))], '{"ids":["field:missing"]}')
+        with self.assertRaises(mapping_exchange.MappingExchangeError):
+            exported([json.dumps(schema(a))], "[]", "custom_hero_a")
+        relation = {"id": "relation:a", "doctype": "Customer", "field_id": "field:missing", "fieldname": "custom_hero_a", "relation_type": "Link", "target_doctype": "Customer", "dependencies": []}
+        with self.assertRaises(mapping_exchange.MappingExchangeError):
+            exported([json.dumps({**schema(a), "relations": [relation]})])
+
+    def test_export_dependencies_default_and_valid_ids(self):
+        for stored, expected in [('[]', []), ('{"ids":[]}', []), ('{"ids":["field:one","type:two"]}', ["field:one", "type:two"])]:
+            with self.subTest(stored=stored):
+                self.assertEqual(mapping_exchange._exportable({"schema_dependencies": stored})["schema_dependencies"], expected)
+
+    def test_export_dependencies_rejects_corrupt_or_lossy_values(self):
+        for stored in ['{', '{}', '{"ids":null}', '{"ids":"field:one"}', '{"ids":[1]}',
+                       '{"ids":[],"other":"preserve me"}', '{"ids":["x"],"ids":[]}',
+                       '["field:one"]', 'null', '', None, 42]:
+            with self.subTest(stored=stored), self.assertRaises(mapping_exchange.MappingExchangeError):
+                mapping_exchange._exportable({"schema_dependencies": stored})
+
     def test_identical_import_is_idempotent(self):
         payload = json.dumps(fixture_payload(FINGERPRINT))
         mapping_exchange.import_json("SYNTHETIC", payload)
@@ -75,7 +154,8 @@ class TestMappingExchange(unittest.TestCase):
         for row in self.frappe.rows.values():
             row["status"] = "Active"
 
-        with patch.dict(sys.modules, {"frappe": self.frappe}):
+        from hero_integration.hero_integration.doctype.hero_frappe_mapping import hero_frappe_mapping as controller
+        with patch.dict(sys.modules, {"frappe": self.frappe}), patch.object(controller, "frappe", self.frappe):
             customer = mapping_runtime.active_mapping_plan("HeroCustomers")
             project = mapping_runtime.active_mapping_plan("HeroProjectMatches")
 

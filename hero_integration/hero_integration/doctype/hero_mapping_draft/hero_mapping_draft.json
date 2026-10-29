@@ -1,0 +1,154 @@
+{
+ "doctype": "DocType",
+ "name": "HERO Mapping Draft",
+ "module": "HERO Integration",
+ "autoname": "field:draft_key",
+ "track_changes": 1,
+ "fields": [
+  {
+   "fieldname": "draft_key",
+   "fieldtype": "Data",
+   "reqd": 1,
+   "unique": 1,
+   "read_only": 1,
+   "label": "Draft Key"
+  },
+  {
+   "fieldname": "site_scope",
+   "fieldtype": "Data",
+   "reqd": 1,
+   "read_only": 1,
+   "label": "Site Scope"
+  },
+  {
+   "fieldname": "definition_id",
+   "fieldtype": "Data",
+   "reqd": 1,
+   "search_index": 1,
+   "read_only": 1,
+   "label": "Definition Id"
+  },
+  {
+   "fieldname": "owner_user",
+   "fieldtype": "Link",
+   "options": "User",
+   "reqd": 1,
+   "read_only": 1,
+   "label": "Owner User"
+  },
+  {
+   "fieldname": "generation",
+   "fieldtype": "Int",
+   "reqd": 1,
+   "read_only": 1,
+   "label": "Generation"
+  },
+  {
+   "fieldname": "state",
+   "fieldtype": "Select",
+   "options": "OPEN\nDISCARDED",
+   "default": "OPEN",
+   "reqd": 1,
+   "read_only": 1,
+   "label": "State"
+  },
+  {
+   "fieldname": "content_json",
+   "fieldtype": "Code",
+   "options": "JSON",
+   "reqd": 1,
+   "label": "Content Json"
+  },
+  {
+   "fieldname": "content_hash",
+   "fieldtype": "Data",
+   "reqd": 1,
+   "read_only": 1,
+   "label": "Content Hash"
+  },
+  {
+   "fieldname": "content_revision",
+   "fieldtype": "Int",
+   "reqd": 1,
+   "read_only": 1,
+   "label": "Content Revision"
+  },
+  {
+   "fieldname": "base_active_mapping",
+   "fieldtype": "Link",
+   "options": "HERO GraphQL Mapping",
+   "read_only": 1,
+   "label": "Base Active Mapping"
+  },
+  {
+   "fieldname": "base_active_revision",
+   "fieldtype": "Int",
+   "read_only": 1,
+   "label": "Base Active Revision"
+  },
+  {
+   "fieldname": "base_active_hash",
+   "fieldtype": "Data",
+   "read_only": 1,
+   "label": "Base Active Hash"
+  },
+  {
+   "fieldname": "base_schema_fingerprint",
+   "fieldtype": "Data",
+   "reqd": 1,
+   "read_only": 1,
+   "label": "Base Schema Fingerprint"
+  },
+  {
+   "fieldname": "new_definition_json",
+   "fieldtype": "Code",
+   "options": "JSON",
+   "read_only": 1,
+   "label": "New Definition Context Json"
+  },
+  {
+   "fieldname": "base_content_json",
+   "fieldtype": "Code",
+   "options": "JSON",
+   "read_only": 1,
+   "label": "Immutable Base Content Json"
+  },
+  {
+   "fieldname": "reconciliation_revision",
+   "fieldtype": "Int",
+   "default": "0",
+   "reqd": 1,
+   "read_only": 1,
+   "label": "Reconciliation Revision"
+  },
+  {
+   "fieldname": "reconciliation_json",
+   "fieldtype": "Code",
+   "options": "JSON",
+   "read_only": 1,
+   "label": "Reconciliation Evidence Json"
+  },
+  {
+   "fieldname": "diagnostics_json",
+   "fieldtype": "Code",
+   "options": "JSON",
+   "read_only": 1,
+   "label": "Diagnostics Json"
+  },
+  {
+   "fieldname": "warning_fingerprint",
+   "fieldtype": "Data",
+   "read_only": 1,
+   "label": "Warning Fingerprint"
+  }
+ ],
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "write": 1,
+   "create": 1
+  }
+ ],
+ "modified": "2026-10-25 00:00:00.000000"
+}
