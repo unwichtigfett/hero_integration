@@ -10,6 +10,15 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
+from hero_integration.graphql_protocol.graphql_response import strict_json_loads
+
+
+# Upper bound for one HERO response body. The largest regular response, a full schema
+# introspection, is well below 5 MB; the bound only prevents unbounded memory use.
+MAX_RESPONSE_BYTES = 20 * 1024 * 1024
+# A server-requested Retry-After is honoured only up to this many seconds.
+MAX_RETRY_AFTER_SECONDS = 300
+
 
 class HeroClientError(RuntimeError):
     """A redacted, machine-readable HERO transport or GraphQL failure."""
@@ -62,6 +71,7 @@ class HeroGraphQLClient:
         timeout: int = 30,
         max_retries: int = 2,
         retry_backoff_seconds: int = 1,
+        max_response_bytes: int = MAX_RESPONSE_BYTES,
     ):
         if not isinstance(timeout, int) or isinstance(timeout, bool) or not 1 <= timeout <= 120:
             raise HeroClientError("HERO timeout must be between 1 and 120 seconds.")
@@ -74,6 +84,9 @@ class HeroGraphQLClient:
         if not isinstance(retry_backoff_seconds, int) or isinstance(retry_backoff_seconds, bool) or not 0 <= retry_backoff_seconds <= 3600:
             raise HeroClientError("HERO retry backoff must be between 0 and 3600 seconds.")
         self.retry_backoff_seconds = retry_backoff_seconds
+        if not isinstance(max_response_bytes, int) or isinstance(max_response_bytes, bool) or not 1024 <= max_response_bytes <= MAX_RESPONSE_BYTES:
+            raise HeroClientError("HERO response size limit is invalid.")
+        self.max_response_bytes = max_response_bytes
 
     def query(self, document: str, variables: Mapping[str, object]) -> dict[str, object]:
         assert_read_only(document)
@@ -130,19 +143,34 @@ class HeroGraphQLClient:
 
     def _request_with_retry(self, opener, request) -> dict[str, object]:
         for attempt in range(self.max_retries + 1):
+            delay = self.retry_backoff_seconds * (2**attempt)
             try:
                 with opener.open(request, timeout=self.timeout) as response:
-                    payload = json.loads(response.read().decode("utf-8"))
+                    # Read at most one byte past the bound, so an oversized body never fills memory.
+                    body = response.read(self.max_response_bytes + 1)
+                if len(body) > self.max_response_bytes:
+                    raise HeroClientError("HERO response exceeds the size limit.", code="RESPONSE_TOO_LARGE")
+                payload = strict_json_loads(body.decode("utf-8"))
                 if not isinstance(payload, dict):
                     raise HeroClientError("HERO response is invalid.", code="INVALID_RESPONSE")
                 return payload
             except urllib.error.HTTPError as exc:
-                retryable, code = exc.code >= 500, f"HTTP_{exc.code}"
+                # 429 (rate limited) is retried like 5xx; a bounded Retry-After from HERO replaces the backoff.
+                retryable, code = exc.code >= 500 or exc.code == 429, f"HTTP_{exc.code}"
+                if exc.code == 429:
+                    delay = _retry_after(exc, delay)
             except (urllib.error.URLError, OSError):
                 retryable, code = True, "TRANSPORT"
-            except (UnicodeError, ValueError) as exc:
+            except (UnicodeError, ValueError, RecursionError) as exc:
                 raise HeroClientError("HERO response is invalid.", code="INVALID_RESPONSE") from exc
             if not retryable or attempt == self.max_retries:
                 raise HeroClientError("HERO request failed.", code=code) from None
-            time.sleep(self.retry_backoff_seconds * (2**attempt))
+            time.sleep(delay)
         raise HeroClientError("HERO request failed.")
+
+
+def _retry_after(error, fallback: int) -> int:
+    value = str((getattr(error, "headers", None) or {}).get("Retry-After", "") or "").strip()
+    if value.isdigit():
+        return min(int(value), MAX_RETRY_AFTER_SECONDS)
+    return min(fallback, MAX_RETRY_AFTER_SECONDS)

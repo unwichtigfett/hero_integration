@@ -14,10 +14,12 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 import json
+import math
 from types import MappingProxyType
 
 from .graphql_response import (
     parse_graphql_response,
+    strict_json_loads,
 )
 from .transport import Response
 from .graphql_operation_materializer import (
@@ -190,6 +192,7 @@ def _named_type(value: object, name: str) -> None:
         if (
             type(value) not in {int, float}
             or isinstance(value, bool)
+            or not math.isfinite(value)
         ):
             raise GraphQLResultDecodeError(
                 "RESULT_TYPE_INVALID"
@@ -372,7 +375,7 @@ def decode_graphql_result(
         )
 
     try:
-        payload = json.loads(
+        payload = strict_json_loads(
             response.payload
         )
     except (

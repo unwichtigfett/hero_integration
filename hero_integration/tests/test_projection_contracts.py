@@ -39,14 +39,16 @@ def native_options(operation):
 
 def documents(operation="HeroTasks"):
     contract = CONTRACTS[operation]
-    snapshot = SimpleNamespace(name="S", schema_fingerprint=contract["fingerprint"])
+    snapshot = SimpleNamespace(name="S", schema_fingerprint=contract["fingerprint"], source_instance="instance-a")
     config = {"target_operation": operation, "records_path": contract["root"], "identity_path": "id",
               "mapping_definition_ids": [row.definition_id for row in definitions(operation)],
               "variables": {"first": "$page_size", "offset": "$offset"}, "page_size": 2}
     if native_options(operation):
         config["native_options"] = native_options(operation)
+    # The read contract also binds direction, operation kind and source instance (see read_contract._common_contract).
     mapping = SimpleNamespace(name="M", status="Active", mapping_revision=1, schema_snapshot="S",
-                              schema_fingerprint=snapshot.schema_fingerprint, mapping_json=json.dumps(config))
+                              schema_fingerprint=snapshot.schema_fingerprint, mapping_json=json.dumps(config),
+                              direction="QUERY_TO_FRAPPE", operation_kind="QUERY", source_instance="instance-a")
     service = SimpleNamespace(name="R", status="Validated", execution_status="Approved", service_revision=1,
                               approved_service_revision=1, read_mapping="M", approved_mapping_revision=1,
                               schema_snapshot="S", schema_fingerprint=snapshot.schema_fingerprint,

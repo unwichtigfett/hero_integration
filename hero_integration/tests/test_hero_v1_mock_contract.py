@@ -59,8 +59,9 @@ class _Response:
     def __init__(self, payload):
         self.payload = payload
 
-    def read(self):
-        return json.dumps(self.payload).encode()
+    def read(self, size=-1):
+        body = json.dumps(self.payload).encode()
+        return body if size is None or size < 0 else body[:size]
 
     def __enter__(self):
         return self

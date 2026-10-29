@@ -1,6 +1,7 @@
 from __future__ import annotations
 from collections.abc import Mapping
 import json
+import math
 from dataclasses import dataclass
 from .graphql_query_composer import GraphQLArgumentSpec, GraphQLQueryComposerModel
 from .schema import GraphQLSchema, GraphQLTypeRef
@@ -51,8 +52,11 @@ def _validate(
     }
     if kind in valid and not valid[kind](value):
         raise GraphQLArgumentValueError(f"Invalid value for GraphQL {kind} argument {name!r}.")
-    if strict_scalars and kind == 'Int' and not -(2**31) <= value < 2**31:
+    # GraphQL Int is 32-bit and Float is finite for every operation, not only for mutation previews.
+    if kind == 'Int' and not -(2**31) <= value < 2**31:
         raise GraphQLArgumentValueError(f"GraphQL Int argument {name!r} is out of range.")
+    if kind == 'Float' and not math.isfinite(value):
+        raise GraphQLArgumentValueError(f"GraphQL Float argument {name!r} must be a finite number.")
     graphql_type = schema.type_named(kind) if schema is not None and kind else None
     if strict_scalars and kind not in valid and (graphql_type is None or graphql_type.kind not in {'ENUM', 'INPUT_OBJECT'}):
         raise GraphQLArgumentValueError(f"GraphQL scalar {kind!r} is not supported for mutation preview.")
@@ -105,11 +109,15 @@ def _parse(text: str, ref: GraphQLTypeRef, name: str, *, default: bool=False) ->
     if kind in {"String","ID"} and not default:
         return text
     if kind=="Int":
-        try: return int(text,10)
+        try: number=int(text,10)
         except ValueError as exc: raise GraphQLArgumentValueError(f"GraphQL Int argument {name!r} requires an integer.") from exc
+        if not -(2**31) <= number < 2**31: raise GraphQLArgumentValueError(f"GraphQL Int argument {name!r} is out of range.")
+        return number
     if kind=="Float":
-        try: return float(text)
+        try: number=float(text)
         except ValueError as exc: raise GraphQLArgumentValueError(f"GraphQL Float argument {name!r} requires a number.") from exc
+        if not math.isfinite(number): raise GraphQLArgumentValueError(f"GraphQL Float argument {name!r} must be a finite number.")
+        return number
     if kind=="Boolean":
         if text.casefold()=="true": return True
         if text.casefold()=="false": return False

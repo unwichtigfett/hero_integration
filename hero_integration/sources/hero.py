@@ -125,7 +125,11 @@ class HeroSource:
         }
 
     def _page(self, query: str, root: str, offset: int, **extra: object) -> SourcePage:
+        if not isinstance(offset, int) or isinstance(offset, bool) or not 0 <= offset <= 10_000_000:
+            raise ValueError("HERO read offset is invalid or exceeds the reviewed run bound.")
         data = self.client.query(query, {"first": self.page_size, "offset": offset, "orderBy": "id", **extra})
+        if not isinstance(data, dict):
+            raise ValueError(f"HERO {root} response does not match the V1 contract.")
         records = data.get(root)
         if not isinstance(records, list) or not all(isinstance(row, dict) for row in records):
             raise ValueError(f"HERO {root} response does not match the V1 contract.")
