@@ -91,10 +91,15 @@ def normalise_mapping(value: object, schema: object) -> dict[str, object]:
     """Validate exactly one approved Frappe field to one HERO input field."""
     if not isinstance(value, Mapping):
         raise WritebackContractError("Writeback mapping must be an object.")
+    if (set(value) - {'version', 'source', 'target', 'transformation'}
+            or ('version' in value and (type(value['version']) is not int or value['version'] != 1))):
+        raise WritebackContractError('Active writeback normalization would lose mapping parameters.')
     source, target = value.get("source"), value.get("target")
     transform = value.get("transformation", "Identity")
     if not isinstance(source, Mapping) or not isinstance(target, Mapping):
         raise WritebackContractError("Writeback mapping needs source and target objects.")
+    if set(source) - {'doctype', 'field'} or set(target) - {'operation', 'argument', 'input_type', 'field'}:
+        raise WritebackContractError('Active writeback normalization would lose mapping parameters.')
     doctype, field = source.get("doctype"), source.get("field")
     if not isinstance(doctype, str) or not isinstance(field, str):
         raise WritebackContractError("Writeback source DocType and field are required.")

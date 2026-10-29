@@ -31,6 +31,13 @@ def schema():
 
 
 class TestFrappeWritebackContract(unittest.TestCase):
+    def test_writeback_normalization_rejects_unreviewed_group_and_unknown_parameters(self):
+        for payload in ({**self.customer_mapping(), 'additional_mappings':[{'id':'not-bound'}]},
+                        {**self.customer_mapping(), 'unknown_option':'do-not-discard'}):
+            with self.assertRaises(WritebackContractError):
+                normalise_mapping(payload, schema())
+            with self.assertRaises(WritebackContractError):
+                build_request_checked(payload, schema(), 42, 'value')
     def customer_mapping(self):
         return {"source": {"doctype": "Customer", "field": "email_id"}, "target": {"operation": "update_contact", "argument": "contact", "input_type": "CustomerInput", "field": "email"}, "transformation": "Trim"}
 
