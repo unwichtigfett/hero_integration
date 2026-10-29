@@ -96,6 +96,7 @@ class TestProjectionContracts(unittest.TestCase):
     def test_task_onboarding_is_bound_to_reviewed_source_and_type(self):
         service, mapping, snapshot = documents()
         snapshot.source_instance = 'hero-one'
+        mapping.source_instance = 'hero-one'
         snapshot.analysis_status = 'Validated'
         service.operation_name = mapping.operation_name = 'tasks'
         mapping.operation_kind = 'QUERY'
@@ -104,6 +105,10 @@ class TestProjectionContracts(unittest.TestCase):
         config['native_task_onboarding'] = {'confirmed': True, 'source_instance': 'hero-one', 'source_type': 'Task'}
         mapping.mapping_json = json.dumps(config)
         self.assertEqual(from_documents(service, mapping, snapshot).target_operation, 'HeroTasks')
+        mapping.source_instance = 'hero-other'
+        with self.assertRaises(ValueError):
+            from_documents(service, mapping, snapshot)
+        mapping.source_instance = 'hero-one'
         service.operation_name = 'HeroTasks'
         self.assertEqual(from_documents(service, mapping, snapshot).target_operation, 'HeroTasks')
         service.operation_name = 'unreviewed-name'
