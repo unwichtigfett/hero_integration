@@ -19,9 +19,6 @@
 .ht-editor.ace_focus {border-color:var(--pc-focus)!important;box-shadow:inset 0 0 0 1px var(--pc-focus),0 0 0 3px color-mix(in srgb,var(--pc-focus) 55%,transparent)!important;}
 .ht-variables {min-height:110px;font-family:monospace;resize:vertical;}
 .ht-variables[aria-invalid="true"] {border-color:var(--hero-field-error);}
-.ht-variables-advanced {margin:4px 0 12px;}
-.ht-variables-advanced > summary {cursor:pointer;color:var(--pc-text);}
-.ht-variables-json {max-height:220px;margin-top:6px;font-family:var(--font-family-monospace, monospace);}
 /* GraphQL Query Result dialog: scoped to the HERO dialog wrapper, theme tokens come from .admin-compat-modal. */
 .ht-result-dialog .modal-dialog {width:calc(100vw - 24px);max-width:1400px;}
 .ht-result-dialog .modal-content {background:var(--pc-surface);color:var(--pc-text);}

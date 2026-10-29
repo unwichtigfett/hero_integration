@@ -14,6 +14,19 @@ test('variables: numbers, booleans, null and strings keep their JSON types', () 
   assert.deepEqual(plain(parseVariablesText(text)), {id: 5, offset: 2, first: 25, ratio: -0.5, zero: 0, search: 'Photovoltaik', active: true, off: false, deleted: null});
 });
 
+test('variables: a closing semicolon is the standard form and stays optional', () => {
+  const withSemicolons = plain(parseVariablesText('id := 5;\noffset := 5;\norderBy := "id";'));
+  assert.deepEqual(withSemicolons, {id: 5, offset: 5, orderBy: 'id'});
+  assert.deepEqual(plain(parseVariablesText('id := 5\noffset := 5\norderBy := "id"')), withSemicolons);
+  assert.deepEqual(plain(parseVariablesText('id := 5;\noffset := 5\nids := [1, 2] ;\nfilter := {"a":"b;"};')),
+    {id: 5, offset: 5, ids: [1, 2], filter: {a: 'b;'}});
+  // A semicolon inside a string belongs to the value.
+  assert.deepEqual(plain(parseVariablesText('text := "a;"\nother := "b;";')), {text: 'a;', other: 'b;'});
+  assert.throws(() => parseVariablesText('id := 5;;'), /Line 1: invalid value for "id"/);
+  assert.throws(() => parseVariablesText('id := ;'), /Line 1: "id" has no value/);
+  assert.throws(() => parseVariablesText('id := 5; offset := 6;'), /Line 1: invalid value for "id"/);
+});
+
 test('variables: unicode, escaped quotes and line breaks in strings', () => {
   const values = plain(parseVariablesText('name := "Photovoltaik und Speicher – Müller"\nquote := "say \\"hi\\""\nlines := "a\\nb"'));
   assert.equal(values.name, 'Photovoltaik und Speicher – Müller');
@@ -28,7 +41,7 @@ test('variables: JSON arrays and nested objects', () => {
 
 test('variables: clear errors for duplicates, missing operator, invalid values and names', () => {
   assert.throws(() => parseVariablesText('id := 1\nid := 2'), /Line 2: variable "id" is defined more than once/);
-  assert.throws(() => parseVariablesText('id = 1'), /Line 1: expected "name := value"/);
+  assert.throws(() => parseVariablesText('id = 1'), /Line 1: expected "name := value;"/);
   assert.throws(() => parseVariablesText('search := Photovoltaik'), /Line 1: invalid value for "search". Strings need double quotes/);
   assert.throws(() => parseVariablesText("name := 'single'"), /invalid value/);
   assert.throws(() => parseVariablesText('filter := {"a":}'), /invalid value for "filter"/);
@@ -53,11 +66,11 @@ test('variables: existing JSON is accepted and converted to the line format and 
   const parsed = parseVariablesText(legacy);
   assert.deepEqual(plain(parsed), {id: '7678', offset: 2, filter: {status: 'active'}});
   const lines = formatVariablesText(parsed);
-  assert.equal(lines, 'id := "7678"\noffset := 2\nfilter := {"status":"active"}');
+  assert.equal(lines, 'id := "7678";\noffset := 2;\nfilter := {"status":"active"};');
   assert.deepEqual(plain(parseVariablesText(lines)), plain(parsed));
   assert.equal(formatVariablesText({}), '');
   assert.deepEqual(plain(parseVariablesText('')), {});
-  assert.throws(() => parseVariablesText('[1, 2]'), /expected "name := value"/);
+  assert.throws(() => parseVariablesText('[1, 2]'), /expected "name := value;"/);
   assert.throws(() => parseVariablesText('{"bad name": 1}'), /not a valid GraphQL variable name/);
 });
 
