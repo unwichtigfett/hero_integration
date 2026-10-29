@@ -8,7 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from hero_integration.services.graphql_graph import GraphSnapshotError, normalize_schema
 
@@ -23,6 +23,7 @@ class MutationContract:
     root_field: str
     variable_types: dict[str, dict[str, object]]
     fingerprint: str
+    argument_variables: dict[str, str] = field(default_factory=dict)
 
 
 def parse_mutation(document: str) -> MutationContract:
@@ -33,6 +34,7 @@ def parse_mutation(document: str) -> MutationContract:
     variables = _variables(stream)
     stream.expect("{")
     root_field = stream.take_name()
+    argument_variables = _root_arguments(stream)
     _skip_field_tail(stream)
     stream.expect("}")
     if not stream.finished:
@@ -46,6 +48,7 @@ def parse_mutation(document: str) -> MutationContract:
         root_field=root_field,
         variable_types=variables,
         fingerprint=hashlib.sha256(canonical.encode()).hexdigest(),
+        argument_variables=argument_variables,
     )
 
 
@@ -67,6 +70,11 @@ def validate_mutation(schema_snapshot: object, contract: MutationContract, varia
     if not isinstance(field, Mapping):
         raise GraphQLContractError("The selected mutation operation does not exist in the saved schema.")
     arguments = {item.get("name"): item for item in field.get("args") or [] if isinstance(item, Mapping)}
+    for name, variable in contract.argument_variables.items():
+        if name not in arguments or variable not in contract.variable_types:
+            raise GraphQLContractError('Mutation argument or bound variable is unknown.')
+        if not _compatible_variable_type(contract.variable_types[variable], arguments[name].get('type')):
+            raise GraphQLContractError('Mutation variable type does not match its schema argument.')
     unknown = sorted(set(variables) - set(contract.variable_types))
     if unknown:
         raise GraphQLContractError("Mutation contains undeclared variables: " + ", ".join(unknown))
@@ -80,9 +88,38 @@ def validate_mutation(schema_snapshot: object, contract: MutationContract, varia
     for argument in arguments.values():
         argument_name = str(argument.get("name") or "")
         ref = argument.get("type")
-        if _non_null(ref) and argument_name not in contract.variable_types and argument.get("defaultValue") is None:
+        variable = contract.argument_variables.get(argument_name)
+        if _non_null(ref) and (not variable or variable not in validated) and argument.get("defaultValue") is None:
             raise GraphQLContractError(f"Required mutation argument {argument_name!r} is not supplied by a declared variable.")
+        if variable and variable in validated:
+            _validate_value(validated[variable], ref, types, f'argument {argument_name}')
     return validated
+
+
+def _root_arguments(stream: "_Stream") -> dict[str, str]:
+    """Retain exact root argument bindings; literal values are not write authority."""
+    result = {}
+    if stream.accept('('):
+        while not stream.accept(')'):
+            name = stream.take_name()
+            if name in result:
+                raise GraphQLContractError('Duplicate mutation argument.')
+            stream.expect(':')
+            stream.expect('$')
+            result[name] = stream.take_name()
+    return result
+
+
+def _compatible_variable_type(variable, argument):
+    if not isinstance(variable, Mapping) or not isinstance(argument, Mapping):
+        return False
+    if argument.get('kind') == 'NON_NULL':
+        return variable.get('kind') == 'NON_NULL' and _compatible_variable_type(variable.get('ofType'), argument.get('ofType'))
+    if variable.get('kind') == 'NON_NULL':
+        return _compatible_variable_type(variable.get('ofType'), argument)
+    if argument.get('kind') == 'LIST':
+        return variable.get('kind') == 'LIST' and _compatible_variable_type(variable.get('ofType'), argument.get('ofType'))
+    return variable.get('kind') == 'NAMED' and variable.get('name') == argument.get('name')
 
 
 def _variables(stream: "_Stream") -> dict[str, dict[str, object]]:
