@@ -140,15 +140,51 @@ class TestMappingDraftExchange(unittest.TestCase):
     def test_only_selected_native_deadline_carries_the_fixed_schema(self):
         rule = {'source_path': 'due_date', 'target_doctype': 'Task', 'target_field': 'custom_hero_due_date',
                 'purpose': 'Native Binding', 'transformation': 'Native Adapter'}
-        item = {'content': {'target_operation': 'HeroTasks', 'native_task_onboarding': {'confirmed': True},
-                            'mapping_definition_ids': ['due'], 'field_rules': {'due': rule}}}
-        schema = exchange._export_schema([item], 'QUERY_TO_FRAPPE')
-        self.assertEqual(schema['custom_fields'][0]['fieldname'], 'custom_hero_due_date')
-        self.assertEqual(schema['custom_fields'][0]['read_only'], 1)
-        item['content']['mapping_definition_ids'] = []
-        self.assertEqual(exchange._export_schema([item], 'QUERY_TO_FRAPPE')['custom_fields'], [])
-        item['content']['mapping_definition_ids'] = ['due']
-        self.assertEqual(exchange._export_schema([item], 'FRAPPE_TO_MUTATION')['custom_fields'], [])
+        base = {'name': 'RULE', 'revision': 1, 'operation': 'HeroTasks', 'schema_snapshot': 'SNAPSHOT',
+                'schema_fingerprint': 'a' * 64}
+        row = {'name': 'RULE', 'mapping_revision': 1, 'operation': 'HeroTasks', 'schema_snapshot': 'SNAPSHOT',
+               'schema_fingerprint': 'a' * 64, 'status': 'Active', 'personal_graphql_mapping': '',
+               'schema_manifest': '', 'schema_dependencies': '[]'}
+        item = {'base_active_name': 'MAP', 'base_schema_fingerprint': 'a' * 64, 'operation_name': 'tasks',
+                'content': {'target_operation': 'HeroTasks', 'native_task_onboarding': {'confirmed': True},
+                            'mapping_definition_ids': ['due'], 'field_rules': {'due': rule}, 'field_rule_bases': {'due': base}}}
+        with patch.object(self.frappe, 'get_all', return_value=[row]):
+            schema = exchange._export_schema([item], 'QUERY_TO_FRAPPE', 'SNAPSHOT')
+            self.assertEqual(schema['custom_fields'][0]['fieldname'], 'custom_hero_due_date')
+            self.assertEqual(schema['custom_fields'][0]['read_only'], 1)
+            item['content']['mapping_definition_ids'] = []
+            self.assertEqual(exchange._export_schema([item], 'QUERY_TO_FRAPPE', 'SNAPSHOT')['custom_fields'], [])
+            item['content']['mapping_definition_ids'] = ['due']
+            self.assertEqual(exchange._export_schema([item], 'FRAPPE_TO_MUTATION', 'SNAPSHOT')['custom_fields'], [])
+
+    def test_selected_rule_schema_manifest_is_exported_and_missing_dependency_rejected(self):
+        field = {'id': 'field:customer', 'doctype': 'Customer', 'fieldname': 'custom_hero_number',
+                 'label': 'Number', 'fieldtype': 'Data', 'options': '', 'insert_after': ''}
+        manifest = {'custom_doctypes': [], 'custom_fields': [field], 'relations': []}
+        base = {'name': 'RULE', 'revision': 1, 'operation': 'HeroCustomers', 'schema_snapshot': 'SNAPSHOT',
+                'schema_fingerprint': 'a' * 64}
+        row = {'name': 'RULE', 'mapping_revision': 1, 'operation': 'HeroCustomers', 'schema_snapshot': 'SNAPSHOT',
+               'schema_fingerprint': 'a' * 64, 'status': 'Active', 'personal_graphql_mapping': '',
+               'schema_manifest': json.dumps(manifest), 'schema_dependencies': '{"ids":["field:customer"]}'}
+        item = {'base_active_name': 'MAP', 'base_schema_fingerprint': 'a' * 64, 'operation_name': 'contacts',
+                'content': {'target_operation': 'HeroCustomers', 'mapping_definition_ids': ['customer'],
+                            'field_rules': {'customer': {'target_doctype': 'Customer', 'target_field': 'custom_hero_number'}},
+                            'field_rule_bases': {'customer': base}}}
+        with patch.object(self.frappe, 'get_all', return_value=[row]):
+            self.assertEqual(exchange._export_schema([item], 'QUERY_TO_FRAPPE', 'SNAPSHOT'), manifest)
+            row['schema_dependencies'] = '{"ids":["field:missing"]}'
+            with self.assertRaisesRegex(exchange.MappingDraftExchangeError, 'invalid or incomplete'):
+                exchange._export_schema([item], 'QUERY_TO_FRAPPE', 'SNAPSHOT')
+            row['mapping_revision'] = 2
+            with self.assertRaisesRegex(exchange.MappingDraftExchangeError, 'provenance is stale'):
+                exchange._export_schema([item], 'QUERY_TO_FRAPPE', 'SNAPSHOT')
+            row['mapping_revision'] = 1
+            row['schema_dependencies'] = '[]'
+            with self.assertRaisesRegex(exchange.MappingDraftExchangeError, 'invalid or incomplete'):
+                exchange._export_schema([item], 'QUERY_TO_FRAPPE', 'SNAPSHOT')
+        with patch.object(self.frappe, 'get_all', return_value=[row, row]):
+            with self.assertRaisesRegex(exchange.MappingDraftExchangeError, 'missing or ambiguous'):
+                exchange._export_schema([item], 'QUERY_TO_FRAPPE', 'SNAPSHOT')
 
     def test_preview_reports_omitted_own_drafts_without_touching_other_direction_or_owner(self):
         package = json.loads(self.package())

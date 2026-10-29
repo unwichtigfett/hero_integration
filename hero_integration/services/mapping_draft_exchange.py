@@ -70,28 +70,63 @@ def export_package(source_instance: str, snapshot_name: str, direction: str) -> 
         "snapshot_name": snapshot_name,
         "schema_fingerprint": next(iter(fingerprints)),
         "direction": direction,
-        "schema": _export_schema(mappings, direction),
+        "schema": _export_schema(mappings, direction, snapshot_name),
         "mappings": mappings,
     })
 
 
-def _export_schema(mappings, direction):
-    """Carry the fixed external-deadline schema only for a selected native rule."""
+def _export_schema(mappings, direction, snapshot_name):
+    """Export schema manifests referenced by the selected personal field rules."""
     empty = {"custom_doctypes": [], "custom_fields": [], "relations": []}
     if direction != 'QUERY_TO_FRAPPE':
         return empty
+    from hero_integration.services.mapping_exchange import MappingExchangeError, _exportable, _merge_export_schemas
+    from hero_integration.services.schema_provisioning import _target_dependency
+
+    rows, selected = [], []
     for item in mappings:
         content = item['content']
-        if content.get('target_operation') != 'HeroTasks' or not content.get('native_task_onboarding'):
-            continue
         rules = content.get('field_rules', {})
-        for identity in content.get('mapping_definition_ids', []):
-            rule = rules.get(identity, {})
-            if (rule.get('source_path'), rule.get('target_doctype'), rule.get('target_field'),
+        bases = content.get('field_rule_bases', {})
+        for identity in references(content):
+            if not isinstance(rules, dict) or not isinstance(bases, dict) or identity not in rules or identity not in bases:
+                raise MappingDraftExchangeError('Selected field rule lacks its saved provenance.')
+            found = frappe.get_all('HERO Frappe Mapping', filters={'definition_id': identity},
+                fields=['name', 'definition_id', 'status', 'schema_snapshot', 'schema_fingerprint',
+                        'mapping_revision', 'operation', 'personal_graphql_mapping', 'schema_manifest', 'schema_dependencies'])
+            if len(found) != 1:
+                raise MappingDraftExchangeError('Selected field rule is missing or ambiguous.')
+            row, base = found[0], bases[identity]
+            current = {'name': _value(row, 'name'), 'revision': _positive_int(_value(row, 'mapping_revision')),
+                       'operation': _value(row, 'operation'), 'schema_snapshot': _value(row, 'schema_snapshot'),
+                       'schema_fingerprint': _value(row, 'schema_fingerprint')}
+            if (_value(row, 'status') != 'Active' or not _same(current, base)
+                    or current['schema_snapshot'] != snapshot_name
+                    or current['schema_fingerprint'] != item['base_schema_fingerprint']
+                    or (_value(row, 'personal_graphql_mapping') or '') not in ('', item['base_active_name'])
+                    or current['operation'] != (content.get('target_operation') or item['operation_name'])):
+                raise MappingDraftExchangeError('Selected field-rule provenance is stale or out of scope.')
+            rule = rules[identity]
+            rows.append(row)
+            deadline = (content.get('target_operation') == 'HeroTasks' and content.get('native_task_onboarding')
+                    and (rule.get('source_path'), rule.get('target_doctype'), rule.get('target_field'),
                     rule.get('purpose'), rule.get('transformation')) == (
-                    'due_date', 'Task', 'custom_hero_due_date', 'Native Binding', 'Native Adapter'):
-                return json.loads(Path(__file__).with_name('task_external_deadline_schema.json').read_text())
-    return empty
+                    'due_date', 'Task', 'custom_hero_due_date', 'Native Binding', 'Native Adapter'))
+            selected.append((row, rule, deadline))
+            if deadline:
+                rows.append({'schema_manifest': Path(__file__).with_name('task_external_deadline_schema.json').read_text()})
+    try:
+        schema = _merge_export_schemas(rows)
+        declared = {entry['id'] for group in schema.values() for entry in group}
+        for row, rule, deadline in selected:
+            dependencies = _exportable(row)['schema_dependencies']
+            target = _target_dependency(schema, rule)
+            if any(identity not in declared for identity in dependencies) or (target and target not in dependencies
+                    and not (deadline and target == 'task-external-deadline')):
+                raise MappingExchangeError('Selected field rule has incomplete schema dependencies.')
+    except (MappingExchangeError, KeyError, TypeError, ValueError) as error:
+        raise MappingDraftExchangeError('Selected field-rule schema dependencies are invalid or incomplete.') from error
+    return schema
 
 
 def preview_import(payload_json: str, source_instance: str, snapshot_name: str, direction: str) -> dict[str, object]:
