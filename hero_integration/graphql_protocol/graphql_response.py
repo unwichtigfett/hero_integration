@@ -9,6 +9,24 @@ class GraphQLResponseEnvelopeError(ValueError):
     """Malformed GraphQL JSON envelope or error metadata."""
 
 
+def _reject_constant(name: str) -> object:
+    raise ValueError(f"JSON constant {name} is not valid GraphQL data.")
+
+
+def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("JSON object contains a duplicate key.")
+        result[key] = value
+    return result
+
+
+def strict_json_loads(text: str | bytes) -> object:
+    """Parse JSON as GraphQL data: no NaN/Infinity and no duplicate keys (no silent last-key-wins)."""
+    return json.loads(text, parse_constant=_reject_constant, object_pairs_hook=_unique_object)
+
+
 @dataclass(frozen=True, slots=True)
 class GraphQLResponseError:
     message: str
@@ -30,11 +48,13 @@ def parse_graphql_response(
     if not isinstance(response_body, str):
         raise TypeError("response_body must be JSON text.")
     try:
-        envelope = json.loads(response_body)
+        envelope = strict_json_loads(response_body)
     except json.JSONDecodeError as exc:
         raise GraphQLResponseEnvelopeError(
             f"GraphQL response is not valid JSON: {exc.msg}."
         ) from exc
+    except (ValueError, RecursionError) as exc:
+        raise GraphQLResponseEnvelopeError("GraphQL response is not valid GraphQL JSON.") from exc
     if not isinstance(envelope, Mapping):
         raise GraphQLResponseEnvelopeError(
             "GraphQL response envelope must be an object."
