@@ -6,7 +6,7 @@ targets as Draft proposals until that app supplies an explicit integration.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from hero_integration.services.direct_mapping import (
     ALLOWED_TARGET_TYPES, PROTECTED_FIELDS, PURPOSE_FIELD, SOURCE_CONTRACTS, SYSTEM_FIELDS,
 )
@@ -155,13 +155,42 @@ def validate_draft_target(operation: str, source_type: str, target_doctype: str,
 
 
 def validate_draft_writeback_source(doctype: str, fieldname: str, metadata) -> CatalogField:
-    """Keep Draft-only writeback sources inside the same protected-field catalog."""
-    source = next((item for item in fields(metadata, doctype=doctype) if item.path == fieldname), None)
+    """Validate a source without relaxing any incoming target protection."""
+    source = next((item for item in writeback_fields(metadata, doctype=doctype) if item.path == fieldname), None)
     if source is None:
         raise ValueError("The Frappe source field is not available in the current site metadata.")
     if not source.selectable:
         raise ValueError(source.reason)
     return source
+
+
+def writeback_fields(metadata, doctype: str = '', *, targets=None) -> list[CatalogField]:
+    """Expose reviewed readable source fields separately from inbound targets.
+
+    Only explicit existing writeback definitions can cross the inbound
+    protected-target boundary, and only at the public field permission level.
+    This grants neither mutation execution nor access to a specific record.
+    """
+    from hero_integration.services.frappe_writeback import DEFINITIONS
+    candidates = doctypes(metadata) if targets is None else targets
+    result = []
+    for target in candidates:
+        if doctype and target.doctype != doctype:
+            continue
+        if not target.selectable:
+            continue
+        reviewed = DEFINITIONS.get(target.doctype)
+        for field in metadata.fields(target.doctype):
+            item = _field(target, field, metadata)
+            if (not item.selectable and reviewed and item.path in reviewed.fields
+                    and item.path in PROTECTED_FIELDS.get(target.doctype, set())
+                    and item.path not in SYSTEM_FIELDS and item.fieldtype in ALLOWED_TARGET_TYPES | {'Long Text', 'Text', 'Code', 'Select'}
+                    and item.fieldtype not in {'Link', 'Table'}
+                    and not getattr(field, 'read_only', 0) and not getattr(field, 'hidden', 0)
+                    and not getattr(field, 'is_virtual', 0) and not int(getattr(field, 'permlevel', 0) or 0)):
+                item = replace(item, selectable=True, reason='Reviewed writeback source; execution requires separate approval.')
+            result.append(item)
+    return sorted(result, key=lambda item: (item.app_name.lower(), item.doctype.lower(), item.path.lower()))
 
 
 def types_compatible(source_type: str, target_type: str) -> bool:

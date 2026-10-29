@@ -2115,7 +2115,7 @@ def mapping_object_catalog(snapshot_name: str, object_type: str = '', search: st
     except ValueError as error:
         frappe.throw(str(error))
     entries = data['items']
-    return {'objects': data['objects'], 'items': entries[start:start + page_size], 'start': start,
+    return {'objects': data['objects'], 'areas': data['areas'], 'items': entries[start:start + page_size], 'start': start,
             'page_size': page_size, 'total': len(entries), 'has_more': start + page_size < len(entries),
             'source_instance': snapshot.source_instance, 'snapshot_name': snapshot.name,
             'schema_fingerprint': snapshot.schema_fingerprint, 'execution_authorized': False}
@@ -2175,7 +2175,7 @@ def writeback_mapper_catalog(
     """Return independent Frappe source pickers without widening writeback."""
     frappe.only_for("System Manager")
     snapshot, schema = _validated_snapshot(snapshot_name)
-    from hero_integration.services.frappe_mapping_catalog import doctypes as catalog_doctypes, fields
+    from hero_integration.services.frappe_mapping_catalog import doctypes as catalog_doctypes, writeback_fields
     from hero_integration.services.frappe_writeback import DEFINITIONS, WritebackContractError, reviewed_input_target
 
     metadata = _FrappePickerMetadata()
@@ -2187,7 +2187,7 @@ def writeback_mapper_catalog(
         frappe.throw("The selected source is not available.", frappe.PermissionError)
     doctypes = [item.__dict__ for item in candidates]
     source_fields: list[dict[str, object]] = []
-    source_candidates = (field for field in fields(metadata, targets=candidates) if field.selectable)
+    source_candidates = (field for field in writeback_fields(metadata, targets=candidates) if field.selectable)
     for field in source_candidates:
         payload = field.__dict__.copy()
         doctype = field.doctype

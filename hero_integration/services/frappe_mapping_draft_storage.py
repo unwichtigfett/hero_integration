@@ -436,6 +436,38 @@ class FrappeMappingDraftStorage:
             except (KeyError, TypeError, ValueError) as error:
                 raise MappingDraftError('Object field context does not match the saved schema.') from error
 
+    def _approved_relationship_contexts(self, content, schema):
+        """Recognize only the existing Project-to-Customer identity resolver.
+
+        This does not approve a service. Publication still checks its existing
+        read contract, rule provenance, permissions and mapping plan.
+        """
+        from hero_integration.services.mapping_suggestions import source_fields
+        from hero_integration.services.object_mapping_catalog import field as schema_field
+        if content.get('target_operation') != 'HeroProjectMatches':
+            return False
+        source = next((item for item in source_fields('HeroProjectMatches', schema)
+                       if item.path == 'customer_id' and item.selectable), None)
+        contexts, rules = content.get('field_contexts') or {}, content.get('field_rules') or {}
+        if not source or not isinstance(contexts, dict) or not contexts or not isinstance(rules, dict):
+            return False
+        for identity, context in contexts.items():
+            rule = rules.get(identity, {})
+            if (identity not in content.get('mapping_definition_ids', []) or not isinstance(context, dict)
+                    or not isinstance(rule, dict)
+                    or (rule.get('source_path'), rule.get('source_type'), rule.get('target_doctype'),
+                 rule.get('target_field'), rule.get('purpose'), rule.get('transformation'), rule.get('relation')) !=
+                    ('customer_id', 'int|null', 'Project', 'customer', 'Customer Relation',
+                     'HERO Customer Link', 'HERO Customer Link') or context.get('object_type') != source.return_type):
+                return False
+            try:
+                chosen = schema_field(schema, context['object_type'], 'customer_id', context['schema_context'])
+            except (KeyError, TypeError, ValueError):
+                return False
+            if chosen['relations'] or chosen['arguments']:
+                return False
+        return True
+
     def _publication_content(self, draft, schema):
         from uuid import NAMESPACE_URL, uuid5
         from hero_integration.services.personal_mapping_content import RULE_FIELDS, same
@@ -466,10 +498,14 @@ class FrappeMappingDraftStorage:
             return normalized, created
         if parent.direction != 'QUERY_TO_FRAPPE':
             raise MappingDraftError('Unsupported publication direction.')
-        if (content.get('field_contexts') or (isinstance(content.get('source'), dict) and
-                ({'object_type', 'schema_context'} & set(content['source']))) or
+        if (isinstance(content.get('source'), dict) and
+                ({'object_type', 'schema_context'} & set(content['source'])) or
                 any('object_type' in item.get('source', {}) for item in additions)):
             raise MappingDraftError('Object-first Draft fields require an approved fetch and publication contract before activation.')
+        if content.get('field_contexts'):
+            if not self._approved_relationship_contexts(content, schema):
+                raise MappingDraftError('Object-first Draft fields require an approved fetch and publication contract before activation.')
+            content.pop('field_contexts')
         ids = content.get('mapping_definition_ids')
         rules, bases = content.pop('field_rules', {}), content.pop('field_rule_bases', {})
         if not isinstance(ids, list) or not ids or not isinstance(rules, dict) or not isinstance(bases, dict):

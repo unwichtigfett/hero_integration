@@ -57,6 +57,34 @@ test('object field context displays relationship role, list cardinality and argu
  assert.match(value,/Project\.addresses → Address \[list\] \(role: String!\)/);
  assert.match(value,/Arguments: locale: String/);
 });
+test('area filter uses catalog memberships and preserves unclassified objects under All', () => {
+ const {objectsInArea,mappingAreas}=window.hero_integration_mapping_editor;
+ const items=[{name:'Customer',areas:['Customers','Projects']},{name:'Task',areas:['Tasks']},{name:'Other',areas:[]}];
+ assert.equal(mappingAreas.join(','),'All areas,Customers,Projects,Tasks,Calendar');
+ assert.equal(objectsInArea(items,'All areas').map(x=>x.name).join(','),'Customer,Task,Other');
+ assert.equal(objectsInArea(items,'Projects').map(x=>x.name).join(','),'Customer');
+ assert.equal(objectsInArea(items,'Tasks').map(x=>x.name).join(','),'Task');
+ assert.equal(objectsInArea(items,'invalid').length,0);
+});
+test('relationship description identifies only the reviewed Project Customer resolver', () => {
+ const {relationshipDescription}=window.hero_integration_mapping_editor;
+ const rule={source_path:'customer_id',target_doctype:'Project',target_field:'customer',purpose:'Customer Relation',
+             transformation:'HERO Customer Link',relation:'HERO Customer Link'};
+ const result=relationshipDescription(rule,'HeroProjectMatches',null);
+ assert.equal(result.source,'ProjectMatch.customer_id');assert.equal(result.target,'Project.customer');
+ assert.match(result.identity,/source instance and external ID.*HERO Integration Link/);
+ assert.match(result.role,/Customer of the project/);
+ assert.doesNotMatch(relationshipDescription({...rule,transformation:'Identity'},'HeroProjectMatches',null).identity,/Resolve the Customer/);
+ assert.doesNotMatch(relationshipDescription(rule,'HeroProjectMatches',{object_type:'Task'}).identity,/Resolve the Customer/);
+ const context={schema_context:JSON.stringify({object_type:'ProjectMatch',segments:[
+  {owner_type:'ProjectMatch',name:'customer',type:'Customer'},
+  {owner_type:'Customer',name:'address',type:'[Address]'},
+  {owner_type:'Address',name:'city',type:'String'}]})};
+ const unknown=relationshipDescription(null,'HeroProjectMatches',context);
+ assert.match(unknown.source,/ProjectMatch\.customer\.address\.city/);
+ assert.match(unknown.cardinality,/address: \[Address\]/);
+ assert.match(unknown.identity,/not been confirmed/);
+});
 test('mutation input type comes from the argument, including GraphQL wrappers', () => {
  const {actionInputType}=window.hero_integration_mapping_editor;
  const operation={arguments:[{name:'contact',type:'CustomerInput!'}, {name:'batch',type:'[CustomerInput!]!'}],input_fields:{contact:[{path:'full_name',input_type:''}]}};
