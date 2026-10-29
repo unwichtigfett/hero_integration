@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime, timezone as dt_timezone
 import json
 import re
 import time
@@ -13,6 +13,8 @@ VALID_MODES = {"OFF", "MONITOR", "AUTO_SYNC"}
 SUPPORTED_SOURCE_OPERATIONS = {"HeroCustomers", "HeroProjectMatches"}
 WINDOW_PATTERN = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d-(?:[01]\d|2[0-3]):[0-5]\d$")
 MAX_FULL_INVENTORY_PAGES = 100
+# Reviewed filter variables per source; anything else is rejected instead of being silently ignored.
+SUPPORTED_FILTERS = {"HeroCustomers": {"showDeleted": bool}, "HeroProjectMatches": {}}
 
 
 class PaginationProgressError(ValueError):
@@ -48,10 +50,12 @@ def runtime_plan(settings) -> dict[str, object]:
     sources = tuple(line.strip() for line in str(getattr(settings, "polling_data_sources", "") or "").splitlines() if line.strip())
     sources = sources or ("HeroCustomers", "HeroProjectMatches")
     filters = _filters(getattr(settings, "polling_filters_json", "{}"))
+    filter_problems = _filter_problems(filters)
+    filters = filters or {}
     strategy = str(getattr(settings, "polling_pagination_strategy", "OFFSET") or "OFFSET").upper()
     timezone = str(getattr(settings, "polling_timezone", "UTC") or "UTC").strip()
     full_inventory = bool(getattr(settings, "polling_full_inventory", 0))
-    unsupported = [source for source in sources if source not in SUPPORTED_SOURCE_OPERATIONS]
+    unsupported = [source for source in sources if source not in SUPPORTED_SOURCE_OPERATIONS] + filter_problems
     if strategy != "OFFSET":
         unsupported.append("pagination strategy " + strategy)
     if not _timezone_is_valid(timezone):
@@ -77,12 +81,19 @@ def runtime_plan(settings) -> dict[str, object]:
     }
 
 
-def scheduler_due(settings, now: datetime, last_success: datetime | None = None) -> bool:
-    """Bound automatic work by mode, configured timezone, window and interval."""
+def scheduler_due(settings, now: datetime, last_success: object = None, *, system_timezone: str | None = None) -> bool:
+    """Bound automatic work by mode, configured timezone, window and interval.
+
+    Frappe passes naive datetimes in the *system* timezone and stores Single
+    Datetime values as strings; both are normalized before comparing.
+    """
     plan = runtime_plan(settings)
     if plan["mode"] == "OFF" or plan["unsupported_sources"]:
         return False
-    local_now = _in_timezone(now, str(plan["timezone"]))
+    current = _aware(now, system_timezone)
+    if current is None:
+        return False
+    local_now = current.astimezone(ZoneInfo(str(plan["timezone"])))
     window = str(plan["execution_window"])
     if window:
         if not WINDOW_PATTERN.fullmatch(window):
@@ -92,7 +103,12 @@ def scheduler_due(settings, now: datetime, last_success: datetime | None = None)
         if not (start <= clock <= end if start <= end else clock >= start or clock <= end):
             return False
     interval = int(plan["interval_minutes"])
-    return last_success is None or (now - last_success).total_seconds() >= interval * 60
+    previous = _aware(_as_datetime(last_success), system_timezone)
+    if previous is None:
+        return True
+    elapsed = (current - previous).total_seconds()
+    # A success time in the future (clock or timezone change) must not block polling indefinitely.
+    return elapsed < 0 or elapsed >= interval * 60
 
 
 def monitor(source, plan: dict[str, object] | None = None, *, customer_offset: int = 0, project_offset: int = 0, record_observer=None) -> MonitorResult:
@@ -158,6 +174,20 @@ def run_monitor() -> None:
         settings.sync_error = "Read-only monitoring failed; see the redacted server error log."
         settings.save(ignore_permissions=True)
         frappe.log_error(title="HERO read-only monitoring failed")
+
+
+def record_scheduler_outcome(mode: str, status: str, detail: str) -> str | None:
+    """Make a scheduler skip or failure visible once; repeats of the same state add no new event."""
+    import frappe
+
+    settings = frappe.get_single("HERO Integration Settings")
+    label = f"{mode} {status.lower()}"
+    if (getattr(settings, "sync_status", "") or "") == label and (getattr(settings, "sync_error", "") or "") == detail:
+        return None
+    event = _record_event(mode if mode in {"MONITOR", "AUTO_SYNC"} else "MONITOR", status, detail)
+    settings.sync_status, settings.sync_error = label, detail
+    settings.save(ignore_permissions=True)
+    return event
 
 
 def _record_event(mode: str, status: str, detail: str, result: MonitorResult | None = None) -> str:
@@ -241,14 +271,59 @@ def _count_pages(reader, offset: int, max_pages: int, minimum_interval: float, r
     return _PageCount(count, current_offset, True)
 
 
-def _filters(value: object) -> dict[str, dict[str, object]]:
+def _filters(value: object) -> dict[str, dict[str, object]] | None:
+    """Parsed filters, or None when the stored JSON is invalid (never treated as "no filter")."""
     try:
         parsed = json.loads(value or "{}")
     except (TypeError, ValueError, json.JSONDecodeError):
-        return {}
-    if not isinstance(parsed, dict):
-        return {}
-    return {str(name): item for name, item in parsed.items() if isinstance(item, dict)}
+        return None
+    if not isinstance(parsed, dict) or not all(isinstance(item, dict) for item in parsed.values()):
+        return None
+    return {str(name): item for name, item in parsed.items()}
+
+
+def _filter_problems(filters: dict[str, dict[str, object]] | None) -> list[str]:
+    if filters is None:
+        return ["filters (invalid JSON object)"]
+    problems = []
+    for source, values in filters.items():
+        allowed = SUPPORTED_FILTERS.get(source)
+        if allowed is None:
+            problems.append(f"filter {source}")
+            continue
+        for key, value in values.items():
+            expected = allowed.get(key)
+            if expected is None or type(value) is not expected:
+                problems.append(f"filter {source}.{key}")
+    return problems
+
+
+def _as_datetime(value: object) -> datetime | None:
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, date):
+        return datetime(value.year, value.month, value.day)
+    if isinstance(value, str) and value.strip():
+        try:
+            return datetime.fromisoformat(value.strip().replace(" ", "T", 1))
+        except ValueError:
+            return None
+    return None
+
+
+def _aware(value: datetime | None, system_timezone: str | None) -> datetime | None:
+    """Naive values are in the Frappe system timezone (UTC when unknown)."""
+    if value is None:
+        return None
+    if value.tzinfo is not None:
+        return value
+    zone = dt_timezone.utc
+    if system_timezone:
+        try:
+            zone = ZoneInfo(system_timezone)
+        except (ZoneInfoNotFoundError, ValueError):
+            return None
+    return value.replace(tzinfo=zone)
 
 
 def _bounded_value(value: object, minimum: int, maximum: int, default: int) -> int:
@@ -266,7 +341,3 @@ def _timezone_is_valid(value: str) -> bool:
         return False
     return True
 
-
-def _in_timezone(now: datetime, timezone: str) -> datetime:
-    zone = ZoneInfo(timezone)
-    return now.astimezone(zone) if now.tzinfo else now.replace(tzinfo=zone)

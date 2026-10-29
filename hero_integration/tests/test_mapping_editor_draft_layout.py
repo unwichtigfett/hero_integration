@@ -58,5 +58,17 @@ class TestMappingEditorDraftLayout(unittest.TestCase):
         self.assertIn("snapshot_name: identity.snapshot_name, node_id: identity.node_id", WORKSPACE, "the UID is what gets saved")
 
 
+class TestSnapshotInheritanceUi(unittest.TestCase):
+    def test_inheritance_is_an_explicit_confirmed_draft_only_action(self):
+        inherit = function("inheritFromParent")
+        self.assertIn('rpc("workspace_snapshot_inherit_mappings", {snapshot_name: snapshotName}, true)', inherit)
+        self.assertIn("modal(", inherit)
+        self.assertIn("Nothing is activated", inherit)
+        for forbidden in ("mapping_draft_publish", "activateDraft", "mapping_field_rule_activate"):
+            self.assertNotIn(forbidden, inherit)
+        self.assertIn("snapshotParents.set(item.name, item.parent_snapshot)", EDITOR)
+        self.assertIn("row.configured_source === true", EDITOR, "the configured HERO source wins the default snapshot")
+
+
 if __name__ == "__main__":
     unittest.main()

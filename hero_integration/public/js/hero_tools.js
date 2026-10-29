@@ -335,7 +335,7 @@
             // Keep the existing state/action objects available for shared logic without rendering a duplicate toolbar.
             this.status = $('p', 'ht-context'); this.status.hidden = true; this.notice = $('div', 'ht-notice'); this.notice.setAttribute('role','status');
             this.bindButton = button('Apply Connection',()=>this.run(async()=>{await call('synchronize_connection',{expected_generation:this.context?.binding_generation || 0},true);await this.show(true);}));
-            this.refreshButton = button('Refresh Schema',()=>this.run(async()=>{const r=await call('refresh_schema',this.scope(),true);this.schema=r.schema_fingerprint;this.validation=null;await this.show(true);}));
+            this.refreshButton = button('Refresh Schema',()=>this.run(async()=>{const r=await call('refresh_schema',this.scope(),true);this.schema=r.schema_fingerprint;this.validation=null;await this.show(true);const inherited=r.inheritance;if(inherited?.status==='COMPLETED'){const c=inherited.counts||{};this.notice.textContent=`New snapshot captured. Inherited ${c['Draft Created']||0} parent mapping(s) as personal drafts (${c.Incompatible||0} incompatible, ${c.Skipped||0} skipped). Nothing was activated.`;}else if(inherited&&inherited.status!=='NO_PARENT')this.notice.textContent='New snapshot captured; mapping inheritance did not complete. Retry it in the Mapping Editor.';}));
             this.bindButton.hidden = true; this.refreshButton.hidden = true;
             this.tabs = $('nav','pc-shell-nav');this.tabs.setAttribute('aria-label','HERO Tools');
             this.panels = Object.fromEntries(['analyzer','graph','services'].map(k=>[k,$('section','ht-panel')]));

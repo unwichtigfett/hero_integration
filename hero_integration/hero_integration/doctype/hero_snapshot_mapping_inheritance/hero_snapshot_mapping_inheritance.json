@@ -1,0 +1,102 @@
+{
+ "doctype": "DocType",
+ "name": "HERO Snapshot Mapping Inheritance",
+ "module": "HERO Integration",
+ "autoname": "field:inheritance_key",
+ "track_changes": 1,
+ "description": "Which parent mapping definition was inherited into which child snapshot as a personal draft, or why not.",
+ "fields": [
+  {
+   "fieldname": "child_snapshot",
+   "label": "Child Snapshot",
+   "fieldtype": "Link",
+   "options": "HERO GraphQL Schema Snapshot",
+   "reqd": 1,
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "parent_snapshot",
+   "label": "Parent Snapshot",
+   "fieldtype": "Link",
+   "options": "HERO GraphQL Schema Snapshot",
+   "reqd": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "direction",
+   "label": "Direction",
+   "fieldtype": "Select",
+   "options": "QUERY_TO_FRAPPE\nFRAPPE_TO_MUTATION",
+   "reqd": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "operation_name",
+   "label": "Operation",
+   "fieldtype": "Data",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "parent_mapping",
+   "label": "Parent Mapping",
+   "fieldtype": "Link",
+   "options": "HERO GraphQL Mapping",
+   "read_only": 1
+  },
+  {
+   "fieldname": "parent_definition",
+   "label": "Parent Definition ID",
+   "fieldtype": "Data",
+   "reqd": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "child_definition",
+   "label": "Child Draft Definition ID",
+   "fieldtype": "Data",
+   "read_only": 1
+  },
+  {
+   "fieldname": "status",
+   "label": "Status",
+   "fieldtype": "Select",
+   "options": "Draft Created\nIncompatible\nSkipped",
+   "reqd": 1,
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "reason",
+   "label": "Reason",
+   "fieldtype": "Small Text",
+   "read_only": 1
+  },
+  {
+   "fieldname": "actor",
+   "label": "Draft Owner",
+   "fieldtype": "Link",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "inheritance_key",
+   "label": "Inheritance Key",
+   "fieldtype": "Data",
+   "unique": 1,
+   "read_only": 1,
+   "hidden": 1
+  }
+ ],
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "write": 0,
+   "create": 0,
+   "delete": 0
+  }
+ ],
+ "modified": "2026-10-29 22:00:00.000000"
+}
