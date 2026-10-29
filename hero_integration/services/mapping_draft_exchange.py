@@ -421,7 +421,8 @@ def _parse(payload_json: str, source_instance: str, snapshot_name: str, directio
     if not isinstance(payload_json, str) or len(payload_json.encode("utf-8")) > 1_000_000:
         raise MappingDraftExchangeError("Draft import exceeds the permitted size.")
     try:
-        package = json.loads(payload_json, parse_constant=lambda _value: (_ for _ in ()).throw(ValueError()))
+        package = json.loads(payload_json, object_pairs_hook=_unique_json_fields,
+                             parse_constant=lambda _value: (_ for _ in ()).throw(ValueError()))
     except (TypeError, ValueError, json.JSONDecodeError) as error:
         raise MappingDraftExchangeError("Draft import is not valid JSON.") from error
     if not isinstance(package, dict) or set(package) != _PACKAGE_KEYS or package.get("format_version") != FORMAT_VERSION:
@@ -444,6 +445,15 @@ def _parse(payload_json: str, source_instance: str, snapshot_name: str, directio
             raise MappingDraftExchangeError("Draft import mapping identity is invalid.")
         normalized.append({**item, "content": bounded(_object(item["content"]))})
     return {**package, "mappings": normalized}
+
+
+def _unique_json_fields(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("Duplicate JSON field")
+        result[key] = value
+    return result
 
 
 def _active_definitions(source_instance: str, snapshot_name: str, direction: str) -> dict[str, object]:
