@@ -41,6 +41,7 @@ class HEROGraphQLMapping(Document):
                     require_exchange_context(*scope)
                 else:
                     lock_exchange_context(*scope)
+        lossy_writeback = False
         try:
             from hero_integration.services.personal_mapping_content import unique_json_object
             mapping = json.loads(self.mapping_json, object_pairs_hook=unique_json_object)
@@ -49,7 +50,10 @@ class HEROGraphQLMapping(Document):
             if self.direction == "FRAPPE_TO_MUTATION":
                 schema = json.loads(snapshot.snapshot_json)
                 if self.status == "Active":
-                    mapping = normalise_mapping(mapping, schema)
+                    from hero_integration.api import _mapping_values_preserved
+                    original = mapping
+                    mapping = normalise_mapping(original, schema)
+                    lossy_writeback = not _mapping_values_preserved(original, mapping)
                 else:
                     try:
                         mapping = normalise_mapping(mapping, schema)
@@ -69,6 +73,8 @@ class HEROGraphQLMapping(Document):
             available = {item["operation_name"] for item in catalog(json.loads(snapshot.snapshot_json), self.operation_kind)}
         except (ValueError, TypeError, WritebackContractError):
             frappe.throw("The GraphQL mapping must contain a valid JSON object and schema operation.")
+        if lossy_writeback:
+            frappe.throw('Active writeback normalization would lose mapping parameters.')
         if self.operation_name not in available:
             frappe.throw("The selected operation is not present in the selected schema snapshot.")
         self.schema_fingerprint = snapshot.schema_fingerprint
