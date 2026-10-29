@@ -37,6 +37,43 @@ class TestEngine(unittest.TestCase):
   partial=self.engine.process("run-1",self.plan,run.generation)
   self.assertEqual((partial.state,partial.checkpoint,partial.record_index,partial.completed),(RunState.PARTIAL,0,0,0)); self.assertEqual(self.ledger.progress[("run-1","1")].state,ProgressState.FAILED)
   self.writer.fail=False; done=self.engine.process("run-1",self.plan,partial.generation); self.assertEqual((done.state,done.completed),(RunState.COMPLETED,1))
+ def test_partial_page_resume_requires_same_page_and_continues_after_completed_record(self):
+  run=self.authorized(); self.reader.pages={0:SourcePage(({"id":"1","name":"Ada"},{"id":"2","name":"Bob"}),None)}
+  original=self.writer.resolve_or_write
+  def blocked(site,app,doctype,identity,values):
+   if identity=="2": raise RuntimeError("failure")
+   return original(site,app,doctype,identity,values)
+  self.writer.resolve_or_write=blocked
+  partial=self.engine.process("run-1",self.plan,run.generation)
+  self.assertEqual((partial.state,partial.record_index,partial.completed),(RunState.PARTIAL,1,1))
+  self.writer.resolve_or_write=original
+  done=self.engine.process("run-1",self.plan,partial.generation)
+  self.assertEqual((done.state,done.completed),(RunState.COMPLETED,2))
+  self.assertEqual(self.reader.calls,[0,0]); self.assertEqual(len(self.writer.docs),2)
+ def test_partial_page_resume_rejects_changed_order_before_further_writes(self):
+  run=self.authorized(); original=self.writer.resolve_or_write
+  self.reader.pages={0:SourcePage(({"id":"1","name":"Ada"},{"id":"2","name":"Bob"}),None)}
+  def blocked(site,app,doctype,identity,values):
+   if identity=="2": raise RuntimeError("failure")
+   return original(site,app,doctype,identity,values)
+  self.writer.resolve_or_write=blocked
+  partial=self.engine.process("run-1",self.plan,run.generation)
+  self.reader.pages[0]=SourcePage(({"id":"2","name":"Bob"},{"id":"1","name":"Ada"}),None)
+  self.writer.resolve_or_write=original
+  failed=self.engine.process("run-1",self.plan,partial.generation)
+  self.assertEqual(failed.state,RunState.FAILED); self.assertEqual(set(self.writer.docs),{("site.test","1")})
+ def test_repeated_page_is_rejected_at_next_offset(self):
+  run=self.authorized(); records=({"id":"1","name":"Ada"},)
+  self.reader.pages={0:SourcePage(records,1),1:SourcePage(records,None)}
+  failed=self.engine.process("run-1",self.plan,run.generation)
+  self.assertEqual((failed.state,failed.checkpoint,failed.completed),(RunState.FAILED,1,1))
+  self.assertEqual(len(self.writer.docs),1)
+ def test_partial_resume_requires_saved_page_fingerprint(self):
+  from dataclasses import replace
+  run=self.authorized(); self.reader.pages={0:SourcePage(({"id":"1","name":"Ada"},{"id":"2","name":"Bob"}),None)}
+  partial=self.ledger.save_run(replace(run,state=RunState.PARTIAL,record_index=1,generation=run.generation+1),run.generation)
+  failed=self.engine.process("run-1",self.plan,partial.generation)
+  self.assertEqual(failed.state,RunState.FAILED); self.assertEqual(self.writer.docs,{})
  def test_stale_plan_and_invalid_pages_fail_closed(self):
   run=self.authorized()
   with self.assertRaises(MigrationConflict): self.engine.process("run-1",(FieldPlan("x",2,("name",),"x"),),run.generation)
