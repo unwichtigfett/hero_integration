@@ -42,6 +42,7 @@ _HERO_OWNED_DOCTYPES = (
     "HERO Polling Event",
     "HERO Task Assignment Policy",
     "HERO Task Assignment State",
+    "HERO Snapshot Mapping Inheritance",
 )
 doc_events = {
     doctype: {"on_trash": "hero_integration.services.guards.assert_app_document_deletion_allowed"}

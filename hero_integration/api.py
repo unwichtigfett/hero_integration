@@ -544,12 +544,11 @@ def workspace_schema_refresh(connection_id: str = "", binding_generation: int | 
             "type_count": type_count,
         }
 
-    previous_rows = frappe.get_all(
-        "HERO GraphQL Schema Snapshot",
-        filters={"source_instance": configuration.source_instance, "endpoint_fingerprint": endpoint_hash},
-        fields=["name"], order_by="modified desc", limit_page_length=1,
-    )
-    previous = frappe.get_doc("HERO GraphQL Schema Snapshot", previous_rows[0]["name"]) if previous_rows else None
+    from hero_integration.services.snapshot_inheritance import parent_for
+
+    # The parent is the most recently *created* snapshot of this source and endpoint.
+    parent_name = parent_for(configuration.source_instance, endpoint_hash)
+    previous = frappe.get_doc("HERO GraphQL Schema Snapshot", parent_name) if parent_name else None
     diff = structural_diff(json.loads(previous.snapshot_json) if previous else None, schema)
     captured_at = captured_at_utc()
     snapshot = frappe.get_doc({
@@ -559,11 +558,14 @@ def workspace_schema_refresh(connection_id: str = "", binding_generation: int | 
         "endpoint_fingerprint": endpoint_hash,
         "schema_version": 1,
         "captured_at": captured_at,
+        "parent_snapshot": parent_name or None,
         "structural_diff_json": json.dumps(diff, ensure_ascii=False, sort_keys=True),
         "execution_contract_status": "Blocked" if diff["breaking"] else "Compatible",
     })
     snapshot.insert()
+    inheritance = _inherit_after_capture(snapshot.name) if parent_name else None
     return {
+        "inheritance": inheritance,
         "status": "CAPTURED",
         "snapshot_name": snapshot.name,
         "schema_fingerprint": snapshot.schema_fingerprint,
@@ -574,12 +576,36 @@ def workspace_schema_refresh(connection_id: str = "", binding_generation: int | 
     }
 
 
+def _inherit_after_capture(snapshot_name: str) -> dict[str, object]:
+    """Inheritance failures never undo the captured snapshot; they are reported instead."""
+    from hero_integration.services.snapshot_inheritance import inherit_parent_mappings
+
+    savepoint = "hero_snapshot_inheritance"
+    frappe.db.savepoint(savepoint)
+    try:
+        return inherit_parent_mappings(snapshot_name, frappe.session.user)
+    except Exception:
+        frappe.db.rollback(save_point=savepoint)
+        frappe.log_error(title="HERO snapshot mapping inheritance failed")
+        return {"status": "FAILED", "child_snapshot": snapshot_name, "activation": False,
+                "message": "Mapping inheritance failed; the snapshot was kept. Retry it from the Mapping Editor."}
+
+
+@frappe.whitelist(methods=["POST"])
+def workspace_snapshot_inherit_mappings(snapshot_name: str) -> dict[str, object]:
+    """Inherit the parent's active mappings into this snapshot as personal drafts; never activates anything."""
+    frappe.only_for("System Manager")
+    from hero_integration.services.snapshot_inheritance import inherit_parent_mappings
+
+    return inherit_parent_mappings(_mapping_text(snapshot_name, "snapshot_name"), frappe.session.user)
+
+
 def _schema_snapshot_rows(start: int = 0, page_size: int = 100) -> list[dict[str, object]]:
     rows = frappe.get_all(
         "HERO GraphQL Schema Snapshot",
         fields=[
             "name", "schema_fingerprint", "analysis_status", "analysis_detail", "modified", "creation",
-            "source_instance", "endpoint_fingerprint", "captured_at", "execution_contract_status",
+            "source_instance", "endpoint_fingerprint", "captured_at", "execution_contract_status", "parent_snapshot",
         ],
         order_by="modified desc, name asc",
         limit_start=start,
@@ -587,9 +613,18 @@ def _schema_snapshot_rows(start: int = 0, page_size: int = 100) -> list[dict[str
     )
     if rows:
         names = _snapshot_display_names()
+        configured = _configured_source_instance()
         for row in rows:
             row["display_name"] = names.get(row["name"], row["name"])
+            # Lets every snapshot picker prefer the configured HERO source over test or other sources.
+            row["configured_source"] = (row.get("source_instance") or "default") == configured
     return rows
+
+
+def _configured_source_instance() -> str:
+    getter = getattr(frappe, "get_single", None)
+    settings = getter("HERO Integration Settings") if callable(getter) else None
+    return str(getattr(settings, "hero_source_instance", "") or "").strip() or "default"
 
 
 def _snapshot_display_names() -> dict[str, str]:
@@ -673,7 +708,9 @@ def workspace_context(snapshot_name: str = "") -> dict[str, object]:
         from hero_integration.services.snapshot_names import newest
 
         usable = {item["name"] for item in snapshots if item["usable"]}
-        latest = newest([row for row in rows if row["name"] in usable])
+        # Prefer the configured HERO source; a test or other source never wins just by being newer.
+        own = [row for row in rows if row["name"] in usable and row.get("configured_source")]
+        latest = newest(own or [row for row in rows if row["name"] in usable])
         snapshot_name = latest["name"] if latest else ""
     selected = next((item for item in snapshots if item["name"] == snapshot_name and item["usable"]), None)
     return {
@@ -705,6 +742,7 @@ def _workspace_snapshot_metadata(row: dict[str, object]) -> dict[str, object]:
         "coverage": {},
         "kind": "Unavailable snapshot",
         "source_instance": row.get("source_instance") or "",
+        "parent_snapshot": row.get("parent_snapshot") or "",
         "captured_at": row.get("captured_at") or row.get("modified") or "",
         "execution_contract_status": row.get("execution_contract_status") or "Compatible",
     }
@@ -948,6 +986,13 @@ def _save_polling_configuration(settings, **values: object) -> None:
             setattr(settings, fieldname, str(value).strip())
     if values["data_sources"] is not None and not _polling_lines(values["data_sources"]):
         frappe.throw("At least one polling data source is required.")
+    from hero_integration.services.polling import SUPPORTED_FILTERS, SUPPORTED_SOURCE_OPERATIONS, _filter_problems
+
+    if values["data_sources"] is not None:
+        unknown = [line for line in _polling_lines(values["data_sources"]) if line not in SUPPORTED_SOURCE_OPERATIONS]
+        if unknown:
+            frappe.throw("Unsupported polling data source: " + ", ".join(unknown) + ". Supported: "
+                         + ", ".join(sorted(SUPPORTED_SOURCE_OPERATIONS)) + ".")
     if values["filters_json"] is not None:
         try:
             parsed = json.loads(str(values["filters_json"] or "{}"))
@@ -955,6 +1000,10 @@ def _save_polling_configuration(settings, **values: object) -> None:
             frappe.throw("Polling filters must be a JSON object.")
         if not isinstance(parsed, dict):
             frappe.throw("Polling filters must be a JSON object.")
+        problems = _filter_problems(parsed if all(isinstance(item, dict) for item in parsed.values()) else None)
+        if problems:
+            frappe.throw("Unsupported polling filters: " + ", ".join(problems) + ". Reviewed filters: "
+                         + json.dumps({name: sorted(keys) for name, keys in SUPPORTED_FILTERS.items()}) + ".")
         settings.polling_filters_json = json.dumps(parsed, ensure_ascii=False, sort_keys=True)
     if values["pagination_strategy"] is not None and settings.polling_pagination_strategy != "OFFSET":
         frappe.throw("Polling pagination strategy must be OFFSET for the approved HERO V1 reader.")

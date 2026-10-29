@@ -98,12 +98,19 @@
         );
     }
 
+    // Mappings of the parent snapshot are inherited as personal drafts; nothing is activated.
+    function inheritanceMessage(inheritance) {
+        if (!inheritance || inheritance.status === "NO_PARENT") return "";
+        if (inheritance.status !== "COMPLETED") return " Mapping inheritance did not complete; retry it in the Mapping Editor.";
+        const counts = inheritance.counts || {};
+        return ` Inherited ${counts["Draft Created"] || 0} mapping(s) from the parent as personal drafts (${counts.Incompatible || 0} incompatible, ${counts.Skipped || 0} skipped). Nothing was activated.`;
+    }
+
     function refreshResultMessage(result) {
         const snapshot = result?.snapshot_name || "saved snapshot";
         const types = Number.isInteger(result?.type_count) ? " (" + result.type_count + " types)" : "";
-        return result?.status === "UNCHANGED"
-            ? "Schema is unchanged: " + snapshot + types + "."
-            : "Schema refresh succeeded: " + snapshot + types + ".";
+        if (result?.status === "UNCHANGED") return "Schema is unchanged: " + snapshot + types + ".";
+        return "Schema refresh succeeded: " + snapshot + types + "." + inheritanceMessage(result?.inheritance);
     }
 
     async function mount(workspace) {

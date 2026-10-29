@@ -40,6 +40,11 @@ class _FrappeSnapshotSelectionMock:
     def only_for(self, role: str) -> None:
         self.permission_calls.append(role)
 
+    def get_single(self, doctype: str):
+        if doctype != "HERO Integration Settings":
+            raise AssertionError(doctype)
+        return SimpleNamespace(hero_source_instance="default")
+
     def get_all(self, doctype: str, **_kwargs):
         self.assert_doctype(doctype, "HERO GraphQL Schema Snapshot")
         return self.rows

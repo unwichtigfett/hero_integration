@@ -219,10 +219,16 @@
     const mappingTabs = Object.freeze(["Query", "Mutation", "Binding"]);
     // Snapshots keep their internal name (UID); the UI shows the server display name S-ddmmyy-NN.
     const snapshotLabels = new Map();
+    // Parent links (previous snapshot of the same HERO source); used for mapping inheritance.
+    const snapshotParents = new Map();
     const snapshotLabel = (name) => (name && snapshotLabels.get(name)) || name;
     const snapshotTime = (row) => String(row?.creation || row?.captured_at || row?.modified || "");
-    const newestValidatedSnapshot = (rows) => (rows || []).filter((row) => row?.analysis_status === "Validated")
-        .reduce((best, row) => !best || snapshotTime(row) > snapshotTime(best) || (snapshotTime(row) === snapshotTime(best) && row.name > best.name) ? row : best, null);
+    const newestOf = (rows) => rows.reduce((best, row) => !best || snapshotTime(row) > snapshotTime(best) || (snapshotTime(row) === snapshotTime(best) && row.name > best.name) ? row : best, null);
+    // The newest validated snapshot of the configured HERO source; other sources (e.g. test sources) only as a fallback.
+    const newestValidatedSnapshot = (rows) => {
+        const validated = (rows || []).filter((row) => row?.analysis_status === "Validated");
+        return newestOf(validated.filter((row) => row.configured_source === true)) || newestOf(validated);
+    };
     async function readSnapshotPages(fetchPage, isCurrent) {
         const result = [], seen = new Set();
         for (let start = 0; ; start += 100) {
@@ -234,7 +240,11 @@
                 seen.add(item.name);
             }
             result.push(...page);
-            page.forEach((item) => snapshotLabels.set(item.name, typeof item.display_name === "string" && item.display_name ? item.display_name : item.name));
+            page.forEach((item) => {
+                snapshotLabels.set(item.name, typeof item.display_name === "string" && item.display_name ? item.display_name : item.name);
+                if (typeof item.parent_snapshot === "string" && item.parent_snapshot) snapshotParents.set(item.name, item.parent_snapshot);
+                else snapshotParents.delete(item.name);
+            });
             if (page.length < 100) return result;
             if (start > 2147483547) throw new Error('Snapshot list exceeds the supported range.');
         }
@@ -1305,7 +1315,27 @@
                 return {items: options.slice(offset, offset + 20), total: options.length};
             }, (item) => leave(() => { snapshotFilter = item.name; active = null; model = null; renderList(); })).prop("hidden", !admin);
             renderDefinitionChooser(header).prop("hidden", !admin);
+            const parent = admin && snapshotFilter ? snapshotParents.get(snapshotFilter) : "";
+            if (parent) header.append(button(`Inherit mappings from parent ${snapshotLabel(parent)}`, () => inheritFromParent(snapshotFilter, parent))
+                .attr("data-inherit-parent", "").attr("title", "Creates your personal drafts on this snapshot from the parent's active mappings. Nothing is activated."));
             if (active) header.append($("<span class='text-muted'></span>").text(`${snapshotLabel(active.schema_snapshot) || text("Snapshot not provided")} · ${text("Revision")}: ${active.revision} · ${mode === "draft" ? text("Personal draft") : active.status || text("Active")}`));
+        }
+        function inheritFromParent(snapshotName, parent) {
+            if (locked()) return;
+            modal("Inherit mappings from parent",
+                `Create your personal drafts on ${snapshotLabel(snapshotName)} from the active mappings of ${snapshotLabel(parent)}? Each draft is checked against the new schema. Nothing is activated and the parent stays unchanged.`,
+                [["Inherit as drafts", async () => {
+                    const request = ++epoch; setBusy(true); say("Inheriting parent mappings as personal drafts…");
+                    try {
+                        const result = await rpc("workspace_snapshot_inherit_mappings", {snapshot_name: snapshotName}, true);
+                        if (disposed || request !== epoch) return;
+                        const counts = result?.counts || {};
+                        const problems = (result?.results || []).filter((item) => item.status === "Incompatible");
+                        say(`${counts["Draft Created"] || 0} draft(s) on ${snapshotLabel(snapshotName)}, ${problems.length} incompatible, ${counts.Skipped || 0} skipped. Nothing was activated.`);
+                        if (problems.length) modal("Not inherited", problems.map((item) => `${item.operation}: ${item.reason}`).join(" · "), [["Close", () => {}, true]]);
+                    } catch (error) { if (!disposed && request === epoch) say(errorText(error)); }
+                    finally { if (!disposed && request === epoch) { setBusy(false); await loadList(false); } }
+                }, true], ["Cancel", () => {}]]);
         }
         function renderMappingsTable(parent) {
             const section = $("<section class='hero-mapping-active' aria-label='Active Mappings'></section>").appendTo(parent);
