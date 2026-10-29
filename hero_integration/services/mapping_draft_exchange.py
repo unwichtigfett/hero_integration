@@ -404,6 +404,25 @@ def _export_portable(source_instance, snapshot_name, direction):
             content = _object(content)
             check_locked(content)
             dependencies = []
+            manifest = parent.get('portable_schema_manifest') or ''
+            declared_dependencies = parent.get('portable_schema_dependencies') or ''
+            if manifest or declared_dependencies:
+                try:
+                    if not manifest or not declared_dependencies:
+                        raise ValueError
+                    mapping_schema = json.loads(manifest, object_pairs_hook=_unique_json_fields)
+                    dependencies = json.loads(declared_dependencies, object_pairs_hook=_unique_json_fields)
+                    if not isinstance(dependencies, list) or any(not isinstance(v, str) or not v for v in dependencies):
+                        raise ValueError
+                    from hero_integration.services.schema_provisioning import _definitions, _recheck_required_schema_current
+                    definitions = _definitions(mapping_schema)
+                    declared = {entry['id'] for group in definitions.values() for entry in group}
+                    if not declared or len(dependencies) != len(set(dependencies)) or set(dependencies) != declared:
+                        raise ValueError
+                    _recheck_required_schema_current(definitions, declared)
+                    manifests.append({'schema_manifest': _json(mapping_schema)})
+                except (ValueError, TypeError):
+                    raise MappingDraftExchangeError('Stored mapping schema provenance is invalid.') from None
             if references(content):
                 locked_rules = {}
                 for rule_id in sorted(references(content)):
@@ -420,7 +439,7 @@ def _export_portable(source_instance, snapshot_name, direction):
                     direction, snapshot_name, locked_rule_rows=locked_rules)
                 if any(schema_manifest.values()):
                     manifests.append({'schema_manifest': _json(schema_manifest)})
-                    dependencies = sorted(entry['id'] for group in schema_manifest.values() for entry in group)
+                    dependencies = sorted(set(dependencies) | {entry['id'] for group in schema_manifest.values() for entry in group})
                 rule_ids = {}
                 for rule_id in references(content):
                     if _value(locked_rules[rule_id], 'portable_lineage_json'):
