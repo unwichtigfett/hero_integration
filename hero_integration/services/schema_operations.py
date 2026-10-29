@@ -36,6 +36,45 @@ def catalog(snapshot: object, operation_kind: str) -> list[dict[str, object]]:
     ]
 
 
+_OPERATION_NODE = re.compile(r"^operation:(query|mutation):([_A-Za-z][_0-9A-Za-z]*)$")
+
+
+def operation_service_draft(snapshot: object, node_id: str) -> dict[str, object]:
+    """Build an unsaved GraphQL service draft for one saved-schema operation node.
+
+    Only required arguments become variables; their values are never part of
+    the document.  Composite results select ``__typename`` only, which every
+    object, interface and union provides, so no schema field is invented.
+    """
+    match = _OPERATION_NODE.match(node_id or "")
+    if not match:
+        raise SchemaOperationError("Select a Query or Mutation operation.")
+    kind, field_name = match.groups()
+    operations = {item["operation_name"]: item for item in catalog(snapshot, kind)}
+    if field_name not in operations:
+        raise SchemaOperationError("The operation does not exist in the saved schema.")
+    schema = normalize_schema(snapshot)
+    types = {item.get("name"): item for item in schema.get("types") or [] if isinstance(item, Mapping)}
+    root = types.get(operations[field_name]["root_type"]) or {}
+    field = next(item for item in root.get("fields") or [] if isinstance(item, Mapping) and item.get("name") == field_name)
+    required = [arg for arg in field.get("args") or []
+                if isinstance(arg, Mapping) and is_required(arg.get("type")) and arg.get("defaultValue") is None]
+    target, _ = _named_type(field.get("type"))
+    composite = (types.get(target) or {}).get("kind") in {"OBJECT", "INTERFACE", "UNION"}
+    operation_name = "".join(part[:1].upper() + part[1:] for part in re.split(r"_+", field_name) if part) or "Operation"
+    definitions = ", ".join(f"${arg['name']}: {type_reference(arg.get('type'))}" for arg in required)
+    arguments = ", ".join(f"{arg['name']}: ${arg['name']}" for arg in required)
+    document = (f"{kind} {operation_name}{f'({definitions})' if definitions else ''} {{\n"
+                f"  {field_name}{f'({arguments})' if arguments else ''}{' { __typename }' if composite else ''}\n}}")
+    return {
+        "operation_kind": kind,
+        "operation_name": field_name,
+        "return_type": type_reference(field.get("type")),
+        "required_variables": [{"name": arg["name"], "type": type_reference(arg.get("type"))} for arg in required],
+        "payload": {"name": field_name, "operation_name": operation_name, "query": document, "variables": {}},
+    }
+
+
 def _operation(kind: str, root_name: str, field: Mapping, types: dict[object, Mapping]) -> dict[str, object]:
     argument_details = [_argument_details(arg) for arg in field.get("args") or [] if isinstance(arg, Mapping)]
     arguments = [{key: item[key] for key in ("name", "type", "required")} for item in argument_details]

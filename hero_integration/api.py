@@ -2068,7 +2068,13 @@ def workspace_service_detail(query_id: str) -> dict[str, object]:
 @frappe.whitelist(methods=["POST"])
 def workspace_service_save(snapshot_name: str, payload_json: str, query_id: str = "", expected_revision: int = 0) -> dict[str, object]:
     frappe.only_for("System Manager")
-    payload = _workspace_payload(payload_json, allow_generated=True)
+    return _save_workspace_service(
+        snapshot_name, _workspace_payload(payload_json, allow_generated=True), query_id, expected_revision, "GraphQL Services",
+    )
+
+
+def _save_workspace_service(snapshot_name, payload, query_id, expected_revision, provenance) -> dict[str, object]:
+    """Shared save path for GraphQL Services and API Analyzer drafts; never executes."""
     kind = str(payload.get("operation_kind", "query"))
     _assert_service_kind(kind)
     snapshot, schema = _validated_snapshot(snapshot_name)
@@ -2098,8 +2104,9 @@ def workspace_service_save(snapshot_name: str, payload_json: str, query_id: str 
     else:
         service = frappe.new_doc("HERO GraphQL Service")
         service.schema_snapshot = snapshot.name
+        service.provenance = provenance
     service.service_name = payload["name"]
-    service.operation_name = payload["operation_name"] or payload["name"]
+    service.operation_name = payload.get("operation_name") or payload["name"]
     service.query_document = payload["query"]
     service.status = "Draft"
     service.save()
@@ -2122,10 +2129,9 @@ def workspace_service_validate(snapshot_name: str, payload_json: str = "", query
                 "valid": True, "can_execute": False, "mutation": detail,
                 "reason": "Mutation drafts are local-only; HERO mutation execution is disabled.",
             }
-        from hero_integration.client.graphql import assert_read_only
-
-        assert_read_only(payload["query"])
-        return {"valid": True, "can_execute": False, "reason": "Saved read-only definitions can be validated; remote execution is disabled in this workspace."}
+        detail = _validated_query_draft(schema, payload["query"])
+        return {"valid": True, "can_execute": False, "query_detail": detail,
+                "reason": "The query matches the saved schema. Save and validate the service before executing it."}
     service = frappe.get_doc("HERO GraphQL Service", query_id)
     if service.schema_snapshot != snapshot_name or int(service.service_revision or 0) != int(expected_revision or 0):
         frappe.throw("The saved service changed or belongs to another schema snapshot.")
@@ -2138,9 +2144,12 @@ def workspace_service_validate(snapshot_name: str, payload_json: str = "", query
             "valid": True, "can_execute": False, "mutation": detail, "query": _workspace_service(service.as_dict()),
             "reason": "Mutation drafts are local-only; HERO mutation execution is disabled.",
         }
+    _snapshot, schema = _validated_snapshot(snapshot_name)
+    detail = _validated_query_draft(schema, service.query_document)
     service.status = "Validated"
     service.save()
-    return {"valid": True, "can_execute": False, "query": _workspace_service(service.as_dict()), "reason": "Remote execution is disabled in this workspace."}
+    return {"valid": True, "can_execute": True, "query": _workspace_service(service.as_dict()), "query_detail": detail,
+            "reason": "The saved query matches the schema. Execution is read-only and requires an explicit click."}
 
 
 @frappe.whitelist()
@@ -2172,6 +2181,107 @@ def workspace_service_delete(query_id: str, expected_revision: int = 0) -> dict[
     assert_deletion_allowed(action="GraphQL service deletion")
     frappe.delete_doc("HERO GraphQL Service", query_id)
     return {"status": "DELETED"}
+
+
+QUERY_RESULT_LIMIT_BYTES = 1_000_000
+
+
+def _validated_query_draft(schema: dict[str, object], document: str, variables: object = None, *, with_values: bool = False):
+    from hero_integration.services.query_draft import QueryDraftError, validate, validate_variables
+
+    try:
+        return validate_variables(schema, document, variables) if with_values else validate(schema, document)
+    except QueryDraftError as error:
+        frappe.throw(str(error))
+
+
+@frappe.whitelist(methods=["POST"])
+def workspace_service_execute(snapshot_name: str, query_id: str, expected_revision: int, variables_json: str = "{}") -> dict[str, object]:
+    """Run one saved, validated query on explicit request through the read-only transport.
+
+    Nothing is persisted: no service status, sync run, Frappe record or HERO
+    mutation results from this call.  Mutations are rejected before transport.
+    """
+    frappe.only_for("System Manager")
+    service = frappe.get_doc("HERO GraphQL Service", query_id)
+    if service.schema_snapshot != snapshot_name or int(service.service_revision or 0) != int(expected_revision or 0):
+        frappe.throw("The saved service changed or belongs to another schema snapshot; reload it before executing.")
+    from hero_integration.services.mutation_draft import operation_kind as document_kind
+
+    if document_kind(service.query_document) != "query":
+        frappe.throw(MUTATION_EXECUTION_DISABLED)
+    if service.status != "Validated":
+        frappe.throw("Validate the saved query against its schema before executing it.")
+    snapshot, schema = _validated_snapshot(snapshot_name)
+    if (service.schema_fingerprint or "") != snapshot.schema_fingerprint:
+        frappe.throw("The saved query was validated against another schema fingerprint; validate it again.")
+    try:
+        values = json.loads(variables_json or "{}")
+    except json.JSONDecodeError as error:
+        frappe.throw(f"Query variables must be JSON: {error.msg}")
+    variables = _validated_query_draft(schema, service.query_document, values, with_values=True)
+    from hero_integration.client.graphql import HeroClientError, HeroGraphQLClient
+    from hero_integration.client.settings import get_configuration
+
+    base = {"query_id": service.name, "revision": int(service.service_revision or 0), "operation": service.operation_name,
+            "schema_fingerprint": snapshot.schema_fingerprint}
+    try:
+        configuration = get_configuration()
+        data = HeroGraphQLClient(configuration.endpoint, lambda: configuration.api_token,
+                                 timeout=configuration.timeout_seconds, max_retries=0).query(service.query_document, variables)
+    except HeroClientError as error:
+        kind = "GRAPHQL" if error.code == "GRAPHQL_ERRORS" else "RESPONSE" if error.code in {"INVALID_RESPONSE", "MISSING_DATA"} else "TRANSPORT"
+        return {**base, "status": "ERROR", "error_kind": kind, "error_code": error.code, "message": str(error),
+                "graphql_errors": list(error.details)}
+    encoded = json.dumps(data, ensure_ascii=False, default=str)
+    size = len(encoded.encode())
+    if size > QUERY_RESULT_LIMIT_BYTES:
+        return {**base, "status": "TOO_LARGE", "size_bytes": size, "limit_bytes": QUERY_RESULT_LIMIT_BYTES,
+                "message": "The HERO response exceeds the display limit; narrow the query or use paging variables."}
+    return {**base, "status": "OK", "size_bytes": size, "data": data}
+
+
+@frappe.whitelist()
+def workspace_analyzer_service_draft(snapshot_name: str, schema_node_id: str) -> dict[str, object]:
+    """Return an unsaved service draft for one analyzer operation node; nothing is stored or executed."""
+    frappe.only_for("System Manager")
+    snapshot, schema = _validated_snapshot(snapshot_name)
+    from hero_integration.services.schema_operations import SchemaOperationError, operation_service_draft
+
+    try:
+        draft = operation_service_draft(schema, schema_node_id)
+    except SchemaOperationError as error:
+        frappe.throw(str(error))
+    return {**draft, "schema_snapshot": snapshot.name, "schema_fingerprint": snapshot.schema_fingerprint}
+
+
+@frappe.whitelist(methods=["POST"])
+def workspace_analyzer_service_save(snapshot_name: str, schema_node_id: str, payload_json: str) -> dict[str, object]:
+    """Save an API Analyzer draft as a GraphQL service; this never contacts HERO."""
+    frappe.only_for("System Manager")
+    snapshot, schema = _validated_snapshot(snapshot_name)
+    from hero_integration.services.schema_operations import SchemaOperationError, operation_service_draft
+
+    try:
+        draft = operation_service_draft(schema, schema_node_id)
+    except SchemaOperationError as error:
+        frappe.throw(str(error))
+    payload = _workspace_payload(payload_json)
+    payload["operation_kind"] = draft["operation_kind"]
+    for generated in ("mapping_generation", "personal_mapping_generation"):
+        payload.pop(generated, None)
+    if draft["operation_kind"] == "query":
+        selected = _validated_query_draft(schema, payload["query"])["root_fields"]
+    else:
+        from hero_integration.services.mutation_draft import validate as validate_mutation_draft
+
+        try:
+            selected = [validate_mutation_draft(schema, payload["query"])["operation"]]
+        except ValueError as error:
+            frappe.throw(str(error))
+    if selected != [draft["operation_name"]]:
+        frappe.throw("The analyzer draft must keep exactly the selected operation as its root field.")
+    return _save_workspace_service(snapshot.name, payload, "", 0, "API Analyzer")
 
 
 def _page(base: dict[str, object], rows: list[object], start: int | str, page_size: int | str) -> dict[str, object]:
@@ -2243,7 +2353,9 @@ def _workspace_service(service: dict[str, object]) -> dict[str, object]:
     return {
         "query_id": service["name"], "name": service["service_name"], "operation_name": service["operation_name"],
         "query": service["query_document"], "revision": int(service.get("service_revision") or 1),
-        "provenance": "HERO Integration", "service_kind": operation_kind(service["query_document"]), "status": service.get("status"),
+        "provenance": service.get("provenance") or "HERO Integration", "service_kind": operation_kind(service["query_document"]),
+        "status": service.get("status"), "schema_snapshot": service.get("schema_snapshot"),
+        "schema_fingerprint": service.get("schema_fingerprint"),
         "validation_summary": service.get("validation_summary"), "variables": {},
     }
 
