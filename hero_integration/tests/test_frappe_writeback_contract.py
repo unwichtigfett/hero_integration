@@ -81,6 +81,20 @@ class TestFrappeWritebackContract(unittest.TestCase):
         with self.assertRaisesRegex(WritebackContractError, "saved schema"):
             reviewed_input_target("Customer", "email_id", incomplete)
 
+    def test_reviewed_field_rejects_collection_object_and_custom_scalar_schema(self):
+        for reference in (
+            {"kind": "LIST", "ofType": {"kind": "SCALAR", "name": "String"}},
+            {"kind": "INPUT_OBJECT", "name": "AddressInput"},
+            {"kind": "SCALAR", "name": "Opaque"},
+        ):
+            bad = schema()
+            bad["__schema"]["types"][1]["inputFields"][1]["type"] = reference
+            with self.subTest(reference=reference):
+                with self.assertRaises(WritebackContractError):
+                    reviewed_input_target("Customer", "email_id", bad)
+                with self.assertRaises(WritebackContractError):
+                    build_request_checked(self.customer_mapping(), bad, 42, "value")
+
     def test_missing_schema_contract_or_invalid_link_identity_is_rejected(self):
         no_mutation = {"__schema": {"types": []}}
         with self.assertRaisesRegex(WritebackContractError, "saved schema"):
