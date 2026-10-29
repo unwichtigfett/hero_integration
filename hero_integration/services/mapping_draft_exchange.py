@@ -478,6 +478,16 @@ def _parse_portable(payload, direction):
             if not isinstance(entry, dict) or not isinstance(entry.get('id'), str) or not entry['id'] or entry['id'] in declarations:
                 raise MappingDraftExchangeError('Portable schema declaration identity is invalid or duplicated.')
             declarations[entry['id']] = entry
+    nested_field_owner = {}
+    for doctype in package['schema']['custom_doctypes']:
+        fields = doctype.get('fields')
+        if not isinstance(fields, list):
+            raise MappingDraftExchangeError('Portable DocType fields are invalid.')
+        for field in fields:
+            identity = field.get('id') if isinstance(field, dict) else None
+            if not isinstance(identity, str) or not identity or identity in declarations or identity in nested_field_owner:
+                raise MappingDraftExchangeError('Portable schema field identity is invalid or duplicated.')
+            nested_field_owner[identity] = doctype['id']
     for entry in package['schema']['relations']:
         if not isinstance(entry.get('dependencies'), list) or any(not isinstance(dep, str) for dep in entry['dependencies']):
             raise MappingDraftExchangeError('Portable relationship dependencies are invalid.')
@@ -495,6 +505,7 @@ def _parse_portable(payload, direction):
         visited, pending = set(), list(identities)
         while pending:
             identity = pending.pop()
+            identity = nested_field_owner.get(identity, identity)
             if identity in visited:
                 continue
             if identity not in declarations:
