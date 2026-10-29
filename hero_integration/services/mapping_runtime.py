@@ -281,6 +281,8 @@ def active_mapping_plan(operation: str, *, definition_ids: tuple[str, ...] = (),
             config = json.loads(mapping.mapping_json, object_pairs_hook=unique_json_object)
         except (ValueError, TypeError, AttributeError):
             raise MappingPlanError('The approved mapping binding is invalid.') from None
+        if not isinstance(config, dict) or config.get('target_operation') != (target_operation or operation):
+            raise MappingPlanError('The selected mapping target operation does not match the requested plan.')
         selected = config.get('mapping_definition_ids') if isinstance(config, dict) else None
         if (not isinstance(selected, list) or any(not isinstance(value, str) or not value for value in selected)
                 or len(set(selected)) != len(selected) or tuple(selected) != tuple(definition_ids)):
