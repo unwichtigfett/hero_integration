@@ -1633,7 +1633,7 @@ def mapping_draft_publish(definition_id: str, expected_generation: int | str,
     definition_id, _ = _personal_draft_identity(definition_id)
     generation = _mapping_int(expected_generation, 'expected_generation', 1)
     revision = _mapping_int(expected_draft_revision, 'expected_draft_revision', 1)
-    active = _mapping_int(expected_active_revision, 'expected_active_revision', 1)
+    active = _mapping_int(expected_active_revision, 'expected_active_revision', 0)
     reconciliation_revision = _mapping_int(expected_reconciliation_revision, 'expected_reconciliation_revision')
     if not isinstance(warning_fingerprint, str) or len(warning_fingerprint) > 140:
         frappe.throw('MAPPING_INPUT_INVALID: Invalid warning fingerprint.')

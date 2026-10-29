@@ -121,7 +121,15 @@ def customer_legacy_literals(selected_ids, mapping, lookup_definition, lookup_po
             continue
         if not row.get('portable_lineage_json'):
             if row.get('personal_graphql_mapping'):
-                raise ValueError('Scoped Customer rule lineage is missing; reconcile the legacy revision.')
+                # A newly published portable root has no predecessor.  Legacy
+                # scoped rows cannot claim this exception without an enrolled,
+                # canonical identity equal to their local immutable identity.
+                try:
+                    root = canonical_uuid(row.get('portable_definition_id'))
+                except ValueError:
+                    raise ValueError('Scoped Customer rule lineage is missing; reconcile the legacy revision.') from None
+                if root != selected or row.get('definition_id') != root:
+                    raise ValueError('Scoped Customer rule root identity is inconsistent.')
             if reserved_customer_semantics(row):
                 raise ValueError('Customer legacy rule identity is ambiguous; reconcile before approval.')
             continue  # Unscoped legacy roots keep their explicitly selected identities.

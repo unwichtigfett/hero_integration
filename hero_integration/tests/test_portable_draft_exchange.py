@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 import json
+import sys
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -85,11 +86,14 @@ class Fake:
     def get_roles(self): return ['System Manager']
     def only_for(self, role):
         if role not in self.get_roles(): raise PermissionError(role)
-    def savepoint(self, name): self.savepoints[name] = (deepcopy(self.drafts), deepcopy(self.revisions))
-    def rollback(self, save_point): self.drafts, self.revisions = deepcopy(self.savepoints[save_point])
+    def savepoint(self, name):
+        self.savepoints[name] = deepcopy((self.drafts, self.revisions, self.active, self.rules))
+    def rollback(self, save_point):
+        self.drafts, self.revisions, self.active, self.rules = deepcopy(self.savepoints[save_point])
     def sql(self, query, params=(), **kwargs):
         if query.startswith('show index'):
-            return [Row(Column_name='definition_id', Seq_in_index=1, Sub_part=None),
+            return [Row(Column_name='definition_id', Seq_in_index=1, Sub_part=None, Non_unique=0,
+                        Key_name='definition_id'),
                     Row(Column_name='portable_definition_id', Seq_in_index=1, Sub_part=None, Non_unique=0,
                         Key_name='portable_definition_id')]
         if 'tabHERO GraphQL Mapping' in query:
@@ -157,6 +161,101 @@ class Fake:
         return [Row(row) for row in rows if all(row.get(k) == v for k, v in filters.items())]
 
 
+class PublicationDocument:
+    """Synthetic Document persistence, executing production validate hooks."""
+    def __init__(self, store, values, new=True):
+        object.__setattr__(self, 'store', store)
+        object.__setattr__(self, 'values', dict(values))
+        object.__setattr__(self, 'new', new)
+        object.__setattr__(self, 'before', None)
+    def __getattr__(self, key): return self.values.get(key)
+    def __setattr__(self, key, value): self.values[key] = value
+    def get(self, key, default=None): return self.values.get(key, default)
+    def update(self, values): self.values.update(values)
+    def is_new(self): return self.new
+    def get_doc_before_save(self): return self.before
+    def has_value_changed(self, field): return self.get(field) != self.before.get(field)
+    def check_permission(self, permission): pass
+    def as_dict(self): return dict(self.values)
+    def _validate(self):
+        from hero_integration.hero_integration.doctype.hero_graphql_mapping.hero_graphql_mapping import HEROGraphQLMapping
+        from hero_integration.hero_integration.doctype.hero_frappe_mapping.hero_frappe_mapping import HEROFrappeMapping
+        from hero_integration.hero_integration.doctype.hero_mapping_draft.hero_mapping_draft import HEROMappingDraft
+        from hero_integration.hero_integration.doctype.hero_mapping_revision.hero_mapping_revision import HEROMappingRevision
+        cls = {'HERO GraphQL Mapping':HEROGraphQLMapping, 'HERO Frappe Mapping':HEROFrappeMapping,
+               'HERO Mapping Draft':HEROMappingDraft, 'HERO Mapping Revision':HEROMappingRevision}[self.doctype]
+        cls.validate(self)
+    def insert(self, **kwargs):
+        self.values.setdefault('name', kwargs.get('set_name') or 'DOC-'+self.definition_id)
+        self.values.setdefault('owner', self.store.session.user)
+        self.values.setdefault('schema_dependencies', '[]')
+        self.values.setdefault('schema_manifest', '')
+        self.values['modified_by'] = self.store.session.user
+        self._validate()
+        if self.store.fail_insert == self.doctype:
+            raise RuntimeError('injected document failure')
+        if self.doctype == 'HERO Mapping Revision':
+            self.store.revisions[tuple(self.values[k] for k in ('draft_key','generation','revision','kind'))] = dict(self.values)
+        else:
+            getattr(self.store, 'active' if self.doctype == 'HERO GraphQL Mapping' else 'rules').append(dict(self.values))
+        object.__setattr__(self, 'new', False)
+        return self
+    def save(self):
+        prior = self.store.drafts.get(self.draft_key)
+        object.__setattr__(self, 'before', PublicationDocument(self.store, prior, False) if prior else None)
+        object.__setattr__(self, 'new', prior is None)
+        self.values['name'] = self.draft_key
+        self.values['modified_by'] = self.store.session.user
+        self._validate()
+        self.store.drafts[self.draft_key] = dict(self.values)
+        object.__setattr__(self, 'new', False)
+        return self
+
+
+class PublicationFake(Fake):
+    def __init__(self, *args):
+        super().__init__(*args)
+        self.fail_insert = None
+        self.PermissionError = PermissionError
+        self.TimestampMismatchError = ValueError
+    def throw(self, message, *args): raise ValueError(message)
+    def get_meta(self, doctype):
+        base = super().get_meta(doctype)
+        original = base.get_field
+        def field(name):
+            if name in {'custom_hero_source_id', 'customer_type', 'sync_status'}:
+                return Row(fieldtype='Data', options='', reqd=0, read_only=0, hidden=0, permlevel=0, is_virtual=0)
+            return original(name)
+        base.get_field = field
+        return base
+    def new_doc(self, doctype): return PublicationDocument(self, {'doctype':doctype})
+    def get_doc(self, *args, **kwargs):
+        if isinstance(args[0], dict):
+            values = args[0]
+            doctype, name = values.get('doctype'), values.get('name')
+            exists = (doctype == 'HERO Mapping Draft' and name in self.drafts) or any(
+                row.get('name') == name for row in (self.active if doctype == 'HERO GraphQL Mapping' else
+                self.rules if doctype == 'HERO Frappe Mapping' else []))
+            return PublicationDocument(self, values, not exists)
+        if args[0] == 'HERO GraphQL Schema Snapshot': return self.snapshot
+        if args[0] == 'HERO Mapping Draft': return PublicationDocument(self, self.drafts[args[1]], False)
+        rows = self.active if args[0] == 'HERO GraphQL Mapping' else self.rules
+        return PublicationDocument(self, next(row for row in rows if row['name'] == args[1]), False)
+    def sql(self, query, params=(), **kwargs):
+        if 'tabHERO Frappe Mapping' in query and 'where name=%s' in query:
+            return [Row(row) for row in self.rules if row.get('name') == params[0]]
+        if 'tabDocField' in query and 'force index (parent)' in query:
+            fields = {'Customer':['custom_hero_source_id', 'customer_name', 'customer_type'],
+                      'HERO Integration Link':['sync_status']}.get(params[0], [])
+            return [Row(name='field-'+field, fieldname=field, fieldtype='Data', options='',
+                        reqd=0, read_only=0, hidden=0, permlevel=0, is_virtual=0) for field in fields]
+        return super().sql(query, params, **kwargs)
+    def get_all(self, doctype, filters=None, fields=None, **kwargs):
+        if doctype == 'HERO Mutation Contract':
+            return ['contract'] if kwargs.get('pluck') == 'name' else [Row(name='contract')]
+        return super().get_all(doctype, filters or {}, fields or [], **kwargs)
+
+
 class FakePickerMetadata:
     def doctypes(self):
         return [{'name': 'Customer', 'module': 'Selling', 'app_name': 'erpnext', 'istable': 0,
@@ -179,6 +278,191 @@ class FakeRuleMetadata:
 
 
 class TestPortableDraftExchange(unittest.TestCase):
+    def test_first_publication_mutation_through_api(self):
+        fake = PublicationFake('target.test', 'source-B', 'snapshot-B')
+        schema = deepcopy(SCHEMA)
+        types = schema['__schema']['types']
+        mutation = next(t for t in types if t.get('name') == 'Mutation')
+        mutation['fields'] = [{'name':'update_contact', 'args':[{'name':'contact',
+            'type':{'kind':'INPUT_OBJECT','name':'CustomerInput'}}],
+            'type':{'kind':'OBJECT','name':'Customer'}}]
+        input_type = next(t for t in types if t.get('name') == 'CustomerInput')
+        input_type['inputFields'] = [{'name':'id', 'type':SCALAR('Int')}, {'name':'full_name', 'type':SCALAR('String')}]
+        types.append({'kind':'SCALAR', 'name':'Int'})
+        fake.snapshot.snapshot_json = json.dumps(schema)
+        fake.snapshot.schema_fingerprint = analyze_snapshot(schema).fingerprint
+        content = {'source':{'doctype':'Customer', 'field':'customer_name'},
+                   'target':{'operation':'update_contact', 'argument':'contact', 'input_type':'CustomerInput',
+                             'field':'full_name'}, 'transformation':'Identity'}
+        definition = {'site_scope':fake.local.site, 'definition_id':IDENTITY, 'source_instance':'source-B',
+            'snapshot_name':'snapshot-B', 'schema_fingerprint':fake.snapshot.schema_fingerprint,
+            'direction':'FRAPPE_TO_MUTATION', 'operation_kind':'MUTATION', 'operation_name':'update_contact'}
+        from hero_integration.hero_integration.doctype.hero_graphql_mapping import hero_graphql_mapping
+        from hero_integration.hero_integration.doctype.hero_mapping_draft import hero_mapping_draft
+        from hero_integration.hero_integration.doctype.hero_mapping_revision import hero_mapping_revision
+        from hero_integration.services import mapping_draft_access
+        with self.context(fake), patch.object(api, '_mapping_request_fields'), \
+             patch.dict(sys.modules, {'frappe':fake}), patch.object(hero_frappe_mapping, 'frappe', fake), \
+             patch.object(hero_graphql_mapping, 'frappe', fake), patch.object(hero_mapping_draft, 'frappe', fake), \
+             patch.object(hero_mapping_revision, 'frappe', fake), patch.object(mapping_draft_access, 'frappe', fake), \
+             patch('hero_integration.hero_integration.doctype.hero_graphql_mapping.hero_graphql_mapping.lock_exchange_context'), \
+             patch('hero_integration.services.frappe_mapping_draft_storage.FrappeMappingDraftStorage',
+                   side_effect=lambda: FrappeMappingDraftStorage(fake)):
+            service = FrappeMappingDraftStorage(fake).service()
+            draft = service.open_new_draft(definition, fake.session.user, content)
+            result = api.mapping_draft_publish(IDENTITY, 1, 1, 0, 0, confirmed=True)
+            self.assertEqual(result['revision'], 1)
+            self.assertEqual(fake.active[0]['direction'], 'FRAPPE_TO_MUTATION')
+            self.assertEqual(json.loads(fake.active[0]['mapping_json'])['target']['field'], 'full_name')
+            self.assertEqual(api.mapping_draft_publish(IDENTITY, 1, 1, 0, 0, confirmed=True)['unchanged'], True)
+            self.assertEqual(service.open_draft(IDENTITY, fake.session.user).base_active_revision, 1)
+            self.assertEqual(fake.rules, [])
+
+    def test_storage_savepoint_restores_all_synthetic_publication_collections(self):
+        fake = Fake('target.test', 'source-B', 'snapshot-B')
+        original = deepcopy((fake.drafts, fake.revisions, fake.active, fake.rules))
+        with self.context(fake):
+            with self.assertRaisesRegex(RuntimeError, 'injected'):
+                with FrappeMappingDraftStorage(fake).transaction(IDENTITY, fake.session.user):
+                    fake.active.append({'definition_id':IDENTITY})
+                    fake.rules.append({'definition_id':'rule'})
+                    fake.drafts['draft'] = {'content':'changed'}
+                    fake.revisions['revision'] = {'kind':'changed'}
+                    raise RuntimeError('injected')
+        self.assertEqual((fake.drafts, fake.revisions, fake.active, fake.rules), original)
+
+    def test_first_publication_requires_local_identity_unique_indexes(self):
+        fake = Fake('target.test', 'source-B', 'snapshot-B')
+        original = fake.sql
+        def without_unique_definition(query, params=(), **kwargs):
+            rows = original(query, params, **kwargs)
+            if query.startswith('show index') and 'tabHERO Frappe Mapping' in query:
+                return [row for row in rows if row.get('Column_name') != 'definition_id']
+            return rows
+        fake.db.sql = without_unique_definition
+        with self.assertRaisesRegex(ValueError, 'Definition identity unique index'):
+            frappe_mapping_draft_storage.assert_first_publication_identity_schema(fake)
+
+    def test_first_publication_rejects_stale_and_foreign_without_writes(self):
+        fake = Fake('target.test', 'source-B', 'snapshot-B')
+        fake.throw = lambda message, *args: (_ for _ in ()).throw(ValueError(message))
+        fake.TimestampMismatchError = ValueError
+        fake.PermissionError = PermissionError
+        content = {'records_path':'customers', 'identity_path':'id', 'mapping_definition_ids':[], 'field_rules':{}}
+        definition = {'site_scope':fake.local.site, 'definition_id':IDENTITY, 'source_instance':'source-B',
+            'snapshot_name':'snapshot-B', 'schema_fingerprint':fake.snapshot.schema_fingerprint,
+            'direction':'QUERY_TO_FRAPPE', 'operation_kind':'QUERY', 'operation_name':'customers'}
+        with self.context(fake), patch.object(api, '_mapping_request_fields'), \
+             patch('hero_integration.hero_integration.doctype.hero_graphql_mapping.hero_graphql_mapping.lock_exchange_context'), \
+             patch('hero_integration.services.frappe_mapping_draft_storage.FrappeMappingDraftStorage',
+                   side_effect=lambda: FrappeMappingDraftStorage(fake)):
+            draft = FrappeMappingDraftStorage(fake).service().open_new_draft(definition, fake.session.user, content)
+            fake.drafts[draft.key].update(modified_by=fake.session.user, diagnostics_json='', warning_fingerprint='')
+            before = deepcopy((fake.drafts, fake.revisions, fake.active, fake.rules))
+            with self.assertRaisesRegex(ValueError, 'MAPPING_DRAFT_CONFLICT'):
+                api.mapping_draft_publish(IDENTITY, 1, 2, 0, 0, confirmed=True)
+            self.assertEqual((fake.drafts, fake.revisions, fake.active, fake.rules), before)
+            with self.assertRaisesRegex(ValueError, 'MAPPING_DRAFT_INVALID'):
+                api.mapping_draft_publish(IDENTITY, 1, 1, 0, 0, confirmed=True)
+            self.assertEqual((fake.drafts, fake.revisions, fake.active, fake.rules), before)
+            fake.session.user = 'other@example.invalid'
+            with self.assertRaisesRegex(ValueError, 'MAPPING_DRAFT_CONFLICT'):
+                api.mapping_draft_publish(IDENTITY, 1, 1, 0, 0, confirmed=True)
+            self.assertEqual((fake.drafts, fake.revisions, fake.active, fake.rules), before)
+
+    def test_first_publication_query_through_api(self):
+        fake = PublicationFake('target.test', 'source-B', 'snapshot-B')
+        schema = deepcopy(SCHEMA)
+        types = schema['__schema']['types']
+        customer = next(item for item in types if item.get('name') == 'Customer')
+        customer['fields'][0]['type'] = {'kind':'NON_NULL', 'ofType':SCALAR('Int')}
+        customer['fields'].extend([{'name':'full_name', 'args':[], 'type':SCALAR('String')},
+            {'name':'company_name', 'args':[], 'type':SCALAR('String')},
+            {'name':'is_deleted', 'args':[], 'type':SCALAR('Boolean')}])
+        types.extend([{'kind':'SCALAR', 'name':'Int'}, {'kind':'SCALAR', 'name':'Boolean'}])
+        fake.snapshot.snapshot_json = json.dumps(schema)
+        fake.snapshot.schema_fingerprint = analyze_snapshot(schema).fingerprint
+        ids = ['09a2bc52-4b21-46b7-9a11-3a62bf5a6348', '9d8fe02d-9eb0-49b1-a599-e0630f421010',
+               '21e99ce9-7e38-40f6-a36d-21aa33e43c98', '0e15170c-6f28-4b89-aa37-6bf14f8e0160']
+        rows = [('id', 'int', 'Customer', 'custom_hero_source_id', 'Source Identity', 'Positive Int To Text'),
+                ('full_name', 'string|null', 'Customer', 'customer_name', 'Record Name', 'Trim'),
+                ('company_name', 'string|null', 'Customer', 'customer_type', 'Customer Type', 'Customer Type From Company Name'),
+                ('is_deleted', 'boolean|null', 'HERO Integration Link', 'sync_status', 'Lifecycle Flag', 'Identity')]
+        rules = {identity:dict(source_path=path, source_type=typ, target_doctype=doctype, target_field=field,
+                               purpose=purpose, transformation=transform, relation='', priority=5)
+                 for identity, (path, typ, doctype, field, purpose, transform) in zip(ids, rows)}
+        content = {'records_path':'customers', 'identity_path':'id', 'target_operation':'HeroCustomers',
+                   'mapping_definition_ids':ids, 'field_rules':rules}
+        definition = {'site_scope':fake.local.site, 'definition_id':IDENTITY, 'source_instance':'source-B',
+            'snapshot_name':'snapshot-B', 'schema_fingerprint':fake.snapshot.schema_fingerprint,
+            'direction':'QUERY_TO_FRAPPE', 'operation_kind':'QUERY', 'operation_name':'customers'}
+        class Metadata(FakeRuleMetadata):
+            def ensure_write(self, doctype):
+                if doctype not in {'Customer', 'HERO Integration Link'}: raise PermissionError(doctype)
+        from hero_integration.hero_integration.doctype.hero_graphql_mapping import hero_graphql_mapping
+        from hero_integration.hero_integration.doctype.hero_mapping_draft import hero_mapping_draft
+        from hero_integration.hero_integration.doctype.hero_mapping_revision import hero_mapping_revision
+        from hero_integration.services import mapping_draft_access
+        with self.context(fake), patch.object(hero_frappe_mapping, '_FrappeMetadata', Metadata), patch.object(api, '_mapping_request_fields'), \
+             patch.dict(sys.modules, {'frappe':fake}), patch.object(hero_frappe_mapping, 'frappe', fake), \
+             patch.object(hero_graphql_mapping, 'frappe', fake), patch.object(hero_mapping_draft, 'frappe', fake), \
+             patch.object(hero_mapping_revision, 'frappe', fake), patch.object(mapping_draft_access, 'frappe', fake), \
+             patch('hero_integration.hero_integration.doctype.hero_graphql_mapping.hero_graphql_mapping.lock_exchange_context'), \
+             patch('hero_integration.services.frappe_mapping_draft_storage.FrappeMappingDraftStorage',
+                   side_effect=lambda: FrappeMappingDraftStorage(fake)):
+            service = FrappeMappingDraftStorage(fake).service()
+            draft = service.open_new_draft(definition, fake.session.user, content)
+            fake.drafts[draft.key]['modified_by'] = fake.session.user
+            fake.drafts[draft.key]['diagnostics_json'] = ''
+            fake.drafts[draft.key]['warning_fingerprint'] = ''
+            self.assertEqual(service.open_draft(IDENTITY, fake.session.user).content, content)
+            with self.assertRaisesRegex(ValueError, 'identity is already used by a personal draft'):
+                fake.get_doc({'doctype':'HERO GraphQL Mapping', 'definition_id':IDENTITY,
+                    'portable_definition_id':IDENTITY, 'schema_snapshot':'snapshot-B', 'operation_kind':'QUERY',
+                    'operation_name':'customers', 'direction':'QUERY_TO_FRAPPE', 'status':'Active',
+                    'mapping_revision':1, 'mapping_json':'{}'}).insert()
+            with self.assertRaisesRegex(ValueError, 'scope is immutable'):
+                fake.get_doc({'doctype':'HERO Frappe Mapping', 'definition_id':ids[0],
+                    'portable_definition_id':ids[0], 'schema_snapshot':'snapshot-B', 'operation':'HeroCustomers',
+                    'status':'Active', 'personal_graphql_mapping':'foreign', **rules[ids[0]]}).insert()
+            conflict = {'doctype':'HERO GraphQL Mapping', 'name':'conflict', 'definition_id':IDENTITY,
+                'portable_definition_id':IDENTITY, 'schema_snapshot':'snapshot-B',
+                'schema_fingerprint':fake.snapshot.schema_fingerprint, 'source_instance':'source-B',
+                'direction':'QUERY_TO_FRAPPE', 'status':'Active', 'operation_name':'customers',
+                'mapping_revision':1, 'mapping_json':'{}'}
+            fake.active.append(conflict)
+            with self.assertRaisesRegex(ValueError, 'MAPPING_DRAFT_CONFLICT'):
+                api.mapping_draft_publish(IDENTITY, 1, 1, 0, 0, confirmed=True)
+            self.assertEqual(fake.active, [conflict])
+            fake.active.clear()
+            before = deepcopy((fake.drafts, fake.revisions, fake.active, fake.rules))
+            fake.fail_insert = 'HERO Frappe Mapping'
+            with self.assertRaisesRegex(RuntimeError, 'injected document failure'):
+                api.mapping_draft_publish(IDENTITY, draft.generation, draft.content_revision, 0, 0, confirmed=True)
+            self.assertEqual((fake.drafts, fake.revisions, fake.active, fake.rules), before)
+            fake.fail_insert = None
+            result = api.mapping_draft_publish(IDENTITY, draft.generation, draft.content_revision, 0, 0, confirmed=True)
+            self.assertEqual(result['revision'], 1)
+            self.assertEqual(json.loads(fake.active[0]['mapping_json'])['mapping_definition_ids'], ids)
+            self.assertEqual({row['definition_id'] for row in fake.rules}, set(ids))
+            self.assertIn((draft.key, 1, 1, 'DRAFT_SAVE'), fake.revisions)
+            self.assertIn((draft.key, 1, 1, 'ACTIVE_ACTIVATION'), fake.revisions)
+            retry = api.mapping_draft_publish(IDENTITY, draft.generation, draft.content_revision, 0, 0, confirmed=True)
+            self.assertEqual(retry, {'name':result['name'], 'revision':1, 'unchanged':True})
+            original_json = fake.active[0]['mapping_json']
+            fake.active[0]['mapping_json'] = json.dumps({'tampered':True})
+            with self.assertRaisesRegex(ValueError, 'MAPPING_DRAFT_CONFLICT'):
+                api.mapping_draft_publish(IDENTITY, 1, 1, 0, 0, confirmed=True)
+            fake.active[0]['mapping_json'] = original_json
+            original_diagnostics = fake.drafts[draft.key]['diagnostics_json']
+            fake.drafts[draft.key]['diagnostics_json'] = '{}'
+            with self.assertRaisesRegex(ValueError, 'MAPPING_DRAFT_CONFLICT'):
+                api.mapping_draft_publish(IDENTITY, 1, 1, 0, 0, confirmed=True)
+            fake.drafts[draft.key]['diagnostics_json'] = original_diagnostics
+            reopened = service.open_draft(IDENTITY, fake.session.user)
+            self.assertEqual(reopened.base_active_revision, 1)
+            self.assertFalse(getattr(fake, 'read_approvals', []))
+
     def context(self, fake):
         stack = __import__('contextlib').ExitStack()
         stack.enter_context(patch.object(exchange, 'frappe', fake))
