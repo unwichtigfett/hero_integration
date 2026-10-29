@@ -40,6 +40,10 @@
     --hero-state-ok: #17702f;
     --hero-state-warning: #845700;
     --hero-state-error: #b42318;
+    /* Node actions: filled primary (Save as GraphQL Service) and outlined secondary (Remember for Mapping). */
+    --hero-action-primary-bg: #1560bd;
+    --hero-action-primary-text: #ffffff;
+    --hero-action-secondary: #6b36c2;
     color: var(--pc-text);
 }
 
@@ -64,6 +68,9 @@
     --hero-state-ok: #56d364;
     --hero-state-warning: #e3b341;
     --hero-state-error: #ff7b72;
+    --hero-action-primary-bg: #1f6feb;
+    --hero-action-primary-text: #ffffff;
+    --hero-action-secondary: #d2a8ff;
 }
 
 /* Frappe applies data-theme during automatic-mode changes; no OS-only override. */

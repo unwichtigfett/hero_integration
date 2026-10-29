@@ -200,3 +200,19 @@
 .ht-analyzer-fingerprint {min-width:0;justify-self:end;font-size:11px;font-weight:500;color:var(--pc-textSecondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .ht-analyzer-type.is-selected .ht-analyzer-type-name {font-weight:750;}
 @media(max-width:1280px){.ht-analyzer-top{grid-template-columns:1fr;}.ht-analyzer-summary{margin:0;}.ht-analyzer-stats{grid-template-columns:repeat(3,minmax(105px,1fr));}.hero-tools.is-analyzer .ht-header{grid-template-columns:1fr auto;}.hero-tools.is-analyzer .ht-header > .ht-context{grid-column:1/-1;grid-row:2;}.hero-tools.is-analyzer .ht-header > .ht-toolbar{grid-column:2;grid-row:1;}}
+/* Node actions: one bordered group under the node identity, separated from description, JSON and relations.
+   Selectors are specific enough to override the shared .btn and .ht-inspector button styles, also in the Node Focus pop-up. */
+.ht-node-id {font-family:var(--font-family-monospace, monospace);font-size:12px;overflow-wrap:anywhere;margin:0 0 4px;}
+.ht-node-actions {margin:12px 0 16px;padding:12px;border:2px solid var(--pc-border);border-radius:8px;background:var(--pc-surface);color:var(--pc-text);}
+.ht-node-actions .ht-node-actions-title {margin:0 0 8px;font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;}
+.ht-node-actions .ht-node-actions-buttons {display:flex;flex-wrap:wrap;gap:8px;align-items:stretch;}
+.ht-node-actions .ht-context {margin:8px 0 0;}
+.ht-node-actions .btn.ht-node-action, .ht-node-service .btn.ht-node-action {display:inline-flex;align-items:center;justify-content:center;width:auto;margin:0;min-height:34px;padding:6px 14px;border:2px solid;border-radius:6px;font-weight:600;text-align:center;white-space:normal;text-decoration:none;cursor:pointer;}
+.ht-node-actions .btn.ht-node-action--service {background:var(--hero-action-primary-bg);border-color:var(--hero-action-primary-bg);color:var(--hero-action-primary-text);}
+.ht-node-actions .btn.ht-node-action--service:hover:not(:disabled) {background:color-mix(in srgb,var(--hero-action-primary-bg) 85%,#000);border-color:color-mix(in srgb,var(--hero-action-primary-bg) 85%,#000);color:var(--hero-action-primary-text);}
+.ht-node-actions .btn.ht-node-action--remember {background:var(--pc-surface);border-color:var(--hero-action-secondary);color:var(--hero-action-secondary);}
+.ht-node-actions .btn.ht-node-action--remember:hover:not(:disabled) {background:color-mix(in srgb,var(--hero-action-secondary) 12%,var(--pc-surface));color:var(--hero-action-secondary);}
+.ht-node-actions .btn.ht-node-action:disabled {opacity:.5;cursor:not-allowed;}
+.ht-node-actions .btn.ht-node-action:focus-visible {outline:3px solid var(--pc-focus);outline-offset:2px;}
+.ht-node-service:not(:empty) {margin-top:12px;padding-top:12px;border-top:1px solid var(--pc-border);}
+.ht-node-service h4 {margin:0 0 6px;}

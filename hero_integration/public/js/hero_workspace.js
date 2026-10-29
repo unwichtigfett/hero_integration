@@ -25,7 +25,7 @@
     // need an explicit release token. JavaScript must stay query-free when it
     // enters frappe.require(): Frappe owns the version parameter and uses the
     // original extension to select its script loader.
-    const ASSET_RELEASE = "20261029.33a";
+    const ASSET_RELEASE = "20261029.34a";
     const ASSETS = [
         "/assets/hero_integration/css/hero_tools.css",
         "/assets/hero_integration/css/hero_adapter.css",
@@ -83,7 +83,7 @@
             return request("workspace_service_execute", {snapshot_name: snapshotName(args), query_id: args.query_id, expected_revision: args.expected_revision || 0, variables_json: JSON.stringify(args.variables || {})});
         }
         if (method === "get_analyzer_service_draft") return request("workspace_analyzer_service_draft", {snapshot_name: snapshotName(args), schema_node_id: args.schema_node_id});
-        if (method === "save_analyzer_service") return request("workspace_analyzer_service_save", {snapshot_name: snapshotName(args), schema_node_id: args.schema_node_id, payload_json: JSON.stringify(args.payload || {})});
+        if (method === "save_analyzer_service") return request("workspace_analyzer_service_save", {snapshot_name: snapshotName(args), schema_node_id: args.schema_node_id, payload_json: JSON.stringify(args.payload || {}), origin: args.origin || "API Analyzer"});
         if (unsupported.has(method)) {
             throw new Error("This historic action is intentionally unavailable in the native workspace. Use the ERPNext Mapping Editor or saved read-only service definitions.");
         }
