@@ -215,6 +215,12 @@ def _schema_input_field(schema: object, contract: WritebackDefinition, field: st
         selected = input_fields.get(field)
         if _named_type(argument.get("type")) != contract.input_type or not {"id", field} <= set(input_fields) or not isinstance(selected, Mapping):
             raise ValueError
+        reference = selected.get("type")
+        kind, name = _named_kind(reference), _named_type(reference)
+        if (_has_list(argument.get("type")) or _has_list(reference)
+                or kind not in {"SCALAR", "ENUM"}
+                or (kind == "SCALAR" and name not in {"String", "ID", "Int", "Float", "Boolean"})):
+            raise ValueError
         return selected
     except (AttributeError, GraphSnapshotError, TypeError, ValueError) as error:
         raise WritebackContractError("The saved schema does not prove this approved HERO write target.") from error

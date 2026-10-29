@@ -169,6 +169,7 @@ def _sync_hero_context(binding_identity_key: str, mapping_name: str, expected_pl
     if row.status != "Active" or row.direction != "FRAPPE_TO_MUTATION" or row.source_instance != binding.source_instance:
         frappe.throw("Sync Hero mutation mapping is not active for this source instance.")
     snapshot, schema = _validated_snapshot(row.schema_snapshot)
+    _require_writeback_snapshot(row, snapshot)
     if (
         snapshot.name != executable.selection.schema_snapshot
         or snapshot.schema_fingerprint != executable.selection.schema_fingerprint
@@ -183,13 +184,12 @@ def _sync_hero_context(binding_identity_key: str, mapping_name: str, expected_pl
     contracts = frappe.get_all(
         "HERO Mutation Contract",
         filters={"schema_snapshot": snapshot.name, "operation_name": mapping["target"]["operation"], "status": "Active"},
-        fields=["name"],
+        fields=["name", "graphql_service", "operation_name", "contract_revision", "contract_fingerprint", "schema_fingerprint"],
     )
-    if len(contracts) != 1:
-        frappe.throw("Exactly one active schema-bound HERO Mutation Contract is required for Sync Hero.")
+    contract = _require_writeback_contract(contracts, snapshot)
     document = frappe.get_doc(binding.target_doctype, binding.target_name)
     frappe.has_permission(binding.target_doctype, "write", document, throw=True)
-    value = document.get(binding.target_field)
+    value = _writeback_source_value(document, binding.target_field)
     outbound_document, variables = build_request_checked(mapping, schema, parent.external_object_id, value)
     local_fingerprint = hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True, default=str).encode()).hexdigest()
     canonical = fingerprint_payload(
@@ -198,6 +198,7 @@ def _sync_hero_context(binding_identity_key: str, mapping_name: str, expected_pl
     )
     canonical += "|" + binding.identity_key + "|" + str(binding.revision)
     canonical += "|" + executable.plan_key + "|" + str(executable.generation)
+    canonical += "|" + contract.name + "|" + str(contract.contract_revision or 1) + "|" + str(contract.contract_fingerprint or "")
     intent = OutboundIntent(
         binding, binding.mapping_revision, executable.selection.schema_fingerprint,
         local_fingerprint, value is not None, outbound_document, variables,
@@ -3064,7 +3065,7 @@ def writeback_available(doctype: str, docname: str) -> dict[str, object]:
     rows = frappe.get_all(
         "HERO GraphQL Mapping",
         filters={"direction": "FRAPPE_TO_MUTATION", "status": "Active"},
-        fields=["name", "direction", "status", "mapping_json", "mapping_revision", "schema_snapshot", "source_instance"],
+        fields=["name", "direction", "status", "mapping_json", "mapping_revision", "schema_snapshot", "schema_fingerprint", "source_instance"],
     )
     actions = []
     for row in rows:
@@ -3140,6 +3141,40 @@ def writeback_execute(mapping_name: str, doctype: str, docname: str, confirmatio
     return {"status": "SUCCEEDED", "correlation_id": audit.correlation_id, "operation": context["mapping"]["target"]["operation"]}
 
 
+def _require_writeback_snapshot(row, snapshot) -> None:
+    """Reject a mapping whose approved schema or source has since changed."""
+    if (not getattr(row, "schema_fingerprint", None)
+            or row.schema_fingerprint != snapshot.schema_fingerprint
+            or (row.source_instance or "") != (snapshot.source_instance or "")):
+        frappe.throw("The writeback mapping schema or source no longer matches its approved snapshot.")
+
+
+def _require_writeback_contract(contracts, snapshot):
+    if len(contracts) != 1:
+        frappe.throw("Exactly one active schema-bound HERO Mutation Contract is required for writeback.")
+    contract = contracts[0]
+    if not getattr(contract, "schema_fingerprint", None) or contract.schema_fingerprint != snapshot.schema_fingerprint:
+        frappe.throw("The active mutation contract no longer matches its schema snapshot.")
+    service = frappe.get_doc("HERO GraphQL Service", contract.graphql_service)
+    if service.schema_snapshot != snapshot.name or service.schema_fingerprint != snapshot.schema_fingerprint:
+        frappe.throw("The mutation contract service no longer matches its schema snapshot.")
+    try:
+        from hero_integration.services.graphql_contract import parse_mutation
+        parsed = parse_mutation(service.query_document)
+        if parsed.fingerprint != contract.contract_fingerprint or parsed.root_field != contract.operation_name:
+            raise ValueError
+    except (TypeError, ValueError):
+        frappe.throw("The mutation contract service no longer matches its approved document.")
+    return contract
+
+
+def _writeback_source_value(document, field: str):
+    """Distinguish an explicitly loaded null from an absent document field."""
+    if field not in vars(document):
+        frappe.throw("The selected writeback field is missing from the loaded document.")
+    return document.get(field)
+
+
 def _writeback_context(mapping_name: str, document, mapping_row=None) -> dict[str, object]:
     """Rebuild every preview input from current server-side state."""
     from hero_integration.services.frappe_writeback import (
@@ -3154,6 +3189,7 @@ def _writeback_context(mapping_name: str, document, mapping_row=None) -> dict[st
     if row.status != "Active" or row.direction != "FRAPPE_TO_MUTATION":
         frappe.throw("The writeback mapping is not active.")
     snapshot, schema = _validated_snapshot(row.schema_snapshot)
+    _require_writeback_snapshot(row, snapshot)
     try:
         mapping = normalise_mapping(json.loads(row.mapping_json), schema)
         source = mapping["source"]
@@ -3165,11 +3201,9 @@ def _writeback_context(mapping_name: str, document, mapping_row=None) -> dict[st
     contracts = frappe.get_all(
         "HERO Mutation Contract",
         filters={"schema_snapshot": snapshot.name, "operation_name": mapping["target"]["operation"], "status": "Active"},
-        fields=["name", "contract_revision", "contract_fingerprint"],
+        fields=["name", "graphql_service", "operation_name", "contract_revision", "contract_fingerprint", "schema_fingerprint"],
     )
-    if len(contracts) != 1:
-        frappe.throw("Exactly one active schema-bound HERO Mutation Contract is required for writeback.")
-    contract = contracts[0]
+    contract = _require_writeback_contract(contracts, snapshot)
     links = frappe.get_all(
         "HERO Integration Link",
         filters={"source_type": expected.source_type, "target_doctype": document.doctype, "target_name": document.name},
@@ -3183,7 +3217,7 @@ def _writeback_context(mapping_name: str, document, mapping_row=None) -> dict[st
     if link.observed_source_hash and link.observed_source_hash != link.source_payload_hash:
         frappe.throw("The linked HERO source changed after its synchronized baseline; writeback is blocked.")
     field = source["field"]
-    value = document.get(field)
+    value = _writeback_source_value(document, field)
     outbound_document, variables = build_request_checked(mapping, schema, link.source_id, value)
     canonical = fingerprint_payload(
         row.name, int(row.mapping_revision or 1), document.modified, link.source_instance,
