@@ -173,6 +173,58 @@
     });
     window.hero_integration_rpc = Object.freeze({call: (method, args) => rpc(method, args)});
 
+    // One canonical "Remember for Mapping" store for API Analyzer, Graph Viewer
+    // and the Mapping Editor. The server validates node identity and owner.
+    const bookmarkCall = (method, args, write = false) =>
+        frappe.call({method: `${API}.${method}`, type: write ? "POST" : "GET", args}).then((response) => {
+            if (response?.exc) throw new Error(String(response.exc));
+            return response?.message;
+        }).catch((error) => { throw new Error(errorMessage(error)); });
+    const bookmarks = {
+        list: (search = "") => bookmarkCall("workspace_node_bookmark_list", {search}),
+        save: (identity, alias) => bookmarkCall("workspace_node_bookmark_save", {
+            snapshot_name: identity.snapshot_name, node_id: identity.node_id, alias, schema_fingerprint: identity.schema_fingerprint,
+        }, true),
+        rename: (bookmark, alias) => bookmarkCall("workspace_node_bookmark_rename", {bookmark, alias}, true),
+        remove: (bookmark) => bookmarkCall("workspace_node_bookmark_delete", {bookmark}, true),
+        resolve: (bookmark) => bookmarkCall("workspace_node_bookmark_resolve", {bookmark}),
+        remember(selection) {
+            // The identity is frozen when the dialog opens, so a selection change
+            // during the dialog cannot store a different node under this alias.
+            const identity = Object.freeze({...selection});
+            return new Promise((resolve) => {
+                const dialog = new frappe.ui.Dialog({
+                    title: "Remember for Mapping",
+                    fields: [
+                        {fieldname: "node_name", fieldtype: "Data", label: "Original node", read_only: 1, default: identity.node_name},
+                        {fieldname: "node_kind", fieldtype: "Data", label: "Node type", read_only: 1, default: identity.node_kind},
+                        {fieldname: "node_id", fieldtype: "Data", label: "GraphQL node ID", read_only: 1, default: identity.node_id},
+                        {fieldname: "snapshot_name", fieldtype: "Data", label: "Snapshot", read_only: 1, default: identity.snapshot_name},
+                        {fieldname: "alias", fieldtype: "Data", label: "Alias", reqd: 1,
+                            description: "A readable name for the Mapping Editor. It never replaces the technical node identity."},
+                    ],
+                    primary_action_label: "Save",
+                    primary_action: async (values) => {
+                        dialog.disable_primary_action();
+                        try {
+                            const result = await bookmarks.save(identity, values.alias);
+                            dialog.hide();
+                            frappe.show_alert({message: result.existing ? "This node is already remembered under this alias." : "Node remembered for mapping. No mapping was created.", indicator: "green"});
+                            resolve(result);
+                        } catch (error) {
+                            dialog.enable_primary_action();
+                            frappe.msgprint({title: "Remember for Mapping", message: frappe.utils.escape_html(error.message), indicator: "red"});
+                        }
+                    },
+                });
+                dialog.set_secondary_action_label("Cancel");
+                dialog.set_secondary_action(() => { dialog.hide(); resolve(null); });
+                dialog.show();
+            });
+        },
+    };
+    window.hero_integration_bookmarks = Object.freeze(bookmarks);
+
     let controller;
     function resetPage(page) {
         ["clear_primary_action", "clear_secondary_action", "clear_menu", "clear_actions", "clear_actions_menu"].forEach((name) => page[name]?.());

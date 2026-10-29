@@ -921,7 +921,77 @@
                 packageRequest++; packagePreview.empty(); packageState.text(text('Choose a package again to preview it.'));
                 viewEpoch = epoch; loadSnapshots(name, operation);
             });
+            renderSavedNodes(section, {viewTab, snapshot, operations, source, info, loadSnapshots, current: () => !disposed && epoch === viewEpoch && tab === viewTab && section[0].isConnected});
             body.append(section); loadSnapshots();
+        }
+        function renderSavedNodes(section, view) {
+            // Saved HERO Nodes: personal bookmarks from API Analyzer / Graph Viewer.
+            // Selecting one only preselects explorer inputs; it never edits a draft,
+            // bumps a revision, activates a mapping, syncs or calls HERO.
+            const store = window.hero_integration_bookmarks;
+            if (!store) return;
+            const box = $("<details class='hero-mapping-saved-nodes'></details>").append($('<summary></summary>').text(text('Saved HERO Nodes')));
+            const search = $("<input class='form-control' aria-label='Search saved HERO nodes'>").attr('placeholder', text('Search alias or original name'));
+            const list = $("<div class='hero-mapping-saved-node-list' role='list'></div>"), state = $("<p role='status'></p>");
+            let request = 0;
+            const wanted = view.viewTab === 'Query' ? 'QUERY' : 'MUTATION';
+            async function refresh() {
+                const serial = ++request; state.text(text('Loading saved HERO nodes…'));
+                try {
+                    const result = await store.list(search.val().trim());
+                    if (serial !== request || !view.current()) return;
+                    list.empty();
+                    if (!result.bookmarks.length) state.text(text('No saved HERO nodes. Use “Remember for Mapping” in the API Analyzer or Graph Viewer.'));
+                    else state.text('');
+                    result.bookmarks.forEach((item) => list.append(row(item)));
+                } catch (error) { if (serial === request) state.text(errorText(error)); }
+            }
+            function preselect(snapshotName, context) {
+                if (context.operation_kind !== wanted) {
+                    view.info.text(text(`This node belongs to the ${context.operation_kind === 'QUERY' ? 'Query' : 'Mutation'} view. Open that mapping tab to use it.`));
+                    return;
+                }
+                section.prop('open', true);
+                view.loadSnapshots(snapshotName, context.operation).then(() => {
+                    if (!view.current()) return;
+                    if (view.viewTab === 'Query' && context.path) view.source.val(context.path).trigger('input');
+                    view.info.text(text(`Preselected ${context.operation}${context.path ? ' · ' + context.path : ''}. Nothing was saved or activated.`));
+                });
+            }
+            async function use(item) {
+                box.find('.hero-mapping-saved-node-choices').remove();
+                state.text(text('Checking the saved node against its snapshot…'));
+                try {
+                    const result = await store.resolve(item.name);
+                    if (!view.current()) return;
+                    const context = result.context, bookmark = result.bookmark;
+                    if (bookmark.status === 'UNRESOLVABLE' || !context) { state.text(text(bookmark.reason)); return; }
+                    const outdated = bookmark.status === 'OUTDATED' ? ' ' + text('Note: a newer validated snapshot exists; the bookmark still refers to its original snapshot.') : '';
+                    state.text(text(context.reason) + outdated);
+                    if (context.mappable) return preselect(bookmark.schema_snapshot, context);
+                    const choices = $("<div class='hero-mapping-saved-node-choices'></div>");
+                    (context.candidates || []).forEach((candidate) => choices.append(button(`${candidate.operation} · ${candidate.path}`, () => { choices.remove(); preselect(bookmark.schema_snapshot, candidate); })));
+                    if (!context.candidates?.length && context.operation) choices.append(button(`${text('Select operation')} ${context.operation}`, () => { choices.remove(); preselect(bookmark.schema_snapshot, {...context, path: ''}); }));
+                    choices.append(button(text('Open in Graph Viewer'), () => leaveWorkspace(() => window.hero_integration_ui.setRoute('api', {hero_tool: 'graph', snapshot: bookmark.schema_snapshot, node: bookmark.node_id}))));
+                    state.after(choices);
+                } catch (error) { state.text(errorText(error)); }
+            }
+            function row(item) {
+                const entry = $("<div class='hero-mapping-saved-node' role='listitem'></div>");
+                entry.append($('<strong></strong>').text(item.alias), $('<span></span>').text(` · ${item.node_name} · ${item.node_kind} · ${item.schema_snapshot} · ${item.status}`));
+                entry.attr('title', item.reason || '');
+                entry.append(button(text('Use in Mapping'), () => use(item)).prop('disabled', item.status === 'UNRESOLVABLE'));
+                entry.append(button(text('Rename'), () => frappe.prompt({fieldname: 'alias', fieldtype: 'Data', label: text('Alias'), reqd: 1, default: item.alias},
+                    async (values) => { try { await store.rename(item.name, values.alias); await refresh(); } catch (error) { state.text(errorText(error)); } }, text('Rename saved HERO node'), text('Save'))));
+                entry.append(button(text('Remove'), () => frappe.confirm(text('Remove this saved HERO node? Mappings are not affected.'),
+                    async () => { try { await store.remove(item.name); await refresh(); } catch (error) { state.text(errorText(error)); } })));
+                return entry;
+            }
+            let timer = null;
+            search.on('input', () => { clearTimeout(timer); timer = setTimeout(refresh, 250); });
+            box.on('toggle', () => { if (box.prop('open')) refresh(); });
+            box.append(search, state, list);
+            section.append(box);
         }
         function renderList() {
             toolbar.detach().empty(); body.empty(); renderWorkspaceContext(); renderContext({}); renderMappingsTable(body);
