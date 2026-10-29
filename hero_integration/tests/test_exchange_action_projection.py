@@ -51,6 +51,26 @@ class TestExchangeActionProjection(unittest.TestCase):
         with self.assertRaises(MappingDraftError):
             validate_exchange_action(self.customer, {'__schema': {'types': []}}, 'update_contact')
 
+    def test_unknown_or_ignored_action_parameters_are_not_accepted(self):
+        for section, key, value in (('source', 'path', 'other'),
+                                    ('source', 'type', 'Data'),
+                                    ('target', 'type', 'String'),
+                                    ('target', 'doctype', 'Customer')):
+            candidate = deepcopy(self.customer)
+            candidate[section][key] = value
+            with self.subTest(section=section, key=key), self.assertRaises(MappingDraftError):
+                validate_exchange_action(candidate, schema(), 'update_contact')
+        for version in (True, 2, '1'):
+            candidate = {**self.customer, 'version': version}
+            with self.subTest(version=version), self.assertRaises(MappingDraftError):
+                validate_exchange_action(candidate, schema(), 'update_contact')
+
+    def test_optional_reviewed_path_and_type_are_accepted(self):
+        candidate = deepcopy(self.customer)
+        candidate['target'].update(field_path='email', graphql_type='String')
+        result = validate_exchange_action(candidate, schema(), 'update_contact')
+        self.assertEqual(result['mapping']['target']['field'], 'email')
+
 
 if __name__ == '__main__':
     unittest.main()

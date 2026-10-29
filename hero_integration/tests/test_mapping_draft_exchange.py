@@ -105,6 +105,12 @@ class TestMappingDraftExchange(unittest.TestCase):
         self.draft_locks = patch.object(exchange, '_lock_open_drafts', side_effect=exchange._open_drafts)
         self.draft_locks.start()
         self.addCleanup(self.draft_locks.stop)
+        self.context_lock = patch.object(exchange, '_lock_context')
+        self.context_lock.start()
+        self.addCleanup(self.context_lock.stop)
+        self.fresh_context = patch.object(exchange, '_fresh_active_definitions', side_effect=exchange._active_definitions)
+        self.fresh_context.start()
+        self.addCleanup(self.fresh_context.stop)
 
     def package(self):
         return exchange.export_package("source-1", "SNAPSHOT", "QUERY_TO_FRAPPE")
@@ -207,6 +213,20 @@ class TestMappingDraftExchange(unittest.TestCase):
                                      confirmed=True, preview_fingerprint=preview['preview_fingerprint'])
             self.preparation_mock.side_effect = lambda item, row, local, schema: {
                 'content': item['content'], 'references': [{'identity': 'changed'}], 'conflicts': [], 'can_save': True}
+            with self.assertRaisesRegex(exchange.MappingDraftExchangeError, 'preview changed'):
+                exchange.save_import(raw, 'source-1', 'SNAPSHOT', 'QUERY_TO_FRAPPE', expected,
+                                     confirmed=True, preview_fingerprint=preview['preview_fingerprint'])
+        provision.assert_not_called()
+
+    def test_new_active_definition_without_draft_invalidates_preview(self):
+        raw = self.package()
+        preview = exchange.preview_import(raw, 'source-1', 'SNAPSHOT', 'QUERY_TO_FRAPPE')
+        expected = [{'definition_id': item['definition_id'], **item['expected']} for item in preview['items']]
+        self.frappe.active.append(self.frappe._active('query-new', 'QUERY', 'readThings', 'QUERY_TO_FRAPPE'))
+        changed = exchange.preview_import(raw, 'source-1', 'SNAPSHOT', 'QUERY_TO_FRAPPE')
+        self.assertEqual(preview['items'], changed['items'])
+        self.assertNotEqual(preview['preview_fingerprint'], changed['preview_fingerprint'])
+        with patch.object(exchange, 'provision_schema') as provision:
             with self.assertRaisesRegex(exchange.MappingDraftExchangeError, 'preview changed'):
                 exchange.save_import(raw, 'source-1', 'SNAPSHOT', 'QUERY_TO_FRAPPE', expected,
                                      confirmed=True, preview_fingerprint=preview['preview_fingerprint'])

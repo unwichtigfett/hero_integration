@@ -97,7 +97,8 @@ def _export_schema(mappings, direction):
 def preview_import(payload_json: str, source_instance: str, snapshot_name: str, direction: str) -> dict[str, object]:
     """Validate a proposed replacement without persisting drafts or schema."""
     package = _parse(payload_json, source_instance, snapshot_name, direction)
-    active = _lock_active_definitions(_active_definitions(source_instance, snapshot_name, direction),
+    _lock_context(source_instance, snapshot_name, direction)
+    active = _lock_active_definitions(_fresh_active_definitions(source_instance, snapshot_name, direction),
                                       source_instance, snapshot_name, direction)
     fingerprints = {str(_value(row, "schema_fingerprint")) for row in active.values()}
     if fingerprints != {package["schema_fingerprint"]}:
@@ -135,6 +136,10 @@ def preview_import(payload_json: str, source_instance: str, snapshot_name: str, 
     result = {
         "format_version": FORMAT_VERSION, "direction": direction, "source_instance": source_instance,
         "snapshot_name": snapshot_name, "schema_fingerprint": package["schema_fingerprint"],
+        "context_definitions": [{"definition_id": identity, "name": _value(row, 'name'),
+                                 "revision": _positive_int(_value(row, 'mapping_revision')),
+                                 "content_hash": _hash(_content(_value(row, 'mapping_json')))}
+                                for identity, row in sorted(active.items())],
         "items": items, "schema": schema, "persisted": False,
         "can_save": not invalid_schema and not any(item.get('conflicts') for item in items),
     }
@@ -360,7 +365,8 @@ def save_import(payload_json: str, source_instance: str, snapshot_name: str, dir
         # DDL may implicitly commit and release every earlier lock. Obtain a
         # fresh preview under new locks before performing any Draft DML.
         post_schema = preview_import(payload_json, source_instance, snapshot_name, direction)
-        if not post_schema['can_save'] or not _same(post_schema['items'], preview['items']):
+        if (not post_schema['can_save'] or not _same(post_schema['items'], preview['items'])
+                or not _same(post_schema['context_definitions'], preview['context_definitions'])):
             raise DraftConflict('Draft or referenced configuration changed during schema provisioning.')
         for item in package["mappings"]:
             definition_id = item["definition_id"]
@@ -448,6 +454,37 @@ def _active_definitions(source_instance: str, snapshot_name: str, direction: str
     result = {str(_value(row, "definition_id")): row for row in rows if _value(row, "operation_kind") == _DIRECTIONS[direction]}
     if len(result) != len(rows) or not result:
         raise MappingDraftExchangeError("Selected draft context has no valid active mapping definitions.")
+    return result
+
+
+def _lock_context(source_instance, snapshot_name, direction):
+    from hero_integration.hero_integration.doctype.hero_graphql_mapping.hero_graphql_mapping import lock_exchange_context
+    lock_exchange_context(source_instance, snapshot_name, direction)
+
+
+def _fresh_active_definitions(source_instance: str, snapshot_name: str, direction: str) -> dict[str, object]:
+    """Read the committed context in a fresh transaction under its application lock.
+
+    The request connection may already have an older REPEATABLE READ snapshot.
+    A separate read avoids a table-wide locking scan on sites without a context
+    index; the caller subsequently locks each observed unique definition ID.
+    """
+    if direction not in _DIRECTIONS or not all(isinstance(value, str) and value for value in (source_instance, snapshot_name)):
+        raise MappingDraftExchangeError('Selected draft context is invalid.')
+    from frappe.database import get_db
+    conf = frappe.local.conf
+    db = get_db(socket=conf.db_socket, host=conf.db_host, port=conf.db_port,
+                user=conf.db_user or conf.db_name, password=conf.db_password, cur_db_name=conf.db_name)
+    try:
+        rows = db.sql('select name, definition_id, schema_fingerprint, operation_kind, operation_name, direction, '
+                      'mapping_revision, mapping_json from `tabHERO GraphQL Mapping` '
+                      'where status=%s and source_instance=%s and schema_snapshot=%s and direction=%s',
+                      ('Active', source_instance, snapshot_name, direction), as_dict=True)
+    finally:
+        db.close()
+    result = {str(_value(row, 'definition_id')): row for row in rows if _value(row, 'operation_kind') == _DIRECTIONS[direction]}
+    if len(result) != len(rows) or not result:
+        raise MappingDraftExchangeError('Selected draft context has no valid active mapping definitions.')
     return result
 
 

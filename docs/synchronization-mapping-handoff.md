@@ -37,8 +37,10 @@ the target and retains target-managed provenance. An authenticated preview
 binds the package and observed references to the site and owner; it is not a
 runtime grant. Registry instances, acknowledgements and execution state are
 not imported. Existing rule identities and the referenced metadata are locked
-for the bounded exchange; unobserved new context definitions and arbitrary
-administrator DDL remain outside that boundary. Primary Customer and Project
+for the bounded exchange. Supported GraphQL Mapping writers use a shared
+site/source/snapshot/direction lock and the preview binds the complete active
+context. Raw database writes and arbitrary administrator DDL remain outside
+that boundary. Primary Customer and Project
 field-action parameters are checked against the existing reviewed writeback
 contract. The target-side integration link remains the authority for identity.
 
