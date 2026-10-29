@@ -689,7 +689,8 @@ def _migrate_native_task(record, run, plan, scope) -> Result:
         return Result('SKIPPED_SOURCE_DELETED', 'Source deletion does not delete or close a Task.')
     values = {}
     try:
-        if 'title' in record and record['title'] is not None:
+        if ('title' in record and record['title'] is not None
+                and (not isinstance(record['title'], str) or record['title'].strip())):
             values['subject'] = _text(record['title'], 'Task title', required=True, limit=140)
         if 'comment' in selected_paths and 'comment' in record and record['comment'] is not None and (not isinstance(record['comment'], str) or record['comment'].strip()):
             values['description'] = _html(_text(record['comment'], 'Task comment'))

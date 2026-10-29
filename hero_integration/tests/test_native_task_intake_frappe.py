@@ -1,5 +1,6 @@
 """Isolated-site tests: run only with an explicitly selected private Frappe site."""
 from types import SimpleNamespace
+from contextlib import nullcontext
 import json
 import os
 import threading
@@ -19,6 +20,37 @@ class _Plan:
 
     def source_identity(self, record):
         return str(record['id'])
+
+
+class TestNativeTaskEmptyTitleOffline(TestCase):
+    def test_empty_title_keeps_subject_and_updates_independent_description(self):
+        from hero_integration.services import migration
+        from hero_integration.services.change_detection import encode, decode, field_hashes
+        from hero_integration.hero_integration.doctype.hero_frappe_mapping import hero_frappe_mapping
+
+        values = {'subject': 'Local title', 'description': '<p>Old</p>'}
+        baseline = field_hashes(values)
+        class Task:
+            name = 'TASK-SYNTHETIC'
+            def get(self, field): return values.get(field)
+            def set(self, field, value): values[field] = value
+            def save(self): pass
+        link = SimpleNamespace(name='LINK', target_doctype='Task', target_name='TASK-SYNTHETIC',
+            mapping_version='native-task-v1:1:fixture-v1', source_field_hashes=encode(baseline),
+            target_field_hashes=encode(baseline), sync_status='Synchronized', conflict_detail='', save=lambda: None)
+        fake_db = SimpleNamespace(sql=lambda query, *args, **kwargs: [SimpleNamespace(name='LINK')]
+                                  if 'HERO Integration Link' in query else [], exists=lambda *args: True)
+        fake = SimpleNamespace(only_for=lambda role: None, conf=SimpleNamespace(db_name='synthetic'), db=fake_db,
+            get_doc=lambda doctype, *args, **kwargs: link if doctype == 'HERO Integration Link' else Task())
+        record = {'id': 7, '_hero_source_instance': 'fixture-task32a', 'title': '  ', 'comment': 'New'}
+        scope = {'confirmed': True, 'source_instance': 'fixture-task32a', 'source_type': 'Task'}
+        with patch.object(migration, 'frappe', fake), patch.object(hero_frappe_mapping, '_lock_active_target'), \
+             patch.object(migration, 'managed_target_update', return_value=nullcontext()):
+            result = _migrate_native_task(record, SimpleNamespace(mapping_revision=1, mode='Execute'), _Plan(), scope)
+        self.assertEqual(result.code, 'CONFLICT')
+        self.assertEqual(values, {'subject': 'Local title', 'description': '<p>New</p>'})
+        self.assertEqual(decode(link.source_field_hashes)['subject'], baseline['subject'])
+        self.assertIn('subject', link.conflict_detail)
 
 
 class TestNativeTaskIntake(TestCase):
@@ -102,6 +134,20 @@ class TestNativeTaskIntake(TestCase):
         task.reload(); link.reload()
         self.assertEqual(task.description, '<p>Plain &lt;text&gt;</p>')
         self.assertEqual((link.source_field_hashes, link.target_field_hashes), (old_source, old_target))
+
+    def test_empty_title_preserves_subject_but_does_not_block_safe_description_update(self):
+        created = self.apply(self.record)
+        task = frappe.get_doc('Task', created.target_name)
+        link = frappe.get_doc('HERO Integration Link', {'source_key': 'HERO:fixture-task32a:Task:982011'})
+        from hero_integration.services.change_detection import decode
+        before_subject = decode(link.source_field_hashes)['subject']
+        result = self.apply({**self.record, 'title': '  ', 'comment': 'Safe remote update'})
+        self.assertEqual(result.code, 'CONFLICT')
+        task.reload(); link.reload()
+        self.assertEqual(task.subject, self.record['title'])
+        self.assertEqual(task.description, '<p>Safe remote update</p>')
+        self.assertEqual(decode(link.source_field_hashes)['subject'], before_subject)
+        self.assertIn('subject', link.conflict_detail)
 
     def test_scope_and_mapping_revision_are_enforced(self):
         created = self.apply(self.record)
