@@ -173,6 +173,7 @@ class FrappeBoundProcessor:
 
     Initial migration owns binding creation and inserts. This processor accepts
     neither an unbound object nor a new field and cannot provision schema.
+    Inbound writes stay blocked until a baseline-checked atomic writer exists.
     """
     def __init__(self, mapping_revision, definition_ids, frappe_module=None, document_adapter=None):
         self.mapping_revision,self.definition_ids,self._frappe_module,self._document_adapter=mapping_revision,frozenset(definition_ids),frappe_module,document_adapter
@@ -192,15 +193,10 @@ class FrappeBoundProcessor:
                 target=grouped.setdefault((binding.target_app,binding.target_doctype,binding.target_name),{})
                 if binding.target_field in target and target[binding.target_field]!=value: return False
                 target[binding.target_field]=value
-            if self._document_adapter is None:
-                from hero_integration.services.migration_engine import FrappeDocumentAdapter
-                writer=FrappeDocumentAdapter("name",self._frappe_module)
-            else:
-                writer=self._document_adapter
-            if not callable(getattr(writer,"update_existing_bound",None)): return False
-            for (app,doctype,name), values in grouped.items():
-                if not writer.update_existing_bound(site_scope,app,doctype,name,values): return False
-            return True
+            # The existing update-only adapter does not atomically compare
+            # the acknowledged local baseline or roll back multiple targets.
+            # Until that contract exists, no inbound write is safe to admit.
+            return False
         except Exception:
             return False
     def _frappe(self):

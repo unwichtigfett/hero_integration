@@ -76,6 +76,16 @@ class TestSync(unittest.TestCase):
   result=engine.pending_sync(SyncRun("cycle","site","admin",state.generation,False))
   self.assertEqual((result.status,result.cursor),(SyncStatus.PARTIAL,"w0"))
   self.assertEqual(provider.calls,["w0","c1","c2"])
+ def test_bound_writer_gate_keeps_cursor_when_local_baseline_contract_missing(self):
+  provider=Provider({None:ChangePage(({"id":"1","name":"Remote"},),None,True,"w1")})
+  class Writer:
+   def __init__(self): self.calls=0
+   def update_existing_bound(self,*args): self.calls+=1; return True
+  writer=Writer(); processor=FrappeBoundProcessor(1,("d",),document_adapter=writer)
+  engine=self.engine(provider,processor); state=self.configured(engine)
+  result=engine.pending_sync(SyncRun("blocked-bound","site","admin",state.generation,False))
+  self.assertEqual((result.status,result.cursor,writer.calls),(SyncStatus.PARTIAL,None,0))
+
  def test_capability_limits_and_revision_change_require_reconciliation(self):
   provider=Provider({None:ChangePage((),None,True,"w")},ChangeCapabilities(False,False,True)); engine=self.engine(provider); state=self.configured(engine)
   self.assertEqual(engine.pending_sync(SyncRun("m","site","admin",state.generation,False)).status,SyncStatus.RECONCILIATION_REQUIRED)
