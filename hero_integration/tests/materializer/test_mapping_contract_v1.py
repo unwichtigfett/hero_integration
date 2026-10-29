@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import copy
 from types import SimpleNamespace
 
 import pytest
@@ -26,6 +27,38 @@ from hero_integration.services.read_contract import ReadContract, ReadContractEr
 from hero_integration.sources.hero import CUSTOMER_CONTRACT_V1, customer_query
 
 
+def test_personal_task_fields_materialize_with_identity_and_lifecycle_selection():
+    raw = copy.deepcopy(RAW_SCHEMA)
+    query = next(t for t in raw['__schema']['types'] if t['name'] == 'Query')
+    scalar = lambda value: {'kind': 'SCALAR', 'name': value}
+    query['fields'].append({'name': 'tasks', 'args': [
+        {'name': 'first', 'type': scalar('Int')}, {'name': 'offset', 'type': scalar('Int')},
+        {'name': 'orderBy', 'type': scalar('String')}],
+        'type': {'kind': 'LIST', 'ofType': {'kind': 'OBJECT', 'name': 'Task'}}})
+    raw['__schema']['types'].append({'kind': 'OBJECT', 'name': 'Task', 'fields': [
+        {'name': 'id', 'args': [], 'type': scalar('ID')},
+        {'name': 'title', 'args': [], 'type': scalar('String')},
+        {'name': 'target_project_match_id', 'args': [], 'type': scalar('Int')},
+        {'name': 'is_deleted', 'args': [], 'type': scalar('Boolean')}]})
+    stored = StoredSnapshot('tasks-snapshot', raw, analyze_snapshot(raw).fingerprint, 'hero-primary')
+    validated = SnapshotAdapter().adapt(stored)
+    content = {'target_operation': 'HeroTasks', 'records_path': 'tasks', 'identity_path': 'id',
+        'variables': {'first': '$page_size', 'offset': '$offset'}, 'page_size': 25,
+        'native_task_onboarding': {'confirmed': True, 'source_instance': 'hero-primary', 'source_type': 'Task'},
+        'mapping_definition_ids': ['task-id', 'task-title', 'task-project'],
+        'field_rules': {'task-id': {'source_path': 'id'}, 'task-title': {'source_path': 'title'},
+                        'task-project': {'source_path': 'target_project_match_id'}}}
+    request = QueryAdapter().materialize_personal_task(validated, content)
+    assert {binding.selection_path for binding in request.result_bindings} == {
+        ('id',), ('title',), ('target_project_match_id',), ('is_deleted',)}
+    assert set(request.variables.values()) == {0, 25, 'id'}
+    assert request.mutation_safety_request is None
+    assert request == QueryAdapter().materialize_personal_task(validated, content)
+    with pytest.raises(MappingContractError, match='pagination'):
+        QueryAdapter().materialize_personal_task(validated, {**content, 'variables': {'first': 100}})
+    with pytest.raises(MappingContractError, match='scope'):
+        QueryAdapter().materialize_personal_task(validated, {**content, 'native_task_onboarding': {
+            'confirmed': True, 'source_instance': 'other', 'source_type': 'Task'}})
 def named(kind, name):
     return {"kind": kind, "name": name}
 

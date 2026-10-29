@@ -71,6 +71,56 @@ class FrappeMappingDraftStorage:
     def service(self) -> MappingDraftService:
         return MappingDraftService(self, canonicalize=self.canonicalize)
 
+    def materialize_native_task(self, definition_id, actor, generation, revision, active_revision, reconciliation_revision,
+                                *, snapshot_name):
+        """Compile one saved personal Task draft without publishing or authorizing it."""
+        from hero_integration.services.mapping_contract_v1 import MappingContractError, QueryAdapter, SnapshotAdapter, StoredSnapshot
+        from hero_integration.services.mapping_draft_service import _hash
+        from hero_integration.services.personal_mapping_content import references
+        from hero_integration.services.direct_mapping import MappingSpec, validate_spec
+        from hero_integration.hero_integration.doctype.hero_frappe_mapping.hero_frappe_mapping import _FrappeMetadata
+        from hero_integration.api import _validated_snapshot
+
+        with self.transaction(definition_id, actor):
+            parent, f = self._definition, self.frappe
+            active = self.active(definition_id)
+            draft = self.draft(draft_key(f.local.site, definition_id, actor))
+            if draft is None or draft.state != 'OPEN' or draft.owner != actor:
+                raise DraftConflict('The personal draft is not open.')
+            if (type(generation) is not int or draft.generation != generation or type(revision) is not int
+                    or revision < 1 or type(reconciliation_revision) is not int
+                    or draft.reconciliation_revision != reconciliation_revision):
+                raise DraftConflict('The personal draft revision is stale or unsaved.')
+            self.service()._assert_current(active, draft, revision, active_revision)
+            f.get_doc(self.DRAFT, draft.key, for_update=True).check_permission('read')
+            if (parent.schema_snapshot != snapshot_name or parent.direction != 'QUERY_TO_FRAPPE'
+                    or parent.operation_kind != 'QUERY' or parent.operation_name != 'tasks'):
+                raise MappingDraftError('Only the explicit Task query mapping can be materialized here.')
+            if _hash(draft.content) != draft.content_hash or self.canonicalize(draft.content) != draft.content:
+                raise MappingDraftError('Saved personal content is not intact and canonical.')
+            saved = f.db.sql(
+                'select content_hash from `tabHERO Mapping Revision` where draft_key=%s and generation=%s '
+                'and revision=%s and kind=%s for update', (draft.key, generation, revision, 'DRAFT_SAVE'), as_dict=True)
+            if len(saved) != 1 or saved[0].content_hash != draft.content_hash:
+                raise DraftConflict('Saved draft history does not match the requested revision.')
+            self._assert_locked_rule_baseline(draft)
+            rules = draft.content.get('field_rules', {})
+            metadata = _FrappeMetadata()
+            for identity in references(draft.content):
+                try:
+                    validate_spec(MappingSpec(operation='HeroTasks', definition_id=identity, **rules[identity]), metadata)
+                except (KeyError, TypeError, ValueError) as error:
+                    raise MappingDraftError('Native Task rule or target metadata is invalid.') from error
+            snapshot, schema = _validated_snapshot(parent.schema_snapshot, for_update=True)
+            if snapshot.schema_fingerprint != active.schema_fingerprint or snapshot.source_instance != parent.source_instance:
+                raise DraftConflict('The Task schema or source context changed.')
+            try:
+                validated = SnapshotAdapter().adapt(StoredSnapshot(snapshot.name, schema, snapshot.schema_fingerprint,
+                                                                   snapshot.source_instance, snapshot.analysis_status))
+                return QueryAdapter().materialize_personal_task(validated, draft.content)
+            except MappingContractError as error:
+                raise MappingDraftError('The saved Task draft cannot be materialized from this schema.') from error
+
     def publish(self, definition_id, actor, generation, revision, active_revision, reconciliation_revision,
                 *, confirmed=False, warning_fingerprint=''):
         """Publish exactly one saved personal revision under the parent lock."""

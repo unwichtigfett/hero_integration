@@ -172,6 +172,21 @@ class TestWorkspaceMutationDraftContract(unittest.TestCase):
         generate.assert_not_called()
         self.assertEqual(self.frappe.new_doc_calls, [])
 
+    def test_personal_task_query_is_generated_from_current_actor_and_revision(self):
+        self.frappe.local = SimpleNamespace(site='test.local')
+        self.frappe.session = SimpleNamespace(user='owner@example.invalid')
+        payload = {'name': 'Task draft service', 'operation_kind': 'query', 'personal_mapping_generation': {
+            'definition_id': 'task-def', 'generation': 1, 'draft_revision': 2,
+            'active_revision': 3, 'reconciliation_revision': 0}}
+        request = SimpleNamespace(document='query tasks { tasks { id title is_deleted } }', operation_name='tasks')
+        storage = SimpleNamespace(materialize_native_task=unittest.mock.Mock(return_value=request))
+        with patch('hero_integration.services.frappe_mapping_draft_storage.FrappeMappingDraftStorage', return_value=storage):
+            result = api.workspace_service_save('SNAPSHOT', json.dumps(payload))
+        storage.materialize_native_task.assert_called_once_with('task-def', 'owner@example.invalid', 1, 2, 3, 0,
+                                                                snapshot_name='SNAPSHOT')
+        self.assertEqual(result['query']['query'], request.document)
+        self.assertEqual(self.frappe.service.status, 'Draft')
+
     def test_generated_query_uses_active_registry_and_materializer_before_draft_save(self):
         from hero_integration.services.graphql_graph import analyze_snapshot
         from hero_integration.services.mapping_contract_v1 import StoredSnapshot
