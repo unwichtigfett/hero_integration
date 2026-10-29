@@ -615,7 +615,7 @@
             if(!['QUERY_OPERATION','MUTATION_OPERATION'].includes(node.kind))return;
             const button= this.analyzerCreateButton = document.createElement('button');
             button.className='btn btn-default';button.type='button';button.textContent='Save as GraphQL Service';
-            button.disabled=true;button.title='Service drafts from analyzer operations require legacy transport state and are unavailable here.';
+            button.title='Creates an unsaved service draft from this operation. No HERO operation is executed.';
             const box=$('section','ht-analyzer-service');target.append(button,box);
             button.addEventListener('click',()=>this.run(()=>this.openAnalyzerService(box,node,scope)));
             this.updateActions();
@@ -745,7 +745,7 @@
         payload(){return {name:this.name.value,category:this.category.value.trim()||(this.serviceKind==='mutation'?'Custom Mutations':'Custom Queries'),description:this.description.value,operation_name:this.operation.value||null,query:this.editor.getValue(),variables:JSON.parse(this.variables.value)};}
         setQuery(q={}){this.copiedFrom=q.copied_from||'';this.draftProvenance=q.provenance||'GraphQL-Services';this.queryEpoch=(this.queryEpoch||0)+1;this.query=q.query_id?q:null;this.name.value=q.name||'';this.category.value=q.category||(this.serviceKind==='mutation'?'Custom Mutations':'Custom Queries');this.description.value=q.description||'';this.operation.value=q.operation_name||'';this.editor.setValue(q.query||'',-1);this.variables.value=JSON.stringify(q.variables||{},null,2);this.base=this.draftString();this.validation=null;this.queryOutput.textContent=q.query_id?`${this.serviceLabel()} ${q.query_id} · Revision ${q.revision}`:'New unsaved draft';this.updateActions();}
         newQuery(copy=false){if(!copy&&!this.confirmReplace())return;const q=copy?{...this.payload(),name:this.name.value+' (Copy)',copied_from:this.query?.query_id||this.copiedFrom,provenance:this.query?.provenance||this.draftProvenance}:{};this.setQuery(q);if(copy)this.base='';}
-        async loadQueries(serial=this.sequence){const data=await call('list_services',{...this.serviceScope(),start:this.starts.services,page_size:50});if(serial!==this.sequence)return;this.queryList.replaceChildren($('h3','',this.serviceKind==='mutation'?'Saved Mutations':'Saved Queries'));for(const q of data.rows)this.queryList.append(button(`${q.name} · r${q.revision} · Provenance=${q.provenance||'Legacy (unbekannt)'}`,()=>{if(!this.busy&&this.confirmReplace())this.setQuery(q);}));this.queryPager.update(data.has_more);
+        async loadQueries(serial=this.sequence){const data=await call('list_services',{...this.serviceScope(),start:this.starts.services,page_size:50});if(serial!==this.sequence)return;this.mutationExecution=data.mutation_execution||null;this.queryList.replaceChildren($('h3','',this.serviceKind==='mutation'?'Saved Mutations':'Saved Queries'));for(const q of data.rows)this.queryList.append(button(`${q.name} · r${q.revision} · Provenance=${q.provenance||'Legacy (unbekannt)'}`,()=>{if(!this.busy&&this.confirmReplace())this.setQuery(q);}));this.queryPager.update(data.has_more);
             const queryId=new URLSearchParams(location.search).get('query');
             if(queryId && queryId!==this.loadedQueryId && queryId!==this.query?.query_id && !this.dirty) {const result=await call('get_query',{...this.scope(),query_id:queryId});if(serial===this.sequence){if(result.query.service_kind!==this.serviceKind){this.openService(result.query.service_kind,queryId);return;}this.setQuery(result.query);this.loadedQueryId=queryId;}}
         }
@@ -760,9 +760,27 @@
             this.queryOutput.textContent=`Saved · Revision ${data.query.revision}${this.dirty?' · Additional local changes are not saved.':''}`;
             await this.loadQueries();
         }
-        async validateQuery(){const stamp=this.draftString();const data=this.query&&!this.dirty?await call('validate_saved_query',{...this.serviceScope(true),query_id:this.query.query_id,expected_revision:this.query.revision},true):await call('preview_query',{...this.serviceScope(true),payload:this.payload()},true);if(stamp!==this.draftString())return;this.validation=data;this.queryOutput.textContent=JSON.stringify(data,null,2);}
+        async validateQuery(){const stamp=this.draftString(),queryId=this.query?.query_id||'';const data=this.query&&!this.dirty?await call('validate_saved_query',{...this.serviceScope(true),query_id:this.query.query_id,expected_revision:this.query.revision},true):await call('preview_query',{...this.serviceScope(true),payload:this.payload()},true);if(stamp!==this.draftString()||queryId!==(this.query?.query_id||''))return;if(data.query&&this.query)this.query={...this.query,status:data.query.status};this.validation=data;this.queryOutput.textContent=JSON.stringify(data,null,2);}
+        canExecuteQuery(){return this.serviceKind==='query'&&!!this.query&&!this.dirty&&(this.query.status==='Validated'||!!this.validation?.can_execute);}
         async executeQuery(){
-            throw new Error('HERO_MUTATION_EXECUTION_DISABLED');
+            // Mutations stay blocked here regardless of the global gate: HERO_MUTATION_EXECUTION_DISABLED.
+            if(this.serviceKind!=='query')throw new Error(errors.HERO_MUTATIONS_DISABLED+' (HERO_MUTATION_EXECUTION_DISABLED)');
+            if(!this.canExecuteQuery())throw new Error('Save and validate the query before executing it.');
+            let variables;try{variables=JSON.parse(this.variables.value||'{}');}catch(error){throw new Error('Variables must be valid JSON: '+error.message);}
+            const epoch=this.queryEpoch,queryId=this.query.query_id,revision=this.query.revision;
+            this.queryOutput.textContent='Executing the saved query once against HERO …';
+            const result=await call('execute_service',{...this.serviceScope(true),query_id:queryId,expected_revision:revision,variables},true);
+            if(epoch!==this.queryEpoch||queryId!==this.query?.query_id)return;
+            this.renderExecution(result);
+        }
+        renderExecution(result){
+            // Text only: HERO data is shown as JSON text, never interpreted as HTML.
+            const head=`${result.operation||''} · Revision ${result.revision} · Schema ${String(result.schema_fingerprint||'').slice(0,12)}…`;
+            if(result.status==='OK'){this.queryOutput.textContent=`HERO response · ${head} · ${result.size_bytes} bytes\n\n${JSON.stringify(result.data,null,2)}`;return;}
+            if(result.status==='TOO_LARGE'){this.queryOutput.textContent=`${result.message} (${result.size_bytes} of max. ${result.limit_bytes} bytes) · ${head}`;return;}
+            const label={GRAPHQL:'GraphQL error returned by HERO',TRANSPORT:'HTTP/transport error',RESPONSE:'Invalid HERO response'}[result.error_kind]||'HERO request failed';
+            const details=(result.graphql_errors||[]).map(message=>`• ${message}`).join('\n');
+            this.queryOutput.textContent=`${label} (${result.error_code}) · ${head}\n${result.message}${details?'\n\n'+details:''}`;
         }
         async deleteQuery(){if(!this.query||!window.confirm(this.dirty?'Delete the saved service and discard the unsaved draft?':'Delete the saved service?'))return;await call('delete_query',{...this.serviceScope(),query_id:this.query.query_id,expected_revision:this.query.revision},true);this.setQuery();await this.loadQueries();}
         updateActions(){if(!this.saveButton)return;
@@ -770,10 +788,11 @@
             if(this.analyzerCreateButton)this.analyzerCreateButton.disabled=!analyzerAllowed||!!this.analyzerServiceForm;
             if(this.analyzerServiceForm)this.analyzerServiceForm.save.disabled=!analyzerAllowed||this.analyzerServiceForm.saved;
             if(this.queryProvenance)this.queryProvenance.textContent='Provenance='+(this.query?.provenance||this.draftProvenance||'GraphQL-Services');
+            const gate=this.mutationExecution;
             if(this.serviceHint)this.serviceHint.textContent=this.serviceKind==='mutation'
-                ? 'Mutation drafts are local-only, stored locally, and validated only against the saved schema. HERO execution remains disabled.'
-                : 'Saved Queries read data from HERO. Results are not stored automatically.';
-this.queryStatus.textContent=this.query?`${this.serviceLabel()} ${this.query.query_id} · Revision ${this.query.revision}${this.dirty?' · Unsaved changes':''}`:'New unsaved draft';const allowed=!!this.context?.can_write&&!this.context.needs_binding_update&&!this.busy&&!!this.schema;for(const b of [this.newButton,this.copyButton])b.disabled=!allowed;this.saveButton.disabled=!allowed;this.saveButton.title=this.serviceKind==='mutation'?'Stores a local-only disabled mutation draft.':' ';this.validateButton.disabled=!allowed;this.executeButton.disabled=true;this.executeButton.title='HERO_MUTATION_EXECUTION_DISABLED';this.deleteButton.disabled=!allowed||!this.query;this.bindButton.disabled=!this.context?.can_write||this.busy;}
+                ? `Mutation drafts are local-only, stored locally, and validated only against the saved schema. Execution from this editor is blocked. Server mutation gate: ${gate?.mutation_execution_status||'unknown'}${gate?.mutation_execution_reason?' · '+gate.mutation_execution_reason:''}`
+                : 'Saved, validated Queries read data from HERO on an explicit click. Results are shown here only and are never stored, synchronized or written to Frappe.';
+this.queryStatus.textContent=this.query?`${this.serviceLabel()} ${this.query.query_id} · Revision ${this.query.revision}${this.dirty?' · Unsaved changes':''}`:'New unsaved draft';const allowed=!!this.context?.can_write&&!this.context.needs_binding_update&&!this.busy&&!!this.schema;for(const b of [this.newButton,this.copyButton])b.disabled=!allowed;this.saveButton.disabled=!allowed;this.saveButton.title=this.serviceKind==='mutation'?'Stores a local-only disabled mutation draft.':' ';this.validateButton.disabled=!allowed;this.executeButton.disabled=!allowed||!this.canExecuteQuery();this.executeButton.title=this.serviceKind==='mutation'?'HERO_MUTATION_EXECUTION_DISABLED':this.canExecuteQuery()?'Runs the saved query once, read-only.':'Save and validate the query first.';this.deleteButton.disabled=!allowed||!this.query;this.bindButton.disabled=!this.context?.can_write||this.busy;}
         destroy(){
             this.cancelGraph?.();
             this.focusDialog?.hide?.();
