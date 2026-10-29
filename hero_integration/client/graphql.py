@@ -14,11 +14,13 @@ from urllib.parse import urlsplit
 class HeroClientError(RuntimeError):
     """A redacted, machine-readable HERO transport or GraphQL failure."""
 
-    def __init__(self, message: str, *, code: str = "UNKNOWN", details: tuple[str, ...] = ()):
+    def __init__(self, message: str, *, code: str = "UNKNOWN", details: tuple[str, ...] = (), data: dict | None = None):
         super().__init__(message)
         self.code = code
         # Bounded GraphQL error messages only; never request data or credentials.
         self.details = tuple(details)
+        # Partial GraphQL data delivered together with errors; kept in memory only.
+        self.data = data
 
 
 class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -120,7 +122,8 @@ class HeroGraphQLClient:
         if payload.get("errors"):
             errors = payload["errors"] if isinstance(payload["errors"], list) else []
             details = tuple(str(item.get("message") or "")[:300] for item in errors[:10] if isinstance(item, dict))
-            raise HeroClientError("HERO GraphQL rejected the request.", code="GRAPHQL_ERRORS", details=details)
+            partial = payload.get("data") if isinstance(payload.get("data"), dict) else None
+            raise HeroClientError("HERO GraphQL rejected the request.", code="GRAPHQL_ERRORS", details=details, data=partial)
         if not isinstance(payload.get("data"), dict):
             raise HeroClientError("HERO GraphQL response contains no data.", code="MISSING_DATA")
         return payload["data"]
