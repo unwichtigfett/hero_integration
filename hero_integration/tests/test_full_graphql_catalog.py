@@ -36,11 +36,11 @@ SCHEMA = {"__schema": {"queryType": {"name": "PartnerQuery"}, "mutationType": {"
 class TestFullGraphQLCatalog(unittest.TestCase):
     def test_mapping_editor_loads_catalogs_without_operation_allowlists(self):
         source = (Path(__file__).resolve().parents[1] / "public" / "js" / "hero_mapping_editor.js").read_text()
-        self.assertIn("loadQueryOperations", source)
-        self.assertIn("renderDynamicOperations", source)
+        self.assertIn("schema_operation_catalog", source)
+        self.assertIn("mapping_object_catalog", source)
         self.assertIn("input_fields", source)
-        self.assertIn("Filter snapshot queries", source)
-        self.assertIn("Filter snapshot mutations", source)
+        self.assertIn("readSnapshotPages", source)
+        self.assertIn("operation_kind: viewTab === 'Query' ? 'QUERY' : 'MUTATION'", source)
         self.assertNotIn("READ_OPERATIONS", source)
         self.assertNotIn('["update_contact", "update_project_match"].includes', source)
 
