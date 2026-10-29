@@ -28,7 +28,8 @@ def policy_write_active():
 
 def validate_policy_payload(payload, site_scope):
     expected = {'source_instance', 'issuer', 'company', 'user_bindings', 'allow_initial', 'allow_transfer'}
-    if not isinstance(payload, dict) or set(payload) != expected or not isinstance(site_scope, str) or not site_scope:
+    if (not isinstance(payload, dict) or set(payload) not in (expected, expected | {'native_effects'})
+            or not isinstance(site_scope, str) or not site_scope):
         raise PolicyError('Policy requires the exact authorized scope and actions.')
     for field in ('source_instance', 'issuer', 'company'):
         if not isinstance(payload[field], str) or not payload[field] or payload[field] != payload[field].strip():
@@ -40,7 +41,21 @@ def validate_policy_payload(payload, site_scope):
         raise PolicyError('Policy requires distinct explicit User binding identities.')
     if type(payload['allow_initial']) is not bool or type(payload['allow_transfer']) is not bool or not payload['allow_initial']:
         raise PolicyError('Policy actions must explicitly allow initial assignment and declare transfer.')
+    if 'native_effects' in payload:
+        effects = payload['native_effects']
+        if (not isinstance(effects, dict) or set(effects) != {'date_rule', 'allow_notifications', 'allow_follow'}
+                or effects['date_rule'] != 'LOCAL_TODAY'
+                or type(effects['allow_notifications']) is not bool or type(effects['allow_follow']) is not bool):
+            raise PolicyError('Native effects require an explicit local date and boolean notification and follow decisions.')
     return {**payload, 'user_bindings': sorted(bindings), 'site_scope': site_scope, 'source_type': 'Task'}
+
+
+def _policy_input(value):
+    keys = ('source_instance', 'issuer', 'company', 'user_bindings', 'allow_initial', 'allow_transfer')
+    result = {key: value[key] for key in keys}
+    if 'native_effects' in value:
+        result['native_effects'] = value['native_effects']
+    return result
 
 
 def _fingerprint(payload):
@@ -107,7 +122,7 @@ def approve_policy(name, expected_revision):
     if doc.site_scope != frappe.local.site or doc.state != 'DRAFT' or int(doc.policy_revision) != int(expected_revision):
         raise PolicyError('Policy is stale, unavailable or outside this site.')
     value = json.loads(doc.policy_json)
-    raw = {key: value[key] for key in ('source_instance', 'issuer', 'company', 'user_bindings', 'allow_initial', 'allow_transfer')}
+    raw = _policy_input(value)
     if (validate_policy_payload(raw, frappe.local.site) != value or _fingerprint(value) != doc.policy_fingerprint
             or doc.source_instance != value['source_instance'] or doc.issuer != value['issuer']):
         raise PolicyError('Policy contents do not match the reviewed scope.')
@@ -140,7 +155,7 @@ def approved_initial_policy(source_instance, binding_name):
         doc = frappe.get_doc('HERO Task Assignment Policy', row.name, for_update=True)
         try:
             payload = json.loads(doc.policy_json)
-            raw = {key: payload[key] for key in ('source_instance', 'issuer', 'company', 'user_bindings', 'allow_initial', 'allow_transfer')}
+            raw = _policy_input(payload)
             if (validate_policy_payload(raw, frappe.local.site) != payload or _fingerprint(payload) != doc.policy_fingerprint
                     or doc.source_instance != payload['source_instance'] or doc.issuer != payload['issuer']
                     or not doc.approved_by or int(doc.approved_revision or 0) != int(doc.policy_revision or 0)):
