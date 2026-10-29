@@ -262,7 +262,12 @@ class InMemoryMappingDraftStorage:
 def _transactional(method):
     @wraps(method)
     def wrapped(self, definition_id, actor, *args, **kwargs):
+        if method.__name__ in {'save', 'open_draft', 'discard'} and hasattr(self._storage, 'lock_draft_identities'):
+            content = (args[2] if len(args) > 2 else kwargs.get('content')) if method.__name__ == 'save' else {}
+            self._storage.lock_draft_identities(actor, definition_id, content)
         with self._storage.transaction(definition_id, actor):
+            if method.__name__ in {'save', 'open_draft', 'discard'} and hasattr(self._storage, 'assert_locked_draft_identities'):
+                self._storage.assert_locked_draft_identities(definition_id, actor)
             return method(self, definition_id, actor, *args, **kwargs)
     return wrapped
 
@@ -279,7 +284,11 @@ class MappingDraftService:
         definition = _new_definition(definition)
         actor = _actor(actor)
         identity = definition['definition_id']
+        if hasattr(self._storage, 'lock_draft_identities'):
+            self._storage.lock_draft_identities(actor, identity, content, direction=definition['direction'])
         with self._storage.transaction(identity, actor):
+            if hasattr(self._storage, 'assert_locked_draft_identities'):
+                self._storage.assert_locked_draft_identities(identity, actor)
             self._storage.assert_new_identity_available(identity, actor)
             if hasattr(self._storage, 'validate_new_definition'):
                 self._storage.validate_new_definition(definition, content)

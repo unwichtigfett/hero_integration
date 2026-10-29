@@ -1384,16 +1384,83 @@ def mapping_draft_read(definition_id: str):
 
 
 @frappe.whitelist(methods=["GET"])
-def mapping_draft_exchange_export(source_instance: str, snapshot_name: str, direction: str) -> dict[str, str]:
+def mapping_draft_list(direction: str, start: int | str = 0, page_size: int | str = 50):
+    """List only the current administrator's open, parentless definitions."""
+    frappe.only_for("System Manager")
+    _mapping_request_fields({"direction", "start", "page_size"})
+    if direction not in {"QUERY_TO_FRAPPE", "FRAPPE_TO_MUTATION"}:
+        frappe.throw("MAPPING_INPUT_INVALID: Invalid direction.")
+    start = _mapping_int(start, "start", 0, 10000)
+    page_size = _mapping_int(page_size, "page_size", 1, 100)
+    rows = frappe.get_all("HERO Mapping Draft", filters={"site_scope": frappe.local.site,
+        "owner_user": frappe.session.user, "state": "OPEN"}, fields=["name"],
+        order_by="name asc", limit_start=start, limit=page_size)
+    items = []
+    for row in rows:
+        doc = frappe.get_doc("HERO Mapping Draft", _row_value(row, "name"))
+        doc.check_permission("read")
+        if (doc.site_scope, doc.owner_user, doc.state) != (frappe.local.site, frappe.session.user, "OPEN"):
+            continue
+        try:
+            context = json.loads(doc.new_definition_json or "null")
+        except (TypeError, ValueError):
+            continue
+        if (not isinstance(context, dict) or context.get("direction") != direction
+                or context.get("site_scope") != frappe.local.site
+                or context.get("definition_id") != doc.definition_id
+                or (context.get("operation_kind"), direction) not in {
+                    ("QUERY", "QUERY_TO_FRAPPE"), ("MUTATION", "FRAPPE_TO_MUTATION")}):
+            continue
+        items.append({key: context.get(key) for key in ("definition_id", "source_instance", "snapshot_name",
+            "schema_fingerprint", "direction", "operation_kind", "operation_name")})
+    return {"items": items, "start": start, "page_size": page_size, "has_more": len(rows) == page_size}
+
+
+@frappe.whitelist(methods=["POST"])
+def mapping_draft_enroll_portable_rule(definition_id: str, rule_id: str, portable_id: str,
+                                       expected_active_revision: int | str, expected_rule_revision: int | str):
+    """Explicitly enroll a scoped active field rule for portable exchange."""
+    _mapping_request_fields({'definition_id', 'rule_id', 'portable_id', 'expected_active_revision', 'expected_rule_revision'})
+    definition_id, _ = _personal_draft_identity(definition_id)
+    rule_id = _mapping_text(rule_id, 'rule_id')
+    active = _mapping_int(expected_active_revision, 'expected_active_revision', 1)
+    revision = _mapping_int(expected_rule_revision, 'expected_rule_revision', 1)
+    from hero_integration.services.mapping_draft_exchange import MappingDraftExchangeError, enroll_portable_rule_identity
+    with _personal_draft_errors():
+        try:
+            return enroll_portable_rule_identity(definition_id, rule_id, portable_id, active, revision)
+        except MappingDraftExchangeError as error:
+            frappe.throw(str(error))
+
+
+@frappe.whitelist(methods=["POST"])
+def mapping_draft_enroll_portable_identity(definition_id: str, portable_id: str, expected_revision: int):
+    """Explicitly enroll a stable portable identity for one active definition."""
+    frappe.only_for("System Manager")
+    _mapping_request_fields({"definition_id", "portable_id", "expected_revision"})
+    from hero_integration.services.mapping_draft_exchange import enroll_portable_identity
+    from hero_integration.services.mapping_draft_service import MappingDraftError
+    from hero_integration.services.mapping_draft_exchange import MappingDraftExchangeError
+    try:
+        if isinstance(expected_revision, str) and expected_revision.isdecimal():
+            expected_revision = int(expected_revision)
+        return enroll_portable_identity(definition_id, portable_id, expected_revision)
+    except (MappingDraftError, MappingDraftExchangeError) as error:
+        frappe.throw(str(error))
+
+
+@frappe.whitelist(methods=["GET"])
+def mapping_draft_exchange_export(source_instance: str, snapshot_name: str, direction: str,
+                                  format_version: str = "hero-personal-mapping-draft-exchange-v1") -> dict[str, str]:
     """Export only the current administrator's OPEN drafts for one direction."""
     frappe.only_for("System Manager")
-    _mapping_request_fields({"source_instance", "snapshot_name", "direction"})
+    _mapping_request_fields({"source_instance", "snapshot_name", "direction", "format_version"})
     source_instance = _mapping_text(source_instance, "source_instance")
     snapshot_name = _mapping_text(snapshot_name, "snapshot_name")
     from hero_integration.services.mapping_draft_exchange import MappingDraftExchangeError, export_package
 
     try:
-        content = export_package(source_instance, snapshot_name, direction)
+        content = export_package(source_instance, snapshot_name, direction, format_version=format_version)
     except MappingDraftExchangeError as error:
         frappe.throw(str(error))
     suffix = "query" if direction == "QUERY_TO_FRAPPE" else "mutation"
@@ -1518,6 +1585,23 @@ def _reconciliation_values(raw, label):
 
 
 @frappe.whitelist(methods=["POST"])
+def mapping_draft_materialize_plan(definition_id: str, expected_generation: int | str,
+                                   expected_draft_revision: int | str, expected_active_revision: int | str,
+                                   expected_reconciliation_revision: int | str = 0):
+    """Preview an owned saved draft's plan without execution authority."""
+    _mapping_request_fields({"definition_id", "expected_generation", "expected_draft_revision",
+                             "expected_active_revision", "expected_reconciliation_revision"})
+    definition_id, _ = _personal_draft_identity(definition_id)
+    values = (_mapping_int(expected_generation, "expected_generation", 1),
+              _mapping_int(expected_draft_revision, "expected_draft_revision", 1),
+              _mapping_int(expected_active_revision, "expected_active_revision", 0),
+              _mapping_int(expected_reconciliation_revision, "expected_reconciliation_revision", 0))
+    from hero_integration.services.frappe_mapping_draft_storage import FrappeMappingDraftStorage
+    with _personal_draft_errors():
+        return FrappeMappingDraftStorage().materialize_portable_draft(definition_id, frappe.session.user, *values)
+
+
+@frappe.whitelist(methods=["POST"])
 def mapping_draft_save(definition_id: str, expected_generation: int | str,
                        expected_draft_revision: int | str, expected_active_revision: int | str, mapping_json: str,
                        expected_reconciliation_revision: int | str = 0, reconciliation_json: str = ""):
@@ -1525,7 +1609,7 @@ def mapping_draft_save(definition_id: str, expected_generation: int | str,
     definition_id, _ = _personal_draft_identity(definition_id)
     generation = _mapping_int(expected_generation, "expected_generation", 1)
     revision = _mapping_int(expected_draft_revision, "expected_draft_revision")
-    active = _mapping_int(expected_active_revision, "expected_active_revision", 1)
+    active = _mapping_int(expected_active_revision, "expected_active_revision", 0)
     reconciliation_revision = _mapping_int(expected_reconciliation_revision, "expected_reconciliation_revision")
     content = _personal_draft_content(mapping_json)
     from hero_integration.services.frappe_mapping_draft_storage import FrappeMappingDraftStorage
@@ -1651,6 +1735,18 @@ def _required_revision(value: int | str, label: str) -> int:
     return revision
 
 
+@frappe.whitelist(methods=['POST'])
+def mapping_field_rule_activate(mapping_name: str, rule_name: str, source_instance: str, snapshot_name: str,
+                                expected_mapping_revision: int | str, expected_rule_revision: int | str,
+                                target_doctype: str | None = None, target_field: str | None = None):
+    """Activate an owned shared rule Draft; never execute a HERO operation."""
+    from hero_integration.services.mapping_rule_write import activate_draft_rule
+    return activate_draft_rule(mapping_name, rule_name, source_instance, snapshot_name,
+                               _required_revision(expected_mapping_revision, 'Mapping revision'),
+                               _required_revision(expected_rule_revision, 'Rule revision'),
+                               target_doctype=target_doctype, target_field=target_field)
+
+
 def _mapping_semantic_content(item, *, snapshot_name: str, operation_kind: str, operation_name: str, direction: str, parsed: dict[str, object]) -> bool:
     """Compare canonical, executable mapping fields; UI-only suggestion metadata is excluded."""
     try:
@@ -1721,7 +1817,8 @@ def graphql_mapping_save(
     frappe.only_for("System Manager")
     activate_requested = _as_bool(activate)
     try:
-        parsed = json.loads(mapping_json, object_pairs_hook=_unique_mapping_object if direction == "FRAPPE_TO_MUTATION" else None)
+        from hero_integration.services.personal_mapping_content import unique_json_object
+        parsed = json.loads(mapping_json, object_pairs_hook=_unique_mapping_object if direction == "FRAPPE_TO_MUTATION" else unique_json_object)
         if not isinstance(parsed, dict):
             raise ValueError
     except (ValueError, TypeError, json.JSONDecodeError) as error:

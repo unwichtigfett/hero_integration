@@ -182,11 +182,12 @@ def adopt_package(
             if relation["id"] in selected:
                 _provision_relation(relation, relation_fields, created)
         _validate_selected_relations(definitions, selected)
-        _recheck_required_schema_current(definitions, required_schema)
         # MariaDB DDL may commit and invalidate earlier savepoints. All mapping
         # activation belongs to a fresh DML transaction after provisioning.
         frappe.db.savepoint(savepoint)
         mapping_savepoint = True
+        _lock_adoption_mappings(snapshot, snapshot_name, package, selected)
+        _recheck_required_schema_current(definitions, required_schema)
         _lock_and_check_snapshot(snapshot_name, preview["snapshot_binding"])
         locked = _lock_and_check_mappings(expected_mappings)
         _activate_selected_mappings(snapshot_name, package, selected, created, locked)
@@ -200,6 +201,29 @@ def adopt_package(
         "schema_note": "Schema changes are documented by this result. Frappe DDL rollback is not promised.",
         "data_migration_started": False,
     }
+
+
+def _lock_adoption_mappings(snapshot, snapshot_name, package, selected):
+    """Serialize selected active targets and portable identities before rule rows."""
+    chosen = [item for item in package['mappings'] if 'mapping:' + item['definition_id'] in selected]
+    if not chosen:
+        return
+    from uuid import UUID
+    from hero_integration.hero_integration.doctype.hero_graphql_mapping.hero_graphql_mapping import lock_exchange_context
+    from hero_integration.hero_integration.doctype.hero_frappe_mapping.hero_frappe_mapping import _lock_active_target
+    lock_exchange_context(getattr(snapshot, 'source_instance', '') or '', snapshot_name, 'QUERY_TO_FRAPPE')
+    targets = {(item['operation'], item['target_doctype'], item['target_field']) for item in chosen
+               if item['purpose'] != 'Record Name'}
+    for operation, doctype, field in sorted(targets):
+        _lock_active_target(operation, doctype, field)
+    identities = set()
+    for item in chosen:
+        try:
+            identities.add(str(UUID(item['definition_id'])))
+        except (ValueError, TypeError, AttributeError):
+            continue  # Legacy non-UUID local IDs remain protected by the row CAS.
+    for identity in sorted(identities):
+        _lock_active_target('portable-field-rule', frappe.local.site, identity)
 
 
 def _definitions(schema: object) -> dict[str, list[dict[str, object]]]:

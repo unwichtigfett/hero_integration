@@ -18,6 +18,146 @@ _publication_scope = ContextVar("hero_mapping_publication_scope", default=None)
 _publication_operation = ContextVar("hero_mapping_publication_operation", default=None)
 
 
+def assert_draft_identity_index(f):
+    """Require the source-controlled full definition_id index before range locks."""
+    rows = f.db.sql('show index from `tabHERO Mapping Draft`', as_dict=True)
+    if not any(row.get('Column_name') == 'definition_id' and int(row.get('Seq_in_index') or 0) == 1
+               and row.get('Sub_part') is None for row in rows):
+        raise MappingDraftError('Portable Draft identity index is not installed; migrate the app before using this operation.')
+
+
+def assert_portable_identity_schema(f):
+    """Fail closed until the app's portable identity columns and unique indexes exist."""
+    for doctype in ('HERO GraphQL Mapping', 'HERO Frappe Mapping'):
+        if not f.db.has_column(doctype, 'portable_definition_id'):
+            raise MappingDraftError('Portable identity schema is not installed; migrate the app before using this operation.')
+        rows = f.db.sql(f'show index from `tab{doctype}`', as_dict=True)
+        names = {row.get('Key_name') for row in rows if row.get('Column_name') == 'portable_definition_id'
+                 and int(row.get('Seq_in_index') or 0) == 1 and row.get('Non_unique') in (0, '0')
+                 and row.get('Sub_part') is None and row.get('Key_name')}
+        if not any(sum(row.get('Key_name') == name for row in rows) == 1 for name in names):
+            raise MappingDraftError('Portable identity unique index is not installed; migrate the app before using this operation.')
+    assert_draft_identity_index(f)
+
+
+def _fresh_identity_candidates(f, identity):
+    """Find committed candidates without locking unrelated Draft rows."""
+    from uuid import UUID
+    from frappe.database import get_db
+    conf = f.local.conf
+    db = get_db(socket=conf.db_socket, host=conf.db_host, port=conf.db_port,
+                user=conf.db_user or conf.db_name, password=conf.db_password, cur_db_name=conf.db_name)
+    try:
+        return db.sql('select d.draft_key, d.content_json, d.new_definition_json, d.base_active_mapping, '
+                      'p.direction as active_direction from `tabHERO Mapping Draft` d '
+                      'left join `tabHERO GraphQL Mapping` p on p.name=d.base_active_mapping '
+                      'where d.site_scope=%s and d.state=%s and (lower(d.content_json) like %s or lower(d.content_json) like %s)',
+                      (f.local.site, 'OPEN', '%' + identity + '%', '%' + UUID(identity).hex + '%'), as_dict=True)
+    finally:
+        db.close()
+
+
+def _fresh_definition_candidates(f, identity):
+    from frappe.database import get_db
+    conf = f.local.conf
+    db = get_db(socket=conf.db_socket, host=conf.db_host, port=conf.db_port,
+                user=conf.db_user or conf.db_name, password=conf.db_password, cur_db_name=conf.db_name)
+    try:
+        return db.sql('select draft_key from `tabHERO Mapping Draft` where site_scope=%s and definition_id=%s',
+                      (f.local.site, identity), as_dict=True)
+    finally:
+        db.close()
+
+
+def lock_definition_drafts(f, identities):
+    """Under definition mutexes, lock exact existing Draft keys, including discarded generations."""
+    identities = set(identities)
+    keys = {row.draft_key for identity in sorted(identities) for row in _fresh_definition_candidates(f, identity)}
+    result = []
+    for key in sorted(keys):
+        rows = f.db.sql('select * from `tabHERO Mapping Draft` where draft_key=%s for update', (key,), as_dict=True)
+        if len(rows) > 1:
+            raise DraftConflict('Personal Draft identity is ambiguous.')
+        if rows and rows[0].site_scope == f.local.site and rows[0].definition_id in identities:
+            result.append(rows[0])
+    return result
+
+
+def _uuid_equal(value, identity):
+    from uuid import UUID
+    try:
+        return str(UUID(value)) == identity
+    except (TypeError, ValueError, AttributeError):
+        return False
+
+
+def _identity_is_referenced(content, identity, kind, direction=None):
+    if not isinstance(content, dict):
+        raise DraftConflict('Existing personal Draft cannot be safely inspected.')
+    from hero_integration.services.personal_mapping_content import identity_sets
+    rules, children = identity_sets(content, direction)
+    if kind == 'rule':
+        return any(_uuid_equal(value, identity) for value in rules)
+    if kind == 'child':
+        return identity in children
+    raise DraftConflict('Unknown Draft identity namespace.')
+
+
+def _draft_identity_direction(f, row, *, active_direction=None):
+    raw = row.get('new_definition_json')
+    if raw:
+        try:
+            context = json.loads(raw)
+        except (ValueError, TypeError):
+            raise DraftConflict('Existing Draft context cannot be safely inspected.') from None
+        direction = context.get('direction') if isinstance(context, dict) else None
+    elif active_direction is not None:
+        direction = active_direction
+    elif row.get('base_active_mapping'):
+        rows = f.db.sql('select direction from `tabHERO GraphQL Mapping` where name=%s',
+                        (row['base_active_mapping'],), as_dict=True)
+        direction = rows[0].get('direction') if len(rows) == 1 else None
+    else:
+        direction = None
+    if direction not in {'QUERY_TO_FRAPPE', 'FRAPPE_TO_MUTATION'}:
+        raise DraftConflict('Existing Draft direction cannot be safely inspected.')
+    return direction
+
+
+def lock_identity_drafts(f, identities, kind):
+    """After the identity mutex, lock only exact Draft keys and revalidate them."""
+    candidates = set()
+    identities = sorted(set(identities))
+    for identity in identities:
+        for row in _fresh_identity_candidates(f, identity):
+            try:
+                content = json.loads(row.content_json)
+            except (TypeError, ValueError):
+                raise DraftConflict('Existing personal Draft cannot be safely inspected.') from None
+            direction = _draft_identity_direction(f, row, active_direction=row.get('active_direction'))
+            if _identity_is_referenced(content, identity, kind, direction):
+                candidates.add(row.draft_key)
+    result = []
+    for key in sorted(candidates):
+        rows = f.db.sql('select * from `tabHERO Mapping Draft` where draft_key=%s for update',
+                        (key,), as_dict=True)
+        if len(rows) > 1:
+            raise DraftConflict('Personal Draft identity is ambiguous.')
+        if not rows:
+            continue
+        row = rows[0]
+        if row.site_scope != f.local.site or row.state != 'OPEN':
+            continue
+        try:
+            content = json.loads(row.content_json)
+        except (TypeError, ValueError):
+            raise DraftConflict('Existing personal Draft cannot be safely inspected.') from None
+        direction = _draft_identity_direction(f, row)
+        if any(_identity_is_referenced(content, identity, kind, direction) for identity in identities):
+            result.append(row)
+    return result
+
+
 def is_personal_publication(document) -> bool:
     import frappe
     return _publication_scope.get() == (frappe.local.site, frappe.session.user, document.name)
@@ -68,9 +208,174 @@ class FrappeMappingDraftStorage:
         self.frappe = frappe_module
         self._definition = None
         self._parentless_identity = None
+        self._locked_definition_ids = set()
+        self._locked_rule_ids = set()
+        self._locked_local_rule_ids = set()
 
     def service(self) -> MappingDraftService:
         return MappingDraftService(self, canonicalize=self.canonicalize)
+
+    def lock_draft_identities(self, actor, definition_id, content, *, extra_rule_ids=(), direction=None):
+        """Take sorted definition and rule locks before a personal draft transaction."""
+        from uuid import UUID
+        from hero_integration.services.personal_mapping_content import identity_sets
+        from hero_integration.hero_integration.doctype.hero_frappe_mapping.hero_frappe_mapping import _lock_active_target
+        self._authorize(actor)
+        assert_portable_identity_schema(self.frappe)
+        value = _object(content)
+        contents = [value]
+        active_rows = self.frappe.db.sql('select mapping_json, direction from `tabHERO GraphQL Mapping` where definition_id=%s',
+                                         (definition_id,), as_dict=True)
+        if len(active_rows) > 1:
+            raise DraftConflict('Mapping definition identity is ambiguous.')
+        if active_rows:
+            active_direction = active_rows[0].get('direction')
+            if direction and direction != active_direction:
+                raise DraftConflict('Mapping direction changed while identities were resolved.')
+            direction = active_direction
+            try:
+                contents.append(_object(json.loads(active_rows[0].mapping_json)))
+            except (ValueError, TypeError):
+                raise DraftConflict('Active mapping cannot be safely inspected.') from None
+        key = draft_key(self.frappe.local.site, definition_id, actor)
+        previous = self.frappe.db.sql('select content_json, new_definition_json from `tabHERO Mapping Draft` where draft_key=%s',
+                                      (key,), as_dict=True)
+        if len(previous) > 1:
+            raise DraftConflict('Personal Draft identity is ambiguous.')
+        if previous:
+            try:
+                contents.append(_object(json.loads(previous[0].content_json)))
+                context = json.loads(previous[0].get('new_definition_json') or 'null')
+                if context:
+                    prior_direction = context.get('direction')
+                    if direction and direction != prior_direction:
+                        raise DraftConflict('Draft direction changed while identities were resolved.')
+                    direction = prior_direction
+            except (ValueError, TypeError):
+                raise DraftConflict('Previous personal Draft cannot be safely inspected.') from None
+        definition_ids = {definition_id}
+        rule_ids = set()
+        for current in contents:
+            rules, children = identity_sets(current, direction)
+            definition_ids.update(children)
+            rule_ids.update(rules)
+        ids = set(extra_rule_ids)
+        for rule_id in sorted(rule_ids):
+            try:
+                ids.add(str(UUID(rule_id)))
+            except (ValueError, TypeError, AttributeError):
+                pass  # Existing nonportable legacy rule IDs are still supported by v1.
+            rows = self.frappe.get_all('HERO Frappe Mapping', filters={'definition_id': rule_id},
+                                       fields=['portable_definition_id'])
+            if len(rows) > 1:
+                raise DraftConflict('Field-rule identity is ambiguous.')
+            portable = rows[0].get('portable_definition_id') if rows else None
+            if portable:
+                try:
+                    if str(UUID(portable)) != portable: raise ValueError
+                except (ValueError, TypeError, AttributeError):
+                    raise DraftConflict('Field-rule portable identity is invalid.') from None
+                ids.add(portable)
+        for identity in sorted(definition_ids):
+            _lock_active_target('personal-new-definition', self.frappe.local.site, identity)
+        for identity in sorted(ids):
+            _lock_active_target('portable-field-rule', self.frappe.local.site, identity)
+        self._locked_definition_ids, self._locked_rule_ids, self._locked_local_rule_ids = definition_ids, ids, rule_ids
+        self._locked_direction = direction
+        for rule_id in sorted(rule_ids):
+            rows = self.frappe.db.sql('select portable_definition_id from `tabHERO Frappe Mapping` '
+                                      'where definition_id=%s for update', (rule_id,), as_dict=True)
+            if len(rows) > 1 or (rows and rows[0].get('portable_definition_id')
+                                 and rows[0]['portable_definition_id'] not in ids):
+                raise DraftConflict('Field-rule identity changed while locks were acquired.')
+
+    def assert_locked_draft_identities(self, definition_id, actor):
+        """Recheck the saved identity set after acquiring the parent and Draft locks."""
+        from uuid import UUID
+        from hero_integration.services.personal_mapping_content import identity_sets
+        draft = self.draft(draft_key(self.frappe.local.site, definition_id, actor))
+        if draft is None:
+            return
+        direction = self._definition.direction if self._definition else (draft.new_definition or {}).get('direction')
+        if direction != self._locked_direction:
+            raise DraftConflict('Draft direction changed while locks were acquired.')
+        current_rules, children = identity_sets(draft.content, direction)
+        if not children <= self._locked_definition_ids:
+            raise DraftConflict('Personal Draft identities changed while locks were acquired.')
+        for identity in current_rules:
+            if identity not in self._locked_local_rule_ids:
+                raise DraftConflict('Personal Draft identities changed while locks were acquired.')
+            try:
+                canonical = str(UUID(identity))
+            except (ValueError, TypeError, AttributeError):
+                continue
+            if canonical not in self._locked_rule_ids:
+                raise DraftConflict('Personal Draft identities changed while locks were acquired.')
+
+    def materialize_portable_draft(self, definition_id, actor, generation, revision, active_revision, reconciliation_revision):
+        """Compile a saved personal draft as a non-executable operation plan."""
+        from hero_integration.api import _validated_snapshot
+        from hero_integration.services.mapping_draft_service import _hash
+        from hero_integration.services.mapping_contract_v1 import (
+            MappingContractError, MutationAdapter, MutationDraft, QueryAdapter, QueryDraft, SnapshotAdapter, StoredSnapshot,
+        )
+        from hero_integration.services.mapping_draft_exchange import _portable_content, _validate_portable_query
+        from hero_integration.services.personal_mapping_content import references
+
+        with self.transaction(definition_id, actor):
+            active, draft = self.service()._current(definition_id, actor)
+            if (type(generation) is not int or generation != draft.generation or type(revision) is not int
+                    or revision < 1 or type(reconciliation_revision) is not int
+                    or reconciliation_revision != draft.reconciliation_revision):
+                raise DraftConflict('Personal draft revision changed before plan generation.')
+            self.service()._assert_current(active, draft, revision, active_revision)
+            self.frappe.get_doc(self.DRAFT, draft.key, for_update=True).check_permission('read')
+            if _hash(draft.content) != draft.content_hash or self.canonicalize(draft.content) != draft.content:
+                raise MappingDraftError('Saved personal content is not intact and canonical.')
+            saved = self.frappe.db.sql('select content_hash from `tabHERO Mapping Revision` '
+                'where draft_key=%s and generation=%s and revision=%s and kind=%s for update',
+                (draft.key, generation, revision, 'DRAFT_SAVE'), as_dict=True)
+            if len(saved) != 1 or saved[0].content_hash != draft.content_hash:
+                raise DraftConflict('Saved draft history does not match the requested revision.')
+            parent = self._definition
+            context = draft.new_definition if parent is None else {
+                'snapshot_name': parent.schema_snapshot, 'source_instance': parent.source_instance,
+                'direction': parent.direction, 'operation_name': parent.operation_name}
+            snapshot, schema = _validated_snapshot(context['snapshot_name'], for_update=True)
+            snapshot.check_permission('read')
+            if snapshot.source_instance != context['source_instance'] or snapshot.schema_fingerprint != draft.base_schema_fingerprint:
+                raise DraftConflict('Draft schema context changed before plan generation.')
+            try:
+                validated = SnapshotAdapter().adapt(StoredSnapshot(snapshot.name, schema, snapshot.schema_fingerprint,
+                                                                   snapshot.source_instance, snapshot.analysis_status))
+                content = _object(draft.content)
+                content.pop('_portable_exchange_schema', None)
+                content.pop('field_rule_bases', None)
+                content = _portable_content(content, context['direction'])
+                if context['direction'] == 'QUERY_TO_FRAPPE':
+                    if content.get('records_path', content.get('record_path')) != context['operation_name']:
+                        raise MappingDraftError('Only direct query-root record paths are supported for this plan.')
+                    _validate_portable_query(content, context['operation_name'], schema)
+                    paths = tuple(sorted({content['identity_path']} | {
+                        content['field_rules'][identity]['source_path'] for identity in references(content)}))
+                    request = QueryAdapter().materialize(validated, QueryDraft('personal_draft', context['operation_name'],
+                                                          context['operation_name'], paths, {}))
+                    return {'direction': context['direction'], 'execution_authority': 'NONE', 'document': request.document,
+                            'variables': request.variables, 'selected_paths': list(paths), 'draft_revision': revision}
+                assignments = [content] + list(content.get('additional_mappings') or [])
+                paths = []
+                for assignment in assignments:
+                    target = assignment.get('target', {})
+                    if target.get('operation') != context['operation_name']:
+                        raise MappingDraftError('Mutation operation does not match the draft context.')
+                    paths.append((target['argument'], *target['field'].split('.')))
+                if len(set(paths)) != len(paths):
+                    raise MappingDraftError('Mutation assignments have duplicate input paths.')
+                result = MutationAdapter().materialize(validated, MutationDraft(context['operation_name'], tuple(paths),
+                                                                                snapshot.source_instance, revision))
+                return {**result, 'direction': context['direction'], 'execution_authority': 'NONE', 'draft_revision': revision}
+            except (MappingContractError, KeyError, TypeError, ValueError) as error:
+                raise MappingDraftError('Saved draft cannot produce a compatible non-executable plan.') from error
 
     def materialize_native_task(self, definition_id, actor, generation, revision, active_revision, reconciliation_revision,
                                 *, snapshot_name):
@@ -133,22 +438,62 @@ class FrappeMappingDraftStorage:
         # parent. The initial lookup identifies only the lock to acquire; the
         # current, locked parent is checked again below before publication.
         rows = self.frappe.db.sql(
-            'select source_instance, schema_snapshot, direction from `tabHERO GraphQL Mapping` '
+            'select name, operation_name, source_instance, schema_snapshot, direction from `tabHERO GraphQL Mapping` '
             'where definition_id=%s', (definition_id,), as_dict=True)
         if len(rows) != 1:
             raise MappingDraftError('Exactly one mapping definition is required.')
         scope = (rows[0].source_instance or '', rows[0].schema_snapshot, rows[0].direction)
         from hero_integration.hero_integration.doctype.hero_graphql_mapping.hero_graphql_mapping import lock_exchange_context
         lock_exchange_context(*scope)
+        key = draft_key(self.frappe.local.site, definition_id, actor)
+        observed = self.frappe.db.sql('select content_json, base_content_json from `tabHERO Mapping Draft` '
+            'where draft_key=%s and site_scope=%s and owner_user=%s and state=%s',
+            (key, self.frappe.local.site, actor, 'OPEN'), as_dict=True)
+        if len(observed) != 1:
+            raise DraftConflict('The personal draft is not open.')
+        try:
+            content = _object(json.loads(observed[0].content_json))
+            base_content = _object(json.loads(getattr(observed[0], 'base_content_json', None) or '{}'))
+            from hero_integration.services.personal_mapping_content import references, validate_additional_mappings
+            validate_additional_mappings(content.get('additional_mappings', []))
+            extra_rule_ids = set()
+            if scope[2] == 'QUERY_TO_FRAPPE':
+                from uuid import NAMESPACE_URL, uuid5
+                from hero_integration.hero_integration.doctype.hero_frappe_mapping.hero_frappe_mapping import _lock_active_target
+                operation = content.get('target_operation') or rows[0].operation_name
+                targets = {(rule.get('target_doctype'), rule.get('target_field'))
+                           for state in (content, base_content) for rule in (state.get('field_rules') or {}).values()
+                           if isinstance(rule, dict) and rule.get('purpose') != 'Record Name'}
+                targets.update((item['target'].get('doctype'), item['target'].get('field'))
+                               for state in (content, base_content) for item in state.get('additional_mappings', []))
+                if any(not isinstance(value, str) or not value for target in targets for value in target):
+                    raise DraftConflict('Personal draft target cannot be safely locked.')
+                target_locks = {(prefix + operation, doctype, field) for doctype, field in targets
+                                for prefix in ('', f'personal:{rows[0].name}:')}
+                for lock_operation, doctype, field in sorted(target_locks):
+                    _lock_active_target(lock_operation, doctype, field)
+                self._publication_target_locks = target_locks
+                extra_rule_ids.update(str(uuid5(NAMESPACE_URL, f'{key}:{generation}:{revision}:{identity}'))
+                                      for identity in references(content))
+                extra_rule_ids.update(item['id'] for item in content.get('additional_mappings', []))
+            self.lock_draft_identities(actor, definition_id, content, extra_rule_ids=extra_rule_ids)
+        except (ValueError, TypeError, KeyError, MappingDraftError):
+            raise DraftConflict('Personal draft identities cannot be safely inspected.') from None
+        observed_hash = _hash(content)
         with self.transaction(definition_id, actor), _publication_operation_scope(self.frappe.local.site, actor, self._definition.name):
             f = self.frappe
-            if (self._definition.source_instance or '', self._definition.schema_snapshot, self._definition.direction) != scope:
+            if ((self._definition.source_instance or '', self._definition.schema_snapshot, self._definition.direction) != scope
+                    or self._definition.name != rows[0].name or self._definition.operation_name != rows[0].operation_name):
                 raise DraftConflict('Mapping context changed; reload before publication.')
             active = self.active(definition_id)
             key = draft_key(f.local.site, definition_id, actor)
             draft = self.draft(key)
             if draft is None or draft.state != 'OPEN' or draft.owner != actor:
                 raise DraftConflict('The personal draft is not open.')
+            if draft.content_hash != observed_hash:
+                raise DraftConflict('Personal draft changed while publication locks were acquired.')
+            if _hash(draft.base_content) != _hash(base_content):
+                raise DraftConflict('Personal draft baseline changed while publication locks were acquired.')
             if (type(generation) is not int or generation != draft.generation or type(revision) is not int
                     or revision != draft.content_revision or type(reconciliation_revision) is not int
                     or reconciliation_revision != draft.reconciliation_revision):
@@ -185,6 +530,8 @@ class FrappeMappingDraftStorage:
                 'and revision=%s and kind=%s for update', (key, generation, revision, 'DRAFT_SAVE'), as_dict=True)
             if len(saved) != 1 or saved[0].content_hash != draft.content_hash:
                 raise DraftConflict('Saved draft history does not match the requested revision.')
+            if self._definition.direction == 'FRAPPE_TO_MUTATION':
+                self._lock_mutation_child_identities(draft)
             from hero_integration.api import _validated_snapshot
             snapshot, schema = _validated_snapshot(self._definition.schema_snapshot, for_update=True)
             if snapshot.schema_fingerprint != active.schema_fingerprint:
@@ -196,6 +543,9 @@ class FrappeMappingDraftStorage:
             finally:
                 self._publication_snapshot = None
             content, created = self._publication_content(draft, schema)
+            from hero_integration.services.personal_mapping_content import same
+            if not created and same(content, active.content):
+                return {'name': active.name, 'revision': active.revision, 'unchanged': True}
             parent = self._definition
             parent.mapping_json = json.dumps(content, ensure_ascii=False, sort_keys=True, separators=(',', ':'), allow_nan=False)
             parent.mapping_revision = active.revision + 1
@@ -218,6 +568,30 @@ class FrappeMappingDraftStorage:
             row.save()
             return {'name': current.name, 'revision': current.revision, 'unchanged': False}
 
+    def _lock_mutation_child_identities(self, draft):
+        """Reject historical child-ID collisions before creating any child definition."""
+        from hero_integration.hero_integration.doctype.hero_frappe_mapping.hero_frappe_mapping import _lock_active_target
+        additions = draft.content.get('additional_mappings') or []
+        ids = [item['id'] for item in additions]
+        if len(ids) != len(set(ids)):
+            raise DraftConflict('Mutation assignment identities are ambiguous.')
+        for identity in sorted(ids):
+            _lock_active_target('personal-new-definition', self.frappe.local.site, identity)
+        rows = lock_identity_drafts(self.frappe, ids, 'child')
+        for identity in sorted(ids):
+            for row in rows:
+                if row.draft_key == draft.key:
+                    continue
+                try:
+                    content = json.loads(row.content_json)
+                    children = content.get('additional_mappings', [])
+                except (TypeError, ValueError, AttributeError):
+                    raise DraftConflict('A related personal draft cannot be safely inspected.') from None
+                if not isinstance(children, list):
+                    raise DraftConflict('A related personal draft cannot be safely inspected.')
+                if any(isinstance(child, dict) and child.get('id') == identity for child in children):
+                    raise DraftConflict('Mutation assignment identity is already used by another personal draft.')
+
     @contextmanager
     def transaction(self, definition_id: str, actor: str):
         f = self.frappe
@@ -228,6 +602,8 @@ class FrappeMappingDraftStorage:
         f.db.savepoint(savepoint)
         token = _write_scope.set((f.local.site, f.session.user))
         try:
+            from hero_integration.hero_integration.doctype.hero_frappe_mapping.hero_frappe_mapping import _lock_active_target
+            _lock_active_target('personal-new-definition', f.local.site, definition_id)
             # Lock the EXISTING parent. This serializes first inserts as well as
             # CAS updates, unlike a lock on a not-yet-existing personal draft.
             rows = f.db.sql(
@@ -242,12 +618,14 @@ class FrappeMappingDraftStorage:
                 if self._definition.status != "Active":
                     raise MappingDraftError("A current active mapping definition is required.")
             else:
-                from hero_integration.hero_integration.doctype.hero_frappe_mapping.hero_frappe_mapping import _lock_active_target
-                _lock_active_target('personal-new-definition', f.local.site, definition_id)
                 rows = f.db.sql('select name from `tabHERO GraphQL Mapping` where definition_id=%s for update',
                                 (definition_id,), as_dict=True)
                 if rows:
                     raise DraftConflict('Definition appeared while its identity was being locked.')
+                rows = f.db.sql('select name from `tabHERO GraphQL Mapping` where portable_definition_id=%s for update',
+                                (definition_id,), as_dict=True)
+                if rows:
+                    raise DraftConflict('Identity is enrolled for another active mapping definition.')
                 self._parentless_identity = definition_id
             yield
         except Exception as error:
@@ -297,10 +675,12 @@ class FrappeMappingDraftStorage:
         self._scope()
         if self._parentless_identity != definition_id or actor != self.frappe.session.user:
             raise DraftConflict('Definition identity already exists.')
-        rows = self.frappe.db.sql('select owner_user from `tabHERO Mapping Draft` where definition_id=%s for update',
-                                  (definition_id,), as_dict=True)
+        assert_draft_identity_index(self.frappe)
+        rows = lock_definition_drafts(self.frappe, [definition_id])
         if any(row.owner_user != actor for row in rows):
             raise DraftConflict('Definition identity is already owned by another administrator.')
+        if lock_identity_drafts(self.frappe, [definition_id], 'child'):
+            raise DraftConflict('Definition identity is already used by a mutation assignment.')
 
     def validate_new_definition(self, definition, content):
         from hero_integration.api import _validated_snapshot
@@ -319,14 +699,24 @@ class FrappeMappingDraftStorage:
         if value.get('native_task_onboarding') is not None:
             raise MappingDraftError('Imported content cannot grant native Task onboarding authority.')
         if definition['direction'] == 'QUERY_TO_FRAPPE':
+            if value.get('additional_mappings'):
+                raise MappingDraftError('Additional query assignments require an active mapping definition.')
             identities = references(value)
             rules = value.get('field_rules', {})
             if not isinstance(rules, dict) or set(identities) != set(rules) or value.get('field_rule_bases'):
                 raise MappingDraftError('New query rules must be complete and have no imported local provenance.')
             from hero_integration.services.direct_mapping import MappingSpec, validate_spec
             from hero_integration.hero_integration.doctype.hero_frappe_mapping.hero_frappe_mapping import _FrappeMetadata
+            from uuid import UUID
             for identity in identities:
+                try:
+                    if str(UUID(identity)) != identity:
+                        raise ValueError
+                except (ValueError, TypeError, AttributeError):
+                    raise MappingDraftError('New-definition field rules require canonical UUID identities.') from None
                 validate_rule(rules[identity])
+                if self._definition is None:
+                    self._assert_parentless_rule_identity(definition, identity, rules[identity])
                 try:
                     validate_spec(MappingSpec(operation=value.get('target_operation') or definition['operation_name'],
                                               definition_id=identity, **rules[identity]), _FrappeMetadata())
@@ -336,14 +726,81 @@ class FrappeMappingDraftStorage:
             from hero_integration.services.frappe_writeback import normalise_draft_mapping, draft_source_type_compatible
             from hero_integration.services.frappe_mapping_catalog import FrappePickerMetadata, validate_draft_writeback_source
             from hero_integration.api import _mapping_values_preserved
-            normalized = normalise_draft_mapping(value, schema)
-            if (not _mapping_values_preserved(value, normalized)
-                    or normalized['target']['operation'] != definition['operation_name']):
-                raise MappingDraftError('New mutation content is incompatible with its operation.')
-            source = normalized['source']
-            field = validate_draft_writeback_source(source['doctype'], source['field'], FrappePickerMetadata())
-            if not draft_source_type_compatible(field.fieldtype, normalized['target']['graphql_type']):
-                raise MappingDraftError('New mutation source is incompatible with the target input.')
+            if set(value) - {'version', 'source', 'target', 'transformation', 'additional_mappings', '_portable_exchange_schema'}:
+                raise MappingDraftError('New mutation content contains unsupported configuration.')
+            assignments = [value] + list(value.get('additional_mappings') or [])
+            from hero_integration.services.personal_mapping_content import validate_additional_mappings
+            validate_additional_mappings(value.get('additional_mappings', []))
+            if self._definition is None:
+                self._assert_parentless_child_identities(definition, value.get('additional_mappings', []))
+            seen_paths = set()
+            for assignment in assignments:
+                candidate = {key: assignment[key] for key in ('version', 'source', 'target', 'transformation') if key in assignment}
+                normalized = normalise_draft_mapping(candidate, schema)
+                if (not _mapping_values_preserved(candidate, normalized)
+                        or normalized['target']['operation'] != definition['operation_name']):
+                    raise MappingDraftError('New mutation content is incompatible with its operation.')
+                path = (normalized['target']['argument'], normalized['target']['field'])
+                if path in seen_paths:
+                    raise MappingDraftError('New mutation assignments must have distinct input paths.')
+                seen_paths.add(path)
+                source = normalized['source']
+                field = validate_draft_writeback_source(source['doctype'], source['field'], FrappePickerMetadata())
+                if not draft_source_type_compatible(field.fieldtype, normalized['target']['graphql_type']):
+                    raise MappingDraftError('New mutation source is incompatible with the target input.')
+
+    def _assert_parentless_child_identities(self, definition, additions):
+        f = self.frappe
+        if additions:
+            assert_draft_identity_index(f)
+        for identity in sorted(item['id'] for item in additions):
+            rows = f.db.sql('select definition_id from `tabHERO GraphQL Mapping` '
+                            'where portable_definition_id=%s or definition_id=%s for update',
+                            (identity, identity), as_dict=True)
+            rows += lock_definition_drafts(f, [identity])
+            if rows or identity == definition['definition_id']:
+                raise DraftConflict('Mutation assignment identity is already in use.')
+            drafts = lock_identity_drafts(f, [identity], 'child')
+            for row in drafts:
+                try:
+                    content = json.loads(row.content_json)
+                    children = content.get('additional_mappings', [])
+                except (ValueError, TypeError, AttributeError):
+                    raise DraftConflict('Existing mutation draft cannot be safely inspected.') from None
+                if not isinstance(children, list):
+                    raise DraftConflict('Existing mutation draft cannot be safely inspected.')
+                if (any(isinstance(child, dict) and child.get('id') == identity for child in children)
+                        and (row.owner_user, row.definition_id) != (f.session.user, definition['definition_id'])):
+                    raise DraftConflict('Mutation assignment identity is already used by another draft.')
+
+    def _assert_parentless_rule_identity(self, definition, identity, rule):
+        from uuid import UUID
+        from hero_integration.services.personal_mapping_content import identity_sets, same
+        f = self.frappe
+        rows = f.db.sql('select name from `tabHERO Frappe Mapping` where portable_definition_id=%s '
+                        'or definition_id in (%s,%s) for update', (identity, identity, UUID(identity).hex), as_dict=True)
+        if rows:
+            raise DraftConflict('Portable field-rule identity is already used by an existing rule.')
+        rows = lock_identity_drafts(f, [identity], 'rule')
+        for row in rows:
+            if (row.owner_user, row.definition_id) == (f.session.user, definition['definition_id']):
+                continue
+            try:
+                content = json.loads(row.content_json)
+                context = json.loads(row.new_definition_json or 'null')
+                snapshots = content.get('field_rules', {})
+                if not isinstance(snapshots, dict): raise ValueError
+                identities, _ = identity_sets(content, _draft_identity_direction(f, row))
+                matches = [item for item in identities if _uuid_equal(item, identity)]
+            except (ValueError, TypeError, AttributeError):
+                raise DraftConflict('Existing field-rule identity cannot be safely inspected.') from None
+            if not matches:
+                continue
+            if (not isinstance(context, dict) or row.owner_user != f.session.user or len(matches) != 1
+                    or any(context.get(key) != definition[key] for key in ('site_scope', 'source_instance', 'snapshot_name',
+                                                                            'schema_fingerprint', 'direction'))
+                    or not same(content.get('field_rules', {}).get(matches[0]), rule)):
+                raise DraftConflict('Portable field-rule identity is already used by a different draft.')
 
     def active(self, definition_id):
         self._scope()
@@ -489,6 +946,11 @@ class FrappeMappingDraftStorage:
             raise MappingDraftError('Native Task onboarding is outside the current source and mapping.')
         if value.get('additional_mappings'):
             self._validate_additional_mappings(value['additional_mappings'])
+            if self._definition.direction == 'FRAPPE_TO_MUTATION':
+                self._assert_parentless_child_identities({'definition_id': self._definition.definition_id},
+                                                         value['additional_mappings'])
+            else:
+                self._assert_query_additional_identities(value['additional_mappings'])
         if value.get('field_contexts') or (isinstance(value.get('source'), dict) and
                 ({'object_type', 'schema_context'} & set(value['source']))):
             self._validate_object_contexts(value)
@@ -513,6 +975,21 @@ class FrappeMappingDraftStorage:
         # Personal drafts store structural content losslessly. Executable
         # writeback normalization remains solely at its existing execution gate.
         return bounded(value)
+
+    def _assert_query_additional_identities(self, additions):
+        """New query assignments claim field-rule, rather than child-definition, IDs."""
+        from uuid import UUID
+        f = self.frappe
+        for item in sorted(additions, key=lambda item: item['id']):
+            identity = item['id']
+            rows = f.db.sql('select name from `tabHERO Frappe Mapping` where portable_definition_id=%s '
+                            'or definition_id in (%s,%s) for update',
+                            (identity, identity, UUID(identity).hex), as_dict=True)
+            if rows:
+                raise DraftConflict('Query assignment identity is already used by an existing rule.')
+            for row in lock_identity_drafts(f, [identity], 'rule'):
+                if (row.owner_user, row.definition_id) != (f.session.user, self._definition.definition_id):
+                    raise DraftConflict('Query assignment identity is already used by another draft.')
 
     def _validate_additional_mappings(self, mappings):
         from hero_integration.api import _validated_snapshot
@@ -731,7 +1208,15 @@ class FrappeMappingDraftStorage:
                 continue
             values = {field: rules[identity].get(field) for field in RULE_FIELDS}
             new_identity = str(uuid5(NAMESPACE_URL, f'{draft.key}:{draft.generation}:{draft.content_revision}:{identity}'))
+            if not f.db.has_column('HERO Frappe Mapping', 'portable_lineage_json'):
+                raise MappingDraftError('Portable rule lineage schema is not installed; migrate the app before publication.')
+            from hero_integration.services.mapping_rule_lineage import next_lineage
+            try:
+                lineage = next_lineage(original, new_identity, values)
+            except ValueError as error:
+                raise MappingDraftError('Enroll and verify the preceding rule portable identity before publication.') from error
             child = f.get_doc({'doctype': 'HERO Frappe Mapping', 'definition_id': new_identity,
+                'portable_definition_id': new_identity, 'portable_lineage_json': lineage,
                 'operation': original.operation, 'schema_snapshot': original.schema_snapshot, 'status': 'Active',
                 'personal_graphql_mapping': parent.name,
                 'mapping_revision': 1, 'schema_dependencies': original.schema_dependencies,
@@ -805,6 +1290,11 @@ class FrappeMappingDraftStorage:
                         or (rule.personal_graphql_mapping and rule.personal_graphql_mapping != parent.name)
                         or rule.operation != (current.get('target_operation') or parent.operation_name)):
                     raise DraftConflict('An active field rule changed scope.')
+                planned = getattr(self, '_publication_target_locks', None)
+                if planned is not None and rule.purpose != 'Record Name':
+                    prefix = f'personal:{rule.personal_graphql_mapping}:' if rule.personal_graphql_mapping else ''
+                    if (prefix + rule.operation, rule.target_doctype, rule.target_field) not in planned:
+                        raise DraftConflict('Active rule target changed while publication locks were acquired.')
                 current['field_rules'][identity] = {field: rule.get(field) for field in RULE_FIELDS}
                 current['field_rule_bases'][identity] = {'name': rule.name, 'revision': int(rule.mapping_revision),
                     'operation': rule.operation, 'schema_snapshot': rule.schema_snapshot,
@@ -862,7 +1352,7 @@ class FrappeMappingDraftStorage:
 
     def _publication_objects(self, created, content):
         objects = list(created)
-        for identity in content.get('mapping_definition_ids', []):
+        for identity in sorted(content.get('mapping_definition_ids', [])):
             rows = self.frappe.db.sql('select name from `tabHERO Frappe Mapping` where definition_id=%s for update',
                                       (identity,), as_dict=True)
             if len(rows) != 1:

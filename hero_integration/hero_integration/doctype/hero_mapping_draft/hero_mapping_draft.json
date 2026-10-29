@@ -24,6 +24,7 @@
    "fieldname": "definition_id",
    "fieldtype": "Data",
    "reqd": 1,
+   "search_index": 1,
    "read_only": 1,
    "label": "Definition Id"
   },

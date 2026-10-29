@@ -37,8 +37,6 @@ class HEROMappingDraft(Document):
         for field in ("draft_key", "site_scope", "definition_id", "owner_user"):
             if self.get(field) != previous.get(field):
                 frappe.throw(f"Personal mapping draft {field} is immutable.")
-        if self.new_definition_json != previous.new_definition_json:
-            frappe.throw('New-definition context is immutable.')
         # The immutable base belongs to a generation. Opening a discarded
         # draft creates a new generation from the currently locked active
         # definition, so its base may legitimately differ from the old one.
@@ -49,6 +47,9 @@ class HEROMappingDraft(Document):
                     and not self.reconciliation_json)
         if previous.state == "DISCARDED" and self.state == "OPEN" and not reopened:
             frappe.throw("Personal mapping draft reopen must start a new generation.")
+        if self.new_definition_json != previous.new_definition_json and not (
+                reopened and previous.new_definition_json and not self.new_definition_json):
+            frappe.throw('New-definition context is immutable within a generation.')
         if self.base_content_json != previous.base_content_json and not reopened:
             frappe.throw("Personal mapping draft base_content_json is immutable.")
 

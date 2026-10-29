@@ -270,10 +270,40 @@ def active_mapping_plan(operation: str, *, definition_ids: tuple[str, ...] = (),
             raise MappingPlanError('A selected rule version belongs to another read mapping.')
     else:
         rows = [row for row in rows if not row.get('personal_graphql_mapping')]
-    if native_task:
+    if mapping_name and definition_ids:
         mapping = frappe.get_doc('HERO GraphQL Mapping', mapping_name)
+        if mapping.status != 'Active' or mapping.direction != 'QUERY_TO_FRAPPE':
+            raise MappingPlanError('The selected read mapping is not an active Query definition.')
+        try:
+            from hero_integration.services.personal_mapping_content import unique_json_object
+            config = json.loads(mapping.mapping_json, object_pairs_hook=unique_json_object)
+        except (ValueError, TypeError, AttributeError):
+            raise MappingPlanError('The approved mapping binding is invalid.') from None
+        selected = config.get('mapping_definition_ids') if isinstance(config, dict) else None
+        if (not isinstance(selected, list) or any(not isinstance(value, str) or not value for value in selected)
+                or len(set(selected)) != len(selected) or tuple(selected) != tuple(definition_ids)):
+            raise MappingPlanError('Selected rules do not match the approved mapping binding.')
         if any(row.get('schema_snapshot') != mapping.schema_snapshot or row.get('schema_fingerprint') != mapping.schema_fingerprint for row in rows):
-            raise MappingPlanError('Native Task rule snapshot does not match the approved read mapping.')
+            raise MappingPlanError('Selected rule snapshot does not match the approved read mapping.')
+        scoped = [row for row in rows if row.get('personal_graphql_mapping')]
+        has_column = getattr(frappe.db, 'has_column', None) if scoped else None
+        if scoped and callable(has_column) and has_column('HERO Frappe Mapping', 'portable_lineage_json'):
+            from hero_integration.services.mapping_rule_lineage import parse_lineage, semantic_fingerprint
+            from hero_integration.services.personal_mapping_content import RULE_FIELDS
+            for row in scoped:
+                metadata = frappe.db.get_value('HERO Frappe Mapping', {'definition_id':row['definition_id']},
+                                               ['portable_definition_id', 'portable_lineage_json', 'schema_manifest', 'schema_dependencies'], as_dict=True)
+                if metadata and not metadata.get('portable_lineage_json'):
+                    continue  # Pre-lineage scoped revisions retain their explicit legacy binding.
+                try:
+                    lineage = parse_lineage(metadata.get('portable_lineage_json') if metadata else None)
+                    fields = {key:row.get(key) for key in RULE_FIELDS}
+                    if (lineage['revision_id'] != metadata.get('portable_definition_id')
+                            or lineage['content_hash'] != semantic_fingerprint(row['operation'], row['schema_fingerprint'], fields,
+                                schema_manifest=metadata.get('schema_manifest'), schema_dependencies=metadata.get('schema_dependencies'))):
+                        raise ValueError
+                except (ValueError, TypeError, AttributeError):
+                    raise MappingPlanError('Scoped rule lineage is missing or inconsistent; reconcile the revision.') from None
     definitions = [MappingSpec(**{k: v for k, v in row.items() if k not in {'personal_graphql_mapping', 'schema_snapshot', 'schema_fingerprint'}}) for row in rows]
     # Recheck native Field grants against the currently installed server
     # contract before executing a previously approved mapping revision.

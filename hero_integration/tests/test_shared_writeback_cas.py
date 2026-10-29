@@ -45,7 +45,7 @@ class TestSharedWritebackCAS(unittest.TestCase):
         self.assertEqual(mapping.save_calls, 0)
 
     def test_existing_controller_advances_revision_for_status_and_draft_editor_only(self):
-        previous = SimpleNamespace(status="Draft", modified_by="alice", mapping_revision=4, definition_id="id", direction="FRAPPE_TO_MUTATION")
+        previous = SimpleNamespace(status="Draft", modified_by="alice", mapping_revision=4, definition_id="id", direction="FRAPPE_TO_MUTATION", get=lambda key: None)
         snapshot = SimpleNamespace(analysis_status="Validated", snapshot_json="{}", schema_fingerprint="fp", source_instance="src")
         fake = SimpleNamespace(only_for=lambda role: None, get_doc=lambda *_: snapshot, session=SimpleNamespace(user="alice"))
         for current_status, editor in (("Disabled", "alice"), ("Draft", "bob")):
@@ -60,6 +60,7 @@ class TestSharedWritebackCAS(unittest.TestCase):
                 status = current_status
                 modified_by = editor
                 def is_new(self): return False
+                def get(self, key): return getattr(self, key, None)
                 def get_doc_before_save(self): return previous
                 def has_value_changed(self, field): return False
             doc = Document()
@@ -134,7 +135,7 @@ class TestSharedWritebackCAS(unittest.TestCase):
         self.assertEqual(mapping.save_calls, 0)
 
     def test_review_metadata_changes_increment_revision_without_status_change(self):
-        previous = SimpleNamespace(status="Draft", modified_by="alice", mapping_revision=4, definition_id="id", direction="FRAPPE_TO_MUTATION")
+        previous = SimpleNamespace(status="Draft", modified_by="alice", mapping_revision=4, definition_id="id", direction="FRAPPE_TO_MUTATION", get=lambda key: None)
         snapshot = SimpleNamespace(analysis_status="Validated", snapshot_json="{}", schema_fingerprint="fp", source_instance="src")
         fake = SimpleNamespace(only_for=lambda role: None, get_doc=lambda *_: snapshot, session=SimpleNamespace(user="alice"))
         class Document:
@@ -142,6 +143,7 @@ class TestSharedWritebackCAS(unittest.TestCase):
             operation_kind, operation_name, definition_id = "QUERY", "readThings", "id"
             mapping_revision, status, modified_by = 4, "Draft", "alice"
             def is_new(self): return False
+            def get(self, key): return getattr(self, key, None)
             def get_doc_before_save(self): return previous
             def has_value_changed(self, field): return field == "suggestion_reason"
         doc = Document()

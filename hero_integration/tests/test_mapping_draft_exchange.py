@@ -49,6 +49,8 @@ class _Frappe:
             ids = set(filters["definition_id"][1])
             return [dict(row) for row in self.drafts if row["definition_id"] in ids and row["owner_user"] == filters["owner_user"]
                     and row["site_scope"] == filters["site_scope"] and row["state"] == filters["state"]]
+        if doctype == "HERO Frappe Mapping":
+            return []
         raise AssertionError(doctype)
 
 
@@ -178,11 +180,17 @@ class TestCurrentExchangeLocks(unittest.TestCase):
         from hero_integration.services.mapping_draft_service import DraftConflict
 
         events = []
-        row = SimpleNamespace(source_instance='source', schema_snapshot='snapshot', direction='QUERY_TO_FRAPPE')
-        fake = SimpleNamespace(local=SimpleNamespace(site='site'), db=SimpleNamespace(
-            sql=lambda *args, **kwargs: (events.append('lookup') or [row])))
+        row = SimpleNamespace(name='mapping', operation_name='customers', source_instance='source', schema_snapshot='snapshot', direction='QUERY_TO_FRAPPE')
+        def sql(query, *args, **kwargs):
+            if query.startswith('select content_json'):
+                events.append('draft-read')
+                return [SimpleNamespace(content_json='{}')]
+            events.append('lookup')
+            return [row]
+        fake = SimpleNamespace(local=SimpleNamespace(site='site'), db=SimpleNamespace(sql=sql))
         storage = FrappeMappingDraftStorage(fake)
         storage._authorize = lambda actor: events.append('authorize')
+        storage.lock_draft_identities = lambda *args, **kwargs: None
         @contextmanager
         def transaction(identity, actor):
             events.append('parent')
@@ -197,7 +205,7 @@ class TestCurrentExchangeLocks(unittest.TestCase):
                           side_effect=lambda *scope: events.append(('context', scope))):
             with self.assertRaisesRegex(DraftConflict, 'context changed'):
                 storage.publish('definition', 'owner', 1, 1, 1, 0, confirmed=True)
-        self.assertEqual(events, ['authorize', 'lookup', ('context', ('source', 'snapshot', 'QUERY_TO_FRAPPE')), 'parent'])
+        self.assertEqual(events, ['authorize', 'lookup', ('context', ('source', 'snapshot', 'QUERY_TO_FRAPPE')), 'draft-read', 'parent'])
 
     def test_parent_reads_are_ordered_and_reject_changed_scope(self):
         calls = []
@@ -251,6 +259,9 @@ class TestMappingDraftExchange(unittest.TestCase):
         self.context_lock = patch.object(exchange, '_lock_context')
         self.context_lock_mock = self.context_lock.start()
         self.addCleanup(self.context_lock.stop)
+        self.identity_lock = patch('hero_integration.hero_integration.doctype.hero_frappe_mapping.hero_frappe_mapping._lock_active_target')
+        self.identity_lock.start()
+        self.addCleanup(self.identity_lock.stop)
         self.fresh_context = patch.object(exchange, '_fresh_active_definitions', side_effect=exchange._active_definitions)
         self.fresh_context.start()
         self.addCleanup(self.fresh_context.stop)
@@ -430,3 +441,42 @@ class TestMappingDraftExchange(unittest.TestCase):
                 exchange.save_import(raw, 'source-1', 'SNAPSHOT', 'QUERY_TO_FRAPPE', expected,
                                      confirmed=True, preview_fingerprint=preview['preview_fingerprint'])
         provision.assert_not_called()
+
+class TestPortableEmptyTarget(unittest.TestCase):
+    """Portable packages create personal drafts without an active definition."""
+
+    def _roundtrip(self, direction, kind, operation, content):
+        from hero_integration.tests.test_portable_draft_exchange import Fake, IDENTITY, TestPortableDraftExchange
+        helper = TestPortableDraftExchange()
+        source = Fake('source.test', 'source-1', 'SNAPSHOT')
+        target = Fake('target.test', 'source-2', 'TARGET')
+        definition = {'site_scope': source.local.site, 'definition_id': IDENTITY, 'source_instance': 'source-1',
+                      'snapshot_name': 'SNAPSHOT', 'schema_fingerprint': source.snapshot.schema_fingerprint,
+                      'direction': direction, 'operation_kind': kind, 'operation_name': operation}
+        with helper.context(source):
+            exchange.FrappeMappingDraftStorage().service().open_new_draft(definition, source.session.user, content)
+            package = exchange.export_package('source-1', 'SNAPSHOT', direction, format_version=exchange.PORTABLE_FORMAT_VERSION)
+        with helper.context(target):
+            preview = exchange.preview_import(package, 'source-2', 'TARGET', direction)
+            self.assertTrue(preview['can_save'])
+            self.assertEqual(preview['items'][0]['state'], 'NEW')
+            expected = [dict(definition_id=item['definition_id'], **item['expected']) for item in preview['items']]
+            saved = exchange.save_import(package, 'source-2', 'TARGET', direction, expected,
+                                         confirmed=True, preview_fingerprint=preview['preview_fingerprint'])
+            self.assertFalse(saved['activation'])
+            draft = exchange.FrappeMappingDraftStorage().service().open_draft(IDENTITY, target.session.user)
+            self.assertEqual(draft.definition_id, IDENTITY)
+            self.assertEqual(draft.content, content)
+            self.assertEqual(target.active, [])
+            self.assertEqual(package, exchange.export_package('source-2', 'TARGET', direction,
+                                                             format_version=exchange.PORTABLE_FORMAT_VERSION))
+
+    def test_query_fresh_target_creates_owned_draft(self):
+        self._roundtrip('QUERY_TO_FRAPPE', 'QUERY', 'customers',
+                        {'records_path': 'customers', 'identity_path': 'id', 'mapping_definition_ids': [], 'field_rules': {}})
+
+    def test_mutation_fresh_target_creates_owned_draft(self):
+        self._roundtrip('FRAPPE_TO_MUTATION', 'MUTATION', 'updateCustomer',
+                        {'source': {'doctype': 'Customer', 'field': 'customer_name'},
+                         'target': {'operation': 'updateCustomer', 'argument': 'input', 'input_type': 'CustomerInput',
+                                    'field': 'name', 'graphql_type': 'String'}, 'transformation': 'Identity'})

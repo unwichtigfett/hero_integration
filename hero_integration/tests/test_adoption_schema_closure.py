@@ -9,7 +9,11 @@ from hero_integration.tests.test_schema_provisioning import _Frappe, package
 
 class TestAdoptionSchemaClosure(unittest.TestCase):
     def setUp(self):
+        from hero_integration.hero_integration.doctype.hero_frappe_mapping import hero_frappe_mapping
         self.f = _Frappe()
+        p = patch.object(hero_frappe_mapping, '_lock_active_target')
+        p.start()
+        self.addCleanup(p.stop)
         for module in (mapping_exchange, schema_provisioning):
             p = patch.object(module, "frappe", self.f)
             p.start()

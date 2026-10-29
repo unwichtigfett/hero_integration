@@ -62,7 +62,10 @@ def protect_managed_mapping(doc):
     definition = previous.get("definition_id") or previous.name
     if not frappe.db.exists("DocType", "HERO Mapping Draft"):
         return
-    if not frappe.db.exists("HERO Mapping Draft", {"definition_id": definition}):
+    # Document.save already owns the parent row. A normal consistent read can
+    # predate a draft committed while this transaction waited for that row.
+    from hero_integration.services.frappe_mapping_draft_storage import _fresh_definition_candidates
+    if not _fresh_definition_candidates(frappe, definition):
         return
     if changed:
         from hero_integration.services.frappe_mapping_draft_storage import is_personal_publication

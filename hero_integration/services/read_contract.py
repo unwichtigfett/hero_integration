@@ -118,15 +118,16 @@ def from_documents(service, mapping, snapshot) -> ReadContract:
                 raise ReadContractError("Customer read-contract version is not supported.") from error
             line2_definition = "customer-primary-address-line2"
             legal_form_definition = "customer-company-legal-form"
+            selected_literals = _customer_selected_literals(definition_ids, mapping)
             if customer_contract_version == CUSTOMER_CONTRACT_V3:
-                if line2_definition not in definition_ids or legal_form_definition not in definition_ids:
+                if line2_definition not in selected_literals or legal_form_definition not in selected_literals:
                     raise ReadContractError("Customer V3 requires the selected primary-address line_2 and company legal-form bindings.")
             elif customer_contract_version == CUSTOMER_CONTRACT_V2:
-                if line2_definition not in definition_ids:
+                if line2_definition not in selected_literals:
                     raise ReadContractError("Customer V2 requires the selected primary-address line_2 binding.")
-                if legal_form_definition in definition_ids:
+                if legal_form_definition in selected_literals:
                     raise ReadContractError("Customer V2 cannot select the company legal-form binding.")
-            elif line2_definition in definition_ids or legal_form_definition in definition_ids:
+            elif line2_definition in selected_literals or legal_form_definition in selected_literals:
                 raise ReadContractError("Customer V1 cannot select V2 or V3 bindings.")
         else:
             expected_query = PROJECT_QUERY_V1
@@ -144,6 +145,35 @@ def from_documents(service, mapping, snapshot) -> ReadContract:
         ):
             raise ReadContractError("Native adapter requires its exact reviewed read-only query and variables.")
     return contract
+
+
+def _customer_selected_literals(definition_ids, mapping):
+    from hero_integration.services.mapping_rule_lineage import customer_legacy_literals
+    import frappe
+    if not frappe.db.has_column('HERO Frappe Mapping', 'portable_lineage_json'):
+        # A restored or rolled-back site can contain scoped UUID revisions
+        # while missing their provenance column. Do not reinterpret those as
+        # ordinary Customer rules, particularly for the V1 exclusion gate.
+        from hero_integration.services.personal_mapping_content import RULE_FIELDS
+        fields = ['definition_id', 'personal_graphql_mapping', 'status', 'operation', 'schema_snapshot',
+                  'schema_fingerprint', *sorted(RULE_FIELDS)]
+        def old_rule(identity):
+            return frappe.get_all('HERO Frappe Mapping', filters={'definition_id':identity}, fields=fields, limit=2)
+        try:
+            return customer_legacy_literals(definition_ids, mapping, old_rule, lambda _value: [])
+        except (ValueError, TypeError, KeyError) as error:
+            raise ReadContractError('Customer rule lineage schema is missing or its revision is ambiguous; reconcile before approval.') from error
+    from hero_integration.services.personal_mapping_content import RULE_FIELDS
+    fields = ['definition_id', 'portable_definition_id', 'portable_lineage_json', 'operation', 'status',
+              'schema_snapshot', 'schema_fingerprint', 'personal_graphql_mapping', 'schema_manifest',
+              'schema_dependencies', *sorted(RULE_FIELDS)]
+    def find(key, value):
+        return frappe.get_all('HERO Frappe Mapping', filters={key:value}, fields=fields, limit=2)
+    try:
+        return customer_legacy_literals(definition_ids, mapping,
+            lambda value:find('definition_id', value), lambda value:find('portable_definition_id', value))
+    except (ValueError, TypeError, KeyError) as error:
+        raise ReadContractError('Customer rule lineage cannot be verified for the selected mapping.') from error
 
 
 def universal_from_documents(service, mapping, snapshot) -> ReadContract:
@@ -169,13 +199,20 @@ def _common_contract(service, mapping, snapshot) -> tuple[ReadContract, Mapping[
         raise ReadContractError("The selected GraphQL service no longer matches its schema snapshot.")
     if mapping.name != getattr(service, "read_mapping", "") or mapping.status != "Active":
         raise ReadContractError("The selected read mapping is not active.")
+    if getattr(mapping, 'direction', None) != 'QUERY_TO_FRAPPE' or getattr(mapping, 'operation_kind', None) != 'QUERY':
+        raise ReadContractError('The selected read mapping is not an active Query definition.')
     if mapping.schema_snapshot != snapshot.name or mapping.schema_fingerprint != snapshot.schema_fingerprint:
         raise ReadContractError("The selected read mapping no longer matches its schema snapshot.")
+    source = getattr(snapshot, 'source_instance', None)
+    if (not isinstance(source, str) or not source.strip() or source != source.strip()
+            or getattr(mapping, 'source_instance', None) != source):
+        raise ReadContractError('The selected read mapping no longer matches the snapshot source.')
     if int(getattr(service, "approved_mapping_revision", 0) or 0) != int(mapping.mapping_revision or 0):
         raise ReadContractError("The selected read mapping approval is stale.")
     assert_read_only(service.query_document)
     try:
-        config = json.loads(mapping.mapping_json)
+        from hero_integration.services.personal_mapping_content import unique_json_object
+        config = json.loads(mapping.mapping_json, object_pairs_hook=unique_json_object)
     except (TypeError, ValueError, json.JSONDecodeError) as error:
         raise ReadContractError("The selected read mapping is not valid JSON.") from error
     if not isinstance(config, Mapping):
@@ -187,7 +224,9 @@ def _common_contract(service, mapping, snapshot) -> tuple[ReadContract, Mapping[
         raise ReadContractError("The selected target adapter is not supported.")
     if not isinstance(records_path, str) or not records_path or not isinstance(identity_path, str) or not identity_path:
         raise ReadContractError("The selected read mapping requires record and external identity paths.")
-    if not isinstance(definition_ids, list) or not definition_ids or not all(isinstance(value, str) and value for value in definition_ids):
+    if (not isinstance(definition_ids, list) or not definition_ids
+            or not all(isinstance(value, str) and value for value in definition_ids)
+            or len(set(definition_ids)) != len(definition_ids)):
         raise ReadContractError("The selected read mapping requires explicit active mapping definitions.")
     if not isinstance(variables, Mapping) or not isinstance(page_size, int) or isinstance(page_size, bool) or not 1 <= page_size <= 1000:
         raise ReadContractError("The selected variables or page size are invalid.")

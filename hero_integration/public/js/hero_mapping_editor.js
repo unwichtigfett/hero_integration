@@ -479,6 +479,7 @@
         let search = String(context.mapping_search || ""), start = Number(context.mapping_start || 0), listing, snapshotFilter = "";
         let revisionsStart = 0, returnFocus = null, fieldFilter = "", detailRequest = 0, exchangeSequence = 0;
         const exchanges = new Map();
+        const exchangeSelections = new Map();
         const browsePaths = new Map();
         const browseObjects = new Map();
         const browseActions = new Map();
@@ -554,11 +555,13 @@
         const focusHeading = () => root.find("h2").trigger("focus");
         const locked = () => busy || disposed;
         const exchangeContext = () => {
-            const direction = active?.direction;
-            if (!admin || active?.mapping_type !== "graphql" || !["QUERY_TO_FRAPPE", "FRAPPE_TO_MUTATION"].includes(direction) ||
-                ![active?.source_instance, active?.schema_snapshot].every((value) => typeof value === "string" && value)) return null;
-            return {source_instance: active.source_instance, snapshot_name: active.schema_snapshot, direction,
-                key: `${active.source_instance}\u0000${active.schema_snapshot}\u0000${direction}`};
+            if (!admin) return null;
+            const selected = active?.mapping_type === "graphql"
+                ? {source_instance: active.source_instance, snapshot_name: active.schema_snapshot, direction: active.direction}
+                : exchangeSelections.get(directionForTab(tab));
+            if (!selected || !["QUERY_TO_FRAPPE", "FRAPPE_TO_MUTATION"].includes(selected.direction) ||
+                ![selected.source_instance, selected.snapshot_name].every((value) => typeof value === "string" && value)) return null;
+            return {...selected, key: `${selected.source_instance}\u0000${selected.snapshot_name}\u0000${selected.direction}`};
         };
         const exchangeLabel = (context = exchangeContext()) => context?.direction === "FRAPPE_TO_MUTATION" ? "Mutation" : "Query";
         const mutationMapping = (value = {}) => [value, active || {}].some((candidate) =>
@@ -912,7 +915,82 @@
         function renderList() {
             toolbar.detach().empty(); body.empty(); renderWorkspaceContext(); renderContext({}); renderMappingsTable(body);
             body.append($("<p class='text-muted'></p>").text(text("Choose an active mapping row or definition to inspect it. Reading and selection do not create a draft.")));
+            if (admin) { renderListExchange(); renderPersonalDraftList(); }
             renderSchemaExplorer();
+        }
+        function renderListExchange() {
+            const viewEpoch = epoch, viewTab = tab, direction = directionForTab(viewTab);
+            const section = $("<section data-exchange-context></section>"), select = $("<select class='form-control' aria-label='Import target snapshot'></select>");
+            const actions = $("<div class='hero-mapping-actions'></div>"), message = $("<p role='status'></p>");
+            section.append($("<h3></h3>").text(text("Import personal drafts")), select, message, actions); body.append(section);
+            select.append($("<option></option>").val("").text(text("Choose a validated target snapshot")));
+            const draw = () => {
+                actions.empty(); const ctx = exchangeContext(), entry = ctx && exchanges.get(ctx.key);
+                if (!ctx) return;
+                actions.append(button(`Import ${exchangeLabel(ctx)} mappings`, chooseImport).attr("data-import-direction", direction));
+                if (entry) actions.append(button("Review import preview", () => exchangePreviewDialog(entry)),
+                    button("Save imported personal drafts", saveImportedDirection, true).prop("disabled", !entry.adopted || !entry.preview.can_save));
+            };
+            draw();
+            readSnapshotPages((args) => rpc("schema_snapshot_list", args), () => !disposed && epoch === viewEpoch && tab === viewTab && section[0].isConnected)
+                .then((rows) => {
+                    if (!rows || disposed || epoch !== viewEpoch || tab !== viewTab || !section[0].isConnected) return;
+                    const valid = rows.filter((row) => row.analysis_status === "Validated" && typeof row.source_instance === "string" && row.source_instance);
+                    valid.forEach((row) => select.append($("<option></option>").val(row.name).text(`${row.name} · ${row.source_instance}`)));
+                    const selected = exchangeSelections.get(direction);
+                    if (selected && valid.some((row) => row.name === selected.snapshot_name && row.source_instance === selected.source_instance)) select.val(selected.snapshot_name);
+                    else if (selected) { exchangeSelections.delete(direction); draw(); }
+                    select.on("change", () => {
+                        const row = valid.find((entry) => entry.name === select.val());
+                        if (row) exchangeSelections.set(direction, {source_instance: row.source_instance, snapshot_name: row.name, direction});
+                        else exchangeSelections.delete(direction);
+                        draw();
+                    });
+                }).catch((error) => { if (!disposed && epoch === viewEpoch) message.text(errorText(error)); });
+        }
+        function renderPersonalDraftList() {
+            const viewEpoch = epoch, viewTab = tab, section = $("<section data-personal-drafts></section>");
+            const list = $("<div></div>"), message = $("<p role='status'></p>"), pager = $("<div></div>");
+            section.append($("<h3></h3>").text(text("My new personal drafts")), message, list, pager); body.append(section);
+            let serial = 0;
+            async function load(offset) {
+                const request = ++serial;
+                message.text(text("Loading personal drafts…"));
+                try {
+                    const result = await rpc("mapping_draft_list", {direction: directionForTab(viewTab), start: offset, page_size: 50});
+                    if (disposed || epoch !== viewEpoch || tab !== viewTab || request !== serial || !section[0].isConnected) return;
+                    if (!Array.isArray(result.items)) throw new Error("Invalid personal draft list.");
+                    list.empty(); message.text(result.items.length ? "" : text("No personal drafts on this page."));
+                    result.items.forEach((item) => list.append($("<p></p>").append(button(
+                        `${item.operation_name} · ${item.snapshot_name} · ${item.definition_id}`,
+                        () => leave(() => openParentlessDraft(item))))));
+                    pager.empty().append(button("Previous drafts", () => load(Math.max(0, offset - 50))).prop("disabled", !offset),
+                        button("Next drafts", () => load(offset + 50)).prop("disabled", !result.has_more));
+                } catch (error) { if (!disposed && epoch === viewEpoch && request === serial) message.text(errorText(error)); }
+            }
+            load(0);
+        }
+        async function openParentlessDraft(item) {
+            if (locked()) return;
+            const request = ++epoch; setBusy(true); say("Loading your saved draft…");
+            try {
+                const result = await rpc("mapping_draft_read", {definition_id: item.definition_id});
+                if (disposed || request !== epoch) return;
+                const draft = result.draft, definition = draft?.new_definition;
+                if (draft?.state !== "OPEN" || draft.definition_id !== item.definition_id || !definition ||
+                    definition.definition_id !== item.definition_id || definition.direction !== directionForTab(tab) ||
+                    definition.source_instance !== item.source_instance || definition.snapshot_name !== item.snapshot_name ||
+                    definition.schema_fingerprint !== item.schema_fingerprint || draft.base_active_revision !== 0) {
+                    throw new Error("Personal draft context changed. Reload the draft list.");
+                }
+                active = {name: "", definition_id: item.definition_id, source_instance: item.source_instance,
+                    schema_snapshot: item.snapshot_name, schema_fingerprint: item.schema_fingerprint,
+                    direction: item.direction, operation_kind: item.operation_kind, operation_name: item.operation_name,
+                    revision: 0, status: "Draft", mapping_type: "graphql", parentless: true};
+                model = new DraftState(draft); mode = "draft"; selected = 0; fieldFilter = "";
+                renderDetail(); say("Personal draft opened. It has no active definition.");
+            } catch (error) { if (!disposed && request === epoch) say(errorText(error)); }
+            finally { if (!disposed && request === epoch) setBusy(false); }
         }
         async function open(item, kind, focus = true) {
             if (locked()) return;
@@ -947,7 +1025,9 @@
             };
             dialog.on("cancel", (event) => { event.preventDefault(); close(); });
             dialog.attr("aria-labelledby", "hero-mapping-exchange-title").append(heading,
-                $("<p></p>").text(text(`Preview only — no personal drafts or schema were changed. Only ${exchangeLabel(entry.context)} mappings for this source and snapshot can be replaced.`)),
+                $("<p></p>").text(text(preview.format_version === "hero-personal-mapping-portable-v2"
+                    ? `Preview only — no personal drafts or schema were changed. These ${exchangeLabel(entry.context)} drafts will be saved in the selected source and snapshot.`
+                    : `Preview only — no personal drafts or schema were changed. Only ${exchangeLabel(entry.context)} mappings for this source and snapshot can be replaced.`)),
                 $("<p></p>").text(`${text("Definitions")}: ${preview.items.length} · ${text("New")}: ${counts.NEW} · ${text("Changed")}: ${counts.REPLACE} · ${text("Unchanged")}: ${counts.UNCHANGED} · ${text("Removed")}: ${counts.REMOVE}`));
             const items = $("<table class='table table-sm hero-mapping-table'><thead><tr><th>Definition</th><th>Result</th></tr></thead><tbody></tbody></table>");
             preview.items.forEach((item) => items.find("tbody").append($("<tr></tr>").append($("<td></td>").text(item.definition_id), $("<td></td>").text(item.state))));
@@ -958,7 +1038,7 @@
             dialog.append($("<details></details>").append($("<summary></summary>").text(`${text("Schema provisioning preview")} (${schema.length})`), safeJson(preview.schema || {})));
             if (!preview.can_save) dialog.append($("<p role='alert'></p>").text(text("This package cannot be saved until its conflicts and invalid definitions are resolved.")));
             const adopt = async () => {
-                const adoptEntry = () => { if (!canAdopt()) return; exchanges.set(entry.context.key, {...entry, adopted: true}); say(`Imported ${exchangeLabel(entry.context)} package adopted locally. Save imported ${exchangeLabel(entry.context)} drafts to persist this direction.`); renderDetail(); };
+                const adoptEntry = () => { if (!canAdopt()) return; exchanges.set(entry.context.key, {...entry, adopted: true}); say(`Imported ${exchangeLabel(entry.context)} package adopted locally. Save imported ${exchangeLabel(entry.context)} drafts to persist this direction.`); if (active) renderDetail(); else renderList(); };
                 if (!model?.dirty) return adoptEntry();
                 modal("Unsaved changes", "Adopting this directional package replaces the local working draft collection. Save or discard the current local edits first.", [
                     ["Save and adopt", async () => { if (await save()) adoptEntry(); }, true],
@@ -986,7 +1066,7 @@
                 exchanges.set(context.key, entry); say("Import preview is ready. No personal drafts or schema were changed.");
             } catch (error) {
                 if (!disposed && request === epoch) say(denied(error) ? errorText(error) : "The import preview failed. Your current work and saved drafts have been kept.");
-            } finally { if (!disposed && request === epoch) { setBusy(false); renderDetail(); if (entry) exchangePreviewDialog(entry, opener); } }
+            } finally { if (!disposed && request === epoch) { setBusy(false); if (active) renderDetail(); else renderList(); if (entry) exchangePreviewDialog(entry, opener); } }
         }
         function chooseImport() {
             const context = exchangeContext();
@@ -1004,13 +1084,14 @@
             try { ownedDownload = link; link.click(); }
             finally { ownedDownload = null; link.remove(); setTimeout(() => URL.revokeObjectURL(href), 1000); }
         }
-        async function exportDirection() {
+        async function exportDirection(formatVersion) {
             const context = exchangeContext();
             if (locked() || !context) return;
             const request = ++epoch; setBusy(true); say(`Exporting saved ${exchangeLabel(context)} drafts…`);
             try {
-                const result = await rpc("mapping_draft_exchange_export", {source_instance: context.source_instance,
-                    snapshot_name: context.snapshot_name, direction: context.direction});
+                const args = {source_instance: context.source_instance, snapshot_name: context.snapshot_name, direction: context.direction};
+                if (formatVersion) args.format_version = formatVersion;
+                const result = await rpc("mapping_draft_exchange_export", args);
                 if (disposed || request !== epoch || context.key !== exchangeContext()?.key) return;
                 downloadExport(result.filename, result.content);
                 say(`Saved ${exchangeLabel(context)} drafts exported. Local unsaved edits were not included.`);
@@ -1034,7 +1115,7 @@
                 ruleCache.clear();
             } catch (error) {
                 if (!disposed && request === epoch) say(`Import save failed or conflicted. ${exchangeFailureText(error)} Check Drafts and schema before previewing again.`);
-            } finally { if (!disposed && request === epoch) { setBusy(false); renderDetail(); } }
+            } finally { if (!disposed && request === epoch) { setBusy(false); if (active) renderDetail(); else renderList(); } }
         }
         function rows(value) {
             let result = [];
@@ -1212,18 +1293,23 @@
             body.empty();
             const draftStatus = $("<div class='hero-mapping-draft-status'></div>");
             if (admin && active.mapping_type === "graphql") {
-                toolbar.append(button("Active version", () => leave(() => { epoch++; ruleCache.clear(); model = null; mode = "active"; renderDetail(); })),
-                    button("Open my draft", openDraft), button("My saved revisions", () => leave(() => showRevisions(0))));
+                if (!active.parentless) toolbar.append(button("Active version", () => leave(() => { epoch++; ruleCache.clear(); model = null; mode = "active"; renderDetail(); })),
+                    button("Open my draft", openDraft));
+                toolbar.append(button("My saved revisions", () => leave(() => showRevisions(0))));
                 const context = exchangeContext(), imported = context && exchanges.get(context.key);
                 if (context) {
                     toolbar.append(button(`Import ${exchangeLabel(context)} mappings`, chooseImport).attr("data-import-direction", context.direction),
-                        button(`Export ${exchangeLabel(context)} mappings`, exportDirection));
+                        button(`Export ${exchangeLabel(context)} mappings`, () => exportDirection()),
+                        button(`Export ${exchangeLabel(context)} active mappings and personal drafts (portable v2)`,
+                            () => exportDirection("hero-personal-mapping-portable-v2")));
                     if (imported) toolbar.append(button(`Review imported ${exchangeLabel(context)} package`, () => exchangePreviewDialog(imported)),
                         button(`Save imported ${exchangeLabel(context)} drafts (${imported.preview.items.length})`, saveImportedDirection, true)
                             .prop("disabled", !imported.adopted || !imported.preview.can_save));
                 }
                 if (mode === "draft") {
-                    toolbar.append(button("Compare active changes", compareActiveChanges).prop("disabled", Boolean(model.detailStale)), button("Save draft", save, true).attr("data-save-draft", ""), button("Discard saved draft", discard));
+                    if (!active.parentless) toolbar.append(button("Compare active changes", compareActiveChanges).prop("disabled", Boolean(model.detailStale)));
+                    toolbar.append(button("Save draft", save, true).attr("data-save-draft", ""), button("Discard saved draft", discard));
+                    toolbar.append(button("Preview saved operation plan", previewDraftPlan).prop("disabled", model.dirty || model.blocked));
                     const reconciliationState = model.reconciliation ? "Local reconciliation changes — not saved"
                         : model.saved.reconciliation_json ? "Saved reconciliation evidence is current only for its recorded draft content."
                             : "No saved reconciliation evidence.";
@@ -1257,8 +1343,10 @@
                 else root.find("button").filter((_, el) => el.textContent.startsWith(text("Undo removal"))).trigger("focus");
                 say("Mapping removed locally. Undo is available until a successful save.");
             };
-            if (editable) heading.append(button("Delete selected mapping", () => removeRow(list[selected])).prop("disabled", !list[selected]),
-                button('Activate', activateDraft).attr('data-activate-draft', ''));
+            if (editable) {
+                heading.append(button("Delete selected mapping", () => removeRow(list[selected])).prop("disabled", !list[selected]));
+                if (!active.parentless) heading.append(button('Activate', activateDraft).attr('data-activate-draft', ''));
+            }
             left.append(heading);
             detail.attr("data-editable", String(editable));
             const searchInput = field("Filter selected field mappings", fieldFilter, (value) => { fieldFilter = value; }, left);
@@ -1635,6 +1723,26 @@
             } catch (error) { say(model?.detailStale ? "The active mapping could not be refreshed. Return to mappings and reopen the draft before editing." : errorText(error)); }
             finally { if (!disposed && request === epoch) { setBusy(false); renderDetail(); } }
         }
+        async function previewDraftPlan() {
+            if (locked() || !model || model.dirty || !canSaveDraft(model, active)) return;
+            const state = model, request = ++epoch, args = state.saveArgs();
+            setBusy(true); say("Preparing a non-executable plan…");
+            try {
+                const result = await rpc("mapping_draft_materialize_plan", {
+                    definition_id: args.definition_id, expected_generation: args.expected_generation,
+                    expected_draft_revision: args.expected_draft_revision, expected_active_revision: args.expected_active_revision,
+                    expected_reconciliation_revision: args.expected_reconciliation_revision}, true);
+                if (disposed || request !== epoch || state !== model) return;
+                if (result.execution_authority !== "NONE") throw new Error("Unexpected plan authority.");
+                const dialog = $("<dialog class='hero-mapping-dialog'></dialog>");
+                dialog.append($("<h3></h3>").text(text("Saved operation plan")),
+                    $("<p></p>").text(text("Preview only. This plan grants no execution permission.")), safeJson(result),
+                    button("Close", () => { dialog[0].close(); dialog.remove(); }));
+                dialog.on("cancel", () => setTimeout(() => dialog.remove(), 0));
+                root.append(dialog); dialog[0].showModal(); say("Operation plan ready; no operation was executed.");
+            } catch (error) { if (!disposed && request === epoch) say(errorText(error)); }
+            finally { if (!disposed && request === epoch) setBusy(false); }
+        }
         async function save() {
             if (locked() || !canSaveDraft(model, active)) return false;
             const invalid = root.find("input").filter((_, el) => !el.checkValidity())[0];
@@ -1797,7 +1905,9 @@
                     if (locked()) return; setBusy(true); const request = ++epoch;
                     try { await rpc("mapping_draft_discard", {definition_id: model.saved.definition_id, expected_generation: model.saved.generation,
                         expected_draft_revision: model.saved.content_revision, confirmed: true}, true);
-                        if (disposed || request !== epoch) return; model = null; mode = "active"; say("Personal draft discarded.");
+                        if (disposed || request !== epoch) return;
+                        if (active.parentless) { model = null; setBusy(false); await loadList(false); say("Personal draft discarded."); return; }
+                        model = null; mode = "active"; say("Personal draft discarded.");
                     } catch (error) { say(errorText(error)); }
                     finally { if (!disposed && request === epoch) { setBusy(false); renderDetail(); } }
                 }], ["Continue editing", () => {}],

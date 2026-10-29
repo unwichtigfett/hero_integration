@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from uuid import UUID
 
 import frappe
 from frappe.model.document import Document
@@ -19,6 +20,8 @@ class HEROGraphQLMapping(Document):
         from hero_integration.services.mapping_draft_access import protect_managed_mapping
         protect_managed_mapping(self)
         previous = self.get_doc_before_save() if not self.is_new() else None
+        if previous and previous.status == 'Active' and previous.direction != self.direction:
+            frappe.throw('An active mapping definition direction is immutable; create a separate definition for the other direction.')
         snapshot = frappe.get_doc("HERO GraphQL Schema Snapshot", self.schema_snapshot)
         if snapshot.analysis_status != "Validated":
             frappe.throw("A validated schema snapshot is required.")
@@ -29,10 +32,18 @@ class HEROGraphQLMapping(Document):
             scopes.add((previous.source_instance or '', previous.schema_snapshot, previous.direction))
         if self.status == 'Active':
             scopes.add((getattr(snapshot, 'source_instance', '') or '', self.schema_snapshot, self.direction))
-        for scope in sorted(scopes):
-            lock_exchange_context(*scope)
+        context_fields = ('status', 'source_instance', 'schema_snapshot', 'direction', 'operation_kind',
+                          'operation_name', 'mapping_json', 'definition_id')
+        context_changed = bool(scopes) and (not previous or any(self.get(field) != previous.get(field) for field in context_fields))
+        if context_changed:
+            for scope in sorted(scopes):
+                if previous:
+                    require_exchange_context(*scope)
+                else:
+                    lock_exchange_context(*scope)
         try:
-            mapping = json.loads(self.mapping_json)
+            from hero_integration.services.personal_mapping_content import unique_json_object
+            mapping = json.loads(self.mapping_json, object_pairs_hook=unique_json_object)
             if not isinstance(mapping, dict):
                 raise ValueError
             if self.direction == "FRAPPE_TO_MUTATION":
@@ -70,11 +81,36 @@ class HEROGraphQLMapping(Document):
             )
             if len(contracts) != 1:
                 frappe.throw("Exactly one active schema-bound HERO Mutation Contract is required for writeback activation.")
-            _check_active_writeback_conflicts(snapshot.name, mapping["source"], self.name or "")
+            if context_changed:
+                _check_active_writeback_conflicts(snapshot.name, mapping["source"], self.name or "")
         if not self.definition_id:
             self.definition_id = self.name or ""
+        if not previous and self.definition_id:
+            try:
+                portable_candidate = str(UUID(self.definition_id))
+            except (ValueError, TypeError, AttributeError):
+                portable_candidate = ''
+            if portable_candidate == self.definition_id:
+                from hero_integration.hero_integration.doctype.hero_frappe_mapping.hero_frappe_mapping import _lock_active_target
+                _lock_active_target('personal-new-definition', frappe.local.site, portable_candidate)
+                matches = frappe.db.sql('select name from `tabHERO GraphQL Mapping` '
+                                        'where portable_definition_id=%s for update', (portable_candidate,))
+                if matches:
+                    frappe.throw('Definition identity is already enrolled by another mapping.')
+                from hero_integration.services.frappe_mapping_draft_storage import (
+                    lock_definition_drafts, lock_identity_drafts, personal_publication_parent,
+                )
+                if lock_definition_drafts(frappe, [portable_candidate]):
+                    frappe.throw('Definition identity is already used by a personal draft.')
+                for row in lock_identity_drafts(frappe, [portable_candidate], 'child'):
+                    parent = personal_publication_parent()
+                    if not (parent and row.owner_user == frappe.session.user and row.base_active_mapping == parent):
+                        frappe.throw('Definition identity is already used by a personal draft.')
         if previous and previous.definition_id and self.definition_id != previous.definition_id:
             frappe.throw("GraphQL mapping definition identity is immutable.")
+        portable = self.get('portable_definition_id') or ''
+        if portable != ((previous.get('portable_definition_id') or '') if previous else ''):
+            frappe.throw('Portable identity may only be enrolled through the identity service.')
         self.content_hash = hashlib.sha256(
             json.dumps(mapping, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
         ).hexdigest()
@@ -96,7 +132,7 @@ class HEROGraphQLMapping(Document):
 
     def on_trash(self):
         if self.status == 'Active':
-            lock_exchange_context(self.source_instance or '', self.schema_snapshot, self.direction)
+            require_exchange_context(self.source_instance or '', self.schema_snapshot, self.direction)
 
 
 def lock_exchange_context(source_instance, snapshot_name, direction):
@@ -104,6 +140,18 @@ def lock_exchange_context(source_instance, snapshot_name, direction):
     from hero_integration.hero_integration.doctype.hero_frappe_mapping.hero_frappe_mapping import _lock_active_target
     _lock_active_target('personal-draft-exchange', source_instance or '',
                         json.dumps([snapshot_name, direction], ensure_ascii=False, separators=(',', ':')))
+
+
+def require_exchange_context(source_instance, snapshot_name, direction):
+    """Existing Document.save already holds the parent row; never acquire context after it."""
+    from hero_integration.hero_integration.doctype.hero_frappe_mapping.hero_frappe_mapping import _lock_active_target
+    target = json.dumps([snapshot_name, direction], ensure_ascii=False, separators=(',', ':'))
+    key = json.dumps([frappe.local.site, 'personal-draft-exchange', source_instance or '', target],
+                     ensure_ascii=False, separators=(',', ':'))
+    name = 'hero-map:' + hashlib.sha256(key.encode()).hexdigest()[:52]
+    if name not in (getattr(frappe.db, '_hero_mapping_target_locks', None) or set()):
+        frappe.throw('Mapping context must be locked before saving an active definition; use the mapping service.')
+    _lock_active_target('personal-draft-exchange', source_instance or '', target)
 
 
 def _unique_json_object(pairs):
