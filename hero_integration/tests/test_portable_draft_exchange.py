@@ -440,6 +440,13 @@ class TestPortableDraftExchange(unittest.TestCase):
             fake.drafts[draft.key]['diagnostics_json'] = ''
             fake.drafts[draft.key]['warning_fingerprint'] = ''
             self.assertEqual(service.open_draft(IDENTITY, fake.session.user).content, content)
+            other_id = 'e21cbe54-e03b-4c9c-a041-c753c9972112'
+            ambiguous = service.open_new_draft({**definition, 'definition_id':other_id}, fake.session.user,
+                                               {**content, 'record_path':'customers'})
+            with self.assertRaisesRegex(ValueError, 'MAPPING_DRAFT_INVALID'):
+                api.mapping_draft_publish(other_id, 1, 1, 0, 0, confirmed=True)
+            self.assertEqual(fake.active, [])
+            service.discard(other_id, fake.session.user, ambiguous.generation, ambiguous.content_revision, confirmed=True)
             fake.drafts[draft.key]['warning_fingerprint'] = 'warning-proof'
             fake.drafts[draft.key]['diagnostics_json'] = json.dumps({'warnings':['Review this mapping']})
             with self.assertRaisesRegex(ValueError, 'MAPPING_DRAFT_INVALID'):

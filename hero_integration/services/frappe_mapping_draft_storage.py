@@ -704,6 +704,9 @@ class FrappeMappingDraftStorage:
                 try:
                     value = _portable_content(value, context['direction'])
                     _validate_portable_query(value, context['operation_name'], schema)
+                    if (value.get('records_path', value.get('record_path')) != context['operation_name']
+                            or ('records_path' in value and 'record_path' in value)):
+                        raise ValueError('Only a direct, unambiguous query-root record path is supported.')
                     operation = value.get('target_operation') or context['operation_name']
                     specs = [MappingSpec(operation=operation, definition_id=identity, **value['field_rules'][identity])
                              for identity in value['mapping_definition_ids']]
