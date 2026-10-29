@@ -139,17 +139,35 @@ def adapt_read_contract(s,contract,d,saved_query,*,offset,service_revision,mappi
 class MutationDraft: field:str; input_paths:tuple[tuple[str,...],...]; source_instance:str; revision:int; relation_mode:RelationMode=RelationMode.SINGLE; resolver_approved:bool=False; null_mode:NullMode=NullMode.MISSING_IS_UNCHANGED
 class MutationAdapter:
  def materialize(self,s,d):
-  if not d.source_instance or d.revision<1 or not d.input_paths or d.null_mode is not NullMode.MISSING_IS_UNCHANGED or (d.relation_mode is RelationMode.COLLECTION and not d.resolver_approved): raise MappingContractError('Non-executable mutation draft is incomplete.')
+  if (not isinstance(d.source_instance,str) or d.source_instance!=s.source_instance
+      or type(d.revision) is not int or d.revision<1 or not d.input_paths
+      or d.null_mode is not NullMode.MISSING_IS_UNCHANGED
+      or not isinstance(d.relation_mode, RelationMode)
+      or (d.relation_mode is RelationMode.COLLECTION and d.resolver_approved is not True)):
+   raise MappingContractError('Non-executable mutation draft is incomplete or outside the snapshot source.')
+  if (not isinstance(d.input_paths,tuple) or any(not isinstance(p,tuple) or not p or
+      any(not isinstance(part,str) or not NAME.fullmatch(part) for part in p) for p in d.input_paths)):
+   raise MappingContractError('Mutation input paths must contain GraphQL names.')
+  if any(a==b[:len(a)] for index,a in enumerate(d.input_paths) for j,b in enumerate(d.input_paths) if index!=j):
+   raise MappingContractError('Mutation input paths overlap or repeat.')
   f=next((x for x in s.ir.mutation_fields if x.name==d.field),None)
   if not f: raise MappingContractError('Unknown mutation field.')
   args={a.name:a for a in f.arguments}
+  input_types=[]
   for path in d.input_paths:
-   if not path: raise MappingContractError('Empty mutation input path.')
    current=args.get(path[0])
    if current is None: raise MappingContractError('Unknown mutation argument.')
    for segment in path[1:]:
-    parent=s.ir.type_named(current.type_ref.named_type() or '')
+    parent_ref=current.type_ref
+    if parent_ref.kind=='NON_NULL': parent_ref=parent_ref.of_type
+    if parent_ref is None or parent_ref.kind=='LIST': raise MappingContractError('Mutation collection paths require an explicit element binding.')
+    parent=s.ir.type_named(parent_ref.named_type() or '')
     if parent is None or parent.kind!='INPUT_OBJECT': raise MappingContractError('Unsupported mutation input path.')
     current=next((x for x in parent.input_fields if x.name==segment),None)
     if current is None: raise MappingContractError('Unknown mutation input path.')
-  return {'executable':False,'field':f.name,'snapshot_fingerprint':s.fingerprint,'source_instance':d.source_instance,'revision':d.revision,'input_paths':d.input_paths}
+   leaf_ref=current.type_ref.of_type if current.type_ref.kind=='NON_NULL' else current.type_ref
+   if leaf_ref is not None and leaf_ref.kind=='LIST' and d.relation_mode is not RelationMode.COLLECTION:
+    raise MappingContractError('Mutation list input requires an explicitly approved collection binding.')
+   input_types.append({'path':list(path),'type':current.type_ref.render(), 'nullable':current.type_ref.kind!='NON_NULL'})
+  return {'executable':False,'field':f.name,'snapshot_fingerprint':s.fingerprint,'source_instance':d.source_instance,
+          'revision':d.revision,'input_paths':d.input_paths,'input_types':input_types,'null_mode':d.null_mode.value}
