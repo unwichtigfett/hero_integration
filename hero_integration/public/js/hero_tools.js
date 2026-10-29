@@ -352,7 +352,7 @@
         }
         async run(action) {if(this.busy)return;this.busy=true;this.updateActions();this.notice.classList.remove('text-danger');try{this.notice.textContent='Loading …';await action();if(this.notice.textContent==='Loading …')this.notice.textContent='';}catch(e){this.notice.textContent=e.message;this.notice.classList.add('text-danger');if(this.tool==='services'){this.validation=null;this.queryOutput.textContent=e.message;}}finally{this.busy=false;this.updateActions();}}
         scope(schema=false) {return {connection_id:this.context.connection_id,binding_generation:this.context.binding_generation,...(schema?{schema_fingerprint:this.schema}: {})};}
-        snapshotLabel(snapshot){const coverage=snapshot.coverage||{},counts=Number.isInteger(coverage.types)?`${coverage.types} types · ${coverage.nodes} nodes`:'no valid graph';return `${snapshot.kind||'Saved snapshot'} · ${snapshot.name} · ${counts}`;}
+        snapshotLabel(snapshot){const coverage=snapshot.coverage||{},counts=Number.isInteger(coverage.types)?`${coverage.types} types · ${coverage.nodes} nodes`:'no valid graph';return `${snapshot.kind||'Saved snapshot'} · ${snapshot.display_name||snapshot.name} · ${counts}`;}
         updateSnapshotSelector(coverage){
             if(!this.snapshotPicker)return;
             const snapshots=Array.isArray(this.context?.snapshots)?this.context.snapshots:[];
@@ -363,7 +363,7 @@
             const selected=this.context?.selected_snapshot_metadata,selectedCoverage=coverage||selected?.coverage||{};
             if(!selected){this.snapshotMeta.textContent='No validated saved GraphQL snapshot is available.';return;}
             const counts=Number.isInteger(selectedCoverage.types)?`${selectedCoverage.types} types · ${selectedCoverage.nodes} nodes · ${selectedCoverage.edges} relations`:'graph analysis unavailable';
-            this.snapshotMeta.textContent=`${selected.kind} · Snapshot ${selected.name} · ${selected.modified||'date unavailable'} · ${selected.schema_fingerprint} · ${counts}`;
+            this.snapshotMeta.textContent=`${selected.kind} · Snapshot ${selected.display_name||selected.name} · ${selected.modified||'date unavailable'} · ${selected.schema_fingerprint} · ${counts}`;
         }
         selectSnapshot(name){
             const snapshot=(this.context?.snapshots||[]).find(item=>item.name===name);
@@ -771,7 +771,7 @@
         rememberButton(node,scope){
             // Only rendered for a real, single node detail; overview class cards never reach detailContents.
             const store=window.hero_integration_bookmarks;if(!store||!node?.node_id||!scope?.schema_fingerprint)return null;
-            const identity={snapshot_name:scope.connection_id,schema_fingerprint:scope.schema_fingerprint,node_id:node.node_id,node_name:node.name,node_kind:node.kind};
+            const identity={snapshot_name:scope.connection_id,snapshot_label:this.context?.selected_snapshot_metadata?.display_name||scope.connection_id,schema_fingerprint:scope.schema_fingerprint,node_id:node.node_id,node_name:node.name,node_kind:node.kind};
             const b=button('Remember for Mapping',()=>{if(this.scopeKey(scope)!==this.scopeKey()){this.notice.textContent=errors.SCHEMA_CHANGED;return;}store.remember(identity);});
             b.className='btn btn-sm ht-node-action ht-node-action--remember ht-remember';b.title='Remember this node under your own alias for the Mapping Editor. No mapping is created.';return b;
         }

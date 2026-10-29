@@ -115,9 +115,18 @@ test('a stale draft response never fills a newer node detail', async () => {
   assert.doesNotMatch(ws.nodeDetail.textContent, /Save Query/);
 });
 
-test('Remember for Mapping stores the selected node identity', () => {
+test('Remember for Mapping stores the node identity and shows the snapshot display name', () => {
   const {ws, scope, remembered} = load();
   ws.detailContents(ws.focusDetail, ROOT_FIELD, scope, () => {});
   buttonsOf(ws.focusDetail).find((b) => b._text === 'Remember for Mapping').click();
-  assert.equal(JSON.stringify(remembered), JSON.stringify([{snapshot_name: 'SNAPSHOT', schema_fingerprint: 'fp', node_id: 'field:Query.contact', node_name: 'contact', node_kind: 'FIELD'}]));
+  assert.equal(JSON.stringify(remembered), JSON.stringify([{snapshot_name: 'SNAPSHOT', snapshot_label: 'SNAPSHOT', schema_fingerprint: 'fp', node_id: 'field:Query.contact', node_name: 'contact', node_kind: 'FIELD'}]));
+});
+
+test('the remember dialog shows S-ddmmyy-NN while the UID stays the stored identity', () => {
+  const {ws, scope, remembered} = load();
+  ws.context = {selected_snapshot_metadata: {display_name: 'S-291026-02'}};
+  ws.detailContents(ws.focusDetail, ROOT_FIELD, scope, () => {});
+  buttonsOf(ws.focusDetail).find((b) => b._text === 'Remember for Mapping').click();
+  assert.equal(remembered.at(-1).snapshot_name, 'SNAPSHOT');
+  assert.equal(remembered.at(-1).snapshot_label, 'S-291026-02');
 });

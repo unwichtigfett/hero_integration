@@ -21,6 +21,8 @@ class SnapshotFrappe:
 
     def get_all(self, doctype, **kwargs):
         self.calls.append((doctype, kwargs))
+        if "limit_start" not in kwargs:
+            return self.rows  # display-name lookup reads all names and creation times
         start = kwargs["limit_start"]
         return self.rows[start:start + kwargs["limit_page_length"]]
 
@@ -38,6 +40,9 @@ class TestSnapshotPagination(unittest.TestCase):
         self.assertEqual(last, [])
         for doctype, args in fake.calls:
             self.assertEqual(doctype, "HERO GraphQL Schema Snapshot")
+            self.assertNotIn("snapshot_json", args["fields"])
+            if "limit_start" not in args:
+                continue
             self.assertEqual(args["order_by"], "modified desc, name asc")
             self.assertEqual(args["limit_page_length"], 100)
             self.assertNotIn("snapshot_json", args["fields"])

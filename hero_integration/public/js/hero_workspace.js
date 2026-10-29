@@ -25,7 +25,7 @@
     // need an explicit release token. JavaScript must stay query-free when it
     // enters frappe.require(): Frappe owns the version parameter and uses the
     // original extension to select its script loader.
-    const ASSET_RELEASE = "20261029.34a";
+    const ASSET_RELEASE = "20261029.35a";
     const ASSETS = [
         "/assets/hero_integration/css/hero_tools.css",
         "/assets/hero_integration/css/hero_adapter.css",
@@ -201,7 +201,8 @@
                         {fieldname: "node_name", fieldtype: "Data", label: "Original node", read_only: 1, default: identity.node_name},
                         {fieldname: "node_kind", fieldtype: "Data", label: "Node type", read_only: 1, default: identity.node_kind},
                         {fieldname: "node_id", fieldtype: "Data", label: "GraphQL node ID", read_only: 1, default: identity.node_id},
-                        {fieldname: "snapshot_name", fieldtype: "Data", label: "Snapshot", read_only: 1, default: identity.snapshot_name},
+                        // The label is display only; the internal snapshot name is what gets saved.
+                        {fieldname: "snapshot_label", fieldtype: "Data", label: "Snapshot", read_only: 1, default: identity.snapshot_label || identity.snapshot_name},
                         {fieldname: "alias", fieldtype: "Data", label: "Alias", reqd: 1,
                             description: "A readable name for the Mapping Editor. It never replaces the technical node identity."},
                     ],

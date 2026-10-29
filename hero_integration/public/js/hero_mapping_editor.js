@@ -217,6 +217,12 @@
     };
     const isOwnedExportLink = (link, ownedLink) => Boolean(ownedLink) && link === ownedLink;
     const mappingTabs = Object.freeze(["Query", "Mutation", "Binding"]);
+    // Snapshots keep their internal name (UID); the UI shows the server display name S-ddmmyy-NN.
+    const snapshotLabels = new Map();
+    const snapshotLabel = (name) => (name && snapshotLabels.get(name)) || name;
+    const snapshotTime = (row) => String(row?.creation || row?.captured_at || row?.modified || "");
+    const newestValidatedSnapshot = (rows) => (rows || []).filter((row) => row?.analysis_status === "Validated")
+        .reduce((best, row) => !best || snapshotTime(row) > snapshotTime(best) || (snapshotTime(row) === snapshotTime(best) && row.name > best.name) ? row : best, null);
     async function readSnapshotPages(fetchPage, isCurrent) {
         const result = [], seen = new Set();
         for (let start = 0; ; start += 100) {
@@ -228,13 +234,14 @@
                 seen.add(item.name);
             }
             result.push(...page);
+            page.forEach((item) => snapshotLabels.set(item.name, typeof item.display_name === "string" && item.display_name ? item.display_name : item.name));
             if (page.length < 100) return result;
             if (start > 2147483547) throw new Error('Snapshot list exceeds the supported range.');
         }
     }
     const directionForTab = (tab) => tab === "Query" ? "QUERY_TO_FRAPPE" : tab === "Mutation" ? "FRAPPE_TO_MUTATION" : null;
     const definitionChoice = (item, index) => ({...item, label: item.operation_name || item.operation || "",
-        context: [index == null ? "" : `Definition ${index + 1}`, item.kind, item.target_doctype, item.schema_snapshot,
+        context: [index == null ? "" : `Definition ${index + 1}`, item.kind, item.target_doctype, snapshotLabel(item.schema_snapshot),
             item.revision == null ? "" : `Revision ${item.revision}`].filter(Boolean).join(" · ")});
     const objectFieldContext = (field) => {
         const args = (items) => (items || []).map((arg) => `${arg.name}: ${arg.type}`).join(", ");
@@ -488,7 +495,7 @@
         const admin = Boolean(window.hero_integration_ui?.isSystemManager);
         let disposed = false, epoch = 0, busy = false, sharedDirty = false, model = null, active = null, mode = "active", selected = 0, ownedDownload = null;
         let search = String(context.mapping_search || ""), start = Number(context.mapping_start || 0), listing, snapshotFilter = "";
-        let revisionsStart = 0, returnFocus = null, fieldFilter = "", detailRequest = 0, exchangeSequence = 0;
+        let revisionsStart = 0, returnFocus = null, fieldFilter = "", detailRequest = 0, exchangeSequence = 0, snapshotDefaultApplied = false;
         const exchanges = new Map();
         const exchangeSelections = new Map();
         const browsePaths = new Map();
@@ -558,7 +565,7 @@
                 resumePendingView(state.pendingView, {list: loadList, detail: open});
             } else {
                 active = null; model = null; mode = "active"; selected = 0; search = ""; start = 0; listing = null;
-                revisionsStart = 0; returnFocus = null; fieldFilter = ""; snapshotFilter = ""; loadList();
+                revisionsStart = 0; returnFocus = null; fieldFilter = ""; snapshotFilter = ""; snapshotDefaultApplied = false; loadList();
             }
         }
         updateTabs();
@@ -620,6 +627,16 @@
         async function loadList(selectFirst = false) {
             const request = ++epoch; entryInteracted = false; pendingView = {kind: "list", selectFirst}; ruleCache.clear(); active = null; model = null; mode = "active";
             rowChangeHandler = null; root.off("hero-mapping-content-change"); toolbar.empty(); body.empty(); say("Loading active mappings…");
+            if (admin && !snapshotDefaultApplied) {
+                // The newest validated snapshot is selected by default; "All readable snapshots" stays an explicit choice.
+                snapshotDefaultApplied = true;
+                try {
+                    const snapshots = await readSnapshotPages((args) => rpc("schema_snapshot_list", args), () => !disposed && request === epoch);
+                    if (disposed || request !== epoch) return;
+                    const latest = newestValidatedSnapshot(snapshots);
+                    if (latest && !snapshotFilter) snapshotFilter = latest.name;
+                } catch (_) { /* Without the snapshot list all readable snapshots stay visible. */ }
+            }
             renderList();
             try {
                 const result = await rpc("frontend_mapping_list", {search, start, page_size: 20, direction: directionForTab(tab)});
@@ -677,7 +694,7 @@
                     if (preferredSnapshot && !valid.some((row) => row.name === preferredSnapshot)) {
                         limitNotice.text(`${limitNotice.text()} ${text('The previously selected snapshot is not available in this result. Select a validated snapshot again.')}`.trim());
                     }
-                    valid.forEach((row) => snapshot.append($('<option></option>').val(row.name).text(row.name)));
+                    valid.forEach((row) => snapshot.append($('<option></option>').val(row.name).text(snapshotLabel(row.name))));
                     snapshot.prop('disabled', false); info.text(text('Choose a validated snapshot.'));
                     if (preferredSnapshot && valid.some((row) => row.name === preferredSnapshot)) {
                         snapshot.val(preferredSnapshot); await loadOperations(preferredSnapshot, preferredOperation);
@@ -922,7 +939,8 @@
                 viewEpoch = epoch; loadSnapshots(name, operation);
             });
             renderSavedNodes(section, {viewTab, snapshot, operations, source, info, loadSnapshots, current: () => !disposed && epoch === viewEpoch && tab === viewTab && section[0].isConnected});
-            body.append(section); loadSnapshots();
+            // Preselect the workspace snapshot (the newest validated one by default).
+            body.append(section); loadSnapshots(snapshotFilter);
         }
         function renderSavedNodes(section, view) {
             // Saved HERO Nodes: personal bookmarks from API Analyzer / Graph Viewer.
@@ -978,7 +996,7 @@
             }
             function row(item) {
                 const entry = $("<div class='hero-mapping-saved-node' role='listitem'></div>");
-                entry.append($('<strong></strong>').text(item.alias), $('<span></span>').text(` · ${item.node_name} · ${item.node_kind} · ${item.schema_snapshot} · ${item.status}`));
+                entry.append($('<strong></strong>').text(item.alias), $('<span></span>').text(` · ${item.node_name} · ${item.node_kind} · ${snapshotLabel(item.schema_snapshot)} · ${item.status}`));
                 entry.attr('title', item.reason || '');
                 entry.append(button(text('Use in Mapping'), () => use(item)).prop('disabled', item.status === 'UNRESOLVABLE'));
                 entry.append(button(text('Rename'), () => frappe.prompt({fieldname: 'alias', fieldtype: 'Data', label: text('Alias'), reqd: 1, default: item.alias},
@@ -1017,7 +1035,7 @@
                 .then((rows) => {
                     if (!rows || disposed || epoch !== viewEpoch || tab !== viewTab || !section[0].isConnected) return;
                     const valid = rows.filter((row) => row.analysis_status === "Validated" && typeof row.source_instance === "string" && row.source_instance);
-                    valid.forEach((row) => select.append($("<option></option>").val(row.name).text(`${row.name} · ${row.source_instance}`)));
+                    valid.forEach((row) => select.append($("<option></option>").val(row.name).text(`${snapshotLabel(row.name)} · ${row.source_instance}`)));
                     const selected = exchangeSelections.get(direction);
                     if (selected && valid.some((row) => row.name === selected.snapshot_name && row.source_instance === selected.source_instance)) select.val(selected.snapshot_name);
                     else if (selected) { exchangeSelections.delete(direction); draw(); }
@@ -1043,7 +1061,7 @@
                     if (!Array.isArray(result.items)) throw new Error("Invalid personal draft list.");
                     list.empty(); message.text(result.items.length ? "" : text("No personal drafts on this page."));
                     result.items.forEach((item) => list.append($("<p></p>").append(button(
-                        `${item.operation_name} · ${item.snapshot_name} · ${item.definition_id}`,
+                        `${item.operation_name} · ${snapshotLabel(item.snapshot_name)} · ${item.definition_id}`,
                         () => leave(() => openParentlessDraft(item))))));
                     pager.empty().append(button("Previous drafts", () => load(Math.max(0, offset - 50))).prop("disabled", !offset),
                         button("Next drafts", () => load(offset + 50)).prop("disabled", !result.has_more));
@@ -1278,15 +1296,16 @@
         }
         function renderWorkspaceContext() {
             const header = $("<div class='hero-mapping-workspace-context'></div>").appendTo(body);
-            choice("GraphQL schema snapshot", snapshotFilter || "All readable snapshots", header, async (search, offset) => {
+            choice("GraphQL schema snapshot", snapshotFilter ? snapshotLabel(snapshotFilter) : "All readable snapshots", header, async (search, offset) => {
                 const currentEpoch = epoch;
                 const snapshots = admin ? await readSnapshotPages((args) => rpc("schema_snapshot_list", args), () => !disposed && epoch === currentEpoch) : [];
-                const options = [{name: "", label: "All readable snapshots"}, ...(snapshots || []).filter((item) => item.analysis_status === "Validated").map((item) => ({name: item.name, label: item.name}))]
-                    .filter((item) => item.label.toLowerCase().includes(search.toLowerCase()));
+                const validated = (snapshots || []).filter((item) => item.analysis_status === "Validated").sort((a, b) => snapshotTime(b).localeCompare(snapshotTime(a)));
+                const options = [{name: "", label: "All readable snapshots"}, ...validated.map((item) => ({name: item.name, label: snapshotLabel(item.name)}))]
+                    .filter((item) => `${item.label} ${item.name}`.toLowerCase().includes(search.toLowerCase()));
                 return {items: options.slice(offset, offset + 20), total: options.length};
             }, (item) => leave(() => { snapshotFilter = item.name; active = null; model = null; renderList(); })).prop("hidden", !admin);
             renderDefinitionChooser(header).prop("hidden", !admin);
-            if (active) header.append($("<span class='text-muted'></span>").text(`${active.schema_snapshot || text("Snapshot not provided")} · ${text("Revision")}: ${active.revision} · ${mode === "draft" ? text("Personal draft") : active.status || text("Active")}`));
+            if (active) header.append($("<span class='text-muted'></span>").text(`${snapshotLabel(active.schema_snapshot) || text("Snapshot not provided")} · ${text("Revision")}: ${active.revision} · ${mode === "draft" ? text("Personal draft") : active.status || text("Active")}`));
         }
         function renderMappingsTable(parent) {
             const section = $("<section class='hero-mapping-active' aria-label='Active Mappings'></section>").appendTo(parent);
@@ -1304,10 +1323,14 @@
             const valid = (n) => !disposed && epoch === tableEpoch && n === sequence && section[0].isConnected;
             const draw = () => {
                 table.find("tbody").empty();
+                // In draft mode the open definition shows the personal draft rows, so field mappings are chosen here, not in a separate draft table.
+                const draftOpen = (item, kind) => mode === "draft" && Boolean(model) && kind === "graphql" && active?.mapping_type === "graphql" && active?.name === item.name;
                 const entries = [...data.graphql_mappings.map((item) => ({item, kind: "graphql"})), ...data.frappe_mappings.map((item) => ({item, kind: "frappe"}))];
+                if (mode === "draft" && model && active?.parentless && !entries.some(({item, kind}) => draftOpen(item, kind))) entries.unshift({item: active, kind: "graphql"});
                 const needle = fieldSearch.val().trim().toLowerCase();
-                entries.filter(({item}) => (!snapshotFilter || item.schema_snapshot === snapshotFilter) && (!operation.val() || (item.operation_name || item.operation) === operation.val())).forEach(({item, kind}) => {
-                    const definition = item.definition || item;
+                entries.filter(({item, kind}) => draftOpen(item, kind) || ((!snapshotFilter || item.schema_snapshot === snapshotFilter) && (!operation.val() || (item.operation_name || item.operation) === operation.val()))).forEach(({item, kind}) => {
+                    const isDraft = draftOpen(item, kind);
+                    const definition = isDraft ? model.content : item.definition || item;
                     const linked = new Map([...ruleCache, ...data.frappe_mappings.map((rule) => [rule.definition_id, rule])]);
                     const projected = kind === "frappe" ? [{source: item.source_path, target: `${item.target_doctype}.${item.target_field}`, app: "Not provided", index: 0}]
                         : rows(definition).map((row, index) => {
@@ -1326,14 +1349,18 @@
                             if (active?.name === item.name && active?.mapping_type === kind) { selected = row.index; renderDetail(); }
                             else leave(async () => { await open(item, kind, false); if (active?.name === item.name) { selected = row.index; renderDetail(); } });
                         };
-                        const tr = $("<tr tabindex='0'></tr>").toggleClass("is-selected", isSelected).attr({"aria-selected": String(isSelected), "aria-label": `${item.operation_name || item.operation}: ${row.source} to ${row.target}`, "data-mapping-name": item.name});
+                        const tr = $("<tr tabindex='0'></tr>").toggleClass("is-selected", isSelected).toggleClass("is-draft", isDraft).attr({"aria-selected": String(isSelected), "aria-label": `${item.operation_name || item.operation}: ${row.source} to ${row.target}`, "data-mapping-name": item.name});
                         tr.on("click", select).on("keydown", (event) => { if (["Enter", " "].includes(event.key)) { event.preventDefault(); select(); } });
-                        for (const value of [item.status || "Active", item.operation_name || item.operation, row.source, row.app, row.target, item.revision]) tr.append($("<td></td>").text(String(value ?? "Not provided")));
+                        for (const value of [isDraft ? text("Personal draft") : item.status || "Active", item.operation_name || item.operation, row.source, row.app, row.target, item.revision]) tr.append($("<td></td>").text(String(value ?? "Not provided")));
                         table.find("tbody").append(tr);
                     });
                 });
                 if (!table.find("tbody").children().length) table.find("tbody").append($("<tr><td colspan='6'></td></tr>").find("td").text(text("No active mappings match this context or filter. Try another snapshot, search or page.")).end());
+                body.find(".hero-mapping-context").trigger("hero-mapping-summary-refresh");
             };
+            // Draft edits redraw the rows in place; the handler is kept per tab like before.
+            rowChangeHandler = () => { if (data && section[0].isConnected) draw(); };
+            root.off("hero-mapping-content-change").on("hero-mapping-content-change", rowChangeHandler);
             const load = async () => {
                 const n = ++sequence; pending = true; table.find("tbody").html("<tr><td colspan='6'>Loading active mappings…</td></tr>");
                 try {
@@ -1402,82 +1429,61 @@
             renderWorkspaceContext();
             const value = content();
             renderContext(value);
-            renderMappingsTable(body);
-            body.append(toolbar, draftStatus);
-            toolbar.addClass("hero-mapping-workbench-actions");
-            body.append($("<p class='text-muted hero-mapping-contract-note'></p>").text(text("Delete changes the personal draft only. Activation publishes a saved valid draft and does not start synchronization.")));
-            const list = rows(value);
-            const grid = $("<div class='hero-mapping-editor-grid'></div>");
-            const left = $("<section class='hero-mapping-table-wrap'></section>");
-            const parameters = $("<details class='hero-mapping-parameters'></details>")
-                .append($("<summary></summary>").text(text("Rule parameters, transformation and additional configuration")));
-            const detail = $("<section class='hero-mapping-row-detail' aria-label='Selected field mapping'></section>").appendTo(parameters);
-            const table = $("<table class='table table-sm hero-mapping-table'><thead><tr><th>Source</th><th>Target</th><th>Rule</th><th></th></tr></thead><tbody></tbody></table>");
             const editable = mode === "draft";
-            const heading = $("<div class='hero-mapping-actions'></div>").append($("<h4></h4>").text(text(editable ? "Personal draft field mappings" : "Selected definition field mappings")));
+            const list = rows(value);
+            const contextSection = body.find(".hero-mapping-context").last();
             const removeRow = (row) => {
                 if (!row) return;
                 if (row.additional) model.removeAdditional(row.index); else model.remove(row.index);
                 selected = 0; renderDetail();
-                const next = root.find("[data-row-selection]").eq(Math.min(row.index, rows(model.content).length - 1));
-                if (next.length) next.trigger("focus");
-                else root.find("button").filter((_, el) => el.textContent.startsWith(text("Undo removal"))).trigger("focus");
+                root.find("[data-delete-mapping]").trigger("focus");
                 say("Mapping removed locally. Undo is available until a successful save.");
             };
-            if (editable) {
-                heading.append(button("Delete selected mapping", () => removeRow(list[selected])).prop("disabled", !list[selected]));
-                heading.append(button('Activate', activateDraft).attr('data-activate-draft', ''));
+            // Personal draft actions live directly in Map Fields; there is no separate lower draft area.
+            if (editable && model) {
+                const actions = $("<div class='hero-mapping-draft-actions' role='group' aria-label='Personal draft actions'></div>");
+                if (!model.creation) {
+                    actions.append(button("Create Mapping", () => { model.creation = {}; renderDetail(); }).attr("data-create-mapping", ""));
+                } else {
+                    actions.append($("<p class='hero-mapping-draft-hint'></p>").text(text("Choose source and target for the new mapping; existing mappings remain unchanged.")),
+                        button("Add mapping to draft", () => {
+                            try { model.createAdditional(); selected = rows(model.content).length - 1; renderDetail(); say("New mapping added locally. Save the draft to keep it."); }
+                            catch (error) { contextSection.find("[role='status']").first().text(error.message); }
+                        }, true).attr("data-create-mapping", ""),
+                        button("Cancel new mapping", () => { model.creation = null; renderDetail(); }));
+                }
+                actions.append(button("Delete Mapping", () => removeRow(list[selected])).attr("data-delete-mapping", "").prop("disabled", !list[selected] || Boolean(model.creation)));
+                if (model.undo.length) actions.append(button(`Undo removal (${model.undo.length})`, () => { model.restore(); renderDetail(); }));
+                if (Array.isArray(value.mapping_definition_ids)) actions.append(button("Add existing field rule", addReference));
+                else if (!value.source && !value.target && active.direction === "FRAPPE_TO_MUTATION") actions.append(button("Add field mapping", () => { model.set(["source"], {}); model.set(["target"], {}); renderDetail(); }).prop("disabled", model.undo.length > 0));
+                actions.append(button("Activate Mapping", activateDraft).attr("data-activate-draft", ""));
+                actions.append($("<p class='text-muted hero-mapping-contract-note'></p>").text(text("Delete changes the personal draft only. Saving keeps a personal draft; Activate publishes a saved valid draft and does not start synchronization.")));
+                contextSection.append(actions);
             }
-            left.append(heading);
-            detail.attr("data-editable", String(editable));
-            const searchInput = field("Filter selected field mappings", fieldFilter, (value) => { fieldFilter = value; }, left);
-            const drawRows = () => {
-                const focusedRow = table.find(":focus").attr("data-row-selection");
-                table.find("tbody").empty(); const needle = searchInput.val().trim().toLowerCase();
-                list.forEach((row, index) => {
-                    const v = row.value, linked = ownRule(value, row.id) || ruleCache.get(row.id), source = row.reference ? (linked?.source_path || row.id) : `${v.source?.doctype || ""}.${v.source?.field || ""}`;
-                    const target = row.reference ? (linked ? `${linked.target_doctype}.${linked.target_field}` : text("Existing active field rule"))
-                        : mutationMapping(v) ? `${v.target?.operation || ""} / ${v.target?.argument || ""}.${v.target?.field_path ?? v.target?.field ?? ""}`
-                            : `${v.target?.doctype || ""}.${v.target?.field_path ?? v.target?.field ?? ""}`;
-                    const rule = row.reference ? (linked?.transformation || text("Referenced rule")) : v.transformation || v.transform || text("No transformation configured");
-                    if (needle && !`${source} ${target} ${rule}`.toLowerCase().includes(needle)) return;
-                    const tr = $("<tr></tr>").toggleClass("is-selected", selected === index);
-                    tr.append($("<td></td>").append(button(source, () => { selected = index; drawRows(); renderRow(row, detail); body.find(".hero-mapping-context").trigger("hero-mapping-selection-change"); }).attr("data-row-selection", index)), $("<td></td>").text(target), $("<td></td>").text(typeof rule === "string" ? rule : text("Configured special rule")));
-                    const actions = $("<td></td>");
-                    if (editable) actions.append(button("Remove", () => removeRow(row)));
-                    tr.append(actions); table.find("tbody").append(tr);
-                });
-                if (list.length && !table.find("tbody").children().length) table.find("tbody").append($("<tr><td colspan='4'></td></tr>").find("td").text(text("No field mappings match this filter.")).end());
-                body.find(".hero-mapping-context").trigger("hero-mapping-summary-refresh");
-                if (focusedRow !== undefined) table.find(`[data-row-selection="${focusedRow}"]`).trigger("focus");
-            };
-            rowChangeHandler = drawRows;
-            root.off("hero-mapping-content-change").on("hero-mapping-content-change", rowChangeHandler);
-            drawRows(); left.append(table);
+            // Transformation, rule parameters and definition settings stay available as collapsible details under Map Fields.
+            const parameters = $("<details class='hero-mapping-parameters hero-mapping-rule-details'></details>")
+                .append($("<summary></summary>").text(text("Rule details (transformation and parameters)")));
+            const detail = $("<section class='hero-mapping-row-detail' aria-label='Selected field mapping'></section>").attr("data-editable", String(editable)).appendTo(parameters);
+            for (const key of ["records_path", "record_path", "identity_path", "target_operation"]) {
+                if (!(key in value)) continue;
+                if (editable && typeof value[key] === "string") field(key.replaceAll("_", " "), value[key], (v) => model.set([key], v), parameters);
+                else parameters.append($("<p></p>").text(`${key}: ${JSON.stringify(value[key])}`));
+            }
+            parameters.append($("<details></details>").append($("<summary></summary>").text(text("Configured structure and additional rules")), safeJson(value)));
+            contextSection.append(parameters);
+            if (list[selected]) renderRow(list[selected], detail);
+            else detail.append($("<p></p>").text(text(list.length ? "Choose a field mapping row." : "No field mappings in this definition.")));
+            renderMappingsTable(body);
+            body.append(toolbar, draftStatus);
+            toolbar.addClass("hero-mapping-workbench-actions");
             const tableEpoch = epoch;
             list.filter((row) => row.reference && !ownRule(value, row.id) && !ruleCache.has(row.id)).forEach(async (row) => {
                 try {
                     const rule = await readActiveRule(row.id);
-                    if (rule && !disposed && tableEpoch === epoch && table[0].isConnected && !ruleCache.has(row.id)) { ruleCache.set(row.id, rule); drawRows(); }
+                    if (rule && !disposed && tableEpoch === epoch && !ruleCache.has(row.id)) { ruleCache.set(row.id, rule); rowChangeHandler?.(); }
                 } catch (_) { /* The reference remains visible; details offer the error context. */ }
             });
-            if (!list.length) left.append($("<p></p>").text(text("No field mappings in this definition.")));
-            if (editable) {
-                if (Array.isArray(value.mapping_definition_ids)) left.append(button("Add existing field rule", addReference));
-                else if (!value.source && !value.target && active.direction === "FRAPPE_TO_MUTATION") left.append(button("Add field mapping", () => { model.set(["source"], {}); model.set(["target"], {}); renderDetail(); }).prop("disabled", model.undo.length > 0));
-                left.append(button(`Undo removal (${model.undo.length})`, () => { model.restore(); renderDetail(); }).prop("disabled", !model.undo.length));
-            }
-            grid.append(left, parameters); body.append($("<details class='hero-mapping-selected-tools'></details>").prop("open", editable).append($("<summary></summary>").text(text("Selected definition and draft tools")), grid));
-            if (list[selected]) renderRow(list[selected], detail);
-            for (const key of ["records_path", "record_path", "identity_path", "target_operation"]) {
-                if (!(key in value)) continue;
-                if (editable && typeof value[key] === "string") field(key.replaceAll("_", " "), value[key], (v) => model.set([key], v));
-                else body.append($("<p></p>").text(`${key}: ${JSON.stringify(value[key])}`));
-            }
-            const structure = $("<details></details>").append($("<summary></summary>").text(text("Configured structure and additional rules")), safeJson(value));
-            body.append(structure);
             if (!admin) body.append($("<p class='text-muted'></p>").text(text("Employee read-only view")));
-            if (editable) body.append($("<p class='text-muted'></p>").text(text("Saving keeps a personal draft. It does not validate or activate the mapping.")));
             updateDirty(); if (busy) root.find("button,input,select,textarea").prop("disabled", true);
             if (model && !canSaveDraft(model, active)) root.find("[data-save-draft]").prop("disabled", true);
         }
@@ -1498,16 +1504,6 @@
             const sourcePane = $("<section class='hero-mapping-context-pane' data-mapping-side='source'></section>").append($("<h4></h4>").text(text(mutation ? "Source Frappe" : "Source HERO")));
             const targetPane = $("<section class='hero-mapping-context-pane' data-mapping-side='target'></section>").append($("<h4></h4>").text(text(mutation ? "Target HERO" : "Target Frappe")));
             const heroPane = mutation ? targetPane : sourcePane, frappePane = mutation ? sourcePane : targetPane;
-            if (mode === 'draft' && model) {
-                if (!model.creation) targetPane.append(button('New mapping', () => { model.creation = {}; renderDetail(); }));
-                else {
-                    targetPane.append($('<p></p>').text(text('Choose source and target for the new mapping; existing mappings remain unchanged.')),
-                        button('Create', () => {
-                            try { model.createAdditional(); selected = rows(model.content).length - 1; renderDetail(); say('New mapping added locally. Save the draft to keep it.'); }
-                            catch (error) { fieldNotice.text(error.message); }
-                        }), button('Cancel new mapping', () => { model.creation = null; renderDetail(); }));
-                }
-            }
             const heroControls = $("<div class='hero-mapping-selection-fields'></div>").appendTo(heroPane);
             const frappeControls = $("<div class='hero-mapping-selection-fields'></div>").appendTo(frappePane);
             const browseKey = `${tab}:${active?.definition_id || ""}:${selected}`;

@@ -575,16 +575,30 @@ def workspace_schema_refresh(connection_id: str = "", binding_generation: int | 
 
 
 def _schema_snapshot_rows(start: int = 0, page_size: int = 100) -> list[dict[str, object]]:
-    return frappe.get_all(
+    rows = frappe.get_all(
         "HERO GraphQL Schema Snapshot",
         fields=[
-            "name", "schema_fingerprint", "analysis_status", "analysis_detail", "modified",
+            "name", "schema_fingerprint", "analysis_status", "analysis_detail", "modified", "creation",
             "source_instance", "endpoint_fingerprint", "captured_at", "execution_contract_status",
         ],
         order_by="modified desc, name asc",
         limit_start=start,
         limit_page_length=page_size,
     )
+    if rows:
+        names = _snapshot_display_names()
+        for row in rows:
+            row["display_name"] = names.get(row["name"], row["name"])
+    return rows
+
+
+def _snapshot_display_names() -> dict[str, str]:
+    """Display names S-ddmmyy-NN for all snapshots; the internal name stays the identity everywhere."""
+    from hero_integration.services.snapshot_names import display_names
+
+    return display_names(frappe.get_all(
+        "HERO GraphQL Schema Snapshot", fields=["name", "creation", "captured_at", "modified"], order_by="creation asc, name asc",
+    ))
 
 
 @frappe.whitelist()
@@ -652,7 +666,15 @@ def graph_view(snapshot_name: str) -> dict[str, object]:
 @frappe.whitelist()
 def workspace_context(snapshot_name: str = "") -> dict[str, object]:
     frappe.only_for("System Manager")
-    snapshots = [_workspace_snapshot_metadata(row) for row in _schema_snapshot_rows()]
+    rows = _schema_snapshot_rows()
+    snapshots = [_workspace_snapshot_metadata(row) for row in rows]
+    if not snapshot_name:
+        # Without an explicit choice the newest usable snapshot is selected.
+        from hero_integration.services.snapshot_names import newest
+
+        usable = {item["name"] for item in snapshots if item["usable"]}
+        latest = newest([row for row in rows if row["name"] in usable])
+        snapshot_name = latest["name"] if latest else ""
     selected = next((item for item in snapshots if item["name"] == snapshot_name and item["usable"]), None)
     return {
         "connection_id": selected["name"] if selected else "",
@@ -675,6 +697,7 @@ def _workspace_snapshot_metadata(row: dict[str, object]) -> dict[str, object]:
     """Expose only selection metadata derived from an already saved snapshot."""
     item = {
         "name": row["name"],
+        "display_name": row.get("display_name") or row["name"],
         "schema_fingerprint": row["schema_fingerprint"],
         "analysis_status": row["analysis_status"],
         "modified": row["modified"],
