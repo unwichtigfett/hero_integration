@@ -31,6 +31,8 @@ class HEROFrappeMapping(Document):
         scope = getattr(self, 'personal_graphql_mapping', None) or ''
         previous = self.get_doc_before_save() if not self.is_new() else None
         old_scope = (previous.personal_graphql_mapping or '') if previous else ''
+        if previous and self.has_value_changed('mapping_revision'):
+            frappe.throw('Field-rule revision is managed by the mapping controller.')
         active_fields = ('status', 'operation', 'schema_snapshot', 'source_path', 'source_type', 'target_doctype',
                          'target_field', 'purpose', 'transformation', 'relation', 'priority',
                          'schema_dependencies', 'schema_manifest', 'definition_id', 'owner')
