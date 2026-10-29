@@ -258,7 +258,7 @@ class TestHeroDeskUiContract(unittest.TestCase):
     def test_mapping_editor_uses_existing_catalogs_and_scoped_table_details(self):
         source = MAPPING_EDITOR_JS.read_text()
         for contract in ("mapping_target_catalog", "mapping_target_catalog_page", "schema_operation_catalog",
-                         "hero-mapping-editor-grid", "hero-mapping-row-detail", "hero-mapping-table",
+                         "hero-mapping-rule-details", "hero-mapping-row-detail", "hero-mapping-table",
                          "Search ${label}", "My saved revisions — read only"):
             self.assertIn(contract, source)
         catalog_loader = source.split('const getFieldCatalog =', 1)[1].split('const page =', 1)[0]

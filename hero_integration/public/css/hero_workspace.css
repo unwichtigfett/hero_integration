@@ -206,3 +206,16 @@
 .hero-mapping-core .hero-mapping-metadata { align-content:start; }
 
 .hero-mapping-core .hero-mapping-selection-control > button, .hero-mapping-core .hero-mapping-selection-fields summary strong { height:36px; min-height:36px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+/* Personal draft actions and rule details sit inside Map Fields; there is no separate lower draft area. */
+.hero-mapping-core .hero-mapping-context > .hero-mapping-draft-actions,
+.hero-mapping-core .hero-mapping-context > .hero-mapping-rule-details { grid-column:1 / -1; }
+.hero-mapping-core .hero-mapping-draft-actions { display:flex; flex-wrap:wrap; gap:8px; align-items:center; padding:12px; border:2px solid var(--pc-border, var(--border-color)); border-radius:8px; background:var(--pc-surfaceRaised, var(--control-bg)); }
+.hero-mapping-core .hero-mapping-draft-actions > .hero-mapping-draft-hint,
+.hero-mapping-core .hero-mapping-draft-actions > .hero-mapping-contract-note { flex-basis:100%; margin:0; }
+.hero-mapping-core .hero-mapping-draft-actions [data-create-mapping] { font-weight:600; }
+.hero-mapping-core .hero-mapping-draft-actions [data-delete-mapping]:not(:disabled) { border-color:var(--hero-state-error, #b42318); color:var(--hero-state-error, #b42318); }
+.hero-mapping-core .hero-mapping-draft-actions [data-activate-draft] { border-color:var(--hero-state-ok, #17702f); color:var(--hero-state-ok, #17702f); font-weight:600; }
+.hero-mapping-core .hero-mapping-rule-details { padding:0 12px; border:1px solid var(--pc-border, var(--border-color)); border-radius:8px; }
+.hero-mapping-core .hero-mapping-rule-details[open] { padding-bottom:12px; }
+.hero-mapping-core .hero-mapping-table tr.is-draft > td:first-child { font-weight:600; box-shadow:inset 4px 0 0 var(--hero-state-warning, #845700); }
