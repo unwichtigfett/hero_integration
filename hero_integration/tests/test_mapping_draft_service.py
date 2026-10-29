@@ -25,6 +25,58 @@ class TestMappingDraftService(unittest.TestCase):
         self.storage.put_active(self.active)
         self.service = MappingDraftService(self.storage)
 
+    def test_new_definition_is_owned_parentless_and_revision_checked(self):
+        definition = {'site_scope': 'b9-acceptance-41i.localhost',
+            'definition_id': 'a16b15fa-7ca8-4722-b63c-ac60cc46629a',
+            'source_instance': 'source-one', 'snapshot_name': 'SNAPSHOT', 'schema_fingerprint': 'a' * 64,
+            'direction': 'QUERY_TO_FRAPPE', 'operation_kind': 'QUERY', 'operation_name': 'customers'}
+        owner = 'admin.one@example.invalid'
+        content = {'records_path': 'customers', 'identity_path': 'id'}
+        draft = self.service.open_new_draft(definition, owner, content)
+        self.assertEqual((draft.definition_id, draft.owner, draft.base_active_name, draft.base_active_revision),
+                         (definition['definition_id'], owner, '', 0))
+        self.assertEqual(draft.content_revision, 1)
+        saved = self.service.save(draft.definition_id, owner, 1, 0, {**content, 'page_size': 10}, expected_generation=1)
+        reopened = self.service.open_draft(draft.definition_id, owner)
+        self.assertEqual(reopened.content, saved.draft.content)
+        self.assertEqual(reopened.content_revision, 2)
+        with self.assertRaises(DraftConflict):
+            self.service.save(draft.definition_id, owner, 1, 0, content, expected_generation=1)
+        with self.assertRaises(DraftConflict):
+            self.service.open_draft(draft.definition_id, 'foreign@example.invalid')
+        self.assertEqual(self.storage.revisions()[0].kind, 'DRAFT_SAVE')
+
+    def test_new_definition_reimport_and_foreign_collision_fail_closed(self):
+        definition = {'site_scope': 'b9-acceptance-41i.localhost',
+            'definition_id': 'a16b15fa-7ca8-4722-b63c-ac60cc46629a',
+            'source_instance': 'source-one', 'snapshot_name': 'SNAPSHOT', 'schema_fingerprint': 'a' * 64,
+            'direction': 'QUERY_TO_FRAPPE', 'operation_kind': 'QUERY', 'operation_name': 'customers'}
+        content = {'records_path': 'customers', 'identity_path': 'id'}
+        first = self.service.open_new_draft(definition, 'alice@example.invalid', content)
+        repeat = self.service.open_new_draft(definition, 'alice@example.invalid', content)
+        self.assertEqual(first, repeat)
+        self.assertEqual(len(self.storage.revisions()), 1)
+        with self.assertRaises(DraftConflict):
+            self.service.open_new_draft(definition, 'bob@example.invalid', content)
+        with self.assertRaises(DraftConflict):
+            self.service.open_new_draft(definition, 'alice@example.invalid', {**content, 'identity_path': 'other'})
+        self.assertEqual(len(self.storage.revisions()), 1)
+        self.service.discard(first.definition_id, first.owner, 1, 1, confirmed=True)
+        reopened = self.service.open_new_draft(definition, first.owner, content)
+        self.assertEqual((reopened.generation, reopened.content_revision), (2, 1))
+        self.assertEqual(len(self.storage.revisions()), 2)
+
+    def test_new_definition_rejects_invalid_identity_and_direction(self):
+        definition = {'site_scope': 'site', 'definition_id': 'HERO-GQL-MAP-00001', 'source_instance': 'source',
+            'snapshot_name': 'snapshot', 'schema_fingerprint': 'a' * 64, 'direction': 'QUERY_TO_FRAPPE',
+            'operation_kind': 'QUERY', 'operation_name': 'customers'}
+        with self.assertRaises(MappingDraftError):
+            self.service.open_new_draft(definition, 'owner@example.invalid', {})
+        definition['definition_id'] = 'a16b15fa-7ca8-4722-b63c-ac60cc46629a'
+        definition['operation_kind'] = 'MUTATION'
+        with self.assertRaises(MappingDraftError):
+            self.service.open_new_draft(definition, 'owner@example.invalid', {})
+
     def test_reconciliation_reports_competing_additional_mappings_as_conflict(self):
         draft = self.service.open_draft(self.active.definition_id, 'owner@example.invalid')
         candidate = dict(draft.content, additional_mappings=[{'id': 'mine'}])

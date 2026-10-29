@@ -67,6 +67,7 @@ class FrappeMappingDraftStorage:
             import frappe as frappe_module
         self.frappe = frappe_module
         self._definition = None
+        self._parentless_identity = None
 
     def service(self) -> MappingDraftService:
         return MappingDraftService(self, canonicalize=self.canonicalize)
@@ -221,7 +222,7 @@ class FrappeMappingDraftStorage:
     def transaction(self, definition_id: str, actor: str):
         f = self.frappe
         self._authorize(actor)
-        if self._definition is not None:
+        if self._definition is not None or self._parentless_identity is not None:
             raise MappingDraftError("Nested personal draft operations are not supported.")
         savepoint = "hero_draft_" + uuid4().hex
         f.db.savepoint(savepoint)
@@ -233,12 +234,21 @@ class FrappeMappingDraftStorage:
                 "select * from `tabHERO GraphQL Mapping` where definition_id=%s for update",
                 (definition_id,), as_dict=True,
             )
-            if len(rows) != 1:
+            if len(rows) > 1:
                 raise MappingDraftError("Exactly one mapping definition is required.")
-            self._definition = f.get_doc(dict(rows[0], doctype="HERO GraphQL Mapping"))
-            self._definition.check_permission("read")
-            if self._definition.status != "Active":
-                raise MappingDraftError("A current active mapping definition is required.")
+            if rows:
+                self._definition = f.get_doc(dict(rows[0], doctype="HERO GraphQL Mapping"))
+                self._definition.check_permission("read")
+                if self._definition.status != "Active":
+                    raise MappingDraftError("A current active mapping definition is required.")
+            else:
+                from hero_integration.hero_integration.doctype.hero_frappe_mapping.hero_frappe_mapping import _lock_active_target
+                _lock_active_target('personal-new-definition', f.local.site, definition_id)
+                rows = f.db.sql('select name from `tabHERO GraphQL Mapping` where definition_id=%s for update',
+                                (definition_id,), as_dict=True)
+                if rows:
+                    raise DraftConflict('Definition appeared while its identity was being locked.')
+                self._parentless_identity = definition_id
             yield
         except Exception as error:
             try:
@@ -250,6 +260,7 @@ class FrappeMappingDraftStorage:
             raise
         finally:
             self._definition = None
+            self._parentless_identity = None
             _write_scope.reset(token)
         # No commit: outer request/job/test transaction retains the parent lock.
 
@@ -262,8 +273,77 @@ class FrappeMappingDraftStorage:
 
     def _scope(self):
         self._authorize(self.frappe.session.user)
-        if self._definition is None:
+        if self._definition is None and self._parentless_identity is None:
             raise PermissionError("A locked draft transaction is required.")
+
+    def active_or_none(self, definition_id):
+        self._scope()
+        if self._definition is None:
+            if self._parentless_identity != definition_id:
+                raise PermissionError('Mapping definition scope mismatch.')
+            return None
+        return self.active(definition_id)
+
+    def parentless(self, definition_id, actor):
+        self._scope()
+        if self._parentless_identity != definition_id or actor != self.frappe.session.user:
+            raise PermissionError('Parentless draft scope mismatch.')
+        value = self.draft(draft_key(self.frappe.local.site, definition_id, actor))
+        if value is not None and value.new_definition is None:
+            raise DraftConflict('Existing draft is not a new-definition draft.')
+        return value
+
+    def assert_new_identity_available(self, definition_id, actor):
+        self._scope()
+        if self._parentless_identity != definition_id or actor != self.frappe.session.user:
+            raise DraftConflict('Definition identity already exists.')
+        rows = self.frappe.db.sql('select owner_user from `tabHERO Mapping Draft` where definition_id=%s for update',
+                                  (definition_id,), as_dict=True)
+        if any(row.owner_user != actor for row in rows):
+            raise DraftConflict('Definition identity is already owned by another administrator.')
+
+    def validate_new_definition(self, definition, content):
+        from hero_integration.api import _validated_snapshot
+        from hero_integration.services.schema_operations import catalog
+        if definition['site_scope'] != self.frappe.local.site:
+            raise PermissionError('New definition belongs to another site.')
+        snapshot, schema = _validated_snapshot(definition['snapshot_name'], for_update=True)
+        snapshot.check_permission('read')
+        if (snapshot.schema_fingerprint != definition['schema_fingerprint']
+                or snapshot.source_instance != definition['source_instance']):
+            raise DraftConflict('New definition source or schema does not match the target snapshot.')
+        if definition['operation_name'] not in {item['operation_name'] for item in catalog(schema, definition['operation_kind'])}:
+            raise MappingDraftError('New definition operation is absent from the target snapshot.')
+        from hero_integration.services.personal_mapping_content import bounded, references, validate_rule
+        value = bounded(_object(content))
+        if value.get('native_task_onboarding') is not None:
+            raise MappingDraftError('Imported content cannot grant native Task onboarding authority.')
+        if definition['direction'] == 'QUERY_TO_FRAPPE':
+            identities = references(value)
+            rules = value.get('field_rules', {})
+            if not isinstance(rules, dict) or set(identities) != set(rules) or value.get('field_rule_bases'):
+                raise MappingDraftError('New query rules must be complete and have no imported local provenance.')
+            from hero_integration.services.direct_mapping import MappingSpec, validate_spec
+            from hero_integration.hero_integration.doctype.hero_frappe_mapping.hero_frappe_mapping import _FrappeMetadata
+            for identity in identities:
+                validate_rule(rules[identity])
+                try:
+                    validate_spec(MappingSpec(operation=value.get('target_operation') or definition['operation_name'],
+                                              definition_id=identity, **rules[identity]), _FrappeMetadata())
+                except (TypeError, ValueError) as error:
+                    raise MappingDraftError('New query field rule is incompatible with target metadata.') from error
+        else:
+            from hero_integration.services.frappe_writeback import normalise_draft_mapping, draft_source_type_compatible
+            from hero_integration.services.frappe_mapping_catalog import FrappePickerMetadata, validate_draft_writeback_source
+            from hero_integration.api import _mapping_values_preserved
+            normalized = normalise_draft_mapping(value, schema)
+            if (not _mapping_values_preserved(value, normalized)
+                    or normalized['target']['operation'] != definition['operation_name']):
+                raise MappingDraftError('New mutation content is incompatible with its operation.')
+            source = normalized['source']
+            field = validate_draft_writeback_source(source['doctype'], source['field'], FrappePickerMetadata())
+            if not draft_source_type_compatible(field.fieldtype, normalized['target']['graphql_type']):
+                raise MappingDraftError('New mutation source is incompatible with the target input.')
 
     def active(self, definition_id):
         self._scope()
@@ -276,7 +356,8 @@ class FrappeMappingDraftStorage:
 
     def draft(self, key):
         self._scope()
-        if key != draft_key(self.frappe.local.site, self._definition.definition_id, self.frappe.session.user):
+        identity = self._definition.definition_id if self._definition else self._parentless_identity
+        if key != draft_key(self.frappe.local.site, identity, self.frappe.session.user):
             raise PermissionError("A foreign personal draft cannot be accessed.")
         rows = self.frappe.db.sql(
             "select * from `tabHERO Mapping Draft` where draft_key=%s for update", (key,), as_dict=True,
@@ -288,19 +369,23 @@ class FrappeMappingDraftStorage:
             raise PermissionError("Personal draft ownership or site mismatch.")
         return MappingDraft(row.draft_key, row.site_scope, row.definition_id, row.owner_user,
                             int(row.generation), row.state, json.loads(row.content_json), row.content_hash,
-                            int(row.content_revision), row.base_active_mapping, int(row.base_active_revision),
-                            row.base_active_hash, row.base_schema_fingerprint,
+                            int(row.content_revision), row.base_active_mapping or '', int(row.base_active_revision or 0),
+                            row.base_active_hash or '', row.base_schema_fingerprint,
                             json.loads(row.base_content_json) if row.base_content_json else None,
                             int(row.reconciliation_revision or 0),
-                            json.loads(row.reconciliation_json) if row.reconciliation_json else None)
+                            json.loads(row.reconciliation_json) if row.reconciliation_json else None,
+                            json.loads(getattr(row, 'new_definition_json', None)) if getattr(row, 'new_definition_json', None) else None)
 
     def save_draft(self, value: MappingDraft):
         self._scope()
         f = self.frappe
-        expected_key = draft_key(f.local.site, self._definition.definition_id, f.session.user)
+        identity = self._definition.definition_id if self._definition else self._parentless_identity
+        expected_key = draft_key(f.local.site, identity, f.session.user)
         if (value.key != expected_key or value.owner != f.session.user or value.site_scope != f.local.site
-                or value.definition_id != self._definition.definition_id):
+                or value.definition_id != identity):
             raise PermissionError("Personal draft scope mismatch.")
+        if (self._definition is None) != (value.new_definition is not None):
+            raise DraftConflict('Draft baseline does not match its definition scope.')
         rows = f.db.sql("select * from `tabHERO Mapping Draft` where name=%s for update", (value.key,), as_dict=True)
         row = f.get_doc(dict(rows[0], doctype=self.DRAFT)) if rows else f.new_doc(self.DRAFT)
         row.update({
@@ -312,6 +397,8 @@ class FrappeMappingDraftStorage:
             "base_active_hash": value.base_active_hash, "base_schema_fingerprint": value.base_schema_fingerprint,
             "base_content_json": json.dumps(value.base_content, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
             if value.base_content is not None else "",
+            "new_definition_json": json.dumps(value.new_definition, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            if value.new_definition is not None else "",
             "reconciliation_revision": value.reconciliation_revision,
             "reconciliation_json": json.dumps(value.reconciliation, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
             if value.reconciliation is not None else "",
@@ -322,7 +409,8 @@ class FrappeMappingDraftStorage:
         self._scope()
         if value.actor != self.frappe.session.user:
             raise PermissionError("Revision actor mismatch.")
-        expected_key = draft_key(self.frappe.local.site, self._definition.definition_id, self.frappe.session.user)
+        identity = self._definition.definition_id if self._definition else self._parentless_identity
+        expected_key = draft_key(self.frappe.local.site, identity, self.frappe.session.user)
         if value.draft_key != expected_key:
             raise PermissionError("A foreign personal draft revision cannot be created.")
         current = self.draft(expected_key)
@@ -384,6 +472,13 @@ class FrappeMappingDraftStorage:
     def canonicalize(self, content):
         from hero_integration.services.personal_mapping_content import bounded, references, same, validate_edits, validate_rule
         self._scope()
+        if self._definition is None:
+            prior = self.parentless(self._parentless_identity, self.frappe.session.user)
+            if prior is None or prior.new_definition is None:
+                raise DraftConflict('New-definition draft is unavailable.')
+            value = validate_edits(prior.content, _object(content))
+            self.validate_new_definition(prior.new_definition, value)
+            return value
         key = draft_key(self.frappe.local.site, self._definition.definition_id, self.frappe.session.user)
         prior = self.draft(key).content
         value = validate_edits(prior, content)

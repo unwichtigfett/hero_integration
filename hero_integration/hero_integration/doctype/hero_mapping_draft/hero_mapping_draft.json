@@ -76,21 +76,18 @@
    "fieldname": "base_active_mapping",
    "fieldtype": "Link",
    "options": "HERO GraphQL Mapping",
-   "reqd": 1,
    "read_only": 1,
    "label": "Base Active Mapping"
   },
   {
    "fieldname": "base_active_revision",
    "fieldtype": "Int",
-   "reqd": 1,
    "read_only": 1,
    "label": "Base Active Revision"
   },
   {
    "fieldname": "base_active_hash",
    "fieldtype": "Data",
-   "reqd": 1,
    "read_only": 1,
    "label": "Base Active Hash"
   },
@@ -100,6 +97,13 @@
    "reqd": 1,
    "read_only": 1,
    "label": "Base Schema Fingerprint"
+  },
+  {
+   "fieldname": "new_definition_json",
+   "fieldtype": "Code",
+   "options": "JSON",
+   "read_only": 1,
+   "label": "New Definition Context Json"
   },
   {
    "fieldname": "base_content_json",

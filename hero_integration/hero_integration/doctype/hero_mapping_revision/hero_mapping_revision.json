@@ -64,21 +64,18 @@
    "fieldname": "base_active_mapping",
    "fieldtype": "Link",
    "options": "HERO GraphQL Mapping",
-   "reqd": 1,
    "read_only": 1,
    "label": "Base Active Mapping"
   },
   {
    "fieldname": "base_active_revision",
    "fieldtype": "Int",
-   "reqd": 1,
    "read_only": 1,
    "label": "Base Active Revision"
   },
   {
    "fieldname": "base_active_hash",
    "fieldtype": "Data",
-   "reqd": 1,
    "read_only": 1,
    "label": "Base Active Hash"
   },

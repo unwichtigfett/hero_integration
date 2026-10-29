@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from functools import wraps
 from hashlib import sha256
 import json
+from uuid import UUID
 from typing import ContextManager, Protocol
 
 
@@ -62,6 +63,7 @@ class MappingDraft:
     base_content: dict[str, object] | None = None
     reconciliation_revision: int = 0
     reconciliation: dict[str, object] | None = None
+    new_definition: dict[str, object] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -201,6 +203,9 @@ def reconciliation_proof_from_json(value: object) -> ReconciliationProof:
 class MappingDraftStorage(Protocol):
     def transaction(self, definition_id: str, actor: str) -> ContextManager: ...
     def active(self, definition_id: str) -> ActiveMapping: ...
+    def active_or_none(self, definition_id: str) -> ActiveMapping | None: ...
+    def parentless(self, definition_id: str, actor: str) -> MappingDraft | None: ...
+    def assert_new_identity_available(self, definition_id: str, actor: str) -> None: ...
     def draft(self, key: str) -> MappingDraft | None: ...
     def save_draft(self, value: MappingDraft) -> None: ...
     def append_revision(self, value: MappingDraftRevision) -> None: ...
@@ -222,6 +227,21 @@ class InMemoryMappingDraftStorage:
             return _active_copy(self._active[definition_id])
         except KeyError as error:
             raise MappingDraftError("Mapping definition does not exist.") from error
+
+    def active_or_none(self, definition_id: str) -> ActiveMapping | None:
+        return _active_copy(self._active[definition_id]) if definition_id in self._active else None
+
+    def parentless(self, definition_id: str, actor: str) -> MappingDraft | None:
+        rows = [d for d in self._drafts.values() if d.definition_id == definition_id
+                and d.owner == actor and d.new_definition is not None]
+        if len(rows) > 1:
+            raise DraftConflict('Parentless definition identity is ambiguous.')
+        return _draft_copy(rows[0]) if rows else None
+
+    def assert_new_identity_available(self, definition_id: str, actor: str) -> None:
+        if definition_id in self._active or any(d.definition_id == definition_id and d.owner != actor
+                                                 for d in self._drafts.values()):
+            raise DraftConflict('Definition identity is already owned or active.')
 
     def draft(self, key: str) -> MappingDraft | None:
         return _draft_copy(self._drafts[key]) if key in self._drafts else None
@@ -254,10 +274,44 @@ class MappingDraftService:
         self._storage = storage
         self._canonicalize = canonicalize or _object
 
+    def open_new_draft(self, definition: dict[str, object], actor: str, content: object) -> MappingDraft:
+        """Create an owned new-definition draft without asserting an active parent."""
+        definition = _new_definition(definition)
+        actor = _actor(actor)
+        identity = definition['definition_id']
+        with self._storage.transaction(identity, actor):
+            self._storage.assert_new_identity_available(identity, actor)
+            if hasattr(self._storage, 'validate_new_definition'):
+                self._storage.validate_new_definition(definition, content)
+            prior = self._storage.parentless(identity, actor)
+            proposed = _object(content)
+            if prior:
+                if prior.new_definition != definition:
+                    raise DraftConflict('New-definition context changed or is unavailable.')
+                if prior.state == 'OPEN':
+                    if prior.content_hash != _hash(proposed):
+                        raise DraftConflict('Existing personal draft differs; use revision-checked save.')
+                    return prior
+                if prior.state != 'DISCARDED':
+                    raise DraftConflict('New-definition draft is unavailable.')
+            key = draft_key(definition['site_scope'], identity, actor)
+            generation = 1 if prior is None else prior.generation + 1
+            value = MappingDraft(key, definition['site_scope'], identity, actor, generation, 'OPEN', proposed,
+                _hash(proposed), 1, '', 0, '', definition['schema_fingerprint'], {}, 0, None, definition)
+            self._storage.save_draft(value)
+            self._storage.append_revision(MappingDraftRevision(key, generation, 1, 'DRAFT_SAVE', actor,
+                _copy(proposed), value.content_hash, '', 0, '', definition['schema_fingerprint']))
+            return value
+
     @_transactional
     def open_draft(self, definition_id: str, actor: str) -> MappingDraft:
-        active = self._storage.active(definition_id)
         actor = _actor(actor)
+        active = self._storage.active_or_none(definition_id) if hasattr(self._storage, 'active_or_none') else self._storage.active(definition_id)
+        if active is None:
+            draft = self._storage.parentless(definition_id, actor)
+            if draft is None or draft.state != 'OPEN':
+                raise DraftConflict('No open personal mapping draft exists for this administrator.')
+            return draft
         key = draft_key(active.site_scope, active.definition_id, actor)
         prior = self._storage.draft(key)
         if prior and prior.state == "OPEN":
@@ -304,6 +358,7 @@ class MappingDraftService:
                 _copy(draft.content), draft.content_hash, draft.content_revision, draft.base_active_name,
                 draft.base_active_revision, draft.base_active_hash, draft.base_schema_fingerprint,
                 _copy_optional(draft.base_content), draft.reconciliation_revision + 1, reconciliation_value,
+                _copy_optional(draft.new_definition),
             )
             self._storage.save_draft(updated)
             return DraftSaveResult(updated, True, True)
@@ -312,7 +367,7 @@ class MappingDraftService:
             _copy(canonical), content_hash, draft.content_revision + 1, draft.base_active_name,
             draft.base_active_revision, draft.base_active_hash, draft.base_schema_fingerprint,
             _copy_optional(draft.base_content), draft.reconciliation_revision + (1 if reconciliation_updated else 0),
-            reconciliation_value,
+            reconciliation_value, _copy_optional(draft.new_definition),
         )
         self._storage.save_draft(updated)
         self._storage.append_revision(MappingDraftRevision(
@@ -327,6 +382,8 @@ class MappingDraftService:
                           expected_active_revision: int, candidate: object, *, expected_generation: int,
                           expected_reconciliation_revision: int) -> ReconciliationPreview:
         active, draft = self._current(definition_id, actor)
+        if active is None:
+            raise DraftConflict('A new definition has no active mapping to reconcile.')
         self._assert_reconciliation_current(
             active, draft, expected_draft_revision, expected_active_revision,
             expected_generation, expected_reconciliation_revision,
@@ -372,15 +429,20 @@ class MappingDraftService:
             _copy(draft.content), draft.content_hash, draft.content_revision, draft.base_active_name,
             draft.base_active_revision, draft.base_active_hash, draft.base_schema_fingerprint,
             _copy_optional(draft.base_content), draft.reconciliation_revision, _copy_optional(draft.reconciliation),
+            _copy_optional(draft.new_definition),
         )
         self._storage.save_draft(discarded)
         return discarded
 
     def _current(self, definition_id: str, actor: str) -> tuple[ActiveMapping, MappingDraft]:
-        active = self._storage.active(definition_id)
-        draft = self._storage.draft(draft_key(active.site_scope, active.definition_id, _actor(actor)))
+        actor = _actor(actor)
+        active = self._storage.active_or_none(definition_id) if hasattr(self._storage, 'active_or_none') else self._storage.active(definition_id)
+        draft = (self._storage.draft(draft_key(active.site_scope, active.definition_id, actor)) if active
+                 else self._storage.parentless(definition_id, actor))
         if draft is None or draft.state != "OPEN":
             raise DraftConflict("No open personal mapping draft exists for this administrator.")
+        if active is not None and draft.new_definition is not None:
+            raise DraftConflict('New definition now has an active parent; reconcile before saving.')
         return active, draft
 
     def _active_content(self, active: ActiveMapping) -> dict[str, object]:
@@ -473,6 +535,11 @@ class MappingDraftService:
             raise DraftConflict("Expected revisions must be non-negative integers.")
         if draft.content_revision != expected_draft_revision:
             raise DraftConflict("Personal mapping draft revision is stale.")
+        if active is None:
+            if (draft.new_definition is None or expected_active_revision != 0 or draft.base_active_name
+                    or draft.base_active_revision != 0 or draft.base_active_hash or draft.reconciliation is not None):
+                raise DraftConflict('A new definition requires an empty active baseline.')
+            return
         name, revision, content_hash = _save_baseline(draft)
         if active.revision != expected_active_revision or active.revision != revision:
             raise DraftConflict("Active mapping revision is stale.")
@@ -534,6 +601,24 @@ def _save_baseline(draft: MappingDraft) -> tuple[str, int, str]:
     if not isinstance(name, str) or not name or type(revision) is not int or revision < 0 or not isinstance(content_hash, str) or not content_hash:
         raise DraftConflict("Personal mapping reconciliation evidence is invalid.")
     return name, revision, content_hash
+
+
+def _new_definition(value: object) -> dict[str, object]:
+    keys = {'site_scope', 'definition_id', 'source_instance', 'snapshot_name', 'schema_fingerprint',
+            'direction', 'operation_kind', 'operation_name'}
+    if not isinstance(value, dict) or set(value) != keys:
+        raise MappingDraftError('New definition requires an exact source and operation context.')
+    if any(not isinstance(value[key], str) or not value[key] or len(value[key]) > 140 for key in keys):
+        raise MappingDraftError('New definition context contains an invalid identity.')
+    try:
+        if str(UUID(value['definition_id'])) != value['definition_id']:
+            raise ValueError
+    except (ValueError, AttributeError):
+        raise MappingDraftError('New definition requires a canonical portable UUID.') from None
+    if (len(value['schema_fingerprint']) != 64 or any(c not in '0123456789abcdef' for c in value['schema_fingerprint'])
+            or (value['direction'], value['operation_kind']) not in {('QUERY_TO_FRAPPE', 'QUERY'), ('FRAPPE_TO_MUTATION', 'MUTATION')}):
+        raise MappingDraftError('New definition direction or schema fingerprint is invalid.')
+    return _copy(value)
 
 
 def _json(value: object) -> str:
@@ -660,6 +745,7 @@ def _draft_copy(value: MappingDraft) -> MappingDraft:
         _copy(value.content), value.content_hash, value.content_revision, value.base_active_name,
         value.base_active_revision, value.base_active_hash, value.base_schema_fingerprint,
         _copy_optional(value.base_content), value.reconciliation_revision, _copy_optional(value.reconciliation),
+        _copy_optional(value.new_definition),
     )
 
 
