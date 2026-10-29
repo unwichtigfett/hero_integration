@@ -6,6 +6,7 @@
   {"fieldname":"schema_fingerprint","label":"Schema Fingerprint","fieldtype":"Data","read_only":1}, {"fieldname":"service_revision","label":"Service Revision","fieldtype":"Int","default":"1","read_only":1},
   {"fieldname":"read_mapping","label":"Approved Read Mapping","fieldtype":"Link","options":"HERO GraphQL Mapping"}, {"fieldname":"execution_status","label":"Read Execution Status","fieldtype":"Select","options":"Pending Approval\nApproved","default":"Pending Approval","read_only":1,"in_list_view":1},
   {"fieldname":"approved_service_revision","label":"Approved Service Revision","fieldtype":"Int","default":"0","read_only":1}, {"fieldname":"approved_mapping_revision","label":"Approved Mapping Revision","fieldtype":"Int","default":"0","read_only":1},
-  {"fieldname":"status","label":"Status","fieldtype":"Select","options":"Draft\nValidated\nDisabled","default":"Draft","reqd":1,"in_list_view":1}, {"fieldname":"validation_summary","label":"Validation Summary","fieldtype":"Small Text","read_only":1}
- ], "permissions":[{"role":"System Manager","read":1,"write":1,"create":1,"delete":1}], "modified":"2026-10-18 00:00:00.000000"
+  {"fieldname":"status","label":"Status","fieldtype":"Select","options":"Draft\nValidated\nDisabled","default":"Draft","reqd":1,"in_list_view":1}, {"fieldname":"validation_summary","label":"Validation Summary","fieldtype":"Small Text","read_only":1},
+  {"fieldname":"provenance","label":"Provenance","fieldtype":"Data","read_only":1,"description":"Origin of the definition, for example GraphQL Services or API Analyzer."}
+ ], "permissions":[{"role":"System Manager","read":1,"write":1,"create":1,"delete":1}], "modified":"2026-10-29 00:00:00.000000"
 }

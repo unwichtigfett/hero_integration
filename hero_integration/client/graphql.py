@@ -14,9 +14,11 @@ from urllib.parse import urlsplit
 class HeroClientError(RuntimeError):
     """A redacted, machine-readable HERO transport or GraphQL failure."""
 
-    def __init__(self, message: str, *, code: str = "UNKNOWN"):
+    def __init__(self, message: str, *, code: str = "UNKNOWN", details: tuple[str, ...] = ()):
         super().__init__(message)
         self.code = code
+        # Bounded GraphQL error messages only; never request data or credentials.
+        self.details = tuple(details)
 
 
 class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -116,7 +118,9 @@ class HeroGraphQLClient:
         if not isinstance(payload, dict):
             raise HeroClientError("HERO response is not a JSON object.", code="INVALID_RESPONSE")
         if payload.get("errors"):
-            raise HeroClientError("HERO GraphQL rejected the request.", code="GRAPHQL_ERRORS")
+            errors = payload["errors"] if isinstance(payload["errors"], list) else []
+            details = tuple(str(item.get("message") or "")[:300] for item in errors[:10] if isinstance(item, dict))
+            raise HeroClientError("HERO GraphQL rejected the request.", code="GRAPHQL_ERRORS", details=details)
         if not isinstance(payload.get("data"), dict):
             raise HeroClientError("HERO GraphQL response contains no data.", code="MISSING_DATA")
         return payload["data"]
@@ -127,15 +131,15 @@ class HeroGraphQLClient:
                 with opener.open(request, timeout=self.timeout) as response:
                     payload = json.loads(response.read().decode("utf-8"))
                 if not isinstance(payload, dict):
-                    raise HeroClientError("HERO response is invalid.")
+                    raise HeroClientError("HERO response is invalid.", code="INVALID_RESPONSE")
                 return payload
             except urllib.error.HTTPError as exc:
-                retryable = exc.code >= 500
+                retryable, code = exc.code >= 500, f"HTTP_{exc.code}"
             except (urllib.error.URLError, OSError):
-                retryable = True
+                retryable, code = True, "TRANSPORT"
             except (UnicodeError, ValueError) as exc:
-                raise HeroClientError("HERO response is invalid.") from exc
+                raise HeroClientError("HERO response is invalid.", code="INVALID_RESPONSE") from exc
             if not retryable or attempt == self.max_retries:
-                raise HeroClientError("HERO request failed.") from None
+                raise HeroClientError("HERO request failed.", code=code) from None
             time.sleep(self.retry_backoff_seconds * (2**attempt))
         raise HeroClientError("HERO request failed.")
