@@ -529,10 +529,9 @@ def _process_projection(run, source) -> None:
             if task_scope is not None:
                 task_record = record if any(item.source_path == 'comment' for item in plan.definitions) else {k: v for k, v in record.items() if k != 'comment'}
                 result = _migrate_native_task(task_record, run, plan, task_scope)
-                if (run.mode != 'Preview' and result.code in {'CREATED', 'UPDATED', 'SKIPPED'}
-                        and result.target_doctype == 'Task' and result.target_name
-                        and any(item.source_path == 'target_user_id' for item in plan.definitions)
-                        and 'target_user_id' in record):
+                if (result.code in {'CREATED', 'UPDATED', 'SKIPPED', 'PREVIEW_OK'}
+                        and result.target_doctype == 'Task'
+                        and any(item.source_path == 'target_user_id' for item in plan.definitions)):
                     _record_task_assignment_pending(run, record, result.target_name, task_scope['source_instance'])
             else:
                 result = _migrate_projection(record, run, plan)
@@ -547,148 +546,127 @@ def _process_projection(run, source) -> None:
         run.save()
 
 
-def _record_task_assignment_pending(run, record, task_name: str, source_instance: str) -> None:
-    """Record a bounded assignment review; no authority to assign is inferred."""
-    target = record['target_user_id']
+@dataclass(frozen=True)
+class TaskAssignmentDecision:
+    action: str
+    detail: str
+    task_name: str = ''
+    recipient: str = ''
+    existing: tuple[str, ...] = ()
+    binding: str = ''
+    policy: str = ''
+    proposed: str = ''
+
+
+def _plan_task_assignment(run, record, task_name: str, source_instance: str) -> TaskAssignmentDecision:
+    """Read authoritative assignment state without writing or granting authority.
+
+    The locks are held through execution by the caller's transaction. A plan is
+    an observation, never a capability to execute later.
+    """
+    def decision(action, detail, **values):
+        return TaskAssignmentDecision(action, detail, task_name or '', **values)
+
+    target = record.get('target_user_id')
+    if 'target_user_id' not in record:
+        return decision('NO_OP', 'PENDING_SOURCE_SEMANTICS: assignee was omitted; existing assignments are preserved.')
     if target is None:
-        detail = 'PENDING_SOURCE_SEMANTICS: explicit NULL never removes a native assignment.'
-    elif not isinstance(target, int) or isinstance(target, bool) or target <= 0:
-        detail = 'PENDING_IDENTITY: source User identity is invalid.'
-    elif 'author_user_id' not in record:
-        detail = 'PENDING_AUTHORITY: source author was not included in the read.'
-    elif record.get('author_user_id') is not None:
-        detail = 'PENDING_AUTHORITY: source author has no verified system, peer or supervisor authority.'
-    else:
-        candidates = frappe.db.sql('''SELECT name, target_name FROM `tabHERO Object Binding`
-            WHERE site_scope=%s AND source_instance=%s AND object_type=%s AND external_object_id=%s
-              AND target_doctype=%s AND lifecycle=%s ORDER BY name LIMIT 2 FOR UPDATE''',
-            (frappe.local.site, source_instance, 'User', str(target), 'User', 'VALID'), as_dict=True)
-        if len(candidates) != 1 or not frappe.db.exists('User', candidates[0].target_name):
-            detail = 'PENDING_IDENTITY: source User has no unique existing User binding.'
-        elif not frappe.db.get_value('User', candidates[0].target_name, 'enabled'):
-            detail = 'PENDING_IDENTITY: bound User is inactive.'
-        else:
-            from hero_integration.services.task_assignment_policy import approved_initial_policy, task_has_policy_company, PolicyError
-            if not frappe.db.exists('DocType', 'HERO Task Assignment Policy'):
-                policy = None
-            else:
-                try:
-                    policy = approved_initial_policy(source_instance, candidates[0].name)
-                except PolicyError:
-                    policy = None
-            if policy:
-                task = frappe.get_doc('Task', task_name, for_update=True)
-                if not task_has_policy_company(task, policy):
-                    detail = 'PENDING_AUTHORITY: Task has no verified project in the policy company.'
-                elif task.status in {'Completed', 'Cancelled'}:
-                    detail = 'PENDING_AUTHORITY: Task lifecycle does not permit assignment.'
-                elif not frappe.has_permission('Task', 'read', doc=task, user=candidates[0].target_name):
-                    detail = 'BLOCKED_PERMISSION: recipient has no Task read access.'
-                elif not frappe.has_permission('ToDo', 'create'):
-                    detail = 'BLOCKED_PERMISSION: integration actor cannot create ToDo.'
-                elif not frappe.get_system_settings('disable_document_sharing'):
-                    detail = 'BLOCKED_PERMISSION: native assignment requires sharing disabled.'
-                else:
-                    from hero_integration.services.task_assignment_state import managed_assignment, assignment_boundary_available
-                    if not assignment_boundary_available():
-                        record_output(run=run.name, source_type='Task', source_id=str(record['id']), result='CONFLICT',
-                            action='task_assignment_review', detail='PENDING_AUTHORITY: native assignment boundary is unavailable.',
-                            target_doctype='Task', target_name=task_name)
-                        return
-                    link = _link('Task', str(record['id']), source_instance)
-                    if not link or link.target_doctype != 'Task' or link.target_name != task_name:
-                        raise MappingPlanError('Task assignment requires its unique source binding.')
-                    if not frappe.db.exists('DocType', 'HERO Task Assignment State'):
-                        detail = 'PENDING_AUTHORITY: managed assignment state is unavailable.'
-                        record_output(run=run.name, source_type='Task', source_id=str(record['id']), result='CONFLICT',
-                            action='task_assignment_review', detail=detail, target_doctype='Task', target_name=task_name)
-                        return
-                    states = frappe.db.sql('SELECT name FROM `tabHERO Task Assignment State` WHERE task_link=%s FOR UPDATE',
-                                           (link.name,), as_dict=True)
-                    state = frappe.get_doc('HERO Task Assignment State', states[0].name, for_update=True) if len(states) == 1 else None
-                    history = frappe.db.sql('SELECT name FROM `tabToDo` WHERE reference_type=%s AND reference_name=%s FOR UPDATE',
-                                            ('Task', task_name), as_dict=True)
-                    if history:
-                        active = [frappe.get_doc('ToDo', row.name, for_update=True) for row in history]
-                        active = [item for item in active if item.status == 'Open']
-                        valid = (state and state.state == 'SYSTEM' and state.task_name == task_name
-                                 and state.policy == policy.name and int(state.policy_revision) == int(policy.policy_revision)
-                                 and int(state.mapping_revision) == int(run.mapping_revision) and len(active) == 1
-                                 and active[0].name == state.todo and str(active[0].modified) == str(state.todo_modified)
-                                 and active[0].assigned_by == frappe.session.user)
-                        if valid:
-                            old_binding = frappe.get_doc('HERO Object Binding', state.user_binding, for_update=True)
-                            valid = (active[0].allocated_to == old_binding.target_name
-                                     and int(state.user_binding_revision or 0) == int(old_binding.binding_revision or 0)
-                                     and int(state.user_binding_revision or 0) > 0
-                                     and old_binding.lifecycle == 'VALID')
-                        if valid and state.user_binding == candidates[0].name:
-                            return
-                        if (valid and int(state.state_revision) == 1 and assignment_boundary_available()
-                                and json.loads(policy.policy_json)['allow_transfer']):
-                            from frappe.desk.form import assign_to
-                            try:
-                                with managed_assignment():
-                                    assign_to.set_status('Task', task_name, todo=state.todo, status='Cancelled')
-                                    assign_to.add({'doctype': 'Task', 'name': task_name, 'assign_to': [candidates[0].target_name]})
-                                    new_rows = frappe.get_all('ToDo', filters={'reference_type': 'Task', 'reference_name': task_name,
-                                        'status': 'Open'}, fields=['name', 'allocated_to'], limit=2)
-                                    if len(new_rows) != 1 or new_rows[0].allocated_to != candidates[0].target_name:
-                                        raise RuntimeError('Task transfer did not produce exactly one recipient.')
-                                    new_todo = frappe.get_doc('ToDo', new_rows[0].name)
-                                    new_binding = frappe.get_doc('HERO Object Binding', candidates[0].name, for_update=True)
-                                    state.todo = new_todo.name
-                                    state.user_binding = new_binding.name
-                                    state.user_binding_revision = new_binding.binding_revision
-                                    state.todo_modified = new_todo.modified
-                                    state.state_revision = int(state.state_revision) + 1
-                                    state.save()
-                                record_output(run=run.name, source_type='Task', source_id=str(record['id']), result='UPDATED',
-                                    action='task_assignment_transferred', target_doctype='Task', target_name=task_name,
-                                    correlation_id=new_todo.name, detail=f'Policy {policy.name} revision {policy.policy_revision}.')
-                            except Exception:
-                                frappe.db.rollback()
-                                raise
-                            return
-                        detail = 'PENDING_AUTHORITY: native assignment or local ownership requires review.'
-                    else:
-                        if state:
-                            detail = 'PENDING_AUTHORITY: managed assignment no longer exists.'
-                            record_output(run=run.name, source_type='Task', source_id=str(record['id']), result='CONFLICT',
-                                action='task_assignment_review', detail=detail, target_doctype='Task', target_name=task_name)
-                            return
-                        from frappe.desk.form import assign_to
-                        try:
-                            with managed_assignment():
-                                assign_to.add({'doctype': 'Task', 'name': task_name, 'assign_to': [candidates[0].target_name]})
-                            todos = frappe.get_all('ToDo', filters={'reference_type': 'Task', 'reference_name': task_name,
-                                                   'allocated_to': candidates[0].target_name, 'status': 'Open'}, fields=['name'], limit=2)
-                            if len(todos) != 1:
-                                raise RuntimeError('Native Task assignment did not create exactly one ToDo.')
-                            todo = frappe.get_doc('ToDo', todos[0].name)
-                            binding = frappe.get_doc('HERO Object Binding', candidates[0].name, for_update=True)
-                            with managed_assignment():
-                                frappe.get_doc({'doctype': 'HERO Task Assignment State', 'task_link': link.name,
-                                    'task_name': task_name, 'todo': todo.name, 'user_binding': candidates[0].name,
-                                    'user_binding_revision': binding.binding_revision,
-                                    'policy': policy.name, 'policy_revision': policy.policy_revision,
-                                    'mapping_revision': int(run.mapping_revision), 'todo_modified': todo.modified,
-                                    'state': 'SYSTEM', 'state_revision': 1}).insert()
-                            record_output(run=run.name, source_type='Task', source_id=str(record['id']), result='CREATED',
-                                          action='task_assignment_created', target_doctype='Task', target_name=task_name,
-                                          correlation_id=todos[0].name,
-                                          detail=json.dumps({'policy': policy.name, 'revision': int(policy.policy_revision),
-                                                             'binding': candidates[0].name, 'modified': str(todo.modified)}, sort_keys=True))
-                        except Exception:
-                            # Native notification callbacks are transaction-wide,
-                            # so a savepoint rollback alone is insufficient.
-                            frappe.db.rollback()
-                            raise
-                        return
-            else:
-                detail = 'PENDING_AUTHORITY: no current matching system assignment policy.'
-    record_output(run=run.name, source_type='Task', source_id=str(record['id']), result='CONFLICT',
+        return decision('NO_OP', 'PENDING_SOURCE_SEMANTICS: explicit NULL never removes a native assignment.')
+    if not isinstance(target, int) or isinstance(target, bool) or target <= 0:
+        return decision('PENDING_IDENTITY', 'PENDING_IDENTITY: source User identity is invalid.')
+    if 'author_user_id' not in record:
+        return decision('BLOCKED', 'PENDING_AUTHORITY: source author was not included in the read.')
+    if record.get('author_user_id') is not None:
+        return decision('BLOCKED', 'PENDING_AUTHORITY: source author has no verified system, peer or supervisor authority.')
+    candidates = frappe.db.sql('''SELECT name, target_name FROM `tabHERO Object Binding`
+        WHERE site_scope=%s AND source_instance=%s AND object_type=%s AND external_object_id=%s
+          AND target_doctype=%s AND lifecycle=%s ORDER BY name LIMIT 2 FOR UPDATE''',
+        (frappe.local.site, source_instance, 'User', str(target), 'User', 'VALID'), as_dict=True)
+    if len(candidates) != 1 or not frappe.db.exists('User', candidates[0].target_name):
+        return decision('PENDING_IDENTITY', 'PENDING_IDENTITY: source User has no unique existing User binding.')
+    recipient = candidates[0].target_name
+    if not frappe.db.get_value('User', recipient, 'enabled'):
+        return decision('PENDING_IDENTITY', 'PENDING_IDENTITY: bound User is inactive.')
+    details = {'recipient': recipient, 'binding': candidates[0].name}
+    if not task_name:
+        return decision('BLOCKED', 'PENDING_TASK: a new Task has no persisted identity or verified local permissions yet.', **details)
+    from hero_integration.services.task_assignment_policy import approved_initial_policy, task_has_policy_company, PolicyError
+    try:
+        policy = approved_initial_policy(source_instance, candidates[0].name) if frappe.db.exists('DocType', 'HERO Task Assignment Policy') else None
+    except PolicyError:
+        policy = None
+    if not policy:
+        return decision('BLOCKED', 'PENDING_AUTHORITY: no current matching system assignment policy.', **details)
+    details['policy'] = policy.name
+    task = frappe.get_doc('Task', task_name, for_update=True)
+    if not task_has_policy_company(task, policy):
+        return decision('BLOCKED', 'PENDING_AUTHORITY: Task has no verified project in the policy company.', **details)
+    if task.status in {'Completed', 'Cancelled'}:
+        return decision('BLOCKED', 'PENDING_AUTHORITY: Task lifecycle does not permit assignment.', **details)
+    if not frappe.has_permission('Task', 'write', doc=task, user=frappe.session.user):
+        return decision('BLOCKED', 'BLOCKED_PERMISSION: actor cannot write the Task.', **details)
+    if not frappe.has_permission('Task', 'read', doc=task, user=recipient):
+        return decision('BLOCKED', 'BLOCKED_PERMISSION: recipient has no Task read access; sharing is forbidden.', **details)
+    if not frappe.has_permission('ToDo', 'create'):
+        return decision('BLOCKED', 'BLOCKED_PERMISSION: integration actor cannot create ToDo.', **details)
+    if not frappe.get_system_settings('disable_document_sharing'):
+        return decision('BLOCKED', 'BLOCKED_PERMISSION: native assignment requires sharing disabled.', **details)
+    from hero_integration.services.task_assignment_state import assignment_boundary_available
+    if not assignment_boundary_available():
+        return decision('BLOCKED', 'PENDING_AUTHORITY: native assignment boundary is unavailable.', **details)
+    link = _link('Task', str(record['id']), source_instance)
+    if not link or link.target_doctype != 'Task' or link.target_name != task_name:
+        return decision('CONFLICT', 'Task assignment requires its unique source binding.', **details)
+    if not frappe.db.exists('DocType', 'HERO Task Assignment State'):
+        return decision('BLOCKED', 'PENDING_AUTHORITY: managed assignment state is unavailable.', **details)
+    states = frappe.db.sql('SELECT name FROM `tabHERO Task Assignment State` WHERE task_link=%s FOR UPDATE',
+                           (link.name,), as_dict=True)
+    if len(states) > 1:
+        return decision('CONFLICT', 'Multiple assignment provenance records require review.', **details)
+    state = frappe.get_doc('HERO Task Assignment State', states[0].name, for_update=True) if states else None
+    history = frappe.db.sql('SELECT name FROM `tabToDo` WHERE reference_type=%s AND reference_name=%s FOR UPDATE',
+                            ('Task', task_name), as_dict=True)
+    active = [frappe.get_doc('ToDo', row.name, for_update=True) for row in history]
+    active = [item for item in active if item.status == 'Open']
+    details['existing'] = tuple(item.name for item in active)
+    if len(active) > 1:
+        return decision('CONFLICT', 'Multiple open assignments require local review.', **details)
+    if state:
+        valid = (state.state == 'SYSTEM' and state.task_name == task_name
+                 and state.policy == policy.name and int(state.policy_revision) == int(policy.policy_revision)
+                 and int(state.mapping_revision) == int(run.mapping_revision) and len(active) == 1
+                 and active[0].name == state.todo and str(active[0].modified) == str(state.todo_modified)
+                 and active[0].assigned_by == frappe.session.user)
+        if valid:
+            old_binding = frappe.get_doc('HERO Object Binding', state.user_binding, for_update=True)
+            valid = (active[0].allocated_to == old_binding.target_name
+                     and int(state.user_binding_revision or 0) == int(old_binding.binding_revision or 0)
+                     and int(state.user_binding_revision or 0) > 0 and old_binding.lifecycle == 'VALID')
+        if not valid:
+            return decision('CONFLICT', 'PENDING_AUTHORITY: local ownership or assignment baseline changed.', **details)
+        if state.user_binding == candidates[0].name:
+            return decision('KEEP', 'Current managed assignment is unchanged.', **details)
+        return decision('BLOCKED', 'PENDING_SOURCE_ORDER: transfer requires verified source ordering and authority.', **details)
+    if active:
+        return decision('CONFLICT', 'PENDING_AUTHORITY: an existing local assignment is preserved.', **details)
+    if history:
+        return decision('BLOCKED', 'PENDING_AUTHORITY: historical assignments require local review.', **details)
+    # Policy payload v1 does not authorize a local due-date or native notification
+    # and follow effects. Do not invent approval or suppress Frappe side effects.
+    return decision('BLOCKED', 'POLICY_REQUIRED: approve local ToDo date and native notification/follow effects.',
+                    proposed='CREATE', **details)
+
+
+def _record_task_assignment_pending(run, record, task_name: str, source_instance: str) -> None:
+    """Use the same locked admission decision for Preview and execution."""
+    plan = _plan_task_assignment(run, record, task_name, source_instance)
+    detail = json.dumps({'decision': plan.action, 'proposed': plan.proposed, 'reason': plan.detail, 'recipient': plan.recipient,
+                         'existing_todos': list(plan.existing), 'local_date': 'POLICY_REQUIRED'}, sort_keys=True)
+    record_output(run=run.name, source_type='Task', source_id=str(record['id']),
+                  result='CONFLICT' if plan.action in {'BLOCKED', 'CONFLICT', 'PENDING_IDENTITY'} else 'SKIPPED',
                   action='task_assignment_review', detail=detail, target_doctype='Task', target_name=task_name)
+    if plan.action in {'BLOCKED', 'CONFLICT', 'PENDING_IDENTITY'} and hasattr(run, 'conflict_records'):
+        run.conflict_records = int(run.conflict_records or 0) + 1
 
 
 def _migrate_native_task(record, run, plan, scope) -> Result:
