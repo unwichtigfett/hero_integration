@@ -14,11 +14,15 @@ def _system_timezone() -> str | None:
 
 
 def _polling_lock():
-    """One polling run per site at a time; a second scheduler tick skips instead of overlapping."""
-    try:
-        from frappe.utils.synchronization import filelock
-    except ImportError:  # minimal Frappe test doubles only
+    """One polling run per site at a time; a second scheduler tick skips instead of overlapping.
+
+    The site lock needs an initialised site (always true for scheduler jobs); Frappe test
+    doubles without a site context run without it.
+    """
+    if not getattr(getattr(frappe, "local", None), "site", None):
         return nullcontext()
+    from frappe.utils.synchronization import filelock
+
     return filelock(POLLING_LOCK, timeout=1)
 
 
