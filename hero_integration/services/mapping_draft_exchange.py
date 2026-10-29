@@ -252,13 +252,14 @@ def _validate_portable_query(content, operation, schema):
             raise MappingDraftExchangeError('Portable query path is invalid.')
         current = start
         has_list = False
+        nullable = False
         for part in path.split('.'):
             fields = types.get(current, {}).get('fields') or []
             field = next((entry for entry in fields if entry.get('name') == part), None)
             if field is None:
                 raise MappingDraftExchangeError('Portable query path is absent from the target schema.')
             ref = field.get('type') or {}
-            nullable = ref.get('kind') != 'NON_NULL'
+            nullable = nullable or ref.get('kind') != 'NON_NULL'
             while ref.get('kind') in {'LIST', 'NON_NULL'}:
                 has_list = has_list or ref.get('kind') == 'LIST'
                 ref = ref.get('ofType') or {}

@@ -1166,6 +1166,22 @@ class TestPortableDraftExchange(unittest.TestCase):
         with self.assertRaisesRegex(exchange.MappingDraftExchangeError, 'duplicated'):
             exchange._parse_portable(json.dumps(package), 'QUERY_TO_FRAPPE')
 
+    def test_portable_query_propagates_nullable_parent_to_nested_field(self):
+        schema = deepcopy(SCHEMA)
+        address = next(item for item in schema['__schema']['types'] if item.get('name') == 'Address')
+        address['fields'][0]['type'] = {'kind':'NON_NULL', 'ofType':SCALAR('String')}
+        content = {'records_path':'customers', 'identity_path':'id',
+                   'field_rules':{'rule':{'source_path':'address.line_2', 'source_type':'string'}}}
+        with self.assertRaisesRegex(exchange.MappingDraftExchangeError, 'type or cardinality'):
+            exchange._validate_portable_query(content, 'customers', schema)
+        content['field_rules']['rule']['source_type'] = 'string|null'
+        exchange._validate_portable_query(content, 'customers', schema)
+        customer = next(item for item in schema['__schema']['types'] if item.get('name') == 'Customer')
+        nested = next(item for item in customer['fields'] if item['name'] == 'address')
+        nested['type'] = {'kind':'NON_NULL', 'ofType':{'kind':'OBJECT', 'name':'Address'}}
+        content['field_rules']['rule']['source_type'] = 'string'
+        exchange._validate_portable_query(content, 'customers', schema)
+
     def test_second_draft_failure_rolls_back_first_draft_and_revision(self):
         source, target = Fake('source.test', 'source-A', 'snapshot-A'), Fake('target.test', 'source-B', 'snapshot-B')
         identities = [IDENTITY, 'bd850de8-a445-4d13-9aa6-8dd086047d5a']
