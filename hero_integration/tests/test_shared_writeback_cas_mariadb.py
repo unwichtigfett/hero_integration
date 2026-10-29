@@ -39,7 +39,7 @@ class TestSharedWritebackMariaDB(unittest.TestCase):
                 with outer.second.cursor(outer.mysql.cursors.DictCursor) as cur:
                     cur.execute("SELECT * FROM draft WHERE name=%s FOR UPDATE", (name,))
                     return SimpleNamespace(**cur.fetchone())
-        self.patches = [patch.object(api, "frappe", Facade()), patch.object(api, "_validated_snapshot", return_value=(None, {})),
+        self.patches = [patch.object(api, "frappe", Facade()), patch.object(api, "_lock_mapping_save_context", return_value={}),
                         patch.object(frappe_writeback, "normalise_mapping", side_effect=lambda value, schema: value)]
         for p in self.patches: p.start()
 

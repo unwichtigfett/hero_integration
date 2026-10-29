@@ -10,6 +10,11 @@ from hero_integration.hero_integration.doctype.hero_graphql_mapping import hero_
 
 
 class TestSharedWritebackCAS(unittest.TestCase):
+    def setUp(self):
+        mocked = patch.object(api, '_lock_mapping_save_context', return_value={})
+        mocked.start()
+        self.addCleanup(mocked.stop)
+
     def test_existing_noop_is_locked_and_own_draft_preserved(self):
         from hero_integration.services import frappe_writeback
         mapping = _Mapping()
@@ -204,3 +209,69 @@ class TestSharedWritebackCAS(unittest.TestCase):
                                              json.dumps(requested), mapping_name=mapping.name, expected_revision=3)
             self.assertEqual((mapping.direction, mapping.mapping_json, mapping.status, mapping.mapping_revision), before)
             self.assertEqual(mapping.save_calls, 0)
+
+
+class TestMappingSaveContext(unittest.TestCase):
+    def test_query_api_reads_mapping_after_context_lock_for_cas(self):
+        events = []
+        mapping = _Mapping(revision=3)
+        fake = _Frappe(mapping=mapping)
+        original = fake.get_doc
+        def get_doc(doctype, name, **kwargs):
+            events.append(('mapping', kwargs))
+            return original(doctype, name, **kwargs)
+        snapshot = SimpleNamespace(source_instance='source', schema_fingerprint='fp')
+        with patch.object(fake, 'get_doc', side_effect=get_doc), patch.object(api, 'frappe', fake), \
+             patch.object(api, '_validated_snapshot', return_value=(snapshot, {})), \
+             patch.object(controller, 'lock_exchange_context', side_effect=lambda *args: events.append(('context', args))):
+            api.graphql_mapping_save('SNAPSHOT', 'QUERY', 'readThings', 'QUERY_TO_FRAPPE',
+                                     mapping.mapping_json, mapping_name=mapping.name, expected_revision=3)
+        self.assertEqual([event[0] for event in events], ['context', 'mapping'])
+        self.assertEqual(events[1][1], {'for_update': True})
+
+    def test_mutation_api_acquires_context_before_field_and_row_locks(self):
+        from hero_integration.services import frappe_writeback
+        from hero_integration.hero_integration.doctype.hero_frappe_mapping import hero_frappe_mapping as field_controller
+        events = []
+        mapping = _Mapping(revision=3)
+        mapping.direction, mapping.operation_kind, mapping.operation_name = 'FRAPPE_TO_MUTATION', 'MUTATION', 'update'
+        value = {'source': {'doctype': 'Customer', 'field': 'customer_name'}, 'target': {'operation': 'update'}}
+        mapping.mapping_json = json.dumps(value)
+        fake = _Frappe(mapping=mapping)
+        fake.db.sql = lambda *args, **kwargs: events.append(('scan',)) or [SimpleNamespace(name=mapping.name, mapping_json=mapping.mapping_json)]
+        original = fake.get_doc
+        def get_doc(doctype, name, **kwargs):
+            events.append(('mapping', kwargs))
+            return original(doctype, name, **kwargs)
+        snapshot = SimpleNamespace(source_instance='source', schema_fingerprint='fp')
+        with patch.object(fake, 'get_doc', side_effect=get_doc), patch.object(api, 'frappe', fake), \
+             patch.object(api, '_validated_snapshot', return_value=(snapshot, {})), \
+             patch.object(frappe_writeback, 'normalise_mapping', return_value=value), \
+             patch.object(controller, 'lock_exchange_context', side_effect=lambda *args: events.append(('context',))), \
+             patch.object(field_controller, '_lock_active_target', side_effect=lambda *args: events.append(('field',))):
+            api.graphql_mapping_save('SNAPSHOT', 'MUTATION', 'update', 'FRAPPE_TO_MUTATION',
+                                     mapping.mapping_json, expected_revision=3)
+        self.assertEqual([event[0] for event in events], ['context', 'field', 'scan', 'mapping'])
+        self.assertEqual(events[-1][1], {'for_update': True})
+
+    def test_context_is_locked_before_fresh_snapshot_read(self):
+        events = []
+        snapshot = SimpleNamespace(source_instance='source', schema_fingerprint='fingerprint')
+        def read(name, *, for_update=False):
+            events.append(('snapshot', for_update))
+            return snapshot, {'validated': True}
+        def lock(source, name, direction):
+            events.append(('context', source, name, direction))
+        with patch.object(api, '_validated_snapshot', side_effect=read), patch.object(controller, 'lock_exchange_context', side_effect=lock):
+            result = api._lock_mapping_save_context('SNAPSHOT', 'QUERY_TO_FRAPPE')
+        self.assertEqual(result, {'validated': True})
+        self.assertEqual(events, [('snapshot', False), ('context', 'source', 'SNAPSHOT', 'QUERY_TO_FRAPPE'), ('snapshot', True)])
+
+    def test_context_change_is_rejected_after_lock(self):
+        first = SimpleNamespace(source_instance='source', schema_fingerprint='fingerprint')
+        changed = SimpleNamespace(source_instance='other', schema_fingerprint='fingerprint')
+        fake = SimpleNamespace(throw=lambda message: (_ for _ in ()).throw(ValueError(message)))
+        with patch.object(api, 'frappe', fake), patch.object(api, '_validated_snapshot', side_effect=[(first, {}), (changed, {})]), \
+             patch.object(controller, 'lock_exchange_context'):
+            with self.assertRaisesRegex(ValueError, 'source context changed'):
+                api._lock_mapping_save_context('SNAPSHOT', 'QUERY_TO_FRAPPE')

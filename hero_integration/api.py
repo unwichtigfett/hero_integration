@@ -1698,6 +1698,18 @@ def _mapping_save_result(item, *, unchanged: bool) -> dict[str, object]:
     }
 
 
+def _lock_mapping_save_context(snapshot_name, direction):
+    """Acquire the exchange lock before mapping rows or writeback field locks."""
+    snapshot, _ = _validated_snapshot(snapshot_name)
+    source = getattr(snapshot, 'source_instance', '') or ''
+    from hero_integration.hero_integration.doctype.hero_graphql_mapping.hero_graphql_mapping import lock_exchange_context
+    lock_exchange_context(source, snapshot_name, direction)
+    current, schema = _validated_snapshot(snapshot_name, for_update=True)
+    if (getattr(current, 'source_instance', '') or '') != source or current.schema_fingerprint != snapshot.schema_fingerprint:
+        frappe.throw('The mapping source context changed; retry the save.')
+    return schema
+
+
 @frappe.whitelist(methods=["POST"])
 def graphql_mapping_save(
     snapshot_name: str, operation_kind: str, operation_name: str, direction: str, mapping_json: str,
@@ -1717,8 +1729,8 @@ def graphql_mapping_save(
         frappe.throw("GraphQL mapping JSON must be an object.")
     if direction not in {"QUERY_TO_FRAPPE", "FRAPPE_TO_MUTATION"}:
         frappe.throw("Unsupported GraphQL mapping direction.")
+    schema = _lock_mapping_save_context(snapshot_name, direction)
     if direction == "FRAPPE_TO_MUTATION":
-        _, schema = _validated_snapshot(snapshot_name)
         submitted_mapping = parsed
         from hero_integration.services.frappe_mapping_catalog import validate_draft_writeback_source
         from hero_integration.services.frappe_writeback import (
@@ -1772,12 +1784,8 @@ def graphql_mapping_save(
             mapping_name = matches[0] if matches else ""
     if not mapping_name:
         item = frappe.new_doc("HERO GraphQL Mapping")
-    elif direction == "FRAPPE_TO_MUTATION":
-        item = frappe.get_doc("HERO GraphQL Mapping", mapping_name, for_update=True)
     else:
-        item = frappe.get_doc("HERO GraphQL Mapping", mapping_name)
-        if item.direction == "FRAPPE_TO_MUTATION":
-            item = frappe.get_doc("HERO GraphQL Mapping", mapping_name, for_update=True)
+        item = frappe.get_doc("HERO GraphQL Mapping", mapping_name, for_update=True)
     if mapping_name and item.schema_snapshot != snapshot_name:
         frappe.throw("The GraphQL mapping belongs to another schema snapshot.")
     if mapping_name and item.direction != direction:

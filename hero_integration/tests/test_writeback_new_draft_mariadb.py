@@ -70,7 +70,7 @@ class TestWritebackNewDraftMariaDB(unittest.TestCase):
 
         self.facade, self.DB = Facade(), DB
         self.patches = [patch.object(api, "frappe", self.facade), patch.object(locks, "frappe", self.facade),
-                        patch.object(api, "_validated_snapshot", return_value=(None, {})),
+                        patch.object(api, "_validated_snapshot", return_value=(SimpleNamespace(source_instance='source', schema_fingerprint='fp'), {})),
                         patch.object(frappe_writeback, "normalise_mapping", side_effect=lambda value, schema: value)]
         for p in self.patches: p.start()
         self.first, self.second = DB(), DB()
