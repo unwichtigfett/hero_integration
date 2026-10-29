@@ -316,7 +316,24 @@ class TestPortableDraftExchange(unittest.TestCase):
             self.assertEqual(json.loads(fake.active[0]['mapping_json'])['target']['field'], 'full_name')
             self.assertEqual(api.mapping_draft_publish(IDENTITY, 1, 1, 0, 0, confirmed=True)['unchanged'], True)
             self.assertEqual(service.open_draft(IDENTITY, fake.session.user).base_active_revision, 1)
+            package = json.loads(exchange.export_package('source-B', 'snapshot-B', 'FRAPPE_TO_MUTATION',
+                                                         format_version=exchange.PORTABLE_FORMAT_VERSION))
+            self.assertEqual(package['mappings'][0]['definition_id'], IDENTITY)
+            self.assertEqual(package['mappings'][0]['content']['target']['field'], 'full_name')
             self.assertEqual(fake.rules, [])
+        target = PublicationFake('other.test', 'source-C', 'snapshot-C')
+        target.snapshot.snapshot_json = json.dumps(schema)
+        target.snapshot.schema_fingerprint = analyze_snapshot(schema).fingerprint
+        with self.context(target), patch.dict(sys.modules, {'frappe':target}), \
+             patch.object(hero_mapping_draft, 'frappe', target), patch.object(hero_mapping_revision, 'frappe', target):
+            raw = json.dumps(package)
+            preview = exchange.preview_import(raw, 'source-C', 'snapshot-C', 'FRAPPE_TO_MUTATION')
+            states = [dict(definition_id=item['definition_id'], **item['expected']) for item in preview['items']]
+            exchange.save_import(raw, 'source-C', 'snapshot-C', 'FRAPPE_TO_MUTATION', states,
+                                 confirmed=True, preview_fingerprint=preview['preview_fingerprint'])
+            imported = FrappeMappingDraftStorage(target).service().open_draft(IDENTITY, target.session.user)
+            self.assertEqual(imported.content['target']['field'], 'full_name')
+            self.assertEqual(target.active, [])
 
     def test_storage_savepoint_restores_all_synthetic_publication_collections(self):
         fake = Fake('target.test', 'source-B', 'snapshot-B')
@@ -461,7 +478,25 @@ class TestPortableDraftExchange(unittest.TestCase):
             fake.drafts[draft.key]['diagnostics_json'] = original_diagnostics
             reopened = service.open_draft(IDENTITY, fake.session.user)
             self.assertEqual(reopened.base_active_revision, 1)
+            package = json.loads(exchange.export_package('source-B', 'snapshot-B', 'QUERY_TO_FRAPPE',
+                                                         format_version=exchange.PORTABLE_FORMAT_VERSION))
+            self.assertEqual(package['mappings'][0]['definition_id'], IDENTITY)
+            self.assertEqual(package['mappings'][0]['content']['mapping_definition_ids'], ids)
             self.assertFalse(getattr(fake, 'read_approvals', []))
+        target = PublicationFake('other.test', 'source-C', 'snapshot-C')
+        target.snapshot.snapshot_json = json.dumps(schema)
+        target.snapshot.schema_fingerprint = analyze_snapshot(schema).fingerprint
+        with self.context(target), patch.object(hero_frappe_mapping, '_FrappeMetadata', Metadata), \
+             patch.dict(sys.modules, {'frappe':target}), patch.object(hero_mapping_draft, 'frappe', target), \
+             patch.object(hero_mapping_revision, 'frappe', target):
+            raw = json.dumps(package)
+            preview = exchange.preview_import(raw, 'source-C', 'snapshot-C', 'QUERY_TO_FRAPPE')
+            states = [dict(definition_id=item['definition_id'], **item['expected']) for item in preview['items']]
+            exchange.save_import(raw, 'source-C', 'snapshot-C', 'QUERY_TO_FRAPPE', states,
+                                 confirmed=True, preview_fingerprint=preview['preview_fingerprint'])
+            imported = FrappeMappingDraftStorage(target).service().open_draft(IDENTITY, target.session.user)
+            self.assertEqual(imported.content['mapping_definition_ids'], ids)
+            self.assertEqual(target.active, [])
 
     def context(self, fake):
         stack = __import__('contextlib').ExitStack()
