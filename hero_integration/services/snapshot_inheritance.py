@@ -46,7 +46,7 @@ def inherit_parent_mappings(child_snapshot: str, actor: str) -> dict[str, object
     parent_name = getattr(child, "parent_snapshot", None)
     if not parent_name:
         return _summary(child.name, None, [], "NO_PARENT")
-    parent, _parent_schema = _validated_snapshot(parent_name)
+    parent, parent_schema = _validated_snapshot(parent_name)
     if parent.source_instance != child.source_instance:
         return _summary(child.name, parent.name, [], "PARENT_SOURCE_MISMATCH")
     from hero_integration.services.frappe_mapping_draft_storage import FrappeMappingDraftStorage
@@ -68,17 +68,17 @@ def inherit_parent_mappings(child_snapshot: str, actor: str) -> dict[str, object
         if (row["direction"], row["operation_name"]) in own:
             results.append(_record(child, parent, row, actor, "Skipped", "The child snapshot has its own active mapping for this operation."))
             continue
-        results.append(_inherit_one(service, child, child_schema, parent, row, actor))
+        results.append(_inherit_one(service, child, child_schema, parent, parent_schema, row, actor))
     return _summary(child.name, parent.name, results, "COMPLETED")
 
 
-def _inherit_one(service, child, child_schema, parent, row, actor) -> dict[str, object]:
+def _inherit_one(service, child, child_schema, parent, parent_schema, row, actor) -> dict[str, object]:
     from hero_integration.services.mapping_draft_service import MappingDraftError
 
     savepoint = "hero_inherit_" + uuid4().hex
     frappe.db.savepoint(savepoint)
     try:
-        content = child_content(row, parent.name, child_schema)
+        content = child_content(row, parent.name, child_schema, parent_schema)
         definition = {
             "site_scope": frappe.local.site, "definition_id": str(uuid4()), "source_instance": child.source_instance,
             "snapshot_name": child.name, "schema_fingerprint": child.schema_fingerprint, "direction": row["direction"],
@@ -92,7 +92,7 @@ def _inherit_one(service, child, child_schema, parent, row, actor) -> dict[str, 
                    "Personal draft created for the child snapshot; review and activate it explicitly.", definition["definition_id"])
 
 
-def child_content(row, parent_snapshot: str, child_schema) -> dict[str, object]:
+def child_content(row, parent_snapshot: str, child_schema, parent_schema) -> dict[str, object]:
     """Copy one active parent definition into new-draft content with fresh rule and assignment identities."""
     from hero_integration.services.personal_mapping_content import RULE_FIELDS, references, unique_json_object
 
@@ -131,11 +131,68 @@ def child_content(row, parent_snapshot: str, child_schema) -> dict[str, object]:
     content["field_rules"] = rules
     if isinstance(content.get("field_contexts"), dict):
         content["field_contexts"] = {renamed.get(key, key): value for key, value in content["field_contexts"].items()}
-    from hero_integration.services.mapping_draft_exchange import _validate_portable_query
-
-    # Record path, identity path and every field rule must still resolve with the same type in the child schema.
-    _validate_portable_query(content, row["operation_name"], child_schema)
+    # The parent definition was valid on the parent schema; it stays valid when every schema element it
+    # uses (record path, identity path, each rule source path) is unchanged in the child schema.
+    record_path = content.get("records_path", content.get("record_path"))
+    paths = [("records", None, record_path)]
+    paths += [("identity", record_path, content.get("identity_path"))]
+    paths += [("field rule", record_path, rule.get("source_path")) for rule in rules.values()]
+    _assert_unchanged(paths, parent_schema, child_schema)
     return content
+
+
+def _assert_unchanged(paths, parent_schema, child_schema) -> None:
+    parent_index, child_index = _type_index(parent_schema), _type_index(child_schema)
+    for label, base, path in paths:
+        if not isinstance(path, str) or not path:
+            continue
+        before = _signature(parent_index, base, path)
+        after = _signature(child_index, base, path)
+        if before != after:
+            raise InheritanceIncompatible(f"The {label} path {path!r} changed or is absent in the child schema.")
+
+
+def _type_index(schema) -> tuple[dict[str, dict], str | None]:
+    from hero_integration.services.graphql_graph import normalize_schema
+
+    normalized = normalize_schema(schema)
+    return {item.get("name"): item for item in normalized.get("types", [])}, (normalized.get("queryType") or {}).get("name")
+
+
+def _type_text(ref) -> str:
+    kind = (ref or {}).get("kind")
+    if kind in {"LIST", "NON_NULL"}:
+        inner = _type_text((ref or {}).get("ofType"))
+        return f"[{inner}]" if kind == "LIST" else f"{inner}!"
+    return f"{kind}:{(ref or {}).get('name')}"
+
+
+def _signature(index, base_path, path) -> tuple | None:
+    """Field-by-field type signature of a path, starting at the root query type (or at the record type)."""
+    types, root = index
+    current = root
+    if base_path:
+        resolved = _walk(types, root, base_path)
+        if resolved is None:
+            return None
+        current = resolved[1]
+    resolved = _walk(types, current, path)
+    return resolved[0] if resolved else None
+
+
+def _walk(types, start, path):
+    current, signature = start, []
+    for part in path.split("."):
+        fields = (types.get(current) or {}).get("fields") or []
+        field = next((entry for entry in fields if entry.get("name") == part), None)
+        if field is None:
+            return None
+        ref = field.get("type") or {}
+        signature.append((part, _type_text(ref)))
+        while ref.get("kind") in {"LIST", "NON_NULL"}:
+            ref = ref.get("ofType") or {}
+        current = ref.get("name")
+    return tuple(signature), current
 
 
 def _record(child, parent, row, actor, status, reason, child_definition=None) -> dict[str, object]:
