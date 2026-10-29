@@ -5,6 +5,19 @@ import json
 from frappe.model.document import Document
 
 
+def _same_json(left, right) -> bool:
+    """Stored JSON fields compare by value; NULL in older rows equals the empty string written today."""
+    left, right = left or "", right or ""
+    if left == right:
+        return True
+    if not left or not right:
+        return False
+    try:
+        return json.loads(left) == json.loads(right)
+    except (TypeError, ValueError):
+        return False
+
+
 class HEROMappingDraft(Document):
     def check_permission(self, *args, **kwargs):
         from hero_integration.services.mapping_draft_access import check_personal_document
@@ -47,10 +60,10 @@ class HEROMappingDraft(Document):
                     and not self.reconciliation_json)
         if previous.state == "DISCARDED" and self.state == "OPEN" and not reopened:
             frappe.throw("Personal mapping draft reopen must start a new generation.")
-        if self.new_definition_json != previous.new_definition_json and not (
+        if not _same_json(self.new_definition_json, previous.new_definition_json) and not (
                 reopened and previous.new_definition_json and not self.new_definition_json):
             frappe.throw('New-definition context is immutable within a generation.')
-        if self.base_content_json != previous.base_content_json and not reopened:
+        if not _same_json(self.base_content_json, previous.base_content_json) and not reopened:
             frappe.throw("Personal mapping draft base_content_json is immutable.")
 
     def db_set(self, *args, **kwargs):
