@@ -251,12 +251,16 @@ class MigrationEngine:
         self.sealed.validate(run.request); plans = _plans(plans, run.request.mapping_revision)
         if not plans: return self._partial(run, skipped=True)
         run = self.ledger.save_run(replace(run, state=RunState.RUNNING, generation=run.generation + 1), run.generation)
-        seen_pages = {run.last_page_fingerprint} if run.last_page_fingerprint else set()
+        resuming_page = run.record_index > 0
+        seen_pages = {run.last_page_fingerprint} if run.last_page_fingerprint and not resuming_page else set()
         while True:
             try: page = _page(self.reader.read_page(run.request, self.sealed, run.checkpoint), run.checkpoint)
             except Exception: return self._failed(run)
             fingerprint = _page_fingerprint(page.records)
-            if fingerprint and fingerprint in seen_pages: return self._failed(run)
+            if resuming_page:
+                if not run.last_page_fingerprint or fingerprint != run.last_page_fingerprint: return self._failed(run)
+                resuming_page = False
+            elif fingerprint and fingerprint in seen_pages: return self._failed(run)
             if fingerprint: seen_pages.add(fingerprint)
             if not page.records and page.next_offset is not None: return self._failed(run)
             try: identities = [_identity(row) for row in page.records]
