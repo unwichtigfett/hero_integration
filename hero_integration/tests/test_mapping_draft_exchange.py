@@ -106,7 +106,7 @@ class TestMappingDraftExchange(unittest.TestCase):
         self.draft_locks.start()
         self.addCleanup(self.draft_locks.stop)
         self.context_lock = patch.object(exchange, '_lock_context')
-        self.context_lock.start()
+        self.context_lock_mock = self.context_lock.start()
         self.addCleanup(self.context_lock.stop)
         self.fresh_context = patch.object(exchange, '_fresh_active_definitions', side_effect=exchange._active_definitions)
         self.fresh_context.start()
@@ -163,6 +163,26 @@ class TestMappingDraftExchange(unittest.TestCase):
         with self.assertRaisesRegex(exchange.MappingDraftExchangeError, "mixed or wrong"):
             exchange.preview_import(json.dumps(package), "source-1", "SNAPSHOT", "QUERY_TO_FRAPPE")
         self.schema_mock.assert_not_called()
+
+    def test_duplicate_fields_at_any_level_are_rejected_before_preview_or_writes(self):
+        package = self.package()
+        payloads = [
+            package.replace('"direction":"QUERY_TO_FRAPPE"',
+                            '"direction":"FRAPPE_TO_MUTATION","direction":"QUERY_TO_FRAPPE"', 1),
+            package.replace('"value":9007199254740993',
+                            '"value":1,"value":9007199254740993', 1),
+        ]
+        with patch.object(exchange, 'provision_schema') as provision:
+            for payload in payloads:
+                with self.subTest(payload=payload):
+                    with self.assertRaisesRegex(exchange.MappingDraftExchangeError, 'not valid JSON'):
+                        exchange.preview_import(payload, 'source-1', 'SNAPSHOT', 'QUERY_TO_FRAPPE')
+                    with self.assertRaisesRegex(exchange.MappingDraftExchangeError, 'not valid JSON'):
+                        exchange.save_import(payload, 'source-1', 'SNAPSHOT', 'QUERY_TO_FRAPPE', [],
+                                             confirmed=True, preview_fingerprint='unused')
+        self.context_lock_mock.assert_not_called()
+        self.schema_mock.assert_not_called()
+        provision.assert_not_called()
 
     def test_save_uses_expected_states_and_discards_only_omitted_own_draft(self):
         package = json.loads(self.package())
