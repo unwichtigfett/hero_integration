@@ -115,6 +115,12 @@ class HEROGraphQLMapping(Document):
         if portable != ((previous.get('portable_definition_id') or '') if previous else '') and not (
                 not previous and portable == self.definition_id and first_publication_admits('definition', portable)):
             frappe.throw('Portable identity may only be enrolled through the identity service.')
+        for field in ('portable_schema_manifest', 'portable_schema_dependencies'):
+            value = self.get(field) or ''
+            old = (previous.get(field) or '') if previous else ''
+            if value != old and not (not previous and self.direction == 'QUERY_TO_FRAPPE'
+                                     and first_publication_admits('definition', self.definition_id)):
+                frappe.throw('Portable mapping schema provenance is immutable and service-managed.')
         self.content_hash = hashlib.sha256(
             json.dumps(mapping, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
         ).hexdigest()

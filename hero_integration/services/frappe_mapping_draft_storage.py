@@ -692,10 +692,11 @@ class FrappeMappingDraftStorage:
             if snapshot.source_instance != context['source_instance'] or snapshot.schema_fingerprint != context['schema_fingerprint']:
                 raise DraftConflict('New-definition schema context changed.')
             snapshot.check_permission('read')
-            if draft.content.get('_portable_exchange_schema'):
-                raise MappingDraftError('Portable schema dependencies require publication provenance support.')
             value = _object(draft.content)
-            value.pop('_portable_exchange_schema', None)
+            envelope = value.pop('_portable_exchange_schema', None)
+            schema_values = {}
+            if envelope is not None:
+                schema_values = self._first_publication_schema(context, value, envelope)
             created = []
             if context['direction'] == 'QUERY_TO_FRAPPE':
                 from hero_integration.services.mapping_draft_exchange import _portable_content, _validate_portable_query
@@ -737,6 +738,7 @@ class FrappeMappingDraftStorage:
                 parent = f.get_doc({'doctype':'HERO GraphQL Mapping', 'definition_id':definition_id,
                     'portable_definition_id':definition_id, 'schema_snapshot':context['snapshot_name'],
                     'schema_fingerprint':context['schema_fingerprint'], 'source_instance':context['source_instance'],
+                    **schema_values,
                     'operation_kind':context['operation_kind'], 'operation_name':context['operation_name'],
                     'direction':context['direction'], 'status':'Active', 'mapping_revision':1,
                     'mapping_json':json.dumps(active_content, ensure_ascii=False, sort_keys=True, separators=(',', ':'))})
@@ -767,6 +769,33 @@ class FrappeMappingDraftStorage:
                 return {'name':current.name, 'revision':current.revision, 'unchanged':False}
             finally:
                 _first_publication.reset(token)
+
+    def _first_publication_schema(self, context, content, envelope):
+        """Bind complete mapping-level portable provenance after current locked revalidation."""
+        from hero_integration.services.mapping_draft_exchange import PORTABLE_FORMAT_VERSION, _parse_portable
+        from hero_integration.services.schema_provisioning import _definitions, _recheck_required_schema_current
+        f = self.frappe
+        if context['direction'] != 'QUERY_TO_FRAPPE' or not isinstance(envelope, dict) or set(envelope) != {'schema', 'dependencies'}:
+            raise MappingDraftError('Portable schema provenance is unsupported or invalid.')
+        if not all(f.db.has_column('HERO GraphQL Mapping', name) for name in
+                   ('portable_schema_manifest', 'portable_schema_dependencies')):
+            raise MappingDraftError('Portable mapping schema provenance is not installed; migrate the app before publication.')
+        try:
+            schema, dependencies = envelope['schema'], envelope['dependencies']
+            package = {'format_version':PORTABLE_FORMAT_VERSION, 'schema_fingerprint':context['schema_fingerprint'],
+                'direction':context['direction'], 'schema':schema, 'mappings':[{'definition_id':context['definition_id'],
+                'operation_kind':context['operation_kind'], 'operation_name':context['operation_name'],
+                'direction':context['direction'], 'content':content, 'dependencies':dependencies}]}
+            _parse_portable(json.dumps(package, ensure_ascii=False, sort_keys=True, separators=(',', ':')), context['direction'])
+            definitions = _definitions(schema)
+            declared = {entry['id'] for group in definitions.values() for entry in group}
+            if not declared or set(dependencies) != declared:
+                raise MappingDraftError('Portable mapping schema requires an explicit complete dependency set.')
+            _recheck_required_schema_current(definitions, declared)
+        except (ValueError, TypeError, KeyError) as error:
+            raise MappingDraftError('Portable mapping schema is incomplete or differs from installed metadata.') from error
+        return {'portable_schema_manifest':json.dumps(schema, ensure_ascii=False, sort_keys=True, separators=(',', ':')),
+                'portable_schema_dependencies':json.dumps(dependencies, ensure_ascii=False, separators=(',', ':'))}
 
     def _lock_mutation_child_identities(self, draft):
         """Reject historical child-ID collisions before creating any child definition."""
@@ -1573,6 +1602,9 @@ class FrappeMappingDraftStorage:
         value = {key: row.get(key) for key in keys}
         if doctype == 'HERO GraphQL Mapping':
             value['mapping_json'] = json.loads(row.mapping_json)
+            for field in ('portable_schema_manifest', 'portable_schema_dependencies'):
+                if row.get(field):
+                    value[field] = json.loads(row[field])
         else:
             value.update({key: row.get(key) for key in RULE_FIELDS})
             value['operation'] = row.operation
