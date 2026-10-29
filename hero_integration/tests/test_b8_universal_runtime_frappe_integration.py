@@ -155,31 +155,31 @@ class TestB8UniversalRuntimeFrappeIntegration(IntegrationTestCase):
         with patch("hero_integration.services.sync_runtime_adapter._UnprovenProvider", return_value=provider):
             tasks.run_scheduled_sync()
         self.assertEqual(calls, [None])
-        self.assertEqual(frappe.get_doc("Customer", self.bound.name).customer_name, self.bound_new)
+        self.assertEqual(frappe.get_doc("Customer", self.bound.name).customer_name, self.bound_old)
         self.assertEqual(frappe.get_doc("Customer", self.unbound.name).customer_name, self.unbound_old)
         self.assertFalse(frappe.db.exists("Customer", {"customer_name": "MUST-NOT-CREATE"}))
-        self.assertEqual((FrappeSyncLedger().state(frappe.local.site).cursor, FrappeSyncLedger().state(frappe.local.site).status), ("wm-1", SyncStatus.SUCCEEDED))
+        self.assertEqual((FrappeSyncLedger().state(frappe.local.site).cursor, FrappeSyncLedger().state(frappe.local.site).status), (None, SyncStatus.PARTIAL))
         self.assertEqual(FrappeBindingStorage().field(frappe.local.site, self.binding.identity_key).revision, self.binding.revision)
 
         with patch("hero_integration.services.sync_runtime_adapter._UnprovenProvider", return_value=provider):
             tasks.run_scheduled_sync()
-        self.assertEqual(calls, [None, "wm-1"])
-        self.assertEqual(FrappeSyncLedger().state(frappe.local.site).cursor, "wm-1")
+        self.assertEqual(calls, [None, None])
+        self.assertIsNone(FrappeSyncLedger().state(frappe.local.site).cursor)
 
         phase["name"] = "failure"
         with patch("hero_integration.services.sync_runtime_adapter._UnprovenProvider", return_value=provider):
             tasks.run_scheduled_sync()
         failed = FrappeSyncLedger().state(frappe.local.site)
-        self.assertEqual((failed.cursor, failed.status), ("wm-1", SyncStatus.FAILED))
+        self.assertEqual((failed.cursor, failed.status), (None, SyncStatus.FAILED))
 
         self.settings.polling_mode = "OFF"
         self.settings.save()
         phase["name"] = "pending"
         with patch("hero_integration.services.sync_runtime_adapter._UnprovenProvider", return_value=provider):
             result = api.pending_sync(self.plan.generation)
-        self.assertEqual(result["status"], "SUCCEEDED")
-        self.assertEqual(frappe.get_doc("Customer", self.bound.name).customer_name, self.bound_pending)
-        self.assertEqual(FrappeSyncLedger().state(frappe.local.site).cursor, "wm-2")
+        self.assertEqual(result["status"], "PARTIAL")
+        self.assertEqual(frappe.get_doc("Customer", self.bound.name).customer_name, self.bound_old)
+        self.assertIsNone(FrappeSyncLedger().state(frappe.local.site).cursor)
 
         before = list(calls)
         with patch("hero_integration.services.sync_runtime_adapter._UnprovenProvider", return_value=provider):

@@ -38,11 +38,11 @@ class TestB7BoundProcessorFrappeIntegration(IntegrationTestCase):
         frappe.db.delete("HERO Object Binding", {"source_instance": self.source})
         frappe.db.delete("Customer", {"customer_name": ["in", ["B9BoundOld", "B9BoundNew", "B9UnboundOld"]]})
 
-    def test_updates_only_existing_bound_target_and_rejects_stale_revision(self):
+    def test_blocks_bound_target_without_atomic_conflict_contract(self):
         fields = FrappeBoundIndex().fields(frappe.local.site, self.source)
         processor = FrappeBoundProcessor(7, ("b9-name",))
-        self.assertTrue(processor.process({"id": "bound-1", "name": "B9BoundNew"}, fields))
-        self.assertEqual(frappe.get_doc("Customer", self.bound.name).customer_name, "B9BoundNew")
+        self.assertFalse(processor.process({"id": "bound-1", "name": "B9BoundNew"}, fields))
+        self.assertEqual(frappe.get_doc("Customer", self.bound.name).customer_name, "B9BoundOld")
         self.assertEqual(frappe.get_doc("Customer", self.unbound.name).customer_name, "B9UnboundOld")
         self.assertFalse(FrappeBoundProcessor(8, ("b9-name",)).process({"id": "bound-1", "name": "blocked"}, fields))
-        self.assertEqual(frappe.get_doc("Customer", self.bound.name).customer_name, "B9BoundNew")
+        self.assertEqual(frappe.get_doc("Customer", self.bound.name).customer_name, "B9BoundOld")
