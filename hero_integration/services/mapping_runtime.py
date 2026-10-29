@@ -237,6 +237,8 @@ def plan_from_definitions(operation: str, definitions: list[MappingSpec] | tuple
 def active_mapping_plan(operation: str, *, definition_ids: tuple[str, ...] = (), target_operation: str = "", mapping_name: str = "", native_task: bool = False, lock_rules: bool = False) -> MappingPlan:
     import frappe
 
+    if definition_ids and (not mapping_name or len(set(definition_ids)) != len(definition_ids)):
+        raise MappingPlanError('Explicit rule IDs require an explicit active mapping and unique bindings.')
     if native_task and (not definition_ids or not mapping_name or len(set(definition_ids)) != len(definition_ids)):
         raise MappingPlanError('Native Task requires explicitly selected approved rules.')
     if lock_rules and not native_task:
@@ -264,7 +266,7 @@ def active_mapping_plan(operation: str, *, definition_ids: tuple[str, ...] = (),
     if definition_ids:
         expected = set(definition_ids)
         rows = [row for row in rows if row["definition_id"] in expected]
-        if {row["definition_id"] for row in rows} != expected:
+        if len(rows) != len(expected) or {row["definition_id"] for row in rows} != expected:
             raise MappingPlanError("The selected active mapping definitions are unavailable or changed.")
         if any(row.get('personal_graphql_mapping') and row.get('personal_graphql_mapping') != mapping_name for row in rows):
             raise MappingPlanError('A selected rule version belongs to another read mapping.')
