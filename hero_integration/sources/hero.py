@@ -138,9 +138,10 @@ class HeroSource:
 
 class GraphQLServiceSource:
     """Read one approved saved service without creating a second mapper."""
-    def __init__(self, client: HeroGraphQLClient, service, contract: ReadContract, source_instance: str):
+    def __init__(self, client: HeroGraphQLClient, service, contract: ReadContract, source_instance: str, *, revalidate=None):
         self.client, self.service, self.contract = client, service, contract
         self.source_instance = source_instance.strip() or "default"
+        self.revalidate = revalidate
 
     def customers(self, offset: int = 0) -> SourcePage:
         if getattr(self, 'customer_source', None) is not None:
@@ -170,11 +171,26 @@ class GraphQLServiceSource:
             raise ReadContractError('Read offset is invalid or exceeds the reviewed run bound.')
         if operation != self.contract.target_operation:
             return SourcePage((), None)
-        variables = dict(self.contract.variables)
-        for name, value in tuple(variables.items()):
-            if value == "$offset": variables[name] = offset
-            elif value == "$page_size": variables[name] = self.contract.page_size
+        request = getattr(self.contract, 'materialized_request', None)
+        if request is not None:
+            if not callable(self.revalidate) or self.revalidate() != self.contract:
+                raise ReadContractError('Generated read approval changed before execution.')
+            variables = request.variables
+            offsets = [binding.variable_name for binding in request.argument_bindings if binding.argument_name == 'offset']
+            if len(offsets) != 1:
+                raise ReadContractError('Generated read has no unique offset binding.')
+            variables[offsets[0]] = offset
+        else:
+            variables = dict(self.contract.variables)
+            for name, value in tuple(variables.items()):
+                if value == "$offset": variables[name] = offset
+                elif value == "$page_size": variables[name] = self.contract.page_size
         data = self.client.query(self.service.query_document, variables)
+        if request is not None:
+            import json
+            from hero_integration.graphql_protocol.graphql_result_decoder import decode_graphql_result
+            from hero_integration.graphql_protocol.transport import Response
+            decode_graphql_result(request, Response(True, json.dumps({'data': data}), True))
         records = value_at(data, self.contract.records_path)
         if not isinstance(records, list) or not all(isinstance(row, dict) for row in records):
             raise ReadContractError("The selected result path is not a list of objects.")

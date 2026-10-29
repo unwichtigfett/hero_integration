@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from hashlib import sha256
 
 from hero_integration.client.graphql import assert_read_only
 from hero_integration.services.projection_contracts import CONTRACTS as PROJECTIONS, approved_query
@@ -25,6 +26,29 @@ class ReadContract:
     definition_ids: tuple[str, ...]
     variables: dict[str, object]
     page_size: int
+    materialized_request: object | None = None
+
+
+def task_materialization(snapshot, config, plan):
+    """Rebuild a native Task request and its mapping-bound approval evidence."""
+    from dataclasses import asdict
+    from hero_integration.services.mapping_contract_v1 import QueryAdapter, SnapshotAdapter, StoredSnapshot
+    rules = {}
+    for spec in plan.definitions:
+        rule = asdict(spec)
+        rule.pop('operation')
+        rule.pop('definition_id')
+        rules[spec.definition_id] = rule
+    content = dict(config)
+    content['field_rules'] = rules
+    validated = SnapshotAdapter().adapt(StoredSnapshot(snapshot.name, snapshot.snapshot_json,
+        snapshot.schema_fingerprint, snapshot.source_instance, snapshot.analysis_status))
+    request = QueryAdapter().materialize_personal_task(validated, content)
+    seal = {'version': 1, 'mapping_version': plan.mapping_version,
+            'schema_fingerprint': snapshot.schema_fingerprint, 'source_instance': snapshot.source_instance,
+            'request_fingerprint': request.request_fingerprint,
+            'document_sha256': sha256(request.document.encode('utf-8')).hexdigest()}
+    return request, seal
 
 
 def from_documents(service, mapping, snapshot) -> ReadContract:
@@ -47,6 +71,7 @@ def from_documents(service, mapping, snapshot) -> ReadContract:
                 or not isinstance(onboarding.get('source_instance'), str)
                 or not onboarding['source_instance'].strip()
                 or onboarding['source_instance'] != getattr(snapshot, 'source_instance', '')
+                or onboarding['source_instance'] != getattr(mapping, 'source_instance', '')
                 or getattr(snapshot, 'analysis_status', '') != 'Validated'
                 or getattr(service, 'operation_name', '') not in {'HeroTasks', 'tasks'}
                 or getattr(mapping, 'operation_name', '') != 'tasks'
@@ -60,7 +85,18 @@ def from_documents(service, mapping, snapshot) -> ReadContract:
         if snapshot.schema_fingerprint != projection['fingerprint']:
             raise ReadContractError('Projection requires its reviewed schema fingerprint.')
         if service.query_document.strip() != approved_query(target).strip():
-            raise ReadContractError('Projection requires the exact reviewed read-only query.')
+            if target != 'HeroTasks' or onboarding is None or not isinstance(config.get('generated_task_seal'), dict):
+                raise ReadContractError('Projection requires the exact reviewed read-only query.')
+            from hero_integration.services.mapping_runtime import active_mapping_plan
+            try:
+                plan = active_mapping_plan(service.operation_name, definition_ids=definition_ids,
+                    target_operation=target, mapping_name=mapping.name, native_task=True, lock_rules=True)
+                request, seal = task_materialization(snapshot, config, plan)
+            except (ValueError, TypeError, KeyError) as error:
+                raise ReadContractError('Generated Task mapping cannot be reconstructed.') from error
+            if config['generated_task_seal'] != seal or service.query_document != request.document:
+                raise ReadContractError('Generated Task plan or approved document changed.')
+            contract = replace(contract, materialized_request=request)
         if records_path != projection['root'] or identity_path != 'id' or dict(variables) != {'first': '$page_size', 'offset': '$offset'}:
             raise ReadContractError('Projection pagination, root or identity path is invalid.')
     elif target in {"HeroCustomers", "HeroProjectMatches"}:

@@ -53,7 +53,7 @@ class TestTaskAssignmentTransfer(unittest.TestCase):
         frappe.set_user(self.users[0])
         self.run = SimpleNamespace(mode='Execute', mapping_revision=1, name=None)
         self.scope = {'confirmed': True, 'source_instance': self.source, 'source_type': 'Task'}
-        self.record = {'id': 991010, 'title': 'Synthetic transfer task', 'target_user_id': 991001,
+        self.record = {'id': 991010, 'title': 'Synthetic transfer task', 'target_user_id': 991001, 'author_user_id': None,
                        '_hero_source_instance': self.source}
         self.result = _migrate_native_task(self.record, self.run, _Plan(), self.scope)
         if not self.__class__.__name__ == 'TestTaskAssignmentScope':

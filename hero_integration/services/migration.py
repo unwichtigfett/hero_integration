@@ -125,10 +125,26 @@ def _source_for_run(run, config):
     contract = from_documents(service, mapping, snapshot)
     if int(run.service_revision or 0) != contract.service_revision or int(run.mapping_revision or 0) != contract.mapping_revision:
         raise MappingPlanError("The queued run no longer matches its approved service or mapping revision.")
+    def revalidate_generated():
+        observed = frappe.get_doc('HERO GraphQL Mapping', run.graphql_mapping)
+        scope = (observed.source_instance or '', observed.schema_snapshot, observed.direction)
+        from hero_integration.hero_integration.doctype.hero_graphql_mapping.hero_graphql_mapping import lock_exchange_context
+        lock_exchange_context(*scope)
+        current_mapping = frappe.get_doc('HERO GraphQL Mapping', run.graphql_mapping, for_update=True)
+        if (current_mapping.source_instance or '', current_mapping.schema_snapshot, current_mapping.direction) != scope:
+            raise MappingPlanError('The generated mapping context changed before execution.')
+        current_service = frappe.get_doc('HERO GraphQL Service', run.graphql_service, for_update=True)
+        current_snapshot = frappe.get_doc('HERO GraphQL Schema Snapshot', current_service.schema_snapshot, for_update=True)
+        current = from_documents(current_service, current_mapping, current_snapshot)
+        if (current.service_revision != int(run.service_revision) or current.mapping_revision != int(run.mapping_revision)
+                or current_snapshot.source_instance != getattr(run, 'source_instance', '')):
+            raise MappingPlanError('The approved generated read context changed before execution.')
+        return current
     source = GraphQLServiceSource(HeroGraphQLClient(
         config.endpoint, lambda: config.api_token, config.timeout_seconds,
         max_retries=0 if _testing_preview_enabled(run) else 2,
-    ), service, contract, getattr(snapshot, "source_instance", "") or config.source_instance)
+    ), service, contract, getattr(snapshot, "source_instance", "") or config.source_instance,
+       revalidate=revalidate_generated if getattr(contract, 'materialized_request', None) is not None else None)
     if contract.target_operation == 'HeroProjectMatches':
         customer_service, customer_mapping, customer_snapshot = _customer_read_documents(run)
         customer_contract = from_documents(customer_service, customer_mapping, customer_snapshot)
@@ -367,6 +383,7 @@ def _mapping_plan_for_run(run, target_operation: str):
         target_operation=contract.target_operation,
         mapping_name=contract.mapping_name,
         native_task=json.loads(mapping.mapping_json).get('native_task_onboarding') is not None,
+        lock_rules=getattr(contract, 'materialized_request', None) is not None,
     )
 
 
@@ -537,6 +554,8 @@ def _record_task_assignment_pending(run, record, task_name: str, source_instance
         detail = 'PENDING_SOURCE_SEMANTICS: explicit NULL never removes a native assignment.'
     elif not isinstance(target, int) or isinstance(target, bool) or target <= 0:
         detail = 'PENDING_IDENTITY: source User identity is invalid.'
+    elif 'author_user_id' not in record:
+        detail = 'PENDING_AUTHORITY: source author was not included in the read.'
     elif record.get('author_user_id') is not None:
         detail = 'PENDING_AUTHORITY: source author has no verified system, peer or supervisor authority.'
     else:

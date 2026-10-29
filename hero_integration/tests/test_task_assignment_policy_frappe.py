@@ -75,7 +75,7 @@ class TestTaskAssignmentPolicyFrappe(unittest.TestCase):
             def source_identity(self, record): return str(record['id'])
         scope = {'confirmed': True, 'source_instance': 'fixture-policy32b', 'source_type': 'Task'}
         run = SimpleNamespace(mode='Execute', mapping_revision=1, name=None)
-        record = {'id': 990002, 'title': 'Synthetic policy task', 'target_user_id': 990001,
+        record = {'id': 990002, 'title': 'Synthetic policy task', 'target_user_id': 990001, 'author_user_id': None,
                   '_hero_source_instance': 'fixture-policy32b'}
         result = _migrate_native_task(record, run, Plan(), scope)
         frappe.set_user('Administrator')
@@ -109,7 +109,7 @@ class TestTaskAssignmentPolicyFrappe(unittest.TestCase):
             def source_identity(self, record): return str(record['id'])
         scope = {'confirmed': True, 'source_instance': 'fixture-policy32b', 'source_type': 'Task'}
         run = SimpleNamespace(mode='Execute', mapping_revision=1, name=None)
-        record = {'id': 990004, 'title': 'Synthetic restricted policy task', 'target_user_id': 990001,
+        record = {'id': 990004, 'title': 'Synthetic restricted policy task', 'target_user_id': 990001, 'author_user_id': None,
                   '_hero_source_instance': 'fixture-policy32b'}
         task = _migrate_native_task(record, run, Plan(), scope)
         project = frappe.get_doc({'doctype': 'Project', 'project_name': 'policy32b-restricted', 'company': self.company}).insert()
@@ -184,7 +184,7 @@ class TestTaskAssignmentPolicyFrappe(unittest.TestCase):
             target = 990001
             def projection(self, offset):
                 return SimpleNamespace(records=({'id': 990003, 'title': 'Synthetic registered policy task',
-                    'target_user_id': self.target, '_hero_source_instance': 'default'},), next_offset=None)
+                    'target_user_id': self.target, 'author_user_id': None, '_hero_source_instance': 'default'},), next_offset=None)
         run = Run(graphql_mapping=mapping.name, graphql_service=service.name, service_revision=service.service_revision,
                   mapping_revision=mapping.mapping_revision, source_instance='default', mode='Execute',
                   resume_offset=0, resume_record_index=0, state='Running', name=None, processed=0,
