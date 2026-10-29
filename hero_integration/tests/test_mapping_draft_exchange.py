@@ -57,6 +57,28 @@ def _schema_preview(_schema):
 
 
 class TestCurrentExchangeLocks(unittest.TestCase):
+    def test_native_task_publication_accepts_own_validated_generated_service_without_approving_it(self):
+        from hashlib import sha256
+        from hero_integration.services.frappe_mapping_draft_storage import FrappeMappingDraftStorage
+        from hero_integration.services.mapping_draft_service import MappingDraftError
+        query = 'query tasks { tasks { id title is_deleted } }'
+        row = {'name': 'SERVICE'}
+        service = SimpleNamespace(modified_by='owner', operation_name='tasks', schema_fingerprint='fp',
+                                  query_document=query, execution_status='Pending Approval',
+                                  check_permission=lambda value: None)
+        fake = SimpleNamespace(session=SimpleNamespace(user='owner'),
+            db=SimpleNamespace(sql=lambda query, *args, **kwargs: [row] if 'schema_snapshot=' in query else []),
+            get_doc=lambda value, *args, **kwargs: service if isinstance(value, dict) else SimpleNamespace())
+        storage = FrappeMappingDraftStorage(fake)
+        storage._definition = SimpleNamespace(schema_snapshot='snapshot', schema_fingerprint='fp', name='MAP')
+        content = {'native_task_onboarding': {'confirmed': True},
+                   'generated_task_seal': {'document_sha256': sha256(query.encode()).hexdigest()}}
+        storage._validate_publication_read_contract(content)
+        self.assertEqual(service.execution_status, 'Pending Approval')
+        service.modified_by = 'other'
+        with self.assertRaisesRegex(MappingDraftError, 'approved read service'):
+            storage._validate_publication_read_contract(content)
+
     def test_saved_personal_task_compiles_selected_rules_after_all_existing_guards(self):
         from hero_integration import api
         from hero_integration.services.frappe_mapping_draft_storage import FrappeMappingDraftStorage

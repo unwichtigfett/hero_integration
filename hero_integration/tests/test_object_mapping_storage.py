@@ -70,6 +70,31 @@ class ObjectMappingStorageTest(unittest.TestCase):
         bad = deepcopy(content); bad['field_contexts']['r']['schema_context'] = '{}'
         self.assertFalse(self.storage._approved_relationship_contexts(bad, value))
 
+    def test_native_task_context_uses_only_reviewed_flat_task_rules(self):
+        self.storage._definition.operation_name = 'tasks'
+        self.storage._definition.source_instance = 'source'
+        value = schema()
+        next(item for item in value['__schema']['types'] if item['name'] == 'Query')['fields'].append(
+            {'name': 'tasks', 'type': ref('LIST', of=ref('OBJECT', 'Task'))})
+        content = {'target_operation': 'HeroTasks', 'mapping_definition_ids': ['r'],
+                   'native_task_onboarding': {'confirmed': True, 'source_instance': 'source', 'source_type': 'Task'},
+                   'field_rules': {'r': {'source_path': 'title', 'source_type': 'string|null',
+                       'target_doctype': 'Task', 'target_field': 'subject', 'purpose': 'Record Name',
+                       'transformation': 'Trim', 'relation': '', 'priority': 0}},
+                   'field_contexts': {'r': {'object_type': 'Task', 'schema_context': self.entry['schema_context']}}}
+        self.assertTrue(self.storage._approved_task_contexts(content, value))
+        for change in ('object', 'target', 'scope', 'context'):
+            bad = deepcopy(content)
+            if change == 'object': bad['field_contexts']['r']['object_type'] = 'Customer'
+            if change == 'target': bad['field_rules']['r']['target_field'] = 'status'
+            if change == 'scope': bad['native_task_onboarding']['source_instance'] = 'other'
+            if change == 'context': bad['field_contexts']['r']['schema_context'] = '{}'
+            with self.subTest(change=change):
+                self.assertFalse(self.storage._approved_task_contexts(bad, value))
+        wrong_root = deepcopy(value)
+        next(item for item in wrong_root['__schema']['types'] if item['name'] == 'Query')['fields'][-1]['type'] = ref('OBJECT', 'Customer')
+        self.assertFalse(self.storage._approved_task_contexts(content, wrong_root))
+
     def test_existing_primary_metadata_is_preserved_and_paths_must_agree(self):
         source = {**self.source, 'doctype': 'legacy', 'type': 'legacy', 'path': 'title', 'source_path': 'title'}
         self.validate({'source': source})

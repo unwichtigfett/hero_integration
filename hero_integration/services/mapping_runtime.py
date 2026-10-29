@@ -234,11 +234,13 @@ def plan_from_definitions(operation: str, definitions: list[MappingSpec] | tuple
     return plan
 
 
-def active_mapping_plan(operation: str, *, definition_ids: tuple[str, ...] = (), target_operation: str = "", mapping_name: str = "", native_task: bool = False) -> MappingPlan:
+def active_mapping_plan(operation: str, *, definition_ids: tuple[str, ...] = (), target_operation: str = "", mapping_name: str = "", native_task: bool = False, lock_rules: bool = False) -> MappingPlan:
     import frappe
 
     if native_task and (not definition_ids or not mapping_name or len(set(definition_ids)) != len(definition_ids)):
         raise MappingPlanError('Native Task requires explicitly selected approved rules.')
+    if lock_rules and not native_task:
+        raise MappingPlanError('Locking rule reads are restricted to the native Task contract.')
     rows = frappe.get_all(
         "HERO Frappe Mapping",
         filters={"operation": target_operation or operation, "status": "Active"},
@@ -248,7 +250,17 @@ def active_mapping_plan(operation: str, *, definition_ids: tuple[str, ...] = (),
             "schema_snapshot", "schema_fingerprint",
         ],
         order_by="priority asc, creation asc",
-    )
+    ) if not lock_rules else []
+    if lock_rules:
+        for identity in sorted(definition_ids):
+            current = frappe.db.sql(
+                'select operation, source_path, source_type, target_doctype, target_field, purpose, '
+                'transformation, relation, priority, definition_id, personal_graphql_mapping, '
+                'schema_snapshot, schema_fingerprint, status from `tabHERO Frappe Mapping` '
+                'where definition_id=%s for update', (identity,), as_dict=True)
+            if len(current) != 1 or current[0]['status'] != 'Active' or current[0]['operation'] != (target_operation or operation):
+                raise MappingPlanError('A selected active Task rule is unavailable or changed.')
+            rows.append({key: value for key, value in current[0].items() if key != 'status'})
     if definition_ids:
         expected = set(definition_ids)
         rows = [row for row in rows if row["definition_id"] in expected]

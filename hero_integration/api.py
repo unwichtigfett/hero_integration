@@ -304,8 +304,14 @@ def approve_read_service(
 ) -> dict[str, object]:
     """Approve one stored read contract; approval never queues a run."""
     frappe.only_for("System Manager")
-    service = frappe.get_doc("HERO GraphQL Service", query_id)
-    mapping = frappe.get_doc("HERO GraphQL Mapping", mapping_name)
+    observed_mapping = frappe.get_doc("HERO GraphQL Mapping", mapping_name)
+    scope = (observed_mapping.source_instance or '', observed_mapping.schema_snapshot, observed_mapping.direction)
+    from hero_integration.hero_integration.doctype.hero_graphql_mapping.hero_graphql_mapping import lock_exchange_context
+    lock_exchange_context(*scope)
+    mapping = frappe.get_doc("HERO GraphQL Mapping", mapping_name, for_update=True)
+    if (mapping.source_instance or '', mapping.schema_snapshot, mapping.direction) != scope:
+        frappe.throw('The mapping context changed; reload it before approval.')
+    service = frappe.get_doc("HERO GraphQL Service", query_id, for_update=True)
     if int(service.service_revision or 0) != int(expected_service_revision or 0) or int(
         mapping.mapping_revision or 0
     ) != int(expected_mapping_revision or 0):
@@ -316,7 +322,12 @@ def approve_read_service(
         or mapping.status != "Active"
     ):
         frappe.throw("Only a validated service and active mapping on the same snapshot can be approved.")
-    service.read_mapping = mapping.name
+    # A changed read binding invalidates approval in the service controller.
+    # Persist that binding first, then explicitly approve its resulting state
+    # in the same request transaction.
+    if service.read_mapping != mapping.name:
+        service.read_mapping = mapping.name
+        service.save()
     service.execution_status = "Approved"
     service.approved_service_revision = service.service_revision
     service.approved_mapping_revision = mapping.mapping_revision

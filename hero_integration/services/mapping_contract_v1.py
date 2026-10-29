@@ -79,6 +79,15 @@ class QueryAdapter:
    raise MappingContractError('Native Task onboarding scope does not match the snapshot.')
   if content.get('records_path') != 'tasks' or content.get('identity_path') != 'id':
    raise MappingContractError('Native Task requires the explicit tasks root and id identity.')
+  root = next((item for item in snapshot.ir.query_fields if item.name == 'tasks'), None)
+  root_type = root.type_ref if root else None
+  if root_type is not None and root_type.kind == 'NON_NULL': root_type = root_type.of_type
+  if root_type is None or root_type.kind != 'LIST' or root_type.named_type() != 'Task':
+   raise MappingContractError('Native Task root must return the Task collection.')
+  element = root_type.of_type
+  if element is not None and element.kind == 'NON_NULL': element = element.of_type
+  if element is None or element.kind != 'OBJECT' or element.name != 'Task':
+   raise MappingContractError('Native Task root must return the Task collection.')
   if content.get('variables') != {'first': '$page_size', 'offset': '$offset'}:
    raise MappingContractError('Native Task pagination differs from the reviewed contract.')
   page_size = content.get('page_size', 100)
@@ -93,7 +102,10 @@ class QueryAdapter:
   if (any(not isinstance(path, str) or not path for path in paths)
       or len(paths) != len(set(paths)) or not {'id', 'title'} <= set(paths)):
    raise MappingContractError('Native Task identity and title rules are required.')
-  selected = tuple(sorted(set(paths) | {'is_deleted'}))
+  selected = set(paths) | {'is_deleted'}
+  if 'target_user_id' in paths:
+   selected.add('author_user_id')
+  selected = tuple(sorted(selected))
   return self.materialize(snapshot, QueryDraft('tasks', 'tasks', 'tasks', selected,
                           {'first': page_size, 'offset': 0, 'orderBy': 'id'}, pagination='offset'))
 @dataclass(frozen=True,slots=True)

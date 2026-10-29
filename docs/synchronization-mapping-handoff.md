@@ -25,6 +25,16 @@ review. Omitted values are preserved, and empty or NULL selected text requires
 review rather than clearing a field. Source deletion does not delete or close
 the Task. A mapping revision change requires review of the existing binding.
 
+An owned saved Task draft can generate a read-only service draft. Publication
+binds the generated document to the selected active Task rule contents, source
+instance and snapshot. A validated generated service permits publication but
+does not grant a read: a System Manager must separately approve the resulting
+active mapping and service revisions. Before each generated page the executor
+revalidates that approval and the locked rule contents, then uses the existing
+HERO client and result decoder. Legacy reviewed documents retain their existing
+contract. This source implementation and offline test evidence do not establish
+Frappe database, assignment-boundary or external HERO runtime acceptance.
+
 The Query and Mutation exchange files have separate directions and owner,
 snapshot and revision boundaries. Mutation drafts are technical metadata;
 they do not demonstrate or authorize an external mutation. The administrator's

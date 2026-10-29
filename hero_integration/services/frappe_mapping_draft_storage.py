@@ -532,6 +532,45 @@ class FrappeMappingDraftStorage:
                 return False
         return True
 
+    def _approved_task_contexts(self, content, schema):
+        """Allow only flat schema contexts for the existing native Task rules."""
+        from hero_integration.services.direct_mapping import MappingSpec, validate_native_task_rule
+        from hero_integration.services.object_mapping_catalog import field as schema_field
+        from hero_integration.services.graphql_graph import normalize_schema
+        parent = self._definition
+        scope = content.get('native_task_onboarding')
+        if (content.get('target_operation') != 'HeroTasks' or parent.operation_name != 'tasks'
+                or scope != {'confirmed': True, 'source_instance': parent.source_instance, 'source_type': 'Task'}):
+            return False
+        try:
+            normalized = normalize_schema(schema)
+            query_name = normalized['queryType']['name']
+            query_type = next(item for item in normalized['types'] if item.get('name') == query_name)
+            roots = [item for item in query_type.get('fields', []) if item.get('name') == 'tasks']
+            ref = roots[0]['type'] if len(roots) == 1 else None
+            while isinstance(ref, dict) and ref.get('kind') in {'NON_NULL', 'LIST'}:
+                ref = ref.get('ofType')
+            if not isinstance(ref, dict) or ref.get('kind') != 'OBJECT' or ref.get('name') != 'Task':
+                return False
+        except (KeyError, TypeError, ValueError, StopIteration):
+            return False
+        contexts, rules = content.get('field_contexts'), content.get('field_rules')
+        if not isinstance(contexts, dict) or not contexts or not isinstance(rules, dict):
+            return False
+        for identity, context in contexts.items():
+            if identity not in content.get('mapping_definition_ids', []) or not isinstance(context, dict):
+                return False
+            try:
+                rule = rules[identity]
+                spec = MappingSpec(operation='HeroTasks', definition_id=identity, **rule)
+                validate_native_task_rule(spec)
+                chosen = schema_field(schema, context['object_type'], spec.source_path, context['schema_context'])
+            except (KeyError, TypeError, ValueError):
+                return False
+            if context['object_type'] != 'Task' or chosen['relations'] or chosen['arguments']:
+                return False
+        return True
+
     def _publication_content(self, draft, schema):
         from uuid import NAMESPACE_URL, uuid5
         from hero_integration.services.personal_mapping_content import RULE_FIELDS, same
@@ -567,7 +606,7 @@ class FrappeMappingDraftStorage:
                 any('object_type' in item.get('source', {}) for item in additions)):
             raise MappingDraftError('Object-first Draft fields require an approved fetch and publication contract before activation.')
         if content.get('field_contexts'):
-            if not self._approved_relationship_contexts(content, schema):
+            if not (self._approved_relationship_contexts(content, schema) or self._approved_task_contexts(content, schema)):
                 raise MappingDraftError('Object-first Draft fields require an approved fetch and publication contract before activation.')
             content.pop('field_contexts')
         ids = content.get('mapping_definition_ids')
@@ -638,8 +677,16 @@ class FrappeMappingDraftStorage:
         targets = [(spec.target_doctype, spec.target_field) for spec in specifications if spec.purpose != 'Record Name']
         if len(set(targets)) != len(targets):
             raise MappingDraftError('The published mapping contains duplicate target fields.')
-        plan_from_definitions(parent.operation_name, specifications, target_operation=operation,
-                              native_task=content.get('native_task_onboarding') is not None)
+        native_task = content.get('native_task_onboarding') is not None
+        plan = plan_from_definitions(parent.operation_name, specifications, target_operation=operation, native_task=native_task)
+        if native_task:
+            from hero_integration.api import _validated_snapshot
+            from hero_integration.services.read_contract import task_materialization
+            snapshot, _ = _validated_snapshot(parent.schema_snapshot, for_update=True)
+            try:
+                _, content['generated_task_seal'] = task_materialization(snapshot, content, plan)
+            except (ValueError, TypeError, KeyError) as error:
+                raise MappingDraftError('Native Task mapping cannot be materialized for publication.') from error
         self._validate_publication_read_contract(content)
         return content, created
 
@@ -676,6 +723,22 @@ class FrappeMappingDraftStorage:
         from hero_integration.services.read_contract import from_documents
         f, parent = self.frappe, self._definition
         snapshot = f.get_doc('HERO GraphQL Schema Snapshot', parent.schema_snapshot, for_update=True)
+        seal = content.get('generated_task_seal')
+        if content.get('native_task_onboarding') and isinstance(seal, dict):
+            from hashlib import sha256
+            candidates = f.db.sql(
+                'select * from `tabHERO GraphQL Service` where schema_snapshot=%s and status=%s for update',
+                (parent.schema_snapshot, 'Validated'), as_dict=True)
+            for row in candidates:
+                service = f.get_doc(dict(row, doctype='HERO GraphQL Service'))
+                service.check_permission('read')
+                document = service.query_document
+                if (service.modified_by == f.session.user and service.operation_name == 'tasks'
+                        and service.schema_fingerprint == parent.schema_fingerprint and isinstance(document, str)
+                        and sha256(document.encode('utf-8')).hexdigest() == seal.get('document_sha256')):
+                    # This proves a validated fetch definition exists; it does
+                    # not approve it or authorize any read execution.
+                    return
         services = f.db.sql('select * from `tabHERO GraphQL Service` where read_mapping=%s and status=%s for update',
                             (parent.name, 'Validated'), as_dict=True)
         approved = []
@@ -685,6 +748,12 @@ class FrappeMappingDraftStorage:
             try:
                 from_documents(service, parent, snapshot)
             except ValueError:
+                continue
+            if content.get('native_task_onboarding') and content.get('generated_task_seal'):
+                # Publication changes the mapping revision and therefore makes
+                # this old approval stale. A new generated service must be
+                # separately approved against the resulting active revision.
+                approved.append(service.name)
                 continue
             values = service.as_dict()
             values['approved_mapping_revision'] = int(parent.mapping_revision) + 1

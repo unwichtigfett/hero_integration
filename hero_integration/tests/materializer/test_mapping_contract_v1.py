@@ -39,6 +39,8 @@ def test_personal_task_fields_materialize_with_identity_and_lifecycle_selection(
         {'name': 'id', 'args': [], 'type': scalar('ID')},
         {'name': 'title', 'args': [], 'type': scalar('String')},
         {'name': 'target_project_match_id', 'args': [], 'type': scalar('Int')},
+        {'name': 'target_user_id', 'args': [], 'type': scalar('Int')},
+        {'name': 'author_user_id', 'args': [], 'type': scalar('Int')},
         {'name': 'is_deleted', 'args': [], 'type': scalar('Boolean')}]})
     stored = StoredSnapshot('tasks-snapshot', raw, analyze_snapshot(raw).fingerprint, 'hero-primary')
     validated = SnapshotAdapter().adapt(stored)
@@ -54,6 +56,10 @@ def test_personal_task_fields_materialize_with_identity_and_lifecycle_selection(
     assert set(request.variables.values()) == {0, 25, 'id'}
     assert request.mutation_safety_request is None
     assert request == QueryAdapter().materialize_personal_task(validated, content)
+    assignment = {**content, 'mapping_definition_ids': [*content['mapping_definition_ids'], 'task-user'],
+                  'field_rules': {**content['field_rules'], 'task-user': {'source_path': 'target_user_id'}}}
+    assigned_request = QueryAdapter().materialize_personal_task(validated, assignment)
+    assert ('author_user_id',) in {binding.selection_path for binding in assigned_request.result_bindings}
     with pytest.raises(MappingContractError, match='pagination'):
         QueryAdapter().materialize_personal_task(validated, {**content, 'variables': {'first': 100}})
     with pytest.raises(MappingContractError, match='scope'):
