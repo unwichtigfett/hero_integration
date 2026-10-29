@@ -312,6 +312,16 @@ class TestPortableDraftExchange(unittest.TestCase):
              patch('hero_integration.services.frappe_mapping_draft_storage.FrappeMappingDraftStorage',
                    side_effect=lambda: FrappeMappingDraftStorage(fake)):
             service = FrappeMappingDraftStorage(fake).service()
+            invalid = {**content, 'additional_mappings':[{'id':'9d8fe02d-9eb0-49b1-a599-e0630f421010',
+                'source':{'doctype':'Customer','field':'email_id'},
+                'target':{'operation':'update_contact','argument':'contact','input_type':'CustomerInput','field':'email'},
+                'transformation':'Identity'}]}
+            with self.assertRaisesRegex(ValueError, 'lose'):
+                fake.get_doc({'doctype':'HERO GraphQL Mapping', 'definition_id':IDENTITY,
+                    'schema_snapshot':'snapshot-B', 'operation_kind':'MUTATION', 'operation_name':'update_contact',
+                    'direction':'FRAPPE_TO_MUTATION', 'status':'Active', 'mapping_revision':1,
+                    'mapping_json':json.dumps(invalid)}).insert()
+            self.assertEqual(fake.active, [])
             draft = service.open_new_draft(definition, fake.session.user, content)
             result = api.mapping_draft_publish(IDENTITY, 1, 1, 0, 0, confirmed=True)
             self.assertEqual(result['revision'], 1)
