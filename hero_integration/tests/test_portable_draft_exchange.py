@@ -325,7 +325,11 @@ class TestPortableDraftExchange(unittest.TestCase):
         target.snapshot.snapshot_json = json.dumps(schema)
         target.snapshot.schema_fingerprint = analyze_snapshot(schema).fingerprint
         with self.context(target), patch.dict(sys.modules, {'frappe':target}), \
-             patch.object(hero_mapping_draft, 'frappe', target), patch.object(hero_mapping_revision, 'frappe', target):
+             patch.object(hero_mapping_draft, 'frappe', target), patch.object(hero_mapping_revision, 'frappe', target), \
+             patch.object(hero_graphql_mapping, 'frappe', target), patch.object(mapping_draft_access, 'frappe', target), \
+             patch.object(api, '_mapping_request_fields'), patch.object(hero_graphql_mapping, 'lock_exchange_context'), \
+             patch('hero_integration.services.frappe_mapping_draft_storage.FrappeMappingDraftStorage',
+                   side_effect=lambda: FrappeMappingDraftStorage(target)):
             raw = json.dumps(package)
             preview = exchange.preview_import(raw, 'source-C', 'snapshot-C', 'FRAPPE_TO_MUTATION')
             states = [dict(definition_id=item['definition_id'], **item['expected']) for item in preview['items']]
@@ -334,6 +338,9 @@ class TestPortableDraftExchange(unittest.TestCase):
             imported = FrappeMappingDraftStorage(target).service().open_draft(IDENTITY, target.session.user)
             self.assertEqual(imported.content['target']['field'], 'full_name')
             self.assertEqual(target.active, [])
+            self.assertEqual(api.mapping_draft_publish(IDENTITY, imported.generation, imported.content_revision,
+                                                       0, 0, confirmed=True)['revision'], 1)
+            self.assertEqual(target.active[0]['source_instance'], 'source-C')
 
     def test_storage_savepoint_restores_all_synthetic_publication_collections(self):
         fake = Fake('target.test', 'source-B', 'snapshot-B')
@@ -505,7 +512,11 @@ class TestPortableDraftExchange(unittest.TestCase):
         target.snapshot.schema_fingerprint = analyze_snapshot(schema).fingerprint
         with self.context(target), patch.object(hero_frappe_mapping, '_FrappeMetadata', Metadata), \
              patch.dict(sys.modules, {'frappe':target}), patch.object(hero_mapping_draft, 'frappe', target), \
-             patch.object(hero_mapping_revision, 'frappe', target):
+             patch.object(hero_mapping_revision, 'frappe', target), patch.object(hero_frappe_mapping, 'frappe', target), \
+             patch.object(hero_graphql_mapping, 'frappe', target), patch.object(mapping_draft_access, 'frappe', target), \
+             patch.object(api, '_mapping_request_fields'), patch.object(hero_graphql_mapping, 'lock_exchange_context'), \
+             patch('hero_integration.services.frappe_mapping_draft_storage.FrappeMappingDraftStorage',
+                   side_effect=lambda: FrappeMappingDraftStorage(target)):
             raw = json.dumps(package)
             preview = exchange.preview_import(raw, 'source-C', 'snapshot-C', 'QUERY_TO_FRAPPE')
             states = [dict(definition_id=item['definition_id'], **item['expected']) for item in preview['items']]
@@ -514,6 +525,9 @@ class TestPortableDraftExchange(unittest.TestCase):
             imported = FrappeMappingDraftStorage(target).service().open_draft(IDENTITY, target.session.user)
             self.assertEqual(imported.content['mapping_definition_ids'], ids)
             self.assertEqual(target.active, [])
+            self.assertEqual(api.mapping_draft_publish(IDENTITY, imported.generation, imported.content_revision,
+                                                       0, 0, confirmed=True)['revision'], 1)
+            self.assertEqual(target.active[0]['source_instance'], 'source-C')
 
     def context(self, fake):
         stack = __import__('contextlib').ExitStack()
