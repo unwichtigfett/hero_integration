@@ -102,6 +102,29 @@ class TestTestingPreviewContract(unittest.TestCase):
             self.assertEqual(calls, [])
             self.assertIn('snapshot', block.call_args.args[1].lower())
 
+    def test_legacy_phase_rejects_repeated_identity_before_second_page_write(self):
+        run = SimpleNamespace(resume_phase='', resume_offset=0, resume_record_index=0,
+                              state='Running', reload=lambda:None, save=lambda:None)
+        pages = {0:SourcePage(({'id':1}, {'id':2}), 2), 2:SourcePage(({'id':2}, {'id':3}), None)}
+        processed = []
+        with patch.object(migration, '_phase_state', return_value='Pending'), \
+             patch.object(migration, '_set_phase_state'), patch.object(migration, '_block_run'), \
+             patch.object(migration, '_migrate_customer', side_effect=lambda record, _run: processed.append(record['id'])), \
+             patch.object(migration, '_record_result'), patch.object(migration, '_record_phase_result'), \
+             patch.object(migration, '_phase_has_blockers', return_value=False):
+            with self.assertRaisesRegex(migration.MappingPlanError, 'identity'):
+                migration._process_phase(run, 'customer', lambda offset: pages[offset])
+        self.assertEqual(processed, [1, 2])
+
+    def test_legacy_phase_rejects_nonadvancing_page_before_record_write(self):
+        run = SimpleNamespace(resume_phase='', resume_offset=0, resume_record_index=0,
+                              state='Running', reload=lambda:None, save=lambda:None)
+        with patch.object(migration, '_phase_state', return_value='Pending'), \
+             patch.object(migration, '_set_phase_state'), patch.object(migration, '_migrate_customer') as writer:
+            with self.assertRaisesRegex(migration.MappingPlanError, 'pagination'):
+                migration._process_phase(run, 'customer', lambda _offset: SourcePage(({'id':1},), 0))
+        writer.assert_not_called()
+
     def test_shared_budget_limits_multiple_sources_and_pagination(self):
         source = _VerifiedSource()
         limited = TestingPreviewSource(source, 2)

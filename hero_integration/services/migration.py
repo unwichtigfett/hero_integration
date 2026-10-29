@@ -387,6 +387,22 @@ def _mapping_plan_for_run(run, target_operation: str):
     )
 
 
+def _validate_enumeration_page(page: SourcePage, offset: int, seen_ids: set[str]) -> None:
+    """Reject invalid pagination before applying any records from the page."""
+    if page.next_offset is not None and (type(page.next_offset) is not int
+            or page.next_offset <= offset or not page.records):
+        raise MappingPlanError('Source pagination did not advance safely.')
+    identities = []
+    for row in page.records:
+        identity = row.get('id') if isinstance(row, dict) else None
+        if not isinstance(identity, (str, int)) or isinstance(identity, bool) or not str(identity).strip():
+            raise MappingPlanError('Source identity is missing or invalid.')
+        identities.append(str(identity))
+    if len(set(identities)) != len(identities) or seen_ids.intersection(identities):
+        raise MappingPlanError('Source identity repeated during enumeration.')
+    seen_ids.update(identities)
+
+
 def _process_phase(run, phase: str, reader) -> bool:
     if _phase_state(run, phase) == "Completed":
         return True
@@ -399,6 +415,7 @@ def _process_phase(run, phase: str, reader) -> bool:
         _set_phase_state(run, phase, "Blocked")
         _block_run(run, "Cannot resume without a verified source snapshot and page identity evidence.")
         return False
+    seen_ids: set[str] = set()
     while True:
         _cancel_if_requested(run)
         page: SourcePage = reader(offset)
@@ -412,6 +429,7 @@ def _process_phase(run, phase: str, reader) -> bool:
             )
             _block_run(run, detail)
             return False
+        _validate_enumeration_page(page, offset, seen_ids)
         for index, record in enumerate(page.records):
             if index < record_index:
                 continue
@@ -515,7 +533,7 @@ def _process_projection(run, source) -> None:
     if offset or index_start:
         _block_run(run, 'Cannot resume without a verified source snapshot and page identity evidence.')
         return
-    seen_pages = set()
+    seen_ids: set[str] = set()
     while True:
         _cancel_if_requested(run)
         page = source.projection(offset)
@@ -527,10 +545,10 @@ def _process_projection(run, source) -> None:
             )
             _block_run(run, detail)
             return
-        page_ids = tuple(record.get('id') for record in page.records)
-        if page_ids and page_ids in seen_pages:
-            raise RepeatedProjectionPageError('Projection pagination returned a repeated page.')
-        seen_pages.add(page_ids)
+        try:
+            _validate_enumeration_page(page, offset, seen_ids)
+        except MappingPlanError as error:
+            raise RepeatedProjectionPageError(str(error)) from error
         for index, record in enumerate(page.records):
             if index < index_start:
                 continue
