@@ -14,9 +14,11 @@ WRITE_RPC_NAMES = {
     "workspace_mutation_contract_save", "execute_graphql_service", "writeback_execute",
     "mapping_draft_create", "mapping_draft_save", "mapping_draft_discard", "mapping_draft_publish",
     "mapping_draft_exchange_save", "workspace_service_execute", "workspace_analyzer_service_save",
+    "workspace_node_bookmark_save", "workspace_node_bookmark_rename", "workspace_node_bookmark_delete",
 }
 READ_RPC_NAMES = {"frontend_mapping_list", "frontend_mapping_detail", "runtime_plan_status",
-                  "mapping_draft_read", "mapping_draft_revisions", "mapping_draft_exchange_export"}
+                  "mapping_draft_read", "mapping_draft_revisions", "mapping_draft_exchange_export",
+                  "workspace_node_bookmark_list", "workspace_node_bookmark_resolve"}
 
 
 class TestApiMethodContract(unittest.TestCase):
