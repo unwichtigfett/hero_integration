@@ -20,18 +20,35 @@ class TestB7BoundProcessor(unittest.TestCase):
         binding = bindings.create_or_resolve_field_binding(parent, source_field="profile.name", target_field="customer_name", mapping_definition_id="name", mapping_revision=4, direction=MappingDirection.HERO_TO_FRAPPE)
         self.field = BoundField("hero-1", binding, ("profile", "name"))
 
-    def test_delegates_only_existing_bound_fields_to_b7_update_writer(self):
+    def test_bound_write_requires_atomic_local_baseline_contract(self):
         writer = _Writer()
         processor = FrappeBoundProcessor(4, ("name",), document_adapter=writer)
-        self.assertTrue(processor.process({"id": "hero-1", "profile": {"name": "Ada"}}, (self.field,)))
-        self.assertEqual(writer.calls, [("site", "erpnext", "Customer", "CUST-1", {"customer_name": "Ada"})])
+        self.assertFalse(processor.process({"id": "hero-1", "profile": {"name": "Ada"}}, (self.field,)))
+        self.assertEqual(writer.calls, [])
+
+    def test_unacknowledged_field_never_overwrites_local_target(self):
+        writer = _Writer()
+        processor = FrappeBoundProcessor(4, ('name',), document_adapter=writer)
+        self.assertFalse(processor.process({'id':'hero-1', 'profile':{'name':'Remote'}}, (self.field,)))
+        self.assertEqual(writer.calls, [])
+
+    def test_synchronized_binding_still_requires_atomic_target_comparison(self):
+        from dataclasses import replace
+        from hero_integration.services.binding_registry import BindingState
+        acknowledged = replace(self.field.binding, state=BindingState.SYNCHRONIZED,
+                               acknowledged_source_fingerprint='a'*64, acknowledged_target_fingerprint='b'*64)
+        field = BoundField('hero-1', acknowledged, ('profile', 'name'))
+        writer = _Writer()
+        self.assertFalse(FrappeBoundProcessor(4, ('name',), document_adapter=writer).process(
+            {'id':'hero-1', 'profile':{'name':'Remote'}}, (field,)))
+        self.assertEqual(writer.calls, [])
 
     def test_stale_unbound_or_failed_update_never_onboards(self):
         writer = _Writer(False)
         self.assertFalse(FrappeBoundProcessor(5, ("name",), document_adapter=writer).process({"id": "hero-1", "profile": {"name": "Ada"}}, (self.field,)))
         self.assertFalse(FrappeBoundProcessor(4, ("name",), document_adapter=writer).process({"id": "other", "profile": {"name": "Ada"}}, (self.field,)))
         self.assertFalse(FrappeBoundProcessor(4, ("name",), document_adapter=writer).process({"id": "hero-1", "profile": {"name": "Ada"}}, (self.field,)))
-        self.assertEqual(len(writer.calls), 1)
+        self.assertEqual(len(writer.calls), 0)
 
 
 class TestIdempotentSyncConfiguration(unittest.TestCase):
