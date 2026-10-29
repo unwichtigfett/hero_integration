@@ -15,17 +15,54 @@ test('new mapping preserves the existing assignment and supports undo', () => {
  state.removeAdditional(0); assert.equal(state.content.source.field,'customer_name'); state.restore();
  assert.equal(state.content.additional_mappings[0].target.field,'nr');
 });
+test('removing and restoring a rule preserves its matching object context', () => {
+ const state = new DraftState({content:{mapping_definition_ids:['rule-1'],field_contexts:{'rule-1':{object_type:'Task',schema_context:'context'}}}});
+ state.remove(0);
+ assert.equal(state.content.mapping_definition_ids.length,0);
+ assert.equal(state.content.field_contexts['rule-1'],undefined);
+ state.restore();
+ assert.equal(state.content.field_contexts['rule-1'].object_type,'Task');
+ assert.equal(state.content.field_contexts['rule-1'].schema_context,'context');
+ assert.equal(state.dirty,false);
+});
+test('selecting a HERO field preserves and updates existing source path aliases', () => {
+ const state = new DraftState({content:{source:{field:'old',path:'old',source_path:'old'}}});
+ state.setHeroSource({path:'project.customer.id',object_type:'Task',schema_context:'schema'});
+ assert.equal(state.content.source.field,'project.customer.id');
+ assert.equal(state.content.source.path,'project.customer.id');
+ assert.equal(state.content.source.source_path,'project.customer.id');
+ assert.equal(state.content.source.object_type,'Task');
+ assert.equal(state.content.source.schema_context,'schema');
+ const plain = new DraftState({content:{source:{field:'old'}}});
+ plain.setHeroSource({path:'title',object_type:'Task',schema_context:'schema'});
+ assert.equal(Object.hasOwn(plain.content.source,'source_path'),false);
+ assert.equal(Object.hasOwn(plain.content.source,'path'),false);
+});
 test('same operation names retain distinct definition identity and context', () => {
  const {definitionChoice}=window.hero_integration_mapping_editor;
  const first={operation_name:'contacts',name:'HERO-GQL-MAP-1',definition_id:'id-1',kind:'graphql',schema_snapshot:'snapshot-a',revision:2};
- const second={...first,name:'HERO-GQL-MAP-2',definition_id:'id-2',revision:3};
- const a=definitionChoice(first), b=definitionChoice(second);
+ const second={...first,name:'HERO-GQL-MAP-2',definition_id:'id-2'};
+ const a=definitionChoice(first,0), b=definitionChoice(second,1);
  assert.equal(a.label,'contacts'); assert.equal(b.label,'contacts');
  assert.equal(a.name,first.name); assert.equal(b.name,second.name);
  assert.equal(a.definition_id,'id-1'); assert.equal(b.definition_id,'id-2');
- assert.match(a.context,/snapshot-a.*Revision 2.*id-1/);
- assert.match(b.context,/Revision 3.*id-2/);
+ assert.match(a.context,/Definition 1.*snapshot-a.*Revision 2/);
+ assert.match(b.context,/Definition 2.*snapshot-a.*Revision 2/);
+ assert.doesNotMatch(a.context,/id-1/); assert.doesNotMatch(b.context,/id-2/);
  assert.equal(definitionChoice({operation:'project_matches'}).label,'project_matches');
+});
+test('object field context displays relationship role, list cardinality and arguments', () => {
+ const {objectFieldContext}=window.hero_integration_mapping_editor;
+ const value=objectFieldContext({fieldtype:'String',relations:[{owner_type:'Project',name:'addresses',target_type:'Address',is_list:true,arguments:[{name:'role',type:'String!'}]}],arguments:[{name:'locale',type:'String'}]});
+ assert.match(value,/Project\.addresses → Address \[list\] \(role: String!\)/);
+ assert.match(value,/Arguments: locale: String/);
+});
+test('mutation input type comes from the argument, including GraphQL wrappers', () => {
+ const {actionInputType}=window.hero_integration_mapping_editor;
+ const operation={arguments:[{name:'contact',type:'CustomerInput!'}, {name:'batch',type:'[CustomerInput!]!'}],input_fields:{contact:[{path:'full_name',input_type:''}]}};
+ assert.equal(actionInputType(operation,'contact'),'CustomerInput');
+ assert.equal(actionInputType(operation,'batch'),'CustomerInput');
+ assert.equal(actionInputType(operation,'missing'),'');
 });
 test('snapshot pagination reaches later pages and never returns partial results after failure or context change', async () => {
  const {readSnapshotPages}=window.hero_integration_mapping_editor;

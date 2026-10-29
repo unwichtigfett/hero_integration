@@ -1,0 +1,72 @@
+import json
+import unittest
+
+from hero_integration.services.object_mapping_catalog import catalog, field
+from hero_integration.services.personal_mapping_content import validate_edits, MappingDraftError
+
+
+def ref(kind, name=None, of=None):
+    return {'kind': kind, 'name': name, 'ofType': of}
+
+
+def schema():
+    address = ref('OBJECT', 'Address')
+    return {'__schema': {'queryType': {'name': 'Query'}, 'types': [
+        {'kind': 'OBJECT', 'name': 'Query', 'fields': [
+            {'name': 'contacts', 'type': ref('LIST', of=ref('OBJECT', 'Customer'))},
+            {'name': 'other_contacts', 'type': ref('LIST', of=ref('OBJECT', 'Customer'))}]},
+        {'kind': 'OBJECT', 'name': 'Customer', 'fields': [
+            {'name': 'title', 'type': ref('NON_NULL', of=ref('SCALAR', 'String'))},
+            {'name': 'customer_address', 'type': address, 'args': [
+                {'name': 'role', 'type': ref('SCALAR', 'String'), 'defaultValue': None}]},
+            {'name': 'project_addresses', 'type': ref('NON_NULL', of=ref('LIST', of=address))}]},
+        {'kind': 'OBJECT', 'name': 'Address', 'fields': [
+            {'name': 'street', 'type': ref('SCALAR', 'String')},
+            {'name': 'owner', 'type': ref('OBJECT', 'Customer')}]},
+        {'kind': 'INPUT_OBJECT', 'name': 'CustomerInput', 'inputFields': []},
+        {'kind': 'OBJECT', 'name': 'Task', 'fields': [
+            {'name': 'title', 'type': ref('SCALAR', 'String')}]},
+    ]}}
+
+
+class ObjectMappingCatalogTest(unittest.TestCase):
+    def test_objects_are_schema_types_not_operations_or_definitions(self):
+        names = [x['name'] for x in catalog(schema())['objects']]
+        self.assertEqual(names.count('Customer'), 1)
+        self.assertNotIn('contacts', names)
+        self.assertNotIn('CustomerInput', names)
+        self.assertEqual([x['path'] for x in catalog(schema(), 'Task')['items']], ['title'])
+        with self.assertRaises(ValueError):
+            catalog(schema(), 'HeroCustomers')
+
+    def test_relationship_roles_lists_and_arguments_remain_distinct(self):
+        items = {x['path']: x for x in catalog(schema(), 'Customer')['items']}
+        first, second = items['customer_address.street'], items['project_addresses.street']
+        self.assertNotEqual(first['schema_context'], second['schema_context'])
+        self.assertEqual(first['relations'][0]['arguments'][0]['name'], 'role')
+        self.assertTrue(second['relations'][0]['is_list'])
+        self.assertEqual(second['relations'][0]['type'], '[Address]!')
+        self.assertFalse(items['title']['nullable'])
+        self.assertFalse(first['activation_allowed'])
+        self.assertNotIn('customer_address.owner.customer_address.street', items)
+        self.assertEqual(field(schema(), 'Customer', first['path'], first['schema_context']), first)
+        with self.assertRaises(ValueError):
+            field(schema(), 'Customer', first['path'], second['schema_context'])
+        altered = schema()
+        customer = next(t for t in altered['__schema']['types'] if t['name'] == 'Customer')
+        customer['fields'][1]['args'][0]['defaultValue'] = 'new-default'
+        with self.assertRaises(ValueError):
+            field(altered, 'Customer', first['path'], first['schema_context'])
+
+    def test_context_survives_draft_and_forged_shape_fails(self):
+        selected = catalog(schema(), 'Task')['items'][0]
+        content = {'mapping_definition_ids': ['task-rule'], 'field_rules': {'task-rule': {'source_path': 'title'}},
+                   'field_contexts': {'task-rule': {'object_type': 'Task', 'schema_context': selected['schema_context']}}}
+        self.assertEqual(validate_edits({}, content), content)
+        bad = json.loads(json.dumps(content)); bad['field_contexts']['task-rule']['approval'] = 'yes'
+        with self.assertRaises(MappingDraftError):
+            validate_edits({}, bad)
+
+
+if __name__ == '__main__':
+    unittest.main()

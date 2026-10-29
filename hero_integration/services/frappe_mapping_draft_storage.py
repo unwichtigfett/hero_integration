@@ -330,6 +330,9 @@ class FrappeMappingDraftStorage:
             raise MappingDraftError('Native Task onboarding is outside the current source and mapping.')
         if value.get('additional_mappings'):
             self._validate_additional_mappings(value['additional_mappings'])
+        if value.get('field_contexts') or (isinstance(value.get('source'), dict) and
+                ({'object_type', 'schema_context'} & set(value['source']))):
+            self._validate_object_contexts(value)
         rules, bases = value.get("field_rules", {}), value.get("field_rule_bases", {})
         if not isinstance(rules, dict) or not isinstance(bases, dict) or not same(bases, prior.get("field_rule_bases", {})):
             raise MappingDraftError("Field-rule provenance is server-managed.")
@@ -355,7 +358,7 @@ class FrappeMappingDraftStorage:
     def _validate_additional_mappings(self, mappings):
         from hero_integration.api import _validated_snapshot
         from hero_integration.services.frappe_mapping_catalog import (
-            FrappePickerMetadata, validate_draft_target, validate_draft_writeback_source,
+            FrappePickerMetadata, fields as target_catalog_fields, validate_draft_target, validate_draft_writeback_source,
         )
         from hero_integration.services.frappe_writeback import (
             WritebackContractError, draft_source_type_compatible, normalise_draft_mapping,
@@ -374,7 +377,17 @@ class FrappeMappingDraftStorage:
             source, target = item['source'], item['target']
             try:
                 if parent.direction == 'QUERY_TO_FRAPPE':
-                    if set(source) != {'field'} or set(target) != {'doctype', 'field'}:
+                    if set(target) != {'doctype', 'field'}:
+                        raise MappingDraftError('Invalid query assignment shape.')
+                    if set(source) == {'field', 'object_type', 'schema_context'}:
+                        from hero_integration.services.object_mapping_catalog import field as schema_field
+                        schema_field(schema, source['object_type'], source['field'], source['schema_context'])
+                        permitted = next((candidate for candidate in target_catalog_fields(
+                            metadata, doctype=target['doctype']) if candidate.path == target['field']), None)
+                        if permitted is None or not permitted.selectable:
+                            raise MappingDraftError('The Frappe target is unavailable or protected.')
+                        continue
+                    if set(source) != {'field'}:
                         raise MappingDraftError('Invalid query assignment shape.')
                     chosen = sources.get(source['field'])
                     if chosen is None or not chosen.mapping_type:
@@ -394,6 +407,34 @@ class FrappeMappingDraftStorage:
                     raise MappingDraftError('Unsupported mapping direction.')
             except (ValueError, WritebackContractError) as error:
                 raise MappingDraftError('Invalid additional mapping.') from error
+
+    def _validate_object_contexts(self, content):
+        from hero_integration.api import _validated_snapshot
+        from hero_integration.services.object_mapping_catalog import field as schema_field
+        if self._definition.direction != 'QUERY_TO_FRAPPE':
+            raise MappingDraftError('Object field contexts require a Query mapping.')
+        snapshot, schema = getattr(self, '_publication_snapshot', None) or _validated_snapshot(self._definition.schema_snapshot)
+        if snapshot.schema_fingerprint != self._definition.schema_fingerprint:
+            raise DraftConflict('Mapping schema changed.')
+        contexts, rules = content.get('field_contexts', {}), content.get('field_rules', {})
+        primary = content.get('source', {})
+        if isinstance(primary, dict) and ({'object_type', 'schema_context'} & set(primary)):
+            allowed = {'field', 'object_type', 'schema_context', 'doctype', 'type', 'path', 'source_path'}
+            if (not {'field', 'object_type', 'schema_context'} <= set(primary)
+                    or set(primary) - allowed
+                    or any(primary[key] != primary['field'] for key in ('path', 'source_path') if key in primary)):
+                raise MappingDraftError('Invalid primary object field context.')
+            try:
+                schema_field(schema, primary['object_type'], primary['field'], primary['schema_context'])
+            except (KeyError, TypeError, ValueError) as error:
+                raise MappingDraftError('Object field context does not match the saved schema.') from error
+        for identity, context in contexts.items():
+            if identity not in rules or identity not in content.get('mapping_definition_ids', []):
+                raise MappingDraftError('Object context must identify a selected personal field rule.')
+            try:
+                schema_field(schema, context['object_type'], rules[identity]['source_path'], context['schema_context'])
+            except (KeyError, TypeError, ValueError) as error:
+                raise MappingDraftError('Object field context does not match the saved schema.') from error
 
     def _publication_content(self, draft, schema):
         from uuid import NAMESPACE_URL, uuid5
@@ -425,6 +466,10 @@ class FrappeMappingDraftStorage:
             return normalized, created
         if parent.direction != 'QUERY_TO_FRAPPE':
             raise MappingDraftError('Unsupported publication direction.')
+        if (content.get('field_contexts') or (isinstance(content.get('source'), dict) and
+                ({'object_type', 'schema_context'} & set(content['source']))) or
+                any('object_type' in item.get('source', {}) for item in additions)):
+            raise MappingDraftError('Object-first Draft fields require an approved fetch and publication contract before activation.')
         ids = content.get('mapping_definition_ids')
         rules, bases = content.pop('field_rules', {}), content.pop('field_rule_bases', {})
         if not isinstance(ids, list) or not ids or not isinstance(rules, dict) or not isinstance(bases, dict):

@@ -2098,6 +2098,29 @@ def preview_direct_mapping(operation: str, source_record_json: str) -> dict[str,
     return {"operation": operation, "values": values, "writes": False}
 
 
+@frappe.whitelist(methods=['GET'])
+def mapping_object_catalog(snapshot_name: str, object_type: str = '', search: str = '',
+                           start: int | str = 0, page_size: int | str = 50) -> dict[str, object]:
+    """Inspect schema objects and relation paths, without authorizing a fetch."""
+    frappe.only_for('System Manager')
+    _mapping_request_fields({'snapshot_name', 'object_type', 'search', 'start', 'page_size'})
+    snapshot_name = _mapping_text(snapshot_name, 'snapshot_name')
+    object_type = _mapping_text(object_type, 'object_type', 140, allow_empty=True)
+    search = _mapping_text(search, 'search', 120, allow_empty=True)
+    start, page_size = _mapping_int(start, 'start', 0, 10000), _mapping_int(page_size, 'page_size', 1, 50)
+    snapshot, schema = _validated_snapshot(snapshot_name)
+    from hero_integration.services.object_mapping_catalog import catalog
+    try:
+        data = catalog(schema, object_type, search)
+    except ValueError as error:
+        frappe.throw(str(error))
+    entries = data['items']
+    return {'objects': data['objects'], 'items': entries[start:start + page_size], 'start': start,
+            'page_size': page_size, 'total': len(entries), 'has_more': start + page_size < len(entries),
+            'source_instance': snapshot.source_instance, 'snapshot_name': snapshot.name,
+            'schema_fingerprint': snapshot.schema_fingerprint, 'execution_authorized': False}
+
+
 @frappe.whitelist()
 def mapping_source_picker(snapshot_name: str, operation: str, search: str = "") -> list[dict[str, object]]:
     frappe.only_for("System Manager")
