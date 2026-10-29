@@ -160,10 +160,19 @@ def validate_exchange_action(content, schema, operation_name):
         WritebackContractError, normalise_mapping, reviewed_input_target,
     )
     try:
+        if not isinstance(content, dict):
+            raise WritebackContractError('Action configuration must be an object.')
+        incoming_source, incoming_target = content.get('source'), content.get('target')
+        if (not isinstance(incoming_source, dict) or set(incoming_source) != {'doctype', 'field'}
+                or not isinstance(incoming_target, dict)
+                or not {'operation', 'argument', 'input_type', 'field'} <= set(incoming_target)
+                or set(incoming_target) - {'operation', 'argument', 'input_type', 'field', 'field_path', 'graphql_type'}):
+            raise WritebackContractError('Action contains an unsupported parameter.')
+        if 'version' in content and (type(content['version']) is not int or content['version'] != 1):
+            raise WritebackContractError('Unsupported action version.')
         action = normalise_mapping(content, schema)
         source, target = action['source'], action['target']
         reviewed = reviewed_input_target(source['doctype'], source['field'], schema)
-        incoming_target = content['target']
         if target['operation'] != operation_name:
             raise WritebackContractError('Action operation does not match the selected definition.')
         if 'field_path' in incoming_target and incoming_target['field_path'] != target['field']:

@@ -22,6 +22,15 @@ class HEROGraphQLMapping(Document):
         snapshot = frappe.get_doc("HERO GraphQL Schema Snapshot", self.schema_snapshot)
         if snapshot.analysis_status != "Validated":
             frappe.throw("A validated schema snapshot is required.")
+        # All supported membership changes in a directional exchange context
+        # participate in the same narrowly scoped application lock.
+        scopes = set()
+        if previous and previous.status == 'Active':
+            scopes.add((previous.source_instance or '', previous.schema_snapshot, previous.direction))
+        if self.status == 'Active':
+            scopes.add((getattr(snapshot, 'source_instance', '') or '', self.schema_snapshot, self.direction))
+        for scope in sorted(scopes):
+            lock_exchange_context(*scope)
         try:
             mapping = json.loads(self.mapping_json)
             if not isinstance(mapping, dict):
@@ -84,6 +93,17 @@ class HEROGraphQLMapping(Document):
         if self.status == "Active" and previous and previous.status == "Draft":
             if previous.modified_by != frappe.session.user:
                 frappe.throw("Only the administrator who last changed this Draft may activate it.")
+
+    def on_trash(self):
+        if self.status == 'Active':
+            lock_exchange_context(self.source_instance or '', self.schema_snapshot, self.direction)
+
+
+def lock_exchange_context(source_instance, snapshot_name, direction):
+    """Serialize supported membership changes for this exact source context."""
+    from hero_integration.hero_integration.doctype.hero_frappe_mapping.hero_frappe_mapping import _lock_active_target
+    _lock_active_target('personal-draft-exchange', source_instance or '',
+                        json.dumps([snapshot_name, direction], ensure_ascii=False, separators=(',', ':')))
 
 
 def _unique_json_object(pairs):
