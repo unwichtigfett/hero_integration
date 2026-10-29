@@ -154,9 +154,14 @@ class MutationAdapter:
   if not f: raise MappingContractError('Unknown mutation field.')
   args={a.name:a for a in f.arguments}
   input_types=[]
+  def describe(input_field):
+   nullable=input_field.type_ref.kind!='NON_NULL'
+   return {'name':input_field.name,'type':input_field.type_ref.render(),'nullable':nullable,
+           'omittable':nullable or input_field.default_value is not None,'default_value':input_field.default_value}
   for path in d.input_paths:
    current=args.get(path[0])
    if current is None: raise MappingContractError('Unknown mutation argument.')
+   segments=[describe(current)]
    for segment in path[1:]:
     parent_ref=current.type_ref
     if parent_ref.kind=='NON_NULL': parent_ref=parent_ref.of_type
@@ -165,9 +170,11 @@ class MutationAdapter:
     if parent is None or parent.kind!='INPUT_OBJECT': raise MappingContractError('Unsupported mutation input path.')
     current=next((x for x in parent.input_fields if x.name==segment),None)
     if current is None: raise MappingContractError('Unknown mutation input path.')
+    segments.append(describe(current))
    leaf_ref=current.type_ref.of_type if current.type_ref.kind=='NON_NULL' else current.type_ref
    if leaf_ref is not None and leaf_ref.kind=='LIST' and d.relation_mode is not RelationMode.COLLECTION:
     raise MappingContractError('Mutation list input requires an explicitly approved collection binding.')
-   input_types.append({'path':list(path),'type':current.type_ref.render(), 'nullable':current.type_ref.kind!='NON_NULL'})
+   input_types.append({'path':list(path),'type':current.type_ref.render(),
+                       'nullable':current.type_ref.kind!='NON_NULL','segments':segments})
   return {'executable':False,'field':f.name,'snapshot_fingerprint':s.fingerprint,'source_instance':d.source_instance,
           'revision':d.revision,'input_paths':d.input_paths,'input_types':input_types,'null_mode':d.null_mode.value}

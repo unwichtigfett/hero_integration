@@ -406,17 +406,23 @@ def test_mutation_plan_rejects_wrong_source_and_ambiguous_or_collection_paths():
     input_type = next(t for t in raw['__schema']['types'] if t['name'] == 'CaseUpdateInput')
     input_type['inputFields'].append({'name':'children', 'defaultValue':None,
         'type':listed(named('INPUT_OBJECT', 'CaseChild'))})
-    input_type['inputFields'].append({'name':'details', 'defaultValue':None,
+    input_type['inputFields'].append({'name':'details', 'defaultValue':'null',
         'type':named('INPUT_OBJECT', 'CaseChild')})
     raw['__schema']['types'].append({'kind':'INPUT_OBJECT', 'name':'CaseChild',
-        'inputFields':[{'name':'title', 'defaultValue':None, 'type':non_null(named('SCALAR','String'))}]})
+        'inputFields':[{'name':'title', 'defaultValue':None, 'type':non_null(named('SCALAR','String'))},
+                       {'name':'label', 'defaultValue':'"default"', 'type':non_null(named('SCALAR','String'))}]})
     adapted = SnapshotAdapter().adapt(StoredSnapshot('snapshot', raw, analyze_snapshot(raw).fingerprint, 'hero-primary'))
     plan = MutationAdapter().materialize(adapted, MutationDraft('updateCase', (('input','title'),), 'hero-primary', 1))
-    assert plan['input_types'] == [{'path':['input','title'], 'type':'String', 'nullable':True}]
+    assert plan['input_types'][0]['path'] == ['input','title']
     assert plan['null_mode'] == 'missing_is_unchanged'
     assert plan['executable'] is False
     nested = MutationAdapter().materialize(adapted, MutationDraft('updateCase', (('input','details','title'),), 'hero-primary', 1))
-    assert nested['input_types'] == [{'path':['input','details','title'], 'type':'String!', 'nullable':False}]
+    segments = nested['input_types'][0]['segments']
+    assert [(item['type'], item['nullable'], item['omittable'], item['default_value']) for item in segments] == [
+        ('CaseUpdateInput!', False, False, None), ('CaseChild', True, True, 'null'), ('String!', False, False, None)]
+    defaulted = MutationAdapter().materialize(adapted, MutationDraft('updateCase', (('input','details','label'),), 'hero-primary', 1))
+    assert defaulted['input_types'][0]['segments'][-1]['omittable'] is True
+    assert defaulted['input_types'][0]['segments'][-1]['nullable'] is False
     collection = MutationAdapter().materialize(adapted, MutationDraft('updateCase', (('input','children'),),
         'hero-primary', 1, relation_mode=RelationMode.COLLECTION, resolver_approved=True))
     assert collection['input_types'][0]['type'] == '[CaseChild]'
