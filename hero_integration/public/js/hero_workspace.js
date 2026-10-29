@@ -25,7 +25,7 @@
     // need an explicit release token. JavaScript must stay query-free when it
     // enters frappe.require(): Frappe owns the version parameter and uses the
     // original extension to select its script loader.
-    const ASSET_RELEASE = "20261029.30a";
+    const ASSET_RELEASE = "20261029.31a";
     const ASSETS = [
         "/assets/hero_integration/css/hero_tools.css",
         "/assets/hero_integration/css/hero_adapter.css",
@@ -98,9 +98,11 @@
         if (method === "list_services") return request("workspace_service_list", {snapshot_name, operation_kind: args.operation_kind || "query", start: args.start || 0, page_size: args.page_size || 50});
         if (method === "get_query") return request("workspace_service_detail", {query_id: args.query_id});
         if (method === "save_query") return request("workspace_service_save", {snapshot_name, query_id: args.query_id || "", expected_revision: args.expected_revision || 0, payload_json: JSON.stringify({...args.payload, operation_kind: args.operation_kind || "query"})});
-        if (method === "validate_saved_query") return request("workspace_service_validate", {snapshot_name, query_id: args.query_id || "", expected_revision: args.expected_revision || 0});
-        if (method === "preview_query" && args.operation_kind === "mutation") return request("workspace_mutation_draft_validate", {snapshot_name, payload_json: JSON.stringify(args.payload)});
-        if (method === "preview_query") return request("workspace_service_validate", {snapshot_name, payload_json: JSON.stringify({...args.payload, operation_kind: args.operation_kind || "query"})});
+        // Variables are runtime input: validated locally against the declarations, never part of the saved payload.
+        const variablesJson = args.variables ? {variables_json: JSON.stringify(args.variables)} : {};
+        if (method === "validate_saved_query") return request("workspace_service_validate", {snapshot_name, query_id: args.query_id || "", expected_revision: args.expected_revision || 0, ...variablesJson});
+        if (method === "preview_query" && args.operation_kind === "mutation") return request("workspace_mutation_draft_validate", {snapshot_name, payload_json: JSON.stringify(args.payload), ...variablesJson});
+        if (method === "preview_query") return request("workspace_service_validate", {snapshot_name, payload_json: JSON.stringify({...args.payload, operation_kind: args.operation_kind || "query"}), ...variablesJson});
         if (method === "delete_query") return request("workspace_service_delete", {query_id: args.query_id, expected_revision: args.expected_revision || 0});
         throw new Error("This historic action has no native compatibility mapping.");
     }
