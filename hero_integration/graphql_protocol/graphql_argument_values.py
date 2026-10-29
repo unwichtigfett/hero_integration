@@ -26,18 +26,19 @@ def _validate(
     name: str,
     *,
     schema: GraphQLSchema | None = None,
+    strict_scalars: bool = False,
 ) -> object:
     if ref.kind == "NON_NULL":
         if value is None:
             raise GraphQLArgumentValueError(f"GraphQL argument {name!r} must not be null.")
-        return _validate(value, _unwrap(ref), name, schema=schema)
+        return _validate(value, _unwrap(ref), name, schema=schema, strict_scalars=strict_scalars)
     if value is None:
         return None
     if ref.kind == "LIST":
         if ref.of_type is None or not isinstance(value, list):
             raise GraphQLArgumentValueError(f"GraphQL list argument {name!r} requires a JSON array.")
         return [
-            _validate(v, ref.of_type, f"{name}[{index}]", schema=schema)
+            _validate(v, ref.of_type, f"{name}[{index}]", schema=schema, strict_scalars=strict_scalars)
             for index, v in enumerate(value)
         ]
     kind=ref.named_type()
@@ -50,7 +51,11 @@ def _validate(
     }
     if kind in valid and not valid[kind](value):
         raise GraphQLArgumentValueError(f"Invalid value for GraphQL {kind} argument {name!r}.")
+    if strict_scalars and kind == 'Int' and not -(2**31) <= value < 2**31:
+        raise GraphQLArgumentValueError(f"GraphQL Int argument {name!r} is out of range.")
     graphql_type = schema.type_named(kind) if schema is not None and kind else None
+    if strict_scalars and kind not in valid and (graphql_type is None or graphql_type.kind not in {'ENUM', 'INPUT_OBJECT'}):
+        raise GraphQLArgumentValueError(f"GraphQL scalar {kind!r} is not supported for mutation preview.")
     if graphql_type is not None and graphql_type.kind == "ENUM":
         allowed = {item.name for item in graphql_type.enum_values}
         if not isinstance(value, str) or value not in allowed:
@@ -84,6 +89,7 @@ def _validate(
                 field.type_ref,
                 child_name,
                 schema=schema,
+                strict_scalars=strict_scalars,
             )
         return result
     return value
