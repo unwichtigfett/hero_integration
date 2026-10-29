@@ -671,6 +671,11 @@ class FrappeMappingDraftStorage:
                 locked_metadata = _portable_target_metadata(draft.content, context['direction'])
                 for doctype, item in locked_metadata.items():
                     meta = f.get_meta(doctype)
+                    declared = item['doctype']
+                    if ((meta.get('module') or '') != (declared.get('module') or '')
+                            or any(int(meta.get(k) or 0) != int(declared.get(k) or 0)
+                                   for k in ('custom', 'istable', 'issingle', 'is_virtual'))):
+                        raise MappingDraftError('Cached target DocType differs from the locked metadata.')
                     for stored in item['fields']:
                         field = meta.get_field(stored['fieldname'])
                         if (field is None or any((field.get(k) or '') != (stored.get(k) or '')

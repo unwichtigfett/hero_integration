@@ -433,6 +433,23 @@ class TestPortableDraftExchange(unittest.TestCase):
             fake.drafts[draft.key]['diagnostics_json'] = ''
             fake.drafts[draft.key]['warning_fingerprint'] = ''
             self.assertEqual(service.open_draft(IDENTITY, fake.session.user).content, content)
+            fake.drafts[draft.key]['warning_fingerprint'] = 'warning-proof'
+            fake.drafts[draft.key]['diagnostics_json'] = json.dumps({'warnings':['Review this mapping']})
+            with self.assertRaisesRegex(ValueError, 'MAPPING_DRAFT_INVALID'):
+                api.mapping_draft_publish(IDENTITY, 1, 1, 0, 0, confirmed=True)
+            self.assertEqual(fake.active, [])
+            fake.drafts[draft.key]['warning_fingerprint'] = ''
+            fake.drafts[draft.key]['diagnostics_json'] = ''
+            metadata = fake.get_meta
+            def stale_meta(doctype):
+                meta = metadata(doctype)
+                meta.get = lambda key: 'stale-module' if key == 'module' else 0
+                return meta
+            fake.get_meta = stale_meta
+            with self.assertRaisesRegex(ValueError, 'MAPPING_DRAFT_INVALID'):
+                api.mapping_draft_publish(IDENTITY, 1, 1, 0, 0, confirmed=True)
+            self.assertEqual(fake.active, [])
+            fake.get_meta = metadata
             with self.assertRaisesRegex(ValueError, 'identity is already used by a personal draft'):
                 fake.get_doc({'doctype':'HERO GraphQL Mapping', 'definition_id':IDENTITY,
                     'portable_definition_id':IDENTITY, 'schema_snapshot':'snapshot-B', 'operation_kind':'QUERY',
