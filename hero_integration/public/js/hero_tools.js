@@ -605,8 +605,16 @@
             }
             return call('get_graph',{...scope,node_id:id});
         }
+        rememberButton(node,scope){
+            // Only rendered for a real, single node detail; overview class cards never reach detailContents.
+            const store=window.hero_integration_bookmarks;if(!store||!node?.node_id||!scope?.schema_fingerprint)return null;
+            const identity={snapshot_name:scope.connection_id,schema_fingerprint:scope.schema_fingerprint,node_id:node.node_id,node_name:node.name,node_kind:node.kind};
+            const b=button('Remember for Mapping',()=>{if(this.scopeKey(scope)!==this.scopeKey()){this.notice.textContent=errors.SCHEMA_CHANGED;return;}store.remember(identity);});
+            b.classList.add('ht-remember');b.title='Remember this node under your own alias for the Mapping Editor. No mapping is created.';return b;
+        }
         detailContents(target,data,scope,navigate){
             target.replaceChildren($('h3','',data.node.name),$('p','',data.node.node_id),$('p','',data.node.description||''),$('pre','ht-data',JSON.stringify(data.node,null,2)));
+            const remember=this.rememberButton(data.node,scope);if(remember)target.insertBefore(remember,target.children[2]);
             if(this.tool==='analyzer')this.appendAnalyzerService(target,data.node,scope);
             for(const [title,edges,key] of [['Incoming',data.incoming,'source_id'],['Outgoing',data.outgoing,'target_id']]){target.append($('h4','',`${title} (${edges.length})`));for(const edge of edges)target.append(button(`${edge.kind}${edge.label?' · '+edge.label:''} · ${edge[key]}`,()=>navigate(edge[key])));}
         }
