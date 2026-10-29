@@ -109,3 +109,67 @@ test('result: summary counts delivered top-level values without changing them', 
   readableResult(data);
   assert.equal(JSON.stringify(data), before, 'formatting has no side effect on the result');
 });
+
+const {jsonTokens, variableTokens, readableTokens, GRAPHQL_HIGHLIGHT_RULES} = window.hero_workspace_tools.graphqlText;
+const joined = (tokens) => tokens.map(([, text]) => text).join('');
+const typed = (tokens) => tokens.filter(([type]) => type !== 'plain').map(([type, text]) => `${type}:${text}`);
+
+test('colours: variable tokens keep the exact text and mark each value type', () => {
+  const text = 'id := 5;\noffset := -2.5\n\norderBy := "id";\nactive := true;\ndeleted := null\nids := [1, "2"];\nfilter := {"a":"b;"};';
+  const tokens = variableTokens(text);
+  assert.equal(joined(tokens), text);
+  assert.deepEqual(plain(typed(variableTokens('id := 5;'))), ['variable:id', 'operator::=', 'number:5', 'punctuation:;']);
+  assert.deepEqual(plain(typed(variableTokens('orderBy := "id";'))), ['variable:orderBy', 'operator::=', 'string:"id"', 'punctuation:;']);
+  assert.deepEqual(plain(typed(variableTokens('a := true\nb := null'))), ['variable:a', 'operator::=', 'boolean:true', 'variable:b', 'operator::=', 'null:null']);
+  assert.deepEqual(plain(typed(variableTokens('filter := {"a":"b;"}'))),
+    ['variable:filter', 'operator::=', 'punctuation:{', 'key:"a"', 'punctuation::', 'string:"b;"', 'punctuation:}']);
+});
+
+test('colours: invalid parts are marked as errors without changing the text', () => {
+  for (const text of ['id = 5', '1id := 5', 'search := Photovoltaik', '{"id": x}']) {
+    const tokens = variableTokens(text);
+    assert.equal(joined(tokens), text);
+    assert.ok(tokens.some(([type]) => type === 'error'), text);
+  }
+  assert.ok(!variableTokens('id := 5;\nname := "x"').some(([type]) => type === 'error'));
+});
+
+test('colours: readable and raw JSON tokens equal the copied text', () => {
+  const data = {projects: [{project_id: 7678, name: 'Photovoltaik', active: true, deleted_at: null, tags: []}, {project_id: '7679'}]};
+  assert.equal(joined(readableTokens(data)), readableResult(data));
+  const line = readableTokens({project_id: '7678', n: 1});
+  assert.deepEqual(plain(line.slice(0, 3)), [['key', 'project_id'], ['operator', ' = '], ['string', '"7678"']]);
+  assert.deepEqual(plain(line.slice(-1)), [['number', '1']]);
+  const raw = JSON.stringify(data, null, 2);
+  assert.equal(joined(jsonTokens(raw)), raw);
+  assert.ok(jsonTokens(raw).some(([type, text]) => type === 'key' && text === '"project_id"'));
+  assert.ok(jsonTokens(raw).some(([type, text]) => type === 'string' && text === '"7679"'));
+});
+
+test('colours: GraphQL editor rules classify keywords, types, variables and values', () => {
+  const rules = GRAPHQL_HIGHLIGHT_RULES.map(([token, regex]) => [token, new RegExp(regex, 'y')]);
+  const tokenize = (line) => {
+    const out = [];
+    for (let at = 0; at < line.length;) {
+      const hit = rules.find(([, regex]) => { regex.lastIndex = at; return regex.test(line) && regex.lastIndex > at; });
+      if (!hit) { at += 1; continue; }
+      const [token, regex] = hit; regex.lastIndex = at; regex.test(line);
+      out.push(`${token}:${line.slice(at, regex.lastIndex)}`); at = regex.lastIndex;
+    }
+    return out;
+  };
+  assert.deepEqual(tokenize('query Contact($id: ID!, $n: Int = 5) { contact(id: $id, active: true, x: null, s: "a") { id ... on Person { name } } } # note'), [
+    'keyword:query', 'support.type:Contact', 'punctuation.operator:(', 'variable:$id', 'punctuation.operator::', 'support.type:ID',
+    'punctuation.operator:!', 'punctuation.operator:,', 'variable:$n', 'punctuation.operator::', 'support.type:Int', 'punctuation.operator:=',
+    'constant.numeric:5', 'punctuation.operator:)', 'punctuation.operator:{', 'identifier:contact', 'punctuation.operator:(', 'identifier:id',
+    'punctuation.operator::', 'variable:$id', 'punctuation.operator:,', 'identifier:active', 'punctuation.operator::',
+    'constant.language.boolean:true', 'punctuation.operator:,', 'identifier:x', 'punctuation.operator::', 'constant.language.null:null',
+    'punctuation.operator:,', 'identifier:s', 'punctuation.operator::', 'string:"a"', 'punctuation.operator:)', 'punctuation.operator:{',
+    'identifier:id', 'punctuation.operator:...', 'keyword:on', 'support.type:Person', 'punctuation.operator:{', 'identifier:name',
+    'punctuation.operator:}', 'punctuation.operator:}', 'punctuation.operator:}', 'comment:# note']);
+  for (const [, regex] of GRAPHQL_HIGHLIGHT_RULES) {
+    // Ignore escaped characters and character classes; any remaining "(" must open a non-capturing group.
+    const groups = regex.replace(/\\./g, '').replace(/\[[^\]]*\]/g, '');
+    assert.ok(!/\((?!\?)/.test(groups), `Ace rules must not use capture groups: ${regex}`);
+  }
+});

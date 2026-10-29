@@ -153,6 +153,7 @@
     const field = (label, input) => { const n = $('label', 'ht-field', label); n.append(input); input.setAttribute('aria-label', label); return n; };
     const input = (placeholder = '') => { const n = $('input', 'form-control'); n.placeholder = placeholder; return n; };
     const button = (label, action) => { const b = $('button', 'btn btn-default btn-sm', label); b.type = 'button'; b.addEventListener('click', action); return b; };
+    const renderTokens = (target, tokens) => target.replaceChildren(...tokens.map(([type, text]) => $('span', 'ht-tok ht-tok-' + type.replace(/\./g, '-'), text)));
     const errors = {CONFIGURATION_REQUIRED:'The HERO connection is not configured completely.', PERMISSION_DENIED:'You do not have permission to use this tool action.',
         BINDING_CHANGED:'The connection changed. Reload the context and accept the change deliberately.', REVISION_CONFLICT:'The record changed in the meantime. Reload it; your draft is retained.',
         SCHEMA_CHANGED:'The current schema changed. Validate again.', SCHEMA_NOT_FOUND:'No schema is available for this connection and revision.',
@@ -223,28 +224,103 @@
         if (GRAPHQL_NAME.test(key)) return path ? `${path}.${key}` : key;
         return `${path}[${JSON.stringify(key)}]`;
     }
-    function readableResultLines(value, path = '', lines = []) {
+    function readableResultEntries(value, path = '', entries = []) {
         const label = path || '(root)';
         if (Array.isArray(value)) {
-            if (!value.length) { lines.push(`${label} = []`); return lines; }
+            if (!value.length) { entries.push({path: label, text: '[]', type: 'empty'}); return entries; }
             value.forEach((item, index) => {
                 // A blank line separates structured list items; the order of the list is kept.
-                if (index && item && typeof item === 'object') lines.push('');
-                readableResultLines(item, `${path}[${index}]`, lines);
+                if (index && item && typeof item === 'object') entries.push(null);
+                readableResultEntries(item, `${path}[${index}]`, entries);
             });
-            return lines;
+            return entries;
         }
         if (value && typeof value === 'object') {
             const keys = Object.keys(value);
-            if (!keys.length) { lines.push(`${label} = {}`); return lines; }
-            for (const key of keys) readableResultLines(value[key], resultKey(path, key), lines);
-            return lines;
+            if (!keys.length) { entries.push({path: label, text: '{}', type: 'empty'}); return entries; }
+            for (const key of keys) readableResultEntries(value[key], resultKey(path, key), entries);
+            return entries;
         }
         // JSON.stringify keeps the delivered type: strings get double quotes and escapes, numbers, booleans and null do not.
-        lines.push(`${label} = ${value === undefined ? 'null' : JSON.stringify(value)}`);
-        return lines;
+        const missing = value === undefined || value === null;
+        entries.push({path: label, text: missing ? 'null' : JSON.stringify(value), type: missing ? 'null' : typeof value});
+        return entries;
     }
-    function readableResult(value) { return readableResultLines(value).join('\n'); }
+    function readableResult(value) { return readableResultEntries(value).map((entry) => entry ? `${entry.path} = ${entry.text}` : '').join('\n'); }
+    /*
+     * Colour tokens: [type, text] pairs whose texts concatenate to exactly the input, so copying and parsing never change.
+     */
+    const JSON_TOKEN = /("(?:[^"\\\n]|\\.)*")(\s*:)?|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)|\b(true|false)\b|\b(null)\b|([{}\[\],:;])|(\s+)|([\s\S])/g;
+    function jsonTokens(text) {
+        const tokens = [];
+        for (const match of String(text).matchAll(JSON_TOKEN)) {
+            if (match[1] !== undefined) { tokens.push([match[2] ? 'key' : 'string', match[1]]); if (match[2]) tokens.push(['punctuation', match[2]]); }
+            else if (match[3] !== undefined) tokens.push(['number', match[3]]);
+            else if (match[4] !== undefined) tokens.push(['boolean', match[4]]);
+            else if (match[5] !== undefined) tokens.push(['null', match[5]]);
+            else if (match[6] !== undefined) tokens.push(['punctuation', match[6]]);
+            else if (match[7] !== undefined) tokens.push(['plain', match[7]]);
+            else tokens.push(['error', match[8]]);
+        }
+        return tokens;
+    }
+    function variableTokens(text) {
+        const source = String(text ?? '');
+        if (source.trim().startsWith('{')) return jsonTokens(source);
+        const tokens = [];
+        source.split('\n').forEach((line, index) => {
+            if (index) tokens.push(['plain', '\n']);
+            const at = line.indexOf(':=');
+            if (!line.trim()) { if (line) tokens.push(['plain', line]); return; }
+            if (at < 0) { tokens.push(['error', line]); return; }
+            const [, before, name, after] = /^(\s*)(.*?)(\s*)$/.exec(line.slice(0, at));
+            if (before) tokens.push(['plain', before]);
+            if (name) tokens.push([GRAPHQL_NAME.test(name) ? 'variable' : 'error', name]);
+            if (after) tokens.push(['plain', after]);
+            tokens.push(['operator', ':=']);
+            tokens.push(...jsonTokens(line.slice(at + 2)));
+        });
+        return tokens;
+    }
+    function readableTokens(value) {
+        const tokens = [];
+        readableResultEntries(value).forEach((entry, index) => {
+            if (index) tokens.push(['plain', '\n']);
+            if (entry) tokens.push(['key', entry.path], ['operator', ' = '], [entry.type, entry.text]);
+        });
+        return tokens;
+    }
+    // GraphQL highlighting rules for the Ace editor; regexes avoid capture groups as Ace requires.
+    const GRAPHQL_HIGHLIGHT_RULES = Object.freeze([
+        ['comment', '#.*$'],
+        ['string', '"(?:[^"\\\\]|\\\\.)*"'],
+        ['variable', '\\$[_A-Za-z][_0-9A-Za-z]*'],
+        ['keyword', '@[_A-Za-z][_0-9A-Za-z]*'],
+        ['keyword', '\\b(?:query|mutation|subscription|fragment|on)\\b'],
+        ['constant.language.boolean', '\\b(?:true|false)\\b'],
+        ['constant.language.null', '\\bnull\\b'],
+        ['constant.numeric', '-?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?\\b'],
+        ['support.type', '\\b[A-Z][_0-9A-Za-z]*\\b'],
+        ['identifier', '[_a-z][_0-9A-Za-z]*'],
+        ['punctuation.operator', '\\.\\.\\.|[{}()\\[\\]:!=,|&]'],
+    ]);
+    function graphqlAceMode(ace) {
+        // Built from Ace core modules only, so no mode file has to be fetched at runtime.
+        const TextMode = ace.require('ace/mode/text').Mode, TextRules = ace.require('ace/mode/text_highlight_rules').TextHighlightRules;
+        function Rules() {
+            this.$rules = {start: GRAPHQL_HIGHLIGHT_RULES.map(([token, regex]) => ({token, regex})).concat([
+                {token: 'string', regex: '"""', next: 'block'}]).sort((a, b) => (b.regex === '"""') - (a.regex === '"""')),
+                block: [{token: 'string', regex: '"""', next: 'start'}, {defaultToken: 'string'}]};
+            this.normalizeRules();
+        }
+        Rules.prototype = Object.create(TextRules.prototype);
+        function Mode() { TextMode.call(this); this.HighlightRules = Rules; }
+        Mode.prototype = Object.create(TextMode.prototype);
+        Mode.prototype.$id = 'hero/graphql';
+        Mode.prototype.lineCommentStart = '#';
+        return new Mode();
+    }
+    const MAX_COLORED_LINES = 20000;
     function resultSummary(data) {
         if (!data || typeof data !== 'object' || Array.isArray(data)) return [];
         return Object.entries(data).map(([key, value]) => `${key}: ${Array.isArray(value) ? `${value.length} ${value.length === 1 ? 'item' : 'items'}` : value === null ? 'null' : typeof value === 'object' ? 'object' : 'value'}`);
@@ -800,15 +876,15 @@
                 if(kind===this.serviceKind)link.setAttribute('aria-current','page');
                 link.addEventListener('click',e=>{if(this.openService(kind)===false)e.preventDefault();});views.append(link);
             }
-            this.editorHost=$('div','ht-editor');this.variables=$('textarea','form-control ht-variables');this.variables.value='';this.variables.rows=6;this.variables.spellcheck=false;this.variables.placeholder='id := 5;\noffset := 5;\norderBy := "id";';this.queryOutput=$('pre','ht-data');this.queryOutput.setAttribute('aria-live','polite');this.queryStatus=$('p','ht-query-status');this.queryStatus.setAttribute('role','status');
+            this.editorHost=$('div','ht-editor');this.variables=$('textarea','form-control ht-variables');this.variables.value='';this.variables.rows=6;this.variables.spellcheck=false;this.variables.setAttribute('wrap','off');this.variablesHighlight=$('pre','ht-variables-highlight');this.variablesHighlight.setAttribute('aria-hidden','true');const variablesBox=$('div','ht-variables-box');variablesBox.append(this.variablesHighlight,this.variables);this.variables.setAttribute('aria-label','Variables');this.variables.placeholder='id := 5;\noffset := 5;\norderBy := "id";';this.queryOutput=$('pre','ht-data');this.queryOutput.setAttribute('aria-live','polite');this.queryStatus=$('p','ht-query-status');this.queryStatus.setAttribute('role','status');
             const bar=$('div','ht-toolbar');this.newButton=button('New '+this.serviceLabel(),()=>this.newQuery());this.copyButton=button('Duplicate',()=>this.run(async()=>this.newQuery(true)));this.saveButton=button('Save',()=>this.run(()=>this.saveQuery()));this.validateButton=button('Validate',()=>this.run(()=>this.validateQuery()));this.executeButton=button(this.serviceKind==='mutation'?'Execute Mutation':'Execute Query',()=>this.run(()=>this.executeQuery()));this.deleteButton=button('Delete',()=>this.run(()=>this.deleteQuery()));bar.append(this.newButton,this.copyButton,this.saveButton,this.validateButton,this.executeButton,this.deleteButton);
             this.serviceHint=$('p','ht-service-hint');this.queryProvenance=$('p','ht-query-provenance');
             // Variables are runtime input: one "name := value;" line each, converted to a JSON object before a request.
             // No preview is shown below the field; invalid input marks the field and explains the problem in its tooltip.
             this.variablesHelp=$('p','ht-context','One variable per line: name := value; (the semicolon is optional). Strings use double quotes; numbers, true, false and null have no quotes; arrays and objects use JSON. Values are not stored with the service.');
-            editor.append(this.queryStatus,this.queryProvenance,field('Name',this.name),field('Category',this.category),field('Description',this.description),field('operationName',this.operation),$('h3','','GraphQL'),this.editorHost,field('Variables',this.variables),this.variablesHelp,bar,this.queryOutput);grid.append(this.queryList,editor);this.queryPager=this.pager('services',()=>this.loadQueries());p.append(views,$('h2','','GraphQL Services · '+this.serviceLabel()),this.serviceHint,grid,this.queryPager.root);
+            editor.append(this.queryStatus,this.queryProvenance,field('Name',this.name),field('Category',this.category),field('Description',this.description),field('operationName',this.operation),$('h3','','GraphQL'),this.editorHost,$('label','ht-field','Variables'),variablesBox,this.variablesHelp,bar,this.queryOutput);grid.append(this.queryList,editor);this.queryPager=this.pager('services',()=>this.loadQueries());p.append(views,$('h2','','GraphQL Services · '+this.serviceLabel()),this.serviceHint,grid,this.queryPager.root);
             for(const n of [this.name,this.category,this.description,this.operation])n.addEventListener('input',()=>this.queryChanged());
-            this.variables.addEventListener('input',()=>{this.markVariables();this.updateActions();});this.markVariables();
+            this.variables.addEventListener('input',()=>{this.markVariables();this.updateActions();});this.variables.addEventListener('scroll',()=>{this.variablesHighlight.scrollTop=this.variables.scrollTop;this.variablesHighlight.scrollLeft=this.variables.scrollLeft;});this.markVariables();
         }
         async initializeEditor(){
             if(window.hero_integration_platform?.loadAce){
@@ -828,13 +904,14 @@
                 useSoftTabs:true
             });
             this.editor.session.setUseWorker(false);
+            try{this.editor.session.setMode(graphqlAceMode(window.ace));}catch(error){/* Without the mode the editor stays plain text. */}
             this.editor.session.on(
                 'change',
                 ()=>this.queryChanged()
             );
             this.base=this.draftString();
         }
-        queryChanged(){this.validation=null;this.queryOutput.textContent='';this.updateActions();}
+        queryChanged(){this.validation=null;this.queryOutput.textContent='';delete this.queryOutput.dataset.state;this.updateActions();}
         queryString(q) {
             // Match SavedQuery's text normalization. Variable values are runtime input and never part of the saved definition,
             // so they do not mark the service as changed.
@@ -842,7 +919,7 @@
         }
         draftString(){return this.queryString({name:this.name.value,category:this.category.value,description:this.description.value,operation_name:this.operation.value,query:this.editor?.getValue()||''});}
         variablesValue(){return parseVariablesText(this.variables.value);}
-        markVariables(){if(!this.variables)return;try{this.variablesValue();this.variables.removeAttribute('aria-invalid');this.variables.title='';}catch(error){this.variables.setAttribute('aria-invalid','true');this.variables.title=error.message;}}
+        markVariables(){if(!this.variables)return;if(this.variablesHighlight){/* A trailing space keeps the last empty line as tall as in the textarea. */renderTokens(this.variablesHighlight,[...variableTokens(this.variables.value),['plain',' ']]);}try{this.variablesValue();this.variables.removeAttribute('aria-invalid');this.variables.title='';}catch(error){this.variables.setAttribute('aria-invalid','true');this.variables.title=error.message;}}
         get dirty(){return this.base!==undefined&&this.base!==this.draftString();}
         confirmReplace(){return !this.dirty||window.confirm('Discard the unsaved service draft?');}
         payload(){return {name:this.name.value,category:this.category.value.trim()||(this.serviceKind==='mutation'?'Custom Mutations':'Custom Queries'),description:this.description.value,operation_name:this.operation.value||null,query:this.editor.getValue()};}
@@ -901,18 +978,23 @@
             const label={OK:'HERO response',PARTIAL:'Partial HERO response with GraphQL errors',TOO_LARGE:'HERO response too large to display'}[result.status]
                 ||{GRAPHQL:'GraphQL error returned by HERO',TRANSPORT:'HTTP/transport error',RESPONSE:'Invalid HERO response'}[result.error_kind]||'HERO request failed';
             this.queryOutput.textContent=`${label} (${result.status}${result.error_code?' · '+result.error_code:''}) · ${head}${result.size_bytes!==undefined?' · '+result.size_bytes+' bytes':''}\nThe result is shown in the GraphQL Query Result window and is not stored.`;
+            this.queryOutput.dataset.state=result.status;
             this.showQueryResult(result,label,head);
         }
         showQueryResult(result,label,head){
             this.resultDialog?.hide?.();
             const hasData=(result.status==='OK'||result.status==='PARTIAL')&&result.data!==undefined;
             const views={readable:hasData?readableResult(result.data):'',raw:hasData?JSON.stringify(result.data,null,2):''};
+            // Very large results are shown without colours so the dialog stays responsive; the text is identical.
+            const colored=hasData&&views.readable.split('\n',MAX_COLORED_LINES+1).length<=MAX_COLORED_LINES;
+            const tokens={readable:()=>readableTokens(result.data),raw:()=>jsonTokens(views.raw)};
             const body=$('div','ht-result');
             const status=$('div','ht-result-status');status.dataset.state=result.status;status.setAttribute('role','status');
             status.append($('strong','',label),$('div','',head));
             if(result.size_bytes!==undefined)status.append($('div','',`Response size: ${result.size_bytes} bytes${result.limit_bytes?' (display limit '+result.limit_bytes+' bytes)':''}`));
             const summary=hasData?resultSummary(result.data):[];
             if(summary.length)status.append($('div','','Delivered: '+summary.join(' · ')));
+            if(hasData&&!colored)status.append($('div','','Colours are turned off for this large result; the text is complete.'));
             body.append(status);
             // HTTP/transport failures and GraphQL errors are labelled separately; partial data stays visible below.
             if(result.status==='ERROR'||result.status==='PARTIAL'||result.status==='TOO_LARGE'){
@@ -923,7 +1005,7 @@
             }
             const toolbar=$('div','ht-toolbar ht-result-views');const output=$('pre','ht-result-output');output.setAttribute('tabindex','0');
             let view='readable';
-            const show=next=>{view=next;output.textContent=hasData?views[next]:(result.status==='TOO_LARGE'?'The response was not displayed because it exceeds the display limit. Nothing was truncated silently.':'No data was delivered.');for(const [key,b] of buttons)b.setAttribute('aria-pressed',String(key===next));};
+            const show=next=>{view=next;if(colored)renderTokens(output,tokens[next]());else output.textContent=hasData?views[next]:(result.status==='TOO_LARGE'?'The response was not displayed because it exceeds the display limit. Nothing was truncated silently.':'No data was delivered.');for(const [key,b] of buttons)b.setAttribute('aria-pressed',String(key===next));};
             const buttons=[['readable',button('Readable',()=>show('readable'))],['raw',button('Raw JSON',()=>show('raw'))]];
             for(const [,b] of buttons){b.disabled=!hasData;toolbar.append(b);}
             const copy=button('Copy Result',()=>{const text=output.textContent;if(window.frappe?.utils?.copy_to_clipboard)frappe.utils.copy_to_clipboard(text);else navigator.clipboard?.writeText(text);});
@@ -957,5 +1039,5 @@ this.queryStatus.textContent=this.query?`${this.serviceLabel()} ${this.query.que
             this.root?.remove?.();
         }
     }
-    window.hero_workspace_tools={Workspace,graphqlText:Object.freeze({parseVariablesText,formatVariablesText,readableResult,resultSummary})};
+    window.hero_workspace_tools={Workspace,graphqlText:Object.freeze({parseVariablesText,formatVariablesText,readableResult,resultSummary,jsonTokens,variableTokens,readableTokens,GRAPHQL_HIGHLIGHT_RULES})};
 })();

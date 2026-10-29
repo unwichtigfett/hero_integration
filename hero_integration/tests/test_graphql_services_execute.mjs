@@ -142,6 +142,28 @@ test('result dialog: readable default, raw JSON toggle and copy of the visible v
   assert.equal(dialogs[0].options.primary_action_label, 'Close');
 });
 
+test('result dialog: coloured readable view copies exactly the plain text', () => {
+  const {dialogs, copied, Workspace} = load();
+  editorState(Workspace).renderExecution(OK);
+  const root = dialogs[0].fields_dict.result.$wrapper[0];
+  const output = root.find((node) => node.attributes['aria-label'] === 'GraphQL Query Result');
+  const classes = output.children.map((child) => child.className);
+  assert.ok(classes.includes('ht-tok ht-tok-key') && classes.includes('ht-tok ht-tok-string') && classes.includes('ht-tok ht-tok-number'));
+  root.find((node) => node.tag === 'button' && node._text === 'Copy Result').click();
+  assert.equal(copied.at(-1), 'contact.id = "7"\ncontact.name = "Photovoltaik und Speicher"\ncontact.power_kwp = 14.5');
+});
+
+test('result dialog: very large results stay complete but without colours', () => {
+  const {dialogs, Workspace} = load();
+  const items = Array.from({length: 20001}, (_, index) => index);
+  editorState(Workspace).renderExecution({...OK, data: {items}});
+  const root = dialogs[0].fields_dict.result.$wrapper[0];
+  const output = root.find((node) => node.attributes['aria-label'] === 'GraphQL Query Result');
+  assert.equal(output.children.length, 0);
+  assert.equal(output.textContent.split('\n').length, 20001);
+  assert.match(root.textContent, /Colours are turned off for this large result; the text is complete/);
+});
+
 test('result dialog: partial data stays visible and GraphQL errors are flagged', () => {
   const {dialogs, Workspace} = load();
   const ws = editorState(Workspace);
