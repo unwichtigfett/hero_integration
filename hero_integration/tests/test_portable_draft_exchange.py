@@ -305,6 +305,7 @@ class TestPortableDraftExchange(unittest.TestCase):
         from hero_integration.hero_integration.doctype.hero_mapping_revision import hero_mapping_revision
         from hero_integration.services import mapping_draft_access
         with self.context(fake), patch.object(api, '_mapping_request_fields'), \
+             patch.object(hero_graphql_mapping, 'FrappePickerMetadata', FakePickerMetadata), \
              patch.dict(sys.modules, {'frappe':fake}), patch.object(hero_frappe_mapping, 'frappe', fake), \
              patch.object(hero_graphql_mapping, 'frappe', fake), patch.object(hero_mapping_draft, 'frappe', fake), \
              patch.object(hero_mapping_revision, 'frappe', fake), patch.object(mapping_draft_access, 'frappe', fake), \
@@ -320,6 +321,11 @@ class TestPortableDraftExchange(unittest.TestCase):
                 fake.get_doc({'doctype':'HERO GraphQL Mapping', 'definition_id':IDENTITY,
                     'schema_snapshot':'snapshot-B', 'operation_kind':'MUTATION', 'operation_name':'update_contact',
                     'direction':'FRAPPE_TO_MUTATION', 'status':'Active', 'mapping_revision':1,
+                    'mapping_json':json.dumps(invalid)}).insert()
+            with self.assertRaisesRegex(ValueError, 'lose'):
+                fake.get_doc({'doctype':'HERO GraphQL Mapping', 'definition_id':IDENTITY,
+                    'schema_snapshot':'snapshot-B', 'operation_kind':'MUTATION', 'operation_name':'update_contact',
+                    'direction':'FRAPPE_TO_MUTATION', 'status':'Draft', 'mapping_revision':1,
                     'mapping_json':json.dumps(invalid)}).insert()
             self.assertEqual(fake.active, [])
             draft = service.open_new_draft(definition, fake.session.user, content)
@@ -1078,6 +1084,12 @@ class TestPortableDraftExchange(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     api.mapping_draft_materialize_plan(IDENTITY, 1, 1, 0, 0,
                         sample_values_json=json.dumps({'input.name':'', 'input.requiredLabel':None}))
+                with self.assertRaises(ValueError):
+                    api.mapping_draft_materialize_plan(IDENTITY, 1, 1, 0, 0,
+                        sample_values_json=json.dumps({'input.name':''}))
+                with self.assertRaises(ValueError):
+                    api.mapping_draft_materialize_plan(IDENTITY, 1, 1, 0, 0,
+                        sample_values_json=json.dumps({'input.requiredLabel':'ok', 'input.contact.email':[]}))
                 with self.assertRaises(ValueError):
                     api.mapping_draft_materialize_plan(IDENTITY, 1, 1, 0, 0,
                         sample_values_json=json.dumps({'input.requiredLabel':'ok', 'input.tags':[]}))

@@ -49,11 +49,10 @@ class HEROGraphQLMapping(Document):
                 raise ValueError
             if self.direction == "FRAPPE_TO_MUTATION":
                 schema = json.loads(snapshot.snapshot_json)
+                from hero_integration.api import _mapping_values_preserved
+                original = mapping
                 if self.status == "Active":
-                    from hero_integration.api import _mapping_values_preserved
-                    original = mapping
                     mapping = normalise_mapping(original, schema)
-                    lossy_writeback = not _mapping_values_preserved(original, mapping)
                 else:
                     try:
                         mapping = normalise_mapping(mapping, schema)
@@ -64,6 +63,7 @@ class HEROGraphQLMapping(Document):
                         )
                         if not draft_source_type_compatible(source_field.fieldtype, mapping["target"]["graphql_type"]):
                             frappe.throw("The selected Frappe source and HERO scalar or enum input types are incompatible.")
+                lossy_writeback = not _mapping_values_preserved(original, mapping)
                 source = mapping["source"]
                 if not frappe.get_meta(source["doctype"]).get_field(source["field"]):
                     frappe.throw("The configured Frappe writeback field no longer exists.")
@@ -71,10 +71,12 @@ class HEROGraphQLMapping(Document):
                     frappe.throw("Writeback direction, operation kind and reviewed HERO target must agree.")
                 self.mapping_json = json.dumps(mapping, ensure_ascii=False, sort_keys=True)
             available = {item["operation_name"] for item in catalog(json.loads(snapshot.snapshot_json), self.operation_kind)}
-        except (ValueError, TypeError, WritebackContractError):
+        except WritebackContractError as error:
+            frappe.throw(str(error))
+        except (ValueError, TypeError):
             frappe.throw("The GraphQL mapping must contain a valid JSON object and schema operation.")
         if lossy_writeback:
-            frappe.throw('Active writeback normalization would lose mapping parameters.')
+            frappe.throw('Writeback normalization would lose mapping parameters.')
         if self.operation_name not in available:
             frappe.throw("The selected operation is not present in the selected schema snapshot.")
         self.schema_fingerprint = snapshot.schema_fingerprint
