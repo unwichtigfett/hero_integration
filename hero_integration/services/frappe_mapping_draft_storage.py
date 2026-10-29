@@ -789,8 +789,8 @@ class FrappeMappingDraftStorage:
             _parse_portable(json.dumps(package, ensure_ascii=False, sort_keys=True, separators=(',', ':')), context['direction'])
             definitions = _definitions(schema)
             declared = {entry['id'] for group in definitions.values() for entry in group}
-            if not declared or set(dependencies) != declared:
-                raise MappingDraftError('Portable mapping schema requires an explicit complete dependency set.')
+            if not declared:
+                raise MappingDraftError('Portable mapping schema requires declared dependencies.')
             _recheck_required_schema_current(definitions, declared)
         except (ValueError, TypeError, KeyError) as error:
             raise MappingDraftError('Portable mapping schema is incomplete or differs from installed metadata.') from error
