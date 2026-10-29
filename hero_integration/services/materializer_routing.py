@@ -74,6 +74,7 @@ class QueryOperationPlan:
     pagination_argument: str | None
     pagination_variable: str | None
     execution_authority: Literal["NONE"] = "NONE"
+    mapping_registry_revision: int | None = None
 
 
 @dataclass(frozen=True)
@@ -89,10 +90,36 @@ class MutationOperationPlan:
     output_reference_ids: tuple[str, ...]
     selected_response_paths: tuple[tuple[str, ...], ...]
     execution_authority: Literal["NONE"] = "NONE"
+    mapping_registry_revision: int | None = None
 
 
 class MaterializerRouter:
     """Compile B1 discovery references to sealed local-only materializer plans."""
+
+    def compile_query_mappings(self, snapshot, registry, fields, definitions, *, operation, arguments,
+                               identity_reference, revision=1, alias=None, pagination_argument=None):
+        """Compile validated mapping fields and an explicit record identity without a stored document.
+
+        The result is a discovery plan only; approval and execution remain separate.
+        """
+        references = _mapping_references(definitions, registry, fields, operation, 'HERO_TO_FRAPPE')
+        if not isinstance(identity_reference, str) or not identity_reference:
+            raise MaterializerRoutingError('An explicit query identity reference is required.')
+        selected = tuple(sorted(set(references) | {identity_reference}))
+        return self.compile_query(snapshot, registry, QueryRoutingRequest(
+            operation=operation, output_references=selected, arguments=arguments,
+            identity_reference=identity_reference, revision=revision, alias=alias,
+            pagination_argument=pagination_argument,
+        ))
+
+    def compile_mutation_mappings(self, snapshot, registry, fields, definitions, *, operation, arguments,
+                                  output_references, revision=1, alias=None):
+        """Compile mapped mutation inputs; the result carries no execution permission."""
+        references = _mapping_references(definitions, registry, fields, operation, 'FRAPPE_TO_HERO')
+        return self.compile_mutation(snapshot, registry, MutationRoutingRequest(
+            operation=operation, input_references=references, arguments=arguments,
+            output_references=output_references, revision=revision, alias=alias,
+        ))
 
     def compile_query(
         self,
@@ -181,6 +208,24 @@ class MaterializerRouter:
             output_reference_ids=tuple(item.reference_id for item in outputs),
             selected_response_paths=tuple(item.response_path for item in result_bindings),
         )
+
+
+def _mapping_references(definitions, registry, fields, operation, direction):
+    from hero_integration.services.mapping_registry_model import MappingAvailability, MappingDefinition
+    from hero_integration.services.mapping_registry_validation import validate_complete_mapping_set
+
+    if not isinstance(definitions, tuple) or not definitions or any(not isinstance(item, MappingDefinition) for item in definitions):
+        raise MaterializerRoutingError('An explicit nonempty mapping definition tuple is required.')
+    if not isinstance(operation, str) or not operation or any(
+            item.direction.value != direction or item.graphql.operation != operation for item in definitions):
+        raise MaterializerRoutingError('Mapping direction or operation binding does not match.')
+    try:
+        validated = validate_complete_mapping_set(definitions, registry, fields)
+    except ValueError as error:
+        raise MaterializerRoutingError('Mapping definitions are invalid for this schema and target.') from error
+    if any(item.availability != MappingAvailability.READY for item in validated):
+        raise MaterializerRoutingError('Mapping definitions require an available target and valid metadata.')
+    return tuple(sorted({item.definition.hero_reference for item in validated}))
 
 
 def _validated_context(snapshot: StoredSnapshot, registry: SchemaRegistry) -> ValidatedSnapshot:
