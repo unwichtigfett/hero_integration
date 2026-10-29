@@ -77,8 +77,22 @@ class FrappeMappingDraftStorage:
         from hero_integration.services.mapping_draft_service import _hash
         if confirmed is not True:
             raise MappingDraftError('Explicit publication confirmation is required.')
+        self._authorize(actor)
+        # Use the same lock order as directional exchange: context before
+        # parent. The initial lookup identifies only the lock to acquire; the
+        # current, locked parent is checked again below before publication.
+        rows = self.frappe.db.sql(
+            'select source_instance, schema_snapshot, direction from `tabHERO GraphQL Mapping` '
+            'where definition_id=%s', (definition_id,), as_dict=True)
+        if len(rows) != 1:
+            raise MappingDraftError('Exactly one mapping definition is required.')
+        scope = (rows[0].source_instance or '', rows[0].schema_snapshot, rows[0].direction)
+        from hero_integration.hero_integration.doctype.hero_graphql_mapping.hero_graphql_mapping import lock_exchange_context
+        lock_exchange_context(*scope)
         with self.transaction(definition_id, actor), _publication_operation_scope(self.frappe.local.site, actor, self._definition.name):
             f = self.frappe
+            if (self._definition.source_instance or '', self._definition.schema_snapshot, self._definition.direction) != scope:
+                raise DraftConflict('Mapping context changed; reload before publication.')
             active = self.active(definition_id)
             key = draft_key(f.local.site, definition_id, actor)
             draft = self.draft(key)

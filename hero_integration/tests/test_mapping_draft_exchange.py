@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 import json
 from types import SimpleNamespace
 import unittest
@@ -56,6 +57,41 @@ def _schema_preview(_schema):
 
 
 class TestCurrentExchangeLocks(unittest.TestCase):
+    def test_single_publish_rejects_unauthorized_actor_before_context_lookup(self):
+        from hero_integration.services.frappe_mapping_draft_storage import FrappeMappingDraftStorage
+
+        db = SimpleNamespace(sql=lambda *args, **kwargs: self.fail('unauthorized lookup'))
+        fake = SimpleNamespace(db=db, session=SimpleNamespace(user='other'))
+        with self.assertRaises(PermissionError):
+            FrappeMappingDraftStorage(fake).publish('definition', 'owner', 1, 1, 1, 0, confirmed=True)
+
+    def test_single_publish_locks_context_before_parent_and_rechecks_scope(self):
+        from hero_integration.hero_integration.doctype.hero_graphql_mapping import hero_graphql_mapping
+        from hero_integration.services.frappe_mapping_draft_storage import FrappeMappingDraftStorage
+        from hero_integration.services.mapping_draft_service import DraftConflict
+
+        events = []
+        row = SimpleNamespace(source_instance='source', schema_snapshot='snapshot', direction='QUERY_TO_FRAPPE')
+        fake = SimpleNamespace(local=SimpleNamespace(site='site'), db=SimpleNamespace(
+            sql=lambda *args, **kwargs: (events.append('lookup') or [row])))
+        storage = FrappeMappingDraftStorage(fake)
+        storage._authorize = lambda actor: events.append('authorize')
+        @contextmanager
+        def transaction(identity, actor):
+            events.append('parent')
+            storage._definition = SimpleNamespace(name='mapping', source_instance='changed',
+                                                  schema_snapshot='snapshot', direction='QUERY_TO_FRAPPE')
+            try:
+                yield
+            finally:
+                storage._definition = None
+        storage.transaction = transaction
+        with patch.object(hero_graphql_mapping, 'lock_exchange_context',
+                          side_effect=lambda *scope: events.append(('context', scope))):
+            with self.assertRaisesRegex(DraftConflict, 'context changed'):
+                storage.publish('definition', 'owner', 1, 1, 1, 0, confirmed=True)
+        self.assertEqual(events, ['authorize', 'lookup', ('context', ('source', 'snapshot', 'QUERY_TO_FRAPPE')), 'parent'])
+
     def test_parent_reads_are_ordered_and_reject_changed_scope(self):
         calls = []
         def sql(query, args, as_dict=False):
