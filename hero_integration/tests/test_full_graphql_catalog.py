@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from copy import deepcopy
 from pathlib import Path
 
 from hero_integration.services.frappe_writeback import (
@@ -51,6 +52,22 @@ class TestFullGraphQLCatalog(unittest.TestCase):
         self.assertEqual([item["path"] for item in fields], ["title", "settings", "settings.enabled"])
         self.assertTrue(fields[-1]["selectable"])
         self.assertFalse(mutations[-1]["input_fields"]["items"][0]["selectable"])
+
+    def test_draft_rejects_custom_scalar_without_a_typed_preview_contract(self):
+        schema = deepcopy(SCHEMA)
+        schema['__schema']['types'].append({'kind':'SCALAR', 'name':'Opaque'})
+        input_type = next(item for item in schema['__schema']['types'] if item['name'] == 'SaveInput')
+        input_type['inputFields'].append({'name':'opaque', 'type':{'kind':'SCALAR', 'name':'Opaque'}})
+        content = {'source':{'doctype':'Customer', 'field':'choice'},
+                   'target':{'operation':'save_one', 'argument':'input', 'field':'opaque'},
+                   'transformation':'Identity'}
+        with self.assertRaisesRegex(WritebackContractError, 'scalar or enum'):
+            normalise_draft_mapping(content, schema)
+        schema['__schema']['types'].append({'kind':'ENUM', 'name':'Choice',
+                                            'enumValues':[{'name':'YES'}, {'name':'NO'}]})
+        input_type['inputFields'].append({'name':'choice', 'type':{'kind':'ENUM', 'name':'Choice'}})
+        content['target']['field'] = 'choice'
+        self.assertEqual(normalise_draft_mapping(content, schema)['target']['graphql_type'], 'Choice')
 
     def test_generic_draft_is_schema_bound_but_cannot_compile_as_writeback(self):
         mapping = normalise_draft_mapping({

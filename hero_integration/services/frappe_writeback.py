@@ -230,12 +230,13 @@ def _schema_draft_input_field(schema: object, operation_name: str, argument_name
         argument = next((item for item in operation.get("args", []) if item.get("name") == argument_name), None)
         input_type = _named_type(argument.get("type"))
         current_ref = argument.get("type")
+        supported_scalars = {"String", "ID", "Int", "Float", "Boolean"}
         if _has_list(current_ref):
             raise ValueError
         if not path:
             named = _named_type(current_ref)
             kind = _named_kind(current_ref)
-            if kind not in {"SCALAR", "ENUM"}:
+            if kind not in {"SCALAR", "ENUM"} or (kind == "SCALAR" and named not in supported_scalars):
                 raise ValueError
             return input_type, _type_label(current_ref)
         current = types.get(input_type)
@@ -245,7 +246,9 @@ def _schema_draft_input_field(schema: object, operation_name: str, argument_name
             if _has_list(current_ref):
                 raise ValueError
             if index == len(path.split(".")) - 1:
-                if _named_kind(current_ref) not in {"SCALAR", "ENUM"}:
+                kind = _named_kind(current_ref)
+                if (kind not in {"SCALAR", "ENUM"}
+                        or (kind == "SCALAR" and _named_type(current_ref) not in supported_scalars)):
                     raise ValueError
                 return input_type, _type_label(current_ref)
             current = types.get(_named_type(current_ref))
