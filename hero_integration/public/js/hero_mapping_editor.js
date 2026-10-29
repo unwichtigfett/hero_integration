@@ -233,8 +233,16 @@
         }
     }
     const directionForTab = (tab) => tab === "Query" ? "QUERY_TO_FRAPPE" : tab === "Mutation" ? "FRAPPE_TO_MUTATION" : null;
-    const definitionChoice = (item) => ({...item, label: item.operation_name || item.operation || "",
-        context: [item.kind, item.target_doctype, item.schema_snapshot, item.revision == null ? "" : `Revision ${item.revision}`, item.definition_id].filter(Boolean).join(" · ")});
+    const definitionChoice = (item, index) => ({...item, label: item.operation_name || item.operation || "",
+        context: [index == null ? "" : `Definition ${index + 1}`, item.kind, item.target_doctype, item.schema_snapshot,
+            item.revision == null ? "" : `Revision ${item.revision}`].filter(Boolean).join(" · ")});
+    const objectFieldContext = (field) => {
+        const args = (items) => (items || []).map((arg) => `${arg.name}: ${arg.type}`).join(", ");
+        const relations = (field.relations || []).map((rel) => `${rel.owner_type}.${rel.name} → ${rel.target_type}${rel.is_list ? " [list]" : ""}${rel.arguments?.length ? ` (${args(rel.arguments)})` : ""}`);
+        return [field.fieldtype || field.type || "", ...relations, field.arguments?.length ? `Arguments: ${args(field.arguments)}` : "", field.reason || ""].filter(Boolean).join(" · ");
+    };
+    const actionInputType = (operation, argument) =>
+        (operation?.arguments?.find((item) => item.name === argument)?.type || "").replace(/[!\[\]]/g, "");
     const bindingAccess = (admin, definition) => !admin ? "ADMIN_ONLY" : definition?.definition_id ? "READ_ONLY" : "SELECT_DEFINITION";
     const resumePendingView = (pending, handlers) => {
         if (pending?.kind === "list") return handlers.list(pending.selectFirst ?? true);
@@ -294,6 +302,14 @@
             this.set(["source", "doctype"], doctype);
             this.set(["source", "field"], field);
         }
+        setHeroSource(field) {
+            this.set(["source", "field"], field.path);
+            this.set(["source", "object_type"], field.object_type);
+            this.set(["source", "schema_context"], field.schema_context);
+            for (const alias of ["path", "source_path"]) {
+                if (Object.hasOwn(this.content.source, alias)) this.set(["source", alias], field.path);
+            }
+        }
         setFrappeTarget(app, doctype, field) {
             this.frappeSelection = {side: "target", app, doctype};
             this.set(["target", "doctype"], doctype);
@@ -303,7 +319,13 @@
         remove(index) {
             this.invalidateReconciliation();
             if (Array.isArray(this.content.mapping_definition_ids)) {
-                this.undo.push({kind: "reference", index, value: this.content.mapping_definition_ids[index]});
+                const id = this.content.mapping_definition_ids[index];
+                const fieldContext = this.content.field_contexts?.[id];
+                this.undo.push({kind: "reference", index, value: id, ...(fieldContext ? {fieldContext: clone(fieldContext)} : {})});
+                if (fieldContext) {
+                    delete this.content.field_contexts[id];
+                    if (!Object.keys(this.content.field_contexts).length && !Object.hasOwn(this.saved.content, 'field_contexts')) delete this.content.field_contexts;
+                }
                 this.content.mapping_definition_ids.splice(index, 1);
             } else {
                 const removed = {};
@@ -318,6 +340,10 @@
             const rank = this.referenceOrder.indexOf(removed.value);
             const next = ids.findIndex((id) => this.referenceOrder.indexOf(id) > rank);
             ids.splice(next >= 0 ? next : ids.length, 0, removed.value);
+            if (removed.fieldContext) {
+                this.content.field_contexts ||= {};
+                this.content.field_contexts[removed.value] = clone(removed.fieldContext);
+            }
         }
         addReference(id) {
             const ids = this.content.mapping_definition_ids;
@@ -414,6 +440,8 @@
         let revisionsStart = 0, returnFocus = null, fieldFilter = "", detailRequest = 0, exchangeSequence = 0;
         const exchanges = new Map();
         const browsePaths = new Map();
+        const browseObjects = new Map();
+        const browseActions = new Map();
         const ruleCache = new Map();
         let appCatalog;
         const readableApps = () => admin ? appCatalog ||= rpc("mapping_target_catalog", {}).catch((error) => { appCatalog = null; throw error; }) : Promise.resolve(null);
@@ -1034,7 +1062,7 @@
                     if (start === 10000) throw new Error("Readable definition range exceeded");
                 }
                 all = all.filter((item) => !snapshot || item.schema_snapshot === snapshot);
-                return {items: all.slice(offset, offset + 20).map(definitionChoice), total: all.length};
+                return {items: all.slice(offset, offset + 20).map((item, index) => definitionChoice(item, offset + index)), total: all.length};
             };
         }
         function renderDefinitionChooser(parent = body, label = "Definition", binding = false) {
@@ -1273,19 +1301,27 @@
             const heroControls = $("<div class='hero-mapping-selection-fields'></div>").appendTo(heroPane);
             const frappeControls = $("<div class='hero-mapping-selection-fields'></div>").appendTo(frappePane);
             const browseKey = `${tab}:${active?.definition_id || ""}:${selected}`;
+            const chosenSnapshot = active?.schema_snapshot || snapshotFilter;
+            const heroBrowseKey = `${tab}:${chosenSnapshot || ""}`;
+            const selectedObject = () => browseObjects.get(heroBrowseKey) || "";
+            const selectedAction = () => browseActions.get(heroBrowseKey) || active?.operation_name || "";
+            const refreshContext = () => active ? renderDetail() : renderList();
             const row = rows(value)[selected] || {};
             const existingRule = !model?.creation && row.reference ? ownRule(value, row.id) || ruleCache.get(row.id) : null;
+            const savedSource = model?.creation?.source || (row.additional ? row.value?.source : value.source) || {};
+            const savedObject = row.reference ? value.field_contexts?.[row.id]?.object_type : savedSource.object_type;
+            if (!mutation && savedObject && !browseObjects.has(heroBrowseKey)) browseObjects.set(heroBrowseKey, savedObject);
             const configured = model?.creation ? (model.creation[frappeSide] || {}) : row.additional ? row.value[frappeSide] || {} : value[frappeSide] || {};
             let browseApp = model?.creation?.app || selectedPickerApp(model, frappeSide, configured, admin) || "";
             let browseDoctype = existingRule?.target_doctype || configured.doctype || "", browseChanged = false;
             let fieldCatalog;
             const catalogEpoch = epoch, contractState = $("<p class='text-muted' role='status'></p>").appendTo(frappePane);
             const getFieldCatalog = async () => {
-                if (!admin || !active || active.mapping_type !== "graphql") return {apps: [], doctypes: [], fields: []};
+                if (!admin) return {apps: [], doctypes: [], fields: []};
                 if (!fieldCatalog) {
-                    const method = mutation && !row.reference ? "writeback_mapper_catalog" : "mapping_target_catalog";
-                    fieldCatalog = rpc(method, method === "writeback_mapper_catalog" ? {snapshot_name: active.schema_snapshot} : {}).then((result) => {
-                        if (method === "writeback_mapper_catalog" && !disposed && epoch === catalogEpoch && context[0].isConnected) contractState.text(text(writebackContractLabel(result, active.operation_name)));
+                    const method = mutation && !row.reference && chosenSnapshot ? "writeback_mapper_catalog" : "mapping_target_catalog";
+                    fieldCatalog = rpc(method, method === "writeback_mapper_catalog" ? {snapshot_name: chosenSnapshot} : {}).then((result) => {
+                        if (method === "writeback_mapper_catalog" && !disposed && epoch === catalogEpoch && context[0].isConnected) contractState.text(text(writebackContractLabel(result, active?.operation_name)));
                         return result;
                     }).catch((error) => { fieldCatalog = null; throw error; });
                 }
@@ -1305,37 +1341,53 @@
                     if (isFrappe) {
                         model.creation[frappeSide] = {doctype: f.target_doctype || browseDoctype, field: f.path};
                         model.creation.app = browseApp;
-                    } else if (mutation) model.creation.target = {operation: active.operation_name, argument: f.argument, input_type: f.argument_input_type, field: f.path, graphql_type: f.type};
-                    else model.creation.source = {field: f.path};
+                    } else if (mutation) {
+                        if (selectedAction() !== active.operation_name) { fieldNotice.text(text("Choose the matching saved definition before editing this action.")); return; }
+                        model.creation.target = {operation: selectedAction(), argument: f.argument, input_type: f.argument_input_type, field: f.path, graphql_type: f.type};
+                    } else model.creation.source = {field: f.path, object_type: f.object_type, schema_context: f.schema_context};
                     renderDetail(); return;
                 }
                 if (row.additional) { fieldNotice.text(text('Use New mapping to add another assignment.')); return; }
                 if (row.reference && !ownRule(model.content, row.id)) { say("This referenced active rule is read-only. Its existing personal-rule contract is required before editing."); return; }
                 if (row.reference) {
                     if (isFrappe) { const target = f.target_doctype || browseDoctype; model.referenceApps ||= Object.create(null); model.referenceApps[row.id] = {app: browseApp, doctype: target}; model.set(["field_rules", row.id, "target_doctype"], target); model.set(["field_rules", row.id, "target_field"], f.path); }
-                    else { model.set(["field_rules", row.id, "source_path"], f.path); model.set(["field_rules", row.id, "source_type"], f.mapping_type || f.fieldtype); }
+                    else { model.set(["field_rules", row.id, "source_path"], f.path); model.set(["field_rules", row.id, "source_type"], f.mapping_type || f.fieldtype); model.set(["field_contexts", row.id], {object_type: f.object_type, schema_context: f.schema_context}); }
                 } else if (isFrappe && mutation) model.setFrappeSource(browseApp, f.target_doctype || browseDoctype, f.path);
                 else if (isFrappe) model.setFrappeTarget(browseApp, f.target_doctype || browseDoctype, f.path);
-                else if (!mutation) { model.set(["source", "field"], f.path); if (Object.hasOwn(model.content.source, "path")) model.set(["source", "path"], f.path); }
-                else { model.set(["target", "argument"], f.argument); model.set(["target", "operation"], active.operation_name); model.set(["target", "field"], f.path); if (Object.hasOwn(model.content.target, "field_path")) model.set(["target", "field_path"], f.path); model.set(["target", "graphql_type"], f.type); }
+                else if (!mutation) model.setHeroSource(f);
+                else { if (selectedAction() !== active.operation_name) { fieldNotice.text(text("Choose the matching saved definition before editing this action.")); return; } model.set(["target", "argument"], f.argument); model.set(["target", "operation"], selectedAction()); model.set(["target", "field"], f.path); if (Object.hasOwn(model.content.target, "field_path")) model.set(["target", "field_path"], f.path); model.set(["target", "graphql_type"], f.type); }
                 renderDetail();
-                body.find("[data-choice-label]").filter((_, element) => element.dataset.choiceLabel === (isFrappe ? "Frappe Field" : "HERO Field")).find("summary").trigger("focus");
+                body.find("[data-choice-label]").filter((_, element) => element.dataset.choiceLabel === (isFrappe ? "Frappe Field" : mutation ? "Input field" : "HERO Field")).find("summary").trigger("focus");
             };
-            renderDefinitionChooser(heroControls, mutation ? "Mutation" : "Operation").prop("hidden", !admin);
-            const path = choice(mutation ? "Argument / Input" : "Object / Path", "", heroControls, async (search, offset) => {
-                if (!active || !admin) return {items: [], total: 0};
-                const definition = active, mapped = content();
+            const objectOrAction = choice(mutation ? "Action" : "Object", "", heroControls, async (search, offset) => {
+                if (!admin || !chosenSnapshot) return {items: [], total: 0, emptyMessage: "Choose a validated schema snapshot first."};
+                if (mutation) {
+                    const catalog = await rpc("schema_operation_catalog", {snapshot_name: chosenSnapshot, operation_kind: "MUTATION"});
+                    return page(catalog.map((item) => ({label: item.operation_name, context: "Mutation action"})), search, offset);
+                }
+                const catalog = await rpc("mapping_object_catalog", {snapshot_name: chosenSnapshot, object_type: "", search: "", start: 0, page_size: 1});
+                return page(catalog.objects.map((item) => ({...item, label: item.label || item.name})), search, offset);
+            }, (item) => {
+                if (mutation) browseActions.set(heroBrowseKey, item.label); else browseObjects.set(heroBrowseKey, item.name);
+                browsePaths.delete(browseKey); refreshContext();
+                root.find("[data-choice-label]").filter((_, element) => element.dataset.choiceLabel === (mutation ? "Action" : "Object")).find("summary").trigger("focus");
+                say(mutation ? "Action selected for browsing. Choose its matching definition before saving." : "Object selected for browsing. Field selection does not grant access or change the fetch configuration.");
+            });
+            const path = choice(mutation ? "Argument / Input" : "Relationship / Path", "", heroControls, async (search, offset) => {
+                if (!admin || !chosenSnapshot) return {items: [], total: 0, emptyMessage: "Choose a validated schema snapshot first."};
                 let paths;
                 if (mutation) {
-                    const catalog = await rpc("schema_operation_catalog", {snapshot_name: definition.schema_snapshot, operation_kind: "MUTATION"});
-                    const operation = catalog.find((item) => item.operation_name === definition.operation_name);
-                    paths = Object.entries(operation?.input_fields || {}).map(([argument, fields]) => ({label: `${argument} / ${fields[0]?.input_type || mapped.target?.input_type || "Input"}`, prefix: argument + "."}));
+                    if (!selectedAction()) return {items: [], total: 0, emptyMessage: "Choose an action first."};
+                    const catalog = await rpc("schema_operation_catalog", {snapshot_name: chosenSnapshot, operation_kind: "MUTATION"});
+                    const operation = catalog.find((item) => item.operation_name === selectedAction());
+                    paths = Object.entries(operation?.input_fields || {}).map(([argument]) => ({label: `${argument} / ${actionInputType(operation, argument) || "Input"}`, prefix: argument + "."}));
                 } else {
-                    const pathsByName = new Map([[mapped.records_path || mapped.record_path || definition.operation_name, ""]]);
-                    for (let start = 0; start <= 10000; start += 100) {
-                        const result = await rpc("mapping_source_picker_page", {snapshot_name: definition.schema_snapshot, operation: mapped.target_operation || definition.operation_name, search: "", start, page_size: 100});
+                    if (!selectedObject()) return {items: [], total: 0, emptyMessage: "Choose a HERO object first."};
+                    const pathsByName = new Map([["All paths", ""]]);
+                    for (let start = 0; start <= 10000; start += 50) {
+                        const result = await rpc("mapping_object_catalog", {snapshot_name: chosenSnapshot, object_type: selectedObject(), search: "", start, page_size: 50});
                         result.items.forEach((field) => { const parent = field.path.split(".").slice(0, -1).join("."); if (parent) pathsByName.set(parent, parent + "."); });
-                        if (start + 100 >= result.total) break;
+                        if (start + 50 >= result.total) break;
                         if (start === 10000) throw new Error("Readable path range exceeded");
                     }
                     paths = [...pathsByName].map(([label, prefix]) => ({label, prefix}));
@@ -1346,17 +1398,32 @@
                 browsePaths.set(browseKey, item); path.find("summary strong").text(item.label).attr("title", item.label);
                 say("Path selected for browsing. Mapping content is unchanged; choose a field in your personal draft to edit it.");
             });
-            const heroField = choice("HERO Field", "", heroControls, async (search, offset) => {
-                if (!admin || !active || active.mapping_type !== "graphql") return {items: [], total: 0};
-                if (row.reference || !mutation) {
-                    const result = await rpc("mapping_source_picker_page", {snapshot_name: active.schema_snapshot, operation: content().target_operation || active.operation_name, search: search || browsePaths.get(browseKey)?.prefix || "", start: offset, page_size: 20});
-                    return {items: result.items.map((f) => ({...f, label: f.path, context: `${f.fieldtype || f.type || ""}${f.selectable === false ? ` · ${f.reason || "not permitted"}` : ""}`, disabled: f.selectable === false})), total: result.total};
+            const heroField = choice(mutation ? "Input field" : "HERO Field", "", heroControls, async (search, offset) => {
+                if (!admin || !chosenSnapshot) return {items: [], total: 0, emptyMessage: "Choose a validated schema snapshot first."};
+                if (!mutation) {
+                    if (!selectedObject()) return {items: [], total: 0, emptyMessage: "Choose a HERO object first."};
+                    const prefix = browsePaths.get(browseKey)?.prefix || "";
+                    if (prefix) {
+                        let fields = [];
+                        for (let start = 0; start <= 10000; start += 50) {
+                            const part = await rpc("mapping_object_catalog", {snapshot_name: chosenSnapshot, object_type: selectedObject(), search: "", start, page_size: 50});
+                            fields.push(...part.items);
+                            if (start + 50 >= part.total) break;
+                            if (start === 10000) throw new Error("Readable field range exceeded");
+                        }
+                        return page(fields.filter((f) => f.path.startsWith(prefix)).map((f) => ({...f, label: f.path, context: objectFieldContext(f), disabled: f.selectable === false})), search, offset);
+                    }
+                    const result = await rpc("mapping_object_catalog", {snapshot_name: chosenSnapshot, object_type: selectedObject(), search, start: offset, page_size: 20});
+                    return {items: result.items.map((f) => ({...f, label: f.path, context: objectFieldContext(f), disabled: f.selectable === false})), total: result.total};
                 }
-                const catalog = await rpc("schema_operation_catalog", {snapshot_name: active.schema_snapshot, operation_kind: active.operation_kind});
-                const operation = catalog.find((v) => v.operation_name === active.operation_name);
-                const items = Object.entries(operation?.input_fields || {}).flatMap(([argument, list]) => list.map((f) => ({...f, argument, argument_input_type: operation.arguments?.find((a) => a.name === argument)?.type?.replace(/!$/, '') || '', fieldtype: f.type, label: `${argument}.${f.path}`, context: `${f.type || ""}${f.nullable === false ? " · required" : ""}${f.select_options?.length ? ` · enum: ${f.select_options.join(", ")}` : ""}`, disabled: f.selectable === false})));
-                return page(items, search, offset);
+                if (!selectedAction()) return {items: [], total: 0, emptyMessage: "Choose an action first."};
+                const catalog = await rpc("schema_operation_catalog", {snapshot_name: chosenSnapshot, operation_kind: "MUTATION"});
+                const operation = catalog.find((v) => v.operation_name === selectedAction());
+                const items = Object.entries(operation?.input_fields || {}).flatMap(([argument, list]) => list.map((f) => ({...f, argument, argument_input_type: actionInputType(operation, argument), fieldtype: f.type, label: `${argument}.${f.path}`, context: `${f.type || ""}${f.nullable === false ? " · required" : ""}${f.select_options?.length ? ` · enum: ${f.select_options.join(", ")}` : ""}`, disabled: f.selectable === false})));
+                const prefix = browsePaths.get(browseKey)?.prefix || "";
+                return page(items.filter((item) => !prefix || item.label.startsWith(prefix)), search, offset);
             }, (item) => setField(item, false));
+            if (!mutation) heroPane.append($('<p class="text-muted"></p>').text(text("Field selection does not grant read access. Inclusion in the approved fetch configuration must be checked separately.")));
             const app = choice("App", "", frappeControls, async (search, offset) => {
                 const catalog = await getFieldCatalog();
                 return page(catalog.apps.map((item) => ({label: item.app_name || item})), search, offset);
@@ -1373,10 +1440,12 @@
                 const result = await rpc("mapping_target_catalog_page", {app_name: browseApp, doctype: browseDoctype, search, start: offset, page_size: 20});
                 return {items: result.items.map((f) => ({...f, label: f.path, context: `${f.fieldtype || f.type || ""}${f.selectable === false ? ` · ${f.reason || "not permitted"}` : ""}`, disabled: f.selectable === false})), total: result.total};
             }, (item) => setField(item, true));
-            if (!admin) [path, heroField, app, doctype, frappeField].forEach((control) => control.prop("hidden", true));
+            if (!admin) [objectOrAction, path, heroField, app, doctype, frappeField].forEach((control) => control.prop("hidden", true));
             const metadata = (pane) => {
                 const dl = $("<dl class='hero-mapping-metadata'></dl>").appendTo(pane), fields = {};
-                for (const label of ["ID", "Name", "Type", "Node", "Revision", "Status"]) { fields[label] = $("<dd></dd>").text(text("Not provided")); dl.append($("<dt></dt>").text(text(label)), fields[label]); }
+                for (const label of ["Name", "Type", "Node", "Revision", "Status"]) { fields[label] = $("<dd></dd>").text(text("Not provided")); dl.append($("<dt></dt>").text(text(label)), fields[label]); }
+                fields.ID = $("<dd></dd>").text(text("Not provided"));
+                pane.append($("<details></details>").append($("<summary></summary>").text(text("Technical details")), $("<dl></dl>").append($("<dt></dt>").text(text("ID")), fields.ID)));
                 return fields;
             };
             const heroMeta = metadata(heroPane), frappeMeta = metadata(frappePane);
@@ -1389,11 +1458,15 @@
                 const setChoiceValue = (element, label) => element.find("summary strong").text(label).attr("title", label);
                 setChoiceValue(app, browseApp || text("Choose…"));
                 setChoiceValue(doctype, browseDoctype || text("Choose…"));
+                setChoiceValue(objectOrAction, (mutation ? selectedAction() : selectedObject()) || text("Choose…"));
                 setChoiceValue(frappeField, browseChanged ? text("Choose…") : rule?.target_field || frappeValue.field_path || frappeValue.field || text("Choose…"));
-                setChoiceValue(heroField, rule?.source_path || (mutation ? assignment.target?.field_path || assignment.target?.field : assignment.source?.field) || text("Choose…"));
-                setChoiceValue(path, browsePaths.get(browseKey)?.label || (mutation ? [value.target?.argument, value.target?.input_type].filter(Boolean).join(" / ") : value.records_path || value.record_path || value.source?.path || value.source?.doctype) || text("Not provided"));
+                const currentObject = row?.reference ? value.field_contexts?.[row.id]?.object_type : assignment.source?.object_type;
+                const objectMismatch = !mutation && currentObject && selectedObject() && currentObject !== selectedObject();
+                setChoiceValue(heroField, objectMismatch ? text("Choose…") : rule?.source_path || (mutation ? assignment.target?.field_path || assignment.target?.field : assignment.source?.field) || text("Choose…"));
+                const savedPath = rule?.source_path || assignment.source?.field || "";
+                setChoiceValue(path, browsePaths.get(browseKey)?.label || (mutation ? [assignment.target?.argument, assignment.target?.input_type].filter(Boolean).join(" / ") : !objectMismatch && savedPath.includes(".") ? savedPath.split(".").slice(0, -1).join(".") : "All paths") || text("Not provided"));
                 heroMeta.ID.text(rule?.definition_id || active?.definition_id || text("Not provided"));
-                heroMeta.Name.text(active?.operation_name || active?.operation || text("Not provided"));
+                heroMeta.Name.text((mutation ? selectedAction() : selectedObject()) || text("Not provided"));
                 heroMeta.Type.text(rule?.source_type || (mutation ? value.target?.graphql_type || value.target?.input_type : value.source?.type) || text("Not provided"));
                 heroMeta.Node.text(rule?.source_path || (mutation ? value.target?.argument : value.records_path || value.record_path) || text("Not provided"));
                 for (const fields of [heroMeta, frappeMeta]) { fields.Revision.text(active ? `${text("Mapping")} ${active.revision}` : text("Not provided")); fields.Status.text(active ? mode === "draft" ? text("Personal draft") : active.status || text("Active") : text("No selection")); }
@@ -1766,5 +1839,5 @@
         const controller = {beforeLeave: leaveWorkspace, destroy() { shell.removeClass("hero-mapping-shell"); disposed = true; epoch++; window.removeEventListener("beforeunload", unload); if (router.route === guardedRoute) router.route = originalRoute; document.removeEventListener("click", links, true); document.removeEventListener("pointerdown", closeChoiceOutside, true); }};
         current = controller; loadList(); return controller;
     }
-    window.hero_integration_mapping_editor = Object.freeze({mount, DraftState, stable, readActiveRule, readSnapshotPages, exchangeExpectedStates, exchangeCounts, exchangeCanAdopt, reviewedTargetLabel, writebackContractLabel, legacyWritebackRows, legacyWritebackDetailMatches, sharedWritebackDraftAccess, reviewedWritebackEditable, buildReviewedWriteback, sharedWritebackRequest, sharedWritebackSaveAccepted, finishSharedWritebackSave, legacyWritebackCurrent, legacyPackageSelection, legacyPackageAdoptionArgs, legacyCandidateArgs, legacyCandidateMatches, legacyCandidateRawMessage, legacyCandidateRpc, legacyCandidatePreviewText, isOwnedExportLink, mappingTabs, directionForTab, definitionChoice, bindingAccess, selectedPickerApp, hasCurrentDraftBase, canSaveDraft, tabKeyTarget, MappingTabStates, resumePendingView});
+    window.hero_integration_mapping_editor = Object.freeze({mount, DraftState, stable, readActiveRule, readSnapshotPages, exchangeExpectedStates, exchangeCounts, exchangeCanAdopt, reviewedTargetLabel, writebackContractLabel, legacyWritebackRows, legacyWritebackDetailMatches, sharedWritebackDraftAccess, reviewedWritebackEditable, buildReviewedWriteback, sharedWritebackRequest, sharedWritebackSaveAccepted, finishSharedWritebackSave, legacyWritebackCurrent, legacyPackageSelection, legacyPackageAdoptionArgs, legacyCandidateArgs, legacyCandidateMatches, legacyCandidateRawMessage, legacyCandidateRpc, legacyCandidatePreviewText, isOwnedExportLink, mappingTabs, directionForTab, definitionChoice, objectFieldContext, actionInputType, bindingAccess, selectedPickerApp, hasCurrentDraftBase, canSaveDraft, tabKeyTarget, MappingTabStates, resumePendingView});
 })();

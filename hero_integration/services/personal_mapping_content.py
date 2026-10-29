@@ -9,7 +9,7 @@ RULE_FIELDS = frozenset({'source_path', 'source_type', 'target_doctype', 'target
                          'purpose', 'transformation', 'relation', 'priority'})
 # These are presentation/domain configuration paths, not document/actor metadata.
 EDITABLE = {
-    'source': frozenset({'doctype', 'field', 'path', 'source_path', 'type'}),
+    'source': frozenset({'doctype', 'field', 'path', 'source_path', 'type', 'object_type', 'schema_context'}),
     'target': frozenset({'doctype', 'field', 'field_path', 'target_field', 'operation',
                          'argument', 'input_type', 'graphql_type', 'type'}),
 }
@@ -78,6 +78,17 @@ def validate_edits(prior, submitted):
             continue
         if key == 'additional_mappings':
             validate_additional_mappings(submitted.get(key, []))
+            continue
+        if key == 'field_contexts':
+            contexts = submitted.get(key, {})
+            if not isinstance(contexts, dict) or len(contexts) > 100:
+                raise MappingDraftError('Invalid object field contexts.')
+            for identity, context in contexts.items():
+                if (not isinstance(identity, str) or not identity or len(identity) > 140
+                        or not isinstance(context, dict) or set(context) != {'object_type', 'schema_context'}
+                        or any(not isinstance(value, str) or not value or len(value) > 4096
+                               for value in context.values())):
+                    raise MappingDraftError('Invalid object field context.')
             continue
         if key in {'field_rules', 'field_rule_bases', 'mapping_definition_ids'}:
             continue

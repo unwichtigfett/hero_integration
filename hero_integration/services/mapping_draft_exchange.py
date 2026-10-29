@@ -185,6 +185,9 @@ def _prepare_item(item, row, local_content, schema):
                     prepared['content'], storage._publication_snapshot[1], storage._definition.operation_name)
             if prepared['content'].get('additional_mappings'):
                 storage._validate_additional_mappings(prepared['content']['additional_mappings'])
+            if (prepared['content'].get('field_contexts') or (isinstance(prepared['content'].get('source'), dict) and
+                    ({'object_type', 'schema_context'} & set(prepared['content']['source'])))):
+                storage._validate_object_contexts(prepared['content'])
             return prepared
     except (MappingDraftError, ValueError) as error:
         raise MappingDraftExchangeError(str(error)) from error
