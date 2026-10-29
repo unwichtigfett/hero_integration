@@ -5,6 +5,20 @@ import test from 'node:test';
 const window = {};
 vm.runInNewContext(readFileSync(new URL('../public/js/hero_mapping_editor.js', import.meta.url), 'utf8'), {window});
 const {DraftState, stable} = window.hero_integration_mapping_editor;
+test('first publication reads back the new name and exact source context', () => {
+ const {publicationResultName, publicationReadbackMatches} = window.hero_integration_mapping_editor;
+ const selected = {parentless:true, name:'', source_instance:'source', schema_snapshot:'snapshot',
+  schema_fingerprint:'hash', direction:'QUERY_TO_FRAPPE', operation_kind:'QUERY', operation_name:'customers'};
+ const result = {name:'mapping-1', revision:1};
+ const observed = {...selected, name:result.name, revision:1, definition_id:'id-1', status:'Active'};
+ assert.equal(publicationResultName(result, selected), 'mapping-1');
+ assert.equal(publicationReadbackMatches(observed, result, selected, 'id-1'), true);
+ assert.equal(publicationReadbackMatches({...observed, direction:'FRAPPE_TO_MUTATION'}, result, selected, 'id-1'), false);
+ assert.equal(publicationReadbackMatches({...observed, definition_id:'other'}, result, selected, 'id-1'), false);
+ assert.throws(() => publicationResultName({...result, revision:2}, selected));
+ assert.throws(() => publicationResultName(result, {parentless:false, name:'different'}));
+ assert.equal(publicationResultName(result, {parentless:false, name:'mapping-1'}), 'mapping-1');
+});
 test('parentless saved draft uses zero active revision for CAS without an active parent', () => {
  const {canSaveDraft} = window.hero_integration_mapping_editor;
  const draft = new DraftState({definition_id:'id-1',generation:1,content_revision:1,

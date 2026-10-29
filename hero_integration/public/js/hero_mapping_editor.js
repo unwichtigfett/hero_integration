@@ -297,6 +297,17 @@
         (!model.saved.base_active_name || active.name === model.saved.base_active_name) &&
         active.revision === (model.reconciliation?.activeRevision ?? model.verifiedActiveRevision ?? model.saved.base_active_revision));
     const canSaveDraft = (model, active) => Boolean(model && !model.creation && !model.blocked && hasCurrentDraftBase(model, active));
+    const publicationResultName = (result, selected) => {
+        if (!result || typeof result.name !== 'string' || !result.name || !Number.isInteger(result.revision)
+            || result.revision < 1 || (selected.parentless ? result.revision !== 1 : result.name !== selected.name))
+            throw new Error('Invalid publication result.');
+        return result.name;
+    };
+    const publicationReadbackMatches = (observed, result, selected, definitionId) => Boolean(observed &&
+        observed.name === result.name && observed.definition_id === definitionId && observed.revision === result.revision &&
+        observed.status === 'Active' && (!selected.parentless ||
+        ['source_instance', 'schema_snapshot', 'schema_fingerprint', 'direction', 'operation_kind', 'operation_name']
+            .every((field) => observed[field] === selected[field])));
     function tabKeyTarget(tab, key) {
         const index = mappingTabs.indexOf(tab);
         if (index < 0) return null;
@@ -1345,7 +1356,7 @@
             };
             if (editable) {
                 heading.append(button("Delete selected mapping", () => removeRow(list[selected])).prop("disabled", !list[selected]));
-                if (!active.parentless) heading.append(button('Activate', activateDraft).attr('data-activate-draft', ''));
+                heading.append(button('Activate', activateDraft).attr('data-activate-draft', ''));
             }
             left.append(heading);
             detail.attr("data-editable", String(editable));
@@ -1794,11 +1805,10 @@
                             expected_reconciliation_revision: d.reconciliation_revision || 0,
                             warning_fingerprint: warning, confirmed: true}, true);
                         if (disposed || request !== epoch) return;
-                        if (result.name !== selectedActive.name || !Number.isInteger(result.revision) || result.revision < 1) throw new Error('Invalid publication result.');
-                        const observed = await rpc('frontend_mapping_detail', {mapping_type: 'graphql', name: selectedActive.name});
+                        const name = publicationResultName(result, selectedActive);
+                        const observed = await rpc('frontend_mapping_detail', {mapping_type: 'graphql', name});
                         if (disposed || request !== epoch) return;
-                        if (observed.name !== selectedActive.name || observed.definition_id !== d.definition_id ||
-                            observed.revision !== result.revision || observed.status !== 'Active') throw new Error('Active readback differs from publication.');
+                        if (!publicationReadbackMatches(observed, result, selectedActive, d.definition_id)) throw new Error('Active readback differs from publication.');
                         detail = observed; model = null; mode = 'active';
                     } catch (error) {
                         if (!disposed && request === epoch) { state.blocked = true; say('Publication failed or its outcome is unknown. Check the active version before trying again.'); }
@@ -2012,5 +2022,5 @@
         const controller = {beforeLeave: leaveWorkspace, destroy() { shell.removeClass("hero-mapping-shell"); disposed = true; epoch++; window.removeEventListener("beforeunload", unload); if (router.route === guardedRoute) router.route = originalRoute; document.removeEventListener("click", links, true); document.removeEventListener("pointerdown", closeChoiceOutside, true); }};
         current = controller; loadList(); return controller;
     }
-    window.hero_integration_mapping_editor = Object.freeze({mount, DraftState, stable, readActiveRule, readSnapshotPages, exchangeExpectedStates, exchangeCounts, exchangeCanAdopt, reviewedTargetLabel, writebackContractLabel, legacyWritebackRows, legacyWritebackDetailMatches, sharedWritebackDraftAccess, reviewedWritebackEditable, buildReviewedWriteback, sharedWritebackRequest, sharedWritebackSaveAccepted, finishSharedWritebackSave, legacyWritebackCurrent, legacyPackageSelection, legacyPackageAdoptionArgs, legacyCandidateArgs, legacyCandidateMatches, legacyCandidateRawMessage, legacyCandidateRpc, legacyCandidatePreviewText, isOwnedExportLink, mappingTabs, mappingAreas, objectsInArea, relationshipDescription, directionForTab, definitionChoice, objectFieldContext, actionInputType, bindingAccess, selectedPickerApp, hasCurrentDraftBase, canSaveDraft, tabKeyTarget, MappingTabStates, resumePendingView});
+    window.hero_integration_mapping_editor = Object.freeze({mount, DraftState, stable, readActiveRule, readSnapshotPages, exchangeExpectedStates, exchangeCounts, exchangeCanAdopt, reviewedTargetLabel, writebackContractLabel, legacyWritebackRows, legacyWritebackDetailMatches, sharedWritebackDraftAccess, reviewedWritebackEditable, buildReviewedWriteback, sharedWritebackRequest, sharedWritebackSaveAccepted, finishSharedWritebackSave, legacyWritebackCurrent, legacyPackageSelection, legacyPackageAdoptionArgs, legacyCandidateArgs, legacyCandidateMatches, legacyCandidateRawMessage, legacyCandidateRpc, legacyCandidatePreviewText, isOwnedExportLink, mappingTabs, mappingAreas, objectsInArea, relationshipDescription, directionForTab, definitionChoice, objectFieldContext, actionInputType, bindingAccess, selectedPickerApp, hasCurrentDraftBase, canSaveDraft, publicationResultName, publicationReadbackMatches, tabKeyTarget, MappingTabStates, resumePendingView});
 })();
