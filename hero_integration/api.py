@@ -2185,6 +2185,142 @@ def workspace_service_delete(query_id: str, expected_revision: int = 0) -> dict[
     return {"status": "DELETED"}
 
 
+BOOKMARK_DOCTYPE = "HERO GraphQL Node Bookmark"
+
+
+def _bookmark_error(callable_, *args):
+    from hero_integration.services.node_bookmark import NodeBookmarkError
+
+    try:
+        return callable_(*args)
+    except NodeBookmarkError as error:
+        frappe.throw(str(error))
+
+
+def _own_bookmark(name: str):
+    bookmark = frappe.get_doc(BOOKMARK_DOCTYPE, name)
+    if bookmark.owner != frappe.session.user:
+        frappe.throw("Node bookmarks can only be used by their owner.", frappe.PermissionError)
+    return bookmark
+
+
+def _bookmark_states(rows) -> dict[str, dict[str, object]]:
+    """Classify bookmarks as CURRENT, OUTDATED (newer validated snapshot) or UNRESOLVABLE; never remap."""
+    from hero_integration.services.node_bookmark import graph_index
+
+    newest: dict[str, str] = {}
+    for snapshot in frappe.get_all("HERO GraphQL Schema Snapshot", filters={"analysis_status": "Validated"},
+                                   fields=["name", "source_instance"], order_by="creation desc"):
+        newest.setdefault(snapshot.get("source_instance") or "", snapshot.get("name"))
+    graphs: dict[str, object] = {}
+    states = {}
+    for row in rows:
+        name = row.get("schema_snapshot")
+        if name not in graphs:
+            try:
+                snapshot, schema = _validated_snapshot(name)
+                graphs[name] = (snapshot.schema_fingerprint, set(graph_index(schema)[0]))
+            except Exception:
+                graphs[name] = None
+        resolved = graphs[name]
+        if not resolved or resolved[0] != row.get("schema_fingerprint") or row.get("node_id") not in resolved[1]:
+            states[row["name"]] = {"status": "UNRESOLVABLE", "reason": "The snapshot, its fingerprint or the node is no longer available."}
+        elif newest.get(row.get("source_instance") or "") not in (None, name):
+            states[row["name"]] = {"status": "OUTDATED", "reason": "A newer validated snapshot exists; the bookmark is not remapped.",
+                                   "newer_snapshot": newest[row.get("source_instance") or ""]}
+        else:
+            states[row["name"]] = {"status": "CURRENT", "reason": "The node exists in the newest validated snapshot."}
+    return states
+
+
+def _bookmark_row(row, state) -> dict[str, object]:
+    keys = ("name", "alias", "node_id", "node_kind", "node_name", "schema_snapshot", "schema_fingerprint", "source_instance", "modified")
+    return {**{key: row.get(key) for key in keys}, **state}
+
+
+@frappe.whitelist(methods=["GET"])
+def workspace_node_bookmark_list(search: str = "") -> dict[str, object]:
+    """List the current user's remembered nodes with their validity; nothing is remapped."""
+    frappe.only_for("System Manager")
+    rows = frappe.get_all(BOOKMARK_DOCTYPE, filters={"owner": frappe.session.user},
+                          fields=["name", "alias", "node_id", "node_kind", "node_name", "schema_snapshot",
+                                  "schema_fingerprint", "source_instance", "modified"], order_by="alias asc")
+    needle = (search or "").strip().casefold()
+    if needle:
+        rows = [row for row in rows if needle in f"{row.get('alias')} {row.get('node_name')}".casefold()]
+    rows = sorted(rows, key=lambda row: (str(row.get("alias") or "").casefold(), row.get("name")))
+    states = _bookmark_states(rows)
+    return {"bookmarks": [_bookmark_row(row, states[row["name"]]) for row in rows]}
+
+
+@frappe.whitelist(methods=["POST"])
+def workspace_node_bookmark_save(snapshot_name: str, node_id: str, alias: str, schema_fingerprint: str) -> dict[str, object]:
+    """Remember one real node of a validated snapshot under a personal alias; creates no mapping."""
+    frappe.only_for("System Manager")
+    from hero_integration.services.node_bookmark import bookmark_key, normalize_alias, resolve_node
+
+    clean_alias, alias_key = _bookmark_error(normalize_alias, alias)
+    snapshot, schema = _validated_snapshot(snapshot_name)
+    if snapshot.schema_fingerprint != schema_fingerprint:
+        frappe.throw("The schema changed while the node was selected. Reload the snapshot and select the node again.")
+    identity = _bookmark_error(resolve_node, schema, node_id)
+    user = frappe.session.user
+    key = bookmark_key(user, snapshot.name, identity["node_id"])
+    existing = frappe.get_all(BOOKMARK_DOCTYPE, filters={"bookmark_key": key}, fields=["name", "alias"])
+    if existing:
+        if existing[0].get("alias") == clean_alias:
+            return {"bookmark": existing[0]["name"], "existing": True}
+        frappe.throw(f"This node is already remembered as “{existing[0].get('alias')}”. Rename that entry instead.")
+    conflict = frappe.get_all(BOOKMARK_DOCTYPE, filters={"owner": user, "alias_key": alias_key}, fields=["name", "node_name"])
+    if conflict:
+        frappe.throw(f"The alias is already used for {conflict[0].get('node_name')}. Choose another alias.")
+    doc = frappe.get_doc({"doctype": BOOKMARK_DOCTYPE, "bookmark_key": key, "alias": clean_alias, "alias_key": alias_key,
+                          "schema_snapshot": snapshot.name, "schema_fingerprint": snapshot.schema_fingerprint,
+                          "source_instance": snapshot.source_instance or "", **identity}).insert()
+    return {"bookmark": doc.name, "existing": False}
+
+
+@frappe.whitelist(methods=["POST"])
+def workspace_node_bookmark_rename(bookmark: str, alias: str) -> dict[str, object]:
+    frappe.only_for("System Manager")
+    from hero_integration.services.node_bookmark import normalize_alias
+
+    clean_alias, alias_key = _bookmark_error(normalize_alias, alias)
+    doc = _own_bookmark(bookmark)
+    conflict = [row for row in frappe.get_all(BOOKMARK_DOCTYPE, filters={"owner": frappe.session.user, "alias_key": alias_key},
+                                              fields=["name", "node_name"]) if row["name"] != doc.name]
+    if conflict:
+        frappe.throw(f"The alias is already used for {conflict[0].get('node_name')}. Choose another alias.")
+    doc.alias = clean_alias
+    doc.save()
+    return {"bookmark": doc.name, "alias": doc.alias}
+
+
+@frappe.whitelist(methods=["POST"])
+def workspace_node_bookmark_delete(bookmark: str) -> dict[str, str]:
+    """Remove a personal bookmark; mappings and services are unaffected."""
+    frappe.only_for("System Manager")
+    doc = _own_bookmark(bookmark)
+    frappe.delete_doc(BOOKMARK_DOCTYPE, doc.name)
+    return {"status": "DELETED"}
+
+
+@frappe.whitelist(methods=["GET"])
+def workspace_node_bookmark_resolve(bookmark: str) -> dict[str, object]:
+    """Return a read-only Mapping Editor preselection; never changes drafts, mappings or activation."""
+    frappe.only_for("System Manager")
+    doc = _own_bookmark(bookmark)
+    row = doc.as_dict()
+    state = _bookmark_states([row])[doc.name]
+    result = {"bookmark": _bookmark_row(row, state), "context": None}
+    if state["status"] != "UNRESOLVABLE":
+        from hero_integration.services.node_bookmark import mapping_context
+
+        _snapshot, schema = _validated_snapshot(doc.schema_snapshot)
+        result["context"] = _bookmark_error(mapping_context, schema, doc.node_id)
+    return result
+
+
 QUERY_RESULT_LIMIT_BYTES = 1_000_000
 
 
