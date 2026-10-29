@@ -1587,18 +1587,22 @@ def _reconciliation_values(raw, label):
 @frappe.whitelist(methods=["POST"])
 def mapping_draft_materialize_plan(definition_id: str, expected_generation: int | str,
                                    expected_draft_revision: int | str, expected_active_revision: int | str,
-                                   expected_reconciliation_revision: int | str = 0):
+                                   expected_reconciliation_revision: int | str = 0, sample_values_json: str = ''):
     """Preview an owned saved draft's plan without execution authority."""
     _mapping_request_fields({"definition_id", "expected_generation", "expected_draft_revision",
-                             "expected_active_revision", "expected_reconciliation_revision"})
+                             "expected_active_revision", "expected_reconciliation_revision", "sample_values_json"})
     definition_id, _ = _personal_draft_identity(definition_id)
     values = (_mapping_int(expected_generation, "expected_generation", 1),
               _mapping_int(expected_draft_revision, "expected_draft_revision", 1),
               _mapping_int(expected_active_revision, "expected_active_revision", 0),
               _mapping_int(expected_reconciliation_revision, "expected_reconciliation_revision", 0))
     from hero_integration.services.frappe_mapping_draft_storage import FrappeMappingDraftStorage
+    if not isinstance(sample_values_json, str):
+        frappe.throw('MAPPING_INPUT_INVALID: sample_values_json must be JSON text.')
+    samples = _personal_draft_content(sample_values_json) if sample_values_json else None
     with _personal_draft_errors():
-        return FrappeMappingDraftStorage().materialize_portable_draft(definition_id, frappe.session.user, *values)
+        return FrappeMappingDraftStorage().materialize_portable_draft(definition_id, frappe.session.user, *values,
+                                                                     sample_values=samples)
 
 
 @frappe.whitelist(methods=["POST"])

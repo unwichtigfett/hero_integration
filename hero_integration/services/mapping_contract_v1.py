@@ -178,3 +178,33 @@ class MutationAdapter:
                        'nullable':current.type_ref.kind!='NON_NULL','segments':segments})
   return {'executable':False,'field':f.name,'snapshot_fingerprint':s.fingerprint,'source_instance':d.source_instance,
           'revision':d.revision,'input_paths':d.input_paths,'input_types':input_types,'null_mode':d.null_mode.value}
+
+ def construct_preview_values(self,s,d,values):
+  """Build schema-checked variables from explicit path-keyed sample values; never execute."""
+  from hero_integration.graphql_protocol.graphql_argument_values import _validate, GraphQLArgumentValueError
+  plan=self.materialize(s,d)
+  if not isinstance(values,Mapping) or len(values)>100 or any(not isinstance(key,str) for key in values):
+   raise MappingContractError('Mutation preview values must be a bounded path-keyed object.')
+  try:
+   if len(json.dumps(values,ensure_ascii=False,allow_nan=False).encode('utf-8'))>65536: raise ValueError
+  except (ValueError,TypeError,RecursionError) as error:
+   raise MappingContractError('Mutation preview values must be bounded JSON.') from error
+  selected={'.'.join(path):path for path in d.input_paths}
+  if set(values)-set(selected): raise MappingContractError('Mutation preview contains an unselected input path.')
+  variables={}
+  for key,path in selected.items():
+   if key not in values: continue
+   parent=variables
+   for segment in path[:-1]: parent=parent.setdefault(segment,{})
+   parent[path[-1]]=values[key]
+  field=next(item for item in s.ir.mutation_fields if item.name==d.field)
+  try:
+   for argument in field.arguments:
+    if argument.name not in variables:
+     if argument.type_ref.kind=='NON_NULL' and argument.default_value is None:
+      raise GraphQLArgumentValueError('A required mutation argument is missing.')
+     continue
+    variables[argument.name]=_validate(variables[argument.name],argument.type_ref,argument.name,schema=s.ir,strict_scalars=True)
+  except (GraphQLArgumentValueError,ValueError,TypeError) as error:
+   raise MappingContractError('Mutation preview variables do not satisfy the saved schema.') from error
+  return {**plan,'variables':variables}

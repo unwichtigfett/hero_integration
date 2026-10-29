@@ -339,7 +339,8 @@ class FrappeMappingDraftStorage:
             if canonical not in self._locked_rule_ids:
                 raise DraftConflict('Personal Draft identities changed while locks were acquired.')
 
-    def materialize_portable_draft(self, definition_id, actor, generation, revision, active_revision, reconciliation_revision):
+    def materialize_portable_draft(self, definition_id, actor, generation, revision, active_revision, reconciliation_revision,
+                                   *, sample_values=None):
         """Compile a saved personal draft as a non-executable operation plan."""
         from hero_integration.api import _validated_snapshot
         from hero_integration.services.mapping_draft_service import _hash
@@ -380,6 +381,8 @@ class FrappeMappingDraftStorage:
                 content.pop('field_rule_bases', None)
                 content = _portable_content(content, context['direction'])
                 if context['direction'] == 'QUERY_TO_FRAPPE':
+                    if sample_values is not None:
+                        raise MappingDraftError('Sample input values apply only to mutation drafts.')
                     if content.get('records_path', content.get('record_path')) != context['operation_name']:
                         raise MappingDraftError('Only direct query-root record paths are supported for this plan.')
                     _validate_portable_query(content, context['operation_name'], schema)
@@ -398,8 +401,10 @@ class FrappeMappingDraftStorage:
                     paths.append((target['argument'], *target['field'].split('.')))
                 if len(set(paths)) != len(paths):
                     raise MappingDraftError('Mutation assignments have duplicate input paths.')
-                result = MutationAdapter().materialize(validated, MutationDraft(context['operation_name'], tuple(paths),
-                                                                                snapshot.source_instance, revision))
+                adapter = MutationAdapter()
+                request = MutationDraft(context['operation_name'], tuple(paths), snapshot.source_instance, revision)
+                result = (adapter.materialize(validated, request) if sample_values is None else
+                          adapter.construct_preview_values(validated, request, sample_values))
                 return {**result, 'direction': context['direction'], 'execution_authority': 'NONE', 'draft_revision': revision}
             except (MappingContractError, KeyError, TypeError, ValueError) as error:
                 raise MappingDraftError('Saved draft cannot produce a compatible non-executable plan.') from error

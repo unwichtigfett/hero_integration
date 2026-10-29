@@ -408,6 +408,9 @@ def test_mutation_plan_rejects_wrong_source_and_ambiguous_or_collection_paths():
         'type':listed(named('INPUT_OBJECT', 'CaseChild'))})
     input_type['inputFields'].append({'name':'details', 'defaultValue':'null',
         'type':named('INPUT_OBJECT', 'CaseChild')})
+    input_type['inputFields'].append({'name':'count', 'defaultValue':None, 'type':named('SCALAR','Int')})
+    input_type['inputFields'].append({'name':'opaque', 'defaultValue':None, 'type':named('SCALAR','Opaque')})
+    raw['__schema']['types'].append({'kind':'SCALAR', 'name':'Opaque'})
     raw['__schema']['types'].append({'kind':'INPUT_OBJECT', 'name':'CaseChild',
         'inputFields':[{'name':'title', 'defaultValue':None, 'type':non_null(named('SCALAR','String'))},
                        {'name':'label', 'defaultValue':'"default"', 'type':non_null(named('SCALAR','String'))}]})
@@ -426,6 +429,20 @@ def test_mutation_plan_rejects_wrong_source_and_ambiguous_or_collection_paths():
     collection = MutationAdapter().materialize(adapted, MutationDraft('updateCase', (('input','children'),),
         'hero-primary', 1, relation_mode=RelationMode.COLLECTION, resolver_approved=True))
     assert collection['input_types'][0]['type'] == '[CaseChild]'
+    collection_draft = MutationDraft('updateCase', (('input','children'),), 'hero-primary', 1,
+                                     relation_mode=RelationMode.COLLECTION, resolver_approved=True)
+    adapter = MutationAdapter()
+    assert adapter.construct_preview_values(adapted, collection_draft, {'input.children':[]})['variables'] == {'input':{'children':[]}}
+    assert adapter.construct_preview_values(adapted, collection_draft, {'input.children':None})['variables'] == {'input':{'children':None}}
+    with pytest.raises(MappingContractError):
+        adapter.construct_preview_values(adapted, collection_draft, {})
+    count = MutationDraft('updateCase', (('input','count'),), 'hero-primary', 1)
+    assert adapter.construct_preview_values(adapted, count, {'input.count':0})['variables'] == {'input':{'count':0}}
+    with pytest.raises(MappingContractError):
+        adapter.construct_preview_values(adapted, count, {'input.count':2**31})
+    opaque = MutationDraft('updateCase', (('input','opaque'),), 'hero-primary', 1)
+    with pytest.raises(MappingContractError):
+        adapter.construct_preview_values(adapted, opaque, {'input.opaque':'value'})
     for value in (
         MutationDraft('updateCase', (('input','title'),), 'another-source', 1),
         MutationDraft('updateCase', (('input','title'),), 'hero-primary', True),
