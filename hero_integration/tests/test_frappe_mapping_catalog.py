@@ -4,7 +4,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from hero_integration.services.frappe_mapping_catalog import catalog, fields, validate_draft_target
+from hero_integration.services.frappe_mapping_catalog import catalog, fields, validate_draft_target, writeback_fields, validate_draft_writeback_source
 from hero_integration.services.mapping_suggestions import PickerField, picker_page
 from hero_integration.services.mapping_suggestions import suggest_from_source
 
@@ -12,6 +12,30 @@ from hero_integration.services.mapping_suggestions import suggest_from_source
 class TestFrappeMappingCatalog(unittest.TestCase):
     def setUp(self):
         self.metadata = _Metadata()
+
+    def test_reviewed_writeback_source_does_not_unprotect_inbound_target(self):
+        self.metadata._fields['Customer'] = [
+            _field('customer_name', 'Customer Name', 'Data'),
+            _field('customer_type', 'Customer Type', 'Data'),
+            _field('name', 'Name', 'Data'),
+        ]
+        inbound = {item.path: item for item in fields(self.metadata, doctype='Customer')}
+        outbound = {item.path: item for item in writeback_fields(self.metadata, doctype='Customer')}
+        self.assertFalse(inbound['customer_name'].selectable)
+        self.assertTrue(outbound['customer_name'].selectable)
+        self.assertFalse(outbound['customer_type'].selectable)
+        self.assertFalse(outbound['name'].selectable)
+        self.assertEqual(validate_draft_writeback_source('Customer', 'customer_name', self.metadata).path, 'customer_name')
+
+    def test_reviewed_source_requires_accessible_real_field_and_doctype(self):
+        for flag in ({'hidden': 1}, {'permlevel': 1}, {'read_only': 1}, {'is_virtual': 1}):
+            self.metadata._fields['Customer'] = [_field('customer_name', 'Customer Name', 'Data', **flag)]
+            self.assertFalse(writeback_fields(self.metadata, doctype='Customer')[0].selectable)
+            with self.assertRaises(ValueError):
+                validate_draft_writeback_source('Customer', 'customer_name', self.metadata)
+        self.metadata._fields['Customer'] = []
+        with self.assertRaises(ValueError):
+            validate_draft_writeback_source('Customer', 'customer_name', self.metadata)
 
     def test_writeback_catalog_filters_before_metadata_and_preserves_all_allowed_pages(self):
         from hero_integration import api

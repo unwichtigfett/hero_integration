@@ -241,6 +241,46 @@
         const relations = (field.relations || []).map((rel) => `${rel.owner_type}.${rel.name} → ${rel.target_type}${rel.is_list ? " [list]" : ""}${rel.arguments?.length ? ` (${args(rel.arguments)})` : ""}`);
         return [field.fieldtype || field.type || "", ...relations, field.arguments?.length ? `Arguments: ${args(field.arguments)}` : "", field.reason || ""].filter(Boolean).join(" · ");
     };
+    const mappingAreas = Object.freeze(["All areas", "Customers", "Projects", "Tasks", "Calendar"]);
+    const objectsInArea = (objects, area) => (objects || []).filter((item) =>
+        area === "All areas" || (mappingAreas.includes(area) && Array.isArray(item.areas) && item.areas.includes(area)));
+    const relationshipDescription = (rule, operation, fieldContext) => {
+        const matchesObject = (name) => !fieldContext?.object_type || fieldContext.object_type === name;
+        if (rule && operation === "HeroProjectMatches" && matchesObject("ProjectMatch") && rule.source_path === "customer_id" &&
+            rule.target_doctype === "Project" && rule.target_field === "customer" &&
+            rule.purpose === "Customer Relation" && rule.transformation === "HERO Customer Link" && rule.relation === "HERO Customer Link")
+            return {source: "ProjectMatch.customer_id", target: "Project.customer", role: "Customer of the project",
+                identity: "Resolve the Customer using the source instance and external ID through HERO Integration Link.",
+                cardinality: "One Customer link per Project", state: "Existing reviewed relationship; unresolved identity requires review."};
+        if (rule && operation === "HeroTasks" && matchesObject("Task") && rule.source_path === "target_project_match_id" &&
+            rule.target_doctype === "Task" && rule.target_field === "project" &&
+            rule.purpose === "Native Binding" && rule.transformation === "Native Adapter")
+            return {source: "Task.target_project_match_id", target: "Task.project", role: "Project of the task",
+                identity: "Resolve the Project using the source instance and external ID through HERO Integration Link.",
+                cardinality: "One Project link per Task", state: "Existing reviewed relationship; unresolved identity requires review."};
+        if (rule && operation === "HeroCalendarEvents" && matchesObject("CalendarEvent") && rule.source_path === "project_match_id" &&
+            rule.target_doctype === "Event" && rule.target_field === "custom_hero_project" &&
+            rule.purpose === "Project Relation" && rule.transformation === "HERO Project Link" && rule.relation === "HERO Project Link")
+            return {source: "CalendarEvent.project_match_id", target: "Event.custom_hero_project", role: "Project of the event",
+                identity: "Resolve the Project using the source instance and external ID through HERO Integration Link.",
+                cardinality: "One Project link per Event", state: "Existing reviewed relationship; unresolved identity requires review."};
+        try {
+            const parsed = JSON.parse(fieldContext?.schema_context || "null");
+            if (parsed && Array.isArray(parsed.segments) && parsed.segments.length > 1) {
+                const steps = parsed.segments.slice(0, -1);
+                return {source: `${parsed.object_type}.${parsed.segments.map((step) => step.name).join(".")}`,
+                    target: rule?.target_doctype && rule?.target_field ? `${rule.target_doctype}.${rule.target_field}` : "Choose a Frappe target",
+                    role: steps.map((step) => `${step.owner_type}.${step.name}`).join(" → "),
+                    cardinality: steps.map((step) => `${step.name}: ${step.type}`).join("; "),
+                    identity: "Identity and resolver have not been confirmed for this path.",
+                    state: "Relationship path is draft-only and requires review before publication."};
+            }
+        } catch (_) { /* A malformed context is rejected by the server. */ }
+        if (rule?.relation) return {source: rule.source_path || "Not provided", target: [rule.target_doctype, rule.target_field].filter(Boolean).join("."),
+            role: rule.relation, identity: "Review the existing resolver and identity contract.",
+            cardinality: "Review the existing relationship contract.", state: "Configured relationship; authority is not inferred."};
+        return null;
+    };
     const actionInputType = (operation, argument) =>
         (operation?.arguments?.find((item) => item.name === argument)?.type || "").replace(/[!\[\]]/g, "");
     const bindingAccess = (admin, definition) => !admin ? "ADMIN_ONLY" : definition?.definition_id ? "READ_ONLY" : "SELECT_DEFINITION";
@@ -442,6 +482,7 @@
         const browsePaths = new Map();
         const browseObjects = new Map();
         const browseActions = new Map();
+        const browseAreas = new Map();
         const ruleCache = new Map();
         let appCatalog;
         const readableApps = () => admin ? appCatalog ||= rpc("mapping_target_catalog", {}).catch((error) => { appCatalog = null; throw error; }) : Promise.resolve(null);
@@ -1305,6 +1346,7 @@
             const heroBrowseKey = `${tab}:${chosenSnapshot || ""}`;
             const selectedObject = () => browseObjects.get(heroBrowseKey) || "";
             const selectedAction = () => browseActions.get(heroBrowseKey) || active?.operation_name || "";
+            const selectedArea = () => browseAreas.get(heroBrowseKey) || "All areas";
             const refreshContext = () => active ? renderDetail() : renderList();
             const row = rows(value)[selected] || {};
             const existingRule = !model?.creation && row.reference ? ownRule(value, row.id) || ruleCache.get(row.id) : null;
@@ -1359,6 +1401,17 @@
                 renderDetail();
                 body.find("[data-choice-label]").filter((_, element) => element.dataset.choiceLabel === (isFrappe ? "Frappe Field" : mutation ? "Input field" : "HERO Field")).find("summary").trigger("focus");
             };
+            let areaChoice;
+            if (!mutation) areaChoice = choice("Area", text(selectedArea()), heroControls, async (search, offset) =>
+                page(mappingAreas.map((label) => ({label})), search, offset), (item) => {
+                    if (item.label !== selectedArea()) {
+                        browseAreas.set(heroBrowseKey, item.label);
+                        browseObjects.set(heroBrowseKey, "");
+                        browsePaths.delete(browseKey);
+                    }
+                    refreshContext();
+                    say("Area selected for browsing. Saved mappings and fetch configuration are unchanged.");
+                });
             const objectOrAction = choice(mutation ? "Action" : "Object", "", heroControls, async (search, offset) => {
                 if (!admin || !chosenSnapshot) return {items: [], total: 0, emptyMessage: "Choose a validated schema snapshot first."};
                 if (mutation) {
@@ -1366,7 +1419,7 @@
                     return page(catalog.map((item) => ({label: item.operation_name, context: "Mutation action"})), search, offset);
                 }
                 const catalog = await rpc("mapping_object_catalog", {snapshot_name: chosenSnapshot, object_type: "", search: "", start: 0, page_size: 1});
-                return page(catalog.objects.map((item) => ({...item, label: item.label || item.name})), search, offset);
+                return page(objectsInArea(catalog.objects, selectedArea()).map((item) => ({...item, label: item.label || item.name})), search, offset);
             }, (item) => {
                 if (mutation) browseActions.set(heroBrowseKey, item.label); else browseObjects.set(heroBrowseKey, item.name);
                 browsePaths.delete(browseKey); refreshContext();
@@ -1440,7 +1493,7 @@
                 const result = await rpc("mapping_target_catalog_page", {app_name: browseApp, doctype: browseDoctype, search, start: offset, page_size: 20});
                 return {items: result.items.map((f) => ({...f, label: f.path, context: `${f.fieldtype || f.type || ""}${f.selectable === false ? ` · ${f.reason || "not permitted"}` : ""}`, disabled: f.selectable === false})), total: result.total};
             }, (item) => setField(item, true));
-            if (!admin) [objectOrAction, path, heroField, app, doctype, frappeField].forEach((control) => control.prop("hidden", true));
+            if (!admin) [areaChoice, objectOrAction, path, heroField, app, doctype, frappeField].forEach((control) => control?.prop("hidden", true));
             const metadata = (pane) => {
                 const dl = $("<dl class='hero-mapping-metadata'></dl>").appendTo(pane), fields = {};
                 for (const label of ["Name", "Type", "Node", "Revision", "Status"]) { fields[label] = $("<dd></dd>").text(text("Not provided")); dl.append($("<dt></dt>").text(text(label)), fields[label]); }
@@ -1449,6 +1502,7 @@
                 return fields;
             };
             const heroMeta = metadata(heroPane), frappeMeta = metadata(frappePane);
+            const relationship = $('<section class="hero-mapping-context-note" aria-label="Relationship details"></section>');
             let appNames = new Map();
             const refresh = () => {
                 const value = active ? content() : {}, row = rows(value)[selected], rule = !model?.creation && row?.reference ? ownRule(value, row.id) || ruleCache.get(row.id) : null;
@@ -1472,9 +1526,18 @@
                 for (const fields of [heroMeta, frappeMeta]) { fields.Revision.text(active ? `${text("Mapping")} ${active.revision}` : text("Not provided")); fields.Status.text(active ? mode === "draft" ? text("Personal draft") : active.status || text("Active") : text("No selection")); }
                 frappeMeta.ID.text(text("Not provided")); frappeMeta.Name.text(rule?.target_field || frappeValue.field_path || frappeValue.field || text("Not provided"));
                 frappeMeta.Type.text(frappeValue.fieldtype || text("Not provided")); frappeMeta.Node.text(rule?.target_doctype || frappeValue.doctype || text("Not provided"));
+                const fieldContext = row?.reference ? value.field_contexts?.[row.id] : assignment.source;
+                const relation = !mutation && relationshipDescription(rule, value.target_operation, fieldContext);
+                relationship.empty().prop("hidden", !relation);
+                if (relation) {
+                    relationship.append($('<h4></h4>').text(text("Relationship")));
+                    for (const [label, detail] of [["Source", relation.source], ["Target", relation.target], ["Role", relation.role],
+                        ["Identity", relation.identity], ["Cardinality", relation.cardinality], ["Status", relation.state]])
+                        relationship.append($('<p></p>').append($('<strong></strong>').text(`${text(label)}: `), document.createTextNode(text(detail || "Not provided"))));
+                }
             };
             context.on("hero-mapping-summary-refresh", refresh).on("hero-mapping-selection-change", () => renderDetail());
-            context.append(sourcePane, $("<span class='hero-mapping-arrow' aria-hidden='true'>→</span>"), targetPane).appendTo(body); refresh();
+            context.append(sourcePane, $("<span class='hero-mapping-arrow' aria-hidden='true'>→</span>"), targetPane, relationship).appendTo(body); refresh();
             if (admin && active) { const requestEpoch = epoch; readableApps().then((catalog) => {
                 if (disposed || requestEpoch !== epoch || !context[0].isConnected) return;
                 appNames = new Map(catalog.doctypes.filter((item) => item.selectable).map((item) => [item.doctype, item.app_name])); refresh();
@@ -1839,5 +1902,5 @@
         const controller = {beforeLeave: leaveWorkspace, destroy() { shell.removeClass("hero-mapping-shell"); disposed = true; epoch++; window.removeEventListener("beforeunload", unload); if (router.route === guardedRoute) router.route = originalRoute; document.removeEventListener("click", links, true); document.removeEventListener("pointerdown", closeChoiceOutside, true); }};
         current = controller; loadList(); return controller;
     }
-    window.hero_integration_mapping_editor = Object.freeze({mount, DraftState, stable, readActiveRule, readSnapshotPages, exchangeExpectedStates, exchangeCounts, exchangeCanAdopt, reviewedTargetLabel, writebackContractLabel, legacyWritebackRows, legacyWritebackDetailMatches, sharedWritebackDraftAccess, reviewedWritebackEditable, buildReviewedWriteback, sharedWritebackRequest, sharedWritebackSaveAccepted, finishSharedWritebackSave, legacyWritebackCurrent, legacyPackageSelection, legacyPackageAdoptionArgs, legacyCandidateArgs, legacyCandidateMatches, legacyCandidateRawMessage, legacyCandidateRpc, legacyCandidatePreviewText, isOwnedExportLink, mappingTabs, directionForTab, definitionChoice, objectFieldContext, actionInputType, bindingAccess, selectedPickerApp, hasCurrentDraftBase, canSaveDraft, tabKeyTarget, MappingTabStates, resumePendingView});
+    window.hero_integration_mapping_editor = Object.freeze({mount, DraftState, stable, readActiveRule, readSnapshotPages, exchangeExpectedStates, exchangeCounts, exchangeCanAdopt, reviewedTargetLabel, writebackContractLabel, legacyWritebackRows, legacyWritebackDetailMatches, sharedWritebackDraftAccess, reviewedWritebackEditable, buildReviewedWriteback, sharedWritebackRequest, sharedWritebackSaveAccepted, finishSharedWritebackSave, legacyWritebackCurrent, legacyPackageSelection, legacyPackageAdoptionArgs, legacyCandidateArgs, legacyCandidateMatches, legacyCandidateRawMessage, legacyCandidateRpc, legacyCandidatePreviewText, isOwnedExportLink, mappingTabs, mappingAreas, objectsInArea, relationshipDescription, directionForTab, definitionChoice, objectFieldContext, actionInputType, bindingAccess, selectedPickerApp, hasCurrentDraftBase, canSaveDraft, tabKeyTarget, MappingTabStates, resumePendingView});
 })();

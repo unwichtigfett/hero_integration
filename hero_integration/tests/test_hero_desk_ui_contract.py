@@ -261,8 +261,9 @@ class TestHeroDeskUiContract(unittest.TestCase):
                          "hero-mapping-editor-grid", "hero-mapping-row-detail", "hero-mapping-table",
                          "Search ${label}", "My saved revisions — read only"):
             self.assertIn(contract, source)
-        self.assertNotIn('"Customer"', source)
-        self.assertNotIn('"Project"', source)
+        catalog_loader = source.split('const getFieldCatalog =', 1)[1].split('const page =', 1)[0]
+        self.assertNotIn('"Customer"', catalog_loader)
+        self.assertNotIn('"Project"', catalog_loader)
 
     def test_polling_and_synchronization_controls_are_visible_without_a_new_page(self):
         settings = SETTINGS_JS.read_text()

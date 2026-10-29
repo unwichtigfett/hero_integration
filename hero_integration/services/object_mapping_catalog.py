@@ -8,6 +8,8 @@ from hero_integration.services.graphql_graph import normalize_schema
 from hero_integration.services.schema_operations import type_reference, is_required
 
 MAX_DEPTH = 4
+AREAS = {'Customers': 'HeroCustomers', 'Projects': 'HeroProjectMatches',
+         'Tasks': 'HeroTasks', 'Calendar': 'HeroCalendarEvents'}
 
 
 def _named(ref):
@@ -42,6 +44,35 @@ def _mapping_type(name, nullable):
     return base + ('|null' if nullable else '') if base else ''
 
 
+def _object_areas(schema, types):
+    """Resolve areas only along existing reviewed source-contract paths."""
+    from hero_integration.services.direct_mapping import SOURCE_CONTRACTS
+    from hero_integration.services.mapping_suggestions import OPERATION_ROOTS
+    query = types.get((schema.get('queryType') or {}).get('name'), {})
+    root_fields = {field['name']: field for field in query.get('fields') or []
+                   if isinstance(field, Mapping) and isinstance(field.get('name'), str)}
+    result = {}
+    for area, operation in AREAS.items():
+        root = root_fields.get(OPERATION_ROOTS.get(operation), {})
+        start, kind = _named(root.get('type'))
+        if kind not in {'OBJECT', 'INTERFACE', 'UNION'} or start not in types:
+            continue
+        result.setdefault(start, set()).add(area)
+        for path in SOURCE_CONTRACTS.get(operation, {}).get('paths', {}):
+            current = start
+            for segment in path.split('.'):
+                member = next((field for field in types[current].get('fields') or []
+                               if isinstance(field, Mapping) and field.get('name') == segment), None)
+                if member is None:
+                    break
+                name, member_kind = _named(member.get('type'))
+                if member_kind not in {'OBJECT', 'INTERFACE', 'UNION'} or name not in types:
+                    break
+                result.setdefault(name, set()).add(area)
+                current = name
+    return result
+
+
 def catalog(snapshot, object_type='', search=''):
     schema = normalize_schema(snapshot)
     types = {t['name']: t for t in schema.get('types', [])
@@ -51,7 +82,10 @@ def catalog(snapshot, object_type='', search=''):
     objects = sorted((name for name, t in types.items()
                       if t.get('kind') == 'OBJECT' and name not in roots and not name.startswith('__')),
                      key=lambda name: (name.casefold(), name))
-    result = {'objects': [{'name': name, 'label': name} for name in objects], 'items': []}
+    memberships = _object_areas(schema, types)
+    result = {'objects': [{'name': name, 'label': name,
+                           'areas': [area for area in AREAS if area in memberships.get(name, set())]}
+                          for name in objects], 'items': [], 'areas': list(AREAS)}
     if not object_type:
         return result
     if object_type not in objects:

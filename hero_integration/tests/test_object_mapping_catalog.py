@@ -30,6 +30,26 @@ def schema():
 
 
 class ObjectMappingCatalogTest(unittest.TestCase):
+    def test_areas_follow_reviewed_query_roots_and_real_relations(self):
+        value = schema()
+        query = next(t for t in value['__schema']['types'] if t['name'] == 'Query')
+        query['fields'].append({'name': 'tasks', 'type': ref('NON_NULL', of=ref('LIST', of=ref('OBJECT', 'Task')))})
+        query['fields'].append({'name': 'project_matches', 'type': ref('LIST', of=ref('OBJECT', 'ProjectMatch'))})
+        value['__schema']['types'].append({'kind': 'OBJECT', 'name': 'ProjectMatch', 'fields': [
+            {'name': 'customer', 'type': ref('OBJECT', 'Customer')},
+            {'name': 'task', 'type': ref('OBJECT', 'Task')}]})
+        next(t for t in value['__schema']['types'] if t['name'] == 'Customer')['fields'].append(
+            {'name': 'address', 'type': ref('OBJECT', 'Address')})
+        next(t for t in value['__schema']['types'] if t['name'] == 'Task')['fields'].append(
+            {'name': 'project', 'type': ref('OBJECT', 'ProjectMatch')})
+        found = {item['name']: item['areas'] for item in catalog(value)['objects']}
+        self.assertEqual(found['Task'], ['Tasks'])
+        self.assertEqual(found['Customer'], ['Customers', 'Projects'])
+        self.assertEqual(found['Address'], ['Customers'])
+        self.assertEqual(found['ProjectMatch'], ['Projects'])
+        self.assertNotIn('Calendar', found['Task'])
+        self.assertEqual(catalog(value)['areas'], ['Customers', 'Projects', 'Tasks', 'Calendar'])
+
     def test_objects_are_schema_types_not_operations_or_definitions(self):
         names = [x['name'] for x in catalog(schema())['objects']]
         self.assertEqual(names.count('Customer'), 1)
