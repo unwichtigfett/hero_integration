@@ -7,7 +7,7 @@ outside the isolated test evidence for B4.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from collections.abc import Mapping
 from typing import Literal
 
@@ -87,6 +87,41 @@ class MappingRegistryService:
         active = self._storage.read_active(site_scope)
         return () if active is None else self._validate(self._definitions(active))
 
+    def compile_active_query(self, snapshot, *, expected_revision, definition_ids, operation, arguments,
+                             identity_reference, alias=None, pagination_argument=None, snapshot_revision=1):
+        """Compile a revision-pinned active selection without granting execution authority."""
+        from hero_integration.services.materializer_routing import MaterializerRouter
+        current = self._require_current(expected_revision)
+        selected = self._selected_definitions(current, definition_ids)
+        plan = MaterializerRouter().compile_query_mappings(
+            snapshot, self._schema, self._fields, selected, operation=operation, arguments=arguments,
+            identity_reference=identity_reference, revision=snapshot_revision, alias=alias,
+            pagination_argument=pagination_argument,
+        )
+        return replace(plan, mapping_registry_revision=current.revision)
+
+    def compile_active_mutation(self, snapshot, *, expected_revision, definition_ids, operation, arguments,
+                                output_references, alias=None, snapshot_revision=1):
+        """Compile revision-pinned mutation inputs without granting execution authority."""
+        from hero_integration.services.materializer_routing import MaterializerRouter
+        current = self._require_current(expected_revision)
+        selected = self._selected_definitions(current, definition_ids)
+        plan = MaterializerRouter().compile_mutation_mappings(
+            snapshot, self._schema, self._fields, selected, operation=operation, arguments=arguments,
+            output_references=output_references, revision=snapshot_revision, alias=alias,
+        )
+        return replace(plan, mapping_registry_revision=current.revision)
+
+    def _selected_definitions(self, current, definition_ids):
+        if (not isinstance(definition_ids, tuple) or not definition_ids
+                or any(not isinstance(value, str) or not value for value in definition_ids)
+                or len(set(definition_ids)) != len(definition_ids)):
+            raise MappingRegistryOperationError('An explicit unique set of mapping definition IDs is required.')
+        definitions = {item.definition_id: item for item in self._definitions(current)}
+        if set(definition_ids) - set(definitions):
+            raise MappingRegistryOperationError('Selected mapping definitions are absent from the active revision.')
+        return tuple(definitions[identity] for identity in sorted(definition_ids))
+
     def add_definition(self, definition: MappingDefinition, *, expected_revision: int) -> MappingRegistryOperationResult:
         current = self._require_current(expected_revision)
         definitions = self._definitions(current)
@@ -126,7 +161,7 @@ class MappingRegistryService:
         return MappingRegistryOperationResult("ACTIVATED", stored.revision, validations)
 
     def _require_current(self, expected_revision: int) -> StoredMappingVersion:
-        if not isinstance(expected_revision, int) or expected_revision < 1:
+        if type(expected_revision) is not int or expected_revision < 1:
             raise MappingRegistryOperationError("Manual edits require an explicit positive expected revision.")
         current = self._storage.read_active(self._fields.site)
         if current is None or current.revision != expected_revision:

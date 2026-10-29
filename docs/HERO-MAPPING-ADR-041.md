@@ -48,3 +48,18 @@ Private acceptance and target deployment are separate. Source time, identity
 and authority contracts remain open wherever the saved evidence does not
 establish them. Reconsider this decision only if a confirmed source contract
 or existing implementation makes these boundaries incompatible.
+
+## Amendment 2026-10-29: canonical operation generation
+
+For new mapping configurations, the existing GraphQL materializer is the
+canonical operation generator. An explicit schema-validated root operation,
+mapped paths, identity and typed arguments determine the generated operation;
+operators do not need to author a GraphQL document. Ambiguous roots require an
+explicit binding. Generation is discovery, not permission to fetch or mutate.
+The existing service approval, mapping revision, schema, identity, pagination,
+writeback and execution gates remain authoritative.
+
+Previously approved stored Query services retain their reviewed-document
+contracts until individually migrated through those gates. This amendment does
+not make generated requests executable or imply that all existing execution
+paths have already been migrated.

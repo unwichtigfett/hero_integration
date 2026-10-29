@@ -1947,12 +1947,18 @@ def workspace_service_detail(query_id: str) -> dict[str, object]:
 @frappe.whitelist(methods=["POST"])
 def workspace_service_save(snapshot_name: str, payload_json: str, query_id: str = "", expected_revision: int = 0) -> dict[str, object]:
     frappe.only_for("System Manager")
-    payload = _workspace_payload(payload_json)
+    payload = _workspace_payload(payload_json, allow_generated=True)
     kind = str(payload.get("operation_kind", "query"))
     _assert_service_kind(kind)
     snapshot, schema = _validated_snapshot(snapshot_name)
     from hero_integration.services.mutation_draft import operation_kind as document_kind, validate as validate_mutation_draft
 
+    if 'mapping_generation' in payload:
+        if kind != 'query' or payload.get('query'):
+            frappe.throw('Generated service input requires query direction and no supplied document.')
+        plan = _workspace_generated_query(snapshot, payload['mapping_generation'])
+        payload['query'] = plan.request.document
+        payload['operation_name'] = plan.request.operation_name
     if document_kind(payload["query"]) != kind:
         frappe.throw("The declared GraphQL service kind does not match the document.")
     if kind == "mutation":
@@ -2047,19 +2053,47 @@ def _page(base: dict[str, object], rows: list[object], start: int | str, page_si
     return {**base, "rows": rows[offset:offset + limit], "has_more": offset + limit < len(rows), "total": len(rows)}
 
 
-def _workspace_payload(payload_json: str) -> dict[str, object]:
+def _workspace_payload(payload_json: str, *, allow_generated: bool = False) -> dict[str, object]:
     try:
         payload = json.loads(payload_json)
     except json.JSONDecodeError as error:
         frappe.throw(f"Service payload must be JSON: {error.msg}")
     if not isinstance(payload, dict):
         frappe.throw("Service payload must be an object.")
-    for field in ("name", "query"):
+    fields = ("name",) if allow_generated and 'mapping_generation' in payload else ("name", "query")
+    for field in fields:
         if not isinstance(payload.get(field), str) or not payload[field].strip():
             frappe.throw(f"Service {field} is required.")
     if payload.get("operation_name") is not None and not isinstance(payload["operation_name"], str):
         frappe.throw("Service operation name must be text.")
     return payload
+
+
+def _workspace_generated_query(snapshot, specification):
+    """Generate a Draft service from the current registry; this grants no read authority."""
+    required = {'registry_revision', 'definition_ids', 'operation', 'arguments', 'identity_reference'}
+    allowed = required | {'alias', 'pagination_argument'}
+    if not isinstance(specification, dict) or not required <= set(specification) or set(specification) - allowed:
+        frappe.throw('Invalid generated mapping service specification.')
+    ids = specification['definition_ids']
+    if not isinstance(ids, list) or not ids or len(ids) > 100 or any(not isinstance(x, str) or not x for x in ids):
+        frappe.throw('Generated mapping service requires selected definition IDs.')
+    from hero_integration.services.frappe_field_metadata_provider import FrappeV16FieldMetadataProvider
+    from hero_integration.services.frappe_field_registry import build_frappe_field_registry
+    from hero_integration.services.mapping_contract_v1 import StoredSnapshot
+    from hero_integration.services.mapping_registry_service import MappingRegistryService
+    from hero_integration.services.mapping_registry_storage import FrappeMappingRegistryStorage
+    from hero_integration.services.schema_registry import build_schema_registry
+
+    stored = StoredSnapshot(snapshot.name, snapshot.snapshot_json, snapshot.schema_fingerprint,
+                            snapshot.source_instance, snapshot.analysis_status)
+    registry = build_schema_registry(stored)
+    fields = build_frappe_field_registry(frappe.local.site, FrappeV16FieldMetadataProvider(frappe))
+    service = MappingRegistryService(FrappeMappingRegistryStorage(frappe), registry, fields)
+    return service.compile_active_query(stored, expected_revision=specification['registry_revision'],
+        definition_ids=tuple(ids), operation=specification['operation'], arguments=specification['arguments'],
+        identity_reference=specification['identity_reference'], alias=specification.get('alias'),
+        pagination_argument=specification.get('pagination_argument'))
 
 
 def _workspace_service(service: dict[str, object]) -> dict[str, object]:
