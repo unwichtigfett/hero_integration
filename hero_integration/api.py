@@ -2116,8 +2116,44 @@ def _save_workspace_service(snapshot_name, payload, query_id, expected_revision,
 
 
 @frappe.whitelist(methods=["POST"])
-def workspace_service_validate(snapshot_name: str, payload_json: str = "", query_id: str = "", expected_revision: int = 0) -> dict[str, object]:
+def workspace_service_validate(
+    snapshot_name: str, payload_json: str = "", query_id: str = "", expected_revision: int = 0, variables_json: str = "",
+) -> dict[str, object]:
     frappe.only_for("System Manager")
+    result = _workspace_service_validate(snapshot_name, payload_json, query_id, expected_revision)
+    document = result.pop("_document")
+    if variables_json:
+        # Local check against the document's variable declarations only; values are never stored or sent to HERO.
+        _snapshot, schema = _validated_snapshot(snapshot_name)
+        result["variables_validated"] = _validated_variable_names(schema, document, variables_json)
+    return result
+
+
+def _parse_variables_json(variables_json: str) -> dict[str, object]:
+    try:
+        values = json.loads(variables_json or "{}")
+    except json.JSONDecodeError as error:
+        frappe.throw(f"GraphQL variables must be a JSON object: {error.msg}")
+    if not isinstance(values, dict):
+        frappe.throw("GraphQL variables must be a JSON object.")
+    return values
+
+
+def _validated_variable_names(schema: dict[str, object], document: str, variables_json: str) -> list[str]:
+    from hero_integration.services.mutation_draft import operation_kind as document_kind
+
+    values = _parse_variables_json(variables_json)
+    if document_kind(document) == "mutation":
+        from hero_integration.services.graphql_contract import GraphQLContractError, parse_mutation, validate_mutation
+
+        try:
+            return sorted(validate_mutation(schema, parse_mutation(document), values))
+        except GraphQLContractError as error:
+            frappe.throw(str(error))
+    return sorted(_validated_query_draft(schema, document, values, with_values=True))
+
+
+def _workspace_service_validate(snapshot_name, payload_json, query_id, expected_revision) -> dict[str, object]:
     if not query_id:
         payload = _workspace_payload(payload_json)
         kind = str(payload.get("operation_kind", "query"))
@@ -2128,11 +2164,11 @@ def workspace_service_validate(snapshot_name: str, payload_json: str = "", query
 
             detail = validate_mutation_draft(schema, payload["query"])
             return {
-                "valid": True, "can_execute": False, "mutation": detail,
+                "valid": True, "can_execute": False, "mutation": detail, "_document": payload["query"],
                 "reason": "Mutation drafts are local-only; HERO mutation execution is disabled.",
             }
         detail = _validated_query_draft(schema, payload["query"])
-        return {"valid": True, "can_execute": False, "query_detail": detail,
+        return {"valid": True, "can_execute": False, "query_detail": detail, "_document": payload["query"],
                 "reason": "The query matches the saved schema. Save and validate the service before executing it."}
     service = frappe.get_doc("HERO GraphQL Service", query_id)
     if service.schema_snapshot != snapshot_name or int(service.service_revision or 0) != int(expected_revision or 0):
@@ -2144,6 +2180,7 @@ def workspace_service_validate(snapshot_name: str, payload_json: str = "", query
         detail = validate_mutation_draft(schema, service.query_document)
         return {
             "valid": True, "can_execute": False, "mutation": detail, "query": _workspace_service(service.as_dict()),
+            "_document": service.query_document,
             "reason": "Mutation drafts are local-only; HERO mutation execution is disabled.",
         }
     _snapshot, schema = _validated_snapshot(snapshot_name)
@@ -2151,11 +2188,12 @@ def workspace_service_validate(snapshot_name: str, payload_json: str = "", query
     service.status = "Validated"
     service.save()
     return {"valid": True, "can_execute": True, "query": _workspace_service(service.as_dict()), "query_detail": detail,
+            "_document": service.query_document,
             "reason": "The saved query matches the schema. Execution is read-only and requires an explicit click."}
 
 
 @frappe.whitelist()
-def workspace_mutation_draft_validate(snapshot_name: str, payload_json: str) -> dict[str, object]:
+def workspace_mutation_draft_validate(snapshot_name: str, payload_json: str, variables_json: str = "") -> dict[str, object]:
     """Validate a mutation draft against stored introspection only; never persist or execute it."""
     frappe.only_for("System Manager")
     payload = _workspace_payload(payload_json)
@@ -2163,7 +2201,9 @@ def workspace_mutation_draft_validate(snapshot_name: str, payload_json: str) -> 
     from hero_integration.services.mutation_draft import validate
 
     detail = validate(schema, payload["query"])
+    extra = {"variables_validated": _validated_variable_names(schema, payload["query"], variables_json)} if variables_json else {}
     return {
+        **extra,
         "valid": True,
         "can_execute": False,
         "schema_fingerprint": snapshot.schema_fingerprint,
@@ -2353,11 +2393,7 @@ def workspace_service_execute(snapshot_name: str, query_id: str, expected_revisi
     snapshot, schema = _validated_snapshot(snapshot_name)
     if (service.schema_fingerprint or "") != snapshot.schema_fingerprint:
         frappe.throw("The saved query was validated against another schema fingerprint; validate it again.")
-    try:
-        values = json.loads(variables_json or "{}")
-    except json.JSONDecodeError as error:
-        frappe.throw(f"Query variables must be JSON: {error.msg}")
-    variables = _validated_query_draft(schema, service.query_document, values, with_values=True)
+    variables = _validated_query_draft(schema, service.query_document, _parse_variables_json(variables_json), with_values=True)
     from hero_integration.client.graphql import HeroClientError, HeroGraphQLClient
     from hero_integration.client.settings import get_configuration
 
@@ -2369,14 +2405,46 @@ def workspace_service_execute(snapshot_name: str, query_id: str, expected_revisi
                                  timeout=configuration.timeout_seconds, max_retries=0).query(service.query_document, variables)
     except HeroClientError as error:
         kind = "GRAPHQL" if error.code == "GRAPHQL_ERRORS" else "RESPONSE" if error.code in {"INVALID_RESPONSE", "MISSING_DATA"} else "TRANSPORT"
-        return {**base, "status": "ERROR", "error_kind": kind, "error_code": error.code, "message": str(error),
-                "graphql_errors": list(error.details)}
+        failure = {**base, "status": "ERROR", "error_kind": kind, "error_code": error.code, "message": str(error),
+                   "graphql_errors": _redacted_messages(error.details, variables)}
+        if kind != "GRAPHQL" or not isinstance(getattr(error, "data", None), dict):
+            return failure
+        # GraphQL may return data and errors together: keep the delivered data visible and flag the errors.
+        data, failure["status"] = error.data, "PARTIAL"
+        base = failure
     encoded = json.dumps(data, ensure_ascii=False, default=str)
     size = len(encoded.encode())
     if size > QUERY_RESULT_LIMIT_BYTES:
-        return {**base, "status": "TOO_LARGE", "size_bytes": size, "limit_bytes": QUERY_RESULT_LIMIT_BYTES,
+        return {**base, "status": "TOO_LARGE", "partial": base.get("status") == "PARTIAL", "size_bytes": size,
+                "limit_bytes": QUERY_RESULT_LIMIT_BYTES,
                 "message": "The HERO response exceeds the display limit; narrow the query or use paging variables."}
-    return {**base, "status": "OK", "size_bytes": size, "data": data}
+    return {**base, "status": base.get("status", "OK"), "size_bytes": size, "data": data}
+
+
+def _redacted_messages(messages, variables) -> list[str]:
+    """HERO error texts can echo submitted values; never return variable values in error details."""
+    secrets: set[str] = set()
+
+    def collect(value):
+        if isinstance(value, dict):
+            for item in value.values():
+                collect(item)
+        elif isinstance(value, list):
+            for item in value:
+                collect(item)
+        elif isinstance(value, (str, int, float)) and not isinstance(value, bool):
+            text = str(value)
+            if len(text) >= 3:
+                secrets.add(text)
+
+    collect(variables or {})
+    result = []
+    for message in messages:
+        text = str(message)
+        for secret in sorted(secrets, key=len, reverse=True):
+            text = text.replace(secret, "[redacted]")
+        result.append(text)
+    return result
 
 
 @frappe.whitelist()
