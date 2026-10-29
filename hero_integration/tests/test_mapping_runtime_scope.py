@@ -85,6 +85,32 @@ class TestMappingRuntimeScope(unittest.TestCase):
             with self.assertRaisesRegex(mapping_runtime.MappingPlanError, 'snapshot'):
                 mapping_runtime.active_mapping_plan('HeroCustomers', definition_ids=('shared',), mapping_name='mapping-a')
 
+    def test_explicit_rule_ids_require_an_active_mapping_binding(self):
+        row = {'definition_id':'shared', 'personal_graphql_mapping':None, 'operation':'HeroCustomers',
+               'source_path':'nr', 'source_type':'string|null', 'target_doctype':'Customer', 'target_field':'email',
+               'purpose':'Field', 'transformation':'Identity', 'relation':'', 'priority':5,
+               'schema_snapshot':'snapshot', 'schema_fingerprint':'fingerprint'}
+        fake = SimpleNamespace(get_all=lambda *_args, **_kwargs: [row],
+            get_meta=lambda *_: SimpleNamespace(get_field=lambda *_: SimpleNamespace(is_custom_field=True)))
+        with patch.dict(sys.modules, {'frappe':fake}), patch.object(
+            mapping_runtime, 'plan_from_definitions', return_value=object()
+        ):
+            with self.assertRaisesRegex(mapping_runtime.MappingPlanError, 'explicit active mapping'):
+                mapping_runtime.active_mapping_plan('HeroCustomers', definition_ids=('shared',))
+
+    def test_duplicate_active_rows_cannot_satisfy_one_pinned_identity(self):
+        row = {'definition_id':'shared', 'personal_graphql_mapping':None, 'operation':'HeroCustomers',
+               'source_path':'nr', 'source_type':'string|null', 'target_doctype':'Customer', 'target_field':'email',
+               'purpose':'Field', 'transformation':'Identity', 'relation':'', 'priority':5,
+               'schema_snapshot':'snapshot', 'schema_fingerprint':'fingerprint'}
+        fake = SimpleNamespace(get_all=lambda *_args, **_kwargs: [row, dict(row)],
+                               get_doc=lambda *_: SimpleNamespace(status='Active', direction='QUERY_TO_FRAPPE',
+                                   schema_snapshot='snapshot', schema_fingerprint='fingerprint',
+                                   mapping_json=json.dumps({'mapping_definition_ids':['shared']})))
+        with patch.dict(sys.modules, {'frappe':fake}):
+            with self.assertRaisesRegex(mapping_runtime.MappingPlanError, 'unavailable or changed'):
+                mapping_runtime.active_mapping_plan('HeroCustomers', definition_ids=('shared',), mapping_name='mapping-a')
+
     def test_duplicate_json_binding_is_rejected(self):
         row = {'definition_id':'shared', 'personal_graphql_mapping':None, 'operation':'HeroCustomers',
                'source_path':'nr', 'source_type':'string|null', 'target_doctype':'Customer', 'target_field':'email',
