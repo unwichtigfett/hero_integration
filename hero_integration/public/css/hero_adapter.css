@@ -25,6 +25,21 @@
     --hero-field-disabled-bg: #dfe3e6;
     --hero-field-placeholder: var(--hero-text);
     --hero-field-error: #b42318;
+    /* Syntax and state colours for GraphQL editors and results (contrast >= 4.5:1 on HERO field surfaces). */
+    --hero-syntax-keyword: #cf222e;
+    --hero-syntax-type: #7340c9;
+    --hero-syntax-key: #0550ae;
+    --hero-syntax-variable: #953800;
+    --hero-syntax-string: #116329;
+    --hero-syntax-number: #0b6e75;
+    --hero-syntax-boolean: #9a1b6c;
+    --hero-syntax-null: #59636e;
+    --hero-syntax-punctuation: #4b535c;
+    --hero-syntax-comment: #59636e;
+    --hero-syntax-error: #b42318;
+    --hero-state-ok: #17702f;
+    --hero-state-warning: #845700;
+    --hero-state-error: #b42318;
     color: var(--pc-text);
 }
 
@@ -35,6 +50,20 @@
     --hero-field-readonly-bg: #272d33;
     --hero-field-disabled-bg: #20252a;
     --hero-field-placeholder: var(--hero-text);
+    --hero-syntax-keyword: #ff7b72;
+    --hero-syntax-type: #d2a8ff;
+    --hero-syntax-key: #79c0ff;
+    --hero-syntax-variable: #ffa657;
+    --hero-syntax-string: #7ee787;
+    --hero-syntax-number: #56d4dd;
+    --hero-syntax-boolean: #ff9bce;
+    --hero-syntax-null: #a5b0bb;
+    --hero-syntax-punctuation: #d0d7de;
+    --hero-syntax-comment: #a5b0bb;
+    --hero-syntax-error: #ff8a80;
+    --hero-state-ok: #56d364;
+    --hero-state-warning: #e3b341;
+    --hero-state-error: #ff7b72;
 }
 
 /* Frappe applies data-theme during automatic-mode changes; no OS-only override. */

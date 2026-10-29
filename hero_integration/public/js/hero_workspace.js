@@ -25,7 +25,7 @@
     // need an explicit release token. JavaScript must stay query-free when it
     // enters frappe.require(): Frappe owns the version parameter and uses the
     // original extension to select its script loader.
-    const ASSET_RELEASE = "20261029.32a";
+    const ASSET_RELEASE = "20261029.33a";
     const ASSETS = [
         "/assets/hero_integration/css/hero_tools.css",
         "/assets/hero_integration/css/hero_adapter.css",

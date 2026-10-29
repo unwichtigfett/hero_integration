@@ -28,7 +28,8 @@ class TestGraphQLServicesUiContract(unittest.TestCase):
         self.assertIn("'Execute Query'", TOOLS)
 
     def test_variables_are_runtime_input_in_name_value_lines(self):
-        self.assertIn("field('Variables',this.variables)", TOOLS)
+        self.assertIn("$('label','ht-field','Variables'),variablesBox", TOOLS)
+        self.assertIn("this.variables.setAttribute('aria-label','Variables')", TOOLS)
         self.assertNotIn("Variables (JSON)", TOOLS)
         # No JSON preview below the Variables field; problems are flagged on the field itself.
         for preview in ("variablesJson", "Advanced: JSON variables", "ht-variables-json"):
@@ -42,6 +43,22 @@ class TestGraphQLServicesUiContract(unittest.TestCase):
         self.assertNotIn("variables", payload, "variable values are never part of the saved service")
         saved_shape = TOOLS.split("        queryString(q) {", 1)[1].split("\n        }", 1)[0].split("return", 1)[1]
         self.assertNotIn("variables", saved_shape)
+
+    def test_colour_coding_uses_scoped_theme_tokens_in_light_and_dark(self):
+        adapter = (JS.parent / "css" / "hero_adapter.css").read_text()
+        tools_css = (JS.parent / "css" / "hero_tools.css").read_text()
+        light, dark = adapter.split(":is(html[data-theme=\"dark\"]", 1)
+        for token in ("--hero-syntax-keyword", "--hero-syntax-string", "--hero-syntax-number", "--hero-syntax-boolean",
+                      "--hero-syntax-null", "--hero-syntax-variable", "--hero-syntax-key", "--hero-state-ok",
+                      "--hero-state-warning", "--hero-state-error"):
+            self.assertIn(token + ":", light)
+            self.assertIn(token + ":", dark.split("}", 1)[0])
+        self.assertNotIn(":root", adapter)
+        for rule in (".ht-tok-string", ".ht-tok-error", ".ht-editor .ace_text-layer .ace_keyword", '.ht-result-status[data-state="PARTIAL"]'):
+            self.assertIn(rule, tools_css)
+        self.assertIn("this.editor.session.setMode(graphqlAceMode(window.ace))", TOOLS)
+        # Colours are spans with textContent; no HTML is injected.
+        self.assertIn("$('span', 'ht-tok ht-tok-' + type.replace", TOOLS)
 
     def test_results_and_errors_are_rendered_as_text_and_distinguished(self):
         render = TOOLS.split("renderExecution(result){", 1)[1].split("\n        async deleteQuery(", 1)[0]
