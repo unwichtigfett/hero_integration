@@ -129,6 +129,8 @@ class HeroSource:
         records = data.get(root)
         if not isinstance(records, list) or not all(isinstance(row, dict) for row in records):
             raise ValueError(f"HERO {root} response does not match the V1 contract.")
+        if len(records) > self.page_size:
+            raise ValueError("HERO response exceeds the approved page size.")
         annotated = tuple(
             {**row, "_hero_source_instance": self.source_instance} if self.source_instance != "default" else dict(row)
             for row in records

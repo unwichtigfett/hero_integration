@@ -139,6 +139,16 @@ class TestHeroV1MockContract(unittest.TestCase):
         self.assertEqual(opener.calls, 2)
         sleep.assert_called_once_with(1)
 
+    def test_source_rejects_overfull_page_instead_of_treating_it_as_complete(self):
+        class Overfull:
+            def query(self, _query, _variables):
+                rows = [{'id':1}, {'id':2}, {'id':3}]
+                return {'contacts':rows, 'project_matches':rows}
+        source = HeroSource(Overfull(), page_size=2)
+        for reader in (source.customers, source.projects):
+            with self.assertRaisesRegex(ValueError, 'page size'):
+                reader()
+
     def test_source_and_mapping_cover_all_fixed_values(self):
         source = _StrictSource()
         customers, projects = HeroSource(source).customers(), HeroSource(source).projects()
