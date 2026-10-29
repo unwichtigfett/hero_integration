@@ -75,6 +75,11 @@ class _FrappeMock:
             raise AssertionError((doctype, name))
         return self.service
 
+    def get_single(self, doctype):
+        # The service list reports the backend-owned mutation gate (OFF by default).
+        assert doctype == "HERO Integration Settings", doctype
+        return SimpleNamespace(allow_graphql_mutation_execution=0)
+
     def get_all(self, doctype, **_kwargs):
         self.get_all_calls.append(doctype)
         if doctype != "HERO GraphQL Service":
@@ -101,7 +106,9 @@ class TestWorkspaceMutationDraftContract(unittest.TestCase):
         self.assertEqual(created["query"]["status"], "Draft")
         self.assertEqual(service.save_calls, 1)
         self.assertFalse(hasattr(service, "variables"))
-        self.assertEqual(api.workspace_service_list("SNAPSHOT", "mutation")["rows"], [created["query"]])
+        listed = api.workspace_service_list("SNAPSHOT", "mutation")
+        self.assertEqual(listed["rows"], [created["query"]])
+        self.assertEqual(listed["mutation_execution"]["mutation_execution_status"], "DISABLED")
         self.assertEqual(api.workspace_service_detail(service.name)["query"], created["query"])
 
         edited_payload = {**PAYLOAD, "name": "Edited case draft", "query": "mutation ChangeCase { changeCase { id } }"}

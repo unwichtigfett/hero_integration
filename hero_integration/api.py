@@ -2056,7 +2056,9 @@ def workspace_service_list(snapshot_name: str, operation_kind: str = "query", st
             order_by="modified desc",
         )
     ]
-    return _page({}, [row for row in rows if row["service_kind"] == operation_kind], start, page_size)
+    # The editor shows the backend-owned mutation gate; it never decides it.
+    return _page({"mutation_execution": _mutation_execution_state()},
+                 [row for row in rows if row["service_kind"] == operation_kind], start, page_size)
 
 
 @frappe.whitelist()
