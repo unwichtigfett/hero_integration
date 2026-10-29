@@ -16,7 +16,8 @@ _DOCTYPE = 'HERO Mapping Identity Claim'
 _insert_scope = ContextVar('hero_mapping_claim_insert', default=None)
 _batch_scope = ContextVar('hero_mapping_claim_batch', default=False)
 _KEYS = {'site_scope', 'source_instance', 'direction', 'schema_fingerprint', 'operation',
-         'identity_kind', 'portable_id', 'logical_id', 'predecessor_id', 'content_hash'}
+         'identity_kind', 'portable_id', 'logical_id', 'predecessor_id', 'mapping_id', 'content_hash',
+         'rule_fields', 'schema_manifest', 'schema_dependencies'}
 
 
 def _uuid(value):
@@ -44,9 +45,33 @@ def canonical_claim(value, site):
             or claim['operation'] != claim['operation'].strip()
             or not _digest(claim['schema_fingerprint']) or not _digest(claim['content_hash'])):
         raise MappingDraftError('Mapping identity claim context is invalid.')
+    from hero_integration.services.mapping_rule_lineage import semantic_fingerprint
+    from hero_integration.services.personal_mapping_content import bounded, validate_rule
+    try:
+        bounded(claim)
+        validate_rule(claim['rule_fields'])
+        manifest, dependencies = claim['schema_manifest'], claim['schema_dependencies']
+        if not isinstance(manifest, dict):
+            raise ValueError
+        from hero_integration.services.mapping_draft_exchange import _portable_schema_graph
+        _portable_schema_graph(manifest or {'custom_doctypes':[], 'custom_fields':[], 'relations':[]})
+        if dependencies != [] and not (isinstance(dependencies, dict) and set(dependencies) == {'ids'}
+                and isinstance(dependencies['ids'], list)
+                and all(isinstance(value, str) and value for value in dependencies['ids'])
+                and len(set(dependencies['ids'])) == len(dependencies['ids'])):
+            raise ValueError
+        expected_hash = semantic_fingerprint(claim['operation'], claim['schema_fingerprint'], claim['rule_fields'],
+            schema_manifest=claim['schema_manifest'], schema_dependencies=claim['schema_dependencies'])
+    except (TypeError, ValueError) as error:
+        raise MappingDraftError('Mapping identity claim rule evidence is invalid.') from error
+    if expected_hash != claim['content_hash']:
+        raise MappingDraftError('Mapping identity claim content fingerprint is inconsistent.')
     if claim['identity_kind'] not in {'LOGICAL_ROOT', 'RULE_REVISION'}:
         raise MappingDraftError('Mapping identity claim kind is invalid.')
     identity, root = _uuid(claim['portable_id']), _uuid(claim['logical_id'])
+    mapping_id = claim['mapping_id']
+    if mapping_id is not None:
+        _uuid(mapping_id)
     predecessor = claim['predecessor_id']
     if predecessor is not None:
         _uuid(predecessor)
@@ -56,6 +81,8 @@ def canonical_claim(value, site):
         raise MappingDraftError('Logical root identity is inconsistent.')
     if claim['identity_kind'] == 'RULE_REVISION' and ((identity == root) != (predecessor is None)):
         raise MappingDraftError('Rule revision ancestry is inconsistent.')
+    if predecessor is not None and mapping_id is None:
+        raise MappingDraftError('A scoped rule revision requires a mapping identity.')
     return claim
 
 
@@ -69,6 +96,12 @@ def claim_key(claim):
 
 def _encoded(claim):
     return json.dumps(claim, ensure_ascii=False, sort_keys=True, separators=(',', ':'), allow_nan=False)
+
+
+def _claim_encoded(claim):
+    # Personal Draft rule content is evidence for the hash, not public claim data.
+    private = {'rule_fields', 'schema_manifest', 'schema_dependencies'}
+    return _encoded({key:value for key,value in claim.items() if key not in private})
 
 
 def assert_claim_schema(frappe):
@@ -124,11 +157,11 @@ def _reserve_claim(frappe, value):
     assert_reconciliation_ready(frappe)
     from hero_integration.hero_integration.doctype.hero_frappe_mapping.hero_frappe_mapping import _lock_active_target
     _lock_active_target('portable-field-rule', frappe.local.site, claim['portable_id'])
-    encoded, key = _encoded(claim), claim_key(claim)
+    encoded, key = _claim_encoded(claim), claim_key(claim)
     digest = sha256(encoded.encode()).hexdigest()
     other_kind = 'RULE_REVISION' if claim['identity_kind'] == 'LOGICAL_ROOT' else 'LOGICAL_ROOT'
     companion = {**claim, 'identity_kind': other_kind}
-    companion_key, companion_json = claim_key(companion), _encoded(companion)
+    companion_key, companion_json = claim_key(companion), _claim_encoded(companion)
     existing = frappe.db.sql('select claim_key, claim_json, claim_hash from `tabHERO Mapping Identity Claim` '
                              'where claim_key=%s for update', (companion_key,), as_dict=True)
     if (len(existing) > 1 or (existing and (claim['portable_id'] != claim['logical_id']
@@ -184,6 +217,8 @@ def reserve_claims(frappe, values):
             if not current or current['logical_id'] != claim['logical_id'] or tuple(current[key] for key in (
                     'site_scope', 'source_instance', 'direction', 'schema_fingerprint', 'operation')) != context:
                 raise MappingDraftError('Claim ancestry has a missing or incompatible predecessor.')
+            if current['mapping_id'] is not None and current['mapping_id'] != claim['mapping_id']:
+                raise MappingDraftError('Claim ancestry crosses a different mapping scope.')
         if current['portable_id'] != claim['logical_id']:
             raise MappingDraftError('Claim ancestry does not reach its root.')
     if any(claim['identity_kind'] == 'LOGICAL_ROOT' and ('RULE_REVISION', claim['portable_id']) not in indexed
