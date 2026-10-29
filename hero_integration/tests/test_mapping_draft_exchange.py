@@ -57,6 +57,91 @@ def _schema_preview(_schema):
 
 
 class TestCurrentExchangeLocks(unittest.TestCase):
+    def test_saved_personal_task_compiles_selected_rules_after_all_existing_guards(self):
+        from hero_integration import api
+        from hero_integration.services.frappe_mapping_draft_storage import FrappeMappingDraftStorage
+        from hero_integration.services.mapping_draft_service import ActiveMapping, MappingDraft, draft_key, _hash
+        from hero_integration.services.graphql_graph import analyze_snapshot
+        from hero_integration.hero_integration.doctype.hero_frappe_mapping import hero_frappe_mapping
+
+        scalar = lambda name: {'kind': 'SCALAR', 'name': name}
+        raw = {'__schema': {'queryType': {'name': 'Query'}, 'types': [
+            {'kind': 'OBJECT', 'name': 'Query', 'fields': [{'name': 'tasks', 'args': [
+                {'name': 'first', 'type': scalar('Int')}, {'name': 'offset', 'type': scalar('Int')},
+                {'name': 'orderBy', 'type': scalar('String')}],
+                'type': {'kind': 'LIST', 'ofType': {'kind': 'OBJECT', 'name': 'Task'}}}]},
+            {'kind': 'OBJECT', 'name': 'Task', 'fields': [
+                {'name': 'id', 'args': [], 'type': scalar('Int')},
+                {'name': 'title', 'args': [], 'type': scalar('String')},
+                {'name': 'is_deleted', 'args': [], 'type': scalar('Boolean')}]},
+            *({'kind': 'SCALAR', 'name': name} for name in ('Int', 'String', 'Boolean'))]}}
+        fingerprint = analyze_snapshot(raw).fingerprint
+        content = {'target_operation': 'HeroTasks', 'records_path': 'tasks', 'identity_path': 'id',
+            'variables': {'first': '$page_size', 'offset': '$offset'}, 'page_size': 10,
+            'native_task_onboarding': {'confirmed': True, 'source_instance': 'source', 'source_type': 'Task'},
+            'mapping_definition_ids': ['id-rule', 'title-rule'], 'field_rules': {
+                'id-rule': {'source_path': 'id', 'source_type': 'int', 'target_doctype': 'HERO Integration Link',
+                            'target_field': 'source_id', 'purpose': 'Source Identity', 'transformation': 'Positive Int To Text', 'relation': '', 'priority': 0},
+                'title-rule': {'source_path': 'title', 'source_type': 'string|null', 'target_doctype': 'Task',
+                               'target_field': 'subject', 'purpose': 'Record Name', 'transformation': 'Trim', 'relation': '', 'priority': 0}}}
+        active = ActiveMapping('site', 'definition', 'mapping', 2, fingerprint, {'base': 'value'})
+        key = draft_key('site', 'definition', 'owner')
+        draft = MappingDraft(key, 'site', 'definition', 'owner', 1, 'OPEN', content, _hash(content), 3,
+                             active.name, 2, active.content_hash, fingerprint, active.content)
+        snapshot = SimpleNamespace(name='snapshot', schema_fingerprint=fingerprint, source_instance='source', analysis_status='Validated')
+        fake = SimpleNamespace(local=SimpleNamespace(site='site'),
+            db=SimpleNamespace(sql=lambda *args, **kwargs: [SimpleNamespace(content_hash=draft.content_hash)]),
+            get_doc=lambda *args, **kwargs: SimpleNamespace(check_permission=lambda permission: None))
+        storage = FrappeMappingDraftStorage(fake)
+        @contextmanager
+        def transaction(identity, actor):
+            storage._definition = SimpleNamespace(name='mapping', schema_snapshot='snapshot', source_instance='source',
+                direction='QUERY_TO_FRAPPE', operation_kind='QUERY', operation_name='tasks')
+            try:
+                yield
+            finally:
+                storage._definition = None
+        storage.transaction = transaction
+        storage.active = lambda identity: active
+        storage.draft = lambda identity: draft
+        storage.canonicalize = lambda value: value
+        storage._assert_locked_rule_baseline = lambda value: None
+        metadata = SimpleNamespace(ensure_write=lambda doctype: None,
+            field=lambda doctype, field: SimpleNamespace(fieldtype='Data', read_only=0))
+        with patch.object(api, '_validated_snapshot', return_value=(snapshot, raw)), \
+             patch.object(hero_frappe_mapping, '_FrappeMetadata', return_value=metadata):
+            request = storage.materialize_native_task('definition', 'owner', 1, 3, 2, 0, snapshot_name='snapshot')
+        self.assertEqual({item.selection_path for item in request.result_bindings}, {('id',), ('title',), ('is_deleted',)})
+        self.assertIsNone(request.mutation_safety_request)
+
+    def test_personal_task_materialization_rechecks_draft_revision_and_source_before_generation(self):
+        from hero_integration.services.frappe_mapping_draft_storage import FrappeMappingDraftStorage
+        from hero_integration.services.mapping_draft_service import ActiveMapping, MappingDraft, DraftConflict, _hash, draft_key
+
+        active = ActiveMapping('site', 'definition', 'mapping', 2, 'a' * 64, {'base': 'value'})
+        key = draft_key('site', 'definition', 'owner')
+        content = {'some': 'content'}
+        draft = MappingDraft(key, 'site', 'definition', 'owner', 1, 'OPEN', content, _hash(content), 3,
+                             active.name, active.revision, active.content_hash, active.schema_fingerprint, active.content)
+        fake = SimpleNamespace(local=SimpleNamespace(site='site'),
+            get_doc=lambda *args, **kwargs: SimpleNamespace(check_permission=lambda permission: None))
+        storage = FrappeMappingDraftStorage(fake)
+        @contextmanager
+        def transaction(identity, actor):
+            storage._definition = SimpleNamespace(name='mapping', schema_snapshot='snapshot',
+                direction='QUERY_TO_FRAPPE', operation_kind='QUERY', operation_name='tasks')
+            try:
+                yield
+            finally:
+                storage._definition = None
+        storage.transaction = transaction
+        storage.active = lambda identity: active
+        storage.draft = lambda identity: draft
+        with self.assertRaises(DraftConflict):
+            storage.materialize_native_task('definition', 'owner', 1, 2, 2, 0, snapshot_name='snapshot')
+        with self.assertRaisesRegex(ValueError, 'explicit Task'):
+            storage.materialize_native_task('definition', 'owner', 1, 3, 2, 0, snapshot_name='other-snapshot')
+
     def test_single_publish_rejects_unauthorized_actor_before_context_lookup(self):
         from hero_integration.services.frappe_mapping_draft_storage import FrappeMappingDraftStorage
 

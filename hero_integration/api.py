@@ -1953,12 +1953,17 @@ def workspace_service_save(snapshot_name: str, payload_json: str, query_id: str 
     snapshot, schema = _validated_snapshot(snapshot_name)
     from hero_integration.services.mutation_draft import operation_kind as document_kind, validate as validate_mutation_draft
 
-    if 'mapping_generation' in payload:
+    if 'mapping_generation' in payload or 'personal_mapping_generation' in payload:
         if kind != 'query' or payload.get('query'):
             frappe.throw('Generated service input requires query direction and no supplied document.')
-        plan = _workspace_generated_query(snapshot, payload['mapping_generation'])
-        payload['query'] = plan.request.document
-        payload['operation_name'] = plan.request.operation_name
+        if 'mapping_generation' in payload and 'personal_mapping_generation' in payload:
+            frappe.throw('Select exactly one mapping generation source.')
+        if 'personal_mapping_generation' in payload:
+            request = _workspace_personal_task_query(snapshot, payload['personal_mapping_generation'])
+        else:
+            request = _workspace_generated_query(snapshot, payload['mapping_generation']).request
+        payload['query'] = request.document
+        payload['operation_name'] = request.operation_name
     if document_kind(payload["query"]) != kind:
         frappe.throw("The declared GraphQL service kind does not match the document.")
     if kind == "mutation":
@@ -2060,7 +2065,7 @@ def _workspace_payload(payload_json: str, *, allow_generated: bool = False) -> d
         frappe.throw(f"Service payload must be JSON: {error.msg}")
     if not isinstance(payload, dict):
         frappe.throw("Service payload must be an object.")
-    fields = ("name",) if allow_generated and 'mapping_generation' in payload else ("name", "query")
+    fields = ("name",) if allow_generated and ({'mapping_generation', 'personal_mapping_generation'} & set(payload)) else ("name", "query")
     for field in fields:
         if not isinstance(payload.get(field), str) or not payload[field].strip():
             frappe.throw(f"Service {field} is required.")
@@ -2094,6 +2099,21 @@ def _workspace_generated_query(snapshot, specification):
         definition_ids=tuple(ids), operation=specification['operation'], arguments=specification['arguments'],
         identity_reference=specification['identity_reference'], alias=specification.get('alias'),
         pagination_argument=specification.get('pagination_argument'))
+
+
+def _workspace_personal_task_query(snapshot, specification):
+    required = {'definition_id', 'generation', 'draft_revision', 'active_revision', 'reconciliation_revision'}
+    if not isinstance(specification, dict) or set(specification) != required:
+        frappe.throw('Invalid personal Task generation specification.')
+    definition_id, _ = _personal_draft_identity(specification['definition_id'])
+    from hero_integration.services.frappe_mapping_draft_storage import FrappeMappingDraftStorage
+    with _personal_draft_errors():
+        return FrappeMappingDraftStorage().materialize_native_task(
+            definition_id, frappe.session.user,
+            _mapping_int(specification['generation'], 'generation', 1),
+            _mapping_int(specification['draft_revision'], 'draft_revision', 1),
+            _mapping_int(specification['active_revision'], 'active_revision', 1),
+            _mapping_int(specification['reconciliation_revision'], 'reconciliation_revision'), snapshot_name=snapshot.name)
 
 
 def _workspace_service(service: dict[str, object]) -> dict[str, object]:

@@ -69,6 +69,33 @@ class QueryAdapter:
   p=SourceApiProposalModel(1,s.ir_fingerprint,(),(),(SourceOperationProposal(b.operation_node_id,d.field,GraphQLOperationKind.QUERY,SourceOperationRole.COLLECTION,None,(),(),(),()),))
   try: return GraphQLOperationMaterializer().materialize(s.ir,p,b,d.variables)
   except GraphQLOperationMaterializationError as e: raise MappingContractError(str(e)) from e
+
+ def materialize_personal_task(self, snapshot, content):
+  """Compile selected native Task rules; this is not read authorization."""
+  if not isinstance(content, Mapping) or content.get('target_operation') != 'HeroTasks':
+   raise MappingContractError('An explicit native Task mapping is required.')
+  scope = content.get('native_task_onboarding')
+  if scope != {'confirmed': True, 'source_instance': snapshot.source_instance, 'source_type': 'Task'}:
+   raise MappingContractError('Native Task onboarding scope does not match the snapshot.')
+  if content.get('records_path') != 'tasks' or content.get('identity_path') != 'id':
+   raise MappingContractError('Native Task requires the explicit tasks root and id identity.')
+  if content.get('variables') != {'first': '$page_size', 'offset': '$offset'}:
+   raise MappingContractError('Native Task pagination differs from the reviewed contract.')
+  page_size = content.get('page_size', 100)
+  if type(page_size) is not int or not 1 <= page_size <= 1000:
+   raise MappingContractError('Native Task page size is invalid.')
+  ids, rules = content.get('mapping_definition_ids'), content.get('field_rules')
+  if (not isinstance(ids, list) or not ids or not isinstance(rules, Mapping)
+      or any(not isinstance(key, str) or key not in rules or not isinstance(rules[key], Mapping) for key in ids)
+      or len(set(ids)) != len(ids) or content.get('additional_mappings')):
+   raise MappingContractError('Native Task field rules are incomplete or unsupported.')
+  paths = [rules[key].get('source_path') for key in ids]
+  if (any(not isinstance(path, str) or not path for path in paths)
+      or len(paths) != len(set(paths)) or not {'id', 'title'} <= set(paths)):
+   raise MappingContractError('Native Task identity and title rules are required.')
+  selected = tuple(sorted(set(paths) | {'is_deleted'}))
+  return self.materialize(snapshot, QueryDraft('tasks', 'tasks', 'tasks', selected,
+                          {'first': page_size, 'offset': 0, 'orderBy': 'id'}, pagination='offset'))
 @dataclass(frozen=True,slots=True)
 class ContractV1ReadAdapter:
  contract:ReadContract; request:GraphQLOperationRequest; transport_document:str; selected_paths:tuple[str,...]; result_bindings:tuple[GraphQLResultBinding,...]
