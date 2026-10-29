@@ -226,7 +226,7 @@ class TestFrontendApiBoundary(unittest.TestCase):
     def test_noop_save_preserves_revision_and_stale_edit_is_rejected(self):
         mapping = _Mapping(revision=3)
         frappe = _Frappe(mapping=mapping)
-        with patch.object(api, "frappe", frappe):
+        with patch.object(api, "frappe", frappe), patch.object(api, '_lock_mapping_save_context', return_value={}):
             saved = api.graphql_mapping_save(
                 "SNAPSHOT", "QUERY", "readThings", "QUERY_TO_FRAPPE", mapping.mapping_json,
                 mapping_name=mapping.name, expected_revision=3,
@@ -244,7 +244,7 @@ class TestFrontendApiBoundary(unittest.TestCase):
     def test_other_administrator_cannot_activate_another_draft(self):
         mapping = _Mapping(modified_by="draft-owner@example.invalid")
         frappe = _Frappe(user="second-admin@example.invalid", mapping=mapping)
-        with patch.object(api, "frappe", frappe):
+        with patch.object(api, "frappe", frappe), patch.object(api, '_lock_mapping_save_context', return_value={}):
             with self.assertRaisesRegex(ValueError, "last changed this Draft"):
                 api.graphql_mapping_save(
                     "SNAPSHOT", "QUERY", "readThings", "QUERY_TO_FRAPPE", mapping.mapping_json,
