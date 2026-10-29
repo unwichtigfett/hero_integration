@@ -16,17 +16,37 @@ class TestGraphQLServicesUiContract(unittest.TestCase):
         self.assertNotIn("execute_graphql_service", WORKSPACE + TOOLS)
         self.assertNotIn("workspace_mutation_execution_set", TOOLS)
 
-    def test_execute_requires_saved_unchanged_validated_query_and_explicit_click(self):
-        self.assertIn("canExecuteQuery(){return this.serviceKind==='query'&&!!this.query&&!this.dirty", TOOLS)
+    def test_execute_never_runs_an_older_revision_silently(self):
+        execute = TOOLS.split("async executeQuery(){", 1)[1].split("\n        renderExecution(", 1)[0]
+        self.assertIn("if(this.serviceKind!=='query')throw new Error", execute)
+        # Unsaved content is saved and validated only after an explicit confirmation; otherwise nothing runs.
+        self.assertIn("if(!this.query||this.dirty){", execute)
+        self.assertIn("window.confirm(", execute)
+        self.assertIn("Nothing was executed", execute)
+        self.assertIn("call('execute_service',{...this.serviceScope(true),query_id:queryId,expected_revision:revision,variables}", execute)
         self.assertIn("this.executeButton.disabled=!allowed||!this.canExecuteQuery()", TOOLS)
-        self.assertIn("if(this.serviceKind!=='query')throw new Error", TOOLS)
+        self.assertIn("'Execute Query'", TOOLS)
+
+    def test_variables_are_runtime_input_in_name_value_lines(self):
+        self.assertIn("field('Variables',this.variables)", TOOLS)
+        self.assertNotIn("Variables (JSON)", TOOLS)
+        self.assertIn("JSON.parse(raw)", TOOLS)
+        for forbidden in ("eval(", "new Function", "Function("):
+            self.assertNotIn(forbidden, TOOLS)
+        payload = TOOLS.split("        payload(){", 1)[1].split("\n", 1)[0]
+        self.assertNotIn("variables", payload, "variable values are never part of the saved service")
+        saved_shape = TOOLS.split("        queryString(q) {", 1)[1].split("\n        }", 1)[0].split("return", 1)[1]
+        self.assertNotIn("variables", saved_shape)
 
     def test_results_and_errors_are_rendered_as_text_and_distinguished(self):
-        render = TOOLS.split("renderExecution(result){", 1)[1].split("\n        }", 1)[0]
+        render = TOOLS.split("renderExecution(result){", 1)[1].split("\n        async deleteQuery(", 1)[0]
         self.assertIn("textContent", render)
         self.assertNotIn("innerHTML", render)
-        for kind in ("GRAPHQL", "TRANSPORT", "RESPONSE", "TOO_LARGE"):
-            self.assertIn(kind, render)
+        self.assertNotIn(".html(", render)
+        for contract in ("GRAPHQL", "TRANSPORT", "RESPONSE", "TOO_LARGE", "PARTIAL", "'GraphQL Query Result'",
+                         "'Readable'", "'Raw JSON'", "'Copy Result'", "primary_action_label:'Close'", "admin-compat-modal"):
+            self.assertIn(contract, render)
+        self.assertNotIn("call(", render, "showing a result never triggers another request")
 
     def test_mutation_editor_shows_backend_gate_and_never_executes(self):
         self.assertIn("this.mutationExecution=data.mutation_execution", TOOLS)
