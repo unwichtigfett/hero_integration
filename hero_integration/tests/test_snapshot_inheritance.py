@@ -117,6 +117,16 @@ class TestQueryInheritance(_Base):
         (log,) = fake.logs.values()
         self.assertEqual((log["status"], log["parent_definition"], log["child_definition"]), ("Draft Created", "def-1", definition["definition_id"]))
 
+    def test_compatibility_compares_with_the_parent_schema_not_with_a_portable_subset(self):
+        # Real active rules may use paths or types outside the portable subset; unchanged elements stay compatible.
+        extended = _schema()
+        extended["__schema"]["types"].append({"kind": "OBJECT", "name": "Unrelated", "fields": [
+            {"name": "id", "args": [], "type": {"kind": "SCALAR", "name": "ID", "ofType": None}}]})
+        unusual = {**RULE, "source_path": "id", "source_type": "json"}
+        fake = _FakeFrappe([_row()], {"rule-1": [unusual]})
+        result = self.run_inherit(fake, extended)
+        self.assertEqual(result["counts"], {"Draft Created": 1, "Incompatible": 0, "Skipped": 0})
+
     def test_a_rule_that_no_longer_fits_the_child_schema_is_recorded_as_incompatible(self):
         for schema in (_schema(with_email=False), _schema(email_type="Int")):
             fake = _FakeFrappe([_row()], {"rule-1": [RULE]})
