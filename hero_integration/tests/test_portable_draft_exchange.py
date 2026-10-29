@@ -529,6 +529,12 @@ class TestPortableDraftExchange(unittest.TestCase):
             'fieldname':'custom_hero_related', 'relation_type':'Link', 'target_doctype':'Customer',
             'dependencies':['field:email', 'field:related']})
         package['mappings'][0]['dependencies'] = ['relation:related']
+        package['schema']['custom_fields'].append({'id':'field:unrelated', 'doctype':'Customer',
+            'fieldname':'custom_hero_unrelated', 'label':'Unrelated', 'fieldtype':'Data', 'options':'', 'insert_after':''})
+        second_id = '5b9b4ec3-9cdc-4e52-976e-83b44f62d354'
+        package['mappings'].append({'definition_id':second_id, 'operation_kind':'QUERY', 'operation_name':'customers',
+            'direction':'QUERY_TO_FRAPPE', 'content':{'records_path':'customers', 'identity_path':'id',
+            'mapping_definition_ids':[], 'field_rules':{}}, 'dependencies':['field:unrelated']})
         package['mappings'][0]['content']['mapping_definition_ids'].append(extra_id)
         package['mappings'][0]['content']['field_rules'][extra_id] = {'source_path':'email', 'source_type':'string|null',
             'target_doctype':'Customer', 'target_field':'custom_hero_email', 'purpose':'Field',
@@ -536,6 +542,8 @@ class TestPortableDraftExchange(unittest.TestCase):
         target.schema_fields[('Customer','custom_hero_email')] = {'fieldtype':'Data', 'options':'', 'label':'Email',
             'reqd':0, 'unique':0, 'read_only':0, 'hidden':0, 'permlevel':0, 'is_virtual':0}
         target.schema_fields[('Customer','custom_hero_related')] = {'fieldtype':'Link', 'options':'Customer', 'label':'Related',
+            'reqd':0, 'unique':0, 'read_only':0, 'hidden':0, 'permlevel':0, 'is_virtual':0}
+        target.schema_fields[('Customer','custom_hero_unrelated')] = {'fieldtype':'Data', 'options':'', 'label':'Unrelated',
             'reqd':0, 'unique':0, 'read_only':0, 'hidden':0, 'permlevel':0, 'is_virtual':0}
         with self.context(target), patch.object(hero_frappe_mapping, '_FrappeMetadata', Metadata), \
              patch.dict(sys.modules, {'frappe':target}), patch.object(hero_mapping_draft, 'frappe', target), \
@@ -552,6 +560,11 @@ class TestPortableDraftExchange(unittest.TestCase):
             imported = FrappeMappingDraftStorage(target).service().open_draft(IDENTITY, target.session.user)
             self.assertEqual(imported.content['mapping_definition_ids'], ids + [extra_id])
             self.assertEqual(target.active, [])
+            invalid_envelope = deepcopy(imported.content['_portable_exchange_schema'])
+            invalid_envelope['dependencies'] = ['field:unrelated']
+            with self.assertRaisesRegex(ValueError, 'incomplete or differs'):
+                FrappeMappingDraftStorage(target)._first_publication_schema(imported.new_definition,
+                    {key:value for key,value in imported.content.items() if key != '_portable_exchange_schema'}, invalid_envelope)
             target.schema_fields[('Customer','custom_hero_email')]['label'] = 'Changed'
             with self.assertRaisesRegex(ValueError, 'MAPPING_DRAFT_INVALID'):
                 api.mapping_draft_publish(IDENTITY, imported.generation, imported.content_revision, 0, 0, confirmed=True)
@@ -568,17 +581,22 @@ class TestPortableDraftExchange(unittest.TestCase):
                 api.mapping_draft_publish(IDENTITY, imported.generation, imported.content_revision, 0, 0, confirmed=True)
             self.assertEqual(target.active, [])
             target.db.has_column = has_column
+            target.schema_fields[('Customer','custom_hero_unrelated')]['label'] = 'Unrelated drift'
             self.assertEqual(api.mapping_draft_publish(IDENTITY, imported.generation, imported.content_revision,
                                                        0, 0, confirmed=True)['revision'], 1)
+            target.schema_fields[('Customer','custom_hero_unrelated')]['label'] = 'Unrelated'
             self.assertEqual(target.active[0]['source_instance'], 'source-C')
-            self.assertEqual(json.loads(target.active[0]['portable_schema_manifest']), package['schema'])
+            own_schema = deepcopy(package['schema'])
+            own_schema['custom_fields'] = [field for field in own_schema['custom_fields'] if field['id'] != 'field:unrelated']
+            self.assertEqual(json.loads(target.active[0]['portable_schema_manifest']), own_schema)
             self.assertEqual(json.loads(target.active[0]['portable_schema_dependencies']), ['relation:related'])
             self.assertTrue(api.mapping_draft_publish(IDENTITY, imported.generation, imported.content_revision,
                                                        0, 0, confirmed=True)['unchanged'])
             exported = json.loads(exchange.export_package('source-C', 'snapshot-C', 'QUERY_TO_FRAPPE',
                                                            format_version=exchange.PORTABLE_FORMAT_VERSION))
             self.assertEqual(exported['schema'], package['schema'])
-            self.assertEqual(exported['mappings'][0]['dependencies'], ['relation:related'])
+            own_mapping = next(item for item in exported['mappings'] if item['definition_id'] == IDENTITY)
+            self.assertEqual(own_mapping['dependencies'], ['relation:related'])
             target.schema_fields[('Customer','custom_hero_related')]['options'] = 'Other'
             with self.assertRaisesRegex(exchange.MappingDraftExchangeError, 'schema provenance is invalid'):
                 exchange.export_package('source-C', 'snapshot-C', 'QUERY_TO_FRAPPE',
