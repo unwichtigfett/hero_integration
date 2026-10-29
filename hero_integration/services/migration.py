@@ -556,6 +556,7 @@ class TaskAssignmentDecision:
     binding: str = ''
     policy: str = ''
     proposed: str = ''
+    date_rule: str = ''
 
 
 def _plan_task_assignment(run, record, task_name: str, source_instance: str) -> TaskAssignmentDecision:
@@ -651,17 +652,67 @@ def _plan_task_assignment(run, record, task_name: str, source_instance: str) -> 
         return decision('CONFLICT', 'PENDING_AUTHORITY: an existing local assignment is preserved.', **details)
     if history:
         return decision('BLOCKED', 'PENDING_AUTHORITY: historical assignments require local review.', **details)
-    # Policy payload v1 does not authorize a local due-date or native notification
-    # and follow effects. Do not invent approval or suppress Frappe side effects.
-    return decision('BLOCKED', 'POLICY_REQUIRED: approve local ToDo date and native notification/follow effects.',
-                    proposed='CREATE', **details)
+    effects = json.loads(policy.policy_json).get('native_effects')
+    if not effects:
+        return decision('BLOCKED', 'POLICY_REQUIRED: approve local ToDo date and native notification/follow effects.',
+                        proposed='CREATE', **details)
+    if recipient != frappe.session.user and not effects['allow_notifications']:
+        return decision('BLOCKED', 'POLICY_REQUIRED: native assignment notification is not authorized.',
+                        proposed='CREATE', **details)
+    if frappe.get_cached_value('User', recipient, 'follow_assigned_documents') and not effects['allow_follow']:
+        return decision('BLOCKED', 'POLICY_REQUIRED: native document following is not authorized.',
+                        proposed='CREATE', **details)
+    return decision('CREATE', 'Authorized native initial assignment; local date is today.',
+                    proposed='CREATE', date_rule=effects['date_rule'], **details)
+
+
+def _execute_initial_task_assignment(run, record, task_name, source_instance, observed):
+    """Revalidate under the same transaction immediately before native effects."""
+    current = _plan_task_assignment(run, record, task_name, source_instance)
+    if current != observed or current.action != 'CREATE':
+        raise RuntimeError('Task assignment admission changed before execution.')
+    from frappe.desk.form import assign_to
+    from frappe.utils import nowdate
+    from hero_integration.services.task_assignment_state import managed_assignment
+    date = nowdate()
+    try:
+        with managed_assignment():
+            assign_to.add({'doctype': 'Task', 'name': task_name, 'assign_to': [current.recipient], 'date': date})
+            rows = frappe.get_all('ToDo', filters={'reference_type': 'Task', 'reference_name': task_name,
+                                  'status': 'Open'}, fields=['name', 'allocated_to'], limit=2)
+            if len(rows) != 1 or rows[0].allocated_to != current.recipient:
+                raise RuntimeError('Native assignment did not produce one verified recipient.')
+            todo = frappe.get_doc('ToDo', rows[0].name, for_update=True)
+            if (todo.reference_type != 'Task' or todo.reference_name != task_name
+                    or todo.allocated_to != current.recipient or todo.assigned_by != frappe.session.user
+                    or str(todo.date) != str(date)):
+                raise RuntimeError('Native assignment does not match the approved Task, actor, recipient and date.')
+            binding = frappe.get_doc('HERO Object Binding', current.binding, for_update=True)
+            policy = frappe.get_doc('HERO Task Assignment Policy', current.policy, for_update=True)
+            link = _link('Task', str(record['id']), source_instance)
+            frappe.get_doc({'doctype': 'HERO Task Assignment State', 'task_link': link.name,
+                'task_name': task_name, 'todo': todo.name, 'user_binding': binding.name,
+                'user_binding_revision': binding.binding_revision, 'policy': policy.name,
+                'policy_revision': policy.policy_revision, 'mapping_revision': int(run.mapping_revision),
+                'todo_modified': todo.modified, 'state': 'SYSTEM', 'state_revision': 1}).insert()
+        return todo.name
+    except Exception:
+        # Savepoint rollback does not clear Frappe's after-commit callbacks.
+        frappe.db.rollback()
+        raise
 
 
 def _record_task_assignment_pending(run, record, task_name: str, source_instance: str) -> None:
     """Use the same locked admission decision for Preview and execution."""
     plan = _plan_task_assignment(run, record, task_name, source_instance)
+    if plan.action == 'CREATE' and getattr(run, 'mode', '') == 'Execute':
+        todo_name = _execute_initial_task_assignment(run, record, task_name, source_instance, plan)
+        record_output(run=run.name, source_type='Task', source_id=str(record['id']), result='CREATED',
+                      action='task_assignment_created', target_doctype='Task', target_name=task_name,
+                      correlation_id=todo_name, detail='Approved native assignment created.')
+        return
     detail = json.dumps({'decision': plan.action, 'proposed': plan.proposed, 'reason': plan.detail, 'recipient': plan.recipient,
-                         'existing_todos': list(plan.existing), 'local_date': 'POLICY_REQUIRED'}, sort_keys=True)
+                         'existing_todos': list(plan.existing), 'local_date': plan.date_rule or 'POLICY_REQUIRED'}, sort_keys=True)
     record_output(run=run.name, source_type='Task', source_id=str(record['id']),
                   result='CONFLICT' if plan.action in {'BLOCKED', 'CONFLICT', 'PENDING_IDENTITY'} else 'SKIPPED',
                   action='task_assignment_review', detail=detail, target_doctype='Task', target_name=task_name)

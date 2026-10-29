@@ -24,3 +24,12 @@ class TestTaskAssignmentPolicy(unittest.TestCase):
             with self.subTest(changes=changes):
                 with self.assertRaises(PolicyError):
                     validate_policy_payload({**self.payload, **changes}, 'isolated.test')
+
+    def test_native_effects_require_explicit_bounded_decisions(self):
+        effects = {'date_rule': 'LOCAL_TODAY', 'allow_notifications': True, 'allow_follow': False}
+        self.assertEqual(validate_policy_payload({**self.payload, 'native_effects': effects}, 'isolated.test')['native_effects'], effects)
+        for invalid in ({**effects, 'date_rule': 'HERO_DUE_DATE'},
+                        {**effects, 'allow_follow': 1}, {'date_rule': 'LOCAL_TODAY'},
+                        {**effects, 'unexpected': True}):
+            with self.subTest(invalid=invalid), self.assertRaises(PolicyError):
+                validate_policy_payload({**self.payload, 'native_effects': invalid}, 'isolated.test')

@@ -38,7 +38,7 @@ class TestTaskAssignmentPlanning(unittest.TestCase):
         self.run = NS(name='RUN', mode='Preview', mapping_revision=1)
         self.record = {'id': 7, 'target_user_id': 8, 'author_user_id': None}
         self.recipient = NS(name='USER-BINDING', target_name='user@example.invalid')
-        self.policy = NS(name='POLICY', policy_revision=1)
+        self.policy = NS(name='POLICY', policy_revision=1, policy_json='{}')
         self.task = NS(name='TASK', status='Open')
         self.state = None
         self.todos = []
@@ -59,10 +59,12 @@ class TestTaskAssignmentPlanning(unittest.TestCase):
             if doctype == 'ToDo': return next(x for x in self.todos if x.name == name)
             if doctype == 'HERO Object Binding': return NS(target_name='old@example.invalid', binding_revision=1, lifecycle='VALID')
             raise AssertionError(doctype)
-        db = NS(sql=sql, exists=lambda *args: True, get_value=lambda *args: self.enabled)
+        db = NS(sql=sql, exists=lambda *args: True,
+                get_value=lambda doctype, name, field: self.enabled if field == 'enabled' else False)
         self.fake = NS(db=db, local=NS(site='private.test'), session=NS(user='actor@example.invalid'),
                        get_doc=get_doc, has_permission=lambda *args, **kwargs: self.permission,
-                       get_system_settings=lambda *args: self.sharing_disabled)
+                       get_system_settings=lambda *args: self.sharing_disabled,
+                       get_cached_value=lambda *args: False)
         for obj, name, value in [
             (migration, 'frappe', self.fake),
             (migration, '_link', lambda *args: NS(name='LINK', target_doctype='Task', target_name='TASK')),
@@ -86,6 +88,19 @@ class TestTaskAssignmentPlanning(unittest.TestCase):
         plan = self.plan()
         self.assertEqual((plan.action, plan.proposed, plan.recipient), ('BLOCKED', 'CREATE', self.recipient.target_name))
         self.assertIn('POLICY_REQUIRED', plan.detail)
+
+    def test_opt_in_native_effects_and_guarded_follow(self):
+        effects = {'date_rule': 'LOCAL_TODAY', 'allow_notifications': False, 'allow_follow': False}
+        self.policy.policy_json = json.dumps({'native_effects': effects})
+        self.assertIn('notification', self.plan().detail)
+        effects['allow_notifications'] = True
+        self.policy.policy_json = json.dumps({'native_effects': effects})
+        self.assertEqual((self.plan().action, self.plan().date_rule), ('CREATE', 'LOCAL_TODAY'))
+        self.fake.get_cached_value = lambda *args: True
+        self.assertIn('following', self.plan().detail)
+        effects['allow_follow'] = True
+        self.policy.policy_json = json.dumps({'native_effects': effects})
+        self.assertEqual(self.plan().action, 'CREATE')
 
     def test_missing_null_invalid_and_unknown_users(self):
         for record, expected in [({'id': 7}, 'NO_OP'), ({'id': 7, 'target_user_id': None}, 'NO_OP'),
@@ -155,5 +170,49 @@ class TestTaskAssignmentPlanning(unittest.TestCase):
         self.assertEqual(len(output), 2)
         self.assertEqual(json.loads(output[0]['detail']), json.loads(output[1]['detail']))
         self.assertEqual(json.loads(output[0]['detail'])['proposed'], 'CREATE')
+
+    def test_authorized_execution_calls_native_adapter_and_records_provenance(self):
+        self.policy.policy_json = json.dumps({'native_effects': {'date_rule': 'LOCAL_TODAY',
+            'allow_notifications': True, 'allow_follow': False}})
+        original_get_doc = self.fake.get_doc
+        inserted, calls = [], []
+        def get_doc(doctype, name=None, **kwargs):
+            if isinstance(doctype, dict):
+                return NS(insert=lambda: inserted.append(doctype))
+            if doctype == 'HERO Object Binding':
+                return NS(name='USER-BINDING', binding_revision=1)
+            if doctype == 'HERO Task Assignment Policy': return self.policy
+            return original_get_doc(doctype, name, **kwargs)
+        self.fake.get_doc = get_doc
+        self.fake.get_all = lambda *args, **kwargs: [NS(name=x.name, allocated_to=x.allocated_to) for x in self.todos]
+        self.fake.db.rollback = lambda: self.fail('unexpected rollback')
+        def add(args):
+            calls.append(args)
+            self.todos = [NS(name='TODO', status='Open', modified='v1', allocated_to=args['assign_to'][0],
+                assigned_by='actor@example.invalid', reference_type='Task', reference_name='TASK', date=args['date'])]
+        form = types.ModuleType('frappe.desk.form'); form.assign_to = NS(add=add)
+        desk = types.ModuleType('frappe.desk'); desk.form = form
+        utils = sys.modules['frappe.utils']
+        with patch.dict(sys.modules, {'frappe.desk': desk, 'frappe.desk.form': form}), \
+             patch.object(utils, 'nowdate', return_value='2026-01-02', create=True):
+            self.run.mode = 'Execute'
+            plan = self.plan()
+            self.assertEqual(migration._execute_initial_task_assignment(self.run, self.record, 'TASK', 'source', plan), 'TODO')
+        self.assertEqual(calls, [{'doctype': 'Task', 'name': 'TASK', 'assign_to': [self.recipient.target_name], 'date': '2026-01-02'}])
+        self.assertEqual((inserted[0]['todo'], inserted[0]['state'], inserted[0]['user_binding']), ('TODO', 'SYSTEM', 'USER-BINDING'))
+
+    def test_native_failure_rolls_back_entire_transaction(self):
+        self.policy.policy_json = json.dumps({'native_effects': {'date_rule': 'LOCAL_TODAY',
+            'allow_notifications': True, 'allow_follow': False}})
+        rolled_back = []
+        self.fake.db.rollback = lambda: rolled_back.append(True)
+        def fail(args): raise RuntimeError('native failure')
+        form = types.ModuleType('frappe.desk.form'); form.assign_to = NS(add=fail)
+        desk = types.ModuleType('frappe.desk'); desk.form = form
+        with patch.dict(sys.modules, {'frappe.desk': desk, 'frappe.desk.form': form}), \
+             patch.object(sys.modules['frappe.utils'], 'nowdate', return_value='2026-01-02', create=True):
+            with self.assertRaisesRegex(RuntimeError, 'native failure'):
+                migration._execute_initial_task_assignment(self.run, self.record, 'TASK', 'source', self.plan())
+        self.assertEqual(rolled_back, [True])
 
 if __name__ == '__main__': unittest.main()
