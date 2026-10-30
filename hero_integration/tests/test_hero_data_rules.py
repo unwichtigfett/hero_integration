@@ -110,6 +110,25 @@ class TestCheckFieldHashes(unittest.TestCase):
         self.assertNotEqual(field_hashes({'flag': 0}), field_hashes({'flag': None}))
 
 
+class TestProjectTrades(unittest.TestCase):
+    def record(self, project_type):
+        return {'project_type': project_type, 'project_nr': '1042', 'customer': {'title': 'Herr', 'full_name': 'Max Muster'},
+                'address': {'full_address': 'Hauptstr. 1, 12345 Berlin'}}
+
+    def test_every_confirmed_code_and_name_builds_a_title(self):
+        from hero_integration.services.project_naming import TRADE_CATALOG, build_project_title
+        for code, name in TRADE_CATALOG.items():
+            for value in (code, code.lower(), name):
+                with self.subTest(value=value):
+                    title = build_project_title(self.record(value))
+                    self.assertTrue(title.startswith(f'{code}-1042 | {name}, Herr Max Muster'))
+
+    def test_an_unknown_trade_names_its_value(self):
+        from hero_integration.services.project_naming import ProjectTitleValidationError, build_project_title
+        with self.assertRaisesRegex(ProjectTitleValidationError, "'XYZ' has no confirmed"):
+            build_project_title(self.record('XYZ'))
+
+
 class TestRecordIsolation(unittest.TestCase):
     def setUp(self):
         patches = [mock.patch.object(frappe.db, 'savepoint'), mock.patch.object(frappe.db, 'rollback'),

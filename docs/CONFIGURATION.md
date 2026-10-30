@@ -56,6 +56,9 @@ HERO data that ERPNext would reject does not stop a run:
 - A phone text such as `+49 151 … Mieterin` keeps its first valid number;
   the full text is added as a comment on the Customer.
 - An incomplete primary address is left out; the Customer is imported.
+- An address without a HERO country is created with Germany.
+- Project titles know the project types PV, KLIM, ELEK, SONS, ABS and DS
+  (by code or name); another type blocks the Project and names its value.
 - `ProjectMatch.id` 0 means no Project.
 - An Event without a title gets its event type as subject.
 - Any other record ERPNext or its database rejects is rolled back alone and

@@ -11,7 +11,16 @@ from collections.abc import Mapping
 
 
 PROJECT_NAME_MAX_LENGTH = 140
-TRADE_CATALOG = {"PV": "Photovoltaik"}
+# Confirmed HERO project types (user decision 2026-10-30).
+TRADE_CATALOG = {
+    "PV": "Photovoltaik",
+    "KLIM": "Klimatechnik",
+    "ELEK": "Elektrohandwerk",
+    "SONS": "Sonstiges",
+    "ABS": "Absturzsicherung",
+    "DS": "Dachsanierung",
+}
+_TRADE_BY_NAME = {name.casefold(): code for code, name in TRADE_CATALOG.items()}
 
 
 class ProjectTitleValidationError(ValueError):
@@ -23,10 +32,14 @@ def build_project_title(record: Mapping[str, object], *, max_length: int = PROJE
     if not isinstance(max_length, int) or isinstance(max_length, bool) or max_length < 1:
         raise ProjectTitleValidationError("ERPNext Project.project_name has no valid maximum length.")
 
-    trade_code = _trade_code(record)
+    trade = _trade_code(record)
+    # HERO may deliver the code (PV) or the name (Photovoltaik).
+    trade_code = trade if trade in TRADE_CATALOG else _TRADE_BY_NAME.get(trade.casefold(), "")
     trade_name = TRADE_CATALOG.get(trade_code)
     if not trade_name:
-        raise ProjectTitleValidationError("Project trade has no confirmed HERO-to-ERPNext title mapping.")
+        raise ProjectTitleValidationError(
+            f"Project trade {trade[:40]!r} has no confirmed HERO-to-ERPNext title mapping."
+        )
     project_number = _project_number(record, trade_code)
     customer = _mapping(record.get("customer"), "ProjectMatch.customer")
     salutation = _required_text(customer.get("title"), "ProjectMatch.customer.title")
