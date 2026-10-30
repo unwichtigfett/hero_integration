@@ -207,3 +207,95 @@
 .hero-mapping-core .hero-mapping-rule-details { padding:0 12px; border:1px solid var(--pc-border, var(--border-color)); border-radius:8px; }
 .hero-mapping-core .hero-mapping-rule-details[open] { padding-bottom:12px; }
 .hero-mapping-core .hero-mapping-table tr.is-draft > td:first-child { font-weight:600; box-shadow:inset 4px 0 0 var(--hero-state-warning, #845700); }
+
+/* Shared page layout for Overview, API & Schema and Settings.
+   Same tokens as the Synchronization page: neutral grey surfaces, green only for status. */
+.hero-integration-ui .hero-page {
+    --hero-page-ok: var(--hero-state-ok, #17702f);
+    --hero-page-warn: var(--hero-state-warning, #845700);
+    --hero-page-error: var(--hero-state-error, #b42318);
+    --hero-page-muted: color-mix(in srgb, var(--pc-text) 62%, transparent);
+    --hero-page-line: color-mix(in srgb, var(--pc-border) 75%, transparent);
+    container-type: inline-size;
+    container-name: hero-page;
+    display: grid;
+    gap: 16px;
+    width: 100%;
+    min-width: 0;
+    color: var(--pc-text);
+}
+.hero-integration-ui .hero-page h2, .hero-integration-ui .hero-page h3, .hero-integration-ui .hero-page p { margin: 0; }
+.hero-integration-ui .hero-page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.hero-integration-ui .hero-page-header h2 { margin-bottom: 6px; font-size: clamp(22px, 2.6vw, 28px); font-weight: 650; letter-spacing: -.02em; line-height: 1.2; }
+.hero-integration-ui .hero-page-header p { color: var(--hero-page-muted); font-size: 13px; }
+.hero-integration-ui .hero-page-header-actions { display: flex; flex-wrap: wrap; gap: 8px; flex: none; }
+
+.hero-integration-ui .hero-page-panel { min-width: 0; border: 1px solid var(--pc-border); border-radius: 8px; background: var(--pc-surface); }
+.hero-integration-ui .hero-page-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 18px 14px; }
+.hero-integration-ui .hero-page-panel-head.is-ruled { border-bottom: 1px solid var(--hero-page-line); }
+.hero-integration-ui .hero-page-panel-head h3 { font-size: 16px; font-weight: 650; }
+.hero-integration-ui .hero-page-panel-head p { margin-top: 3px; color: var(--hero-page-muted); font-size: 12px; }
+.hero-integration-ui .hero-page-panel-body { padding: 14px 18px 18px; }
+
+.hero-integration-ui .hero-page-label { color: var(--hero-page-muted); font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.hero-integration-ui .hero-page [data-state="ok"] { color: var(--hero-page-ok); }
+.hero-integration-ui .hero-page [data-state="warning"] { color: var(--hero-page-warn); }
+.hero-integration-ui .hero-page [data-state="error"] { color: var(--hero-page-error); }
+.hero-integration-ui .hero-page [data-state="off"] { color: var(--hero-page-muted); }
+
+/* Status tiles */
+.hero-integration-ui .hero-page-stats { display: grid; gap: 14px; grid-template-columns: minmax(0, 1fr); }
+.hero-integration-ui .hero-page-stat { min-width: 0; min-height: 92px; padding: 14px 16px; border: 1px solid var(--pc-border); border-radius: 8px; background: var(--pc-surface); }
+.hero-integration-ui .hero-page-stat-value { margin-top: 7px; overflow: hidden; font-size: 19px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.hero-integration-ui .hero-page-stat-sub { margin-top: 3px; color: var(--hero-page-muted); font-size: 11.5px; }
+
+/* Read-only fields and status rows */
+.hero-integration-ui .hero-page-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; padding: 11px 0; }
+.hero-integration-ui .hero-page-field + .hero-page-field { border-top: 1px solid var(--hero-page-line); }
+.hero-integration-ui .hero-page-field-label { color: var(--hero-page-muted); font-size: 12px; }
+.hero-integration-ui .hero-page-field-value { font-size: 13px; font-weight: 550; overflow-wrap: anywhere; }
+.hero-integration-ui .hero-page-mono { font-family: var(--font-family-monospace, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 12px; }
+.hero-integration-ui .hero-page-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 13px 0; border-bottom: 1px solid var(--hero-page-line); font-size: 13px; }
+.hero-integration-ui .hero-page-row:last-child { border-bottom: 0; }
+.hero-integration-ui .hero-page-row strong { font-weight: 600; }
+.hero-integration-ui .hero-page-row-sub { margin-top: 2px; color: var(--hero-page-muted); font-size: 11.5px; }
+.hero-integration-ui .hero-page .hero-page-pill { flex: none; padding: 3px 10px; border: 1px solid var(--pc-border); border-radius: 999px; color: var(--pc-text); font-size: 11.5px; white-space: nowrap; }
+.hero-integration-ui .hero-page .hero-page-pill[data-state="ok"] { border-color: color-mix(in srgb, var(--hero-page-ok) 55%, var(--pc-border)); color: var(--hero-page-ok); }
+.hero-integration-ui .hero-page .hero-page-pill[data-state="warning"] { border-color: color-mix(in srgb, var(--hero-page-warn) 55%, var(--pc-border)); color: var(--hero-page-warn); }
+.hero-integration-ui .hero-page .hero-page-pill[data-state="off"] { color: var(--hero-page-muted); }
+.hero-integration-ui .hero-page .hero-page-badge { display: inline-flex; flex: none; align-items: center; gap: 8px; padding: 6px 13px; border: 1px solid var(--pc-border); border-radius: 999px; color: var(--hero-page-muted); font-size: 12px; white-space: nowrap; }
+.hero-integration-ui .hero-page .hero-page-badge::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.hero-integration-ui .hero-page .hero-page-badge[data-state="ok"] { border-color: color-mix(in srgb, var(--hero-page-ok) 55%, var(--pc-border)); color: var(--hero-page-ok); }
+
+/* Buttons and links */
+.hero-integration-ui .hero-page-button {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-height: 34px; padding: 7px 15px;
+    border: 1px solid var(--pc-controlBorder, var(--pc-border)); border-radius: 6px;
+    background: var(--pc-surfaceRaised); color: var(--pc-text);
+    font: inherit; font-size: 13px; font-weight: 600; white-space: nowrap; text-decoration: none; cursor: pointer;
+}
+.hero-integration-ui .hero-page-button.is-quiet { background: var(--pc-surface); }
+.hero-integration-ui .hero-page-button:not(:disabled):hover { background: color-mix(in srgb, var(--pc-text) 8%, var(--pc-surfaceRaised)); color: var(--pc-text); text-decoration: none; }
+.hero-integration-ui .hero-page-button:disabled { cursor: not-allowed; opacity: .55; }
+.hero-integration-ui .hero-page-chip { display: inline-flex; align-items: center; padding: 7px 13px; border: 1px solid var(--pc-border); border-radius: 6px; background: var(--pc-surfaceRaised); color: var(--pc-text); font-size: 12.5px; font-weight: 550; text-decoration: none; }
+.hero-integration-ui .hero-page-chip:hover { border-color: var(--pc-text); color: var(--pc-text); text-decoration: none; }
+.hero-integration-ui .hero-page :is(.hero-page-button, .hero-page-chip, a, button, summary):focus-visible { outline: 2px solid var(--pc-focus); outline-offset: 2px; }
+
+/* Status line below a page or section */
+.hero-integration-ui .hero-page-note { display: flex; align-items: center; gap: 8px; color: var(--hero-page-muted); font-size: 12px; }
+.hero-integration-ui .hero-page-note::before { content: ""; flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--hero-page-muted); }
+.hero-integration-ui .hero-page-note[data-state="ok"]::before { background: var(--hero-page-ok); }
+.hero-integration-ui .hero-page-note[data-state="warning"]::before { background: var(--hero-page-warn); }
+.hero-integration-ui .hero-page-note[data-state="error"]::before { background: var(--hero-page-error); }
+.hero-integration-ui .hero-page-note:empty { display: none; }
+
+@container hero-page (min-width: 560px) {
+    .hero-integration-ui .hero-page-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@container hero-page (min-width: 980px) {
+    .hero-integration-ui .hero-page-stats { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+@container hero-page (max-width: 559px) {
+    .hero-integration-ui .hero-page-header { flex-direction: column; }
+}
