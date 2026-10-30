@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from contextlib import nullcontext
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -68,3 +69,57 @@ class TestProjectionRuntime(unittest.TestCase):
         ):
             result = migration._migrate_projection(row, SimpleNamespace(mode="Preview"), plan)
         self.assertEqual(result.code, "CONFLICT")
+
+    def test_calendar_partial_values_preserve_unconfirmed_clears_and_falsy_scalars(self):
+        from hero_integration.services.native_projections import values as native_values
+        from hero_integration.services.projection_contracts import CONTRACTS
+        from hero_integration.tests.test_projection_contracts import native_options
+
+        plan = plan_from_definitions("HeroCalendarEvents", definitions("HeroCalendarEvents"))
+        row = record("HeroCalendarEvents")
+        row.update(description="", full_address="", resources=[], partners=[], is_done=False,
+                   category_id=0, color="")
+        native = native_values(CONTRACTS["HeroCalendarEvents"], row, "9", "a",
+                               native_options("HeroCalendarEvents"), lookup=lambda *args: {}, allow_partial=True)
+        result = plan.values(row, native_value=lambda field: native[field], allow_partial=True)
+        for field in ("description", "location", "custom_hero_resources", "custom_hero_partners"):
+            self.assertNotIn(field, result)
+        self.assertEqual(result["custom_hero_is_done"], "false")
+        self.assertEqual(result["custom_hero_category_id"], "0")
+        self.assertEqual(result["custom_hero_color"], "")
+        self.assertEqual(result["all_day"], 0)
+        with self.assertRaises(ValueError):
+            plan.values({**row, "category_id": False}, native_value=lambda field: native[field], allow_partial=True)
+
+    def test_event_upsert_preserves_omitted_baselines_and_detects_later_local_conflict(self):
+        from hero_integration.services.change_detection import encode, field_hashes
+
+        before = {"subject": "old", "location": "acknowledged"}
+        link = SimpleNamespace(name="LINK", target_doctype="Event", target_name="EV-1", mapping_version="v1",
+                               source_field_hashes=encode(field_hashes(before)), target_field_hashes=encode(field_hashes(before)))
+        class Target:
+            name = "EV-1"
+            def __init__(self): self.fields = {**before, "location": "local edit"}; self.saves = 0
+            def get(self, field): return self.fields.get(field)
+            def set(self, field, value): self.fields[field] = value
+            def save(self): self.saves += 1
+        target = Target()
+        fake = SimpleNamespace(db=SimpleNamespace(exists=lambda *args: True, savepoint=lambda *args: None),
+                               get_doc=lambda *args: target)
+        def baseline(_link, _source_hash, _target_hash, source, target_hashes, _version):
+            link.source_field_hashes = encode(source)
+            link.target_field_hashes = encode(target_hashes)
+        with patch.object(migration, "frappe", fake), patch.object(migration, "_target_available", return_value=True), \
+             patch.object(migration, "_link", return_value=link), patch.object(migration, "_observe_link"), \
+             patch.object(migration, "_update_link_baseline", side_effect=baseline), \
+             patch.object(migration, "managed_target_update", return_value=nullcontext()), \
+             patch.object(migration, "notify_conflict_once"), patch.object(migration, "_mark_link_conflict"):
+            def apply(values, version="v1"):
+                return migration._upsert("CalendarEvent", "9", {"id": 9}, values, "Event", "custom_hero_key",
+                                         version, SimpleNamespace(mode="Execute"), preserve_omitted=True)
+            self.assertEqual(apply({"subject": "new"}).code, "UPDATED")
+            self.assertEqual(target.fields, {"subject": "new", "location": "local edit"})
+            self.assertEqual(apply({"subject": "new"}).code, "SKIPPED")
+            self.assertEqual(apply({"subject": "new", "location": "source edit"}).code, "CONFLICT")
+            self.assertEqual(apply({"subject": "new"}, "v2").code, "CONFLICT")
+            self.assertEqual(target.saves, 1)
