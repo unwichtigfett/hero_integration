@@ -1589,7 +1589,9 @@ def _save_link(link) -> None:
 
 
 def _customer_name_for_source(value: object, source_instance: str = "default") -> str:
-    source_id = str(value) if isinstance(value, int) and value > 0 else ""
+    if type(value) is not int or value <= 0:
+        raise MappingPlanError("The configured HERO customer relation requires a positive integer identity.")
+    source_id = str(value)
     customer_link = _link("customer", source_id, source_instance)
     if not customer_link or customer_link.target_doctype != "Customer":
         raise MappingPlanError("The configured HERO customer relation has no unambiguous ERPNext link.")
