@@ -59,7 +59,7 @@ class TestTaskAssignmentPlanning(unittest.TestCase):
             if doctype == 'ToDo': return next(x for x in self.todos if x.name == name)
             if doctype == 'HERO Object Binding': return NS(target_name='old@example.invalid', binding_revision=1, lifecycle='VALID')
             raise AssertionError(doctype)
-        db = NS(sql=sql, exists=lambda *args: True,
+        db = NS(sql=sql, exists=lambda *args: True, savepoint=lambda name: None,
                 get_value=lambda doctype, name, field: self.enabled if field == 'enabled' else False)
         self.fake = NS(db=db, local=NS(site='private.test'), session=NS(user='actor@example.invalid'),
                        get_doc=get_doc, has_permission=lambda *args, **kwargs: self.permission,
