@@ -11,7 +11,7 @@ never causes repeated HERO requests.
 """
 from __future__ import annotations
 
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager
 import json
 
 import frappe
@@ -30,8 +30,8 @@ class SchemaRefreshError(RuntimeError):
 
 
 def refresh_interval(settings) -> int:
-    value = getattr(settings, "schema_refresh_interval_minutes", None)
-    return int(value) if value not in (None, "") else INTERVAL_DEFAULT
+    """Sites created before this field read it as empty (0); that means the default."""
+    return int(getattr(settings, "schema_refresh_interval_minutes", None) or 0) or INTERVAL_DEFAULT
 
 
 def connection_ready(settings, token_configured: bool | None = None) -> bool:
@@ -78,8 +78,7 @@ def state(settings, token_configured: bool) -> dict[str, object]:
 def _refresh_lock():
     """One capture per site at a time; a concurrent capture fails fast instead of racing the unique fingerprint."""
     if not getattr(getattr(frappe, "local", None), "site", None):
-        with nullcontext():
-            yield
+        yield  # Frappe test doubles without a site context
         return
     from frappe.utils.file_lock import LockTimeoutError
     from frappe.utils.synchronization import filelock
