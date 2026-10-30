@@ -1265,11 +1265,13 @@ def _migrate_project(record: dict[str, object], run) -> Result:
         values["custom_hero_source_id"] = f"{source_instance}:{source_id}"
     except (MappingPlanError, ProjectTitleValidationError) as error:
         return Result("BLOCKED_RECORD", str(error))
-    if not values.get("project_name"):
+    if not values.get("project_name") and not (
+        "project_name" in values.missing and _link("project", source_id, source_instance)
+    ):
         return Result("BLOCKED_RECORD", "Configured project record name is empty.")
     return _upsert(
         "project", source_id, record, values, "Project", "project_name", plan.mapping_version, run,
-        source_instance=source_instance,
+        source_instance=source_instance, required_on_create=("customer", "project_name"),
     )
 
 

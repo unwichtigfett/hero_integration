@@ -6,6 +6,7 @@ import json
 from dataclasses import dataclass
 from typing import Callable
 from hero_integration.services.projection_contracts import CONTRACTS as PROJECTIONS, validate_projection_record
+from hero_integration.services.project_naming import project_title_missing
 
 from hero_integration.services.direct_mapping import (
     MappingSpec,
@@ -21,6 +22,7 @@ from hero_integration.services.direct_mapping import (
     PURPOSE_SOURCE_IDENTITY,
     RELATION_CUSTOMER_PRIMARY_ADDRESS,
     TRANSFORM_TRIM,
+    TRANSFORM_POSITIVE_INT_TO_TEXT,
     MISSING,
     lookup,
     source_value,
@@ -116,8 +118,29 @@ class MappingPlan:
                 validate_projection_record(self.target_operation or self.operation, record, allow_partial=allow_partial)
             except ValueError as error:
                 raise MappingPlanError(str(error)) from error
+        if (self.target_operation or self.operation) == "HeroProjectMatches":
+            for field in ("customer", "address", "current_project_match_status"):
+                nested = record.get(field)
+                if nested is not None and not isinstance(nested, dict):
+                    raise MappingPlanError("Project response has an incompatible object: " + field)
         for definition in self.definitions:
             raw = lookup(record, definition.source_path)
+            operation = self.target_operation or self.operation
+            if operation == "HeroProjectMatches" and raw is not MISSING:
+                kind = definition.source_type.split("|")[0]
+                valid = (raw is None and "|null" in definition.source_type) or (
+                    (kind == "string" and isinstance(raw, str)) or
+                    (kind == "int" and type(raw) is int) or
+                    (kind == "boolean" and type(raw) is bool)
+                )
+                # Project naming also accepts the established structured trade
+                # representation used by existing contracts and test fixtures.
+                if definition.source_path == "project_type" and isinstance(raw, dict):
+                    valid = isinstance(raw.get("code"), str)
+                if definition.transformation == TRANSFORM_POSITIVE_INT_TO_TEXT and raw is not None:
+                    valid = type(raw) is int and raw > 0
+                if not valid:
+                    raise MappingPlanError("Project response has an incompatible field: " + definition.source_path)
             value = None if raw is MISSING else raw
             if (self.target_operation or self.operation) == 'HeroCalendarEvents' and (
                 value is None or (definition.source_path in {'description', 'full_address'}
@@ -128,6 +151,9 @@ class MappingPlan:
                 continue
             if definition.purpose in {PURPOSE_FIELD, PURPOSE_RECORD_NAME, PURPOSE_CUSTOMER_TYPE, PURPOSE_CUSTOMER_CONTACT, PURPOSE_SOURCE_IDENTITY}:
                 project_name = definition.purpose == PURPOSE_RECORD_NAME and (self.target_operation or self.operation) == "HeroProjectMatches"
+                if project_name and project_title is not None and project_title_missing(record):
+                    values.missing.add(definition.target_field)
+                    continue
                 if raw is MISSING and not projection and not project_name:
                     # An unselected or omitted response field is no evidence
                     # of an empty HERO value (e.g. a missing company_name must
@@ -173,6 +199,9 @@ class MappingPlan:
                 else:
                     values[definition.target_field] = project_link(value)
             elif definition.purpose == PURPOSE_CUSTOMER_RELATION:
+                if raw is MISSING:
+                    values.missing.add(definition.target_field)
+                    continue
                 if customer_link is None:
                     raise MappingPlanError("Customer relation resolver is unavailable.")
                 values[definition.target_field] = customer_link(value)
