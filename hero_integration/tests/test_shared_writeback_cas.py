@@ -104,6 +104,34 @@ class TestSharedWritebackCAS(unittest.TestCase):
                                          suggestion_reason="new")
         self.assertEqual((mapping.status, mapping.save_calls), ("Active", 0))
 
+    def test_api_rejects_direction_operation_mismatch_before_snapshot_or_write(self):
+        mapping = _Mapping()
+        fake = _Frappe(mapping=mapping)
+        with patch.object(api, "frappe", fake), patch.object(api, "_lock_mapping_save_context") as lock:
+            for direction, kind in (("QUERY_TO_FRAPPE", "MUTATION"), ("FRAPPE_TO_MUTATION", "QUERY")):
+                with self.subTest(direction=direction), self.assertRaisesRegex(ValueError, "direction and operation kind must agree"):
+                    api.graphql_mapping_save("SNAPSHOT", kind, "operation", direction, "{}")
+            lock.assert_not_called()
+        self.assertEqual(mapping.save_calls, 0)
+
+    def test_existing_query_cannot_be_repurposed_as_mutation_operation(self):
+        mapping = _Mapping()
+        before = (mapping.operation_kind, mapping.operation_name, mapping.mapping_json, mapping.mapping_revision)
+        with patch.object(api, "frappe", _Frappe(mapping=mapping)):
+            with self.assertRaisesRegex(ValueError, "direction and operation kind must agree"):
+                api.graphql_mapping_save("SNAPSHOT", "MUTATION", "update", "QUERY_TO_FRAPPE", "{}",
+                                         mapping_name=mapping.name, expected_revision=3)
+        self.assertEqual((mapping.operation_kind, mapping.operation_name, mapping.mapping_json, mapping.mapping_revision), before)
+        self.assertEqual(mapping.save_calls, 0)
+
+    def test_controller_rejects_direction_operation_mismatch(self):
+        fake = SimpleNamespace(only_for=lambda role: None, throw=lambda message: (_ for _ in ()).throw(ValueError(message)))
+        with patch.object(controller, "frappe", fake):
+            for direction, kind in (("QUERY_TO_FRAPPE", "MUTATION"), ("FRAPPE_TO_MUTATION", "QUERY")):
+                doc = SimpleNamespace(direction=direction, operation_kind=kind, is_new=lambda: True)
+                with self.subTest(direction=direction), self.assertRaisesRegex(ValueError, "direction and operation kind must agree"):
+                    controller.HEROGraphQLMapping.validate(doc)
+
     def test_unknown_submitted_writeback_parameter_is_rejected(self):
         from hero_integration.services import frappe_writeback
         mapping = _Mapping()

@@ -22,6 +22,10 @@ class HEROGraphQLMapping(Document):
         previous = self.get_doc_before_save() if not self.is_new() else None
         if previous and previous.status == 'Active' and previous.direction != self.direction:
             frappe.throw('An active mapping definition direction is immutable; create a separate definition for the other direction.')
+        if (self.direction, self.operation_kind) not in {
+            ("QUERY_TO_FRAPPE", "QUERY"), ("FRAPPE_TO_MUTATION", "MUTATION"),
+        }:
+            frappe.throw("GraphQL mapping direction and operation kind must agree.")
         snapshot = frappe.get_doc("HERO GraphQL Schema Snapshot", self.schema_snapshot)
         if snapshot.analysis_status != "Validated":
             frappe.throw("A validated schema snapshot is required.")
