@@ -41,6 +41,26 @@
             : "The server did not provide additional details.";
     }
 
+    // One settings group: a panel with a title, an optional description and a field grid.
+    function section(title, layout, description, ...children) {
+        const panel = node("section", `hero-page-panel hero-settings-section hero-settings-${layout}`);
+        const heading = node("h3", "hero-settings-section-title", title);
+        heading.id = `hero-settings-${layout}-title`;
+        panel.setAttribute("aria-labelledby", heading.id);
+        const grid = node("div", "hero-settings-grid");
+        grid.append(...children);
+        panel.append(heading);
+        if (description) panel.append(node("p", "hero-settings-section-help", description));
+        panel.append(grid);
+        return panel;
+    }
+
+    function column(cls, ...children) {
+        const wrap = node("div", cls);
+        wrap.append(...children);
+        return wrap;
+    }
+
     function pollingGroup(title, ...fields) {
         const group = node("fieldset", "hero-settings-polling-group");
         group.append(node("legend", "", title), ...fields);
@@ -48,18 +68,22 @@
     }
 
     async function mount(workspace) {
-        const root = node("section", "hero-settings");
-        const header = node("div", "hero-settings-header");
+        const root = node("section", "hero-page hero-settings");
+        const header = node("header", "hero-page-header hero-settings-header");
         const heading = node("div");
         heading.append(
             node("h2", "", "HERO Settings"),
             node("p", "", "Configure the connection stored by HERO Integration.")
         );
-        const refresh = node("button", "hero-settings-button secondary", "Refresh");
+        const refresh = node("button", "hero-page-button is-quiet hero-settings-button", "Refresh");
         refresh.type = "button";
-        header.append(heading, refresh);
+        const save = node("button", "hero-page-button hero-settings-button primary", "Save Settings");
+        save.type = "button";
+        save.title = uiText("Saves connection, sources, company, safety and polling settings.");
+        const headerActions = node("div", "hero-page-header-actions");
+        headerActions.append(refresh, save);
+        header.append(heading, headerActions);
 
-        const card = node("div", "hero-settings-card");
         const enabled = document.createElement("input");
         enabled.type = "checkbox";
         enabled.className = "hero-settings-check";
@@ -125,43 +149,50 @@
         timeout.step = "1";
 
         const tokenState = node("span", "hero-settings-token-state", "Unknown");
-        const status = node("div", "hero-settings-status", "Loading …");
+        const status = node("div", "hero-page-note hero-settings-status", "Loading …");
         status.setAttribute("role", "status");
+        const tokenHelp = column("hero-settings-field hero-settings-token-row", node("span", "hero-settings-label", "Stored credential"), tokenState);
 
-        const tokenHelp = node("span", "hero-settings-token-row");
-        tokenHelp.append(node("span", "", "Stored credential:"), tokenState);
-
-        const mutationCard = node("section", "hero-settings-card hero-settings-mutations");
-        const mutationEnabled = document.createElement("input");
-        mutationEnabled.type = "checkbox";
-        mutationEnabled.className = "hero-settings-check";
-        const mutationStatus = node("div", "hero-settings-status", "Loading …");
-        mutationStatus.setAttribute("role", "status");
-        const mutationSave = node("button", "hero-settings-button secondary", "Apply mutation setting");
-        mutationSave.type = "button";
-        mutationCard.append(
-            node("h3", "", "Mutation Security"),
-            node("p", "hero-settings-help", "GraphQL Mutations remain disabled until the server-side security gates are satisfied."),
-            field("Allow mutation execution", mutationEnabled, "Only System Managers can change this global gate. It is OFF by default."),
-            node("p", "hero-settings-warning", "An enabled global gate does not execute anything by itself: each mutation needs a compatible snapshot, an active per-operation contract, validated variables, preview, and explicit confirmation."),
-            mutationStatus,
-            mutationSave
+        const connection = section("HERO Connection", "connection", "",
+            field("Enabled", enabled, "Enable or disable local HERO Integration configuration."),
+            field("API URL", url, "HTTPS GraphQL endpoint used by the connector."),
+            field("API Token", token, "The current token is never returned to the browser. An empty field keeps it unchanged."),
+            tokenHelp,
+            field("Timeout (seconds)", timeout, "Maximum duration of a HERO API request."),
+            node("p", "hero-settings-warning", "Changing the API URL or token rotates the HERO binding generation and clears the current schema binding.")
+        );
+        const sources = section("Sources", "sources", "",
+            field("Allowed HERO hosts", allowedHosts, "One exact HTTPS hostname per line; the endpoint host must be present."),
+            field("HERO source instance", sourceInstance, "Stable identity for this external source.")
+        );
+        const companyStatus = node("div", "hero-settings-status hero-settings-company-state", "Company selection is not loaded yet.");
+        companyStatus.setAttribute("role", "status");
+        const companySave = node("button", "hero-page-button hero-settings-button", "Save Company");
+        companySave.type = "button";
+        const companyConfirm = node("button", "hero-page-button hero-settings-button", "Confirm Company");
+        companyConfirm.type = "button";
+        const companySection = section("ERPNext Company", "company", "",
+            field("ERPNext Company", company, "Existing ERPNext Company used for HERO projects."),
+            field("Confirm ERPNext Company", companyConfirmed, "A company change clears this confirmation server-side."),
+            column("hero-settings-field", node("span", "hero-settings-label", "Confirmed"), companyStatus),
+            column("hero-settings-actions", companySave, companyConfirm)
+        );
+        const securitySection = section("Safety and conflict notifications", "safety", "",
+            field("Allow deletion", allowDeletion, "OFF blocks every HERO Integration deletion route on the server. Turning it on is only a necessary prerequisite."),
+            field("Administrator notification recipients", adminRecipients, "One enabled System Manager user ID per line. Empty notifies enabled System Managers."),
         );
 
-        const save = node("button", "hero-settings-button primary", "Save Settings");
-        save.type = "button";
         const testingStatus = node("div", "hero-settings-status", "Testing settings are not loaded yet.");
         testingStatus.setAttribute("role", "status");
-        const testingSave = node("button", "hero-settings-button secondary", "Save Testing Settings");
+        const testingSave = node("button", "hero-page-button hero-settings-button", "Save Testing Settings");
         testingSave.type = "button";
-        const testingCard = node("section", "hero-settings-card hero-settings-testing");
-        testingCard.append(
-            node("h3", "", "Testing"),
+        const testingCard = section("Testing", "testing", "",
             field("Enabled", testingEnabled),
             field("Max. Actions", testingMaxActions, "When enabled, manual synchronization previews are limited to the configured number of HERO API requests and start with the newest available records. No business data is modified."),
-            testingStatus, testingSave
+            column("hero-settings-actions", testingSave, testingStatus)
         );
-        const pollingCard = node("section", "hero-settings-card hero-settings-polling");
+
+        const pollingCard = node("section", "hero-page-panel hero-settings-polling");
         const pollingDetails = document.createElement("details");
         pollingDetails.className = "hero-settings-polling-details";
         const pollingSummary = node("summary", "hero-settings-polling-summary");
@@ -185,44 +216,22 @@
         pollingDetails.append(pollingSummary, pollingContent);
         pollingCard.append(pollingDetails);
 
-        const connection = node("fieldset", "hero-settings-section");
-        connection.append(
-            node("legend", "", "HERO Connection"),
-            field("Enabled", enabled, "Enable or disable local HERO Integration configuration."),
-            field("API URL", url, "HTTPS GraphQL endpoint used by the connector."),
-            field("API Token", token, "The current token is never returned to the browser. An empty field keeps it unchanged."),
-            tokenHelp,
-            field("Timeout (seconds)", timeout, "Maximum duration of a HERO API request."),
-            node("p", "hero-settings-warning", "Changing the API URL or token rotates the HERO binding generation and clears the current schema binding.")
+        const mutationEnabled = document.createElement("input");
+        mutationEnabled.type = "checkbox";
+        mutationEnabled.className = "hero-settings-check";
+        const mutationStatus = node("div", "hero-settings-status", "Loading …");
+        mutationStatus.setAttribute("role", "status");
+        const mutationSave = node("button", "hero-page-button hero-settings-button", "Apply mutation setting");
+        mutationSave.type = "button";
+        const mutationCard = section("Mutation Security", "mutations", "GraphQL Mutations remain disabled until the server-side security gates are satisfied.",
+            field("Allow mutation execution", mutationEnabled, "Only System Managers can change this global gate. It is OFF by default."),
+            column("hero-settings-aside",
+                node("p", "", "An enabled global gate does not execute anything by itself: each mutation needs a compatible snapshot, an active per-operation contract, validated variables, preview, and explicit confirmation."),
+                mutationStatus),
+            column("hero-settings-actions", mutationSave)
         );
-        const sources = node("fieldset", "hero-settings-section");
-        sources.append(
-            node("legend", "", "Sources"),
-            field("Allowed HERO hosts", allowedHosts, "One exact HTTPS hostname per line; the endpoint host must be present."),
-            field("HERO source instance", sourceInstance, "Stable identity for this external source.")
-        );
-        const companySection = node("fieldset", "hero-settings-section");
-        const companyStatus = node("div", "hero-settings-status", "Company selection is not loaded yet.");
-        companyStatus.setAttribute("role", "status");
-        const companySave = node("button", "hero-settings-button secondary", "Save Company");
-        companySave.type = "button";
-        const companyConfirm = node("button", "hero-settings-button secondary", "Confirm Company");
-        companyConfirm.type = "button";
-        companySection.append(
-            node("legend", "", "ERPNext Company"),
-            field("ERPNext Company", company, "Existing ERPNext Company used for HERO projects."),
-            field("Confirm ERPNext Company", companyConfirmed, "A company change clears this confirmation server-side."),
-            companyStatus, companySave, companyConfirm
-        );
-        const securitySection = node("fieldset", "hero-settings-section");
-        securitySection.append(
-            node("legend", "", "Safety and conflict notifications"),
-            field("Allow deletion", allowDeletion, "OFF blocks every HERO Integration deletion route on the server. Turning it on is only a necessary prerequisite."),
-            field("Administrator notification recipients", adminRecipients, "One enabled System Manager user ID per line. Empty notifies enabled System Managers."),
-        );
-        card.append(connection, sources, companySection, securitySection, status, save);
 
-        root.append(header, card, testingCard, pollingCard, mutationCard);
+        root.append(header, status, connection, sources, companySection, securitySection, testingCard, pollingCard, mutationCard);
         workspace.replaceChildren(root);
 
         let destroyed = false, isBusy = false, storedCompany = "";

@@ -1,234 +1,101 @@
-.hero-integration-ui .hero-settings {
+/* HERO Settings. Panels, header and buttons come from the shared .hero-page styles in hero_workspace.css.
+   Each group is its own panel; fields sit side by side on wide pages and stack on narrow ones. */
+.hero-integration-ui .hero-settings { gap: 12px; }
+.hero-integration-ui .hero-settings .hero-settings-header { margin-bottom: 4px; }
+
+/* Groups */
+.hero-integration-ui .hero-settings .hero-settings-section { padding: 14px 18px 16px; }
+.hero-integration-ui .hero-settings .hero-settings-section-title { margin: 0 0 12px; color: var(--pc-text); font-size: 16px; font-weight: 650; }
+.hero-integration-ui .hero-settings .hero-settings-section-help { margin: -6px 0 12px; color: var(--hero-page-muted); font-size: 12px; }
+.hero-integration-ui .hero-settings .hero-settings-grid { display: grid; gap: 16px 24px; grid-template-columns: minmax(0, 1fr); align-items: start; }
+
+/* Fields */
+.hero-integration-ui .hero-settings .hero-settings-field { display: grid; gap: 6px; min-width: 0; align-content: start; }
+.hero-integration-ui .hero-settings .hero-settings-label { color: var(--pc-text); font-size: 13px; font-weight: 600; }
+.hero-integration-ui .hero-settings .hero-settings-help { color: var(--hero-page-muted); font-size: 12px; line-height: 1.4; }
+.hero-integration-ui .hero-settings .hero-settings-input {
     width: 100%;
-    margin: 0 auto;
+    min-height: 36px;
+    box-sizing: border-box;
+    padding: 7px 11px;
+    border-radius: 6px;
+    background: var(--hero-field-bg, var(--pc-surface));
     color: var(--pc-text);
+    font: inherit;
+    font-size: 13px;
 }
+.hero-integration-ui .hero-settings textarea.hero-settings-input { min-height: 38px; resize: vertical; }
+.hero-integration-ui .hero-settings .hero-settings-input:disabled,
+.hero-integration-ui .hero-settings .hero-settings-button:disabled { cursor: default; }
+.hero-integration-ui .hero-settings .hero-settings-check { width: 18px; height: 18px; margin: 4px 0 2px; accent-color: var(--hero-page-ok); }
 
-.hero-settings-header {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 20px;
-    margin-bottom: 20px;
-}
+.hero-integration-ui .hero-settings .hero-settings-token-state { font-size: 13px; font-weight: 600; }
+.hero-integration-ui .hero-settings .hero-settings-token-state[data-state="configured"] { color: var(--hero-page-ok); }
+.hero-integration-ui .hero-settings .hero-settings-token-state[data-state="missing"] { color: var(--hero-page-warn); }
+.hero-integration-ui .hero-settings .hero-settings-token-state[data-state="error"] { color: var(--hero-page-error); }
 
-.hero-settings-header h2 {
-    margin: 0 0 6px;
-    color: var(--pc-text);
-}
+.hero-integration-ui .hero-settings .hero-settings-warning { grid-column: 1 / -1; margin: 0; padding: 2px 0 2px 12px; border-left: 3px solid var(--hero-page-warn); color: var(--pc-text); font-size: 12px; }
 
-.hero-settings-header p {
-    margin: 0;
-    color: var(--pc-text);
-}
+/* Status texts */
+.hero-integration-ui .hero-settings .hero-settings-status { color: var(--pc-text); font-size: 12.5px; }
+.hero-integration-ui .hero-settings .hero-settings-status[data-state="success"] { color: var(--hero-page-ok); }
+.hero-integration-ui .hero-settings .hero-settings-status[data-state="error"] { color: var(--hero-page-error); }
+.hero-integration-ui .hero-settings .hero-page-note.hero-settings-status { color: var(--hero-page-muted); }
+.hero-integration-ui .hero-settings .hero-page-note[data-state="success"]::before { background: var(--hero-page-ok); }
 
-.hero-integration-ui .hero-settings-card {
-    display: grid;
-    gap: 18px;
-    padding: 18px;
-    border: 1px solid var(--admin-border, var(--pc-border));
-    border-radius: 10px;
-    background: var(--admin-surface, var(--pc-surface));
-}
+/* Group actions: buttons stacked in the last column */
+.hero-integration-ui .hero-settings .hero-settings-actions { display: grid; gap: 10px; min-width: 0; align-content: start; }
+.hero-integration-ui .hero-settings .hero-settings-actions .hero-page-button { width: 100%; }
+.hero-integration-ui .hero-settings .hero-settings-aside { display: grid; gap: 10px; padding-left: 14px; border-left: 2px solid var(--pc-border); font-size: 12px; }
+.hero-integration-ui .hero-settings .hero-settings-aside p { margin: 0; color: var(--pc-text); }
 
-.hero-integration-ui .hero-settings > .hero-settings-card:first-of-type { grid-template-columns: minmax(0, 1.2fr) minmax(320px, .9fr); align-items: start; }
-.hero-integration-ui .hero-settings > .hero-settings-card:first-of-type > .hero-settings-section:first-child { grid-row: span 3; }
-.hero-integration-ui .hero-settings > .hero-settings-card:first-of-type > .hero-settings-status, .hero-integration-ui .hero-settings > .hero-settings-card:first-of-type > .hero-settings-button { grid-column: 1 / -1; }
-
-.hero-integration-ui .hero-settings-section {
-    display: grid;
-    gap: 14px;
-    min-width: 0;
-    margin: 0;
-    padding: 16px;
-    border: 1px solid var(--pc-border);
-    border-radius: 8px;
-    background: var(--pc-surfaceRaised, var(--admin-surface, var(--pc-surface)));
-}
-
-.hero-integration-ui .hero-settings-section legend {
-    width: auto;
-    margin: 0;
-    padding: 0 6px;
-    color: var(--pc-text);
-    font-size: 14px;
-    font-weight: 600;
-}
-
-.hero-settings-mutations {
-    margin-top: 20px;
-}
-
-.hero-settings-polling {
-    margin-top: 20px;
-    padding: 0;
-}
-
-.hero-settings-polling-details {
-    width: 100%;
-}
-
-.hero-settings-polling-summary {
+/* Polling: closed native accordion */
+.hero-integration-ui .hero-settings .hero-settings-polling-details { width: 100%; }
+.hero-integration-ui .hero-settings .hero-settings-polling-summary {
     display: list-item;
     list-style-position: inside;
-    padding: 22px;
-    cursor: pointer;
+    padding: 12px 18px;
     color: var(--pc-text);
+    cursor: pointer;
 }
-
-.hero-settings-polling-summary:focus-visible {
-    outline: 2px solid var(--primary, #2490ef);
-    outline-offset: -3px;
-}
-
-.hero-settings-polling-title {
-    font-weight: 600;
-}
-
-.hero-settings-polling-content {
+.hero-integration-ui .hero-settings .hero-settings-polling-summary::marker { color: var(--pc-text); }
+.hero-integration-ui .hero-settings .hero-settings-polling-title { font-size: 14px; font-weight: 650; }
+.hero-integration-ui .hero-settings .hero-settings-polling-content { display: grid; gap: 14px; padding: 16px 18px 18px; border-top: 1px solid var(--hero-page-line); }
+.hero-integration-ui .hero-settings .hero-settings-polling-group {
     display: grid;
-    gap: 18px;
-    padding: 0 22px 22px;
-    border-top: 1px solid var(--admin-border, var(--pc-border));
-}
-
-.hero-settings-polling-group {
-    display: grid;
-    gap: 14px;
+    gap: 16px 24px;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+    align-items: start;
     min-width: 0;
     margin: 0;
-    padding: 16px;
-    border: 1px solid var(--admin-border, var(--pc-border));
-    border-radius: 8px;
+    padding: 14px 16px 16px;
+    border: 1px solid var(--hero-page-line);
+    border-radius: 6px;
 }
-
-.hero-settings-polling-group legend {
+.hero-integration-ui .hero-settings .hero-settings-polling-group legend {
     width: auto;
     margin: 0;
     padding: 0 6px;
+    border: 0;
     color: var(--pc-text);
-    font-size: 14px;
-    font-weight: 600;
-}
-
-.hero-settings-mutations h3 {
-    margin: 0;
-    color: var(--pc-text);
-}
-
-.hero-settings-field {
-    display: grid;
-    gap: 7px;
-}
-
-.hero-settings-label {
-    font-weight: 600;
-    color: var(--pc-text);
-}
-
-.hero-settings-help,
-.hero-settings-token-row,
-.hero-settings-warning,
-.hero-settings-status {
     font-size: 13px;
-    color: var(--pc-text);
+    font-weight: 650;
 }
 
-.hero-settings-input {
-    width: 100%;
-    box-sizing: border-box;
-    padding: 9px 11px;
-    border: 2px solid var(--hero-field-border, var(--admin-border, var(--pc-border)));
-    border-radius: 7px;
-    background: var(--hero-field-bg, var(--admin-input, var(--pc-surface)));
-    color: var(--pc-text);
-    font: inherit;
+/* Medium: two columns per group */
+@container hero-page (min-width: 640px) {
+    .hero-integration-ui .hero-settings .hero-settings-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
-
-.hero-settings-input:focus-visible {
-    border-color: var(--pc-focus, var(--primary, #2490ef));
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--pc-focus, var(--primary, #2490ef)) 35%, transparent);
-    outline: 0;
+/* Large: the column layout of each group */
+@container hero-page (min-width: 1100px) {
+    .hero-integration-ui .hero-settings .hero-settings-connection .hero-settings-grid { grid-template-columns: minmax(180px, .85fr) minmax(0, 1.5fr) minmax(0, 1.25fr) minmax(130px, .55fr) minmax(0, 1fr); }
+    .hero-integration-ui .hero-settings .hero-settings-company .hero-settings-grid { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, .7fr) minmax(220px, .9fr); }
+    .hero-integration-ui .hero-settings .hero-settings-testing .hero-settings-grid { grid-template-columns: minmax(0, .9fr) minmax(0, 1.2fr) minmax(220px, .8fr); }
+    .hero-integration-ui .hero-settings .hero-settings-mutations .hero-settings-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr) minmax(220px, .6fr); }
+    .hero-integration-ui .hero-settings .hero-settings-testing .hero-settings-actions,
+    .hero-integration-ui .hero-settings .hero-settings-mutations .hero-settings-actions { align-self: center; }
 }
-
-.hero-settings-input:is([readonly], [aria-readonly="true"]) {
-    background: var(--hero-field-readonly-bg, var(--admin-surface, var(--pc-surface)));
-    border-style: dashed;
-}
-
-.hero-settings-input:is(.is-invalid, [aria-invalid="true"]),
-.has-error .hero-settings-input {
-    border-color: var(--hero-field-error, #b42318);
-    box-shadow: 0 0 0 1px var(--hero-field-error, #b42318);
-}
-
-.hero-settings-check {
-    width: 18px;
-    height: 18px;
-}
-
-.hero-settings-token-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-
-.hero-settings-token-state {
-    font-weight: 600;
-}
-
-.hero-settings-token-state[data-state="configured"] {
-    color: var(--pc-text);
-    text-decoration: underline 2px var(--admin-success, #2e7d32);
-    text-underline-offset: 3px;
-}
-
-.hero-settings-token-state[data-state="missing"] {
-    color: var(--pc-text);
-    text-decoration: underline 2px var(--admin-warning, #a15c00);
-    text-underline-offset: 3px;
-}
-
-.hero-settings-warning {
-    margin: 0;
-    padding: 10px 12px;
-    border-left: 3px solid var(--admin-warning, #a15c00);
-}
-
-.hero-settings-button {
-    min-height: 36px;
-    padding: 8px 14px;
-    border-radius: 7px;
-    border: 1px solid var(--admin-border, var(--pc-border));
-    background: var(--pc-surface);
-    color: var(--pc-text);
-    font: inherit;
-    cursor: pointer;
-}
-
-.hero-settings-button.primary {
-    justify-self: start;
-    font-weight: 600;
-}
-
-.hero-settings-button:disabled,
-.hero-settings-input:disabled {
-    cursor: default;
-    opacity: 1;
-}
-
-.hero-settings-input:disabled {
-    background: var(--hero-field-disabled-bg, var(--admin-surface, var(--pc-surface)));
-    color: var(--pc-text);
-    border-color: color-mix(in srgb, var(--hero-field-border, var(--admin-border, var(--pc-border))) 58%, var(--admin-surface, var(--pc-surface)));
-}
-
-@media (max-width: 900px) { .hero-integration-ui .hero-settings > .hero-settings-card:first-of-type { grid-template-columns: 1fr; } .hero-integration-ui .hero-settings > .hero-settings-card:first-of-type > .hero-settings-section:first-child, .hero-integration-ui .hero-settings > .hero-settings-card:first-of-type > .hero-settings-status, .hero-integration-ui .hero-settings > .hero-settings-card:first-of-type > .hero-settings-button { grid-column: auto; grid-row: auto; } }
-@media (max-width: 680px) {
-    .hero-settings-header {
-        flex-direction: column;
-    }
-    .hero-settings-button {
-        width: 100%;
-    }
+@container hero-page (max-width: 639px) {
+    .hero-integration-ui .hero-settings .hero-page-header-actions { display: grid; width: 100%; }
+    .hero-integration-ui .hero-settings .hero-settings-aside { padding-left: 0; padding-top: 12px; border-left: 0; border-top: 2px solid var(--pc-border); }
 }

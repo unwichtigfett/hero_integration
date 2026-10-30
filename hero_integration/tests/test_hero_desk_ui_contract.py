@@ -327,17 +327,24 @@ class TestHeroDeskUiContract(unittest.TestCase):
 
     def test_overview_metrics_are_scoped_bordered_status_cards_in_both_themes(self):
         source = OVERVIEW_CSS.read_text()
+        shared = WORKSPACE_CSS.read_text()
+        overview = OVERVIEW_JS.read_text()
 
+        # Overview, API & Schema and Settings share the page panels of the Synchronization page tokens.
         for contract in (
-            ".hero-integration-ui .hero-overview", "--hero-overview-card-surface",
-            "--hero-overview-card-border", "#f0f1f2", "#65717d", "#272d33",
-            "#aab3bb", 'html[data-theme="dark"]', "--hero-overview-card-label: var(--pc-text)",
-            "repeat(auto-fit, minmax(min(100%, 220px), 1fr))",
-            "border: 2px solid var(--hero-overview-card-border) !important",
-            "background-color: var(--hero-overview-card-surface) !important",
+            ".hero-integration-ui .hero-page", "container-name: hero-page", "--hero-page-ok: var(--hero-state-ok",
+            ".hero-page-panel", ".hero-page-stat", ".hero-page-pill", ".hero-page-note",
+            "border: 1px solid var(--pc-border)", "background: var(--pc-surface)",
+            "repeat(4, minmax(0, 1fr))",
         ):
             with self.subTest(contract=contract):
-                self.assertIn(contract, source)
+                self.assertIn(contract, shared)
+        self.assertIn(".hero-integration-ui .hero-overview", source)
+        self.assertIn("@container hero-page", source)
+        self.assertNotIn("prefers-color-scheme", shared)
+        for contract in ('"hero-page hero-overview"', "Connection details", "Capabilities & permissions", "Actions & tools"):
+            with self.subTest(contract=contract):
+                self.assertIn(contract, overview)
 
     def test_hero_control_contrast_is_scoped_and_stateful(self):
         adapter = ADAPTER_CSS.read_text()
