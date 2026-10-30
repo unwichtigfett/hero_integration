@@ -15,7 +15,10 @@ after_migrate = "hero_integration.install.after_migrate"
 # A one-minute tick only checks mode, window and interval; the configured
 # polling interval (1..1440 minutes) decides whether anything starts.
 scheduler_events = {
-    "cron": {"* * * * *": ["hero_integration.tasks.run_scheduled_sync"]},
+    "cron": {"* * * * *": [
+        "hero_integration.tasks.run_scheduled_sync",
+        "hero_integration.tasks.run_scheduled_schema_refresh",
+    ]},
 }
 
 # Native Desk extension only.  It asks the server for eligible, linked fields

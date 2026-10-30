@@ -69,6 +69,13 @@ def run_scheduled_sync() -> None:
         record_scheduler_outcome(mode, "Skipped", "A previous polling run is still active; this run was skipped.")
 
 
+def run_scheduled_schema_refresh() -> None:
+    """Reload the live HERO schema every configured interval; independent of the polling mode."""
+    from hero_integration.services.schema_refresh import run_scheduled_schema_refresh as tick
+
+    tick()
+
+
 def _sync_state(field: str):
     db = getattr(frappe, "db", None)
     return db.get_single_value("HERO Integration Sync State", field) if db is not None else None

@@ -61,9 +61,10 @@ class TestHeroDeskUiContract(unittest.TestCase):
         self.assertNotIn("frappe.require(assetUrl(path)", source)
         for endpoint in (
             "workspace_context", "workspace_schema", "workspace_graph", "workspace_service_save",
-            "workspace_testing_settings_save", "workspace_erpnext_company_save", "workspace_erpnext_company_confirm",
+            "workspace_testing_settings_save",
         ):
             self.assertIn(endpoint, source)
+        self.assertNotIn("workspace_erpnext_company", source)
         self.assertIn("unsupported", source)
         self.assertNotIn("execute_graphql_service", source)
         for removed in ("legacyPageSections", "redirectLegacy", "hero-api-analyzer", "hero-graph-viewer", "hero-graphql-services", "hero-adapter-tools", "hero-migration-center", "hero-settings"):
@@ -127,14 +128,30 @@ class TestHeroDeskUiContract(unittest.TestCase):
             "Testing", "testingEnabled", "testingMaxActions", "testing_enabled", "testing_max_actions",
             "manual synchronization previews are limited", "No business data is modified.",
             "Save Testing Settings", "workspace_testing_settings_save",
-            "Save Company", "Confirm Company", "workspace_erpnext_company_save", "workspace_erpnext_company_confirm",
         ):
             with self.subTest(contract=contract):
                 self.assertIn(contract, source)
+        for removed in ("ERPNext Company", "Save Company", "Confirm Company", "workspace_erpnext_company"):
+            with self.subTest(removed=removed):
+                self.assertNotIn(removed, source)
         doctype = json.loads((PACKAGE_ROOT / "hero_integration" / "doctype" / "hero_integration_settings" / "hero_integration_settings.json").read_text())
         fields = {field["fieldname"]: field for field in doctype["fields"]}
         self.assertEqual((fields["testing_enabled"]["fieldtype"], fields["testing_enabled"]["default"]), ("Check", "0"))
         self.assertEqual((fields["testing_max_actions"]["fieldtype"], fields["testing_max_actions"]["default"]), ("Int", "5"))
+
+    def test_settings_save_bar_sits_above_polling_and_save_checks_the_token(self):
+        source = SETTINGS_JS.read_text()
+        # Only Refresh stays in the header; Reset and Save sit together above Polling, Save on the right.
+        self.assertIn("headerActions.append(refresh);", source)
+        self.assertIn('column("hero-settings-savebar", reset, save)', source)
+        self.assertIn("testingCard, saveBar, pollingCard", source)
+        # Saving an enabled connection with an unverified token loads the schema at once.
+        self.assertIn('"workspace_schema_refresh"', source)
+        self.assertIn("if (data.schema_refresh?.check_due) await verifyToken();", source)
+        self.assertIn('schemaInterval.min = "10"', source)
+        self.assertIn('schemaInterval.max = "240"', source)
+        connection = source[source.index('section("HERO Connection"'):source.index('const sources = section(')]
+        self.assertLess(connection.index("Schema refresh (minutes)"), connection.index("Timeout (seconds)"))
 
     def test_synchronization_lists_server_recorded_testing_outcomes(self):
         source = MIGRATION_JS.read_text()
@@ -397,7 +414,7 @@ class TestHeroDeskUiContract(unittest.TestCase):
                          "repeat(2, minmax(0, 1fr))", "repeat(4, minmax(0, 1fr))", "max-height: 640px"):
             with self.subTest(contract=contract):
                 self.assertIn(contract, sync_css)
-        for contract in ("HERO Connection", "Sources", "ERPNext Company", "hero-settings-section"):
+        for contract in ("HERO Connection", "Sources", "hero-settings-section"):
             with self.subTest(contract=contract):
                 self.assertIn(contract, settings)
         self.assertIn("hero-sync-panel", migration)

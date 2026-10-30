@@ -44,7 +44,7 @@ These nine definitions are installed by the application's lifecycle hooks, witho
 ### Project
 
 - `Project.project_name` uses the validated native Project title contract. `Project.customer` is resolved through `HERO Integration Link`.
-- `Project.company` is set only from the confirmed local ERPNext Company setting, never directly from a HERO Customer ID. `Project.notes` remains the native ERPNext field; optional external partner notes are held separately.
+- `Project.company` is set only from the ERPNext Default Company, never directly from a HERO Customer ID. `Project.notes` remains the native ERPNext field; optional external partner notes are held separately.
 - Seven external project-match status attributes are stored under `custom_hero_observed_status_*` solely as observed source information. They must not drive `Project.status`, `docstatus`, tickets, state machines or workflow transitions.
 
 ### Calendar Event

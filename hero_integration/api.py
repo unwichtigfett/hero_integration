@@ -749,113 +749,21 @@ def schema_snapshot_list(start: int | str = 0, page_size: int | str = 100) -> li
 def workspace_schema_refresh(connection_id: str = "", binding_generation: int | str = 0) -> dict[str, object]:
     """Capture a new complete, validated live HERO schema snapshot.
 
-    This is intentionally an explicit System Manager action.  Opening a page,
-    loading settings, or generating mapping suggestions never invokes it.
+    Called by the explicit refresh action and right after the connection
+    settings are saved. Opening a page, loading settings, or generating mapping
+    suggestions never invokes it. An unchanged schema keeps its snapshot.
     """
     frappe.only_for("System Manager")
     # Refresh always uses persisted server configuration, never a selected snapshot.
     del connection_id, binding_generation
-    from hero_integration.client.graphql import HeroClientError, HeroGraphQLClient
-    from hero_integration.client.settings import HeroConfigurationError, get_configuration
-    from hero_integration.services.introspection import (
-        INTROSPECTION_QUERY,
-        COMPATIBILITY_INTROSPECTION_QUERY,
-        IntrospectionError,
-        canonical_schema,
-        captured_at_utc,
-        endpoint_fingerprint,
-        structural_diff,
-    )
+    from hero_integration.services.schema_refresh import SchemaRefreshError, refresh
 
     try:
-        configuration = get_configuration()
-        endpoint_hash = endpoint_fingerprint(configuration.endpoint.url, configuration.source_instance)
-        client = HeroGraphQLClient(
-            configuration.endpoint,
-            token_provider=lambda: configuration.api_token,
-            timeout=configuration.timeout_seconds,
-            max_retries=1,
-        )
-        try:
-            response = client.introspect(INTROSPECTION_QUERY)
-        except HeroClientError as error:
-            if error.code != "GRAPHQL_ERRORS":
-                raise
-            response = client.introspect(COMPATIBILITY_INTROSPECTION_QUERY)
-        schema = canonical_schema(response)
-    except (HeroClientError, HeroConfigurationError, IntrospectionError, ValueError) as error:
-        frappe.throw(f"HERO schema refresh failed safely: {error}")
-
-    schema_json = {"__schema": schema}
-    from hero_integration.services.graphql_graph import analyze_snapshot
-
-    fingerprint = analyze_snapshot(schema_json).fingerprint
-    type_count = len(schema["types"])
-    existing = frappe.get_all(
-        "HERO GraphQL Schema Snapshot",
-        filters={
-            "schema_fingerprint": fingerprint,
-            "source_instance": configuration.source_instance,
-            "endpoint_fingerprint": endpoint_hash,
-        },
-        fields=["name", "schema_fingerprint", "execution_contract_status"],
-        limit_page_length=1,
-    )
-    if existing:
-        row = existing[0]
-        return {
-            "status": "UNCHANGED",
-            "snapshot_name": row["name"],
-            "schema_fingerprint": row["schema_fingerprint"],
-            "execution_contract_status": row.get("execution_contract_status") or "Compatible",
-            "type_count": type_count,
-        }
-
-    from hero_integration.services.snapshot_inheritance import parent_for
-
-    # The parent is the most recently *created* snapshot of this source and endpoint.
-    parent_name = parent_for(configuration.source_instance, endpoint_hash)
-    previous = frappe.get_doc("HERO GraphQL Schema Snapshot", parent_name) if parent_name else None
-    diff = structural_diff(json.loads(previous.snapshot_json) if previous else None, schema)
-    captured_at = captured_at_utc()
-    snapshot = frappe.get_doc({
-        "doctype": "HERO GraphQL Schema Snapshot",
-        "snapshot_json": json.dumps(schema_json, ensure_ascii=False, sort_keys=True),
-        "source_instance": configuration.source_instance,
-        "endpoint_fingerprint": endpoint_hash,
-        "schema_version": 1,
-        "captured_at": captured_at,
-        "parent_snapshot": parent_name or None,
-        "structural_diff_json": json.dumps(diff, ensure_ascii=False, sort_keys=True),
-        "execution_contract_status": "Blocked" if diff["breaking"] else "Compatible",
-    })
-    snapshot.insert()
-    inheritance = _inherit_after_capture(snapshot.name) if parent_name else None
-    return {
-        "inheritance": inheritance,
-        "status": "CAPTURED",
-        "snapshot_name": snapshot.name,
-        "schema_fingerprint": snapshot.schema_fingerprint,
-        "execution_contract_status": snapshot.execution_contract_status,
-        "captured_at": captured_at,
-        "type_count": type_count,
-        "structural_diff": diff,
-    }
-
-
-def _inherit_after_capture(snapshot_name: str) -> dict[str, object]:
-    """Inheritance failures never undo the captured snapshot; they are reported instead."""
-    from hero_integration.services.snapshot_inheritance import inherit_parent_mappings
-
-    savepoint = "hero_snapshot_inheritance"
-    frappe.db.savepoint(savepoint)
-    try:
-        return inherit_parent_mappings(snapshot_name, frappe.session.user)
-    except Exception:
-        frappe.db.rollback(save_point=savepoint)
-        frappe.log_error(title="HERO snapshot mapping inheritance failed")
-        return {"status": "FAILED", "child_snapshot": snapshot_name, "activation": False,
-                "message": "Mapping inheritance failed; the snapshot was kept. Retry it from the Mapping Editor."}
+        return refresh(frappe.session.user)
+    except SchemaRefreshError as error:
+        # Keep the recorded failure; the request itself is rolled back by the error.
+        frappe.db.commit()
+        frappe.throw(str(error))
 
 
 @frappe.whitelist(methods=["POST"])
@@ -1064,14 +972,13 @@ def workspace_settings_get() -> dict[str, object]:
         "source_binding_revision": int(getattr(settings, "source_binding_revision", 0) or 0),
         "source_binding_confirmed": int(getattr(settings, "source_binding_confirmed_revision", 0) or 0)
         == int(getattr(settings, "source_binding_revision", 0) or 0),
-        "erpnext_company": getattr(settings, "erpnext_company", "") or "",
-        "erpnext_company_confirmed": bool(getattr(settings, "erpnext_company_confirmed", 0)),
         "allow_deletion": bool(getattr(settings, "allow_deletion", 0)),
         "admin_notification_recipients": getattr(settings, "admin_notification_recipients", "") or "",
         "api_token_configured": token_configured,
         "api_token_status": token_status,
         "timeout_seconds": int(settings.timeout_seconds or 30),
         "testing": _testing_settings(settings),
+        "schema_refresh": _schema_refresh_state(settings, token_configured),
         "polling": {
             "mode": getattr(settings, "polling_mode", "OFF") or "OFF",
             "interval_minutes": int(getattr(settings, "polling_interval_minutes", 60) or 60),
@@ -1099,7 +1006,7 @@ def workspace_settings_get() -> dict[str, object]:
 def workspace_settings_save(
     enabled: int | bool, api_url: str, api_token: str = "", timeout_seconds: int = 30,
     allowed_hero_hosts: str | None = None, hero_source_instance: str | None = None,
-    erpnext_company: str | None = None, erpnext_company_confirmed: int | bool | None = None,
+    schema_refresh_interval_minutes: int | str | None = None,
     polling_mode: str | None = None, polling_interval_minutes: int | None = None,
     polling_timezone: str | None = None, polling_execution_window: str | None = None,
     polling_bootstrap: int | bool | None = None, polling_page_size: int | None = None,
@@ -1123,10 +1030,11 @@ def workspace_settings_save(
         settings.allowed_hero_hosts = allowed_hero_hosts.strip()
     if hero_source_instance is not None:
         settings.hero_source_instance = hero_source_instance.strip()
-    if erpnext_company is not None:
-        settings.erpnext_company = erpnext_company.strip()
-    if erpnext_company_confirmed is not None:
-        settings.erpnext_company_confirmed = int(_as_bool(erpnext_company_confirmed))
+    if schema_refresh_interval_minutes is not None:
+        from hero_integration.services.schema_refresh import INTERVAL_MAX, INTERVAL_MIN
+
+        settings.schema_refresh_interval_minutes = _bounded_int(
+            schema_refresh_interval_minutes, "Schema refresh interval", INTERVAL_MIN, INTERVAL_MAX)
     if allow_deletion is not None:
         settings.allow_deletion = int(_as_bool(allow_deletion))
     if admin_notification_recipients is not None:
@@ -1175,32 +1083,6 @@ def workspace_testing_settings_save(
     return workspace_settings_get()
 
 
-@frappe.whitelist(methods=["POST"])
-def workspace_erpnext_company_save(erpnext_company: str) -> dict[str, object]:
-    """Store a Company selection; the DocType invalidates confirmation on change."""
-    frappe.only_for("System Manager")
-    settings = frappe.get_single("HERO Integration Settings")
-    settings.erpnext_company = str(erpnext_company or "").strip()
-    settings.save()
-    return workspace_settings_get()
-
-
-@frappe.whitelist(methods=["POST"])
-def workspace_erpnext_company_confirm(erpnext_company: str) -> dict[str, object]:
-    """Confirm exactly the Company already persisted on the server."""
-    frappe.only_for("System Manager")
-    settings = frappe.get_single("HERO Integration Settings")
-    requested = str(erpnext_company or "").strip()
-    stored = str(getattr(settings, "erpnext_company", "") or "").strip()
-    if not stored:
-        frappe.throw("Save an ERPNext Company before confirming it.")
-    if requested != stored:
-        frappe.throw("Save the selected ERPNext Company before confirming it.")
-    settings.erpnext_company_confirmed = 1
-    settings.save()
-    return workspace_settings_get()
-
-
 def _polling_lines(value: object) -> list[str]:
     return [line.strip() for line in str(value or "").splitlines() if line.strip()]
 
@@ -1213,6 +1095,12 @@ def _validated_admin_recipients(value: str) -> list[str]:
         ):
             frappe.throw(f"Conflict notification recipient is not an enabled System Manager: {user}")
     return recipients
+
+
+def _schema_refresh_state(settings, token_configured: bool) -> dict[str, object]:
+    from hero_integration.services.schema_refresh import state
+
+    return state(settings, token_configured)
 
 
 def _polling_snapshot() -> dict[str, str] | None:

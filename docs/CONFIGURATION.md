@@ -20,9 +20,19 @@ Open **HERO Integration Settings** as a System Manager after installation.
    Pending Sync stay blocked until a System Manager confirms it. The token is
    never used as an identity.
 
-Select an existing ERPNext Company to own all imported Projects and enable
-**Confirm Company for HERO Projects**. The app checks that the Company exists,
-is readable by the current user, and is not disabled.
+When **Enabled**, the API URL and an API token are set, **Save Settings**
+loads the live HERO schema right away. This also verifies the token: an
+invalid token shows an error, a valid one stores the schema as a validated
+snapshot. After that, the schema is reloaded every **Schema refresh
+(minutes)**, 10 through 240, default 60. An unchanged schema keeps its
+snapshot and fingerprint; only a changed schema creates a new snapshot.
+Only a verified token is refreshed on the schedule, so an invalid token never
+causes repeated HERO requests. **Reset** discards unsaved changes in the form.
+
+One HERO account belongs to one business, so there is no Company setting.
+Imported Projects use the ERPNext **Default Company** (Global Defaults); a site
+with exactly one Company uses that Company. The app checks that the Company
+exists, is readable by the current user, and is not disabled.
 
 Use **HERO Migration Center** to start a Preview before an execution run.
 A preview creates source-link record. Execute creates

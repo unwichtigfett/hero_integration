@@ -4,7 +4,7 @@ import unittest
 from types import SimpleNamespace
 
 from hero_integration.client.graphql import HeroClientError, assert_read_only, validate_endpoint
-from hero_integration.integrations.erpnext.company import confirmed_project_company
+from hero_integration.integrations.erpnext.company import project_company
 from hero_integration.sources.hero import CUSTOMER_QUERY_V1, PROJECT_QUERY_V1
 from hero_integration.tests.mapping_fixture import fixture_plan
 
@@ -80,14 +80,15 @@ class TestOfflineContracts(unittest.TestCase):
         self.assertEqual(project["custom_hero_source_created"], "2026-10-18T10:00:00+00:00")
         self.assertEqual(project["custom_hero_source_modified"], "2026-10-18T11:00:00+00:00")
 
-    def test_confirmed_company_requires_existing_readable_enabled_company(self):
-        valid = _FakeFrappe(company="Executing Company", confirmed=1)
-        self.assertEqual(confirmed_project_company(valid).name, "Executing Company")
-        self.assertFalse(confirmed_project_company(_FakeFrappe(company="", confirmed=0)).is_valid)
-        self.assertFalse(confirmed_project_company(_FakeFrappe(company="Executing Company", confirmed=0)).is_valid)
-        self.assertFalse(confirmed_project_company(_FakeFrappe(company="Missing", confirmed=1, exists=False)).is_valid)
-        self.assertFalse(confirmed_project_company(_FakeFrappe(company="Executing Company", confirmed=1, readable=False)).is_valid)
-        self.assertFalse(confirmed_project_company(_FakeFrappe(company="Executing Company", confirmed=1, disabled=1)).is_valid)
+    def test_project_company_is_the_existing_readable_enabled_erpnext_default(self):
+        self.assertEqual(project_company(_FakeFrappe(default="Executing Company")).name, "Executing Company")
+        # Without a Default Company, a site with exactly one Company uses it; none or several block.
+        self.assertEqual(project_company(_FakeFrappe(default="", companies=["Only Company"])).name, "Only Company")
+        self.assertFalse(project_company(_FakeFrappe(default="", companies=[])).is_valid)
+        self.assertFalse(project_company(_FakeFrappe(default="", companies=["A", "B"])).is_valid)
+        self.assertFalse(project_company(_FakeFrappe(default="Missing", exists=False)).is_valid)
+        self.assertFalse(project_company(_FakeFrappe(default="Executing Company", readable=False)).is_valid)
+        self.assertFalse(project_company(_FakeFrappe(default="Executing Company", disabled=1)).is_valid)
 
     def test_queries_are_fixed_and_read_only(self):
         self.assertIn("contacts(first:", CUSTOMER_QUERY_V1)
@@ -102,9 +103,14 @@ class _FakeMeta:
 
 
 class _FakeDatabase:
-    def __init__(self, exists, disabled):
+    def __init__(self, default, exists, disabled):
+        self._default = default
         self._exists = exists
         self._disabled = disabled
+
+    def get_single_value(self, doctype, fieldname):
+        assert (doctype, fieldname) == ("Global Defaults", "default_company")
+        return self._default
 
     def exists(self, doctype, name):
         return doctype == "Company" and self._exists and name != "Missing"
@@ -114,14 +120,14 @@ class _FakeDatabase:
 
 
 class _FakeFrappe:
-    def __init__(self, company, confirmed, exists=True, readable=True, disabled=0):
-        self._settings = SimpleNamespace(erpnext_company=company, erpnext_company_confirmed=confirmed)
+    def __init__(self, default, companies=(), exists=True, readable=True, disabled=0):
+        self._companies = list(companies)
         self._readable = readable
-        self.db = _FakeDatabase(exists, disabled)
+        self.db = _FakeDatabase(default, exists, disabled)
 
-    def get_single(self, doctype):
-        self.assert_doctype(doctype, "HERO Integration Settings")
-        return self._settings
+    def get_all(self, doctype, pluck=None, limit_page_length=None):
+        self.assert_doctype(doctype, "Company")
+        return self._companies[:limit_page_length]
 
     def has_permission(self, doctype, permission_type, name):
         self.assert_doctype(doctype, "Company")

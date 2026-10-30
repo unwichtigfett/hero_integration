@@ -49,6 +49,11 @@
 .hero-integration-ui .hero-settings .hero-settings-aside { display: grid; gap: 10px; padding-left: 14px; border-left: 2px solid var(--pc-border); font-size: 12px; }
 .hero-integration-ui .hero-settings .hero-settings-aside p { margin: 0; color: var(--pc-text); }
 
+.hero-integration-ui .hero-settings .hero-settings-schema-state { grid-column: 1 / -1; }
+
+/* Save bar above polling: Reset beside Save, Save on the right */
+.hero-integration-ui .hero-settings .hero-settings-savebar { display: flex; justify-content: flex-end; gap: 10px; }
+
 /* Polling: closed native accordion */
 .hero-integration-ui .hero-settings .hero-settings-polling-details { width: 100%; }
 .hero-integration-ui .hero-settings .hero-settings-polling-summary {
@@ -88,8 +93,7 @@
 }
 /* Large: the column layout of each group */
 @container hero-page (min-width: 1100px) {
-    .hero-integration-ui .hero-settings .hero-settings-connection .hero-settings-grid { grid-template-columns: minmax(180px, .85fr) minmax(0, 1.5fr) minmax(0, 1.25fr) minmax(130px, .55fr) minmax(0, 1fr); }
-    .hero-integration-ui .hero-settings .hero-settings-company .hero-settings-grid { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, .7fr) minmax(220px, .9fr); }
+    .hero-integration-ui .hero-settings .hero-settings-connection .hero-settings-grid { grid-template-columns: minmax(150px, .7fr) minmax(0, 1.5fr) minmax(0, 1.25fr) minmax(130px, .55fr) minmax(0, .85fr) minmax(0, .85fr); }
     .hero-integration-ui .hero-settings .hero-settings-testing .hero-settings-grid { grid-template-columns: minmax(0, .9fr) minmax(0, 1.2fr) minmax(220px, .8fr); }
     .hero-integration-ui .hero-settings .hero-settings-mutations .hero-settings-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr) minmax(220px, .6fr); }
     .hero-integration-ui .hero-settings .hero-settings-testing .hero-settings-actions,
