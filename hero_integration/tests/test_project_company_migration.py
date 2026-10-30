@@ -307,6 +307,13 @@ class TestProjectCompanyMigration(unittest.TestCase):
         self.assertEqual(self._execute(no_type).code, "SKIPPED")
         self.assertEqual(self.frappe.customers[0]["customer_type"], "Individual")
 
+    def test_project_boolean_customer_identity_never_resolves_as_integer(self):
+        from unittest.mock import patch
+        with patch.object(self.migration, "_link", return_value=SimpleNamespace(target_doctype="Customer", target_name="CUST-1")) as link:
+            with self.assertRaises(self.migration.MappingPlanError):
+                self.migration._customer_name_for_source(True)
+        link.assert_not_called()
+
     def test_missing_type_source_blocks_creation_instead_of_defaulting(self):
         result = self._execute({"id": 305, "full_name": "Synthetic Bob"})
         self.assertEqual(result.code, "BLOCKED_RECORD")
