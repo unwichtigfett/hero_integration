@@ -286,6 +286,18 @@ class TestRC16NativeSafety(IntegrationTestCase):
             observe_frappe_target_change(SimpleNamespace(doctype="Customer", name=self.token))
         get_all.assert_not_called()
 
+    def test_change_observer_does_not_query_dropped_tables_during_uninstall(self) -> None:
+        """Uninstall drops the Link table before Frappe saves Installed Applications."""
+
+        previous = frappe.flags.in_uninstall
+        frappe.flags.in_uninstall = True
+        self.addCleanup(setattr, frappe.flags, "in_uninstall", previous)
+        with patch.object(
+            frappe, "get_all", side_effect=AssertionError("Link query must not run during uninstall")
+        ) as get_all:
+            observe_frappe_target_change(SimpleNamespace(doctype="Installed Applications", name="Installed Applications"))
+        get_all.assert_not_called()
+
     def test_change_observer_propagates_normal_query_errors_outside_migration(self) -> None:
         """Only the framework migration phase is a no-op boundary."""
 

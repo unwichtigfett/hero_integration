@@ -92,8 +92,9 @@ def observe_frappe_target_change(doc, method=None) -> None:
     # During install/migrate, DocType metadata can be written before the
     # corresponding database columns exist.  This global on_update hook runs
     # for those technical writes as well, so it must return before querying
-    # the Link fields introduced by the same synchronization.
-    if frappe.flags.in_migrate:
+    # the Link fields introduced by the same synchronization.  During uninstall
+    # the app tables are already dropped while this hook is still registered.
+    if frappe.flags.in_migrate or frappe.flags.in_uninstall:
         return
     from hero_integration.services.frappe_mapping_draft_storage import personal_publication_active
     if personal_publication_active():
