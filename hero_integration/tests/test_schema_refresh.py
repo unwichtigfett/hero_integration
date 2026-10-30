@@ -57,7 +57,9 @@ class TestSchemaRefreshDue(unittest.TestCase):
             _settings(schema_refresh_interval_minutes=10, schema_last_checked_on=NOW - timedelta(minutes=10)), NOW))
 
     def test_missing_interval_uses_the_default(self):
-        self.assertEqual(schema_refresh.refresh_interval(_settings(schema_refresh_interval_minutes=None)), 60)
+        for empty in (None, 0, ""):
+            with self.subTest(empty=empty):
+                self.assertEqual(schema_refresh.refresh_interval(_settings(schema_refresh_interval_minutes=empty)), 60)
 
 
 class TestSchemaRefreshRecording(unittest.TestCase):
