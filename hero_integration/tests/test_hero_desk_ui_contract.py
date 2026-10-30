@@ -17,7 +17,7 @@ SETTINGS_JS = PACKAGE_ROOT / "public" / "js" / "hero_settings.js"
 MAPPING_EDITOR_JS = PACKAGE_ROOT / "public" / "js" / "hero_mapping_editor.js"
 MIGRATION_JS = PACKAGE_ROOT / "public" / "js" / "hero_migration.js"
 ADAPTER_CSS = PACKAGE_ROOT / "public" / "css" / "hero_adapter.css"
-PARITY_MATRIX = PACKAGE_ROOT.parent / "UI_PARITY_MATRIX.md"
+UI_DOCUMENTATION = PACKAGE_ROOT.parent / "docs" / "UI.md"
 SIDEBAR_JSON = PACKAGE_ROOT / "hero_integration" / "sidebar" / "hero_integration" / "hero_integration.json"
 
 
@@ -398,12 +398,16 @@ class TestHeroDeskUiContract(unittest.TestCase):
         pyproject = PACKAGE_ROOT.parent / "pyproject.toml"
         self.assertIn('"**/*.css"', pyproject.read_text())
 
-    def test_parity_matrix_states_native_boundary_and_evidence(self):
-        matrix = PARITY_MATRIX.read_text()
-        self.assertIn("Original RPC", matrix)
-        self.assertIn("IMPLEMENTED_SOURCE_TESTED", matrix)
-        self.assertIn("LEGACY_PROCESS_ONLY", matrix)
-        self.assertIn("manual step", matrix)
+    def test_ui_documentation_and_source_keep_native_boundary_and_evidence(self):
+        documentation = UI_DOCUMENTATION.read_text()
+        self.assertIn("Original RPC", documentation)
+        self.assertIn("LEGACY_PROCESS_ONLY", documentation)
+        self.assertIn("manual step", documentation)
+        api_source = (PACKAGE_ROOT / "api.py").read_text()
+        for endpoint in ("workspace_context", "workspace_schema", "workspace_graph"):
+            with self.subTest(endpoint=endpoint):
+                self.assertIn(f"def {endpoint}(", api_source)
+                self.assertIn(endpoint, documentation)
 
     def test_workspace_tabs_remain_the_only_navigation_targets(self):
         source = WORKSPACE_JS.read_text()
