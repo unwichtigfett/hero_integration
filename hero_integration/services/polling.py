@@ -134,10 +134,6 @@ def run_monitor() -> None:
     """Scheduled MONITOR entrypoint: read-only transport plus bounded metadata."""
     import frappe
 
-    from hero_integration.client.graphql import HeroGraphQLClient
-    from hero_integration.client.settings import get_configuration
-    from hero_integration.sources.hero import HeroSource
-
     settings = frappe.get_single("HERO Integration Settings")
     plan = runtime_plan(settings)
     if plan["mode"] != "MONITOR":
@@ -145,35 +141,24 @@ def run_monitor() -> None:
     if plan["unsupported_sources"]:
         _record_event("MONITOR", "Skipped", "Polling configuration is not supported by the approved runtime contract; no HERO request was made.")
         return
-    state = frappe.get_single("HERO Integration Sync State")
-    customer_offset = 0 if plan["allow_backfill"] or plan["bootstrap"] else int(getattr(state, "customer_offset", 0) or 0)
-    project_offset = 0 if plan["allow_backfill"] or plan["bootstrap"] else int(getattr(state, "project_offset", 0) or 0)
+    from hero_integration.services.sync_runtime_adapter import RuntimeBridgeError, run_materialized_monitor
     try:
-        config = get_configuration()
-        client = HeroGraphQLClient(config.endpoint, lambda: config.api_token, timeout=int(plan["timeout_seconds"]), max_retries=int(plan["retry_limit"]), retry_backoff_seconds=int(plan["retry_backoff_seconds"]))
-        source = HeroSource(client, config.source_instance, page_size=int(plan["page_size"]), filters=plan["filters"], pagination_strategy=str(plan["pagination_strategy"]))
-        result = monitor(source, plan, customer_offset=customer_offset, project_offset=project_offset, record_observer=_monitor_observer if plan["reconciliation"] else None)
-        state.customer_offset, state.project_offset = result.customer_next_offset, result.project_next_offset
-        state.watermark_status = "Bounded incomplete monitor" if result.incomplete_sources else "Monitor scan complete; no cursor watermark claimed"
-        state.save(ignore_permissions=True)
-        if result.incomplete_sources:
-            detail = "Read-only monitoring stopped at its configured page bound for: " + ", ".join(result.incomplete_sources) + "."
-            event = _record_event("MONITOR", "Incomplete", detail, result)
-            settings.sync_status = "MONITOR incomplete"
-        else:
-            detail = "Read-only monitoring completed; no business records were written."
-            event = _record_event("MONITOR", "Succeeded", detail, result)
-            settings.last_successful_sync, settings.sync_status = frappe.utils.now_datetime(), "MONITOR succeeded"
-        settings.sync_error = ""
+        result = run_materialized_monitor(frappe_module=frappe)
+        detail = "Materialized monitoring observed one bounded read page; full coverage is not claimed and no business records were written."
+        event = _record_event("MONITOR", "Incomplete", detail, result)
+        settings.last_successful_sync = frappe.utils.now_datetime()
+        settings.sync_status, settings.sync_error = "MONITOR incomplete", ""
         settings.save(ignore_permissions=True)
         if plan["notifications"]:
             _notify_polling_event(event, detail)
+    except RuntimeBridgeError as error:
+        record_scheduler_outcome("MONITOR", "Skipped", f"Materialized monitoring is blocked: {error}")
     except Exception:
-        _record_event("MONITOR", "Failed", "Read-only monitoring failed; see the redacted server error log.")
+        _record_event("MONITOR", "Failed", "Materialized monitoring failed; see the redacted server error log.")
         settings.sync_status = "MONITOR failed"
-        settings.sync_error = "Read-only monitoring failed; see the redacted server error log."
+        settings.sync_error = "Materialized monitoring failed or is not approved; see the redacted server error log."
         settings.save(ignore_permissions=True)
-        frappe.log_error(title="HERO read-only monitoring failed")
+        frappe.log_error(title="HERO materialized monitoring failed")
 
 
 def record_scheduler_outcome(mode: str, status: str, detail: str) -> str | None:

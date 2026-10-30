@@ -112,6 +112,67 @@ def run_scheduled_auto_sync(*, frappe_module=None) -> RuntimePreflight:
     return _run(executable, frappe, automatic=True)
 
 
+def run_materialized_monitor(*, frappe_module=None, client=None):
+    """Observe one approved B2 query page without processing or checkpointing data."""
+    from hero_integration.services.b8_runtime import reconstruct_materialized_read_plan
+    from hero_integration.services.polling import MonitorResult, effective_mode, runtime_plan
+    from hero_integration.services.read_contract import value_at
+    from hero_integration.graphql_protocol.graphql_result_decoder import decode_graphql_result
+    from hero_integration.graphql_protocol.transport import Response
+    from hero_integration.client.settings import get_configuration
+    from hero_integration.client.graphql import HeroGraphQLClient
+    import json
+
+    frappe = _frappe(frappe_module)
+    settings = frappe.get_single("HERO Integration Settings")
+    if effective_mode(settings) != "MONITOR":
+        raise RuntimeBridgeError("Materialized monitoring requires MONITOR mode.")
+    polling = runtime_plan(settings)
+    if polling["unsupported_sources"] or polling["filters"]:
+        raise RuntimeBridgeError("Materialized monitoring cannot apply legacy polling filters; review the approved query variables.")
+    if polling["reconciliation"]:
+        raise RuntimeBridgeError("Materialized monitoring does not yet support reconciliation.")
+    site = getattr(getattr(frappe, "local", None), "site", "")
+    source = str(getattr(settings, "hero_source_instance", "default") or "default").strip()
+    if not site or not source:
+        raise RuntimeBridgeError("Monitoring requires current site and source identities.")
+    actor = _scheduler_actor(frappe)
+    plans = _runtime_plan_service(frappe)
+    approved = plans.current_approved(site, source)
+    if approved is None:
+        raise RuntimeBridgeError("No approved canonical runtime plan exists for this site/source instance.")
+    executable = plans.resolve_executable_plan(site, source, approved.generation, True, actor)
+    _require_latest_validated_snapshot(frappe, settings, source, executable.selection)
+    materialized = reconstruct_materialized_read_plan(executable.selection, frappe_module=frappe)
+    if materialized.sealed.contract.page_size > polling["page_size"]:
+        raise RuntimeBridgeError("The approved read page size exceeds the monitoring limit.")
+    configuration = get_configuration()
+    if configuration.source_instance != source:
+        raise RuntimeBridgeError("Configured HERO source changed before monitoring.")
+    transport = client or HeroGraphQLClient(configuration.endpoint, lambda: configuration.api_token,
+                                            timeout=configuration.timeout_seconds, max_retries=0)
+    # Resolve the same generation and seal again immediately before transport.
+    current = plans.resolve_executable_plan(site, source, approved.generation, True, actor)
+    _require_latest_validated_snapshot(frappe, settings, source, current.selection)
+    if current.selection != executable.selection:
+        raise RuntimeBridgeError("Approved monitoring plan changed before the read.")
+    request = materialized.request
+    data = transport.query(request.document, dict(request.variables))
+    decode_graphql_result(request, Response(True, json.dumps({"data": data}), True))
+    contract = materialized.sealed.contract
+    records = value_at(data, contract.records_path)
+    if not isinstance(records, list) or len(records) > contract.page_size or not all(isinstance(row, dict) for row in records):
+        raise RuntimeBridgeError("Materialized monitoring response violates its bounded read contract.")
+    for row in records:
+        identity = value_at(row, contract.identity_path)
+        if isinstance(identity, bool) or not isinstance(identity, (str, int)) or not str(identity):
+            raise RuntimeBridgeError("Materialized monitoring response has no valid record identity.")
+    operation = contract.target_operation
+    return MonitorResult(len(records) if operation == "HeroCustomers" else 0,
+                         len(records) if operation == "HeroProjectMatches" else 0,
+                         source, (operation,))
+
+
 def run_pending_sync(expected_plan_generation: int, *, frappe_module=None, provider=None) -> RuntimePreflight:
     """Run an explicitly requested bound-only reconciliation while polling is OFF.
 
