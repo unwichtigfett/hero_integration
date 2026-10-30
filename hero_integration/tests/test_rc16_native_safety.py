@@ -146,6 +146,44 @@ class TestRC16NativeSafety(IntegrationTestCase):
         self.assertEqual(frappe.db.get_value("HERO Integration Run", run.name, "state"), "Running")
         self.assertEqual(frappe.db.get_single_value("HERO Integration Sync State", "active_run"), run.name)
 
+    def test_live_claim_blocks_while_an_expired_claim_is_released(self):
+        from datetime import timedelta
+        from frappe.utils import now_datetime
+
+        first, second = self._run(), self._run()
+        frappe.db.commit()
+        self.assertTrue(_claim_run(first))
+        self.assertFalse(_claim_run(second))
+        self.assertEqual(frappe.db.get_value("HERO Integration Run", second.name, "state"), "Blocked")
+        self.assertTrue(api._has_active_run())
+        # The first worker stopped without finishing: its lease runs out.
+        frappe.db.set_value("HERO Integration Run", first.name, "lease_expires_on", now_datetime() - timedelta(seconds=1))
+        frappe.db.commit()
+        self.assertFalse(api._has_active_run())
+        third = self._run()
+        frappe.db.commit()
+        self.assertTrue(_claim_run(third))
+        self.assertEqual(frappe.db.get_value("HERO Integration Run", first.name, "state"), "Failed")
+        self.assertIn("lease expired", frappe.db.get_value("HERO Integration Run", first.name, "error_message"))
+        self.assertEqual(frappe.db.get_single_value("HERO Integration Sync State", "active_run"), third.name)
+
+    def test_retried_job_reclaims_its_own_run_only_after_the_lease_expired(self):
+        from datetime import timedelta
+        from frappe.utils import now_datetime
+
+        run = self._run()
+        frappe.db.commit()
+        self.assertTrue(_claim_run(run))
+        first_claim = run.started_on
+        duplicate = frappe.get_doc("HERO Integration Run", run.name)
+        self.assertFalse(_claim_run(duplicate))
+        frappe.db.set_value("HERO Integration Run", run.name, "lease_expires_on", now_datetime() - timedelta(seconds=1))
+        frappe.db.commit()
+        retried = frappe.get_doc("HERO Integration Run", run.name)
+        self.assertTrue(_claim_run(retried))
+        self.assertGreater(retried.started_on, first_claim)
+        self.assertGreater(retried.lease_expires_on, now_datetime())
+
     def test_frappe_dispatcher_rejects_get_for_every_write_rpc(self) -> None:
         previous_request = getattr(frappe.local, "request", None)
         try:
