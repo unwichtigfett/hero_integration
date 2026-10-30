@@ -71,7 +71,7 @@ def test_non_finite_float_text_and_default_rejected(text):
     _, model = numeric_model("Float", default=text)
     with pytest.raises(GraphQLArgumentValueError, match="must be finite"):
         parse_argument_text(model.arguments[0], text)
-    with pytest.raises(GraphQLArgumentValueError, match="must be finite"):
+    with pytest.raises(GraphQLArgumentValueError):
         validate_argument_values(model, {})
 
 
@@ -114,7 +114,7 @@ def test_integer_id_is_not_restricted_to_graphql_int_range():
 
 @pytest.mark.parametrize("kind,text", [("Int", '{"values":[1,2147483648]}'), ("Float", '{"values":[1,1e999]}')])
 def test_nested_numeric_text_and_default_report_the_offending_path(kind, text):
-    _, model = numeric_model(kind, nested=True, default=text)
+    _, model = numeric_model(kind, nested=True, default=text.replace('"values"', 'values'))
     with pytest.raises(GraphQLArgumentValueError, match=r"filter\.values\[1\]"):
         parse_argument_text(model.arguments[0], text)
     with pytest.raises(GraphQLArgumentValueError, match=r"filter\.values\[1\]"):
@@ -137,3 +137,61 @@ def test_nested_text_rejects_boolean_without_converting_it():
     _, model = numeric_model("Float", nested=True)
     with pytest.raises(GraphQLArgumentValueError, match=r"filter\.values\[1\]"):
         parse_argument_text(model.arguments[0], '{"values":[0,true]}')
+
+
+@pytest.mark.parametrize("kind", ["Float", "ID"])
+def test_graphql_default_large_number_obeys_declared_scalar(kind):
+    _, model = numeric_model(kind, nested=True, default="{values: [2147483648]}")
+    assert validate_argument_values(model, {}).values == {"filter": {"values": [2147483648]}}
+
+
+def test_graphql_default_nested_int_boundary_and_omission():
+    _, model = numeric_model("Int", nested=True, default="{values: [-2147483648, 2147483647]}")
+    assert validate_argument_values(model, {}).values == {"filter": {"values": [-2147483648, 2147483647]}}
+    assert validate_typed_argument_values(model, {}) == {}
+
+
+@pytest.mark.parametrize("literal", ["{values: [$x]}", "{values: [1}", "{values: [1], values: [2]}", "{values: [1]} extra"])
+def test_default_must_be_unambiguous_constant_graphql_value(literal):
+    _, model = numeric_model("Int", nested=True, default=literal)
+    with pytest.raises(GraphQLArgumentValueError):
+        validate_argument_values(model, {})
+
+
+def test_graphql_default_preserves_enum_boolean_null_and_escaped_string():
+    from hero_integration.graphql_protocol.schema import GraphQLEnumValue
+    enum = GraphQLType("ENUM", "Mode", None, enum_values=(GraphQLEnumValue("READY", None, False, None),))
+    fields = (
+        GraphQLArgument("mode", None, GraphQLTypeRef("ENUM", "Mode"), None),
+        GraphQLArgument("active", None, GraphQLTypeRef("SCALAR", "Boolean"), None),
+        GraphQLArgument("note", None, GraphQLTypeRef("SCALAR", "String"), None),
+        GraphQLArgument("optional", None, GraphQLTypeRef("SCALAR", "String"), None),
+    )
+    ref = GraphQLTypeRef("INPUT_OBJECT", "Filter")
+    # Build the GraphQL string using JSON escaping to exercise commas and escapes.
+    import json
+    expected = 'a, b\n"quoted"'
+    literal = '{mode: READY, active: false, note: ' + json.dumps(expected) + ', optional: null}'
+    field = GraphQLField("records", None, (GraphQLArgument("filter", None, ref, literal),), GraphQLTypeRef("SCALAR", "String"), False, None)
+    schema = GraphQLSchema("Query", None, None, (GraphQLType("OBJECT", "Query", None, fields=(field,)),
+        GraphQLType("INPUT_OBJECT", "Filter", None, input_fields=fields), enum, GraphQLType("SCALAR", "String", None)))
+    model = build_query_composer_model(schema, field)
+    assert validate_argument_values(model, {}).values == {"filter": {"mode": "READY", "active": False, "note": expected, "optional": None}}
+
+
+def test_nested_objects_and_custom_scalar_defaults_preserve_contents():
+    inner = GraphQLType("INPUT_OBJECT", "Inner", None, input_fields=(
+        GraphQLArgument("values", None, GraphQLTypeRef("LIST", of_type=GraphQLTypeRef("SCALAR", "Int")), None),
+        GraphQLArgument("opaque", None, GraphQLTypeRef("SCALAR", "Custom"), None),
+    ))
+    outer = GraphQLType("INPUT_OBJECT", "Outer", None, input_fields=(
+        GraphQLArgument("inner", None, GraphQLTypeRef("INPUT_OBJECT", "Inner"), None),
+    ))
+    literal = '{inner: {values: [1, 2147483647], opaque: "a,b"}}'
+    field = GraphQLField("records", None, (GraphQLArgument("filter", None, GraphQLTypeRef("INPUT_OBJECT", "Outer"), literal),), GraphQLTypeRef("SCALAR", "String"), False, None)
+    schema = GraphQLSchema("Query", None, None, (GraphQLType("OBJECT", "Query", None, fields=(field,)),
+        GraphQLType("SCALAR", "String", None), GraphQLType("SCALAR", "Custom", None), inner, outer))
+    model = build_query_composer_model(schema, field)
+    assert validate_argument_values(model, {}).values == {"filter": {"inner": {"values": [1, 2147483647], "opaque": "a,b"}}}
+    assert validate_typed_argument_values(model, {"filter": None}, schema=schema) == {"filter": None}
+    assert validate_typed_argument_values(model, {}, schema=schema) == {}

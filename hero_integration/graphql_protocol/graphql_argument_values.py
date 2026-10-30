@@ -3,6 +3,8 @@ from collections.abc import Mapping
 import json
 import math
 from dataclasses import dataclass
+from graphql import GraphQLError, parse_const_value, value_from_ast_untyped
+from graphql.language import ObjectValueNode, ListValueNode
 from .graphql_query_composer import GraphQLArgumentSpec, GraphQLQueryComposerModel
 from .schema import GraphQLSchema, GraphQLTypeRef
 
@@ -112,7 +114,30 @@ def _validate(
         return result
     return value
 
+def _check_literal_fields(node, path: str) -> None:
+    # The GraphQL parser accepts duplicate fields; conversion would discard one.
+    if isinstance(node, ObjectValueNode):
+        seen = set()
+        for field in node.fields:
+            name = field.name.value
+            if name in seen:
+                raise GraphQLArgumentValueError(f"Duplicate GraphQL default field {path}.{name}.")
+            seen.add(name)
+            _check_literal_fields(field.value, f"{path}.{name}")
+    elif isinstance(node, ListValueNode):
+        for index, value in enumerate(node.values):
+            _check_literal_fields(value, f"{path}[{index}]")
+
+
 def _parse(text: str, ref: GraphQLTypeRef, name: str, *, default: bool=False, schema: GraphQLSchema | None = None) -> object:
+    if default:
+        try:
+            literal = parse_const_value(text)
+            _check_literal_fields(literal, name)
+            value = value_from_ast_untyped(literal)
+        except GraphQLError as exc:
+            raise GraphQLArgumentValueError(f"Invalid GraphQL default for {name!r}: {exc.message}") from exc
+        return _validate(value, ref, name, schema=schema)
     target=_unwrap(ref)
     kind=target.named_type()
     if target.kind=="LIST":
