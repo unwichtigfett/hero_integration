@@ -609,7 +609,12 @@ def _migrate_customer(record: dict[str, object], run) -> Result:
         source_id = plan.source_identity(record)
         values = plan.values(record)
         contact_values = plan.customer_contact_values(values)
-        address = _customer_primary_address(record, plan.customer_primary_address_line2(record))
+        address_note = ""
+        try:
+            address = _customer_primary_address(record, plan.customer_primary_address_line2(record))
+        except IncompleteAddress as error:
+            # The Customer is still imported; an incomplete address is skipped, as if HERO had none.
+            address, address_note = None, f" {error} It was not imported."
     except MappingPlanError as error:
         return Result("BLOCKED_RECORD", str(error))
     if plan.source_deleted(record):
@@ -624,7 +629,7 @@ def _migrate_customer(record: dict[str, object], run) -> Result:
         values['custom_hero_source_id'] = f'{_source_instance(record)}:{source_id}'
     home_phone = plan.home_phone(record)
     tracks_home_phone = plan.has_home_phone()
-    return _upsert(
+    result = _upsert(
         "customer", source_id, record, values, "Customer", "customer_name", plan.mapping_version, run,
         after_insert=lambda customer: _synchronize_customer_relations(
             customer, contact_values, home_phone, address, _source_instance(record), plan.mapping_version,
@@ -643,6 +648,10 @@ def _migrate_customer(record: dict[str, object], run) -> Result:
         comparison_extra={"hero_phone_home": home_phone} if tracks_home_phone else None,
         required_on_create=("customer_type",),
     )
+    if address_note and result.code != "BLOCKED_RECORD":
+        from dataclasses import replace
+        result = replace(result, detail=(result.detail or "") + address_note)
+    return result
 
 
 def _process_projection(run, source) -> None:
@@ -895,6 +904,9 @@ def _migrate_native_task(record, run, plan, scope) -> Result:
     selected_paths = {definition.source_path for definition in plan.definitions}
     if record.get('is_deleted') is True:
         return Result('SKIPPED_SOURCE_DELETED', 'Source deletion does not delete or close a Task.')
+    if _no_project_match(record.get('target_project_match_id')):
+        # No project: treated as omitted, so it neither links nor clears nor needs review.
+        record = {key: value for key, value in record.items() if key != 'target_project_match_id'}
     values = {}
     try:
         if ('title' in record and record['title'] is not None
@@ -1116,7 +1128,14 @@ def _projection_target_values(target, values, contract):
     return snapshot
 
 
+def _no_project_match(value) -> bool:
+    """HERO uses ProjectMatch ID 0 for records that belong to no project."""
+    return type(value) is int and value == 0
+
+
 def _project_name_for_source(value, source_instance):
+    if _no_project_match(value):
+        return None  # same as a NULL reference: no new link, an existing one stays
     if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
         raise MappingPlanError('ProjectMatch reference must be a positive integer.')
     link = _link('project', str(value), source_instance)
@@ -1464,6 +1483,10 @@ def _source_instance(record: dict[str, object]) -> str:
     return value.strip() if isinstance(value, str) and value.strip() else "default"
 
 
+class IncompleteAddress(MappingPlanError):
+    """Street, zip code or city is missing; the Customer is imported without this address."""
+
+
 def _is_contact_person(record: dict[str, object]) -> bool:
     """Contact persons have a distinct HERO lifecycle and must not become Customers."""
     return record.get("is_contact_person") is True
@@ -1481,7 +1504,7 @@ def _customer_primary_address(record: dict[str, object], selected_line2: str | N
         raise MappingPlanError("Customer primary address identity is missing or invalid.")
     fields = {key: value.get(key) for key in ("street", "zipcode", "city")}
     if not all(isinstance(item, str) and item.strip() for item in fields.values()):
-        raise MappingPlanError("Customer primary address is incomplete.")
+        raise IncompleteAddress("Customer primary address is incomplete.")
     country = value.get('country')
     country_code = country.get('code') if isinstance(country, dict) else None
     address = {
