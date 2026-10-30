@@ -23,6 +23,7 @@ test("settings save omits removed fields and preserves other controls", async ()
     const api = async (method, payload) => {
         if (method === "workspace_settings_save") {
             calls.push(payload);
+            assert.equal("admin_notification_recipients" in payload, false);
             assert.equal("polling_data_sources" in payload, false);
             assert.equal("polling_filters_json" in payload, false);
             return settings;
@@ -37,6 +38,9 @@ test("settings save omits removed fields and preserves other controls", async ()
     assert.equal(workspace.find(el => el.textContent === "Validated snapshot data sources"), undefined);
     assert.equal(workspace.find(el => el.textContent === "Operation filters JSON"), undefined);
     assert.ok(workspace.find(el => el.textContent === "Allow bootstrap"));
+    assert.ok(workspace.find(el => el.textContent === "Allowed hosts"));
+    assert.ok(workspace.find(el => el.textContent === "Source instance"));
+    assert.equal(workspace.find(el => el.textContent === "Administrator notification recipients"), undefined);
     const save = workspace.find(el => el.tag === "button" && el.textContent === "Save Settings");
     await save.handlers.click();
     assert.equal(calls.length, 1);

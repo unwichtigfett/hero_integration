@@ -661,27 +661,18 @@
         }
         function renderSchemaExplorer() {
             if (!admin) return;
-            let viewEpoch = epoch, request = 0, suggestionRequest = 0, packageRequest = 0;
-            const viewTab = tab, section = $("<details class='hero-mapping-schema-explorer' data-field-picker></details>").append($('<summary></summary>').text(text('Inspect saved schema')));
+            let viewEpoch = epoch, request = 0, packageRequest = 0;
+            const viewTab = tab, section = $("<section data-field-picker></section>"), explorer = $("<details class='hero-mapping-schema-explorer'></details>").append($('<summary></summary>').text(text('Inspect saved schema')));
+            section.append(explorer);
             const snapshot = $("<select class='form-control' aria-label='Saved schema snapshot'></select>");
             const operations = $("<select class='form-control' aria-label='Schema operation'></select>");
             const info = $("<p role='status'></p>"), limitNotice = $("<p role='status'></p>"), details = $('<pre></pre>');
-            const source = $("<input class='form-control' aria-label='HERO source path'>"), target = $("<input class='form-control' aria-label='Target DocType (optional)'>");
             const currentView = (number) => !disposed && epoch === viewEpoch && tab === viewTab && number === request && section[0].isConnected;
             const resetOperations = () => operations.empty().append($('<option></option>').val('').text(text('Choose an operation'))).prop('disabled', true);
             const resetSnapshots = () => snapshot.empty().append($('<option></option>').val('').text(text('Choose a validated snapshot'))).prop('disabled', true);
             resetSnapshots(); resetOperations();
-            const suggestions = button('Show field suggestions', async () => {
-                const snapshotName = snapshot.val(), operation = operations.val(), sourcePath = source.val().trim();
-                if (!snapshotName || !operation || !sourcePath || snapshot.prop('disabled') || operations.prop('disabled')) return info.text(text('Choose a snapshot and query operation and enter a source path.'));
-                const serial = request, suggestionSerial = ++suggestionRequest; info.text(text('Loading suggestions…'));
-                try {
-                    const result = await rpc('mapping_suggestions', {snapshot_name: snapshotName, operation, source_path: sourcePath, target_doctype: target.val().trim()});
-                    if (currentView(serial) && suggestionSerial === suggestionRequest) { details.text(JSON.stringify(result, null, 2)); info.text(text('Suggestions are read only.')); }
-                } catch (error) { if (currentView(serial) && suggestionSerial === suggestionRequest) info.text(errorText(error)); }
-            });
             async function loadOperations(name, preferred = '') {
-                const serial = ++request; suggestionRequest++; section.trigger('hero-mapping-candidate-invalidate'); resetOperations(); details.empty();
+                const serial = ++request; resetOperations(); details.empty();
                 if (!name) { info.text(text('Choose a validated snapshot.')); return; }
                 info.text(text('Loading schema operations…'));
                 try {
@@ -689,12 +680,12 @@
                     if (!currentView(serial)) return;
                     result.forEach((item) => operations.append($('<option></option>').val(item.operation_name).text(`${item.operation_name} → ${item.return_type || 'unknown'}`)));
                     operations.prop('disabled', false); info.text(text('Choose an operation to inspect its schema.'));
-                    operations.off('change.schema').on('change.schema', () => { suggestionRequest++; const item = result.find((row) => row.operation_name === operations.val()); details.text(item ? JSON.stringify(item, null, 2) : ''); info.text(text('Suggestions are read only; select Show field suggestions to load them.')); });
+                    operations.off('change.schema').on('change.schema', () => { const item = result.find((row) => row.operation_name === operations.val()); details.text(item ? JSON.stringify(item, null, 2) : ''); info.text(text('Saved schema operation details.')); });
                     if (preferred && result.some((item) => item.operation_name === preferred)) operations.val(preferred).trigger('change');
                 } catch (error) { if (currentView(serial)) info.text(errorText(error)); }
             }
             async function loadSnapshots(preferredSnapshot = '', preferredOperation = '') {
-                const serial = ++request; suggestionRequest++; section.trigger('hero-mapping-candidate-invalidate'); resetSnapshots(); resetOperations(); details.empty();
+                const serial = ++request; resetSnapshots(); resetOperations(); details.empty();
                 info.text(text('Loading saved snapshots…')); limitNotice.empty();
                 try {
                     const result = await readSnapshotPages((args) => rpc('schema_snapshot_list', args), () => currentView(serial));
@@ -714,46 +705,7 @@
                 } catch (error) { if (currentView(serial)) { limitNotice.text(text('The snapshot list could not be loaded completely. Retry before choosing a snapshot.')); info.text(errorText(error)); } }
             }
             snapshot.on('change', () => { packageRequest++; packagePreview.empty(); loadOperations(snapshot.val()); });
-            source.add(target).on('input', () => { suggestionRequest++; details.empty(); info.text(text('Select Show field suggestions to load the current inputs.')); });
-            section.append(snapshot, operations, info, limitNotice, details);
-            if (viewTab === 'Query') {
-                section.append(source, target, suggestions);
-                let candidateSerial = 0;
-                const candidateSource = $("<input class='form-control' aria-label='Legacy preview HERO source path'>");
-                const candidateDoctype = $("<input class='form-control' aria-label='Legacy preview target DocType'>");
-                const candidateField = $("<input class='form-control' aria-label='Legacy preview target field'>");
-                const candidateSample = $("<textarea class='form-control' aria-label='Legacy preview synthetic JSON record'></textarea>");
-                const candidateState = $("<p role='status'></p>"), candidateResult = $("<pre></pre>");
-                const clearCandidate = () => { candidateSerial++; candidateResult.empty(); candidateState.text(text('Enter inputs and run the legacy preview.')); };
-                snapshot.add(operations).on('change', clearCandidate);
-                candidateSource.add(candidateDoctype).add(candidateField).add(candidateSample).on('input', clearCandidate);
-                section.on('hero-mapping-picker-resume hero-mapping-candidate-invalidate', clearCandidate);
-                const preview = button('Preview synthetic record (legacy)', async () => {
-                    let args;
-                    try {
-                        if (snapshot.prop('disabled') || operations.prop('disabled')) throw new Error('Choose a validated snapshot and query.');
-                        args = legacyCandidateArgs(snapshot.val(), operations.val(), candidateSource.val(), candidateDoctype.val(), candidateField.val(), candidateSample.val());
-                    } catch (error) { candidateResult.empty(); candidateState.text(text(error.message)); return; }
-                    const serial = ++candidateSerial, viewRequest = request;
-                    candidateResult.empty(); candidateState.text(text('Loading legacy preview…'));
-                    const current = () => currentView(viewRequest) && serial === candidateSerial;
-                    try {
-                        const result = await legacyCandidateRpc(args);
-                        if (!current()) return;
-                        let display;
-                        try { display = legacyCandidatePreviewText(result, args); }
-                        catch (error) { candidateState.text(text(error.message)); return; }
-                        candidateState.text(text('Read-only legacy identity preview. No mapping or document was saved.'));
-                        candidateResult.text(display);
-                    } catch (error) { if (current()) candidateState.text(text(error?.message === 'This browser cannot preserve preview numbers.' ? error.message : errorText(error))); }
-                });
-                section.append($('<h4></h4>').text(text('Legacy synthetic record preview')),
-                    $('<p></p>').text(text('Uses only historical approved source paths and the Identity transformation. This does not preview personal draft rules, save a mapping, or contact HERO. Enter synthetic data only.')),
-                    $('<label></label>').text(text('HERO source path')).append(candidateSource),
-                    $('<label></label>').text(text('Target DocType')).append(candidateDoctype),
-                    $('<label></label>').text(text('Target field')).append(candidateField),
-                    $('<label></label>').text(text('Synthetic JSON record')).append(candidateSample), preview, candidateState, candidateResult);
-            }
+            explorer.append(snapshot, operations, info, limitNotice, details);
             if (viewTab === 'Mutation') {
                 let legacyRequest = 0, detailSerial = 0;
                 const legacyState = $("<p role='status'></p>");
@@ -938,7 +890,7 @@
                 $('<p></p>').text(text('Export includes saved global field mappings for this snapshot fingerprint, including Active, Draft and Disabled mappings. Personal drafts are not included.')),
                 $('<p></p>').text(text('Select changes explicitly. Adoption may create schema and activates selected field mappings; it does not migrate HERO data.')),
                 fileInput, exportPackage, packageState, packagePreview);
-            section.append(button('Retry saved schema', () => { packageRequest++; packagePreview.empty(); loadSnapshots(snapshot.val(), operations.val()); }));
+            explorer.append(button('Retry saved schema', () => { packageRequest++; packagePreview.empty(); loadSnapshots(snapshot.val(), operations.val()); }));
             section.append(button('Open Graph Viewer', () => {
                 const name = snapshot.val(); if (!name || snapshot.prop('disabled')) return info.text(text('Choose a validated snapshot.'));
                 leaveWorkspace(() => window.hero_integration_ui.setRoute('api', {hero_tool: 'graph', snapshot: name}));
@@ -948,7 +900,7 @@
                 packageRequest++; packagePreview.empty(); packageState.text(text('Choose a package again to preview it.'));
                 viewEpoch = epoch; loadSnapshots(name, operation);
             });
-            renderSavedNodes(section, {viewTab, snapshot, operations, source, info, loadSnapshots, current: () => !disposed && epoch === viewEpoch && tab === viewTab && section[0].isConnected});
+            renderSavedNodes(section, {viewTab, snapshot, operations, explorer, info, loadSnapshots, current: () => !disposed && epoch === viewEpoch && tab === viewTab && section[0].isConnected});
             // Preselect the workspace snapshot (the newest validated one by default).
             body.append(section); loadSnapshots(snapshotFilter);
         }
@@ -979,11 +931,10 @@
                     view.info.text(text(`This node belongs to the ${context.operation_kind === 'QUERY' ? 'Query' : 'Mutation'} view. Open that mapping tab to use it.`));
                     return;
                 }
-                section.prop('open', true);
+                view.explorer.prop('open', true);
                 view.loadSnapshots(snapshotName, context.operation).then(() => {
                     if (!view.current()) return;
-                    if (view.viewTab === 'Query' && context.path) view.source.val(context.path).trigger('input');
-                    view.info.text(text(`Preselected ${context.operation}${context.path ? ' · ' + context.path : ''}. Nothing was saved or activated.`));
+                    view.info.text(text(`Operation ${context.operation} selected.${context.path ? ' Saved node path: ' + context.path + '.' : ''} Nothing was saved or activated.`));
                 });
             }
             async function use(item) {
@@ -1031,12 +982,15 @@
             const viewEpoch = epoch, viewTab = tab, direction = directionForTab(viewTab);
             const section = $("<section data-exchange-context></section>"), select = $("<select class='form-control' aria-label='Import target snapshot'></select>");
             const actions = $("<div class='hero-mapping-actions'></div>"), message = $("<p role='status'></p>");
-            section.append($("<h3></h3>").text(text("Import personal drafts")), select, message, actions); body.append(section);
+            section.append($("<h3></h3>").text(text("Load / Save mappings")), select, message, actions); body.append(section);
             select.append($("<option></option>").val("").text(text("Choose a validated target snapshot")));
             const draw = () => {
                 actions.empty(); const ctx = exchangeContext(), entry = ctx && exchanges.get(ctx.key);
+                const label = exchangeLabel(ctx || {direction});
+                actions.append(button(`Import ${label} mappings`, chooseImport).attr("data-import-direction", direction).prop("disabled", !ctx),
+                    button(`Export ${label} mappings`, () => exportDirection()).prop("disabled", !ctx),
+                    button(`Export ${label} active mappings and personal drafts (portable v2)`, () => exportDirection("hero-personal-mapping-portable-v2")).prop("disabled", !ctx));
                 if (!ctx) return;
-                actions.append(button(`Import ${exchangeLabel(ctx)} mappings`, chooseImport).attr("data-import-direction", direction));
                 if (entry) actions.append(button("Review import preview", () => exchangePreviewDialog(entry)),
                     button("Save imported personal drafts", saveImportedDirection, true).prop("disabled", !entry.adopted || !entry.preview.can_save));
             };
@@ -1046,9 +1000,10 @@
                     if (!rows || disposed || epoch !== viewEpoch || tab !== viewTab || !section[0].isConnected) return;
                     const valid = rows.filter((row) => row.analysis_status === "Validated" && typeof row.source_instance === "string" && row.source_instance);
                     valid.forEach((row) => select.append($("<option></option>").val(row.name).text(`${snapshotLabel(row.name)} · ${row.source_instance}`)));
-                    const selected = exchangeSelections.get(direction);
+                    const selected = active?.mapping_type === "graphql" ? {snapshot_name: active.schema_snapshot, source_instance: active.source_instance} : exchangeSelections.get(direction);
+                    if (active?.mapping_type === "graphql") select.prop("disabled", true);
                     if (selected && valid.some((row) => row.name === selected.snapshot_name && row.source_instance === selected.source_instance)) select.val(selected.snapshot_name);
-                    else if (selected) { exchangeSelections.delete(direction); draw(); }
+                    else if (selected && !active) { exchangeSelections.delete(direction); draw(); }
                     select.on("change", () => {
                         const row = valid.find((entry) => entry.name === select.val());
                         if (row) exchangeSelections.set(direction, {source_instance: row.source_instance, snapshot_name: row.name, direction});
@@ -1205,7 +1160,7 @@
                 downloadExport(result.filename, result.content);
                 say(`Saved ${exchangeLabel(context)} drafts exported. Local unsaved edits were not included.`);
             } catch (error) { if (!disposed && request === epoch) say(errorText(error)); }
-            finally { if (!disposed && request === epoch) { setBusy(false); renderDetail(); } }
+            finally { if (!disposed && request === epoch) { setBusy(false); if (active) renderDetail(); else renderList(); } }
         }
         async function saveImportedDirection() {
             const context = exchangeContext(), entry = context && exchanges.get(context.key);
@@ -1314,7 +1269,6 @@
                     .filter((item) => `${item.label} ${item.name}`.toLowerCase().includes(search.toLowerCase()));
                 return {items: options.slice(offset, offset + 20), total: options.length};
             }, (item) => leave(() => { snapshotFilter = item.name; active = null; model = null; renderList(); })).prop("hidden", !admin);
-            renderDefinitionChooser(header).prop("hidden", !admin);
             const parent = admin && snapshotFilter ? snapshotParents.get(snapshotFilter) : "";
             if (parent) header.append(button(`Inherit mappings from parent ${snapshotLabel(parent)}`, () => inheritFromParent(snapshotFilter, parent))
                 .attr("data-inherit-parent", "").attr("title", "Creates your personal drafts on this snapshot from the parent's active mappings. Nothing is activated."));
@@ -1434,16 +1388,6 @@
                 if (!active.parentless) toolbar.append(button("Active version", () => leave(() => { epoch++; ruleCache.clear(); model = null; mode = "active"; renderDetail(); })),
                     button("Open my draft", openDraft));
                 toolbar.append(button("My saved revisions", () => leave(() => showRevisions(0))));
-                const context = exchangeContext(), imported = context && exchanges.get(context.key);
-                if (context) {
-                    toolbar.append(button(`Import ${exchangeLabel(context)} mappings`, chooseImport).attr("data-import-direction", context.direction),
-                        button(`Export ${exchangeLabel(context)} mappings`, () => exportDirection()),
-                        button(`Export ${exchangeLabel(context)} active mappings and personal drafts (portable v2)`,
-                            () => exportDirection("hero-personal-mapping-portable-v2")));
-                    if (imported) toolbar.append(button(`Review imported ${exchangeLabel(context)} package`, () => exchangePreviewDialog(imported)),
-                        button(`Save imported ${exchangeLabel(context)} drafts (${imported.preview.items.length})`, saveImportedDirection, true)
-                            .prop("disabled", !imported.adopted || !imported.preview.can_save));
-                }
                 if (mode === "draft") {
                     if (!active.parentless) toolbar.append(button("Compare active changes", compareActiveChanges).prop("disabled", Boolean(model.detailStale)));
                     toolbar.append(button("Save draft", save, true).attr("data-save-draft", ""), button("Discard saved draft", discard));
@@ -1504,6 +1448,7 @@
             if (list[selected]) renderRow(list[selected], detail);
             else detail.append($("<p></p>").text(text(list.length ? "Choose a field mapping row." : "No field mappings in this definition.")));
             renderMappingsTable(body);
+            if (admin) renderListExchange();
             body.append(toolbar, draftStatus);
             toolbar.addClass("hero-mapping-workbench-actions");
             const tableEpoch = epoch;

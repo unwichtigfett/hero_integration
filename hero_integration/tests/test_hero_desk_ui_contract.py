@@ -206,15 +206,29 @@ class TestHeroDeskUiContract(unittest.TestCase):
         source = MAPPING_EDITOR_JS.read_text()
         explorer = source.split("function renderSchemaExplorer()", 1)[1].split("function renderList()", 1)[0]
         for contract in ("if (!admin) return", "analysis_status === 'Validated'", "schema_snapshot_list",
-                         "schema_operation_catalog", "mapping_suggestions", "leaveWorkspace", "hero_tool: 'graph'",
+                         "schema_operation_catalog", "leaveWorkspace", "hero_tool: 'graph'",
                          "epoch === viewEpoch", "section[0].isConnected", "tab === viewTab",
                          "hero-mapping-picker-resume", "loadSnapshots(name, operation)",
-                         "suggestionSerial === suggestionRequest", "Retry saved schema",
+                         "Retry saved schema",
                          "readSnapshotPages((args) => rpc('schema_snapshot_list', args)", "snapshot list could not be loaded completely",
                          "previously selected snapshot is not available in this result"):
             self.assertIn(contract, explorer)
-        for forbidden in ("workspace_schema_refresh",):
+        for forbidden in ("workspace_schema_refresh", "mapping_suggestions", "Legacy synthetic record preview", "Show field suggestions"):
             self.assertNotIn(forbidden, explorer)
+        self.assertIn("explorer.append(snapshot, operations, info, limitNotice, details)", explorer)
+
+    def test_mapping_exchange_is_below_table_in_list_and_detail(self):
+        source = MAPPING_EDITOR_JS.read_text()
+        listing = source.split("function renderList()", 1)[1].split("function renderListExchange()", 1)[0]
+        detail = source.split("function renderDetail()", 1)[1].split("function renderContext(", 1)[0]
+        exchange = source.split("function renderListExchange()", 1)[1].split("function renderPersonalDraftList()", 1)[0]
+        for view in (listing, detail):
+            self.assertLess(view.index("renderMappingsTable(body)"), view.index("renderListExchange()"))
+        for action in ("chooseImport", "exportDirection()", "hero-personal-mapping-portable-v2"):
+            self.assertIn(action, exchange)
+        self.assertIn('active?.mapping_type === "graphql"', exchange)
+        context = source.split("function renderWorkspaceContext()", 1)[1].split("function inheritFromParent(", 1)[0]
+        self.assertNotIn("renderDefinitionChooser(header)", context)
 
     def test_shared_writeback_save_is_scoped_and_conflict_guarded(self):
         source = MAPPING_EDITOR_JS.read_text()
