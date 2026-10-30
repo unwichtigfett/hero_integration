@@ -108,8 +108,9 @@ def from_documents(service, mapping, snapshot) -> ReadContract:
             CUSTOMER_CONTRACT_V1,
             CUSTOMER_CONTRACT_V2,
             CUSTOMER_CONTRACT_V3,
-            PROJECT_QUERY_V1,
+            PROJECT_CONTRACT_V1,
             customer_query,
+            project_query,
         )
 
         customer_contract_version = str(config.get("customer_contract_version", CUSTOMER_CONTRACT_V1))
@@ -132,7 +133,10 @@ def from_documents(service, mapping, snapshot) -> ReadContract:
             elif line2_definition in selected_literals or legal_form_definition in selected_literals:
                 raise ReadContractError("Customer V1 cannot select V2 or V3 bindings.")
         else:
-            expected_query = PROJECT_QUERY_V1
+            try:
+                expected_query = project_query(str(config.get("project_contract_version", PROJECT_CONTRACT_V1)))
+            except ValueError as error:
+                raise ReadContractError("Project read-contract version is not supported.") from error
         expected_variables = (
             {"first": "$page_size", "offset": "$offset", "orderBy": "id", "showDeleted": True}
             if target == "HeroCustomers"
