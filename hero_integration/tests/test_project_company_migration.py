@@ -58,6 +58,7 @@ class TestProjectCompanyMigration(unittest.TestCase):
         frappe_module = types.ModuleType("frappe")
         frappe_module.db = cls.frappe.db
         frappe_module.get_doc = cls.frappe.get_doc
+        frappe_module.get_all = cls.frappe.get_all
         frappe_module.get_meta = cls.frappe.get_meta
         frappe_module.get_single = cls.frappe.get_single
         frappe_module.has_permission = cls.frappe.has_permission
@@ -539,6 +540,13 @@ class TestProjectCompanyMigration(unittest.TestCase):
         self.assertEqual(run.customer_phase_state, "Completed")
         self.assertEqual((run.customer_phase_created, run.customer_phase_blocked), (1, 1))
 
+    def test_a_namesake_of_another_hero_customer_is_created(self):
+        self.frappe.customers.append({"name": "CUST-LINKED", "customer_name": "Same Name"})
+        self.frappe.links[("customer", "900")] = SimpleNamespace(target_name="CUST-LINKED", target_doctype="Customer")
+        self.assertIsNone(self.migration._unlinked_namesake("Customer", "customer_name", "Same Name"))
+        self.frappe.customers.append({"name": "CUST-MANUAL", "customer_name": "Same Name"})
+        self.assertEqual(self.migration._unlinked_namesake("Customer", "customer_name", "Same Name"), "CUST-MANUAL")
+
     def test_missing_or_invalid_company_blocks_before_project_insert(self):
         self.frappe.default_company = "Missing Company"
 
@@ -706,6 +714,15 @@ class _FakeFrappe:
         if values["doctype"] == "HERO Integration Link":
             return _LinkDocument(self, values)
         raise AssertionError(f"unexpected document creation: {values}")
+
+    def get_all(self, doctype, filters, pluck, limit_page_length):
+        if doctype == "HERO Integration Link":
+            names = set(filters["target_name"][1])
+            return [link.target_name for link in self.links.values()
+                    if link.target_doctype == filters["target_doctype"] and link.target_name in names]
+        records = self.customers if doctype == "Customer" else self.projects
+        (field, value), = filters.items()
+        return [record["name"] for record in records if record.get(field) == value]
 
     def link(self, source_type, source_id, source_instance="default"):
         return self.links.get((source_type, source_id, source_instance)) or self.links.get((source_type, source_id))

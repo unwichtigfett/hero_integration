@@ -1446,6 +1446,8 @@ def _upsert(
         return Result("BLOCKED_RECORD", "HERO response omits the source of: " + ", ".join(unknown) + ".")
     duplicate = frappe.db.exists(doctype, {name_field: values[name_field]})
     if duplicate:
+        duplicate = _unlinked_namesake(doctype, name_field, values[name_field])
+    if duplicate:
         return Result("SKIPPED_AMBIGUOUS", f"Existing {doctype} has no stable HERO link.", doctype, duplicate)
     if run.mode == "Preview":
         return Result("PREVIEW_OK", "A new target record would be created.", doctype)
@@ -1508,6 +1510,16 @@ def _link(source_type: str, source_id: str, source_instance: str = "default"):
 def _digest(value: object) -> str:
     encoded = json.dumps(value, sort_keys=True, ensure_ascii=False, default=str, separators=(",", ":")).encode()
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _unlinked_namesake(doctype: str, name_field: str, value: object) -> str | None:
+    """A same-named target without a HERO link may be a manual record; one linked to another HERO record is not."""
+    names = frappe.get_all(doctype, filters={name_field: value}, pluck="name", limit_page_length=0)
+    linked = set(frappe.get_all(
+        "HERO Integration Link", filters={"target_doctype": doctype, "target_name": ["in", names]},
+        pluck="target_name", limit_page_length=0,
+    )) if names else set()
+    return next((name for name in names if name not in linked), None)
 
 
 def _target_values(target, values: dict[str, object]) -> dict[str, object]:
