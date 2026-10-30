@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .schema import (
     GraphQLArgument,
@@ -17,6 +17,7 @@ class GraphQLQueryComposerError(ValueError):
 @dataclass(frozen=True)
 class GraphQLArgumentSpec:
     argument: GraphQLArgument
+    schema: GraphQLSchema | None = field(default=None, repr=False, compare=False)
 
     @property
     def name(self) -> str:
@@ -134,7 +135,7 @@ def _build_root_composer_model(
     )
 
     arguments = tuple(
-        GraphQLArgumentSpec(argument)
+        GraphQLArgumentSpec(argument, schema)
         for argument in root_field.arguments
     )
 

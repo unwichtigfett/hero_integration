@@ -28,18 +28,21 @@ def _validate(
     *,
     schema: GraphQLSchema | None = None,
     strict_scalars: bool = False,
+    numeric_only: bool = False,
 ) -> object:
     if ref.kind == "NON_NULL":
         if value is None:
             raise GraphQLArgumentValueError(f"GraphQL argument {name!r} must not be null.")
-        return _validate(value, _unwrap(ref), name, schema=schema, strict_scalars=strict_scalars)
+        return _validate(value, _unwrap(ref), name, schema=schema, strict_scalars=strict_scalars, numeric_only=numeric_only)
     if value is None:
         return None
     if ref.kind == "LIST":
+        if numeric_only and not isinstance(value, list):
+            return value
         if ref.of_type is None or not isinstance(value, list):
             raise GraphQLArgumentValueError(f"GraphQL list argument {name!r} requires a JSON array.")
         return [
-            _validate(v, ref.of_type, f"{name}[{index}]", schema=schema, strict_scalars=strict_scalars)
+            _validate(v, ref.of_type, f"{name}[{index}]", schema=schema, strict_scalars=strict_scalars, numeric_only=numeric_only)
             for index, v in enumerate(value)
         ]
     kind=ref.named_type()
@@ -50,14 +53,25 @@ def _validate(
         "String": lambda v: isinstance(v,str),
         "ID": lambda v: isinstance(v,(str,int)) and not isinstance(v,bool),
     }
-    if kind in valid and not valid[kind](value):
+    if kind in valid and (not numeric_only or kind in {"Int", "Float"}) and not valid[kind](value):
         raise GraphQLArgumentValueError(f"Invalid value for GraphQL {kind} argument {name!r}.")
     # GraphQL Int is 32-bit and Float is finite for every operation, not only for mutation previews.
     if kind == 'Int' and not -(2**31) <= value < 2**31:
         raise GraphQLArgumentValueError(f"GraphQL Int argument {name!r} is out of range.")
-    if kind == 'Float' and not math.isfinite(value):
-        raise GraphQLArgumentValueError(f"GraphQL Float argument {name!r} must be a finite number.")
+    if kind == 'Float':
+        try:
+            finite = math.isfinite(value)
+        except OverflowError:
+            finite = False
+        if not finite:
+            raise GraphQLArgumentValueError(f"GraphQL Float argument {name!r} must be finite.")
     graphql_type = schema.type_named(kind) if schema is not None and kind else None
+    if numeric_only:
+        if graphql_type is not None and graphql_type.kind == "INPUT_OBJECT" and isinstance(value, Mapping):
+            fields = {item.name: item for item in graphql_type.input_fields}
+            return {key: _validate(child, fields[key].type_ref, f"{name}.{key}", schema=schema, numeric_only=True)
+                    if key in fields else child for key, child in value.items()}
+        return value
     if strict_scalars and kind not in valid and (graphql_type is None or graphql_type.kind not in {'ENUM', 'INPUT_OBJECT'}):
         raise GraphQLArgumentValueError(f"GraphQL scalar {kind!r} is not supported for mutation preview.")
     if graphql_type is not None and graphql_type.kind == "ENUM":
@@ -98,33 +112,33 @@ def _validate(
         return result
     return value
 
-def _parse(text: str, ref: GraphQLTypeRef, name: str, *, default: bool=False) -> object:
+def _parse(text: str, ref: GraphQLTypeRef, name: str, *, default: bool=False, schema: GraphQLSchema | None = None) -> object:
     target=_unwrap(ref)
     kind=target.named_type()
     if target.kind=="LIST":
         try: value=json.loads(text)
         except json.JSONDecodeError as exc:
             raise GraphQLArgumentValueError(f"GraphQL list argument {name!r} requires valid JSON.") from exc
-        return _validate(value,target,name)
+        _validate(value,target,name)
+        return _validate(value,target,name,schema=schema,numeric_only=True)
     if kind in {"String","ID"} and not default:
         return text
     if kind=="Int":
         try: number=int(text,10)
         except ValueError as exc: raise GraphQLArgumentValueError(f"GraphQL Int argument {name!r} requires an integer.") from exc
-        if not -(2**31) <= number < 2**31: raise GraphQLArgumentValueError(f"GraphQL Int argument {name!r} is out of range.")
-        return number
+        return _validate(number,target,name)
     if kind=="Float":
         try: number=float(text)
         except ValueError as exc: raise GraphQLArgumentValueError(f"GraphQL Float argument {name!r} requires a number.") from exc
-        if not math.isfinite(number): raise GraphQLArgumentValueError(f"GraphQL Float argument {name!r} must be a finite number.")
-        return number
+        return _validate(number,target,name)
     if kind=="Boolean":
         if text.casefold()=="true": return True
         if text.casefold()=="false": return False
         raise GraphQLArgumentValueError(f"GraphQL Boolean argument {name!r} requires true or false.")
     try: value=json.loads(text)
     except json.JSONDecodeError: value=text
-    return _validate(value,target,name)
+    _validate(value,target,name)
+    return _validate(value,target,name,schema=schema,numeric_only=True)
 
 def validate_typed_argument_values(
     model: GraphQLQueryComposerModel,
@@ -172,8 +186,8 @@ def parse_argument_text(spec: GraphQLArgumentSpec, text: str) -> object:
             raise GraphQLArgumentValueError(f"Required GraphQL argument {spec.name!r} has no value.")
         if spec.default_value is None:
             return None
-        return _parse(spec.default_value,spec.argument.type_ref,spec.name,default=True)
-    return _parse(text,spec.argument.type_ref,spec.name)
+        return _parse(spec.default_value,spec.argument.type_ref,spec.name,default=True,schema=spec.schema)
+    return _parse(text,spec.argument.type_ref,spec.name,schema=spec.schema)
 
 def validate_argument_values(model: GraphQLQueryComposerModel, raw_values: dict[str,str]) -> GraphQLArgumentValidationResult:
     specs={s.name:s for s in model.arguments}
