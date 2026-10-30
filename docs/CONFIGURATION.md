@@ -50,6 +50,23 @@ A field missing from the HERO response is neither a change nor a clear. An
 explicit HERO `null` or empty value is compared but never written (no-clear
 policy). Nothing is ever deleted.
 
+HERO data that ERPNext would reject does not stop a run:
+
+- An email address ERPNext rejects is left out; the Customer is imported.
+- A phone text such as `+49 151 … Mieterin` keeps its first valid number;
+  the full text is added as a comment on the Customer.
+- An incomplete primary address is left out; the Customer is imported.
+- `ProjectMatch.id` 0 means no Project.
+- An Event without a title gets its event type as subject.
+- Any other record ERPNext or its database rejects is rolled back alone and
+  marked `BLOCKED_RECORD`; see the Error Log. A blocked Customer blocks only
+  its own Projects.
+
+ERPNext names a Customer's primary Contact `<name>-<Customer ID>`. With
+Customer IDs taken from long Customer names this exceeds the 140-character
+limit, so name Customers by a naming series (Selling Settings → Customer
+Naming By → Naming Series, for example `KD-.#####`).
+
 Create a reviewed GraphQL schema snapshot before configuring mappings. The
 Mapping Editor exports deterministic JSON packages with the snapshot
 fingerprint and optional HERO-owned schema definitions. Upload validates the

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass
 from datetime import timedelta
 
@@ -570,9 +571,10 @@ def _process_phase(run, phase: str, reader) -> bool:
         run.resume_record_index = 0
         run.save()
         if page.next_offset is None:
-            if _phase_has_blockers(run, phase):
+            # Every Customer was processed; a blocked Customer only blocks its own Projects.
+            if phase == "project" and _phase_has_blockers(run, phase):
                 _set_phase_state(run, phase, "Blocked")
-                _block_run(run, f"Customer phase contains unresolved records; Project phase was not started." if phase == "customer" else f"Project phase contains unresolved records.")
+                _block_run(run, "Project phase contains unresolved records.")
                 return False
             _set_phase_state(run, phase, "Completed")
             return True
@@ -609,8 +611,9 @@ def _migrate_customer(record: dict[str, object], run) -> Result:
         plan = _mapping_plan_for_run(run, "HeroCustomers")
         source_id = plan.source_identity(record)
         values = plan.values(record)
-        # ERPNext rejects such an address; the Customer is imported without it.
+        # ERPNext rejects such an email address; the Customer is imported without it.
         email_note = _drop_invalid_email(values)
+        home_phone, phone_originals, phone_note = _clean_customer_phones(values, plan.home_phone(record))
         contact_values = plan.customer_contact_values(values)
         address_note = ""
         try:
@@ -630,20 +633,28 @@ def _migrate_customer(record: dict[str, object], run) -> Result:
         return Result("BLOCKED_RECORD", "Configured customer record name is empty.")
     if _source_instance(record) != 'default':
         values['custom_hero_source_id'] = f'{_source_instance(record)}:{source_id}'
-    home_phone = plan.home_phone(record)
     tracks_home_phone = plan.has_home_phone()
-    result = _upsert(
-        "customer", source_id, record, values, "Customer", "customer_name", plan.mapping_version, run,
-        after_insert=lambda customer: _synchronize_customer_relations(
+
+    def after_insert(customer):
+        _synchronize_customer_relations(
             customer, contact_values, home_phone, address, _source_instance(record), plan.mapping_version,
-        ),
+        )
+        _keep_phone_originals(customer, phone_originals)
+
+    def after_update(customer, outcome):
         # Relations receive only the reconciled HERO changes: a locally edited
         # Contact value is never rewritten because another field changed.
-        after_update=lambda customer, outcome: _synchronize_customer_relations(
+        _synchronize_customer_relations(
             customer, {field: value for field, value in contact_values.items() if field in outcome.apply},
             home_phone if "hero_phone_home" in outcome.apply else None,
             address, _source_instance(record), plan.mapping_version,
-        ),
+        )
+        _keep_phone_originals(customer, {field: text for field, text in phone_originals.items() if field in outcome.apply})
+
+    result = _upsert(
+        "customer", source_id, record, values, "Customer", "customer_name", plan.mapping_version, run,
+        after_insert=after_insert,
+        after_update=after_update,
         target_snapshot=lambda customer: _customer_target_values(
             customer, values, plan.customer_contact_fields(), home_phone, track_home_phone=tracks_home_phone,
         ),
@@ -651,7 +662,7 @@ def _migrate_customer(record: dict[str, object], run) -> Result:
         comparison_extra={"hero_phone_home": home_phone} if tracks_home_phone else None,
         required_on_create=("customer_type",),
     )
-    note = email_note + address_note
+    note = email_note + phone_note + address_note
     if note and result.code != "BLOCKED_RECORD":
         from dataclasses import replace
         result = replace(result, detail=(result.detail or "") + note)
@@ -675,13 +686,66 @@ def _drop_invalid_email(values) -> str:
     return " The HERO email address is not valid in ERPNext; it was not imported."
 
 
+_PHONE_NUMBER = re.compile(r"\+?\d[\d \-().]*\d")
+_PHONE_LABELS = {"mobile_no": "mobile phone", "hero_phone_home": "home phone"}
+
+
+def _phone_number(value):
+    """Return (number, original) for HERO phone text; original is set only when ERPNext would reject it."""
+    from frappe.utils import validate_phone_number
+
+    if not isinstance(value, str) or not value.strip() or validate_phone_number(value):
+        return value, ""
+    # "07000/11111" is one number; a slash between words separates two numbers.
+    text = re.sub(r"(?<=\d)/(?=\d)", " ", value)
+    for candidate in _PHONE_NUMBER.findall(text):
+        if sum(char.isdigit() for char in candidate) >= 6 and validate_phone_number(candidate):
+            return candidate, value
+    return None, value
+
+
+def _clean_customer_phones(values, home_phone):
+    """Keep the first valid number of a phone text; the full text is kept as a Customer comment."""
+    originals = {}
+    mobile, original = _phone_number(values.get("mobile_no"))
+    if original:
+        originals["mobile_no"] = original
+        if mobile:
+            values["mobile_no"] = mobile
+        else:
+            del values["mobile_no"]
+            missing = getattr(values, "missing", None)
+            if missing is not None:
+                missing.add("mobile_no")
+    home, original = _phone_number(home_phone)
+    if original:
+        originals["hero_phone_home"] = original
+        home_phone = home
+    if not originals:
+        return home_phone, originals, ""
+    return home_phone, originals, " A HERO phone text is not a valid ERPNext number; the first number was imported and the full text kept as a comment."
+
+
+def _keep_phone_originals(customer, originals) -> None:
+    for field, text in originals.items():
+        customer.add_comment("Comment", f"HERO {_PHONE_LABELS[field]} as entered in HERO: {text}")
+
+
+def _rejections() -> tuple[type, ...]:
+    """Errors where ERPNext or its database refuses one record's data."""
+    candidates = (getattr(frappe, "ValidationError", None), getattr(frappe.db, "DataError", None))
+    return tuple(item for item in candidates if isinstance(item, type))
+
+
 def _migrate_isolated(migrate) -> Result:
     """Run one record so that an ERPNext validation error blocks only this record."""
     savepoint = "hero_record"
     frappe.db.savepoint(savepoint)
     try:
         return migrate()
-    except frappe.ValidationError as error:
+    except Exception as error:
+        if not isinstance(error, _rejections()):
+            raise
         try:
             frappe.db.rollback(save_point=savepoint)
         except Exception:

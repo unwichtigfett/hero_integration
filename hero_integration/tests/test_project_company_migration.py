@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import importlib
+import re
 import sys
 import types
 import unittest
@@ -66,6 +67,9 @@ class TestProjectCompanyMigration(unittest.TestCase):
         utils_module.get_datetime = lambda value: value
         utils_module.split_emails = lambda value: [item.strip() for item in value.split(",") if item.strip()]
         utils_module.validate_email_address = lambda value, throw=False: value if value.isascii() else ""
+        utils_module.validate_phone_number = lambda value, throw=False: bool(
+            re.match(r"([0-9\ \+\_\-\,\.\*\#\(\)]){1,20}$", str(value).strip())
+        )
         sys.modules["frappe"] = frappe_module
         sys.modules["frappe.utils"] = utils_module
 
@@ -514,6 +518,26 @@ class TestProjectCompanyMigration(unittest.TestCase):
         self.assertEqual(run.customer_phase_state, "Completed")
         self.assertEqual((run.customer_phase_processed, run.customer_phase_created), (3, 3))
         self.assertEqual((run.resume_phase, run.resume_offset, run.resume_record_index), ("customer", 0, 0))
+
+    def test_blocked_customer_does_not_stop_the_customer_phase(self):
+        run = SimpleNamespace(
+            customer_phase_state="Queued", customer_phase_processed=0, customer_phase_created=0,
+            customer_phase_skipped=0, customer_phase_blocked=0, resume_phase="", resume_offset=0,
+            resume_record_index=0, state="Running", save=lambda: None, reload=lambda: None,
+        )
+        results = {1: "CREATED", 2: "BLOCKED_RECORD"}
+        original_migrate, original_record = self.migration._migrate_customer, self.migration._record_result
+        try:
+            self.migration._migrate_customer = lambda record, item: self.migration.Result(results[record["id"]], "synthetic")
+            self.migration._record_result = lambda *args: None
+            finished = self.migration._process_phase(run, "customer", lambda offset: SourcePage(({"id": 1}, {"id": 2}), None))
+        finally:
+            self.migration._migrate_customer, self.migration._record_result = original_migrate, original_record
+
+        self.assertTrue(finished)
+        self.assertEqual(run.state, "Running")
+        self.assertEqual(run.customer_phase_state, "Completed")
+        self.assertEqual((run.customer_phase_created, run.customer_phase_blocked), (1, 1))
 
     def test_missing_or_invalid_company_blocks_before_project_insert(self):
         self.frappe.default_company = "Missing Company"
