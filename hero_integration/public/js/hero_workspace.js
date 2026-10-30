@@ -25,7 +25,7 @@
     // need an explicit release token. JavaScript must stay query-free when it
     // enters frappe.require(): Frappe owns the version parameter and uses the
     // original extension to select its script loader.
-    const ASSET_RELEASE = "20261029.36a";
+    const ASSET_RELEASE = "20261030.38a";
     const ASSETS = [
         "/assets/hero_integration/css/hero_tools.css",
         "/assets/hero_integration/css/hero_adapter.css",
@@ -33,6 +33,7 @@
         "/assets/hero_integration/css/hero_overview.css",
         "/assets/hero_integration/css/hero_settings.css",
         "/assets/hero_integration/css/hero_api_summary.css",
+        "/assets/hero_integration/css/hero_sync.css",
         "/assets/hero_integration/js/hero_tools.js",
         "/assets/hero_integration/js/hero_overview.js",
         "/assets/hero_integration/js/hero_settings.js",
@@ -56,6 +57,7 @@
         "integration_overview", "workspace_context", "workspace_settings_get", "workspace_settings_save",
         "workspace_testing_settings_save", "workspace_erpnext_company_save", "workspace_erpnext_company_confirm",
         "workspace_mutation_execution_set", "workspace_sync_status", "workspace_schema_refresh",
+        "sync_page_state", "sync_area_start", "sync_service_set", "sync_page_runs", "sync_page_run_detail", "sync_page_conflicts",
     ]);
     const errorMessage = (error) => {
         if (typeof error === "string") return error;
@@ -283,7 +285,7 @@
             if (section === "overview") await window.hero_integration_overview.mount(content);
             else if (section === "settings") await window.hero_integration_settings_ui.mount(content);
             else if (section === "mapping") controller.workspace = window.hero_integration_mapping_editor.mount(sectionPage, context);
-            else if (section === "synchronization") window.hero_integration_migration.mount(sectionPage);
+            else if (section === "synchronization") controller.workspace = window.hero_integration_migration.mount(sectionPage);
             else {
                 const tool = routeTarget(section, context.hero_tool).tool;
                 if (!tool) await window.hero_integration_api_summary.mount(content, context);

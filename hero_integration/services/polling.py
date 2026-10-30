@@ -3,18 +3,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime, timezone as dt_timezone
-import json
 import re
 import time
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 VALID_MODES = {"OFF", "MONITOR", "AUTO_SYNC"}
-SUPPORTED_SOURCE_OPERATIONS = {"HeroCustomers", "HeroProjectMatches"}
+# Polling reads the reviewed V1 source operations, unfiltered, of every area switched on
+# on the Synchronization page.
+POLLING_SOURCES = ("HeroCustomers", "HeroProjectMatches")
 WINDOW_PATTERN = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d-(?:[01]\d|2[0-3]):[0-5]\d$")
 MAX_FULL_INVENTORY_PAGES = 100
-# Reviewed filter variables per source; anything else is rejected instead of being silently ignored.
-SUPPORTED_FILTERS = {"HeroCustomers": {"showDeleted": bool}, "HeroProjectMatches": {}}
 
 
 class PaginationProgressError(ValueError):
@@ -47,21 +46,21 @@ def effective_mode(settings) -> str:
 
 def runtime_plan(settings) -> dict[str, object]:
     """Normalize every offered polling setting without reaching HERO."""
-    sources = tuple(line.strip() for line in str(getattr(settings, "polling_data_sources", "") or "").splitlines() if line.strip())
-    sources = sources or ("HeroCustomers", "HeroProjectMatches")
-    filters = _filters(getattr(settings, "polling_filters_json", "{}"))
-    filter_problems = _filter_problems(filters)
-    filters = filters or {}
+    from hero_integration.services.sync_page import AREAS, BY_OPERATION, area_enabled
+
+    areas = {item.key: area_enabled(settings, item) for item in AREAS}
+    sources = [operation for operation in POLLING_SOURCES if areas[BY_OPERATION[operation].key]]
     strategy = str(getattr(settings, "polling_pagination_strategy", "OFFSET") or "OFFSET").upper()
     timezone = str(getattr(settings, "polling_timezone", "UTC") or "UTC").strip()
     full_inventory = bool(getattr(settings, "polling_full_inventory", 0))
-    unsupported = [source for source in sources if source not in SUPPORTED_SOURCE_OPERATIONS] + filter_problems
+    unsupported = []
     if strategy != "OFFSET":
         unsupported.append("pagination strategy " + strategy)
     if not _timezone_is_valid(timezone):
         unsupported.append("timezone " + timezone)
     return {
-        "mode": effective_mode(settings), "sources": list(sources), "filters": filters, "timezone": timezone,
+        "mode": effective_mode(settings), "sources": sources, "timezone": timezone,
+        "paused": bool(getattr(settings, "sync_service_paused", 0)), "areas": areas,
         "execution_window": str(getattr(settings, "polling_execution_window", "") or "").strip(),
         "interval_minutes": _bounded_value(getattr(settings, "polling_interval_minutes", 60), 1, 1440, 60),
         "bootstrap": bool(getattr(settings, "polling_bootstrap", 0)),
@@ -75,7 +74,8 @@ def runtime_plan(settings) -> dict[str, object]:
         "rate_limit": _bounded_value(getattr(settings, "polling_rate_limit", 30), 1, 10000, 30),
         "concurrency": _bounded_value(getattr(settings, "polling_concurrency", 1), 1, 1, 1),
         "notifications": bool(getattr(settings, "polling_notifications", 0)), "unsupported_sources": unsupported,
-        "can_auto_sync": effective_mode(settings) == "AUTO_SYNC" and not unsupported,
+        "can_auto_sync": effective_mode(settings) == "AUTO_SYNC" and not unsupported
+        and not getattr(settings, "sync_service_paused", 0) and any(areas.values()),
         "watermarks": "Offsets resume incomplete bounded scans only; this does not claim a monotonic HERO cursor.",
         "reconciliation_policy": "Report-only; HERO absence never deletes ERPNext data.",
     }
@@ -88,7 +88,7 @@ def scheduler_due(settings, now: datetime, last_success: object = None, *, syste
     Datetime values as strings; both are normalized before comparing.
     """
     plan = runtime_plan(settings)
-    if plan["mode"] == "OFF" or plan["unsupported_sources"]:
+    if plan["mode"] == "OFF" or plan["unsupported_sources"] or plan["paused"] or not any(plan["areas"].values()):
         return False
     current = _aware(now, system_timezone)
     if current is None:
@@ -113,7 +113,7 @@ def scheduler_due(settings, now: datetime, last_success: object = None, *, syste
 
 def monitor(source, plan: dict[str, object] | None = None, *, customer_offset: int = 0, project_offset: int = 0, record_observer=None) -> MonitorResult:
     """Read selected source pages with a finite, progress-checked policy."""
-    plan = plan or {"sources": ["HeroCustomers", "HeroProjectMatches"], "max_pages": MAX_FULL_INVENTORY_PAGES, "rate_limit": 10000}
+    plan = plan or {"sources": list(POLLING_SOURCES), "max_pages": MAX_FULL_INVENTORY_PAGES, "rate_limit": 10000}
     minimum_interval = 60 / max(int(plan.get("rate_limit", 10000)), 1)
     max_pages = max(int(plan.get("max_pages", MAX_FULL_INVENTORY_PAGES)), 1)
     page_size = plan.get("page_size")
@@ -151,7 +151,7 @@ def run_monitor() -> None:
     try:
         config = get_configuration()
         client = HeroGraphQLClient(config.endpoint, lambda: config.api_token, timeout=int(plan["timeout_seconds"]), max_retries=int(plan["retry_limit"]), retry_backoff_seconds=int(plan["retry_backoff_seconds"]))
-        source = HeroSource(client, config.source_instance, page_size=int(plan["page_size"]), filters=plan["filters"], pagination_strategy=str(plan["pagination_strategy"]))
+        source = HeroSource(client, config.source_instance, page_size=int(plan["page_size"]), pagination_strategy=str(plan["pagination_strategy"]))
         result = monitor(source, plan, customer_offset=customer_offset, project_offset=project_offset, record_observer=_monitor_observer if plan["reconciliation"] else None)
         state.customer_offset, state.project_offset = result.customer_next_offset, result.project_next_offset
         state.watermark_status = "Bounded incomplete monitor" if result.incomplete_sources else "Monitor scan complete; no cursor watermark claimed"
@@ -269,33 +269,6 @@ def _count_pages(reader, offset: int, max_pages: int, minimum_interval: float, r
             return _PageCount(count, 0, False)
         current_offset = page.next_offset
     return _PageCount(count, current_offset, True)
-
-
-def _filters(value: object) -> dict[str, dict[str, object]] | None:
-    """Parsed filters, or None when the stored JSON is invalid (never treated as "no filter")."""
-    try:
-        parsed = json.loads(value or "{}")
-    except (TypeError, ValueError, json.JSONDecodeError):
-        return None
-    if not isinstance(parsed, dict) or not all(isinstance(item, dict) for item in parsed.values()):
-        return None
-    return {str(name): item for name, item in parsed.items()}
-
-
-def _filter_problems(filters: dict[str, dict[str, object]] | None) -> list[str]:
-    if filters is None:
-        return ["filters (invalid JSON object)"]
-    problems = []
-    for source, values in filters.items():
-        allowed = SUPPORTED_FILTERS.get(source)
-        if allowed is None:
-            problems.append(f"filter {source}")
-            continue
-        for key, value in values.items():
-            expected = allowed.get(key)
-            if expected is None or type(value) is not expected:
-                problems.append(f"filter {source}.{key}")
-    return problems
 
 
 def _as_datetime(value: object) -> datetime | None:

@@ -234,7 +234,7 @@ class _SyncHeroTransport:
 
 
 def _start_migration(
-    action: str, dry_run: int | bool, scheduled: bool, graphql_service: str
+    action: str, dry_run: int | bool, scheduled: bool, graphql_service: str, source_instance: str = ""
 ) -> dict[str, str]:
     if action not in ACTIONS:
         frappe.throw("Unsupported HERO migration action.")
@@ -264,6 +264,8 @@ def _start_migration(
             "mapping_revision": mapping.mapping_revision,
             "testing_enabled": int(testing["enabled"]),
             "testing_max_actions": testing["max_actions"],
+            # Bound at acceptance so Start/Update and history are scoped to the source from the first moment.
+            **({"source_instance": source_instance} if source_instance else {}),
             **dependencies,
         }
     )
@@ -469,6 +471,259 @@ def workspace_sync_status() -> dict[str, object]:
             order_by="modified desc", limit_page_length=10,
         ),
     }
+
+
+# --- Synchronization page -------------------------------------------------
+# One button per data area: the read service, mapping rules and source instance
+# are resolved on the server from Settings and the active, approved mapping.
+
+RUN_LIST_FIELDS = [
+    "name", "action", "mode", "state", "processed", "created_records", "skipped_records", "conflict_records",
+    "started_on", "finished_on", "creation", "source_instance",
+]
+
+
+@frappe.whitelist(methods=["GET"])
+def sync_page_state() -> dict[str, object]:
+    """Stored state of the Synchronization page; this endpoint never contacts HERO."""
+    frappe.only_for("System Manager")
+    from hero_integration.services.polling import runtime_plan
+    from hero_integration.services.sync_page import ACTIVE_STATES, AREAS
+
+    settings = frappe.get_single("HERO Integration Settings")
+    instance = _configured_source_instance()
+    plan = runtime_plan(settings)
+    active = frappe.get_all("HERO Integration Run", filters={"state": ["in", list(ACTIVE_STATES)]},
+                            fields=["name", "action", "state"], order_by="creation asc", limit_page_length=20)
+    services = _sync_area_read_services(instance)
+    return {
+        "source_instance": instance,
+        "active_run": active[0] if active else None,
+        "areas": [_sync_area_state(item, instance, services.get(item.operation) or [], active, plan) for item in AREAS],
+        "service": {
+            "mode": plan["mode"], "allowed": plan["mode"] != "OFF", "paused": plan["paused"],
+            "running": plan["mode"] != "OFF" and not plan["paused"] and any(plan["areas"].values()),
+            "interval_minutes": plan["interval_minutes"], "timezone": plan["timezone"],
+            "execution_window": plan["execution_window"], "page_size": plan["page_size"],
+            "pagination_strategy": plan["pagination_strategy"], "retry_limit": plan["retry_limit"],
+            "retry_backoff_seconds": plan["retry_backoff_seconds"], "timeout_seconds": plan["timeout_seconds"],
+            "rate_limit": plan["rate_limit"], "notifications": plan["notifications"],
+            "polled_sources": plan["sources"], "unsupported": plan["unsupported_sources"],
+            "sync_status": getattr(settings, "sync_status", "") or "Not started",
+            "sync_error": getattr(settings, "sync_error", "") or "",
+            "last_successful_sync": getattr(settings, "last_successful_sync", None),
+        },
+        "metrics": _sync_metrics(instance),
+    }
+
+
+@frappe.whitelist(methods=["POST"])
+def sync_area_start(area: str) -> dict[str, object]:
+    """Start or update one data area with the newest approved read service of the active mapping."""
+    frappe.only_for("System Manager")
+    from hero_integration.services.sync_page import ACTIVE_STATES
+
+    item = _sync_area(area)
+    instance = _configured_source_instance()
+    if frappe.db.exists("HERO Integration Run", {"state": ["in", list(ACTIVE_STATES)]}):
+        frappe.throw("Another HERO run is still queued or running. Start this area when it has finished.")
+    services = _sync_area_read_services(instance).get(item.operation) or []
+    if not services:
+        frappe.throw(_sync_area_blocker(item, instance))
+    result = _start_migration(action=item.run_action, dry_run=0, scheduled=False,
+                              graphql_service=services[0]["service"], source_instance=instance)
+    return {**result, "area": item.key}
+
+
+@frappe.whitelist(methods=["POST"])
+def sync_service_set(enabled: int | bool | str | None = None, area: str = "",
+                     area_enabled: int | bool | str | None = None) -> dict[str, object]:
+    """Switch the sync service or one area on or off; polling settings stay unchanged."""
+    frappe.only_for("System Manager")
+    from hero_integration.services.polling import effective_mode
+
+    settings = frappe.get_single("HERO Integration Settings")
+    if enabled is not None:
+        if _as_bool(enabled) and effective_mode(settings) == "OFF":
+            frappe.throw("Polling is switched off in Settings. Choose a polling mode there before switching the sync on.")
+        settings.sync_service_paused = 0 if _as_bool(enabled) else 1
+    if area:
+        if area_enabled is None:
+            frappe.throw("Say whether the area is switched on or off.")
+        setattr(settings, _sync_area(area).setting, int(_as_bool(area_enabled)))
+    settings.save()
+    return sync_page_state()
+
+
+@frappe.whitelist(methods=["GET"])
+def sync_page_runs(start: int | str = 0, page_size: int | str = 8) -> dict[str, object]:
+    """One page of the runtime history, newest first."""
+    frappe.only_for("System Manager")
+    from hero_integration.services.sync_page import action_label
+
+    start = _mapping_int(start, "start", 0, 2147483647)
+    page_size = _mapping_int(page_size, "page_size", 1, 50)
+    rows = frappe.get_all("HERO Integration Run", fields=RUN_LIST_FIELDS, order_by="creation desc",
+                          limit_start=start, limit_page_length=page_size)
+    for row in rows:
+        row["area"] = action_label(row["action"])
+    return {"start": start, "page_size": page_size, "total": frappe.db.count("HERO Integration Run"), "rows": rows}
+
+
+@frappe.whitelist(methods=["GET"])
+def sync_page_run_detail(run_name: str) -> dict[str, object]:
+    """Details, record outcomes and the allowed actions of one run."""
+    frappe.only_for("System Manager")
+    from hero_integration.services.sync_page import CONFLICT_RESULTS, action_label
+
+    run = frappe.get_doc("HERO Integration Run", run_name)
+    fields = RUN_LIST_FIELDS + [
+        "error_message", "graphql_service", "graphql_mapping", "mapping_revision", "resume_phase", "resume_offset",
+        "customer_phase_state", "customer_phase_processed", "project_phase_state", "project_phase_processed",
+        "testing_enabled", "testing_max_actions", "testing_executed_actions", "testing_records_received",
+        "testing_status", "testing_results_json",
+    ]
+    detail = {field: getattr(run, field, None) for field in fields}
+    outcomes: dict[str, int] = {}
+    for row in frappe.get_all("HERO Integration Record", filters={"run": run.name}, fields=["result"], limit_page_length=5000):
+        outcomes[row["result"]] = outcomes.get(row["result"], 0) + 1
+    detail.update({
+        "area": action_label(run.action),
+        "outcomes": outcomes,
+        "conflicts": frappe.get_all(
+            "HERO Integration Record", filters={"run": run.name, "result": ["in", list(CONFLICT_RESULTS)]},
+            fields=["source_type", "source_id", "result", "detail", "target_doctype", "target_name"],
+            order_by="creation asc", limit_page_length=20,
+        ),
+        "can_cancel": run.state in {"Queued", "Running"},
+        "can_continue": run.state in {"Failed", "Cancelled", "Blocked"} and not _as_bool(getattr(run, "testing_enabled", 0)),
+    })
+    return detail
+
+
+@frappe.whitelist(methods=["GET"])
+def sync_page_conflicts(start: int | str = 0, page_size: int | str = 8) -> dict[str, object]:
+    """Open record conflicts of the configured source, newest first."""
+    frappe.only_for("System Manager")
+    from hero_integration.services.sync_page import AREAS
+
+    start = _mapping_int(start, "start", 0, 2147483647)
+    page_size = _mapping_int(page_size, "page_size", 1, 50)
+    filters = {"sync_status": "Conflict", "source_instance": _configured_source_instance()}
+    labels = {item.source_type: item.label for item in AREAS}
+    rows = frappe.get_all("HERO Integration Link", filters=filters,
+                          fields=["name", "source_type", "source_id", "target_doctype", "target_name", "conflict_detail", "modified"],
+                          order_by="modified desc", limit_start=start, limit_page_length=page_size)
+    for row in rows:
+        row["area"] = labels.get(row["source_type"], row["source_type"])
+    return {"start": start, "page_size": page_size, "total": frappe.db.count("HERO Integration Link", filters), "rows": rows}
+
+
+def _sync_area(key: str):
+    from hero_integration.services.sync_page import area
+
+    try:
+        return area(key)
+    except ValueError as error:
+        frappe.throw(str(error))
+
+
+def _sync_area_blocker(item, instance: str) -> str:
+    return (f"{item.action_label} needs an approved read service with an active mapping for {item.label} "
+            f"on a snapshot of the HERO source instance \"{instance}\". Approve one under API & Schema and Mapping.")
+
+
+def _sync_area_read_services(instance: str) -> dict[str, list[dict[str, str]]]:
+    """Approved read services per target operation, best first: newest snapshot, then newest service.
+
+    Only services whose stored read contract is still valid are returned.
+    """
+    from hero_integration.services.read_contract import ReadContractError, from_documents
+
+    candidates: dict[str, list[tuple[object, object, dict[str, str]]]] = {}
+    rows = frappe.get_all("HERO GraphQL Service", filters={"execution_status": "Approved", "status": "Validated"},
+                          fields=["name", "read_mapping", "schema_snapshot", "modified"], order_by="modified desc",
+                          limit_page_length=500)
+    for row in rows:
+        if not row.get("read_mapping") or not row.get("schema_snapshot"):
+            continue
+        mapping = frappe.db.get_value("HERO GraphQL Mapping", row["read_mapping"], ["status", "mapping_json"], as_dict=True)
+        snapshot = frappe.db.get_value("HERO GraphQL Schema Snapshot", row["schema_snapshot"], ["source_instance", "creation"], as_dict=True)
+        if not mapping or mapping.get("status") != "Active" or not snapshot:
+            continue
+        if (snapshot.get("source_instance") or "default") != instance:
+            continue
+        try:
+            target = json.loads(mapping.get("mapping_json") or "{}").get("target_operation")
+        except (TypeError, ValueError, AttributeError):
+            continue
+        item = {"service": row["name"], "mapping": row["read_mapping"], "snapshot": row["schema_snapshot"]}
+        candidates.setdefault(str(target or ""), []).append((snapshot.get("creation") or "", row.get("modified") or "", item))
+    result: dict[str, list[dict[str, str]]] = {}
+    for operation, items in candidates.items():
+        for _created, _modified, item in sorted(items, key=lambda value: (str(value[0]), str(value[1])), reverse=True):
+            try:
+                from_documents(frappe.get_doc("HERO GraphQL Service", item["service"]),
+                               frappe.get_doc("HERO GraphQL Mapping", item["mapping"]),
+                               frappe.get_doc("HERO GraphQL Schema Snapshot", item["snapshot"]))
+            except (ReadContractError, ValueError):
+                continue
+            result.setdefault(operation, []).append(item)
+            break  # the first valid one is used; the rest need no analysis
+    return result
+
+
+def _sync_area_state(item, instance: str, services: list[dict[str, str]], active: list[dict[str, object]], plan) -> dict[str, object]:
+    from hero_integration.services.sync_page import SUCCESS_STATES, mapping_scope
+
+    service = services[0] if services else None
+    rules = frappe.get_all("HERO Frappe Mapping", filters={"operation": item.operation, "status": "Active"},
+                           fields=["target_doctype", "target_field", "personal_graphql_mapping"], limit_page_length=2000)
+    rules = [rule for rule in rules if not rule.get("personal_graphql_mapping")
+             or (service is not None and rule.get("personal_graphql_mapping") == service["mapping"])]
+    executed = {"action": item.run_action, "mode": "Execute", "source_instance": instance}
+    last = frappe.get_all("HERO Integration Run", filters={**executed, "state": ["in", list(SUCCESS_STATES)]},
+                          fields=["name", "finished_on"], order_by="finished_on desc", limit_page_length=1)
+    running = next((row for row in active if row.get("action") == item.run_action), None)
+    return {
+        "key": item.key, "label": item.label, "action_label": item.action_label,
+        "description": item.description, "scope_note": item.scope_note,
+        "scope": mapping_scope(rules),
+        "button": "Update" if frappe.db.exists("HERO Integration Run", executed) else "Start",
+        "last_successful": last[0]["finished_on"] if last else None,
+        "running_run": running["name"] if running else "",
+        "ready": service is not None,
+        "blocker": "" if service else _sync_area_blocker(item, instance),
+        "service": service,
+        "sync_enabled": bool(plan["areas"].get(item.key)),
+        "polled": item.operation in plan["sources"],
+    }
+
+
+def _sync_metrics(instance: str) -> dict[str, object]:
+    """Uniquely linked records per area and polling runs of the recent period."""
+    from frappe.utils import add_days, now_datetime
+
+    from hero_integration.services.sync_page import AREAS, POLLING_PERIOD_DAYS
+
+    records = {
+        item.key: frappe.db.count("HERO Integration Link", {
+            "source_type": item.source_type, "source_instance": instance, "sync_status": ["!=", "Source Deleted"],
+        })
+        for item in AREAS
+    }
+    since = add_days(now_datetime(), -POLLING_PERIOD_DAYS)
+    polling = {
+        status.lower(): frappe.db.count("HERO Polling Event", {"status": status, "creation": [">=", since]})
+        for status in ("Succeeded", "Incomplete", "Failed", "Skipped")
+    }
+    return {
+        "records": records,
+        "polling": {"period_days": POLLING_PERIOD_DAYS, "runs": sum(polling.values()), "pass": polling["succeeded"],
+                    "fail": polling["failed"], "incomplete": polling["incomplete"], "skipped": polling["skipped"]},
+    }
+
+
 @frappe.whitelist()
 def schema_snapshot_list(start: int | str = 0, page_size: int | str = 100) -> list[dict[str, object]]:
     """List saved snapshots; request successive pages until a page is empty."""
@@ -704,13 +959,7 @@ def workspace_context(snapshot_name: str = "") -> dict[str, object]:
     rows = _schema_snapshot_rows()
     snapshots = [_workspace_snapshot_metadata(row) for row in rows]
     if not snapshot_name:
-        # Without an explicit choice the newest usable snapshot is selected.
-        from hero_integration.services.snapshot_names import newest
-
-        usable = {item["name"] for item in snapshots if item["usable"]}
-        # Prefer the configured HERO source; a test or other source never wins just by being newer.
-        own = [row for row in rows if row["name"] in usable and row.get("configured_source")]
-        latest = newest(own or [row for row in rows if row["name"] in usable])
+        latest = _newest_validated_snapshot(rows, snapshots)
         snapshot_name = latest["name"] if latest else ""
     selected = next((item for item in snapshots if item["name"] == snapshot_name and item["usable"]), None)
     return {
@@ -728,6 +977,27 @@ def workspace_context(snapshot_name: str = "") -> dict[str, object]:
         "selected_snapshot_metadata": selected,
         "snapshots": snapshots,
     }
+
+
+def _newest_validated_snapshot(rows: list[dict[str, object]] | None = None,
+                               snapshots: list[dict[str, object]] | None = None) -> dict[str, object] | None:
+    """The snapshot used without an explicit choice: the newest usable one, configured HERO source first.
+
+    A test or other source never wins just by being newer. Only rows that can win are analysed.
+    """
+    from hero_integration.services.snapshot_names import newest
+
+    rows = _schema_snapshot_rows() if rows is None else rows
+    known = {item["name"]: item for item in snapshots or []}
+    validated = [row for row in rows if row.get("analysis_status") == "Validated"]
+    for group in ([row for row in validated if row.get("configured_source")], validated):
+        remaining = list(group)
+        while (latest := newest(remaining)) is not None:
+            item = known.get(latest["name"]) or _workspace_snapshot_metadata(latest)
+            if item["usable"]:
+                return item
+            remaining = [row for row in remaining if row["name"] != latest["name"]]
+    return None
 
 
 def _workspace_snapshot_metadata(row: dict[str, object]) -> dict[str, object]:
@@ -792,8 +1062,7 @@ def workspace_settings_get() -> dict[str, object]:
             "interval_minutes": int(getattr(settings, "polling_interval_minutes", 60) or 60),
             "timezone": getattr(settings, "polling_timezone", "UTC") or "UTC",
             "execution_window": getattr(settings, "polling_execution_window", "") or "",
-            "data_sources": _polling_lines(getattr(settings, "polling_data_sources", "")),
-            "filters": _polling_filters(getattr(settings, "polling_filters_json", "{}")),
+            "snapshot": _polling_snapshot(),
             "bootstrap": bool(getattr(settings, "polling_bootstrap", 0)),
             "page_size": int(getattr(settings, "polling_page_size", 100) or 100),
             "pagination_strategy": getattr(settings, "polling_pagination_strategy", "OFFSET") or "OFFSET",
@@ -818,7 +1087,6 @@ def workspace_settings_save(
     erpnext_company: str | None = None, erpnext_company_confirmed: int | bool | None = None,
     polling_mode: str | None = None, polling_interval_minutes: int | None = None,
     polling_timezone: str | None = None, polling_execution_window: str | None = None,
-    polling_data_sources: str | None = None, polling_filters_json: str | None = None,
     polling_bootstrap: int | bool | None = None, polling_page_size: int | None = None,
     polling_pagination_strategy: str | None = None, polling_allow_backfill: int | bool | None = None,
     polling_full_inventory: int | bool | None = None, polling_reconciliation: int | bool | None = None,
@@ -863,8 +1131,8 @@ def workspace_settings_save(
         settings.polling_interval_minutes = int(polling_interval_minutes)
     _save_polling_configuration(
         settings,
-        timezone=polling_timezone, execution_window=polling_execution_window, data_sources=polling_data_sources,
-        filters_json=polling_filters_json, bootstrap=polling_bootstrap, page_size=polling_page_size,
+        timezone=polling_timezone, execution_window=polling_execution_window,
+        bootstrap=polling_bootstrap, page_size=polling_page_size,
         pagination_strategy=polling_pagination_strategy, allow_backfill=polling_allow_backfill,
         full_inventory=polling_full_inventory, reconciliation=polling_reconciliation, retry_limit=polling_retry_limit,
         retry_backoff_seconds=polling_retry_backoff_seconds, timeout_seconds=polling_timeout_seconds,
@@ -929,12 +1197,10 @@ def _validated_admin_recipients(value: str) -> list[str]:
     return recipients
 
 
-def _polling_filters(value: object) -> dict[str, object]:
-    try:
-        parsed = json.loads(value or "{}")
-    except (TypeError, ValueError, json.JSONDecodeError):
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
+def _polling_snapshot() -> dict[str, str] | None:
+    """Polling always follows the newest validated snapshot; there is nothing to configure."""
+    latest = _newest_validated_snapshot()
+    return {"name": latest["name"], "display_name": latest["display_name"]} if latest else None
 
 
 def _bounded_int(value: int | str, label: str, minimum: int, maximum: int) -> int:
@@ -978,33 +1244,12 @@ def _save_polling_configuration(settings, **values: object) -> None:
     """Validate optional persisted polling controls without scheduling any work."""
     scalar_fields = {
         "timezone": "polling_timezone", "execution_window": "polling_execution_window",
-        "data_sources": "polling_data_sources", "pagination_strategy": "polling_pagination_strategy",
+        "pagination_strategy": "polling_pagination_strategy",
     }
     for input_name, fieldname in scalar_fields.items():
         value = values[input_name]
         if value is not None:
             setattr(settings, fieldname, str(value).strip())
-    if values["data_sources"] is not None and not _polling_lines(values["data_sources"]):
-        frappe.throw("At least one polling data source is required.")
-    from hero_integration.services.polling import SUPPORTED_FILTERS, SUPPORTED_SOURCE_OPERATIONS, _filter_problems
-
-    if values["data_sources"] is not None:
-        unknown = [line for line in _polling_lines(values["data_sources"]) if line not in SUPPORTED_SOURCE_OPERATIONS]
-        if unknown:
-            frappe.throw("Unsupported polling data source: " + ", ".join(unknown) + ". Supported: "
-                         + ", ".join(sorted(SUPPORTED_SOURCE_OPERATIONS)) + ".")
-    if values["filters_json"] is not None:
-        try:
-            parsed = json.loads(str(values["filters_json"] or "{}"))
-        except (TypeError, ValueError, json.JSONDecodeError):
-            frappe.throw("Polling filters must be a JSON object.")
-        if not isinstance(parsed, dict):
-            frappe.throw("Polling filters must be a JSON object.")
-        problems = _filter_problems(parsed if all(isinstance(item, dict) for item in parsed.values()) else None)
-        if problems:
-            frappe.throw("Unsupported polling filters: " + ", ".join(problems) + ". Reviewed filters: "
-                         + json.dumps({name: sorted(keys) for name, keys in SUPPORTED_FILTERS.items()}) + ".")
-        settings.polling_filters_json = json.dumps(parsed, ensure_ascii=False, sort_keys=True)
     if values["pagination_strategy"] is not None and settings.polling_pagination_strategy != "OFFSET":
         frappe.throw("Polling pagination strategy must be OFFSET for the approved HERO V1 reader.")
     numeric = {

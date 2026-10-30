@@ -30,11 +30,14 @@ class TestPollingContract(unittest.TestCase):
         result = monitor(_Source())
         self.assertEqual((result.customer_records, result.project_records, result.source_instance), (3, 1, "synthetic"))
 
-    def test_runtime_plan_labels_unimplemented_schema_operations_without_enabling_auto_sync(self):
-        settings = SimpleNamespace(polling_mode="AUTO_SYNC", scheduled_sync_enabled=0, polling_data_sources="HeroCustomers\nFutureQuery")
+    def test_runtime_plan_always_reads_every_reviewed_source_and_ignores_legacy_values(self):
+        settings = SimpleNamespace(polling_mode="AUTO_SYNC", scheduled_sync_enabled=0, polling_data_sources="{}",
+                                   polling_filters_json='{"FutureQuery": {}}')
         plan = runtime_plan(settings)
-        self.assertEqual(plan["unsupported_sources"], ["FutureQuery"])
-        self.assertFalse(plan["can_auto_sync"])
+        self.assertEqual(plan["sources"], ["HeroCustomers", "HeroProjectMatches"])
+        self.assertNotIn("filters", plan)
+        self.assertEqual(plan["unsupported_sources"], [])
+        self.assertTrue(plan["can_auto_sync"])
         self.assertIn("does not claim", plan["watermarks"])
 
     def test_scheduler_window_and_interval_are_side_effect_free_gates(self):
@@ -46,7 +49,7 @@ class TestPollingContract(unittest.TestCase):
 
     def test_monitor_stops_at_the_persisted_inventory_bound_and_records_resume_offset(self):
         plan = runtime_plan(SimpleNamespace(
-            polling_mode="MONITOR", scheduled_sync_enabled=0, polling_data_sources="HeroCustomers",
+            polling_mode="MONITOR", scheduled_sync_enabled=0,
             polling_full_inventory=False, polling_rate_limit=10000,
         ))
         result = monitor(_Source(), plan)
@@ -115,8 +118,7 @@ class TestPollingContract(unittest.TestCase):
 
     def test_runtime_plan_exposes_the_effective_reader_controls(self):
         settings = SimpleNamespace(
-            polling_mode="MONITOR", scheduled_sync_enabled=0, polling_data_sources="HeroCustomers",
-            polling_filters_json='{"HeroCustomers":{"showDeleted":false}}', polling_timezone="Europe/Berlin",
+            polling_mode="MONITOR", scheduled_sync_enabled=0, polling_timezone="Europe/Berlin",
             polling_page_size=25, polling_pagination_strategy="OFFSET", polling_bootstrap=True,
             polling_allow_backfill=True, polling_full_inventory=True, polling_reconciliation=True,
             polling_retry_limit=2, polling_retry_backoff_seconds=15, polling_timeout_seconds=45,
@@ -125,6 +127,5 @@ class TestPollingContract(unittest.TestCase):
 
         plan = runtime_plan(settings)
 
-        self.assertEqual(plan["filters"], {"HeroCustomers": {"showDeleted": False}})
         self.assertEqual((plan["page_size"], plan["max_pages"], plan["timeout_seconds"]), (25, 100, 45))
         self.assertTrue(all(plan[key] for key in ("bootstrap", "allow_backfill", "reconciliation", "notifications")))
