@@ -169,16 +169,21 @@ class TestTestingPreviewContract(unittest.TestCase):
         self.assertEqual(limited.customers(0).records, ())
         self.assertEqual(limited.status, "BLOCKED")
 
-    def test_testing_run_constructs_a_zero_retry_client_without_changing_normal_runs(self):
+    def test_historical_runs_are_rejected_before_any_client_is_constructed(self):
         calls = []
 
         class Client:
             def __init__(self, *args, **kwargs):
                 calls.append(kwargs["max_retries"])
 
-        config = SimpleNamespace(endpoint="synthetic", api_token="synthetic", timeout_seconds=1, source_instance="synthetic")
+        config = SimpleNamespace(endpoint="synthetic", api_token="synthetic", timeout_seconds=1, source_instance="synthetic",
+                                 source_binding_revision=0, source_binding_confirmed=True)
+        # Historical runs without an approved endpoint-bound read service are
+        # rejected before any client exists; approved service runs keep the
+        # zero-retry client for testing previews (see _source_for_run).
         with patch.object(migration, "HeroGraphQLClient", Client):
-            migration._source_for_run(SimpleNamespace(mode="Preview", testing_enabled=1, graphql_service=""), config)
-            migration._source_for_run(SimpleNamespace(mode="Preview", testing_enabled=0, graphql_service=""), config)
+            for testing in (1, 0):
+                with self.assertRaises(migration.MappingPlanError):
+                    migration._source_for_run(SimpleNamespace(mode="Preview", testing_enabled=testing, graphql_service=""), config)
 
-        self.assertEqual(calls, [0, 2])
+        self.assertEqual(calls, [])
