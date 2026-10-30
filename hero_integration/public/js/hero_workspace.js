@@ -55,7 +55,7 @@
 
     const nativeMethods = new Set([
         "integration_overview", "workspace_context", "workspace_settings_get", "workspace_settings_save",
-        "workspace_testing_settings_save", "workspace_erpnext_company_save", "workspace_erpnext_company_confirm",
+        "workspace_testing_settings_save",
         "workspace_mutation_execution_set", "workspace_sync_status", "workspace_schema_refresh",
         "sync_page_state", "sync_area_start", "sync_service_set", "sync_page_runs", "sync_page_run_detail", "sync_page_conflicts",
     ]);

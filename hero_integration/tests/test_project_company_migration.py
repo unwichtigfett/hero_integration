@@ -38,7 +38,7 @@ class TestProjectCompanyMigration(unittest.TestCase):
         sys.modules.pop("hero_integration.services.migration", None)
         cls._install_fake_frappe()
         cls.migration = importlib.import_module("hero_integration.services.migration")
-        cls._confirmed_project_company = cls.migration.confirmed_project_company
+        cls._project_company = cls.migration.project_company
         cls._synchronize_home_phone = cls.migration.synchronize_home_phone
         cls._home_phone_for_customer = cls.migration.home_phone_for_customer
         cls._active_mapping_plan = cls.migration.active_mapping_plan
@@ -70,7 +70,7 @@ class TestProjectCompanyMigration(unittest.TestCase):
     def setUp(self):
         self.frappe.reset()
         self.migration._link = self.frappe.link
-        self.migration.confirmed_project_company = type(self)._confirmed_project_company
+        self.migration.project_company = type(self)._project_company
         self.migration.synchronize_home_phone = lambda customer, phone: None
         self.migration.home_phone_for_customer = lambda customer: None
         self.migration.active_mapping_plan = fixture_plan
@@ -514,7 +514,7 @@ class TestProjectCompanyMigration(unittest.TestCase):
         self.assertEqual((run.resume_phase, run.resume_offset, run.resume_record_index), ("customer", 0, 0))
 
     def test_missing_or_invalid_company_blocks_before_project_insert(self):
-        self.frappe.settings.erpnext_company = ""
+        self.frappe.default_company = "Missing Company"
 
         result = self.migration._migrate_project(
             _project_title_inputs(id=202, customer_id=101, project_title="Blocked Project"),
@@ -633,7 +633,8 @@ class _FakeFrappe:
     def reset(self):
         self.projects = []
         self.customers = []
-        self.settings = SimpleNamespace(erpnext_company="Executing Company", erpnext_company_confirmed=1)
+        self.settings = SimpleNamespace()
+        self.default_company = "Executing Company"
         self.schema_fields = {
             "Customer": {
                 "customer_name", "customer_type", "first_name", "last_name", "email_id", "mobile_no",
@@ -697,6 +698,11 @@ class _FakeDatabase:
         self.frappe_api.customers = customers
         self.frappe_api.projects = projects
         self.frappe_api.links = links
+
+    def get_single_value(self, doctype, fieldname):
+        if (doctype, fieldname) != ("Global Defaults", "default_company"):
+            raise AssertionError(f"unexpected get_single_value: {doctype}, {fieldname}")
+        return self.frappe_api.default_company
 
     def exists(self, doctype, filters):
         if doctype == "DocType":

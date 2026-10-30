@@ -10,7 +10,7 @@ from frappe.utils import get_datetime, now_datetime
 
 from hero_integration.client.graphql import HeroGraphQLClient
 from hero_integration.client.settings import get_configuration
-from hero_integration.integrations.erpnext.company import confirmed_project_company
+from hero_integration.integrations.erpnext.company import project_company
 from hero_integration.integrations.erpnext.contact import (
     HomePhoneConflict,
     home_phone_for_customer,
@@ -1678,7 +1678,7 @@ def _mark_running_phase_failed(run) -> None:
 
 
 def _confirmed_company_name() -> str:
-    company = confirmed_project_company()
+    company = project_company()
     if not company.is_valid:
         raise MappingPlanError(company.reason)
     return company.name

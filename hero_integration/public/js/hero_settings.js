@@ -17,8 +17,7 @@
     const GET = "workspace_settings_get";
     const SAVE = "workspace_settings_save";
     const SAVE_TESTING = "workspace_testing_settings_save";
-    const SAVE_COMPANY = "workspace_erpnext_company_save";
-    const CONFIRM_COMPANY = "workspace_erpnext_company_confirm";
+    const REFRESH_SCHEMA = "workspace_schema_refresh";
     const SET_MUTATION_EXECUTION = "workspace_mutation_execution_set";
 
     function node(tag, cls, text) {
@@ -79,9 +78,12 @@
         refresh.type = "button";
         const save = node("button", "hero-page-button hero-settings-button primary", "Save Settings");
         save.type = "button";
-        save.title = uiText("Saves connection, sources, company, safety and polling settings.");
+        save.title = uiText("Saves connection, sources, safety and polling settings. A new or unverified API token loads the HERO schema right away.");
+        const reset = node("button", "hero-page-button is-quiet hero-settings-button", "Reset");
+        reset.type = "button";
+        reset.title = uiText("Discards unsaved changes and shows the saved settings again.");
         const headerActions = node("div", "hero-page-header-actions");
-        headerActions.append(refresh, save);
+        headerActions.append(refresh);
         header.append(heading, headerActions);
 
         const enabled = document.createElement("input");
@@ -99,16 +101,11 @@
         allowedHosts.rows = 2;
         const sourceInstance = document.createElement("input");
         sourceInstance.className = "hero-settings-input";
-        const company = document.createElement("input");
-        company.className = "hero-settings-input";
         const bindingConfirm = document.createElement("input");
         bindingConfirm.type = "checkbox";
         bindingConfirm.className = "hero-settings-check";
         const bindingStatus = node("div", "hero-settings-status", "Source binding is not loaded yet.");
         bindingStatus.setAttribute("role", "status");
-        const companyConfirmed = document.createElement("input");
-        companyConfirmed.type = "checkbox";
-        companyConfirmed.className = "hero-settings-check";
         const allowDeletion = document.createElement("input");
         allowDeletion.type = "checkbox";
         allowDeletion.className = "hero-settings-check";
@@ -144,6 +141,13 @@
         token.autocomplete = "new-password";
         token.spellcheck = false;
 
+        const schemaInterval = document.createElement("input");
+        schemaInterval.type = "number";
+        schemaInterval.className = "hero-settings-input";
+        schemaInterval.min = "10";
+        schemaInterval.max = "240";
+        schemaInterval.step = "1";
+
         const timeout = document.createElement("input");
         timeout.type = "number";
         timeout.className = "hero-settings-input";
@@ -154,13 +158,17 @@
         const status = node("div", "hero-page-note hero-settings-status", "Loading …");
         status.setAttribute("role", "status");
         const tokenHelp = column("hero-settings-field hero-settings-token-row", node("span", "hero-settings-label", "Stored credential"), tokenState);
+        const schemaStatus = node("div", "hero-settings-status hero-settings-schema-state", "Schema status is not loaded yet.");
+        schemaStatus.setAttribute("role", "status");
 
         const connection = section("HERO Connection", "connection", "",
             field("Enabled", enabled, "Enable or disable local HERO Integration configuration."),
             field("API URL", url, "HTTPS GraphQL endpoint used by the connector."),
             field("API Token", token, "The current token is never returned to the browser. An empty field keeps it unchanged."),
             tokenHelp,
+            field("Schema refresh (minutes)", schemaInterval, "10–240 minutes. Reloads the HERO schema once the token is verified."),
             field("Timeout (seconds)", timeout, "Maximum duration of a HERO API request."),
+            schemaStatus,
             node("p", "hero-settings-warning", "Changing the API URL, token or source instance opens a new source binding. Runs, MONITOR and AUTO_SYNC stay blocked until it is confirmed.")
         );
         const sources = section("Sources", "sources", "",
@@ -168,18 +176,6 @@
             field("Source instance", sourceInstance, "Stable identity for this external source."),
             field("Confirm source binding", bindingConfirm, "Confirm that the endpoint and API token belong to the HERO account named by the source instance. The token is never used as an identity."),
             bindingStatus
-        );
-        const companyStatus = node("div", "hero-settings-status hero-settings-company-state", "Company selection is not loaded yet.");
-        companyStatus.setAttribute("role", "status");
-        const companySave = node("button", "hero-page-button hero-settings-button", "Save Company");
-        companySave.type = "button";
-        const companyConfirm = node("button", "hero-page-button hero-settings-button", "Confirm Company");
-        companyConfirm.type = "button";
-        const companySection = section("ERPNext Company", "company", "",
-            field("ERPNext Company", company, "Existing ERPNext Company used for HERO projects."),
-            field("Confirm ERPNext Company", companyConfirmed, "A company change clears this confirmation server-side."),
-            column("hero-settings-field", node("span", "hero-settings-label", "Confirmed"), companyStatus),
-            column("hero-settings-actions", companySave, companyConfirm)
         );
         const securitySection = section("Safety and conflict notifications", "safety", "",
             field("Allow deletion", allowDeletion, "OFF blocks every HERO Integration deletion route on the server. Turning it on is only a necessary prerequisite."),
@@ -195,6 +191,8 @@
             column("hero-settings-actions", testingSave, testingStatus)
         );
 
+        const saveBar = column("hero-settings-savebar", reset, save);
+
         const pollingCard = node("section", "hero-page-panel hero-settings-polling");
         const pollingDetails = document.createElement("details");
         pollingDetails.className = "hero-settings-polling-details";
@@ -204,7 +202,7 @@
         const pollingContent = node("div", "hero-settings-polling-content");
         pollingContent.append(
             pollingGroup("Cadence and scope",
-                field("Polling mode", pollingMode, "OFF never contacts HERO automatically. MONITOR records internal run metadata only; AUTO_SYNC requires active approved HERO-to-Frappe mappings."),
+                field("Polling mode", pollingMode, "OFF never polls HERO records automatically; the schema refresh is separate. MONITOR records internal run metadata only; AUTO_SYNC requires active approved HERO-to-Frappe mappings."),
                 field("Polling interval (minutes)", pollingInterval, "1–1440 minutes; the Frappe scheduler evaluates cadence server-side."),
                 field("Timezone", pollingTimezone), field("Execution window", pollingWindow, "Optional local time window in HH:MM-HH:MM.")),
             pollingGroup("Data sources",
@@ -234,15 +232,16 @@
             column("hero-settings-actions", mutationSave)
         );
 
-        root.append(header, status, connection, sources, companySection, securitySection, testingCard, pollingCard, mutationCard);
+        root.append(header, status, connection, sources, securitySection, testingCard, saveBar, pollingCard, mutationCard);
         workspace.replaceChildren(root);
 
-        let destroyed = false, isBusy = false, storedCompany = "";
+        let destroyed = false, loaded = null;
 
         function busy(value) {
-            isBusy = value;
             refresh.disabled = value;
             save.disabled = value;
+            reset.disabled = value;
+            schemaInterval.disabled = value;
             enabled.disabled = value;
             url.disabled = value;
             token.disabled = value;
@@ -250,8 +249,6 @@
             allowedHosts.disabled = value;
             sourceInstance.disabled = value;
             bindingConfirm.disabled = value;
-            company.disabled = value;
-            companyConfirmed.disabled = true;
             allowDeletion.disabled = value;
             pollingMode.disabled = value;
             pollingInterval.disabled = value;
@@ -261,18 +258,10 @@
             testingEnabled.disabled = value;
             testingMaxActions.disabled = value;
             testingSave.disabled = value;
-            companySave.disabled = value;
-            updateCompanyControls();
-        }
-
-        function updateCompanyControls() {
-            const selected = company.value.trim();
-            const savedSelection = Boolean(storedCompany) && selected === storedCompany;
-            companyConfirm.disabled = isBusy || !savedSelection;
-            companyConfirm.title = savedSelection ? "Confirm the saved ERPNext Company." : "Save the selected ERPNext Company before confirming it.";
         }
 
         function apply(data) {
+            loaded = data;
             enabled.checked = Boolean(data.enabled);
             url.value = data.api_url || "";
             timeout.value = String(data.timeout_seconds || 30);
@@ -283,11 +272,7 @@
                 ? "Source binding confirmed (revision " + (data.source_binding_revision || 0) + ")."
                 : "Source binding changed and is not confirmed. HERO reads are blocked.");
             bindingStatus.dataset.state = data.source_binding_confirmed ? "success" : "error";
-            storedCompany = data.erpnext_company || "";
-            company.value = storedCompany;
-            companyConfirmed.checked = Boolean(data.erpnext_company_confirmed);
-            companyStatus.textContent = uiText(!storedCompany ? "Save an ERPNext Company before confirming it." : companyConfirmed.checked ? "Confirmed" : "Company saved. Confirmation required.");
-            companyStatus.dataset.state = companyConfirmed.checked ? "success" : "";
+            schemaInterval.value = String(data.schema_refresh?.refresh_interval_minutes || 60);
             allowDeletion.checked = Boolean(data.allow_deletion);
             pollingMode.value = data.polling?.mode || "OFF";
             pollingInterval.value = String(data.polling?.interval_minutes || 60);
@@ -309,11 +294,26 @@
             testingEnabled.checked = Boolean(data.testing?.enabled);
             testingMaxActions.value = String(data.testing?.max_actions || 5);
             token.value = "";
-            const configured = data.api_token_status === "CONFIGURED";
-            tokenState.textContent = uiText(configured ? "Configured" : data.api_token_status === "CREDENTIAL_ERROR" ? "Credential error" : "Not configured");
-            tokenState.dataset.state = configured ? "configured" : data.api_token_status === "CREDENTIAL_ERROR" ? "error" : "missing";
+            applyTokenState(data);
             applyMutationState(data);
-            updateCompanyControls();
+        }
+
+        function applyTokenState(data) {
+            const schema = data.schema_refresh || {};
+            const configured = data.api_token_status === "CONFIGURED";
+            const failed = configured && schema.last_status === "FAILED";
+            const verified = configured && schema.token_verified && !failed;
+            tokenState.textContent = uiText(
+                data.api_token_status === "CREDENTIAL_ERROR" ? "Credential error"
+                    : !configured ? "Not configured"
+                    : failed ? "Check failed"
+                    : verified ? "Verified" : "Not verified yet");
+            tokenState.dataset.state = verified ? "configured" : failed || data.api_token_status === "CREDENTIAL_ERROR" ? "error" : "missing";
+            const checked = schema.last_checked_on ? " " + uiText("Last check:") + " " + schema.last_checked_on + "." : "";
+            schemaStatus.textContent = schema.last_status
+                ? uiText(schema.last_message || "") + checked
+                : uiText("The HERO schema is loaded when enabled settings with an API token are saved.");
+            schemaStatus.dataset.state = schema.last_status === "OK" ? "success" : schema.last_status === "FAILED" ? "error" : "";
         }
 
         function applyMutationState(data) {
@@ -344,19 +344,16 @@
         async function persist() {
             busy(true);
             status.textContent = uiText("Saving …");
-            const companyBeforeSave = storedCompany;
-            const requestedCompany = company.value.trim();
             try {
                 const data = await platform.api(SAVE, {
                     enabled: enabled.checked,
                     api_url: url.value.trim(),
                     api_token: token.value,
                     timeout_seconds: Number(timeout.value),
+                    schema_refresh_interval_minutes: schemaInterval.value,
                     allowed_hero_hosts: allowedHosts.value.trim(),
                     hero_source_instance: sourceInstance.value.trim(),
                     confirm_source_binding: bindingConfirm.checked,
-                    erpnext_company: company.value.trim(),
-                    erpnext_company_confirmed: companyConfirmed.checked,
                     allow_deletion: allowDeletion.checked,
                     polling_mode: pollingMode.value,
                     polling_interval_minutes: Number(pollingInterval.value),
@@ -372,10 +369,7 @@
                     apply(data);
                     status.textContent = uiText("Settings saved.");
                     status.dataset.state = "success";
-                    if (requestedCompany !== companyBeforeSave && !data.erpnext_company_confirmed) {
-                        companyStatus.textContent = uiText("Company saved. Confirmation was reset because the company changed.");
-                        companyStatus.dataset.state = "";
-                    }
+                    if (data.schema_refresh?.check_due) await verifyToken();
                 }
             } catch (error) {
                 if (!destroyed) {
@@ -410,50 +404,36 @@
             }
         }
 
-        async function persistCompany() {
-            busy(true);
-            companyStatus.textContent = uiText("Saving company …");
+        // Saved, enabled settings with an unverified token load the schema; this also proves the token.
+        async function verifyToken() {
+            status.textContent = uiText("Settings saved. Loading the HERO schema to verify the API token …");
+            status.dataset.state = "";
+            let message, state;
             try {
-                const data = await platform.api(SAVE_COMPANY, {erpnext_company: company.value.trim()}, {write: true});
-                if (!destroyed) {
-                    apply(data);
-                    companyStatus.textContent = uiText(data.erpnext_company_confirmed ? "Confirmed" : "Company saved. Confirmation required.");
-                    companyStatus.dataset.state = data.erpnext_company_confirmed ? "success" : "";
-                }
+                const result = await platform.api(REFRESH_SCHEMA, {}, {write: true});
+                message = result.status === "UNCHANGED"
+                    ? "Settings saved. API token is valid; the HERO schema is unchanged."
+                    : "Settings saved. API token is valid; the HERO schema was loaded.";
+                state = "success";
             } catch (error) {
-                if (!destroyed) {
-                    companyStatus.textContent = `Could not save ERPNext Company. ${errorMessage(error)}`;
-                    companyStatus.dataset.state = "error";
-                }
-            } finally {
-                if (!destroyed) busy(false);
+                message = `Settings saved, but the API token could not be verified. ${errorMessage(error)}`;
+                state = "error";
+            }
+            try {
+                const data = await platform.api(GET);
+                if (!destroyed) apply(data);
+            } catch (_) { /* The status line below still reports the check result. */ }
+            if (!destroyed) {
+                status.textContent = uiText(message);
+                status.dataset.state = state;
             }
         }
 
-        async function confirmCompany() {
-            if (company.value.trim() !== storedCompany || !storedCompany) {
-                companyStatus.textContent = uiText("Save the selected ERPNext Company before confirming it.");
-                companyStatus.dataset.state = "error";
-                return;
-            }
-            busy(true);
-            companyStatus.textContent = uiText("Confirming company …");
-            try {
-                const data = await platform.api(CONFIRM_COMPANY, {erpnext_company: company.value.trim()}, {write: true});
-                if (!data.erpnext_company_confirmed) throw new Error("The server did not confirm the selected ERPNext Company.");
-                if (!destroyed) {
-                    apply(data);
-                    companyStatus.textContent = uiText("Confirmed");
-                    companyStatus.dataset.state = "success";
-                }
-            } catch (error) {
-                if (!destroyed) {
-                    companyStatus.textContent = `Could not confirm ERPNext Company. ${errorMessage(error)}`;
-                    companyStatus.dataset.state = "error";
-                }
-            } finally {
-                if (!destroyed) busy(false);
-            }
+        function resetForm() {
+            if (!loaded) return;
+            apply(loaded);
+            status.textContent = uiText("Unsaved changes discarded.");
+            status.dataset.state = "";
         }
 
         async function persistMutationSetting() {
@@ -477,9 +457,7 @@
         refresh.addEventListener("click", load);
         save.addEventListener("click", persist);
         testingSave.addEventListener("click", persistTesting);
-        companySave.addEventListener("click", persistCompany);
-        companyConfirm.addEventListener("click", confirmCompany);
-        company.addEventListener("input", updateCompanyControls);
+        reset.addEventListener("click", resetForm);
         mutationSave.addEventListener("click", persistMutationSetting);
         await load();
 
@@ -488,6 +466,7 @@
                 destroyed = true;
                 refresh.replaceWith(refresh.cloneNode(true));
                 save.replaceWith(save.cloneNode(true));
+                reset.replaceWith(reset.cloneNode(true));
                 root.remove();
             }
         };

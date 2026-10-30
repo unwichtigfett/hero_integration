@@ -6,14 +6,12 @@ from frappe.utils import now_datetime
 
 from hero_integration.client.graphql import HeroClientError, validate_endpoint
 from hero_integration.client.settings import BINDING_FIELDS, next_source_binding
-from hero_integration.integrations.erpnext.company import confirmed_project_company
+from hero_integration.services.schema_refresh import INTERVAL_MAX, INTERVAL_MIN, refresh_interval
 
 
 class HEROIntegrationSettings(Document):
     def validate(self):
         frappe.only_for("System Manager")
-        if self.has_value_changed("erpnext_company"):
-            self.erpnext_company_confirmed = 0
         self._update_source_binding()
         if self.hero_api_url:
             hosts = {line.strip().lower() for line in (self.allowed_hero_hosts or "").splitlines() if line.strip()}
@@ -21,7 +19,8 @@ class HEROIntegrationSettings(Document):
                 validate_endpoint(self.hero_api_url, hosts)
             except HeroClientError as exc:
                 raise ValueError(str(exc)) from exc
-        self._validate_company_selection()
+        if not INTERVAL_MIN <= refresh_interval(self) <= INTERVAL_MAX:
+            raise ValueError(f"Schema refresh interval must be between {INTERVAL_MIN} and {INTERVAL_MAX} minutes.")
 
     def _update_source_binding(self):
         confirm = bool(self.get("confirm_source_binding"))
@@ -34,10 +33,3 @@ class HEROIntegrationSettings(Document):
             self.source_binding_confirmed_by = frappe.session.user
             self.source_binding_confirmed_on = now_datetime()
         self.confirm_source_binding = 0
-
-    def _validate_company_selection(self):
-        if not self.erpnext_company_confirmed:
-            return
-        selection = confirmed_project_company(settings=self)
-        if not selection.is_valid:
-            raise ValueError(selection.reason)

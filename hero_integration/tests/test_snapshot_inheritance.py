@@ -223,9 +223,11 @@ class TestCaptureSafety(unittest.TestCase):
 
         db = SimpleNamespace(savepoint=MagicMock(), rollback=MagicMock())
         fake = SimpleNamespace(db=db, session=SimpleNamespace(user="admin@example.com"), log_error=MagicMock())
-        with patch.object(api, "frappe", fake), \
+        from hero_integration.services import schema_refresh
+
+        with patch.object(schema_refresh, "frappe", fake), \
                 patch("hero_integration.services.snapshot_inheritance.inherit_parent_mappings", side_effect=RuntimeError("boom")):
-            result = api._inherit_after_capture("CHILD")
+            result = schema_refresh.inherit_after_capture("CHILD", "admin@example.com")
         self.assertEqual((result["status"], result["activation"]), ("FAILED", False))
         db.rollback.assert_called_once_with(save_point="hero_snapshot_inheritance")
         fake.log_error.assert_called_once()

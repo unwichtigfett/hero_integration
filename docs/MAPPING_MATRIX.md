@@ -74,7 +74,7 @@ Source paths in each table are relative to the operation's collection item, resp
 | `HeroProjectMatches:custom_hero_observed_status_modified` | `current_project_match_status.modified` | `Project.custom_hero_observed_status_modified` | Field |
 | `HeroProjectMatches:custom_hero_observed_status_step_id` | `current_project_match_status.step_id` | `Project.custom_hero_observed_status_step_id` | Field |
 
-**Contract boundary:** The Customer relation resolves through `HERO Integration Link`; `Project.company` is obtained only from a separately confirmed local ERPNext Company setting, **not** the HERO `customer_id`. Project title uses the validated native naming contract. All seven `custom_hero_observed_status_*` fields are observational and never mutate native project status, `docstatus`, state machines or workflows.
+**Contract boundary:** The Customer relation resolves through `HERO Integration Link`; `Project.company` is obtained only from the ERPNext Default Company, **not** the HERO `customer_id`. Project title uses the validated native naming contract. All seven `custom_hero_observed_status_*` fields are observational and never mutate native project status, `docstatus`, state machines or workflows.
 
 ### `HeroCalendarEvents` — Event
 

@@ -96,4 +96,6 @@ class TestSchedulerCadence(unittest.TestCase):
         tree = ast.parse((Path(__file__).resolve().parents[1] / "hooks.py").read_text())
         events = next(ast.literal_eval(node.value) for node in tree.body
                       if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == "scheduler_events")
-        self.assertEqual(events, {"cron": {"* * * * *": ["hero_integration.tasks.run_scheduled_sync"]}})
+        self.assertEqual(events, {"cron": {"* * * * *": [
+            "hero_integration.tasks.run_scheduled_sync", "hero_integration.tasks.run_scheduled_schema_refresh",
+        ]}})

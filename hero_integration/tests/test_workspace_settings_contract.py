@@ -33,8 +33,6 @@ class _Settings:
         self.password_error = password_error
         self.stored_credential = stored_credential
         self.allow_graphql_mutation_execution = allow_graphql_mutation_execution
-        self.erpnext_company = ""
-        self.erpnext_company_confirmed = 0
         self.testing_enabled = 0
         self.testing_max_actions = 5
         self.password_calls: list[tuple[str, bool]] = []
@@ -128,19 +126,20 @@ class TestWorkspaceSettingsContract(unittest.TestCase):
         self.assertEqual(settings.save_calls, 1)
         self.assertFalse(result["mutation_execution_enabled"])
 
-    def test_admin_can_save_allowed_host_source_company_and_fail_closed_polling(self):
+    def test_admin_can_save_allowed_host_source_and_fail_closed_polling(self):
         settings = _Settings()
         frappe_mock = _FrappeSettingsMock(settings)
         with patch.object(api, "frappe", frappe_mock):
             result = api.workspace_settings_save(
                 True, "https://hero.synthetic.invalid/graphql", allowed_hero_hosts="hero.synthetic.invalid",
-                hero_source_instance="synthetic", erpnext_company="Synthetic Company",
-                erpnext_company_confirmed=False, polling_mode="OFF", polling_interval_minutes=15,
+                hero_source_instance="synthetic", polling_mode="OFF", polling_interval_minutes=15,
+                schema_refresh_interval_minutes="30",
             )
         self.assertEqual(settings.allowed_hero_hosts, "hero.synthetic.invalid")
         self.assertEqual(settings.hero_source_instance, "synthetic")
-        self.assertEqual(settings.erpnext_company, "Synthetic Company")
-        self.assertEqual(settings.erpnext_company_confirmed, 0)
+        self.assertEqual(settings.schema_refresh_interval_minutes, 30)
+        self.assertEqual(result["schema_refresh"]["refresh_interval_minutes"], 30)
+        self.assertNotIn("erpnext_company", result)
         self.assertEqual(settings.polling_mode, "OFF")
         self.assertEqual(settings.polling_interval_minutes, 15)
         self.assertEqual(result["polling"]["mode"], "OFF")
@@ -236,28 +235,19 @@ class TestWorkspaceSettingsContract(unittest.TestCase):
             api.workspace_testing_settings_save(False, "101")
         self.assertEqual(settings.save_calls, 0)
 
-    def test_company_confirmation_requires_the_server_saved_selection(self):
-        settings = _Settings()
-        frappe_mock = _FrappeSettingsMock(settings)
-        with patch.object(api, "frappe", frappe_mock):
-            saved = api.workspace_erpnext_company_save("Synthetic Company")
-            confirmed = api.workspace_erpnext_company_confirm("Synthetic Company")
+    def test_schema_refresh_interval_is_bounded_to_10_through_240_minutes(self):
+        for value in ("9", "241", "x"):
+            settings = _Settings()
+            frappe_mock = _FrappeSettingsMock(settings)
+            with self.subTest(value=value), patch.object(api, "frappe", frappe_mock), \
+                    self.assertRaisesRegex(ValueError, "Schema refresh interval"):
+                api.workspace_settings_save(True, "https://hero.synthetic.invalid/graphql",
+                                            schema_refresh_interval_minutes=value)
+            self.assertEqual(settings.save_calls, 0)
 
-        self.assertEqual(saved["erpnext_company"], "Synthetic Company")
-        self.assertTrue(confirmed["erpnext_company_confirmed"])
-        self.assertEqual(settings.erpnext_company_confirmed, 1)
-        self.assertEqual(settings.save_calls, 2)
-
-    def test_company_confirmation_rejects_unsaved_or_mismatched_selection(self):
-        settings = _Settings()
-        frappe_mock = _FrappeSettingsMock(settings)
-        with patch.object(api, "frappe", frappe_mock):
-            with self.assertRaisesRegex(ValueError, "Save an ERPNext Company"):
-                api.workspace_erpnext_company_confirm("Synthetic Company")
-            settings.erpnext_company = "Saved Company"
-            with self.assertRaisesRegex(ValueError, "Save the selected"):
-                api.workspace_erpnext_company_confirm("Other Company")
-        self.assertEqual(settings.save_calls, 0)
+    def test_company_endpoints_are_removed(self):
+        self.assertFalse(hasattr(api, "workspace_erpnext_company_save"))
+        self.assertFalse(hasattr(api, "workspace_erpnext_company_confirm"))
 
     def test_polling_rejects_controls_the_approved_reader_cannot_execute(self):
         settings = _Settings()
