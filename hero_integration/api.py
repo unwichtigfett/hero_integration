@@ -274,7 +274,7 @@ def _start_migration(
     frappe.enqueue(
         "hero_integration.services.migration.execute_run",
         queue="long",
-        timeout=1500,
+        timeout=_run_job_timeout(),
         enqueue_after_commit=True,
         job_id=f"hero-integration:{frappe.local.site}:{run.name}",
         deduplicate=True,
@@ -395,7 +395,7 @@ def resume_run(run_name: str) -> dict[str, str]:
     frappe.enqueue(
         "hero_integration.services.migration.execute_run",
         queue="long",
-        timeout=1500,
+        timeout=_run_job_timeout(),
         enqueue_after_commit=True,
         job_id=f"hero-integration:{frappe.local.site}:{run.name}",
         deduplicate=True,
@@ -3629,7 +3629,16 @@ def _has_active_run() -> bool:
     state = frappe.get_single("HERO Integration Sync State")
     if not state.active_run:
         return False
-    return frappe.get_value("HERO Integration Run", state.active_run, "state") not in TERMINAL_STATES
+    from hero_integration.services.migration import run_lease_alive
+
+    # A run whose worker stopped is released by the next claim.
+    return run_lease_alive(state.active_run)
+
+
+def _run_job_timeout() -> int:
+    from hero_integration.services.migration import RUN_JOB_TIMEOUT
+
+    return RUN_JOB_TIMEOUT
 
 
 def _require_selected_mappings(action: str, service, mapping, dependencies=None) -> None:

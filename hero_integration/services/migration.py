@@ -35,6 +35,12 @@ TERMINAL_STATES = {"Completed", "Completed With Conflicts", "Failed", "Cancelled
 PHASES = ("customer", "project")
 PROJECTION_ACTIONS = {"Projection Migration", "Schedule Migration"}
 PHASE_BLOCKING_RESULTS = {"BLOCKED_RECORD", "CONFLICT", "SKIPPED_AMBIGUOUS", "UNAVAILABLE"}
+# A run is one queue job and RQ stops a job at its timeout.  A claim therefore
+# cannot outlive timeout + grace; a Running run past that lease belongs to a
+# stopped worker (killed process, lost host) and is released automatically.
+RUN_JOB_TIMEOUT = 1500
+RUN_LEASE_GRACE_SECONDS = 300
+RUN_LEASE_SECONDS = RUN_JOB_TIMEOUT + RUN_LEASE_GRACE_SECONDS
 
 
 @dataclass(frozen=True)
@@ -117,7 +123,7 @@ def execute_run(run_name: str) -> None:
             source = testing_source
         _process_requested_phases(run, source)
         run.reload()
-        if run.state == "Running":
+        if run.state == "Running" and run.started_on == claim_started_on:
             run.state = "Completed With Conflicts" if run.conflict_records else "Completed"
             run.finished_on = now_datetime()
             run.save()
@@ -258,13 +264,20 @@ def _claim_run(run) -> bool:
         return False
     try:
         active_run = _locked_active_run()
+        now = now_datetime()
         if active_run == run.name and frappe.db.get_value("HERO Integration Run", run.name, "state") == "Running":
-            return False
+            if run_lease_alive(run.name, now):
+                return False
+            # A duplicate or retried job of the same run after its worker died.
+            _interrupt_run(run.name, now)
+            run.reload()
         if active_run and active_run != run.name:
             active_state = frappe.db.get_value("HERO Integration Run", active_run, "state")
             if active_state not in TERMINAL_STATES:
-                _block_run(run, f"Another HERO run is active: {active_run}.")
-                return False
+                if run_lease_alive(active_run, now):
+                    _block_run(run, f"Another HERO run is active: {active_run}.")
+                    return False
+                _interrupt_run(active_run, now)
         frappe.db.sql(
             "UPDATE `tabSingles` SET `value` = %s WHERE `doctype` = %s AND `field` = %s",
             (run.name, "HERO Integration Sync State", "active_run"),
@@ -274,6 +287,7 @@ def _claim_run(run) -> bool:
         if run.started_on:
             started_on = max(started_on, get_datetime(run.started_on) + timedelta(microseconds=1))
         run.started_on = started_on
+        run.lease_expires_on = started_on + timedelta(seconds=RUN_LEASE_SECONDS)
         run.save()
         # Persist the reservation before another connection may inspect it or
         # this worker starts any source I/O.  Releasing the advisory lock
@@ -292,6 +306,39 @@ def _claim_run(run) -> bool:
         return False
     finally:
         _release_active_run_lock()
+
+
+def run_lease_alive(run_name: str, now=None) -> bool:
+    """Whether a non-terminal run may still be executing in a live worker.
+
+    Runs claimed before leases existed have no expiry; their ``started_on``
+    plus the lease window is used instead.  A Queued run holds no claim.
+    """
+    row = frappe.db.get_value("HERO Integration Run", run_name, ["state", "lease_expires_on", "started_on"], as_dict=True)
+    if not row or row.state in TERMINAL_STATES:
+        return False
+    if row.state != "Running":
+        return True
+    expires = row.lease_expires_on
+    if not expires and row.started_on:
+        expires = get_datetime(row.started_on) + timedelta(seconds=RUN_LEASE_SECONDS)
+    return bool(expires) and get_datetime(expires) > (now or now_datetime())
+
+
+def _interrupt_run(run_name: str, now) -> None:
+    """Mark a stopped worker's run Failed so that its slot can be reused.
+
+    Its uncommitted record work was already rolled back by the database; only
+    the committed reservation remains.  Resume starts the run again.
+    """
+    fields = {
+        "state": "Failed", "finished_on": now,
+        "error_message": "The worker stopped before finishing (lease expired). Resume starts the run again.",
+    }
+    for phase in PHASES:
+        if frappe.db.get_value("HERO Integration Run", run_name, f"{phase}_phase_state") == "Running":
+            fields[f"{phase}_phase_state"] = "Failed"
+    frappe.db.set_value("HERO Integration Run", run_name, fields, update_modified=False)
 
 
 def _finalize_failed_run(run_name: str, claim_started_on) -> None:
