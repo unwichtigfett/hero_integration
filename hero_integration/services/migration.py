@@ -621,6 +621,10 @@ def _migrate_customer(record: dict[str, object], run) -> Result:
         except IncompleteAddress as error:
             # The Customer is still imported; an incomplete address is skipped, as if HERO had none.
             address, address_note = None, f" {error} It was not imported."
+        if address is not None and not address.get("country_code"):
+            # HERO customers are German unless HERO names another country.
+            address["country_code"] = DEFAULT_ADDRESS_COUNTRY
+            address_note = " The HERO address has no country; Germany was assumed."
     except MappingPlanError as error:
         return Result("BLOCKED_RECORD", str(error))
     if plan.source_deleted(record):
@@ -1595,6 +1599,9 @@ def _customer_name_for_source(value: object, source_instance: str = "default") -
 def _source_instance(record: dict[str, object]) -> str:
     value = record.get("_hero_source_instance")
     return value.strip() if isinstance(value, str) and value.strip() else "default"
+
+
+DEFAULT_ADDRESS_COUNTRY = "de"
 
 
 class IncompleteAddress(MappingPlanError):
