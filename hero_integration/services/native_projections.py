@@ -53,6 +53,27 @@ def _text(value, field, *, required=False, limit=None):
     return value
 
 
+EVENT_SUBJECT_FALLBACK = 'HERO-Termin'
+
+
+def _event_subject(record, *, creating):
+    """HERO allows untitled events; ERPNext requires a subject.
+
+    A new Event without a HERO title is named after its event type. An existing
+    Event keeps its subject when the HERO title is empty.
+    """
+    title = record.get('title')
+    if isinstance(title, str) and title.strip():
+        return _text(title, 'Event title', limit=140)
+    if not creating:
+        return _text(title, 'Event title')
+    for key in ('localized_type', 'type'):
+        value = record.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()[:140]
+    return EVENT_SUBJECT_FALLBACK
+
+
 def _html(value):
     # Preserve text, not executable HTML or remote attachments.
     return '<p>' + escape(value or '').replace('\n', '<br>') + '</p>'
@@ -135,7 +156,7 @@ def values(contract, record, identity, instance, options, *, lookup, item_link=N
                   'custom_hero_resource_type': _text(r.get('type'), 'Resource type', limit=140), 'custom_hero_type_id': str(r['type_id']) if r.get('type_id') is not None else None}
                  for r in record.get('resources') or []]
     partners = [{'custom_hero_source_id': str(r['id']), 'custom_hero_partner_name': _text(r.get('full_name'), 'Partner name', limit=140)} for r in record.get('partners') or []]
-    return {'subject': _text(record.get('title'), 'Event title', required=not allow_partial), 'description': _html(_text(record.get('description'), 'Event description')),
+    return {'subject': _event_subject(record, creating=not allow_partial), 'description': _html(_text(record.get('description'), 'Event description')),
             'location': _text(record.get('full_address'), 'Event location', limit=140),
             'custom_hero_resources': resources, 'custom_hero_partners': partners,
             **times}
