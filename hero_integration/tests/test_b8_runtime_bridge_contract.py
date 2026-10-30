@@ -58,7 +58,8 @@ class TestB8RuntimeBridgeContract(unittest.TestCase):
 
     def test_preflight_revalidates_the_current_plan_before_any_runtime_execution(self):
         selection = SimpleNamespace(
-            source_instance="hero-one", execution_mode="AUTO_SYNC", operation_revision=3, service_revision=3
+            source_instance="hero-one", execution_mode="AUTO_SYNC", operation_revision=3, service_revision=3,
+            schema_snapshot="latest", schema_fingerprint="fp"
         )
         executable = SimpleNamespace(plan_key="a" * 64, generation=7, selection=selection)
         approved = SimpleNamespace(generation=7)
@@ -76,7 +77,8 @@ class TestB8RuntimeBridgeContract(unittest.TestCase):
         frappe_module = SimpleNamespace(
             local=SimpleNamespace(site="b9-test.localhost"),
             session=SimpleNamespace(user="Administrator"),
-            get_single=lambda _doctype: SimpleNamespace(polling_mode="AUTO_SYNC", scheduled_sync_enabled=1, hero_source_instance="hero-one"),
+            get_single=lambda _doctype: SimpleNamespace(polling_mode="AUTO_SYNC", scheduled_sync_enabled=1, hero_source_instance="hero-one", hero_api_url="https://hero.example/graphql", allowed_hero_hosts="hero.example"),
+            get_all=lambda *args, **kwargs: [{"name": "latest", "schema_fingerprint": "fp"}],
         )
         expected = sync_runtime_adapter.RuntimePreflight("INCOMPLETE", executable.plan_key, executable.generation, "hero-one")
         with patch.object(sync_runtime_adapter, "_runtime_plan_service", return_value=Service()), patch.object(
@@ -90,6 +92,40 @@ class TestB8RuntimeBridgeContract(unittest.TestCase):
             ("current", "b9-test.localhost", "hero-one"),
             ("resolve", ("b9-test.localhost", "hero-one", 7, True, "Administrator")),
         ])
+
+    def test_automatic_sync_uses_latest_validated_snapshot_without_reusing_old_approval(self):
+        selection = SimpleNamespace(source_instance="hero-one", execution_mode="AUTO_SYNC", schema_snapshot="old", schema_fingerprint="old-fp")
+        executable = SimpleNamespace(selection=selection)
+        service = SimpleNamespace(current_approved=lambda *a: SimpleNamespace(generation=1),
+                                  resolve_executable_plan=lambda *a: executable)
+        calls = []
+        def get_all(doctype, **kwargs):
+            calls.append((doctype, kwargs))
+            return [{"name": "latest", "schema_fingerprint": "new-fp"}]
+        fake = SimpleNamespace(local=SimpleNamespace(site="isolated.local"), session=SimpleNamespace(user="Administrator"),
+                               get_single=lambda *a: SimpleNamespace(polling_mode="AUTO_SYNC", hero_source_instance="hero-one",
+                                   hero_api_url="https://hero.example/graphql", allowed_hero_hosts="hero.example"), get_all=get_all)
+        with patch.object(sync_runtime_adapter, "_runtime_plan_service", return_value=service), \
+             patch.object(sync_runtime_adapter, "_run") as run:
+            with self.assertRaisesRegex(sync_runtime_adapter.RuntimeBridgeError, "newest validated snapshot"):
+                sync_runtime_adapter.run_scheduled_auto_sync(frappe_module=fake)
+            run.assert_not_called()
+        self.assertEqual(calls[0][1]["filters"]["source_instance"], "hero-one")
+        self.assertEqual(calls[0][1]["filters"]["analysis_status"], "Validated")
+        self.assertEqual(calls[0][1]["order_by"], "creation desc, name desc")
+        self.assertTrue(calls[0][1]["filters"]["endpoint_fingerprint"])
+
+    def test_missing_validated_snapshot_blocks_before_runtime(self):
+        fake = SimpleNamespace(local=SimpleNamespace(site="isolated.local"), session=SimpleNamespace(user="Administrator"),
+                               get_single=lambda *a: SimpleNamespace(polling_mode="AUTO_SYNC", hero_source_instance="hero-one",
+                                   hero_api_url="https://hero.example/graphql", allowed_hero_hosts="hero.example"),
+                               get_all=lambda *args, **kwargs: [])
+        service = SimpleNamespace(current_approved=lambda *a: SimpleNamespace(generation=1),
+                                  resolve_executable_plan=lambda *a: SimpleNamespace(selection=SimpleNamespace(execution_mode="AUTO_SYNC")))
+        with patch.object(sync_runtime_adapter, "_runtime_plan_service", return_value=service), patch.object(sync_runtime_adapter, "_run") as run:
+            with self.assertRaisesRegex(sync_runtime_adapter.RuntimeBridgeError, "validated snapshot"):
+                sync_runtime_adapter.run_scheduled_auto_sync(frappe_module=fake)
+            run.assert_not_called()
 
     def test_preflight_rejects_missing_approved_plan_before_resolution(self):
         class Service:

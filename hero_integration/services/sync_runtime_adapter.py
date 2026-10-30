@@ -55,6 +55,32 @@ def _scheduler_actor(frappe_module) -> str:
     return actor
 
 
+def _require_latest_validated_snapshot(frappe, settings, source_instance, selection) -> None:
+    """Do not silently transfer approval when the source schema changes."""
+    from hero_integration.client.graphql import HeroClientError, validate_endpoint
+    from hero_integration.services.introspection import endpoint_fingerprint
+
+    hosts = {line.strip().lower() for line in str(getattr(settings, "allowed_hero_hosts", "") or "").splitlines() if line.strip()}
+    try:
+        endpoint = validate_endpoint(getattr(settings, "hero_api_url", ""), hosts)
+    except (HeroClientError, ValueError) as error:
+        raise RuntimeBridgeError("Automatic sync requires a valid configured HERO endpoint.") from error
+    rows = frappe.get_all(
+        "HERO GraphQL Schema Snapshot",
+        filters={"source_instance": source_instance,
+                 "endpoint_fingerprint": endpoint_fingerprint(endpoint.url, source_instance),
+                 "analysis_status": "Validated"},
+        fields=["name", "schema_fingerprint"],
+        order_by="creation desc, name desc", limit_page_length=1,
+    )
+    if not rows:
+        raise RuntimeBridgeError("No validated snapshot exists for the current HERO source and endpoint.")
+    newest = rows[0]
+    if (newest.get("name") != selection.schema_snapshot
+            or newest.get("schema_fingerprint") != selection.schema_fingerprint):
+        raise RuntimeBridgeError("The approved plan does not use the newest validated snapshot; review and approve an updated plan.")
+
+
 def run_scheduled_auto_sync(*, frappe_module=None) -> RuntimePreflight:
     """Revalidate the selected AUTO_SYNC plan before any provider construction.
 
@@ -82,6 +108,7 @@ def run_scheduled_auto_sync(*, frappe_module=None) -> RuntimePreflight:
     )
     if executable.selection.execution_mode != RUNTIME_EXECUTION_MODE:
         raise RuntimeBridgeError("Runtime plan execution mode is not AUTO_SYNC.")
+    _require_latest_validated_snapshot(frappe, settings, source_instance, executable.selection)
     return _run(executable, frappe, automatic=True)
 
 
