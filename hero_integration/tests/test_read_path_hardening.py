@@ -76,7 +76,9 @@ class TestRateLimits(unittest.TestCase):
         opener.open.side_effect = [_http_error(429, "Wed, 21 Oct 2026 07:28:00 GMT"), _Body(b'{"data": {}}')]
         with patch.object(graphql.time, "sleep") as sleep:
             _client(max_retries=1, retry_backoff_seconds=3)._request_with_retry(opener, object())
-        sleep.assert_called_once_with(3)
+        # A past HTTP date falls back to the jittered exponential backoff.
+        sleep.assert_called_once()
+        self.assertTrue(3 <= sleep.call_args.args[0] <= 6, sleep.call_args)
 
     def test_without_retries_429_and_4xx_fail_once(self):
         for code in (429, 400, 401):

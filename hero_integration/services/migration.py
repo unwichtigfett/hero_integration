@@ -217,6 +217,7 @@ def _source_for_run(run, config):
     source = GraphQLServiceSource(HeroGraphQLClient(
         config.endpoint, lambda: config.api_token, config.timeout_seconds,
         max_retries=0 if _testing_preview_enabled(run) else 2,
+        requests_per_minute=_request_rate(),
     ), service, contract, getattr(snapshot, "source_instance", "") or config.source_instance,
        revalidate=revalidate_generated if getattr(contract, 'materialized_request', None) is not None else None)
     if contract.target_operation == 'HeroProjectMatches':
@@ -224,6 +225,13 @@ def _source_for_run(run, config):
         customer_contract = from_documents(customer_service, customer_mapping, customer_snapshot)
         source.customer_source = GraphQLServiceSource(source.client, customer_service, customer_contract, source.source_instance)
     return source
+
+
+def _request_rate() -> int:
+    """Runs draw from the same configured per-host HERO rate as polling."""
+    from hero_integration.services.polling import runtime_plan
+
+    return int(runtime_plan(frappe.get_single("HERO Integration Settings"))["rate_limit"])
 
 
 def customer_dependency(service, mapping):

@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 import json
+import random
 import ssl
+import threading
 import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from email.utils import parsedate_to_datetime
 from urllib.parse import urlsplit
 
 from hero_integration.graphql_protocol.graphql_response import strict_json_loads
@@ -18,6 +21,9 @@ from hero_integration.graphql_protocol.graphql_response import strict_json_loads
 MAX_RESPONSE_BYTES = 20 * 1024 * 1024
 # A server-requested Retry-After is honoured only up to this many seconds.
 MAX_RETRY_AFTER_SECONDS = 300
+# One request-rate budget per HERO host, shared by every client in this process.
+_RATE_LOCK = threading.Lock()
+_NEXT_REQUEST_AT: dict[str, float] = {}
 
 
 class HeroClientError(RuntimeError):
@@ -58,9 +64,24 @@ def validate_endpoint(url: str, allowed_hosts: set[str]) -> HeroEndpoint:
 
 
 def assert_read_only(document: str) -> None:
-    tokens = document.replace("{", " ").replace("}", " ").split()
-    if any(token.lower() in {"mutation", "subscription"} for token in tokens):
-        raise HeroClientError("Only HERO GraphQL queries are allowed.")
+    """Accept exactly one GraphQL query operation (fragments allowed).
+
+    The complete executable document is parsed: lexical token splitting let
+    e.g. ``mutation($id: ID!)`` through and cannot handle literals or
+    fragments.  Without graphql-core, reads fail closed.
+    """
+    try:
+        from graphql import GraphQLError, parse
+        from graphql.language import OperationDefinitionNode, OperationType
+    except ImportError as error:
+        raise HeroClientError("GraphQL query validation is unavailable.") from error
+    try:
+        parsed = parse(document)
+    except (GraphQLError, TypeError) as error:
+        raise HeroClientError("HERO GraphQL document is invalid.") from error
+    operations = [item for item in parsed.definitions if isinstance(item, OperationDefinitionNode)]
+    if len(operations) != 1 or operations[0].operation != OperationType.QUERY:
+        raise HeroClientError("Only one HERO GraphQL query operation is allowed.")
 
 
 class HeroGraphQLClient:
@@ -72,6 +93,7 @@ class HeroGraphQLClient:
         max_retries: int = 2,
         retry_backoff_seconds: int = 1,
         max_response_bytes: int = MAX_RESPONSE_BYTES,
+        requests_per_minute: int = 0,
     ):
         if not isinstance(timeout, int) or isinstance(timeout, bool) or not 1 <= timeout <= 120:
             raise HeroClientError("HERO timeout must be between 1 and 120 seconds.")
@@ -87,6 +109,9 @@ class HeroGraphQLClient:
         if not isinstance(max_response_bytes, int) or isinstance(max_response_bytes, bool) or not 1024 <= max_response_bytes <= MAX_RESPONSE_BYTES:
             raise HeroClientError("HERO response size limit is invalid.")
         self.max_response_bytes = max_response_bytes
+        if not isinstance(requests_per_minute, int) or isinstance(requests_per_minute, bool) or not 0 <= requests_per_minute <= 10000:
+            raise HeroClientError("HERO request rate must be between 0 (unbounded) and 10000 per minute.")
+        self.min_interval_seconds = 60 / requests_per_minute if requests_per_minute else 0.0
 
     def query(self, document: str, variables: Mapping[str, object]) -> dict[str, object]:
         assert_read_only(document)
@@ -141,9 +166,23 @@ class HeroGraphQLClient:
             raise HeroClientError("HERO GraphQL response contains no data.", code="MISSING_DATA")
         return payload["data"]
 
+    def _await_rate_budget(self) -> None:
+        if not self.min_interval_seconds:
+            return
+        with _RATE_LOCK:
+            now = time.monotonic()
+            start = max(now, _NEXT_REQUEST_AT.get(self.endpoint.host, 0.0))
+            _NEXT_REQUEST_AT[self.endpoint.host] = start + self.min_interval_seconds
+        if start > now:
+            time.sleep(start - now)
+
     def _request_with_retry(self, opener, request) -> dict[str, object]:
+        """Only HTTP 429, 5xx and transport failures are retried, with
+        exponential backoff plus jitter or a bounded server Retry-After."""
         for attempt in range(self.max_retries + 1):
-            delay = self.retry_backoff_seconds * (2**attempt)
+            base = self.retry_backoff_seconds * (2**attempt)
+            delay = base + random.uniform(0, base) if base else 0
+            self._await_rate_budget()
             try:
                 with opener.open(request, timeout=self.timeout) as response:
                     # Read at most one byte past the bound, so an oversized body never fills memory.
@@ -169,8 +208,16 @@ class HeroGraphQLClient:
         raise HeroClientError("HERO request failed.")
 
 
-def _retry_after(error, fallback: int) -> int:
+def _retry_after(error, fallback: float) -> float:
     value = str((getattr(error, "headers", None) or {}).get("Retry-After", "") or "").strip()
     if value.isdigit():
         return min(int(value), MAX_RETRY_AFTER_SECONDS)
+    if value:
+        try:
+            moment = parsedate_to_datetime(value)
+        except (TypeError, ValueError):
+            moment = None
+        remaining = moment.timestamp() - time.time() if moment is not None else 0.0
+        if remaining > 0:
+            return min(remaining, MAX_RETRY_AFTER_SECONDS)
     return min(fallback, MAX_RETRY_AFTER_SECONDS)

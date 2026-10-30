@@ -29,7 +29,9 @@ class TestPortableRelease(unittest.TestCase):
         self.assertEqual(metadata["project"]["name"], "hero_integration")
         dependency = metadata["tool"]["bench"]["frappe-dependencies"]["frappe"]
         self.assertEqual(dependency, ">=16.0.0-dev,<17.0.0")
-        self.assertEqual(metadata["project"]["dependencies"], [])
+        # graphql-core parses every executable document at the read-only
+        # boundary; the read client fails closed without it.
+        self.assertEqual(metadata["project"]["dependencies"], ["graphql-core>=3.2,<3.3"])
         self.assertTrue((PACKAGE / "modules.txt").is_file())
         self.assertTrue((PACKAGE / "patches.txt").is_file())
         self.assertTrue((PACKAGE / "install.py").is_file())
