@@ -1891,6 +1891,13 @@ def _lock_mapping_save_context(snapshot_name, direction):
     return schema
 
 
+def _assert_mapping_direction_kind(direction, operation_kind):
+    if not isinstance(operation_kind, str) or (direction, operation_kind.upper()) not in {
+        ("QUERY_TO_FRAPPE", "QUERY"), ("FRAPPE_TO_MUTATION", "MUTATION"),
+    }:
+        frappe.throw("GraphQL mapping direction and operation kind must agree.")
+
+
 @frappe.whitelist(methods=["POST"])
 def graphql_mapping_save(
     snapshot_name: str, operation_kind: str, operation_name: str, direction: str, mapping_json: str,
@@ -1911,6 +1918,8 @@ def graphql_mapping_save(
         frappe.throw("GraphQL mapping JSON must be an object.")
     if direction not in {"QUERY_TO_FRAPPE", "FRAPPE_TO_MUTATION"}:
         frappe.throw("Unsupported GraphQL mapping direction.")
+    if not mapping_name:
+        _assert_mapping_direction_kind(direction, operation_kind)
     schema = _lock_mapping_save_context(snapshot_name, direction)
     if direction == "FRAPPE_TO_MUTATION":
         submitted_mapping = parsed
@@ -1972,6 +1981,7 @@ def graphql_mapping_save(
         frappe.throw("The GraphQL mapping belongs to another schema snapshot.")
     if mapping_name and item.direction != direction:
         frappe.throw("An existing GraphQL mapping cannot change direction.")
+    _assert_mapping_direction_kind(direction, operation_kind)
     if mapping_name:
         expected = _required_revision(expected_revision, "GraphQL mapping revision")
         if expected != int(item.mapping_revision or 0):
