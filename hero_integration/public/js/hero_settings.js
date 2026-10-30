@@ -83,9 +83,6 @@
         const allowDeletion = document.createElement("input");
         allowDeletion.type = "checkbox";
         allowDeletion.className = "hero-settings-check";
-        const adminRecipients = document.createElement("textarea");
-        adminRecipients.className = "hero-settings-input";
-        adminRecipients.rows = 2;
         const pollingMode = document.createElement("select");
         pollingMode.className = "hero-settings-input";
         ["OFF", "MONITOR", "AUTO_SYNC"].forEach(value => {
@@ -173,9 +170,9 @@
                 field("Polling interval (minutes)", pollingInterval, "1–1440 minutes; the Frappe scheduler evaluates cadence server-side."),
                 field("Timezone", pollingTimezone), field("Execution window", pollingWindow, "Optional local time window in HH:MM-HH:MM.")),
             pollingGroup("Processing",
-                field("Allow bootstrap", pollingBootstrap),
+                field("Allow bootstrap", pollingBootstrap, "Stores permission for an initial load; the current polling reader does not perform bootstrap."),
                 field("Page size", pollingPageSize), field("Pagination strategy", pollingPagination, "Cursor watermarks are advanced only after complete successful processing. Offset pagination does not invent watermarks."),
-                field("Allow backfill", pollingBackfill), field("Allow full inventory", pollingInventory), field("Allow reconciliation", pollingReconciliation, "Reconciliation reports discrepancies and never auto-deletes ERPNext records.")),
+                field("Allow backfill", pollingBackfill, "Stores permission to fetch older records; the current polling reader does not perform backfill."), field("Allow full inventory", pollingInventory, "Allows a bounded scan of up to 100 pages per source instead of one page."), field("Allow reconciliation", pollingReconciliation, "Reconciliation reports discrepancies and never auto-deletes ERPNext records.")),
             pollingGroup("Reliability and notifications",
                 field("Retry limit", pollingRetryLimit), field("Retry backoff seconds", pollingBackoff), field("Polling timeout seconds", pollingTimeout), field("Rate limit", pollingRate), field("Concurrency", pollingConcurrency, "The approved V1 source reader is intentionally single-worker."), field("Notifications", pollingNotifications))
         );
@@ -195,8 +192,8 @@
         const sources = node("fieldset", "hero-settings-section");
         sources.append(
             node("legend", "", "Sources"),
-            field("Allowed HERO hosts", allowedHosts, "One exact HTTPS hostname per line; the endpoint host must be present."),
-            field("HERO source instance", sourceInstance, "Stable identity for this external source.")
+            field("Allowed hosts", allowedHosts, "One exact HTTPS hostname per line; the endpoint host must be present."),
+            field("Source instance", sourceInstance, "Stable identity for this external source.")
         );
         const companySection = node("fieldset", "hero-settings-section");
         const companyStatus = node("div", "hero-settings-status", "Company selection is not loaded yet.");
@@ -215,7 +212,6 @@
         securitySection.append(
             node("legend", "", "Safety and conflict notifications"),
             field("Allow deletion", allowDeletion, "OFF blocks every HERO Integration deletion route on the server. Turning it on is only a necessary prerequisite."),
-            field("Administrator notification recipients", adminRecipients, "One enabled System Manager user ID per line. Empty notifies enabled System Managers."),
         );
         card.append(connection, sources, companySection, securitySection, status, save);
 
@@ -237,7 +233,6 @@
             company.disabled = value;
             companyConfirmed.disabled = true;
             allowDeletion.disabled = value;
-            adminRecipients.disabled = value;
             pollingMode.disabled = value;
             pollingInterval.disabled = value;
             [pollingTimezone, pollingWindow, pollingBootstrap, pollingPageSize, pollingPagination, pollingBackfill, pollingInventory, pollingReconciliation, pollingRetryLimit, pollingBackoff, pollingTimeout, pollingRate, pollingConcurrency, pollingNotifications].forEach((control) => { control.disabled = value; });
@@ -269,7 +264,6 @@
             companyStatus.textContent = uiText(!storedCompany ? "Save an ERPNext Company before confirming it." : companyConfirmed.checked ? "Confirmed" : "Company saved. Confirmation required.");
             companyStatus.dataset.state = companyConfirmed.checked ? "success" : "";
             allowDeletion.checked = Boolean(data.allow_deletion);
-            adminRecipients.value = data.admin_notification_recipients || "";
             pollingMode.value = data.polling?.mode || "OFF";
             pollingInterval.value = String(data.polling?.interval_minutes || 60);
             pollingTimezone.value = data.polling?.timezone || "UTC";
@@ -336,7 +330,7 @@
                     hero_source_instance: sourceInstance.value.trim(),
                     erpnext_company: company.value.trim(),
                     erpnext_company_confirmed: companyConfirmed.checked,
-                    allow_deletion: allowDeletion.checked, admin_notification_recipients: adminRecipients.value.trim(),
+                    allow_deletion: allowDeletion.checked,
                     polling_mode: pollingMode.value,
                     polling_interval_minutes: Number(pollingInterval.value),
                     polling_timezone: pollingTimezone.value.trim(), polling_execution_window: pollingWindow.value.trim(),
