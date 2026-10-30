@@ -5,6 +5,11 @@
   {"fieldname": "allowed_hero_hosts", "fieldtype": "Small Text", "label": "Allowed HERO Hosts", "description": "One exact HTTPS hostname per line.", "default": "login.hero-software.de"},
   {"fieldname": "hero_api_token", "fieldtype": "Password", "label": "HERO API Token"},
   {"fieldname": "hero_source_instance", "fieldtype": "Data", "label": "HERO Source Instance", "default": "default", "description": "Stable source-instance identity used together with ProjectMatch.id. Change only for a separate HERO source."},
+  {"fieldname": "confirm_source_binding", "fieldtype": "Check", "label": "Confirm Source Binding", "description": "Confirm that the configured endpoint and API token belong to the HERO account named by the source instance. Required after the endpoint, token or source instance changes; use a new source instance for a different HERO account."},
+  {"fieldname": "source_binding_revision", "fieldtype": "Int", "label": "Source Binding Revision", "read_only": 1, "default": "0"},
+  {"fieldname": "source_binding_confirmed_revision", "fieldtype": "Int", "label": "Confirmed Source Binding Revision", "read_only": 1, "default": "0"},
+  {"fieldname": "source_binding_confirmed_by", "fieldtype": "Link", "options": "User", "label": "Source Binding Confirmed By", "read_only": 1},
+  {"fieldname": "source_binding_confirmed_on", "fieldtype": "Datetime", "label": "Source Binding Confirmed On", "read_only": 1},
   {"fieldname": "timeout_seconds", "fieldtype": "Int", "label": "Timeout Seconds", "default": "30"},
   {"fieldname": "allow_graphql_mutation_execution", "fieldtype": "Check", "label": "Allow GraphQL Mutation Execution", "default": "0", "description": "Global fail-closed gate. System Manager activation still requires an active schema-bound contract and explicit confirmation for every individual mutation."},
   {"fieldname": "allow_deletion", "fieldtype": "Check", "label": "Allow deletion", "default": "0", "description": "Global fail-closed deletion gate. Turning this off blocks manual, queued and automatic HERO Integration deletions and invalidates prepared destructive work."},
@@ -22,5 +27,5 @@
   {"fieldname": "last_successful_sync", "fieldtype": "Datetime", "label": "Last Successful Sync", "read_only": 1},
   {"fieldname": "sync_status", "fieldtype": "Data", "label": "Sync Status", "read_only": 1},
   {"fieldname": "sync_error", "fieldtype": "Small Text", "label": "Sync Error", "read_only": 1}
- ], "permissions": [{"role": "System Manager", "read": 1, "write": 1, "create": 1}], "modified": "2026-10-30 03:00:00.000000"
+ ], "permissions": [{"role": "System Manager", "read": 1, "write": 1, "create": 1}], "modified": "2026-10-30 05:00:00.000000"
 }

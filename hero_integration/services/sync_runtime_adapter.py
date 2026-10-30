@@ -81,6 +81,13 @@ def _require_latest_validated_snapshot(frappe, settings, source_instance, select
         raise RuntimeBridgeError("The approved plan does not use the newest validated snapshot; review and approve an updated plan.")
 
 
+def _require_confirmed_source_binding(settings) -> None:
+    """Refuse HERO reads after an unconfirmed endpoint, token or source change."""
+    revision = int(getattr(settings, "source_binding_revision", 0) or 0)
+    if int(getattr(settings, "source_binding_confirmed_revision", 0) or 0) != revision:
+        raise RuntimeBridgeError("The HERO endpoint, token or source instance changed; an administrator must confirm the source binding.")
+
+
 def run_scheduled_auto_sync(*, frappe_module=None) -> RuntimePreflight:
     """Revalidate the selected AUTO_SYNC plan before any provider construction.
 
@@ -94,6 +101,7 @@ def run_scheduled_auto_sync(*, frappe_module=None) -> RuntimePreflight:
 
     if effective_mode(settings) != "AUTO_SYNC":
         raise RuntimeBridgeError("Canonical scheduled sync requires AUTO_SYNC mode.")
+    _require_confirmed_source_binding(settings)
     site_scope = getattr(getattr(frappe, "local", None), "site", "")
     source_instance = str(getattr(settings, "hero_source_instance", "default") or "default").strip()
     if not site_scope or not source_instance:
@@ -128,6 +136,7 @@ def run_materialized_monitor(*, frappe_module=None, client=None):
     settings = frappe.get_single("HERO Integration Settings")
     if effective_mode(settings) != "MONITOR":
         raise RuntimeBridgeError("Materialized monitoring requires MONITOR mode.")
+    _require_confirmed_source_binding(settings)
     polling = runtime_plan(settings)
     if polling["unsupported_sources"]:
         raise RuntimeBridgeError("Materialized monitoring configuration is not supported; review the approved query variables.")
@@ -205,6 +214,7 @@ def run_pending_sync(expected_plan_generation: int, *, frappe_module=None, provi
     source_instance = str(getattr(settings, "hero_source_instance", "default") or "default").strip()
     if not site_scope or not source_instance:
         raise RuntimeBridgeError("Pending Sync requires current site and source identities.")
+    _require_confirmed_source_binding(settings)
     actor = getattr(getattr(frappe, "session", None), "user", "")
     service = _runtime_plan_service(frappe)
     executable = service.resolve_executable_plan(site_scope, source_instance, expected_plan_generation, False, actor)

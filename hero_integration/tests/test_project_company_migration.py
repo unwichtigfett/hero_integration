@@ -346,17 +346,49 @@ class TestProjectCompanyMigration(unittest.TestCase):
     def test_run_source_binding_rejects_endpoint_and_account_switch(self):
         from hero_integration.services.introspection import endpoint_fingerprint
         endpoint = SimpleNamespace(url="https://example.invalid/graphql")
-        config = SimpleNamespace(endpoint=endpoint, source_instance="account-a")
+        def config(instance="account-a", url=endpoint.url, confirmed=True, revision=0):
+            return SimpleNamespace(endpoint=SimpleNamespace(url=url), source_instance=instance,
+                                   source_binding_confirmed=confirmed, source_binding_revision=revision)
         snapshot = SimpleNamespace(source_instance="account-a", endpoint_fingerprint=endpoint_fingerprint(endpoint.url, "account-a"))
-        self.migration._validate_run_source_binding(SimpleNamespace(source_instance="account-a"), config, snapshot)
-        for run, cfg, snap in (
-            (SimpleNamespace(source_instance="account-b"), config, snapshot),
-            (SimpleNamespace(source_instance="account-a"), SimpleNamespace(endpoint=endpoint, source_instance="account-b"), snapshot),
-            (SimpleNamespace(source_instance="account-a"), SimpleNamespace(endpoint=SimpleNamespace(url="https://other.invalid/graphql"), source_instance="account-a"), snapshot),
-            (SimpleNamespace(source_instance="account-a"), config, SimpleNamespace(source_instance="account-a", endpoint_fingerprint="")),
+        run = SimpleNamespace(source_instance="account-a", source_binding_revision=0)
+        self.migration._validate_run_source_binding(run, config(), snapshot)
+        for run_doc, cfg, snap in (
+            (SimpleNamespace(source_instance="account-b"), config(), snapshot),
+            (run, config(instance="account-b"), snapshot),
+            (run, config(url="https://other.invalid/graphql"), snapshot),
+            (run, config(), SimpleNamespace(source_instance="account-a", endpoint_fingerprint="")),
         ):
             with self.assertRaises(self.migration.MappingPlanError):
-                self.migration._validate_run_source_binding(run, cfg, snap)
+                self.migration._validate_run_source_binding(run_doc, cfg, snap)
+
+    def test_credential_swap_under_the_same_url_and_label_requires_confirmation(self):
+        from hero_integration.services.introspection import endpoint_fingerprint
+        url = "https://example.invalid/graphql"
+        snapshot = SimpleNamespace(source_instance="account-a", endpoint_fingerprint=endpoint_fingerprint(url, "account-a"))
+        swapped = SimpleNamespace(endpoint=SimpleNamespace(url=url), source_instance="account-a",
+                                  source_binding_confirmed=False, source_binding_revision=1)
+        new_run = SimpleNamespace(source_instance="", source_binding_revision=1)
+        with self.assertRaisesRegex(self.migration.MappingPlanError, "confirm the source binding"):
+            self.migration._validate_run_source_binding(new_run, swapped, snapshot)
+        confirmed = SimpleNamespace(**{**swapped.__dict__, "source_binding_confirmed": True})
+        self.migration._validate_run_source_binding(new_run, confirmed, snapshot)
+        # A historical run queued under the old binding is never replayed
+        # against the new credentials, even with a compatible schema.
+        historical = SimpleNamespace(source_instance="account-a", source_binding_revision=0)
+        with self.assertRaisesRegex(self.migration.MappingPlanError, "earlier HERO source binding"):
+            self.migration._validate_run_source_binding(historical, confirmed, snapshot)
+
+    def test_identical_schema_from_another_account_cannot_reuse_a_snapshot(self):
+        from hero_integration.services.introspection import endpoint_fingerprint
+        url = "https://example.invalid/graphql"
+        # Same endpoint and same schema fingerprint, different account label:
+        # the snapshot of account-a is not evidence for account-b records.
+        snapshot = SimpleNamespace(source_instance="account-a", endpoint_fingerprint=endpoint_fingerprint(url, "account-a"),
+                                   schema_fingerprint="same-schema")
+        other = SimpleNamespace(endpoint=SimpleNamespace(url=url), source_instance="account-b",
+                                source_binding_confirmed=True, source_binding_revision=0)
+        with self.assertRaises(self.migration.MappingPlanError):
+            self.migration._validate_run_source_binding(SimpleNamespace(source_instance="", source_binding_revision=0), other, snapshot)
 
     def test_preview_existing_change_does_not_write_link_or_target_state(self):
         record = {"id": 301, "full_name": "Synthetic Ada", "company_name": None, "email": "ada@synthetic.invalid"}

@@ -169,6 +169,13 @@ def _validate_run_source_binding(run, config, snapshot=None):
     recorded = getattr(run, "source_instance", "") or ""
     if not instance or (recorded and recorded != instance):
         raise MappingPlanError("Migration run does not match the configured HERO source instance.")
+    # A schema fingerprint or a matching URL is no proof of the HERO account
+    # behind the token: require the administrator-confirmed binding that was
+    # in force when this run was queued.
+    if not getattr(config, "source_binding_confirmed", False):
+        raise MappingPlanError("The HERO endpoint, token or source instance changed; an administrator must confirm the source binding.")
+    if int(getattr(run, "source_binding_revision", 0) or 0) != int(getattr(config, "source_binding_revision", 0) or 0):
+        raise MappingPlanError("The run was queued under an earlier HERO source binding; queue a new run.")
     if snapshot is None:
         # Historical runs lack an immutable endpoint binding; do not replay them
         # against whatever endpoint happens to be configured today.

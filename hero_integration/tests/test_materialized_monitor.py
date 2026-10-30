@@ -38,6 +38,15 @@ class TestMaterializedMonitor(unittest.TestCase):
         self.assertEqual(result.incomplete_sources, ("HeroProjectMatches",))
         self.assertEqual(result.project_next_offset, 0)
 
+    def test_unconfirmed_source_binding_never_queries(self):
+        self.settings.source_binding_revision, self.settings.source_binding_confirmed_revision = 2, 1
+        with self.assertRaisesRegex(sync_runtime_adapter.RuntimeBridgeError, "confirm the source binding"):
+            self.run_monitor()
+        self.client.query.assert_not_called()
+        self.settings.source_binding_confirmed_revision = 2
+        self.run_monitor()
+        self.client.query.assert_called_once()
+
     def test_missing_plan_or_newer_snapshot_never_queries(self):
         self.service.current_approved = lambda *a: None
         with self.assertRaises(sync_runtime_adapter.RuntimeBridgeError): self.run_monitor()
