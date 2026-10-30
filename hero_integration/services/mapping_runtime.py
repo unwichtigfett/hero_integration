@@ -21,6 +21,8 @@ from hero_integration.services.direct_mapping import (
     PURPOSE_SOURCE_IDENTITY,
     RELATION_CUSTOMER_PRIMARY_ADDRESS,
     TRANSFORM_TRIM,
+    MISSING,
+    lookup,
     source_value,
     transformed_value,
 )
@@ -28,6 +30,20 @@ from hero_integration.services.direct_mapping import (
 
 class MappingPlanError(ValueError):
     pass
+
+
+class MappedValues(dict):
+    """Writable target values plus the fields HERO did not supply a value for.
+
+    ``missing`` targets were absent from the response and carry no evidence;
+    ``empty`` targets were explicitly null/empty and are not written under the
+    established no-clear policy, but still take part in change comparison.
+    """
+
+    def __init__(self, *args, missing=(), empty=(), **kwargs):
+        super().__init__(*args, **kwargs)
+        self.missing = set(missing)
+        self.empty = set(empty)
 
 
 @dataclass(frozen=True)
@@ -93,7 +109,7 @@ class MappingPlan:
         native_value: Callable[[str], object] | None = None,
         allow_partial: bool = False,
     ) -> dict[str, object]:
-        values: dict[str, object] = {}
+        values = MappedValues()
         projection = (self.target_operation or self.operation) in PROJECTIONS
         if projection:
             try:
@@ -101,7 +117,8 @@ class MappingPlan:
             except ValueError as error:
                 raise MappingPlanError(str(error)) from error
         for definition in self.definitions:
-            value = source_value(record, definition.source_path)
+            raw = lookup(record, definition.source_path)
+            value = None if raw is MISSING else raw
             if (self.target_operation or self.operation) == 'HeroCalendarEvents' and (
                 value is None or (definition.source_path in {'description', 'full_address'}
                                   and isinstance(value, str) and not value.strip())
@@ -110,15 +127,27 @@ class MappingPlan:
                 # Missing, NULL and unconfirmed empty values do not clear Event fields.
                 continue
             if definition.purpose in {PURPOSE_FIELD, PURPOSE_RECORD_NAME, PURPOSE_CUSTOMER_TYPE, PURPOSE_CUSTOMER_CONTACT, PURPOSE_SOURCE_IDENTITY}:
-                if definition.purpose == PURPOSE_RECORD_NAME and (self.target_operation or self.operation) == "HeroProjectMatches":
+                project_name = definition.purpose == PURPOSE_RECORD_NAME and (self.target_operation or self.operation) == "HeroProjectMatches"
+                if raw is MISSING and not projection and not project_name:
+                    # An unselected or omitted response field is no evidence
+                    # of an empty HERO value (e.g. a missing company_name must
+                    # not turn a Company into an Individual).
+                    if definition.target_field not in values:
+                        values.missing.add(definition.target_field)
+                    continue
+                if project_name:
                     transformed = project_title(record) if project_title is not None else transformed_value(definition, value)
                 else:
                     transformed = transformed_value(definition, value)
                 if not projection and not definition.source_path.startswith('current_project_match_status.') and (transformed is None or transformed == ""):
+                    if definition.target_field not in values:
+                        values.empty.add(definition.target_field)
                     continue
                 if definition.purpose == PURPOSE_RECORD_NAME and definition.target_field in values:
                     continue
                 values[definition.target_field] = transformed
+                values.missing.discard(definition.target_field)
+                values.empty.discard(definition.target_field)
             elif definition.purpose == 'Native Binding':
                 # Customer primary-address values are intentionally not fields
                 # of the Customer document.  The Customer adapter resolves the
@@ -163,6 +192,13 @@ class MappingPlan:
             return None
         value = transformed_value(definitions[0], source_value(record, definitions[0].source_path))
         return value if isinstance(value, str) else None
+
+    def has_home_phone(self) -> bool:
+        return bool(self._with_purpose(PURPOSE_CUSTOMER_HOME_PHONE))
+
+    def customer_contact_fields(self) -> set[str]:
+        """Every selected Customer Primary Contact target, empty or not."""
+        return {definition.target_field for definition in self._with_purpose(PURPOSE_CUSTOMER_CONTACT)}
 
     def customer_contact_values(self, values: dict[str, object]) -> dict[str, object]:
         """Expose only the explicit Customer Primary Contact bindings."""
