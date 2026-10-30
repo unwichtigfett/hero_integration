@@ -187,6 +187,35 @@ class TestProjectCompanyMigration(unittest.TestCase):
         self.assertEqual(self.frappe.customers[0]["email_id"], "local@synthetic.invalid")
         self.assertIn("email_id", self.frappe.links[("customer", "301")].conflict_detail)
 
+    def test_monitor_linked_customer_uses_contact_snapshot_without_business_write(self):
+        record = {"id": 301, "full_name": "Synthetic Ada", "email": "ada@synthetic.invalid"}
+        self.migration._migrate_customer(record, SimpleNamespace(mode="Execute"))
+        before = copy.deepcopy(self.frappe.customers)
+        self.assertIsNone(self.migration.observe_monitor_record("HeroCustomers", record))
+        self.assertEqual(self.frappe.customers, before)
+
+    def test_local_observation_does_not_hide_later_same_field_conflict(self):
+        record = {"id": 301, "full_name": "Synthetic Ada", "email": "ada@synthetic.invalid"}
+        self.migration._migrate_customer(record, SimpleNamespace(mode="Execute"))
+        self.frappe.customers[0]["email_id"] = "local@synthetic.invalid"
+        self.assertEqual(self.migration._migrate_customer(record, SimpleNamespace(mode="Execute")).code, "OBSERVED")
+        result = self.migration._migrate_customer(
+            {**record, "email": "remote@synthetic.invalid"}, SimpleNamespace(mode="Execute")
+        )
+        self.assertEqual(result.code, "CONFLICT")
+        self.assertEqual(self.frappe.customers[0]["email_id"], "local@synthetic.invalid")
+
+    def test_local_change_survives_unrelated_source_change_and_later_conflict(self):
+        record = {"id": 301, "full_name": "Synthetic Ada", "email": "ada@synthetic.invalid", "category": "A"}
+        self.migration._migrate_customer(record, SimpleNamespace(mode="Execute"))
+        self.frappe.customers[0]["email_id"] = "local@synthetic.invalid"
+        result = self.migration._migrate_customer({**record, "category": "B"}, SimpleNamespace(mode="Execute"))
+        self.assertEqual(result.code, "CONFLICT")
+        self.assertEqual(self.frappe.customers[0]["email_id"], "local@synthetic.invalid")
+        result = self.migration._migrate_customer({**record, "email": "remote@synthetic.invalid"}, SimpleNamespace(mode="Execute"))
+        self.assertEqual(result.code, "CONFLICT")
+        self.assertEqual(self.frappe.customers[0]["email_id"], "local@synthetic.invalid")
+
     def test_preview_existing_change_does_not_write_link_or_target_state(self):
         record = {"id": 301, "full_name": "Synthetic Ada", "email": "ada@synthetic.invalid"}
         self.migration._migrate_customer(record, SimpleNamespace(mode="Execute"))

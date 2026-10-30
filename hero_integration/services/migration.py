@@ -1028,7 +1028,8 @@ def observe_monitor_record(operation: str, record: dict[str, object]) -> Result 
             source_id = plan.source_identity(record)
             values = plan.values(record)
             source_type, doctype = "customer", "Customer"
-            snapshot = lambda target: _customer_target_values(target, values, plan.home_phone(record))
+            contact_values = plan.customer_contact_values(values)
+            snapshot = lambda target: _customer_target_values(target, values, contact_values, plan.home_phone(record))
         elif operation == "HeroProjectMatches":
             plan = active_mapping_plan(operation)
             source_id = plan.source_identity(record)
@@ -1134,6 +1135,14 @@ def _upsert(
                 notify_conflict_once(existing, same_field_changes, detail)
                 _mark_link_conflict(existing, detail)
             return Result("CONFLICT", detail, doctype, target.name)
+        # Relation adapters can update more than the fields in changed_source.
+        # Until they support field-scoped writes, simultaneous local and source
+        # edits must be reviewed instead of silently advancing either baseline.
+        if changed_source and changed_target:
+            detail = "Local and HERO field changes require review before applying relation updates."
+            if run.mode != "Preview":
+                _mark_link_conflict(existing, detail)
+            return Result("CONFLICT", detail, doctype, target.name)
         if run.mode == "Preview":
             if changed_source:
                 return Result("PREVIEW_OK", "Existing target would receive non-conflicting HERO field changes.", doctype, target.name)
@@ -1160,13 +1169,8 @@ def _upsert(
                                   {**prior_target, **{key: target_field_hashes[key] for key in changed_source if key in target_field_hashes}}
                                   if preserve_omitted else target_field_hashes, mapping_version)
             return Result("UPDATED", "Non-conflicting HERO field changes were applied through native Frappe validation.", doctype, target.name)
-        # A local-only change is observed but never becomes an outbound HERO
-        # mutation.  Keep it as the target baseline for a later comparison.
+        # Observations must not advance the last acknowledged baseline.
         if changed_target:
-            if preserve_omitted:
-                return Result("OBSERVED", "Local field change observed; its acknowledged baseline is preserved.", doctype, target.name)
-            _update_link_baseline(existing, source_hash, _digest(target_values),
-                                  source_field_hashes, target_field_hashes, mapping_version)
             return Result("OBSERVED", "Local field change observed; no outbound HERO mutation was prepared.", doctype, target.name)
         return Result("SKIPPED", "Record is already synchronized.", doctype, target.name)
     duplicate = frappe.db.exists(doctype, {name_field: values[name_field]})
