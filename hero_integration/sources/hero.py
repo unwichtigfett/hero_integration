@@ -139,7 +139,9 @@ class HeroSource:
             {**row, "_hero_source_instance": self.source_instance} if self.source_instance != "default" else dict(row)
             for row in records
         )
-        return SourcePage(annotated, offset + len(records) if len(records) == self.page_size else None)
+        # Only an empty page ends an offset scan: a short page can be a server
+        # page cap below the requested size, not the end of the dataset.
+        return SourcePage(annotated, offset + len(records) if records else None)
 
 
 class GraphQLServiceSource:
@@ -205,7 +207,8 @@ class GraphQLServiceSource:
         for row in records:
             value_at(row, self.contract.identity_path)
         annotated = tuple({**row, "_hero_source_instance": self.source_instance} for row in records)
-        return SourcePage(annotated, offset + len(records) if len(records) == self.contract.page_size else None)
+        # Only an empty page ends an offset scan (see HeroSource._page).
+        return SourcePage(annotated, offset + len(records) if records else None)
 
 
 class TestingPreviewSource:

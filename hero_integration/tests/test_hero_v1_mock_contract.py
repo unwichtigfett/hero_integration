@@ -228,7 +228,10 @@ class TestHeroV1MockContract(unittest.TestCase):
 
         self.assertEqual((len(CUSTOMERS), len(PROJECTS)), (25, 40))
         self.assertEqual((len(first_page.records), len(second_page.records)), (100, 1))
-        self.assertEqual((first_page.next_offset, second_page.next_offset), (100, None))
+        # A short page does not end an offset scan; only the empty page does.
+        third_page = source.customers(second_page.next_offset or 0)
+        self.assertEqual((first_page.next_offset, second_page.next_offset, third_page.next_offset), (100, 101, None))
+        self.assertEqual(third_page.records, ())
         self.assertEqual(second_page.records[0], UPDATED_CUSTOMER)
         self.assertEqual(projects.records, PROJECTS)
         valid_customer_ids = {row["id"] for row in CUSTOMERS if not row["is_deleted"]}

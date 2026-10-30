@@ -75,8 +75,9 @@ class DeterministicHeroMock:
             records = _customer_page(variables["offset"])
             return {"contacts": list(records)}
         if query == PROJECT_QUERY_V1:
-            self._require(variables, {"first": PAGE_SIZE, "offset": 0, "orderBy": "id"})
-            return {"project_matches": list(PROJECTS)}
+            self._require(variables, {"first": PAGE_SIZE, "orderBy": "id"})
+            # Only an empty page ends an offset scan.
+            return {"project_matches": list(PROJECTS) if variables["offset"] == 0 else []}
         raise AssertionError("unexpected HERO operation")
 
     @staticmethod

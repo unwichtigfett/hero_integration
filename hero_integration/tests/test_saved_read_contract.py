@@ -37,7 +37,8 @@ class TestSavedReadContract(unittest.TestCase):
         page = GraphQLServiceSource(client, self.service, contract, "synthetic").customers()
         self.assertEqual(client.calls, [(self.service.query_document, {"first": 2, "offset": 0, "orderBy": "id", "showDeleted": True})])
         self.assertEqual(page.records[0]["_hero_source_instance"], "synthetic")
-        self.assertIsNone(page.next_offset)
+        # A short page may be a server page cap; only an empty page ends the scan.
+        self.assertEqual(page.next_offset, 1)
 
     def test_unapproved_or_stale_contract_is_rejected_before_transport(self):
         self.service.execution_status = "Pending Approval"
