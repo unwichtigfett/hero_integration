@@ -160,15 +160,17 @@
         const tokenHelp = column("hero-settings-field hero-settings-token-row", node("span", "hero-settings-label", "Stored credential"), tokenState);
         const schemaStatus = node("div", "hero-settings-status hero-settings-schema-state", "Schema status is not loaded yet.");
         schemaStatus.setAttribute("role", "status");
+        // The last schema check is shown directly below its interval.
+        const schemaRefreshField = field("Schema refresh (minutes)", schemaInterval, "10–240 minutes, once the token is verified.");
+        schemaRefreshField.append(schemaStatus);
 
         const connection = section("HERO Connection", "connection", "",
             field("Enabled", enabled, "Enable or disable local HERO Integration configuration."),
             field("API URL", url, "HTTPS GraphQL endpoint used by the connector."),
             field("API Token", token, "The current token is never returned to the browser. An empty field keeps it unchanged."),
             tokenHelp,
-            field("Schema refresh (minutes)", schemaInterval, "10–240 minutes. Reloads the HERO schema once the token is verified."),
             field("Timeout (seconds)", timeout, "Maximum duration of a HERO API request."),
-            schemaStatus,
+            schemaRefreshField,
             node("p", "hero-settings-warning", "Changing the API URL, token or source instance opens a new source binding. Runs, MONITOR and AUTO_SYNC stay blocked until it is confirmed.")
         );
         const sources = section("Sources", "sources", "",
@@ -309,10 +311,9 @@
                     : failed ? "Check failed"
                     : verified ? "Verified" : "Not verified yet");
             tokenState.dataset.state = verified ? "configured" : failed || data.api_token_status === "CREDENTIAL_ERROR" ? "error" : "missing";
-            const checked = schema.last_checked_on ? " " + uiText("Last check:") + " " + schema.last_checked_on + "." : "";
-            schemaStatus.textContent = schema.last_status
-                ? uiText(schema.last_message || "") + checked
-                : uiText("The HERO schema is loaded when enabled settings with an API token are saved.");
+            schemaStatus.textContent = schema.last_checked_on
+                ? uiText("Last check:") + " " + String(schema.last_checked_on).slice(0, 16) + " – " + uiText(schema.last_message || "")
+                : uiText("No check yet. Saving enabled settings with an API token loads the schema.");
             schemaStatus.dataset.state = schema.last_status === "OK" ? "success" : schema.last_status === "FAILED" ? "error" : "";
         }
 

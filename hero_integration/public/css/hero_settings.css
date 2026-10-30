@@ -49,7 +49,7 @@
 .hero-integration-ui .hero-settings .hero-settings-aside { display: grid; gap: 10px; padding-left: 14px; border-left: 2px solid var(--pc-border); font-size: 12px; }
 .hero-integration-ui .hero-settings .hero-settings-aside p { margin: 0; color: var(--pc-text); }
 
-.hero-integration-ui .hero-settings .hero-settings-schema-state { grid-column: 1 / -1; }
+.hero-integration-ui .hero-settings .hero-settings-schema-state { font-size: 12px; line-height: 1.4; }
 
 /* Save bar above polling: Reset beside Save, Save on the right */
 .hero-integration-ui .hero-settings .hero-settings-savebar { display: flex; justify-content: flex-end; gap: 10px; }
