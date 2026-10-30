@@ -151,7 +151,9 @@ class TestHeroDeskUiContract(unittest.TestCase):
         self.assertIn('schemaInterval.min = "10"', source)
         self.assertIn('schemaInterval.max = "240"', source)
         connection = source[source.index('section("HERO Connection"'):source.index('const sources = section(')]
-        self.assertLess(connection.index("Schema refresh (minutes)"), connection.index("Timeout (seconds)"))
+        # Timeout first, then the schema refresh interval with its last check right below it.
+        self.assertLess(connection.index("Timeout (seconds)"), connection.index("schemaRefreshField"))
+        self.assertIn("schemaRefreshField.append(schemaStatus);", source)
 
     def test_synchronization_lists_server_recorded_testing_outcomes(self):
         source = MIGRATION_JS.read_text()
