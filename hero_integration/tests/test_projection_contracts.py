@@ -238,7 +238,11 @@ class TestProjectionContracts(unittest.TestCase):
         contract = from_documents(service, mapping, snapshot)
         calls = []
         client = SimpleNamespace(query=lambda query, variables: (calls.append((query, variables)) or {"tasks": [record()]}))
-        page = GraphQLServiceSource(client, service, contract, "instance-a").projection(4)
+        source = GraphQLServiceSource(client, service, contract, "instance-a")
+        page = source.projection(4)
         self.assertEqual(calls[0][1], {"first": 2, "offset": 4})
-        self.assertIsNone(page.next_offset)
+        # A short page may be a server page cap: the scan continues until an empty page.
+        self.assertEqual(page.next_offset, 5)
+        client.query = lambda query, variables: (calls.append((query, variables)) or {"tasks": []})
+        self.assertIsNone(source.projection(5).next_offset)
         self.assertEqual(page.records[0]["_hero_source_instance"], "instance-a")
