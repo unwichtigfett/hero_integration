@@ -557,7 +557,8 @@ def _process_phase(run, phase: str, reader) -> bool:
             if index < record_index:
                 continue
             _cancel_if_requested(run)
-            result = _migrate_customer(record, run) if phase == "customer" else _migrate_project(record, run)
+            migrate = _migrate_customer if phase == "customer" else _migrate_project
+            result = _migrate_isolated(lambda: migrate(record, run))
             _record_result(run, phase, record, result)
             _record_phase_result(run, phase, result)
             run.resume_phase = phase
@@ -608,6 +609,8 @@ def _migrate_customer(record: dict[str, object], run) -> Result:
         plan = _mapping_plan_for_run(run, "HeroCustomers")
         source_id = plan.source_identity(record)
         values = plan.values(record)
+        # ERPNext rejects such an address; the Customer is imported without it.
+        email_note = _drop_invalid_email(values)
         contact_values = plan.customer_contact_values(values)
         address_note = ""
         try:
@@ -648,10 +651,45 @@ def _migrate_customer(record: dict[str, object], run) -> Result:
         comparison_extra={"hero_phone_home": home_phone} if tracks_home_phone else None,
         required_on_create=("customer_type",),
     )
-    if address_note and result.code != "BLOCKED_RECORD":
+    note = email_note + address_note
+    if note and result.code != "BLOCKED_RECORD":
         from dataclasses import replace
-        result = replace(result, detail=(result.detail or "") + address_note)
+        result = replace(result, detail=(result.detail or "") + note)
     return result
+
+
+def _drop_invalid_email(values) -> str:
+    """Remove an email ERPNext would reject and say so; umlauts elsewhere are fine."""
+    from frappe.utils import split_emails, validate_email_address
+
+    email = values.get("email_id")
+    if not isinstance(email, str) or not email.strip():
+        return ""
+    if all(validate_email_address(item, throw=False) for item in split_emails(email)):
+        return ""
+    del values["email_id"]
+    missing = getattr(values, "missing", None)
+    if missing is not None:
+        # No usable evidence: the stored baseline for this field is kept as is.
+        missing.add("email_id")
+    return " The HERO email address is not valid in ERPNext; it was not imported."
+
+
+def _migrate_isolated(migrate) -> Result:
+    """Run one record so that an ERPNext validation error blocks only this record."""
+    savepoint = "hero_record"
+    frappe.db.savepoint(savepoint)
+    try:
+        return migrate()
+    except frappe.ValidationError as error:
+        try:
+            frappe.db.rollback(save_point=savepoint)
+        except Exception:
+            # An inner full rollback removed the savepoint; the run fails as before.
+            raise error from None
+        frappe.clear_messages()
+        frappe.log_error(title="HERO record rejected by ERPNext")
+        return Result("BLOCKED_RECORD", f"ERPNext rejected the record ({type(error).__name__}); see Error Log.")
 
 
 def _process_projection(run, source) -> None:
@@ -697,13 +735,13 @@ def _process_projection(run, source) -> None:
             _cancel_if_requested(run)
             if task_scope is not None:
                 task_record = record if any(item.source_path == 'comment' for item in plan.definitions) else {k: v for k, v in record.items() if k != 'comment'}
-                result = _migrate_native_task(task_record, run, plan, task_scope)
+                result = _migrate_isolated(lambda: _migrate_native_task(task_record, run, plan, task_scope))
                 if (result.code in {'CREATED', 'UPDATED', 'SKIPPED', 'PREVIEW_OK'}
                         and result.target_doctype == 'Task'
                         and any(item.source_path == 'target_user_id' for item in plan.definitions)):
                     _record_task_assignment_pending(run, record, result.target_name, task_scope['source_instance'])
             else:
-                result = _migrate_projection(record, run, plan)
+                result = _migrate_isolated(lambda: _migrate_projection(record, run, plan))
             _record_result(run, PROJECTIONS[operation]['source_type'], record, result)
             run.resume_phase = operation
             run.resume_offset, run.resume_record_index = offset, index + 1
