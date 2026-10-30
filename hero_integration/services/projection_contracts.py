@@ -100,3 +100,58 @@ def approved_query(operation):
     return ('query ' + operation + '($first: Int!, $offset: Int!) {\n  '
             + contract['root'] + '(first: $first, offset: $offset, orderBy: "id") {\n    '
             + '\n    '.join(contract['selection']) + '\n  }\n}\n')
+
+
+# GraphQL scalar names each contract source type may be read from.
+_SCALARS = {'int': {'Int'}, 'string': {'String', 'DateTime', 'Date', 'ID'}, 'boolean': {'Boolean'}}
+_COMPATIBILITY: dict[tuple[str, str], str] = {}
+
+
+def schema_incompatibility(operation, snapshot):
+    """Return why a reviewed projection cannot read from this snapshot, or '' when it can.
+
+    The contract is bound to what it reads, not to the whole schema: its exact
+    reviewed query must validate against the snapshot, and every contract path
+    must keep its reviewed scalar or list type. Unrelated HERO schema changes,
+    which a periodic schema refresh captures as new snapshots, therefore do not
+    block the projection. The recorded ``fingerprint`` names the schema the
+    contract was originally reviewed on; that schema stays compatible.
+    """
+    key = (operation, str(getattr(snapshot, 'schema_fingerprint', '') or ''))
+    if key[1] == CONTRACTS[operation]['fingerprint']:
+        return ''  # the schema the contract was reviewed on
+    if key[1] and key in _COMPATIBILITY:
+        return _COMPATIBILITY[key]
+    reason = _incompatibility(CONTRACTS[operation], approved_query(operation), getattr(snapshot, 'snapshot_json', None))
+    if key[1]:
+        _COMPATIBILITY[key] = reason
+    return reason
+
+
+def _incompatibility(contract, document, snapshot_json):
+    from graphql import GraphQLList, GraphQLNonNull, build_client_schema, get_named_type, parse, validate
+
+    try:
+        raw = json.loads(snapshot_json) if isinstance(snapshot_json, str) else snapshot_json
+        schema = build_client_schema(raw)
+    except Exception:  # an unreadable snapshot never authorizes a projection
+        return 'the snapshot schema cannot be read'
+    errors = validate(schema, parse(document))
+    if errors:
+        return 'the reviewed query is invalid on this schema (' + errors[0].message[:200] + ')'
+    for path, source_type in contract['paths'].items():
+        current = schema.get_type(contract['type'])
+        field = None
+        for segment in path.split('.'):
+            field = getattr(current, 'fields', {}).get(segment)
+            if field is None:
+                return 'field ' + path + ' is missing'
+            current = get_named_type(field.type)
+        family = source_type.split('|')[0]
+        inner = field.type.of_type if isinstance(field.type, GraphQLNonNull) else field.type
+        if family == 'json':
+            if not isinstance(inner, GraphQLList):
+                return 'field ' + path + ' is no longer a list'
+        elif current.name not in _SCALARS.get(family, ()) or isinstance(inner, GraphQLList):
+            return 'field ' + path + ' changed its type to ' + str(field.type)
+    return ''

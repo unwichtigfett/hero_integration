@@ -82,8 +82,10 @@ def from_documents(service, mapping, snapshot) -> ReadContract:
         projection = PROJECTIONS[target]
         from hero_integration.services.native_projections import validate_options
         validate_options(projection, config.get('native_options'))
-        if snapshot.schema_fingerprint != projection['fingerprint']:
-            raise ReadContractError('Projection requires its reviewed schema fingerprint.')
+        from hero_integration.services.projection_contracts import schema_incompatibility
+        problem = schema_incompatibility(target, snapshot)
+        if problem:
+            raise ReadContractError('Projection does not match this schema snapshot: ' + problem + '.')
         if service.query_document.strip() != approved_query(target).strip():
             if target != 'HeroTasks' or onboarding is None or not isinstance(config.get('generated_task_seal'), dict):
                 raise ReadContractError('Projection requires the exact reviewed read-only query.')
