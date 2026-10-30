@@ -269,7 +269,7 @@ class TestHeroDeskUiContract(unittest.TestCase):
         settings = SETTINGS_JS.read_text()
         migration = MIGRATION_JS.read_text()
         for contract in (
-            "Polling Settings", "hero-settings-polling-details", "polling_data_sources", "polling_filters_json", "polling_pagination_strategy",
+            "Polling Settings", "hero-settings-polling-details", "polling_bootstrap", "polling_pagination_strategy",
             "polling_reconciliation", "polling_retry_backoff_seconds", "polling_notifications", "AUTO_SYNC",
         ):
             with self.subTest(contract=contract):

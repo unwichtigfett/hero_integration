@@ -171,6 +171,19 @@ class TestWorkspaceSettingsContract(unittest.TestCase):
         self.assertTrue(result["polling"]["reconciliation"])
         self.assertTrue(result["polling"]["notifications"])
 
+    def test_saving_other_settings_preserves_existing_polling_sources_and_filters(self):
+        settings = _Settings()
+        settings.polling_data_sources = ""
+        settings.polling_filters_json = '{"HeroCustomers": {"search": "unsupported"}}'
+        frappe_mock = _FrappeSettingsMock(settings)
+        with patch.object(api, "frappe", frappe_mock):
+            api.workspace_settings_save(True, settings.hero_api_url, timeout_seconds=45, polling_bootstrap=True)
+        self.assertEqual(settings.timeout_seconds, 45)
+        self.assertEqual(settings.polling_bootstrap, 1)
+        self.assertEqual(settings.polling_data_sources, "")
+        self.assertEqual(settings.polling_filters_json, '{"HeroCustomers": {"search": "unsupported"}}')
+        self.assertEqual(settings.save_calls, 1)
+
     def test_admin_can_persist_and_reload_testing_controls(self):
         settings = _Settings()
         frappe_mock = _FrappeSettingsMock(settings)
