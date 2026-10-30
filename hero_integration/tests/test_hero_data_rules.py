@@ -65,6 +65,43 @@ class TestInvalidCustomerEmail(unittest.TestCase):
                 self.assertIn('email_id', values)
 
 
+class TestPhoneText(unittest.TestCase):
+    def test_the_first_valid_number_is_kept_with_the_full_text(self):
+        cases = {
+            '+4915500000001 Mieterin': '+4915500000001',
+            '07000 11111 ( Architekt)': '07000 11111',
+            '015200000001 Frau Muster / 015700000002 Dieter Muster': '015200000001',
+            '07000/11111': '07000 11111',
+        }
+        for text, number in cases.items():
+            with self.subTest(text=text):
+                self.assertEqual(migration._phone_number(text), (number, text))
+
+    def test_valid_empty_or_numberless_text(self):
+        self.assertEqual(migration._phone_number('+49 151 1234567'), ('+49 151 1234567', ''))
+        self.assertEqual(migration._phone_number(None), (None, ''))
+        self.assertEqual(migration._phone_number('Haus 2, bitte klingeln'), (None, 'Haus 2, bitte klingeln'))
+
+    def test_customer_phones_are_cleaned_and_originals_kept(self):
+        values = MappedValues({'customer_name': 'Muster', 'mobile_no': 'nur abends'})
+        home, originals, note = migration._clean_customer_phones(values, '07000 11111 (Architekt)')
+        self.assertEqual(home, '07000 11111')
+        self.assertNotIn('mobile_no', values)
+        self.assertIn('mobile_no', values.missing)
+        self.assertEqual(originals, {'mobile_no': 'nur abends', 'hero_phone_home': '07000 11111 (Architekt)'})
+        self.assertIn('comment', note)
+
+    def test_clean_phones_leave_no_note(self):
+        values = MappedValues({'mobile_no': '+49 151 1234567'})
+        self.assertEqual(migration._clean_customer_phones(values, None), (None, {}, ''))
+
+    def test_originals_become_customer_comments(self):
+        customer = mock.Mock()
+        migration._keep_phone_originals(customer, {'mobile_no': '+4915500000001 Mieterin'})
+        customer.add_comment.assert_called_once_with(
+            'Comment', 'HERO mobile phone as entered in HERO: +4915500000001 Mieterin')
+
+
 class TestRecordIsolation(unittest.TestCase):
     def setUp(self):
         patches = [mock.patch.object(frappe.db, 'savepoint'), mock.patch.object(frappe.db, 'rollback'),
@@ -82,6 +119,11 @@ class TestRecordIsolation(unittest.TestCase):
         self.assertNotIn('x is not', result.detail)
         self.rollback.assert_called_once_with(save_point='hero_record')
         self.log_error.assert_called_once()
+
+    def test_a_database_data_error_blocks_only_this_record(self):
+        result = migration._migrate_isolated(mock.Mock(side_effect=frappe.db.DataError(1406, 'Data too long')))
+        self.assertEqual(result.code, 'BLOCKED_RECORD')
+        self.assertIn('DataError', result.detail)
 
     def test_other_errors_still_stop_the_run(self):
         for error in (MappingPlanError('plan'), RuntimeError('boom')):
