@@ -54,10 +54,27 @@ class TestPollingConfiguration(unittest.TestCase):
                 self.assertTrue(scheduler_due(settings, datetime(2026, 11, 10, 12, 0)))
 
 
+class _FakeDb:
+    def __init__(self, state=None):
+        self.state, self.commits = dict(state or {}), 0
+
+    def get_single_value(self, doctype, field):
+        assert doctype == "HERO Integration Sync State", doctype
+        return self.state.get(field)
+
+    def set_single_value(self, doctype, field, value):
+        assert doctype == "HERO Integration Sync State", doctype
+        self.state[field] = value
+
+    def commit(self):
+        self.commits += 1
+
+
 class _FakeFrappe(types.ModuleType):
-    def __init__(self, settings):
+    def __init__(self, settings, state=None):
         super().__init__("frappe")
         self.settings, self.events, self.logged = settings, [], []
+        self.db = _FakeDb(state)
         self.whitelist = lambda *args, **kwargs: (lambda function: function)
         self.utils = SimpleNamespace(now_datetime=lambda: datetime(2026, 11, 10, 12, 0), get_system_timezone=lambda: "Europe/Berlin")
 
@@ -75,8 +92,8 @@ class _FakeFrappe(types.ModuleType):
 
 
 class TestScheduledEntry(unittest.TestCase):
-    def run_tasks(self, settings, adapter=None, lock=None, lock_error=None):
-        fake = _FakeFrappe(settings)
+    def run_tasks(self, settings, adapter=None, lock=None, lock_error=None, state=None):
+        fake = _FakeFrappe(settings, state)
         settings.save = lambda ignore_permissions=False: None
         modules = {"frappe": fake}
         if adapter is not None:
@@ -118,6 +135,38 @@ class TestScheduledEntry(unittest.TestCase):
         with patch.object(polling, "run_monitor") as run_monitor:
             self.run_tasks(settings)
         run_monitor.assert_called_once()
+
+    def test_interval_counts_from_the_last_started_poll_so_failures_are_not_retried_every_tick(self):
+        settings = _settings(sync_status="", sync_error="")
+        with patch.object(polling, "run_monitor") as run_monitor:
+            fake, _ = self.run_tasks(settings, state={"last_poll_started_on": "2026-11-10 11:50:00"})
+        run_monitor.assert_not_called()
+        with patch.object(polling, "run_monitor") as run_monitor:
+            fake, _ = self.run_tasks(settings, state={"last_poll_started_on": "2026-11-10 10:50:00"})
+        run_monitor.assert_called_once()
+        self.assertEqual(fake.db.state["last_poll_started_on"], datetime(2026, 11, 10, 12, 0))
+        self.assertEqual(fake.db.commits, 1)
+
+    def test_a_live_migration_run_makes_polling_wait(self):
+        settings = _settings(sync_status="", sync_error="")
+        with patch.object(polling, "run_monitor") as run_monitor, \
+             patch.dict(sys.modules, {"hero_integration.services.migration": SimpleNamespace(run_lease_alive=lambda name: True)}):
+            fake, _ = self.run_tasks(settings, state={"active_run": "RUN-1"})
+        run_monitor.assert_not_called()
+        self.assertEqual(fake.events[-1]["status"], "Skipped")
+        self.assertIn("HERO run is active", fake.events[-1]["detail"])
+        with patch.object(polling, "run_monitor") as run_monitor, \
+             patch.dict(sys.modules, {"hero_integration.services.migration": SimpleNamespace(run_lease_alive=lambda name: False)}):
+            self.run_tasks(settings, state={"active_run": "RUN-1"})
+        run_monitor.assert_called_once()
+
+    def test_out_of_range_numeric_settings_fail_closed(self):
+        for field, value in (("polling_interval_minutes", 5000), ("polling_page_size", 0.5), ("polling_retry_limit", 9),
+                             ("polling_rate_limit", -1), ("polling_timeout_seconds", "x")):
+            with self.subTest(field=field):
+                plan = runtime_plan(_settings(**{field: value}))
+                self.assertIn("setting " + field, plan["unsupported_sources"])
+        self.assertEqual(runtime_plan(_settings(polling_page_size=0, polling_rate_limit=None))["unsupported_sources"], [])
 
     def test_a_running_poll_makes_the_next_tick_skip_visibly(self):
         class Busy(Exception):

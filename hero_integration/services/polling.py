@@ -53,7 +53,7 @@ def runtime_plan(settings) -> dict[str, object]:
     strategy = str(getattr(settings, "polling_pagination_strategy", "OFFSET") or "OFFSET").upper()
     timezone = str(getattr(settings, "polling_timezone", "UTC") or "UTC").strip()
     full_inventory = bool(getattr(settings, "polling_full_inventory", 0))
-    unsupported = []
+    unsupported = _invalid_numeric_settings(settings)
     if strategy != "OFFSET":
         unsupported.append("pagination strategy " + strategy)
     if not _timezone_is_valid(timezone):
@@ -282,6 +282,33 @@ def _aware(value: datetime | None, system_timezone: str | None) -> datetime | No
         except (ZoneInfoNotFoundError, ValueError):
             return None
     return value.replace(tzinfo=zone)
+
+
+NUMERIC_LIMITS = {
+    "polling_interval_minutes": (1, 1440), "polling_page_size": (1, 1000), "polling_retry_limit": (0, 3),
+    "polling_retry_backoff_seconds": (0, 3600), "polling_timeout_seconds": (1, 120),
+    "polling_rate_limit": (1, 10000), "polling_concurrency": (1, 1),
+}
+
+
+def _invalid_numeric_settings(settings) -> list[str]:
+    """Out-of-range stored values fail closed instead of silently becoming defaults.
+
+    An unset Int field reads as 0/None and keeps its documented default.
+    """
+    invalid = []
+    for field, (minimum, maximum) in NUMERIC_LIMITS.items():
+        value = getattr(settings, field, None)
+        if value in (None, "", 0) and minimum > 0:
+            continue
+        try:
+            number = int(value) if value not in (None, "") else minimum
+        except (TypeError, ValueError):
+            invalid.append("setting " + field)
+            continue
+        if isinstance(value, bool) or not minimum <= number <= maximum:
+            invalid.append("setting " + field)
+    return invalid
 
 
 def _bounded_value(value: object, minimum: int, maximum: int, default: int) -> int:

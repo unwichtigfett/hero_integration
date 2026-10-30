@@ -86,3 +86,14 @@ class TestSchedulerContract(unittest.TestCase):
                 sys.modules["hero_integration.services.sync_runtime_adapter"] = previous_adapter
 
         self.assertEqual(calls, ["canonical"])
+
+
+class TestSchedulerCadence(unittest.TestCase):
+    def test_scheduler_ticks_every_minute_so_short_intervals_are_honoured(self):
+        import ast
+        from pathlib import Path
+
+        tree = ast.parse((Path(__file__).resolve().parents[1] / "hooks.py").read_text())
+        events = next(ast.literal_eval(node.value) for node in tree.body
+                      if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == "scheduler_events")
+        self.assertEqual(events, {"cron": {"* * * * *": ["hero_integration.tasks.run_scheduled_sync"]}})
