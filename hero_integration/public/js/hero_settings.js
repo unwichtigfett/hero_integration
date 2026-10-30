@@ -95,8 +95,6 @@
         pollingInterval.type = "number"; pollingInterval.min = "1"; pollingInterval.max = "1440"; pollingInterval.className = "hero-settings-input";
         const pollingTimezone = document.createElement("input"); pollingTimezone.className = "hero-settings-input";
         const pollingWindow = document.createElement("input"); pollingWindow.className = "hero-settings-input"; pollingWindow.placeholder = "HH:MM-HH:MM";
-        const pollingSources = document.createElement("textarea"); pollingSources.className = "hero-settings-input"; pollingSources.rows = 3;
-        const pollingFilters = document.createElement("textarea"); pollingFilters.className = "hero-settings-input"; pollingFilters.rows = 4; pollingFilters.spellcheck = false;
         const pollingBootstrap = document.createElement("input"); pollingBootstrap.type = "checkbox"; pollingBootstrap.className = "hero-settings-check";
         const pollingPageSize = document.createElement("input"); pollingPageSize.type = "number"; pollingPageSize.min = "1"; pollingPageSize.max = "1000"; pollingPageSize.className = "hero-settings-input";
         const pollingPagination = document.createElement("select"); pollingPagination.className = "hero-settings-input"; ["OFFSET", "CURSOR"].forEach(value => { const option = document.createElement("option"); option.value = value; option.textContent = value; pollingPagination.append(option); });
@@ -174,11 +172,8 @@
                 field("Polling mode", pollingMode, "OFF never contacts HERO automatically. MONITOR records internal run metadata only; AUTO_SYNC requires active approved HERO-to-Frappe mappings."),
                 field("Polling interval (minutes)", pollingInterval, "1–1440 minutes; the Frappe scheduler evaluates cadence server-side."),
                 field("Timezone", pollingTimezone), field("Execution window", pollingWindow, "Optional local time window in HH:MM-HH:MM.")),
-            pollingGroup("Data sources",
-                field("Validated snapshot data sources", pollingSources, "One Query-root operation per line. Empty input is rejected."),
-                field("Operation filters JSON", pollingFilters, "JSON object only; this stores no secrets and does not contact HERO."),
-                field("Allow bootstrap", pollingBootstrap)),
             pollingGroup("Processing",
+                field("Allow bootstrap", pollingBootstrap),
                 field("Page size", pollingPageSize), field("Pagination strategy", pollingPagination, "Cursor watermarks are advanced only after complete successful processing. Offset pagination does not invent watermarks."),
                 field("Allow backfill", pollingBackfill), field("Allow full inventory", pollingInventory), field("Allow reconciliation", pollingReconciliation, "Reconciliation reports discrepancies and never auto-deletes ERPNext records.")),
             pollingGroup("Reliability and notifications",
@@ -245,7 +240,7 @@
             adminRecipients.disabled = value;
             pollingMode.disabled = value;
             pollingInterval.disabled = value;
-            [pollingTimezone, pollingWindow, pollingSources, pollingFilters, pollingBootstrap, pollingPageSize, pollingPagination, pollingBackfill, pollingInventory, pollingReconciliation, pollingRetryLimit, pollingBackoff, pollingTimeout, pollingRate, pollingConcurrency, pollingNotifications].forEach((control) => { control.disabled = value; });
+            [pollingTimezone, pollingWindow, pollingBootstrap, pollingPageSize, pollingPagination, pollingBackfill, pollingInventory, pollingReconciliation, pollingRetryLimit, pollingBackoff, pollingTimeout, pollingRate, pollingConcurrency, pollingNotifications].forEach((control) => { control.disabled = value; });
             mutationEnabled.disabled = value;
             mutationSave.disabled = value;
             testingEnabled.disabled = value;
@@ -279,8 +274,6 @@
             pollingInterval.value = String(data.polling?.interval_minutes || 60);
             pollingTimezone.value = data.polling?.timezone || "UTC";
             pollingWindow.value = data.polling?.execution_window || "";
-            pollingSources.value = (data.polling?.data_sources || []).join("\n");
-            pollingFilters.value = JSON.stringify(data.polling?.filters || {}, null, 2);
             pollingBootstrap.checked = Boolean(data.polling?.bootstrap);
             pollingPageSize.value = String(data.polling?.page_size || 100);
             pollingPagination.value = data.polling?.pagination_strategy || "OFFSET";
@@ -347,7 +340,7 @@
                     polling_mode: pollingMode.value,
                     polling_interval_minutes: Number(pollingInterval.value),
                     polling_timezone: pollingTimezone.value.trim(), polling_execution_window: pollingWindow.value.trim(),
-                    polling_data_sources: pollingSources.value.trim(), polling_filters_json: pollingFilters.value.trim(), polling_bootstrap: pollingBootstrap.checked,
+                    polling_bootstrap: pollingBootstrap.checked,
                     polling_page_size: Number(pollingPageSize.value), polling_pagination_strategy: pollingPagination.value,
                     polling_allow_backfill: pollingBackfill.checked, polling_full_inventory: pollingInventory.checked, polling_reconciliation: pollingReconciliation.checked,
                     polling_retry_limit: Number(pollingRetryLimit.value), polling_retry_backoff_seconds: Number(pollingBackoff.value), polling_timeout_seconds: Number(pollingTimeout.value),
