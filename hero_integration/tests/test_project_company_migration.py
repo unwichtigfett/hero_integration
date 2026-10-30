@@ -615,6 +615,75 @@ class TestProjectCompanyMigration(unittest.TestCase):
         self.assertEqual(result.code, "UPDATED")
         self.assertNotEqual(self.frappe.projects[0]["project_name"], original)
 
+    def test_missing_project_customer_preserves_link_and_allows_other_update(self):
+        record = _project_title_inputs(id=778, customer_id=101, partner_notes="A")
+        run = SimpleNamespace(mode="Execute")
+        self.assertEqual(self.migration._migrate_project(record, run).code, "CREATED")
+        link = self.frappe.links[("project", "778")]
+        from hero_integration.services.change_detection import decode
+        baseline = decode(link.source_field_hashes)["customer"]
+        partial = {key: value for key, value in record.items() if key != "customer_id"}
+        self.assertIsNone(self.migration.observe_monitor_record("HeroProjectMatches", partial))
+        self.assertEqual(self.migration._migrate_project(partial, run).code, "SKIPPED")
+        self.assertEqual(self.migration._migrate_project({**partial, "partner_notes": "B"}, run).code, "UPDATED")
+        self.assertEqual(self.frappe.projects[0]["customer"], "Synthetic Customer")
+        self.assertEqual(decode(link.source_field_hashes)["customer"], baseline)
+        self.assertEqual(self.migration._migrate_project(partial, run).code, "UPDATED")
+
+    def test_project_missing_customer_blocks_creation(self):
+        record = _project_title_inputs(id=778, partner_notes="A")
+        self.assertEqual(self.migration._migrate_project(record, SimpleNamespace(mode="Execute")).code, "BLOCKED_RECORD")
+        self.assertFalse(self.frappe.projects)
+
+    def test_missing_title_input_preserves_name_during_independent_update(self):
+        record = _project_title_inputs(id=779, customer_id=101, partner_notes="A")
+        run = SimpleNamespace(mode="Execute")
+        self.assertEqual(self.migration._migrate_project(record, run).code, "CREATED")
+        original = self.frappe.projects[0]["project_name"]
+        partial = {key: value for key, value in record.items() if key != "project_nr"}
+        self.assertIsNone(self.migration.observe_monitor_record("HeroProjectMatches", partial))
+        self.assertEqual(self.migration._migrate_project({**partial, "partner_notes": "B"}, run).code, "UPDATED")
+        self.assertEqual(self.frappe.projects[0]["project_name"], original)
+        self.assertEqual(self.migration._migrate_project({**partial, "partner_notes": "B"}, run).code, "SKIPPED")
+        self.assertEqual(self.migration._migrate_project({**record, "project_nr": None}, run).code, "BLOCKED_RECORD")
+        self.assertEqual(self.migration._migrate_project({**partial, "id": 782}, run).code, "BLOCKED_RECORD")
+
+    def test_project_invalid_scalar_and_status_object_block_monitor_and_migration(self):
+        record = _project_title_inputs(id=778, customer_id=101, partner_notes="A")
+        run = SimpleNamespace(mode="Execute")
+        self.assertEqual(self.migration._migrate_project(record, run).code, "CREATED")
+        for invalid in ({**record, "partner_notes": False}, {**record, "current_project_match_status": []}):
+            self.assertEqual(self.migration._migrate_project(invalid, run).code, "BLOCKED_RECORD")
+            self.assertEqual(self.migration.observe_monitor_record("HeroProjectMatches", invalid).code, "BLOCKED_RECORD")
+
+    def test_project_status_presence_null_and_zero(self):
+        from hero_integration.services.direct_mapping import MappingSpec
+        from hero_integration.services.mapping_runtime import plan_from_definitions
+        spec = MappingSpec("HeroProjectMatches", "current_project_match_status.status_code", "Project", "custom_hero_status_code", "int|null", "Field", "Identity", definition_id="status")
+        plan = plan_from_definitions("HeroProjectMatches", [*fixture_plan("HeroProjectMatches").definitions, spec])
+        self.migration.active_mapping_plan = lambda operation: plan
+        record = _project_title_inputs(id=780, customer_id=101, current_project_match_status={"status_code": 0})
+        run = SimpleNamespace(mode="Execute")
+        self.assertEqual(self.migration._migrate_project(record, run).code, "CREATED")
+        self.assertEqual(self.frappe.projects[0]["custom_hero_status_code"], 0)
+        partial = {key: value for key, value in record.items() if key != "current_project_match_status"}
+        self.assertIsNone(self.migration.observe_monitor_record("HeroProjectMatches", partial))
+        self.assertEqual(self.migration._migrate_project(partial, run).code, "SKIPPED")
+        self.assertEqual(self.frappe.projects[0]["custom_hero_status_code"], 0)
+        self.assertEqual(self.migration._migrate_project({**record, "current_project_match_status": {"status_code": None}}, run).code, "UPDATED")
+        self.assertIsNone(self.frappe.projects[0]["custom_hero_status_code"])
+        self.assertEqual(self.migration._migrate_project({**record, "current_project_match_status": {"status_code": False}}, run).code, "BLOCKED_RECORD")
+
+    def test_invalid_related_project_identity_is_not_normalized_to_null(self):
+        record = _project_title_inputs(id=781, customer_id=101, project_id=44)
+        run = SimpleNamespace(mode="Execute")
+        self.assertEqual(self.migration._migrate_project(record, run).code, "CREATED")
+        for invalid in (0, -1, False, "44"):
+            row = {**record, "project_id": invalid}
+            self.assertEqual(self.migration._migrate_project(row, run).code, "BLOCKED_RECORD")
+            self.assertEqual(self.migration.observe_monitor_record("HeroProjectMatches", row).code, "BLOCKED_RECORD")
+        self.assertEqual(self.frappe.projects[0]["custom_hero_related_project_id"], "44")
+
     def test_missing_active_mapping_blocks_target_mutation(self):
         self.migration.active_mapping_plan = lambda operation: (_ for _ in ()).throw(
             self.migration.MappingPlanError("No active mapping definitions exist for this operation.")

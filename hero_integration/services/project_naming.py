@@ -27,6 +27,20 @@ class ProjectTitleValidationError(ValueError):
     """Raised before a Project document is created when title data is incomplete."""
 
 
+def project_title_missing(record: Mapping[str, object]) -> bool:
+    """Identify omitted title inputs without treating explicit null as absence."""
+    if "project_nr" not in record or ("project_type" not in record and "confirmed_project_type" not in record):
+        return True
+    if "customer" not in record or "address" not in record:
+        return True
+    customer, address = record["customer"], record["address"]
+    if isinstance(customer, Mapping) and any(key not in customer for key in ("title", "full_name")):
+        return True
+    if isinstance(address, Mapping) and not any(key in address for key in ("full_address", "formatted_address")):
+        return any(key not in address for key in ("street", "house_number", "postal_code", "city"))
+    return False
+
+
 def build_project_title(record: Mapping[str, object], *, max_length: int = PROJECT_NAME_MAX_LENGTH) -> str:
     """Build the native ``Project.project_name`` without guessing domain values."""
     if not isinstance(max_length, int) or isinstance(max_length, bool) or max_length < 1:
