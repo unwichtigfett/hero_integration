@@ -102,6 +102,14 @@ class TestPhoneText(unittest.TestCase):
             'Comment', 'HERO mobile phone as entered in HERO: +4915500000001 Mieterin')
 
 
+class TestCheckFieldHashes(unittest.TestCase):
+    def test_a_check_field_hashes_alike_before_and_after_reload(self):
+        from hero_integration.services.change_detection import field_hashes
+        self.assertEqual(field_hashes({'flag': False}), field_hashes({'flag': 0}))
+        self.assertEqual(field_hashes({'flag': True}), field_hashes({'flag': 1}))
+        self.assertNotEqual(field_hashes({'flag': 0}), field_hashes({'flag': None}))
+
+
 class TestRecordIsolation(unittest.TestCase):
     def setUp(self):
         patches = [mock.patch.object(frappe.db, 'savepoint'), mock.patch.object(frappe.db, 'rollback'),

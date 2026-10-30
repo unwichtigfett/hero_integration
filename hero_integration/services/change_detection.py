@@ -48,10 +48,15 @@ def field_hashes(values: Mapping[str, object]) -> dict[str, str]:
 
     return {
         str(field): hashlib.sha256(
-            json.dumps(value, ensure_ascii=False, sort_keys=True, default=str, separators=(",", ":")).encode()
+            json.dumps(check_value(value), ensure_ascii=False, sort_keys=True, default=str, separators=(",", ":")).encode()
         ).hexdigest()
         for field, value in sorted(values.items())
     }
+
+
+def check_value(value: object) -> object:
+    """A Check field is False/True on a new document but 0/1 once read back; compare both alike."""
+    return int(value) if isinstance(value, bool) else value
 
 
 def encode(hashes: Mapping[str, str]) -> str:
