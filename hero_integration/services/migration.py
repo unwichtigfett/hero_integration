@@ -660,11 +660,11 @@ def _migrate_customer(record: dict[str, object], run) -> Result:
 
 def _drop_invalid_email(values) -> str:
     """Remove an email ERPNext would reject and say so; umlauts elsewhere are fine."""
-    from frappe.utils import split_emails, validate_email_address
-
     email = values.get("email_id")
     if not isinstance(email, str) or not email.strip():
         return ""
+    from frappe.utils import split_emails, validate_email_address
+
     if all(validate_email_address(item, throw=False) for item in split_emails(email)):
         return ""
     del values["email_id"]

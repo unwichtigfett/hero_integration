@@ -64,6 +64,8 @@ class TestProjectCompanyMigration(unittest.TestCase):
         utils_module = types.ModuleType("frappe.utils")
         utils_module.now_datetime = lambda: "2026-10-16 00:00:00"
         utils_module.get_datetime = lambda value: value
+        utils_module.split_emails = lambda value: [item.strip() for item in value.split(",") if item.strip()]
+        utils_module.validate_email_address = lambda value, throw=False: value if value.isascii() else ""
         sys.modules["frappe"] = frappe_module
         sys.modules["frappe.utils"] = utils_module
 
