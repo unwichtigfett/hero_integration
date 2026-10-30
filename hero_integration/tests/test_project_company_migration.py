@@ -216,6 +216,21 @@ class TestProjectCompanyMigration(unittest.TestCase):
         self.assertEqual(result.code, "CONFLICT")
         self.assertEqual(self.frappe.customers[0]["email_id"], "local@synthetic.invalid")
 
+    def test_run_source_binding_rejects_endpoint_and_account_switch(self):
+        from hero_integration.services.introspection import endpoint_fingerprint
+        endpoint = SimpleNamespace(url="https://example.invalid/graphql")
+        config = SimpleNamespace(endpoint=endpoint, source_instance="account-a")
+        snapshot = SimpleNamespace(source_instance="account-a", endpoint_fingerprint=endpoint_fingerprint(endpoint.url, "account-a"))
+        self.migration._validate_run_source_binding(SimpleNamespace(source_instance="account-a"), config, snapshot)
+        for run, cfg, snap in (
+            (SimpleNamespace(source_instance="account-b"), config, snapshot),
+            (SimpleNamespace(source_instance="account-a"), SimpleNamespace(endpoint=endpoint, source_instance="account-b"), snapshot),
+            (SimpleNamespace(source_instance="account-a"), SimpleNamespace(endpoint=SimpleNamespace(url="https://other.invalid/graphql"), source_instance="account-a"), snapshot),
+            (SimpleNamespace(source_instance="account-a"), config, SimpleNamespace(source_instance="account-a", endpoint_fingerprint="")),
+        ):
+            with self.assertRaises(self.migration.MappingPlanError):
+                self.migration._validate_run_source_binding(run, cfg, snap)
+
     def test_preview_existing_change_does_not_write_link_or_target_state(self):
         record = {"id": 301, "full_name": "Synthetic Ada", "email": "ada@synthetic.invalid"}
         self.migration._migrate_customer(record, SimpleNamespace(mode="Execute"))
