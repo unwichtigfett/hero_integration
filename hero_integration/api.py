@@ -252,6 +252,7 @@ def _start_migration(
         else {}
     )
     _require_selected_mappings(action, service, mapping, dependencies)
+    binding = _confirmed_source_binding()
     if scheduled and _has_active_run():
         return {"status": "SKIPPED_ACTIVE_RUN"}
     run = frappe.get_doc(
@@ -259,6 +260,7 @@ def _start_migration(
             "doctype": "HERO Integration Run",
             "action": action,
             "mode": "Preview" if is_preview else "Execute",
+            "source_binding_revision": binding,
             "graphql_service": service.name,
             "service_revision": service.service_revision,
             "graphql_mapping": mapping.name,
@@ -281,6 +283,15 @@ def _start_migration(
         run_name=run.name,
     )
     return {"status": "QUEUED", "run": run.name}
+
+
+def _confirmed_source_binding() -> int:
+    """Return the confirmed source-binding revision a new run is frozen to."""
+    settings = frappe.get_single("HERO Integration Settings")
+    revision = int(getattr(settings, "source_binding_revision", 0) or 0)
+    if int(getattr(settings, "source_binding_confirmed_revision", 0) or 0) != revision:
+        frappe.throw("The HERO endpoint, token or source instance changed; confirm the source binding before starting a run.")
+    return revision
 
 
 def _approved_read_service(service_name: str):
@@ -1050,6 +1061,9 @@ def workspace_settings_get() -> dict[str, object]:
         "api_url": settings.hero_api_url or "",
         "allowed_hero_hosts": getattr(settings, "allowed_hero_hosts", "") or "",
         "hero_source_instance": getattr(settings, "hero_source_instance", "default") or "default",
+        "source_binding_revision": int(getattr(settings, "source_binding_revision", 0) or 0),
+        "source_binding_confirmed": int(getattr(settings, "source_binding_confirmed_revision", 0) or 0)
+        == int(getattr(settings, "source_binding_revision", 0) or 0),
         "erpnext_company": getattr(settings, "erpnext_company", "") or "",
         "erpnext_company_confirmed": bool(getattr(settings, "erpnext_company_confirmed", 0)),
         "allow_deletion": bool(getattr(settings, "allow_deletion", 0)),
@@ -1096,6 +1110,7 @@ def workspace_settings_save(
     polling_concurrency: int | None = None, polling_notifications: int | bool | None = None,
     allow_deletion: int | bool | None = None, admin_notification_recipients: str | None = None,
     testing_enabled: int | bool | None = None, testing_max_actions: int | str | None = None,
+    confirm_source_binding: int | bool | None = None,
 ) -> dict[str, object]:
     """Persist only native integration configuration, with DocType validation."""
     frappe.only_for("System Manager")
@@ -1141,6 +1156,8 @@ def workspace_settings_save(
     )
     if api_token:
         settings.hero_api_token = api_token
+    if confirm_source_binding is not None:
+        settings.confirm_source_binding = int(_as_bool(confirm_source_binding))
     settings.save()
     return workspace_settings_get()
 

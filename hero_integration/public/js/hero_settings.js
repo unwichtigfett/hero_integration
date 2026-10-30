@@ -101,6 +101,11 @@
         sourceInstance.className = "hero-settings-input";
         const company = document.createElement("input");
         company.className = "hero-settings-input";
+        const bindingConfirm = document.createElement("input");
+        bindingConfirm.type = "checkbox";
+        bindingConfirm.className = "hero-settings-check";
+        const bindingStatus = node("div", "hero-settings-status", "Source binding is not loaded yet.");
+        bindingStatus.setAttribute("role", "status");
         const companyConfirmed = document.createElement("input");
         companyConfirmed.type = "checkbox";
         companyConfirmed.className = "hero-settings-check";
@@ -156,11 +161,13 @@
             field("API Token", token, "The current token is never returned to the browser. An empty field keeps it unchanged."),
             tokenHelp,
             field("Timeout (seconds)", timeout, "Maximum duration of a HERO API request."),
-            node("p", "hero-settings-warning", "Changing the API URL or token rotates the HERO binding generation and clears the current schema binding.")
+            node("p", "hero-settings-warning", "Changing the API URL, token or source instance opens a new source binding. Runs, MONITOR and AUTO_SYNC stay blocked until it is confirmed.")
         );
         const sources = section("Sources", "sources", "",
             field("Allowed hosts", allowedHosts, "One exact HTTPS hostname per line; the endpoint host must be present."),
-            field("Source instance", sourceInstance, "Stable identity for this external source.")
+            field("Source instance", sourceInstance, "Stable identity for this external source."),
+            field("Confirm source binding", bindingConfirm, "Confirm that the endpoint and API token belong to the HERO account named by the source instance. The token is never used as an identity."),
+            bindingStatus
         );
         const companyStatus = node("div", "hero-settings-status hero-settings-company-state", "Company selection is not loaded yet.");
         companyStatus.setAttribute("role", "status");
@@ -242,6 +249,7 @@
             timeout.disabled = value;
             allowedHosts.disabled = value;
             sourceInstance.disabled = value;
+            bindingConfirm.disabled = value;
             company.disabled = value;
             companyConfirmed.disabled = true;
             allowDeletion.disabled = value;
@@ -270,6 +278,11 @@
             timeout.value = String(data.timeout_seconds || 30);
             allowedHosts.value = data.allowed_hero_hosts || "";
             sourceInstance.value = data.hero_source_instance || "default";
+            bindingConfirm.checked = false;
+            bindingStatus.textContent = uiText(data.source_binding_confirmed
+                ? "Source binding confirmed (revision " + (data.source_binding_revision || 0) + ")."
+                : "Source binding changed and is not confirmed. HERO reads are blocked.");
+            bindingStatus.dataset.state = data.source_binding_confirmed ? "success" : "error";
             storedCompany = data.erpnext_company || "";
             company.value = storedCompany;
             companyConfirmed.checked = Boolean(data.erpnext_company_confirmed);
@@ -341,6 +354,7 @@
                     timeout_seconds: Number(timeout.value),
                     allowed_hero_hosts: allowedHosts.value.trim(),
                     hero_source_instance: sourceInstance.value.trim(),
+                    confirm_source_binding: bindingConfirm.checked,
                     erpnext_company: company.value.trim(),
                     erpnext_company_confirmed: companyConfirmed.checked,
                     allow_deletion: allowDeletion.checked,
