@@ -43,11 +43,10 @@ class TestHeroDeskUiContract(unittest.TestCase):
                 self.assertIn(contract, workspace + mapping)
         self.assertNotIn('method: "frappe.client.get_list"', mapping)
         migration = MIGRATION_JS.read_text()
-        for contract in (
-            "pending_sync", "expected_plan_generation", "Pending Sync", "RECONCILIATION_REQUIRED",
-        ):
-            with self.subTest(contract=contract):
-                self.assertIn(contract, migration)
+        # The technical Pending Sync area left the Synchronization page; its plan is resolved on the server.
+        for removed in ("pending_sync", "Pending Sync", "Load approved plan", "runtime_plan_status", "Source instance'"):
+            with self.subTest(removed=removed):
+                self.assertNotIn(removed, migration)
         self.assertNotIn("sync_hero_preview", migration)
         self.assertNotIn("sync_hero_execute", migration)
 
@@ -283,17 +282,27 @@ class TestHeroDeskUiContract(unittest.TestCase):
         settings = SETTINGS_JS.read_text()
         migration = MIGRATION_JS.read_text()
         for contract in (
-            "Polling Settings", "hero-settings-polling-details", "polling_bootstrap", "polling_pagination_strategy",
+            "Polling Settings", "hero-settings-polling-details", "polling_bootstrap", "Validated snapshot", "polling_pagination_strategy",
             "polling_reconciliation", "polling_retry_backoff_seconds", "polling_notifications", "AUTO_SYNC",
         ):
             with self.subTest(contract=contract):
                 self.assertIn(contract, settings)
+        for removed in ("polling_data_sources", "polling_filters_json", "Operation filters JSON"):
+            with self.subTest(removed=removed):
+                self.assertNotIn(removed, settings)
         for contract in (
-            "workspace_sync_status", "Preview never writes business or link status", "Cancel", "Resume",
-            "Customer Migration", "Project Migration", "Cheap Data Migration", "Full Data Migration", "Sync",
+            "sync_page_state", "sync_area_start", "sync_service_set", "sync_page_runs", "sync_page_run_detail",
+            "sync_page_conflicts", "cancel_run", "resume_run", "Cancel", "Continue", "Manual Actions",
+            "Subscription Service", "Sync on", "Sync off", "Sync Services", "Service Information", "States",
+            "Runtime History", "Function Details", "Conflicts", "Last successful", "Mapped objects",
+            "Migration", "Runtime",
         ):
             with self.subTest(contract=contract):
                 self.assertIn(contract, migration)
+        for removed in ("Preview", "Execute", "HERO GraphQL Service", "select approved read service", "Cheap Data Migration", "Full Data Migration",
+                        "Customer Migration", "Projection Migration", "Schedule Migration", "start_migration"):
+            with self.subTest(removed=removed):
+                self.assertNotIn(removed, migration)
 
     def test_graphql_services_use_the_canonical_api_route_and_operation_kind(self):
         workspace = WORKSPACE_JS.read_text()
@@ -332,17 +341,24 @@ class TestHeroDeskUiContract(unittest.TestCase):
 
     def test_overview_metrics_are_scoped_bordered_status_cards_in_both_themes(self):
         source = OVERVIEW_CSS.read_text()
+        shared = WORKSPACE_CSS.read_text()
+        overview = OVERVIEW_JS.read_text()
 
+        # Overview, API & Schema and Settings share the page panels of the Synchronization page tokens.
         for contract in (
-            ".hero-integration-ui .hero-overview", "--hero-overview-card-surface",
-            "--hero-overview-card-border", "#f0f1f2", "#65717d", "#272d33",
-            "#aab3bb", 'html[data-theme="dark"]', "--hero-overview-card-label: var(--pc-text)",
-            "repeat(auto-fit, minmax(min(100%, 220px), 1fr))",
-            "border: 2px solid var(--hero-overview-card-border) !important",
-            "background-color: var(--hero-overview-card-surface) !important",
+            ".hero-integration-ui .hero-page", "container-name: hero-page", "--hero-page-ok: var(--hero-state-ok",
+            ".hero-page-panel", ".hero-page-stat", ".hero-page-pill", ".hero-page-note",
+            "border: 1px solid var(--pc-border)", "background: var(--pc-surface)",
+            "repeat(4, minmax(0, 1fr))",
         ):
             with self.subTest(contract=contract):
-                self.assertIn(contract, source)
+                self.assertIn(contract, shared)
+        self.assertIn(".hero-integration-ui .hero-overview", source)
+        self.assertIn("@container hero-page", source)
+        self.assertNotIn("prefers-color-scheme", shared)
+        for contract in ('"hero-page hero-overview"', "Connection details", "Capabilities & permissions", "Actions & tools"):
+            with self.subTest(contract=contract):
+                self.assertIn(contract, overview)
 
     def test_hero_control_contrast_is_scoped_and_stateful(self):
         adapter = ADAPTER_CSS.read_text()
@@ -372,16 +388,20 @@ class TestHeroDeskUiContract(unittest.TestCase):
 
         for contract in (
             "hero-unified-content", "hero-unified-api-navigation",
-            "hero-mapping-section", "hero-migration-panel", "hero-migration-actions",
-            "hero-migration-action-buttons",
+            "hero-mapping-section",
         ):
             with self.subTest(contract=contract):
                 self.assertIn(contract, workspace_css)
+        sync_css = (PACKAGE_ROOT / "public" / "css" / "hero_sync.css").read_text()
+        for contract in ("hero-sync-panel", "hero-sync-cards", "container-type: inline-size", "data-view=\"runtime\"",
+                         "repeat(2, minmax(0, 1fr))", "repeat(4, minmax(0, 1fr))", "max-height: 640px"):
+            with self.subTest(contract=contract):
+                self.assertIn(contract, sync_css)
         for contract in ("HERO Connection", "Sources", "ERPNext Company", "hero-settings-section"):
             with self.subTest(contract=contract):
                 self.assertIn(contract, settings)
-        self.assertIn("hero-migration-panel", migration)
-        self.assertIn("hero-migration-actions", migration)
+        self.assertIn("hero-sync-panel", migration)
+        self.assertIn("hero-sync-cards", migration)
         self.assertIn("Field mapping details", mapping)
 
     def test_hero_owned_ui_strings_are_not_routed_through_frappe_translation(self):
@@ -405,7 +425,7 @@ class TestHeroDeskUiContract(unittest.TestCase):
 
     def test_styles_are_packaged_with_the_app(self):
         self.assertTrue(WORKSPACE_CSS.is_file())
-        for asset in ("hero_tools.css", "hero_adapter.css", "hero_overview.css", "hero_settings.css"):
+        for asset in ("hero_tools.css", "hero_adapter.css", "hero_overview.css", "hero_settings.css", "hero_sync.css"):
             self.assertTrue((PACKAGE_ROOT / "public" / "css" / asset).is_file())
         self.assertTrue(MAPPING_EDITOR_JS.is_file())
         self.assertTrue(MIGRATION_JS.is_file())

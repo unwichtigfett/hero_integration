@@ -1,32 +1,40 @@
-.hero-integration-ui .hero-api-summary { display: grid; gap: 18px; color: var(--pc-text); }
-.hero-integration-ui .hero-api-summary-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
-.hero-integration-ui .hero-api-summary h2, .hero-integration-ui .hero-api-summary h3, .hero-integration-ui .hero-api-summary p { margin-top: 0; }
-.hero-integration-ui .hero-api-summary-header h2 { margin-bottom: 6px; font-size: clamp(26px, 3vw, 34px); letter-spacing: -.035em; }
-.hero-integration-ui .hero-api-summary-header p, .hero-integration-ui .hero-api-summary-copy, .hero-integration-ui .hero-api-summary-state { color: var(--pc-textSecondary); }
-.hero-integration-ui .hero-api-summary-badge { flex: 0 0 auto; padding: 7px 11px; border: 1px solid var(--pc-border); border-radius: 999px; font-size: 12px; font-weight: 700; }
-.hero-integration-ui .hero-api-summary-badge[data-state="ready"] { border-color: #2e7d32; color: #2e7d32; }
-.hero-integration-ui .hero-api-summary-status { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); margin: 0; padding: 14px 18px; border: 1px solid var(--pc-border); border-radius: 10px; background: var(--pc-surface); }
-.hero-integration-ui .hero-api-summary-status > * { min-width: 0; padding: 0 16px; border-left: 1px solid var(--pc-border); }
-.hero-integration-ui .hero-api-summary-status > :first-child, .hero-integration-ui .hero-api-summary-status > :nth-child(2) { border-left: 0; padding-left: 0; }
-.hero-integration-ui .hero-api-summary-status dt, .hero-integration-ui .hero-api-summary-label { color: var(--pc-textSecondary); font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
-.hero-integration-ui .hero-api-summary-status dd { margin: 6px 0 0; overflow-wrap: anywhere; }
-.hero-integration-ui .hero-api-summary-positive { color: #2e7d32; }
-.hero-integration-ui .hero-api-summary-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
-.hero-integration-ui .hero-api-summary-card, .hero-integration-ui .hero-api-summary-explorer, .hero-integration-ui .hero-api-summary-tools { padding: 18px; border: 1px solid var(--pc-border); border-radius: 10px; background: var(--pc-surface); }
-.hero-integration-ui .hero-api-summary-card h3, .hero-integration-ui .hero-api-summary-explorer h3, .hero-integration-ui .hero-api-summary-tools h3 { font-size: 17px; }
-.hero-integration-ui .hero-api-summary-card .hero-api-summary-label { margin: 16px 0 4px; }
-.hero-integration-ui .hero-api-summary-value { margin-bottom: 0; overflow-wrap: anywhere; font-weight: 650; }
-.hero-integration-ui .hero-api-summary-fingerprint { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; font-weight: 500; }
-.hero-integration-ui .hero-api-summary-explorer { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, .55fr) auto; align-items: end; gap: 14px; }
-.hero-integration-ui .hero-api-summary-explorer h3, .hero-integration-ui .hero-api-summary-explorer .hero-api-summary-copy { grid-column: 1 / -1; margin-bottom: 0; }
-.hero-integration-ui .hero-api-summary-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.hero-integration-ui .hero-api-summary-actions .btn { text-decoration: none; }
-.hero-integration-ui .hero-api-summary-tools { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
-.hero-integration-ui .hero-api-summary-tools h3 { grid-column: 1 / -1; margin-bottom: 0; }
-.hero-integration-ui .hero-api-summary-tool { display: grid; grid-template-columns: auto 1fr; gap: 7px 10px; min-height: 132px; padding: 15px; border: 1px solid var(--pc-border); border-radius: 8px; color: var(--pc-text); text-decoration: none; }
-.hero-integration-ui .hero-api-summary-tool:hover, .hero-integration-ui .hero-api-summary-tool:focus-visible { border-color: var(--pc-text); box-shadow: 0 0 0 2px color-mix(in srgb, var(--pc-text) 12%, transparent); outline: 0; }
-.hero-integration-ui .hero-api-summary-tool-icon { grid-row: span 2; font-size: 20px; }
-.hero-integration-ui .hero-api-summary-tool-title { font-weight: 750; }
-.hero-integration-ui .hero-api-summary-tool-copy { color: var(--pc-textSecondary); font-size: 13px; line-height: 1.45; }
-@media (max-width: 900px) { .hero-integration-ui .hero-api-summary-status { grid-template-columns: repeat(2, minmax(0, 1fr)); } .hero-integration-ui .hero-api-summary-status > * { padding: 10px 0; border-left: 0; border-top: 1px solid var(--pc-border); } .hero-integration-ui .hero-api-summary-status > :first-child, .hero-integration-ui .hero-api-summary-status > :nth-child(2) { border-top: 0; } .hero-integration-ui .hero-api-summary-columns, .hero-integration-ui .hero-api-summary-tools { grid-template-columns: 1fr; } .hero-integration-ui .hero-api-summary-explorer { grid-template-columns: 1fr; } }
-@media (max-width: 620px) { .hero-integration-ui .hero-api-summary-header { flex-direction: column; } .hero-integration-ui .hero-api-summary-status { grid-template-columns: 1fr; } .hero-integration-ui .hero-api-summary-status > :nth-child(2) { border-top: 1px solid var(--pc-border); } }
+/* API & Schema landing page. Panels, labels and buttons come from the shared .hero-page styles in hero_workspace.css.
+   The three tools (Analyzer, Graph Viewer, GraphQL Services) keep their own styles in hero_tools.css. */
+.hero-integration-ui .hero-api-summary .hero-api-summary-status { display: grid; grid-template-columns: minmax(0, 1fr); margin: 0; }
+.hero-integration-ui .hero-api-summary .hero-api-summary-cell { min-width: 0; padding: 12px 18px; border-top: 1px solid var(--hero-page-line); }
+.hero-integration-ui .hero-api-summary .hero-api-summary-cell:first-child { border-top: 0; }
+.hero-integration-ui .hero-api-summary .hero-api-summary-cell dd { margin: 5px 0 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
+
+.hero-integration-ui .hero-api-summary .hero-api-summary-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 0 18px 18px; }
+.hero-integration-ui .hero-api-summary .hero-api-summary-snapshot { flex: 1 1 260px; min-width: 0; width: auto; min-height: 38px; }
+
+.hero-integration-ui .hero-api-summary .hero-api-summary-tools { display: grid; gap: 14px; grid-template-columns: minmax(0, 1fr); padding: 0 18px 18px; }
+.hero-integration-ui .hero-api-summary .hero-api-summary-tool {
+    display: flex; flex-direction: column; min-width: 0; min-height: 145px; padding: 18px;
+    border: 1px solid var(--pc-border); border-radius: 6px; background: var(--pc-surfaceRaised);
+    color: var(--pc-text); text-decoration: none;
+}
+.hero-integration-ui .hero-api-summary .hero-api-summary-tool:hover,
+.hero-integration-ui .hero-api-summary .hero-api-summary-tool:focus-visible { border-color: var(--pc-text); color: var(--pc-text); text-decoration: none; }
+.hero-integration-ui .hero-api-summary .hero-api-summary-tool-top { display: flex; align-items: center; gap: 12px; font-size: 14px; font-weight: 650; }
+.hero-integration-ui .hero-api-summary .hero-api-summary-tool-icon {
+    display: inline-flex; flex: none; align-items: center; justify-content: center; width: 29px; height: 29px;
+    border-radius: 6px; background: color-mix(in srgb, var(--pc-text) 9%, transparent); font-size: 16px;
+}
+.hero-integration-ui .hero-api-summary .hero-api-summary-tool-copy { margin: 14px 0 15px; color: var(--hero-page-muted); font-size: 12.5px; line-height: 1.45; }
+.hero-integration-ui .hero-api-summary .hero-api-summary-tool-footer { margin-top: auto; padding-top: 10px; border-top: 1px solid var(--hero-page-line); font-size: 11.5px; }
+
+@container hero-page (min-width: 560px) {
+    .hero-integration-ui .hero-api-summary .hero-api-summary-status { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .hero-integration-ui .hero-api-summary .hero-api-summary-cell:nth-child(2) { border-top: 0; }
+    .hero-integration-ui .hero-api-summary .hero-api-summary-cell:nth-child(even) { border-left: 1px solid var(--hero-page-line); }
+}
+@container hero-page (min-width: 900px) {
+    .hero-integration-ui .hero-api-summary .hero-api-summary-status { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .hero-integration-ui .hero-api-summary .hero-api-summary-cell { border-top: 0; }
+    .hero-integration-ui .hero-api-summary .hero-api-summary-cell + .hero-api-summary-cell { border-left: 1px solid var(--hero-page-line); }
+    .hero-integration-ui .hero-api-summary .hero-api-summary-tools { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@container hero-page (max-width: 559px) {
+    .hero-integration-ui .hero-api-summary .hero-api-summary-controls > .hero-page-button { flex: 1 1 100%; }
+}
