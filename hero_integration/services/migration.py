@@ -108,20 +108,34 @@ def execute_run(run_name: str) -> None:
             _release_run(run.name)
 
 
+def _validate_run_source_binding(run, config, snapshot=None):
+    """Reject source changes before any provider request or record processing."""
+    from hero_integration.services.introspection import endpoint_fingerprint
+
+    instance = getattr(config, "source_instance", "")
+    recorded = getattr(run, "source_instance", "") or ""
+    if not instance or (recorded and recorded != instance):
+        raise MappingPlanError("Migration run does not match the configured HERO source instance.")
+    if snapshot is None:
+        # Historical runs lack an immutable endpoint binding; do not replay them
+        # against whatever endpoint happens to be configured today.
+        raise MappingPlanError("Historical run has no approved endpoint-bound read snapshot.")
+    if (getattr(snapshot, "source_instance", "") != instance or
+        getattr(snapshot, "endpoint_fingerprint", "") != endpoint_fingerprint(config.endpoint.url, instance)):
+        raise MappingPlanError("Approved schema snapshot does not match the current HERO endpoint and source instance.")
+
+
 def _source_for_run(run, config):
     """Bind every newly queued run to its approved immutable read revisions."""
     if not getattr(run, "graphql_service", ""):
-        # Historical runs keep their recorded legacy behavior; new API calls
-        # never create this form.
-        return HeroSource(HeroGraphQLClient(
-            config.endpoint, lambda: config.api_token, config.timeout_seconds,
-            max_retries=0 if _testing_preview_enabled(run) else 2,
-        ), config.source_instance)
+        _validate_run_source_binding(run, config)
+        raise MappingPlanError("Historical run requires a new approved endpoint-bound read service.")
     from hero_integration.services.read_contract import ReadContractError, from_documents
 
     service = frappe.get_doc("HERO GraphQL Service", run.graphql_service)
     mapping = frappe.get_doc("HERO GraphQL Mapping", run.graphql_mapping)
     snapshot = frappe.get_doc("HERO GraphQL Schema Snapshot", service.schema_snapshot)
+    _validate_run_source_binding(run, config, snapshot)
     contract = from_documents(service, mapping, snapshot)
     if int(run.service_revision or 0) != contract.service_revision or int(run.mapping_revision or 0) != contract.mapping_revision:
         raise MappingPlanError("The queued run no longer matches its approved service or mapping revision.")
