@@ -192,7 +192,24 @@ class TestHeroV1MockContract(unittest.TestCase):
                 ("project_matches", field) for field in selected["HeroProjectMatches"]
             },
         }
-        self.assertEqual(matrix, expected)
+        # V3 is the historical 30-path inventory.  Later selected paths have
+        # separately reviewed consumers; keep both contracts explicit.
+        self.assertEqual({op: matrix[op] - expected[op] for op in expected},
+                         {op: set() for op in expected})
+        from hero_integration.services.projection_contracts import STATUS_PATHS
+        from hero_integration.tests.mapping_fixture import four_domain_contract_payload
+        self.assertEqual(expected["HeroCustomers"] - matrix["HeroCustomers"],
+                         {("contacts", "address.country.code")})
+        self.assertEqual(expected["HeroProjectMatches"] - matrix["HeroProjectMatches"],
+                         {("project_matches", path) for path in STATUS_PATHS})
+        project_rules = {item["source_path"]: item for item in four_domain_contract_payload()["mappings"]
+                         if item["operation"] == "HeroProjectMatches"}
+        for path in STATUS_PATHS:
+            with self.subTest(path=path):
+                rule = project_rules[path]
+                self.assertEqual(rule["target_doctype"], "Project")
+                self.assertEqual(rule["target_field"], "custom_hero_observed_status_" + path.rsplit(".", 1)[1])
+                self.assertEqual(rule["purpose"], "Field")
         self.assertEqual(sum(map(len, matrix.values())), 30)
         self.assertEqual(sum(row["status"] == "NATIVE_MAPPED" for row in MATRIX["fields"]), 17)
         self.assertEqual(sum(row["status"] == "CUSTOM_FIELD_MAPPED" for row in MATRIX["fields"]), 10)
