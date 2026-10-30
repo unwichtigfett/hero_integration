@@ -1380,6 +1380,9 @@ def _personal_draft_document(definition_id):
         return None
     doc = frappe.get_doc("HERO Mapping Draft", key)
     doc.check_permission("read")
+    if (doc.draft_key, doc.definition_id, doc.site_scope, doc.owner_user) != (
+            key, definition_id, frappe.local.site, frappe.session.user):
+        frappe.throw("Personal mapping draft access denied.", frappe.PermissionError)
     return doc
 
 
@@ -1411,9 +1414,13 @@ def _personal_draft_result(value):
 def _personal_draft_doc_result(doc):
     if doc is None:
         return {"draft": None}
+    from hero_integration.services.mapping_draft_service import _hash
+    content = _personal_draft_content(doc.content_json)
+    if _hash(content) != doc.content_hash:
+        frappe.throw("MAPPING_DRAFT_CONFLICT: Reload the current personal draft.", frappe.TimestampMismatchError)
     return {"draft": {
         "key": doc.draft_key, "site_scope": doc.site_scope, "definition_id": doc.definition_id, "owner": doc.owner_user,
-        "generation": int(doc.generation), "state": doc.state, "content": json.loads(doc.content_json),
+        "generation": int(doc.generation), "state": doc.state, "content": content,
         "content_json": doc.content_json,
         "content_hash": doc.content_hash, "content_revision": int(doc.content_revision),
         "base_active_name": doc.base_active_mapping or "", "base_active_revision": int(doc.base_active_revision or 0),
