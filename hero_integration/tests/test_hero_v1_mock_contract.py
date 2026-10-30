@@ -138,7 +138,9 @@ class TestHeroV1MockContract(unittest.TestCase):
                 with self.assertRaises(HeroClientError):
                     client.query(CUSTOMER_QUERY_V1, variables)
         self.assertEqual(opener.calls, 2)
-        sleep.assert_called_once_with(1)
+        # Exponential backoff with jitter: base 1 s plus up to 1 s.
+        sleep.assert_called_once()
+        self.assertTrue(1 <= sleep.call_args.args[0] <= 2)
 
     def test_source_rejects_overfull_page_instead_of_treating_it_as_complete(self):
         class Overfull:

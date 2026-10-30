@@ -161,7 +161,8 @@ def run_materialized_monitor(*, frappe_module=None, client=None):
     if configuration.source_instance != source:
         raise RuntimeBridgeError("Configured HERO source changed before monitoring.")
     transport = client or HeroGraphQLClient(configuration.endpoint, lambda: configuration.api_token,
-                                            timeout=configuration.timeout_seconds, max_retries=0)
+                                            timeout=configuration.timeout_seconds, max_retries=0,
+                                            requests_per_minute=int(polling["rate_limit"]))
     # Resolve the same generation and seal again immediately before transport.
     current = plans.resolve_executable_plan(site, source, approved.generation, True, actor)
     _require_latest_validated_snapshot(frappe, settings, source, current.selection)
