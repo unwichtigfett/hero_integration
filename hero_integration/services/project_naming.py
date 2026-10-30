@@ -32,7 +32,7 @@ def build_project_title(record: Mapping[str, object], *, max_length: int = PROJE
     if not isinstance(max_length, int) or isinstance(max_length, bool) or max_length < 1:
         raise ProjectTitleValidationError("ERPNext Project.project_name has no valid maximum length.")
 
-    trade_code, trade_name = _trade(record)
+    trade_code, trade_name = project_trade(record)
     project_number = _project_number(record, trade_code)
     customer = _mapping(record.get("customer"), "ProjectMatch.customer")
     salutation = _required_text(customer.get("title"), "ProjectMatch.customer.title")
@@ -48,7 +48,7 @@ def build_project_title(record: Mapping[str, object], *, max_length: int = PROJE
     return title
 
 
-def _trade(record: Mapping[str, object]) -> tuple[str, str]:
+def project_trade(record: Mapping[str, object]) -> tuple[str, str]:
     """The HERO trade (measure) by code or name; project_type is only a fallback."""
     candidates = []
     measure = record.get("measure")
