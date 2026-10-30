@@ -51,9 +51,8 @@ class TestMaterializedMonitor(unittest.TestCase):
         with self.assertRaises(ValueError): self.run_monitor()
         self.client.query.assert_not_called()
 
-    def test_legacy_filter_and_reconciliation_are_not_silently_ignored(self):
-        for attribute, value in (("polling_filters_json", '{"HeroCustomers":{"showDeleted":false}}'),
-                                 ("polling_reconciliation", 1)):
+    def test_reconciliation_is_not_silently_ignored(self):
+        for attribute, value in (("polling_reconciliation", 1),):
             setattr(self.settings, attribute, value)
             with self.subTest(attribute=attribute), self.assertRaises(sync_runtime_adapter.RuntimeBridgeError):
                 self.run_monitor()

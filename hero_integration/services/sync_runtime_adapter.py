@@ -109,6 +109,7 @@ def run_scheduled_auto_sync(*, frappe_module=None) -> RuntimePreflight:
     if executable.selection.execution_mode != RUNTIME_EXECUTION_MODE:
         raise RuntimeBridgeError("Runtime plan execution mode is not AUTO_SYNC.")
     _require_latest_validated_snapshot(frappe, settings, source_instance, executable.selection)
+    _require_area_enabled(frappe, settings, executable.selection)
     return _run(executable, frappe, automatic=True)
 
 
@@ -128,8 +129,8 @@ def run_materialized_monitor(*, frappe_module=None, client=None):
     if effective_mode(settings) != "MONITOR":
         raise RuntimeBridgeError("Materialized monitoring requires MONITOR mode.")
     polling = runtime_plan(settings)
-    if polling["unsupported_sources"] or polling["filters"]:
-        raise RuntimeBridgeError("Materialized monitoring cannot apply legacy polling filters; review the approved query variables.")
+    if polling["unsupported_sources"]:
+        raise RuntimeBridgeError("Materialized monitoring configuration is not supported; review the approved query variables.")
     if polling["reconciliation"]:
         raise RuntimeBridgeError("Materialized monitoring does not yet support reconciliation.")
     site = getattr(getattr(frappe, "local", None), "site", "")
@@ -143,6 +144,7 @@ def run_materialized_monitor(*, frappe_module=None, client=None):
         raise RuntimeBridgeError("No approved canonical runtime plan exists for this site/source instance.")
     executable = plans.resolve_executable_plan(site, source, approved.generation, True, actor)
     _require_latest_validated_snapshot(frappe, settings, source, executable.selection)
+    _require_area_enabled(frappe, settings, executable.selection)
     materialized = reconstruct_materialized_read_plan(executable.selection, frappe_module=frappe)
     if materialized.sealed.contract.page_size > polling["page_size"]:
         raise RuntimeBridgeError("The approved read page size exceeds the monitoring limit.")
@@ -171,6 +173,23 @@ def run_materialized_monitor(*, frappe_module=None, client=None):
     return MonitorResult(len(records) if operation == "HeroCustomers" else 0,
                          len(records) if operation == "HeroProjectMatches" else 0,
                          source, (operation,))
+
+
+def _require_area_enabled(frappe, settings, selection) -> None:
+    """Respect the area switches of the Synchronization page before any HERO request."""
+    import json
+
+    from hero_integration.services.sync_page import AREAS, BY_OPERATION, area_enabled
+
+    if all(area_enabled(settings, item) for item in AREAS):
+        return
+    try:
+        target = json.loads(frappe.db.get_value("HERO GraphQL Mapping", selection.graphql_mapping, "mapping_json") or "{}").get("target_operation")
+    except (TypeError, ValueError, AttributeError):
+        target = None
+    item = BY_OPERATION.get(target)
+    if item is None or not area_enabled(settings, item):
+        raise RuntimeBridgeError(f"Automatic sync for {item.label if item else 'this area'} is switched off on the Synchronization page.")
 
 
 def run_pending_sync(expected_plan_generation: int, *, frappe_module=None, provider=None) -> RuntimePreflight:

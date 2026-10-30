@@ -74,6 +74,10 @@ class _FrappeSettingsMock:
     def throw(self, message: str) -> None:
         raise ValueError(message)
 
+    def get_all(self, doctype: str, **_kwargs) -> list[dict[str, object]]:
+        assert doctype == "HERO GraphQL Schema Snapshot", doctype
+        return []
+
 
 class TestWorkspaceSettingsContract(unittest.TestCase):
     def _call(self, settings: _Settings, permission_error: Exception | None = None):
@@ -158,14 +162,13 @@ class TestWorkspaceSettingsContract(unittest.TestCase):
         frappe_mock = _FrappeSettingsMock(settings)
         with patch.object(api, "frappe", frappe_mock):
             result = api.workspace_settings_save(
-                True, settings.hero_api_url, polling_mode="MONITOR", polling_data_sources="HeroCustomers\nHeroProjectMatches",
-                polling_filters_json='{"HeroCustomers":{"showDeleted":false}}', polling_bootstrap=True,
+                True, settings.hero_api_url, polling_mode="MONITOR", polling_bootstrap=True,
                 polling_page_size=50, polling_pagination_strategy="OFFSET", polling_allow_backfill=False,
                 polling_full_inventory=False, polling_reconciliation=True, polling_retry_limit=2,
                 polling_retry_backoff_seconds=30, polling_timeout_seconds=45, polling_rate_limit=20,
                 polling_concurrency=1, polling_notifications=True,
             )
-        self.assertEqual(settings.polling_filters_json, '{"HeroCustomers": {"showDeleted": false}}')
+        self.assertTrue(settings.polling_bootstrap)
         self.assertEqual(settings.polling_page_size, 50)
         self.assertEqual(settings.polling_concurrency, 1)
         self.assertTrue(result["polling"]["reconciliation"])

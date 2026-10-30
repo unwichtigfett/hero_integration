@@ -45,26 +45,13 @@ class TestSchedulerTime(unittest.TestCase):
 
 
 class TestPollingConfiguration(unittest.TestCase):
-    def test_invalid_or_unreviewed_filters_block_instead_of_running_unfiltered(self):
-        cases = {
-            "{not json": ["filters (invalid JSON object)"],
-            "[1, 2]": ["filters (invalid JSON object)"],
-            '{"HeroCustomers": 5}': ["filters (invalid JSON object)"],
-            '{"HeroCustomers": {"showDeleted": "false"}}': ["filter HeroCustomers.showDeleted"],
-            '{"HeroCustomers": {"search": "x"}}': ["filter HeroCustomers.search"],
-            '{"HeroProjectMatches": {"status": 1}}': ["filter HeroProjectMatches.status"],
-            '{"FutureQuery": {}}': ["filter FutureQuery"],
-        }
-        for value, expected in cases.items():
-            with self.subTest(value=value):
-                plan = runtime_plan(_settings(polling_filters_json=value))
-                self.assertEqual(plan["unsupported_sources"], expected)
-                self.assertFalse(scheduler_due(_settings(polling_filters_json=value), datetime(2026, 11, 10, 12, 0)))
-        ok = runtime_plan(_settings(polling_filters_json='{"HeroCustomers": {"showDeleted": false}}'))
-        self.assertEqual((ok["unsupported_sources"], ok["filters"]), ([], {"HeroCustomers": {"showDeleted": False}}))
-
-    def test_unknown_data_source_line_is_reported(self):
-        self.assertEqual(runtime_plan(_settings(polling_data_sources="{}"))["unsupported_sources"], ["{}"])
+    def test_left_over_sources_and_filters_from_older_versions_no_longer_block_polling(self):
+        for sources, filters in (("{}", "{}"), ("FutureQuery", "{not json"), ("HeroCustomers", '{"HeroCustomers": {"search": "x"}}')):
+            with self.subTest(sources=sources, filters=filters):
+                settings = _settings(polling_data_sources=sources, polling_filters_json=filters)
+                plan = runtime_plan(settings)
+                self.assertEqual((plan["sources"], plan["unsupported_sources"]), (["HeroCustomers", "HeroProjectMatches"], []))
+                self.assertTrue(scheduler_due(settings, datetime(2026, 11, 10, 12, 0)))
 
 
 class _FakeFrappe(types.ModuleType):
@@ -112,14 +99,14 @@ class TestScheduledEntry(unittest.TestCase):
                     sys.modules[name] = module
 
     def test_unsupported_configuration_is_recorded_once_without_a_request(self):
-        settings = _settings(polling_data_sources="{}", sync_status="", sync_error="")
+        settings = _settings(polling_timezone="Invalid/Zone", sync_status="", sync_error="")
         with patch.object(polling, "run_monitor") as run_monitor:
             fake, _tasks = self.run_tasks(settings)
             self.run_tasks(settings)
         run_monitor.assert_not_called()
         self.assertEqual(len(fake.events), 1)
         self.assertEqual((fake.events[0]["mode"], fake.events[0]["status"]), ("MONITOR", "Skipped"))
-        self.assertIn("{}", settings.sync_error)
+        self.assertIn("timezone Invalid/Zone", settings.sync_error)
         self.assertEqual(settings.sync_status, "MONITOR skipped")
 
     def test_string_last_success_no_longer_crashes_the_hourly_run(self):
@@ -188,7 +175,7 @@ class TestPollingSettingsSave(unittest.TestCase):
         from hero_integration import api
 
         settings = SimpleNamespace(polling_pagination_strategy="OFFSET")
-        defaults = {"timezone": None, "execution_window": None, "data_sources": None, "filters_json": None, "bootstrap": None,
+        defaults = {"timezone": None, "execution_window": None, "bootstrap": None,
                     "page_size": None, "pagination_strategy": None, "allow_backfill": None, "full_inventory": None,
                     "reconciliation": None, "retry_limit": None, "retry_backoff_seconds": None, "timeout_seconds": None,
                     "rate_limit": None, "concurrency": None, "notifications": None}
@@ -197,12 +184,9 @@ class TestPollingSettingsSave(unittest.TestCase):
             api._save_polling_configuration(settings, **{**defaults, **values})
         return settings
 
-    def test_unknown_sources_and_unreviewed_filters_are_rejected_when_saving(self):
-        with self.assertRaisesRegex(ValueError, "Unsupported polling data source: \\{\\}"):
-            self.save(data_sources="{}")
-        with self.assertRaisesRegex(ValueError, "Unsupported polling filters: filter HeroCustomers.search"):
-            self.save(filters_json='{"HeroCustomers": {"search": "x"}}')
-        with self.assertRaisesRegex(ValueError, "filter HeroCustomers.showDeleted"):
-            self.save(filters_json='{"HeroCustomers": {"showDeleted": "no"}}')
-        saved = self.save(data_sources="HeroCustomers\nHeroProjectMatches", filters_json='{"HeroCustomers": {"showDeleted": false}}')
-        self.assertEqual(saved.polling_filters_json, '{"HeroCustomers": {"showDeleted": false}}')
+    def test_only_reviewed_reader_controls_are_saved(self):
+        with self.assertRaisesRegex(ValueError, "must be OFFSET"):
+            self.save(pagination_strategy="CURSOR")
+        saved = self.save(page_size=50, timezone=" Europe/Berlin ")
+        self.assertEqual((saved.polling_page_size, saved.polling_timezone), (50, "Europe/Berlin"))
+        self.assertFalse(hasattr(saved, "polling_data_sources") or hasattr(saved, "polling_filters_json"))

@@ -27,30 +27,56 @@
     }
 
     const metricPresentation = Object.freeze({
-        "Connector": ["⌁", "HERO integration availability"],
-        "API Endpoint": ["⌘", "Configured GraphQL endpoint"],
-        "Credential": ["◇", "Stored credential state"],
-        "Timeout": ["◷", "Request timeout"],
-        "Connection ID": ["▣", "Selected connection identity"],
-        "Binding Generation": ["⌘", "Current binding generation"],
-        "Binding": ["▤", "Schema binding state"],
-        "Schema": ["▦", "Saved schema state"],
-        "Local Configuration Access": ["⌑", "Local configuration permission"],
-        "HERO Mutation Execution": ["▷", "Server-side mutation gate"],
-        "Automatic Synchronization": ["⟳", "Polling configuration"],
+        "Connector": "HERO integration availability",
+        "Credential": "Stored credential state",
+        "Binding": "Schema binding state",
+        "Schema": "Saved schema metadata",
+        "Local Configuration Access": "Local configuration permission",
+        "HERO Mutation Execution": "Server-side mutation gate",
+        "Automatic Synchronization": "Polling configuration",
     });
 
+    // Status tile: label, value and a short description.
     function metric(label, value, state = "") {
-        const card = el("div", "hero-overview-metric");
-        const [icon, description] = metricPresentation[label] || ["·", label];
-        const iconNode = el("span", "hero-overview-icon", icon);
-        iconNode.setAttribute("aria-hidden", "true");
-        const content = el("div", "hero-overview-metric-content");
-        const v = el("div", "hero-overview-value", value);
+        const card = el("div", "hero-page-stat");
+        const v = el("div", "hero-page-stat-value", value);
         if (state) v.dataset.state = state;
-        content.append(el("div", "hero-overview-label", label), v, el("div", "hero-overview-description", description));
-        card.append(iconNode, content);
+        v.title = uiText(value);
+        card.append(el("div", "hero-page-label", label), v, el("div", "hero-page-stat-sub", metricPresentation[label] || ""));
         return card;
+    }
+
+    // Read-only field of the connection details.
+    function detail(label, value, mono = false) {
+        const wrap = el("div", "hero-page-field");
+        wrap.append(el("div", "hero-page-field-label", label), el("div", `hero-page-field-value${mono ? " hero-page-mono" : ""}`, value));
+        return wrap;
+    }
+
+    // Capability row: title, description and a state pill.
+    function capability(label, value, state = "") {
+        const row = el("div", "hero-page-row");
+        const text = el("div");
+        text.append(el("strong", "", label), el("div", "hero-page-row-sub", metricPresentation[label] || ""));
+        const pill = el("span", "hero-page-pill", value);
+        if (state) pill.dataset.state = state;
+        row.append(text, pill);
+        return row;
+    }
+
+    function shortFingerprint(value) {
+        if (!value) return "Not available";
+        return value.length > 20 ? `${value.slice(0, 8)}…${value.slice(-7)}` : value;
+    }
+
+    function panel(title, description, ruled, ...body) {
+        const section = el("section", "hero-page-panel");
+        const head = el("div", `hero-page-panel-head${ruled ? " is-ruled" : ""}`);
+        const text = el("div");
+        text.append(el("h3", "", title), el("p", "", description));
+        head.append(text);
+        section.append(head, ...body);
+        return section;
     }
 
     function errorMessage(error) {
@@ -60,7 +86,7 @@
     }
 
     function toolLink(label, route, params = {}) {
-        const link = el("a", "hero-overview-link", label);
+        const link = el("a", "hero-page-chip", label);
         link.dataset.heroRoute = route;
         link.dataset.heroParams = JSON.stringify(params);
         link.href = platform.url(route, params);
@@ -114,22 +140,32 @@
     }
 
     async function mount(workspace) {
-        const root = el("section", "hero-overview");
-        const header = el("div", "hero-overview-header");
+        const root = el("section", "hero-page hero-overview");
+        const header = el("header", "hero-page-header");
         const title = el("div");
         title.append(
             el("h2", "", "HERO Overview"),
             el("p", "", "Saved GraphQL schema and local integration status.")
         );
-        const reload = el("button", "hero-overview-button secondary", "Refresh Status");
+        const reload = el("button", "hero-page-button", "Refresh Status");
         reload.type = "button";
         header.append(title, reload);
 
-        const grid = el("div", "hero-overview-grid");
-        const actions = el("div", "hero-overview-actions");
-        const sync = el("button", "hero-overview-button primary", "Synchronize Binding");
-        const schema = el("button", "hero-overview-button primary", "Refresh Schema");
+        const grid = el("div", "hero-page-stats hero-overview-grid");
+        grid.setAttribute("aria-label", uiText("Connection and schema status"));
+        const details = el("div", "hero-page-panel-body hero-overview-details");
+        const capabilities = el("div", "hero-page-panel-body hero-overview-capabilities");
+        const columns = el("div", "hero-overview-columns");
+        columns.append(
+            panel("Connection details", "Read-only information from the current HERO source.", true, details),
+            panel("Capabilities & permissions", "Current integration gates and execution availability.", true, capabilities)
+        );
+
+        const sync = el("button", "hero-page-button", "Synchronize Binding");
+        const schema = el("button", "hero-page-button is-quiet", "Refresh Schema");
         sync.type = schema.type = "button";
+        const actions = el("div", "hero-overview-actions");
+        actions.append(sync, schema);
 
         const links = el("div", "hero-overview-links");
         links.append(
@@ -139,15 +175,21 @@
             toolLink("Mapping Editor", "mapping"),
             toolLink("Settings", "settings")
         );
+        const toolbar = el("div", "hero-overview-toolbar");
+        toolbar.append(actions, links);
 
-        const status = el("div", "hero-overview-status", "Loading …");
+        const status = el("div", "hero-page-note hero-overview-status", "Loading …");
         status.setAttribute("role", "status");
-        actions.append(sync, schema);
-        root.append(header, grid, actions, links, status);
+        root.append(header, grid, columns, panel("Actions & tools", "Use the existing integration operations and analysis tools.", false, toolbar), status);
         workspace.replaceChildren(root);
 
         let destroyed = false;
         let context = null;
+
+        function say(text, state = "") {
+            status.textContent = text;
+            status.dataset.state = state;
+        }
         let settings = null;
 
         function busy(value) {
@@ -162,18 +204,27 @@
             const [localAccess, localAccessState] = localConfigurationAccess(context);
             const [mutationExecution, mutationExecutionState] = mutationExecutionStatus(settings);
             const [automaticSynchronization, automaticSynchronizationState] = automaticSynchronizationStatus(settings);
+            const bindingState = c.needs_binding_update ? ["Update required", "warning"] : (c.connection_id ? ["Current", "ok"] : ["Not bound", "warning"]);
             grid.replaceChildren(
                 metric("Connector", s.enabled ? "Enabled" : "Disabled", s.enabled ? "ok" : "off"),
-                metric("API Endpoint", s.api_url || "Not configured"),
                 metric("Credential", s.api_token_configured ? "Configured" : "Not configured", s.api_token_configured ? "ok" : "warning"),
-                metric("Timeout", `${s.timeout_seconds || 30} s`),
-                metric("Connection ID", c.connection_id || "Not bound"),
-                metric("Binding Generation", String(c.binding_generation || 0)),
-                metric("Binding", c.needs_binding_update ? "Update required" : (c.connection_id ? "Current" : "Not bound"), c.needs_binding_update ? "warning" : "ok"),
-                metric("Schema", c.schema_fingerprint || "Not available"),
-                metric("Local Configuration Access", localAccess, localAccessState),
-                metric("HERO Mutation Execution", mutationExecution, mutationExecutionState),
-                metric("Automatic Synchronization", automaticSynchronization, automaticSynchronizationState)
+                metric("Binding", ...bindingState),
+                metric("Schema", c.schema_fingerprint ? "Available" : "Not available", c.schema_fingerprint ? "" : "warning")
+            );
+            const pairs = el("div", "hero-overview-pairs");
+            pairs.append(
+                detail("Connection ID", c.connection_id || "Not bound", Boolean(c.connection_id)),
+                detail("Timeout", `${s.timeout_seconds || 30} s`),
+                detail("Binding Generation", String(c.binding_generation || 0)),
+                detail("Schema fingerprint", shortFingerprint(c.schema_fingerprint), Boolean(c.schema_fingerprint))
+            );
+            const fingerprint = pairs.lastElementChild.lastElementChild;
+            if (c.schema_fingerprint) fingerprint.title = c.schema_fingerprint;
+            details.replaceChildren(detail("API Endpoint", s.api_url || "Not configured"), pairs);
+            capabilities.replaceChildren(
+                capability("Local Configuration Access", localAccess, localAccessState),
+                capability("HERO Mutation Execution", mutationExecution, mutationExecutionState),
+                capability("Automatic Synchronization", automaticSynchronization, automaticSynchronizationState)
             );
             sync.disabled = !c.can_write || !c.needs_binding_update || !c.binding_refresh_available;
             schema.disabled = !schemaRefreshAvailable(c, s);
@@ -186,19 +237,19 @@
 
         async function load(snapshotName = context?.selected_snapshot || "") {
             busy(true);
-            status.textContent = uiText("Loading …");
+            say(uiText("Loading …"));
             try {
                 settings = await platform.api(SETTINGS);
                 try {
                     context = await platform.api(CONTEXT, snapshotName ? {snapshot_name: snapshotName} : {});
-                    status.textContent = uiText("HERO status is current.");
+                    say(uiText("HERO status is current."), "ok");
                 } catch (_) {
                     context = null;
-                    status.textContent = uiText("Connection context unavailable. Check HERO Settings.");
+                    say(uiText("Connection context unavailable. Check HERO Settings."), "warning");
                 }
                 if (!destroyed) render();
             } catch (_) {
-                if (!destroyed) status.textContent = uiText("Failed to load HERO status.");
+                if (!destroyed) say(uiText("Failed to load HERO status."), "error");
             } finally {
                 if (!destroyed) busy(false);
             }
@@ -207,12 +258,12 @@
         async function synchronize() {
             if (!context) return;
             busy(true);
-            status.textContent = uiText("Synchronizing binding …");
+            say(uiText("Synchronizing binding …"));
             try {
                 await platform.api(SYNC, {expected_generation: context.binding_generation || 0}, {write: true});
                 await load();
             } catch (_) {
-                status.textContent = uiText("Failed to synchronize HERO binding.");
+                say(uiText("Failed to synchronize HERO binding."), "error");
                 busy(false);
             }
         }
@@ -220,7 +271,7 @@
         async function refreshSchema() {
             if (!schemaRefreshAvailable(context, settings)) return;
             busy(true);
-            status.textContent = uiText("Refreshing schema …");
+            say(uiText("Refreshing schema …"));
             try {
                 const result = await platform.api(REFRESH, {}, {write: true});
                 if (result.snapshot_name) {
@@ -229,9 +280,9 @@
                     history.replaceState(null, "", target.pathname + target.search + target.hash);
                 }
                 await load(result.snapshot_name);
-                if (!destroyed) status.textContent = uiText(refreshResultMessage(result));
+                if (!destroyed) say(uiText(refreshResultMessage(result)), "ok");
             } catch (error) {
-                status.textContent = uiText("Failed to refresh HERO schema.") + " " + errorMessage(error);
+                say(uiText("Failed to refresh HERO schema.") + " " + errorMessage(error), "error");
                 busy(false);
             }
         }
