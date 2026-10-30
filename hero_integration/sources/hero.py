@@ -46,6 +46,12 @@ query HeroProjectMatches($first: Int!, $offset: Int!, $orderBy: String!) {
   }
 }
 """
+PROJECT_CONTRACT_V1 = "v1"
+PROJECT_CONTRACT_V2 = "v2"
+# V2 also reads the HERO trade (Gewerk) used in the Project title.
+PROJECT_QUERY_V2 = PROJECT_QUERY_V1.replace(
+    "    display_id created modified\n", "    display_id created modified\n    measure { short name }\n",
+)
 PAGE_SIZE = 100
 CUSTOMER_SELECTED_PATHS = (
     "id", "nr", "first_name", "last_name", "full_name", "email", "phone_mobile", "phone_home",
@@ -62,6 +68,17 @@ PROJECT_SELECTED_PATHS = (
     "current_project_match_status.created", "current_project_match_status.modified",
     "current_project_match_status.step_id",
 )
+PROJECT_SELECTED_PATHS_V2 = (*PROJECT_SELECTED_PATHS, "measure.short", "measure.name")
+
+
+def project_query(contract_version: str) -> str:
+    """Return one explicitly reviewed Project read-contract version."""
+
+    if contract_version == PROJECT_CONTRACT_V1:
+        return PROJECT_QUERY_V1
+    if contract_version == PROJECT_CONTRACT_V2:
+        return PROJECT_QUERY_V2
+    raise ValueError("Unsupported Project read-contract version.")
 
 
 def customer_query(contract_version: str) -> str:

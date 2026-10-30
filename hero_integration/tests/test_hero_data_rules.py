@@ -123,6 +123,21 @@ class TestProjectTrades(unittest.TestCase):
                     title = build_project_title(self.record(value))
                     self.assertTrue(title.startswith(f'{code}-1042 | {name}, Herr Max Muster'))
 
+    def test_the_hero_measure_wins_over_project_type(self):
+        from hero_integration.services.project_naming import build_project_title
+        record = {**self.record('UNMANAGED'), 'measure': {'short': 'KLIM', 'name': 'Klimatechnik'}}
+        self.assertTrue(build_project_title(record).startswith('KLIM-1042 | Klimatechnik,'))
+        record['measure'] = {'short': 'X1', 'name': 'Dachsanierung'}
+        self.assertTrue(build_project_title(record).startswith('DS-1042 | Dachsanierung,'))
+
+    def test_project_query_v2_reads_the_measure_and_v1_is_unchanged(self):
+        from hero_integration.sources import hero
+        self.assertEqual(hero.project_query('v1'), hero.PROJECT_QUERY_V1)
+        self.assertNotIn('measure', hero.PROJECT_QUERY_V1)
+        self.assertIn('measure { short name }', hero.project_query('v2'))
+        with self.assertRaises(ValueError):
+            hero.project_query('v9')
+
     def test_an_unknown_trade_names_its_value(self):
         from hero_integration.services.project_naming import ProjectTitleValidationError, build_project_title
         with self.assertRaisesRegex(ProjectTitleValidationError, "'XYZ' has no confirmed"):

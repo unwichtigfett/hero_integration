@@ -32,14 +32,7 @@ def build_project_title(record: Mapping[str, object], *, max_length: int = PROJE
     if not isinstance(max_length, int) or isinstance(max_length, bool) or max_length < 1:
         raise ProjectTitleValidationError("ERPNext Project.project_name has no valid maximum length.")
 
-    trade = _trade_code(record)
-    # HERO may deliver the code (PV) or the name (Photovoltaik).
-    trade_code = trade if trade in TRADE_CATALOG else _TRADE_BY_NAME.get(trade.casefold(), "")
-    trade_name = TRADE_CATALOG.get(trade_code)
-    if not trade_name:
-        raise ProjectTitleValidationError(
-            f"Project trade {trade[:40]!r} has no confirmed HERO-to-ERPNext title mapping."
-        )
+    trade_code, trade_name = _trade(record)
     project_number = _project_number(record, trade_code)
     customer = _mapping(record.get("customer"), "ProjectMatch.customer")
     salutation = _required_text(customer.get("title"), "ProjectMatch.customer.title")
@@ -55,17 +48,23 @@ def build_project_title(record: Mapping[str, object], *, max_length: int = PROJE
     return title
 
 
-def _trade_code(record: Mapping[str, object]) -> str:
-    value = record.get("project_type")
-    if isinstance(value, Mapping):
-        value = value.get("code")
-    if value is None:
-        value = record.get("confirmed_project_type")
-        if isinstance(value, Mapping):
-            value = value.get("code")
-    if not isinstance(value, str) or not value.strip():
-        raise ProjectTitleValidationError("ProjectMatch.project_type or a confirmed ProjectType is required.")
-    return value.strip().upper()
+def _trade(record: Mapping[str, object]) -> tuple[str, str]:
+    """The HERO trade (measure) by code or name; project_type is only a fallback."""
+    candidates = []
+    measure = record.get("measure")
+    if isinstance(measure, Mapping):
+        candidates += [measure.get("short"), measure.get("name")]
+    for field in ("project_type", "confirmed_project_type"):
+        value = record.get(field)
+        candidates.append(value.get("code") if isinstance(value, Mapping) else value)
+    values = [value.strip() for value in candidates if isinstance(value, str) and value.strip()]
+    if not values:
+        raise ProjectTitleValidationError("ProjectMatch.measure, project_type or a confirmed ProjectType is required.")
+    for value in values:
+        code = value.upper() if value.upper() in TRADE_CATALOG else _TRADE_BY_NAME.get(value.casefold())
+        if code:
+            return code, TRADE_CATALOG[code]
+    raise ProjectTitleValidationError(f"Project trade {values[0][:40]!r} has no confirmed HERO-to-ERPNext title mapping.")
 
 
 def _project_number(record: Mapping[str, object], trade_code: str) -> str:
