@@ -103,7 +103,7 @@ class TestProjectCompanyMigration(unittest.TestCase):
 
     def test_customer_contact_values_are_dry_run_safe_and_idempotent(self):
         record = {
-            "id": 301, "full_name": "Synthetic Ada", "first_name": "Ada", "last_name": "Lovelace",
+            "id": 301, "full_name": "Synthetic Ada", "company_name": None, "first_name": "Ada", "last_name": "Lovelace",
             "email": "ada@synthetic.invalid", "phone_mobile": "+49 555 101",
         }
 
@@ -125,7 +125,7 @@ class TestProjectCompanyMigration(unittest.TestCase):
 
     def test_transfer_persists_every_custom_field_value_without_system_field_writes(self):
         customer_record = {
-            "id": 401, "nr": "C-401", "full_name": "Synthetic Ada", "first_name": "Ada",
+            "id": 401, "nr": "C-401", "full_name": "Synthetic Ada", "company_name": None, "first_name": "Ada",
             "last_name": "Lovelace", "email": "ada@synthetic.invalid", "phone_mobile": "+49 555 401",
             "phone_home": "+49 556 401", "company_name": "", "category": "Synthetic",
             "type": "Prospect", "is_deleted": False,
@@ -163,7 +163,7 @@ class TestProjectCompanyMigration(unittest.TestCase):
         self.assertEqual(self.frappe.customers[0]["custom_hero_customer_category"], "Synthetic Territory")
 
     def test_hero_only_customer_contact_change_updates_through_native_validation(self):
-        record = {"id": 301, "full_name": "Synthetic Ada", "email": "ada@synthetic.invalid"}
+        record = {"id": 301, "full_name": "Synthetic Ada", "company_name": None, "email": "ada@synthetic.invalid"}
         self.migration._migrate_customer(record, SimpleNamespace(mode="Execute"))
 
         result = self.migration._migrate_customer(
@@ -175,7 +175,7 @@ class TestProjectCompanyMigration(unittest.TestCase):
         self.assertEqual(self.frappe.links[("customer", "301")].sync_status, "Synchronized")
 
     def test_same_field_changed_on_both_sides_conflicts_without_overwrite(self):
-        record = {"id": 301, "full_name": "Synthetic Ada", "email": "ada@synthetic.invalid"}
+        record = {"id": 301, "full_name": "Synthetic Ada", "company_name": None, "email": "ada@synthetic.invalid"}
         self.migration._migrate_customer(record, SimpleNamespace(mode="Execute"))
         self.frappe.customers[0]["email_id"] = "local@synthetic.invalid"
 
@@ -188,14 +188,14 @@ class TestProjectCompanyMigration(unittest.TestCase):
         self.assertIn("email_id", self.frappe.links[("customer", "301")].conflict_detail)
 
     def test_monitor_linked_customer_uses_contact_snapshot_without_business_write(self):
-        record = {"id": 301, "full_name": "Synthetic Ada", "email": "ada@synthetic.invalid"}
+        record = {"id": 301, "full_name": "Synthetic Ada", "company_name": None, "email": "ada@synthetic.invalid"}
         self.migration._migrate_customer(record, SimpleNamespace(mode="Execute"))
         before = copy.deepcopy(self.frappe.customers)
         self.assertIsNone(self.migration.observe_monitor_record("HeroCustomers", record))
         self.assertEqual(self.frappe.customers, before)
 
     def test_local_observation_does_not_hide_later_same_field_conflict(self):
-        record = {"id": 301, "full_name": "Synthetic Ada", "email": "ada@synthetic.invalid"}
+        record = {"id": 301, "full_name": "Synthetic Ada", "company_name": None, "email": "ada@synthetic.invalid"}
         self.migration._migrate_customer(record, SimpleNamespace(mode="Execute"))
         self.frappe.customers[0]["email_id"] = "local@synthetic.invalid"
         self.assertEqual(self.migration._migrate_customer(record, SimpleNamespace(mode="Execute")).code, "OBSERVED")
@@ -206,15 +206,142 @@ class TestProjectCompanyMigration(unittest.TestCase):
         self.assertEqual(self.frappe.customers[0]["email_id"], "local@synthetic.invalid")
 
     def test_local_change_survives_unrelated_source_change_and_later_conflict(self):
-        record = {"id": 301, "full_name": "Synthetic Ada", "email": "ada@synthetic.invalid", "category": "A"}
+        record = {"id": 301, "full_name": "Synthetic Ada", "company_name": None, "email": "ada@synthetic.invalid", "category": "A"}
         self.migration._migrate_customer(record, SimpleNamespace(mode="Execute"))
         self.frappe.customers[0]["email_id"] = "local@synthetic.invalid"
+        # A HERO-only field is applied while the unrelated local edit is kept
+        # and its baseline is not advanced.
         result = self.migration._migrate_customer({**record, "category": "B"}, SimpleNamespace(mode="Execute"))
-        self.assertEqual(result.code, "CONFLICT")
+        self.assertEqual(result.code, "UPDATED")
+        self.assertIn("email_id", result.detail)
+        self.assertEqual(self.frappe.customers[0]["custom_hero_customer_category"], "B")
         self.assertEqual(self.frappe.customers[0]["email_id"], "local@synthetic.invalid")
         result = self.migration._migrate_customer({**record, "email": "remote@synthetic.invalid"}, SimpleNamespace(mode="Execute"))
         self.assertEqual(result.code, "CONFLICT")
         self.assertEqual(self.frappe.customers[0]["email_id"], "local@synthetic.invalid")
+
+    def _execute(self, record):
+        return self.migration._migrate_customer(record, SimpleNamespace(mode="Execute"))
+
+    def _baseline(self, source_id="301"):
+        link = self.frappe.links[("customer", source_id)]
+        return link.source_field_hashes, link.target_field_hashes
+
+    def test_three_way_field_outcomes_follow_the_acknowledged_baseline(self):
+        record = {"id": 301, "full_name": "Synthetic Ada", "company_name": None, "email": "ada@synthetic.invalid", "category": "A"}
+        self.assertEqual(self._execute(record).code, "CREATED")
+        customer = self.frappe.customers[0]
+        # No source change, no target change.
+        self.assertEqual(self._execute(record).code, "SKIPPED")
+        # Source change only: applied.
+        record = {**record, "category": "B"}
+        self.assertEqual(self._execute(record).code, "UPDATED")
+        self.assertEqual(customer["custom_hero_customer_category"], "B")
+        # Target change only: preserved, baseline not advanced.
+        customer["custom_hero_customer_category"] = "Local"
+        before = self._baseline()
+        self.assertEqual(self._execute(record).code, "OBSERVED")
+        self.assertEqual(self._baseline(), before)
+        self.assertEqual(customer["custom_hero_customer_category"], "Local")
+        # Both changed to the same value: converged without a write.
+        result = self._execute({**record, "category": "Local"})
+        self.assertEqual(result.code, "CONVERGED")
+        self.assertNotEqual(self._baseline(), before)
+        # Both changed to different values: conflict, nothing overwritten.
+        customer["custom_hero_customer_category"] = "Mine"
+        result = self._execute({**record, "category": "Theirs"})
+        self.assertEqual(result.code, "CONFLICT")
+        self.assertEqual(customer["custom_hero_customer_category"], "Mine")
+
+    def test_local_edit_then_hero_edit_replay_and_conflict_recovery(self):
+        record = {"id": 301, "full_name": "Synthetic Ada", "company_name": None, "email": "ada@synthetic.invalid", "category": "A"}
+        self._execute(record)
+        customer = self.frappe.customers[0]
+        customer["email_id"] = "local@synthetic.invalid"
+        self.assertEqual(self._execute(record).code, "OBSERVED")
+        changed = {**record, "email": "remote@synthetic.invalid"}
+        for _ in range(2):  # replaying the same HERO page never resolves a conflict by itself
+            self.assertEqual(self._execute(changed).code, "CONFLICT")
+            self.assertEqual(customer["email_id"], "local@synthetic.invalid")
+        self.assertEqual(self.frappe.links[("customer", "301")].sync_status, "Conflict")
+        # An administrator aligns Frappe with HERO: the record converges and
+        # the link returns to Synchronized; later HERO edits apply again.
+        customer["email_id"] = "remote@synthetic.invalid"
+        self.assertEqual(self._execute(changed).code, "CONVERGED")
+        self.assertEqual(self.frappe.links[("customer", "301")].sync_status, "Synchronized")
+        self.assertEqual(self._execute({**changed, "email": "next@synthetic.invalid"}).code, "UPDATED")
+        self.assertEqual(customer["email_id"], "next@synthetic.invalid")
+
+    def test_relation_writes_are_scoped_to_reconciled_hero_changes(self):
+        calls = []
+        self.migration._synchronize_customer_relations = lambda customer, contact_values, phone, *rest: calls.append((dict(contact_values), phone))
+        record = {"id": 301, "full_name": "Synthetic Ada", "company_name": None, "email": "ada@synthetic.invalid", "first_name": "Ada", "category": "A"}
+        self._execute(record)
+        calls.clear()
+        self.frappe.customers[0]["email_id"] = "local@synthetic.invalid"
+        result = self._execute({**record, "first_name": "Adele"})
+        self.assertEqual(result.code, "UPDATED")
+        # The local email is neither rewritten on the Customer nor sent to the
+        # Contact adapter; only the HERO-changed first_name is.
+        self.assertEqual(calls, [({"first_name": "Adele"}, None)])
+        self.assertEqual(self.frappe.customers[0]["email_id"], "local@synthetic.invalid")
+
+    def test_missing_response_field_is_neither_a_change_nor_a_clear(self):
+        record = {"id": 301, "full_name": "Synthetic Ada", "company_name": None, "email": "ada@synthetic.invalid", "category": "A"}
+        self._execute(record)
+        before = self._baseline()
+        partial = {key: value for key, value in record.items() if key not in {"category", "email"}}
+        self.assertEqual(self._execute(partial).code, "SKIPPED")
+        self.assertEqual(self.frappe.customers[0]["custom_hero_customer_category"], "A")
+        self.assertEqual(self.frappe.customers[0]["email_id"], "ada@synthetic.invalid")
+        self.assertEqual(self._baseline(), before)
+        # Missing company_name must not re-derive the Customer type either.
+        no_type = {key: value for key, value in record.items() if key != "company_name"}
+        self.assertEqual(self._execute(no_type).code, "SKIPPED")
+        self.assertEqual(self.frappe.customers[0]["customer_type"], "Individual")
+
+    def test_missing_type_source_blocks_creation_instead_of_defaulting(self):
+        result = self._execute({"id": 305, "full_name": "Synthetic Bob"})
+        self.assertEqual(result.code, "BLOCKED_RECORD")
+        self.assertFalse(self.frappe.customers)
+
+    def test_explicit_null_is_acknowledged_without_clearing_and_keeps_local_protection(self):
+        record = {"id": 301, "full_name": "Synthetic Ada", "company_name": None, "email": "ada@synthetic.invalid", "category": "A"}
+        self._execute(record)
+        cleared = {**record, "category": None}
+        result = self._execute(cleared)
+        self.assertEqual(result.code, "SKIPPED")
+        self.assertIn("custom_hero_customer_category", result.detail)
+        self.assertEqual(self.frappe.customers[0]["custom_hero_customer_category"], "A")
+        # The Frappe value is still under its old target baseline: a local edit
+        # followed by a new HERO value is a conflict, not an overwrite.
+        self.frappe.customers[0]["custom_hero_customer_category"] = "Local"
+        self.assertEqual(self._execute({**record, "category": "C"}).code, "CONFLICT")
+        self.assertEqual(self.frappe.customers[0]["custom_hero_customer_category"], "Local")
+
+    def test_monitor_customer_outcomes_never_write_business_data_or_advance_baselines(self):
+        from unittest.mock import patch
+        record = {"id": 301, "full_name": "Synthetic Ada", "company_name": None, "email": "ada@synthetic.invalid", "category": "A"}
+        self._execute(record)
+        customer = self.frappe.customers[0]
+        baseline = self._baseline()
+        observe = self.migration.observe_monitor_record
+        self.assertIsNone(observe("HeroCustomers", record))
+        self.assertEqual(observe("HeroCustomers", {**record, "category": "B"}).code, "OBSERVED")
+        customer["custom_hero_customer_category"] = "Local"
+        self.assertEqual(observe("HeroCustomers", record).code, "OBSERVED")
+        conflict = observe("HeroCustomers", {**record, "category": "B"})
+        self.assertEqual(conflict.code, "CONFLICT")
+        self.assertIn("custom_hero_customer_category", conflict.detail)
+        self.assertEqual(customer["custom_hero_customer_category"], "Local")
+        self.assertEqual(self._baseline(), baseline)
+        # A native primary Contact supplies the compared contact values.
+        customer["custom_hero_customer_category"] = "A"
+        with patch.object(self.migration, "primary_contact_values", return_value={"email_id": "contact@synthetic.invalid"}) as contact:
+            result = observe("HeroCustomers", record)
+        self.assertEqual(result.code, "OBSERVED")
+        self.assertIn("email_id", contact.call_args.args[1])
+        self.assertEqual(self._baseline(), baseline)
 
     def test_run_source_binding_rejects_endpoint_and_account_switch(self):
         from hero_integration.services.introspection import endpoint_fingerprint
@@ -232,7 +359,7 @@ class TestProjectCompanyMigration(unittest.TestCase):
                 self.migration._validate_run_source_binding(run, cfg, snap)
 
     def test_preview_existing_change_does_not_write_link_or_target_state(self):
-        record = {"id": 301, "full_name": "Synthetic Ada", "email": "ada@synthetic.invalid"}
+        record = {"id": 301, "full_name": "Synthetic Ada", "company_name": None, "email": "ada@synthetic.invalid"}
         self.migration._migrate_customer(record, SimpleNamespace(mode="Execute"))
         link = self.frappe.links[("customer", "301")]
         before = (link.sync_status, link.conflict_detail, link.source_payload_hash, link.target_payload_hash)
@@ -246,7 +373,7 @@ class TestProjectCompanyMigration(unittest.TestCase):
         self.assertEqual((link.sync_status, link.conflict_detail, link.source_payload_hash, link.target_payload_hash), before)
 
     def test_v1_customer_link_requires_review_before_v2_contact_enrichment(self):
-        record = {"id": 301, "full_name": "Synthetic Ada", "email": "ada@synthetic.invalid"}
+        record = {"id": 301, "full_name": "Synthetic Ada", "company_name": None, "email": "ada@synthetic.invalid"}
         self.frappe.customers.append({
             "name": "CUST-0001", "customer_name": "Synthetic Ada", "customer_type": "Individual",
         })
@@ -266,7 +393,7 @@ class TestProjectCompanyMigration(unittest.TestCase):
         self.assertEqual(self.frappe.customers[0].get("email_id"), None)
 
     def test_deleted_customer_never_deletes_a_target(self):
-        record = {"id": 301, "full_name": "Synthetic Ada"}
+        record = {"id": 301, "full_name": "Synthetic Ada", "company_name": None}
         self.migration._migrate_customer(record, SimpleNamespace(mode="Execute"))
 
         result = self.migration._migrate_customer(
@@ -420,7 +547,7 @@ class TestProjectCompanyMigration(unittest.TestCase):
             self.migration.MappingPlanError("No active mapping definitions exist for this operation.")
         )
 
-        customer = self.migration._migrate_customer({"id": 301, "full_name": "Synthetic Ada"}, SimpleNamespace(mode="Execute"))
+        customer = self.migration._migrate_customer({"id": 301, "full_name": "Synthetic Ada", "company_name": None}, SimpleNamespace(mode="Execute"))
         project = self.migration._migrate_project(_project_title_inputs(id=201, customer_id=101, project_title="Synthetic Project"), SimpleNamespace(mode="Execute"))
 
         self.assertEqual((customer.code, project.code), ("BLOCKED_RECORD", "BLOCKED_RECORD"))

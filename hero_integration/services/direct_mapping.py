@@ -173,14 +173,42 @@ def transformed_value(spec: MappingSpec, value: object) -> object | None:
     return value
 
 
-def source_value(record: dict[str, object], source_path: str) -> object | None:
-    """Read one approved finite HERO response path without inventing fallbacks."""
+class _Missing:
+    """A selected path that the GraphQL response did not contain."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "MISSING"
+
+    def __bool__(self) -> bool:
+        return False
+
+
+MISSING = _Missing()
+
+
+def lookup(record: dict[str, object], source_path: str) -> object:
+    """Read one response path, keeping an absent key distinct from ``null``.
+
+    An explicit ``null`` parent object makes every nested selection ``None``
+    (GraphQL nulls the whole object); an absent key or a non-object parent is
+    ``MISSING`` and must never be treated as an authoritative empty value.
+    """
     current: object = record
     for segment in source_path.split("."):
-        if not isinstance(current, dict):
+        if current is None:
             return None
-        current = current.get(segment)
+        if not isinstance(current, dict) or segment not in current:
+            return MISSING
+        current = current[segment]
     return current
+
+
+def source_value(record: dict[str, object], source_path: str) -> object | None:
+    """Read one approved finite HERO response path without inventing fallbacks."""
+    value = lookup(record, source_path)
+    return None if value is MISSING else value
 
 
 def _validate_binding(spec: MappingSpec, metadata) -> None:

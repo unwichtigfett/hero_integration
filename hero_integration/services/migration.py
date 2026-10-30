@@ -19,7 +19,9 @@ from hero_integration.integrations.erpnext.contact import (
     synchronize_home_phone,
 )
 from hero_integration.sources.hero import GraphQLServiceSource, HeroSource, SourcePage, TestingPreviewSource
-from hero_integration.services.change_detection import changed_fields, decode as decode_hashes, encode as encode_hashes, field_hashes, managed_target_update
+from hero_integration.services.change_detection import (
+    changed_fields, decode as decode_hashes, encode as encode_hashes, field_hashes, managed_target_update, next_baseline, reconcile,
+)
 from hero_integration.services.conflict_notifications import notify_conflict_once
 from hero_integration.services.integration_events import record_output
 from hero_integration.services.mapping_runtime import MappingPlanError, active_mapping_plan
@@ -49,6 +51,51 @@ class CustomerAddressError(ValueError):
 
 class RepeatedProjectionPageError(MappingPlanError):
     """The current projection attempt cannot continue without duplicating a page."""
+
+
+def _is_empty(value: object) -> bool:
+    return value is None or value == "" or value == []
+
+
+class _Comparison:
+    """One record's normalized HERO state and the target fields it tracks.
+
+    ``values`` are the writable target values from the mapping plan.  Fields
+    the plan reported as explicitly empty are compared as ``None`` but never
+    written (no-clear policy); fields reported missing carry no evidence at
+    all.  ``extra`` adds relation snapshots (for example the Customer home
+    phone) that have no field on the target document itself.
+    """
+
+    def __init__(self, values, extra=None):
+        extra = dict(extra or {})
+        self.missing = set(getattr(values, "missing", ())) - set(values) - set(extra)
+        empty = set(getattr(values, "empty", ())) - set(values)
+        self.source_values = {**{field: None for field in empty}, **values, **extra}
+        self.unwritable = empty | {field for field, value in extra.items() if _is_empty(value)}
+        self.tracked = set(self.source_values) | self.missing
+        self.source_hashes = field_hashes(self.source_values)
+
+    def omit(self, fields) -> None:
+        """Treat fields without a current HERO value as missing evidence."""
+        omitted = set(fields) - set(self.source_values)
+        self.missing |= omitted
+        self.tracked |= omitted
+
+    def target_values(self, target, snapshot) -> dict[str, object]:
+        current = dict(snapshot(target))
+        for field in self.tracked - set(current):
+            current[field] = target.get(field)
+        return current
+
+    def reconcile(self, prior_source, prior_target, target_values):
+        return reconcile(
+            prior_source, prior_target, self.source_hashes, field_hashes(target_values),
+            tracked=self.tracked, missing=self.missing,
+            source_empty={field for field, value in self.source_values.items() if _is_empty(value)},
+            target_empty={field for field, value in target_values.items() if _is_empty(value)},
+            unwritable=self.unwritable,
+        )
 
 
 def execute_run(run_name: str) -> None:
@@ -513,16 +560,26 @@ def _migrate_customer(record: dict[str, object], run) -> Result:
         return Result("BLOCKED_RECORD", "Configured customer record name is empty.")
     if _source_instance(record) != 'default':
         values['custom_hero_source_id'] = f'{_source_instance(record)}:{source_id}'
+    home_phone = plan.home_phone(record)
+    tracks_home_phone = plan.has_home_phone()
     return _upsert(
         "customer", source_id, record, values, "Customer", "customer_name", plan.mapping_version, run,
         after_insert=lambda customer: _synchronize_customer_relations(
-            customer, contact_values, plan.home_phone(record), address, _source_instance(record), plan.mapping_version,
+            customer, contact_values, home_phone, address, _source_instance(record), plan.mapping_version,
         ),
-        after_update=lambda customer: _synchronize_customer_relations(
-            customer, contact_values, plan.home_phone(record), address, _source_instance(record), plan.mapping_version,
+        # Relations receive only the reconciled HERO changes: a locally edited
+        # Contact value is never rewritten because another field changed.
+        after_update=lambda customer, outcome: _synchronize_customer_relations(
+            customer, {field: value for field, value in contact_values.items() if field in outcome.apply},
+            home_phone if "hero_phone_home" in outcome.apply else None,
+            address, _source_instance(record), plan.mapping_version,
         ),
-        target_snapshot=lambda customer: _customer_target_values(customer, values, contact_values, plan.home_phone(record)),
+        target_snapshot=lambda customer: _customer_target_values(
+            customer, values, plan.customer_contact_fields(), home_phone, track_home_phone=tracks_home_phone,
+        ),
         source_instance=_source_instance(record),
+        comparison_extra={"hero_phone_home": home_phone} if tracks_home_phone else None,
+        required_on_create=("customer_type",),
     )
 
 
@@ -1032,18 +1089,25 @@ def _migrate_project(record: dict[str, object], run) -> Result:
 def observe_monitor_record(operation: str, record: dict[str, object]) -> Result | None:
     """Compare one configured source record without mutating an ERPNext target.
 
-    MONITOR reuses the active mapping plan and Link field baselines. A source
-    change alone is technical output; a same-field change on both sides uses
-    the established durable conflict and administrator-notification path.
+    MONITOR reuses the active mapping plan and the same field-wise three-way
+    comparison as the materializer.  It never advances a baseline: a source or
+    local change is technical output only, and a same-field change on both
+    sides uses the durable conflict and administrator-notification path.
     """
+    extra = None
     try:
         if operation == "HeroCustomers":
             plan = active_mapping_plan(operation)
             source_id = plan.source_identity(record)
             values = plan.values(record)
             source_type, doctype = "customer", "Customer"
-            contact_values = plan.customer_contact_values(values)
-            snapshot = lambda target: _customer_target_values(target, values, contact_values, plan.home_phone(record))
+            home_phone = plan.home_phone(record)
+            tracks_home_phone = plan.has_home_phone()
+            extra = {"hero_phone_home": home_phone} if tracks_home_phone else None
+            contact_fields = plan.customer_contact_fields()
+            snapshot = lambda target: _customer_target_values(
+                target, values, contact_fields, home_phone, track_home_phone=tracks_home_phone,
+            )
         elif operation == "HeroProjectMatches":
             plan = active_mapping_plan(operation)
             source_id = plan.source_identity(record)
@@ -1068,23 +1132,22 @@ def observe_monitor_record(operation: str, record: dict[str, object]) -> Result 
     prior_target = decode_hashes(getattr(link, "target_field_hashes", ""))
     if prior_source is None or prior_target is None:
         return Result("OBSERVED", "Linked record has no field-level baseline; MONITOR made no write.", doctype, target.name)
-    source_hashes = field_hashes(values)
-    target_values = snapshot(target)
-    target_hashes = field_hashes(target_values)
-    source_changed = changed_fields(prior_source, source_hashes)
-    target_changed = changed_fields(prior_target, target_hashes)
-    same_fields = source_changed & target_changed
-    if same_fields:
-        detail = f"Field conflict requires review: {', '.join(sorted(same_fields))}."
-        notify_conflict_once(link, same_fields, detail)
+    comparison = _Comparison(values, extra)
+    target_values = comparison.target_values(target, snapshot)
+    outcome = comparison.reconcile(prior_source, prior_target, target_values)
+    if outcome.conflicts:
+        detail = f"Field conflict requires review: {', '.join(sorted(outcome.conflicts))}."
+        notify_conflict_once(link, set(outcome.conflicts), detail)
         _mark_link_conflict(link, detail)
         return Result("CONFLICT", detail, doctype, target.name)
-    if source_changed:
+    if outcome.apply or outcome.acknowledged:
         _observe_link(link, _digest(record), _digest(target_values))
         return Result("OBSERVED", "HERO field change observed by MONITOR; no ERPNext write was prepared.", doctype, target.name)
-    if target_changed:
+    if outcome.local:
         _observe_link(link, _digest(record), _digest(target_values))
         return Result("OBSERVED", "Frappe field change observed by MONITOR; no HERO action was prepared.", doctype, target.name)
+    if outcome.converged:
+        return Result("OBSERVED", "HERO and Frappe changed to the same values; MONITOR left the baseline unchanged.", doctype, target.name)
     return None
 
 
@@ -1104,6 +1167,8 @@ def _upsert(
     source_instance: str = "default",
     creation_values: dict | None = None,
     preserve_omitted: bool = False,
+    comparison_extra: dict | None = None,
+    required_on_create: tuple[str, ...] = (),
 ) -> Result:
     if not _target_available(doctype):
         return Result("UNAVAILABLE", f"{doctype} is not installed on this site.")
@@ -1120,14 +1185,12 @@ def _upsert(
             return Result("CONFLICT", "Stored target reference no longer exists.")
         target = frappe.get_doc(existing.target_doctype, existing.target_name)
         snapshot = target_snapshot or (lambda item: _target_values(item, values))
-        target_values = snapshot(target)
-        source_field_hashes = field_hashes(values)
-        target_field_hashes = field_hashes(target_values)
         prior_source = decode_hashes(getattr(existing, "source_field_hashes", ""))
         prior_target = decode_hashes(getattr(existing, "target_field_hashes", ""))
         # RC15 links have whole-payload hashes only.  They remain fail-closed
         # until an administrator establishes a fresh, field-level baseline.
         if prior_source is None or prior_target is None:
+            target_values = snapshot(target)
             if run.mode == "Preview":
                 return Result("PREVIEW_OK", "Existing legacy link requires a reviewed field-level baseline.", doctype, target.name)
             _observe_link(existing, source_hash, _digest(target_values))
@@ -1138,55 +1201,66 @@ def _upsert(
                 _mark_link_conflict(existing, "HERO source changed; legacy link has no field baseline.")
                 return Result("CONFLICT", "HERO source changed; legacy link has no field baseline.", doctype, target.name)
             return Result("SKIPPED", "Record is already synchronized.", doctype, target.name)
-        compared_source = {field: prior_source[field] for field in source_field_hashes if field in prior_source} if preserve_omitted else prior_source
-        compared_target = {field: prior_target[field] for field in target_field_hashes if field in prior_target} if preserve_omitted else prior_target
-        changed_source = changed_fields(compared_source, source_field_hashes)
-        changed_target = changed_fields(compared_target, target_field_hashes)
-        same_field_changes = changed_source & changed_target
-        if same_field_changes:
-            detail = f"Field conflict requires review: {', '.join(sorted(same_field_changes))}."
+        comparison = _Comparison(values, comparison_extra)
+        target_values = comparison.target_values(target, snapshot)
+        target_field_hashes = field_hashes(target_values)
+        if preserve_omitted:
+            # Events omit unconfirmed values entirely: their acknowledged
+            # baselines are carried forward instead of being compared.
+            comparison.omit(set(prior_source) | set(prior_target))
+        outcome = comparison.reconcile(prior_source, prior_target, target_values)
+        if outcome.conflicts:
+            detail = f"Field conflict requires review: {', '.join(sorted(outcome.conflicts))}."
             if run.mode != "Preview":
-                notify_conflict_once(existing, same_field_changes, detail)
-                _mark_link_conflict(existing, detail)
-            return Result("CONFLICT", detail, doctype, target.name)
-        # Relation adapters can update more than the fields in changed_source.
-        # Until they support field-scoped writes, simultaneous local and source
-        # edits must be reviewed instead of silently advancing either baseline.
-        if changed_source and changed_target:
-            detail = "Local and HERO field changes require review before applying relation updates."
-            if run.mode != "Preview":
+                notify_conflict_once(existing, set(outcome.conflicts), detail)
                 _mark_link_conflict(existing, detail)
             return Result("CONFLICT", detail, doctype, target.name)
         if run.mode == "Preview":
-            if changed_source:
+            if outcome.apply:
                 return Result("PREVIEW_OK", "Existing target would receive non-conflicting HERO field changes.", doctype, target.name)
             return Result("PREVIEW_OK", "Existing target would remain unchanged; local changes are observed only.", doctype, target.name)
         _observe_link(existing, source_hash, _digest(target_values))
-        if changed_source:
+        if outcome.apply:
             savepoint = "hero_upsert_update"
             frappe.db.savepoint(savepoint)
             try:
-                for field in changed_source:
+                # Write only fields HERO changed while Frappe kept the baseline;
+                # locally changed fields and their relations are never touched.
+                for field in sorted(outcome.apply):
                     if field in values:
                         target.set(field, values[field])
                 with managed_target_update(doctype, target.name, existing.name):
                     target.save()
                 if after_update:
-                    after_update(target)
+                    after_update(target, outcome)
             except (HomePhoneConflict, CustomerAddressError) as error:
                 frappe.db.rollback(save_point=savepoint)
                 return Result("CONFLICT", str(error), doctype, target.name)
-            target_values = snapshot(target)
+            target_values = comparison.target_values(target, snapshot)
             target_field_hashes = field_hashes(target_values)
-            _update_link_baseline(existing, source_hash, _digest(target_values),
-                                  {**prior_source, **source_field_hashes} if preserve_omitted else source_field_hashes,
-                                  {**prior_target, **{key: target_field_hashes[key] for key in changed_source if key in target_field_hashes}}
-                                  if preserve_omitted else target_field_hashes, mapping_version)
-            return Result("UPDATED", "Non-conflicting HERO field changes were applied through native Frappe validation.", doctype, target.name)
+        if outcome.advances_baseline:
+            _update_link_baseline(
+                existing, source_hash, _digest(target_values),
+                next_baseline(prior_source, comparison.source_hashes, outcome, tracked=comparison.tracked),
+                next_baseline(prior_target, target_field_hashes, outcome, tracked=comparison.tracked),
+                mapping_version,
+            )
+        kept = f" Local changes were preserved: {', '.join(sorted(outcome.local))}." if outcome.local else ""
+        if outcome.apply:
+            return Result("UPDATED", "Non-conflicting HERO field changes were applied through native Frappe validation." + kept, doctype, target.name)
+        if outcome.converged:
+            return Result("CONVERGED", "HERO and Frappe changed to the same values; the baseline was advanced without a write." + kept, doctype, target.name)
         # Observations must not advance the last acknowledged baseline.
-        if changed_target:
-            return Result("OBSERVED", "Local field change observed; no outbound HERO mutation was prepared.", doctype, target.name)
+        if outcome.local:
+            return Result("OBSERVED", "Local field change observed; no outbound HERO mutation was prepared." + kept, doctype, target.name)
+        if outcome.acknowledged:
+            return Result("SKIPPED", "HERO cleared values that the no-clear policy does not write: " + ", ".join(sorted(outcome.acknowledged)) + ".", doctype, target.name)
         return Result("SKIPPED", "Record is already synchronized.", doctype, target.name)
+    unknown = sorted(set(getattr(values, "missing", ())) & set(required_on_create))
+    if unknown:
+        # A derived classification (e.g. Customer type from company_name) is
+        # never defaulted for a new document when HERO omitted its source.
+        return Result("BLOCKED_RECORD", "HERO response omits the source of: " + ", ".join(unknown) + ".")
     duplicate = frappe.db.exists(doctype, {name_field: values[name_field]})
     if duplicate:
         return Result("SKIPPED_AMBIGUOUS", f"Existing {doctype} has no stable HERO link.", doctype, duplicate)
@@ -1203,14 +1277,16 @@ def _upsert(
         if after_insert:
             after_insert(target)
         snapshot = target_snapshot or (lambda item: _target_values(item, values))
-        target_hash = _digest(snapshot(target))
+        comparison = _Comparison(values, comparison_extra)
+        target_values = comparison.target_values(target, snapshot)
+        target_hash = _digest(target_values)
         frappe.get_doc({
             "doctype": "HERO Integration Link", "source_system": "HERO", "source_type": source_type,
             "source_id": source_id, "source_instance": source_instance, "sync_status": "Synchronized",
             "conflict_detail": "", "last_synced_on": now_datetime(),
             "target_doctype": doctype, "target_name": target.name, "source_payload_hash": source_hash,
-            "target_payload_hash": target_hash, "source_field_hashes": encode_hashes(field_hashes(values)),
-            "target_field_hashes": encode_hashes(field_hashes(snapshot(target))), "mapping_version": mapping_version,
+            "target_payload_hash": target_hash, "source_field_hashes": encode_hashes(comparison.source_hashes),
+            "target_field_hashes": encode_hashes(field_hashes(target_values)), "mapping_version": mapping_version,
         }).insert()
     except (HomePhoneConflict, CustomerAddressError) as error:
         frappe.db.rollback(save_point=savepoint)
@@ -1255,7 +1331,9 @@ def _target_values(target, values: dict[str, object]) -> dict[str, object]:
     return {field: target.get(field) for field in values}
 
 
-def _customer_target_values(target, values: dict[str, object], contact_values: dict[str, object], home_phone: str | None) -> dict[str, object]:
+def _customer_target_values(
+    target, values: dict[str, object], contact_fields, home_phone: str | None, *, track_home_phone: bool = False,
+) -> dict[str, object]:
     snapshot = _target_values(target, values)
     # Existing rows created before Contact persistence (or a relationship that
     # cannot safely be read) retain the Customer-field snapshot for conflict
@@ -1263,10 +1341,10 @@ def _customer_target_values(target, values: dict[str, object], contact_values: d
     # the visible Customer projection to ``None``.
     snapshot.update({
         field: value
-        for field, value in primary_contact_values(target, set(contact_values)).items()
+        for field, value in primary_contact_values(target, set(contact_fields)).items()
         if value is not None
     })
-    if home_phone:
+    if home_phone or track_home_phone:
         snapshot["hero_phone_home"] = home_phone_for_customer(target)
     return snapshot
 

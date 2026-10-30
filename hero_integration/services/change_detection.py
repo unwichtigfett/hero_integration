@@ -6,6 +6,7 @@ import hashlib
 import json
 from contextlib import contextmanager
 from contextvars import ContextVar
+from dataclasses import dataclass
 from typing import Mapping
 
 _managed_target = ContextVar("hero_integration_managed_target", default=None)
@@ -74,6 +75,89 @@ def changed_fields(previous: Mapping[str, str], current: Mapping[str, str]) -> s
         field for field in set(previous) | set(current)
         if previous.get(field) != current.get(field)
     }
+
+
+EMPTY_HASH = field_hashes({"value": None})["value"]
+
+
+@dataclass(frozen=True)
+class Reconciliation:
+    """Field-wise three-way outcome against the last acknowledged baseline.
+
+    ``apply`` may be written to Frappe; ``local`` keeps the local value and its
+    old baseline; ``converged`` and ``acknowledged`` (HERO cleared a value that
+    the no-clear policy does not write) advance the baseline without a write.
+    """
+
+    apply: frozenset[str]
+    local: frozenset[str]
+    conflicts: frozenset[str]
+    converged: frozenset[str]
+    acknowledged: frozenset[str]
+    unchanged: frozenset[str]
+
+    @property
+    def advances_baseline(self) -> bool:
+        return bool(self.apply or self.converged or self.acknowledged)
+
+
+def reconcile(
+    prior_source: Mapping[str, str],
+    prior_target: Mapping[str, str],
+    source: Mapping[str, str],
+    target: Mapping[str, str],
+    *,
+    tracked: set[str] | frozenset[str],
+    missing: set[str] | frozenset[str] = frozenset(),
+    source_empty: set[str] | frozenset[str] = frozenset(),
+    target_empty: set[str] | frozenset[str] = frozenset(),
+    unwritable: set[str] | frozenset[str] = frozenset(),
+) -> Reconciliation:
+    """Classify each tracked field; never compare a field HERO did not return.
+
+    ``missing`` fields were absent from the GraphQL response.  They are neither
+    a change nor a deletion, so their baselines are carried forward unchanged.
+    A field without a baseline (for example a newly selected mapping) counts as
+    changed in HERO only when HERO has a value, and as changed locally only
+    when Frappe holds a non-empty value.  A HERO change of an ``unwritable``
+    field (an empty value under the no-clear policy) is acknowledged only.
+    """
+
+    groups: dict[str, set[str]] = {name: set() for name in ("apply", "local", "conflicts", "converged", "acknowledged", "unchanged")}
+    for field in sorted(set(tracked) - set(missing)):
+        current_source = source.get(field, EMPTY_HASH)
+        current_target = target.get(field, EMPTY_HASH)
+        # Both maps describe one common acknowledged value.  When only one side
+        # recorded a field (older links, relation snapshots), use it for both.
+        base_source = prior_source.get(field, prior_target.get(field))
+        base_target = prior_target.get(field, prior_source.get(field))
+        source_changed = base_source != current_source if base_source is not None else field not in source_empty
+        target_changed = base_target != current_target if base_target is not None else field not in target_empty
+        if not source_changed and not target_changed:
+            groups["unchanged"].add(field)
+        elif source_changed and target_changed:
+            groups["converged" if current_source == current_target else "conflicts"].add(field)
+        elif source_changed:
+            groups["acknowledged" if field in unwritable else "apply"].add(field)
+        else:
+            groups["local"].add(field)
+    return Reconciliation(**{name: frozenset(fields) for name, fields in groups.items()})
+
+
+def next_baseline(
+    prior: Mapping[str, str],
+    current: Mapping[str, str],
+    outcome: Reconciliation,
+    *,
+    tracked: set[str] | frozenset[str],
+) -> dict[str, str]:
+    """Advance only reconciled fields; local-only and missing fields keep theirs."""
+
+    advanced = outcome.apply | outcome.converged | outcome.acknowledged | outcome.unchanged
+    result = {field: value for field, value in prior.items() if field in tracked and field not in advanced}
+    for field in advanced:
+        result[field] = current.get(field, EMPTY_HASH)
+    return dict(sorted(result.items()))
 
 
 def observe_frappe_target_change(doc, method=None) -> None:
