@@ -82,7 +82,25 @@ def run_scheduled_auto_sync(*, frappe_module=None) -> RuntimePreflight:
     )
     if executable.selection.execution_mode != RUNTIME_EXECUTION_MODE:
         raise RuntimeBridgeError("Runtime plan execution mode is not AUTO_SYNC.")
+    _require_area_enabled(frappe, settings, executable.selection)
     return _run(executable, frappe, automatic=True)
+
+
+def _require_area_enabled(frappe, settings, selection) -> None:
+    """Respect the area switches of the Synchronization page before any HERO request."""
+    import json
+
+    from hero_integration.services.sync_page import AREAS, BY_OPERATION, area_enabled
+
+    if all(area_enabled(settings, item) for item in AREAS):
+        return
+    try:
+        target = json.loads(frappe.db.get_value("HERO GraphQL Mapping", selection.graphql_mapping, "mapping_json") or "{}").get("target_operation")
+    except (TypeError, ValueError, AttributeError):
+        target = None
+    item = BY_OPERATION.get(target)
+    if item is None or not area_enabled(settings, item):
+        raise RuntimeBridgeError(f"Automatic sync for {item.label if item else 'this area'} is switched off on the Synchronization page.")
 
 
 def run_pending_sync(expected_plan_generation: int, *, frappe_module=None, provider=None) -> RuntimePreflight:

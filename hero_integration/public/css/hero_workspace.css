@@ -83,19 +83,7 @@
 .hero-mapping-status.status-invalid { border-color: #b56a4d; color: var(--pc-text, #000000); }
 .hero-mapping-preview { background: var(--control-bg, #f7f7f7); border-radius: 6px; margin: 14px 0 0; max-height: 260px; overflow: auto; padding: 12px; white-space: pre-wrap; }
 .hero-mapping-advanced summary { cursor: pointer; font-weight: 600; }
-.hero-integration-ui .hero-migration-center { display: grid; gap: 16px; }
-.hero-integration-ui .hero-migration-panel { min-width: 0; padding: 18px; border: 1px solid var(--pc-border); border-radius: 10px; background: var(--pc-surface); }
-.hero-integration-ui .hero-migration-intro { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
-.hero-integration-ui .hero-migration-intro h2 { margin: 0 0 6px; font-size: clamp(26px, 3vw, 34px); letter-spacing: -.035em; }
-.hero-integration-ui .hero-migration-panel > :first-child { margin-top: 0; }
-.hero-integration-ui .hero-migration-panel > :last-child { margin-bottom: 0; }
-.hero-integration-ui .hero-migration-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
-.hero-integration-ui .hero-migration-action { display: grid; gap: 12px; min-height: 220px; padding: 16px; border: 1px solid var(--pc-border); border-radius: 8px; background: var(--pc-surfaceRaised); }
-.hero-integration-ui .hero-migration-action h4, .hero-integration-ui .hero-migration-action p { margin: 0; }
-.hero-integration-ui .hero-migration-action p { color: var(--pc-textSecondary); font-size: 13px; line-height: 1.45; }
-.hero-integration-ui .hero-migration-action-buttons { align-self: end; display: flex; flex-wrap: wrap; gap: 8px; }
-.hero-integration-ui .hero-migration-action-buttons .btn { min-width: 92px; }
-@media (max-width: 900px) { .hero-integration-ui .hero-mapping-controls, .hero-integration-ui .hero-mapping-grid { grid-template-columns: 1fr; } .hero-integration-ui .hero-migration-actions { grid-template-columns: 1fr; } }
+@media (max-width: 900px) { .hero-integration-ui .hero-mapping-controls, .hero-integration-ui .hero-mapping-grid { grid-template-columns: 1fr; } }
 @media (max-width: 900px) { .hero-integration-summary-grid, .hero-integration-summary-grid.compact { grid-template-columns: 1fr; } .hero-integration-split, .hero-integration-graph-layout { grid-template-columns: 1fr; } .hero-integration-graph-controls { grid-template-columns: 1fr 1fr; } }
 
 /* Personal mapping editor: scoped to the mapping surface. */

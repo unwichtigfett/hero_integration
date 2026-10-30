@@ -100,3 +100,26 @@ class TestWorkspaceSnapshotSelection(unittest.TestCase):
             [("SYNTHETIC", "Synthetic/test schema", 3), ("FULL", "Full schema", 300)],
         )
         self.assertEqual(frappe_mock.permission_calls, ["System Manager", "System Manager"])
+
+
+class TestPollingSnapshot(unittest.TestCase):
+    def test_polling_follows_the_newest_usable_snapshot_of_the_configured_source(self):
+        schema = _schema(3)
+        fingerprint = analyze_snapshot(schema).fingerprint
+
+        def row(name, created, status="Validated", source="default", row_fingerprint=fingerprint):
+            return {"name": name, "schema_fingerprint": row_fingerprint, "analysis_status": status, "analysis_detail": "",
+                    "modified": created, "creation": created, "source_instance": source}
+
+        rows = [
+            row("FAILED", "2026-10-22 09:00:00", status="Failed"),
+            row("BROKEN", "2026-10-21 09:00:00", row_fingerprint="other"),
+            row("OTHER_SOURCE", "2026-10-20 09:00:00", source="test"),
+            row("OWN", "2026-10-18 09:00:00"),
+        ]
+        documents = {item["name"]: SimpleNamespace(snapshot_json=json.dumps(schema)) for item in rows}
+        with patch.object(api, "frappe", _FrappeSnapshotSelectionMock(documents, rows)):
+            self.assertEqual(api._polling_snapshot(), {"name": "OWN", "display_name": "S-181026-01"})
+            self.assertEqual(api.workspace_context()["selected_snapshot"], "OWN")
+        with patch.object(api, "frappe", _FrappeSnapshotSelectionMock({}, [])):
+            self.assertIsNone(api._polling_snapshot())
