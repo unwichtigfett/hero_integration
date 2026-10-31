@@ -1265,14 +1265,46 @@ def _migrate_project(record: dict[str, object], run) -> Result:
         values["custom_hero_source_id"] = f"{source_instance}:{source_id}"
     except (MappingPlanError, ProjectTitleValidationError) as error:
         return Result("BLOCKED_RECORD", str(error))
-    if not values.get("project_name") and not (
-        "project_name" in values.missing and _link("project", source_id, source_instance)
-    ):
+    existing = _link("project", source_id, source_instance)
+    title_basis = _hold_customer_only_title_change(record, values, existing)
+    if not values.get("project_name") and not ("project_name" in values.missing and existing):
         return Result("BLOCKED_RECORD", "Configured project record name is empty.")
     return _upsert(
         "project", source_id, record, values, "Project", "project_name", plan.mapping_version, run,
         source_instance=source_instance, required_on_create=("customer", "project_name"),
+        comparison_extra=title_basis,
     )
+
+
+PROJECT_TITLE_BASIS = "hero_project_title_basis"
+
+
+def _hold_customer_only_title_change(record, values, link) -> dict | None:
+    """Keep an existing Project title when only the HERO customer part changed.
+
+    User decision 2026-10-31: a changed customer name or salutation never
+    renames an existing Project; trade, number and address changes still
+    regenerate the title under the field-wise conflict rules.  The title
+    without its customer part is tracked as a comparison-only basis.  A
+    baseline without that basis cannot tell the cases apart, so the existing
+    title is preserved and the basis recorded.
+    """
+    if not values.get("project_name"):
+        return None
+    neutral = {**record, "customer": {"title": "-", "full_name": "-"}}
+    try:
+        basis = {PROJECT_TITLE_BASIS: build_project_title(neutral, max_length=10_000)}
+    except ProjectTitleValidationError:
+        return None
+    prior = decode_hashes(getattr(link, "source_field_hashes", "")) if link else None
+    if not prior or prior.get("project_name") is None:
+        return basis
+    title_changed = prior["project_name"] != field_hashes({"project_name": values["project_name"]})["project_name"]
+    prior_basis = prior.get(PROJECT_TITLE_BASIS)
+    if title_changed and (prior_basis is None or prior_basis == field_hashes(basis)[PROJECT_TITLE_BASIS]):
+        del values["project_name"]
+        values.missing.add("project_name")
+    return basis
 
 
 def observe_monitor_record(operation: str, record: dict[str, object]) -> Result | None:
@@ -1307,6 +1339,7 @@ def observe_monitor_record(operation: str, record: dict[str, object]) -> Result 
                 _project_title_for_record,
             )
             values["custom_hero_source_id"] = f"{_source_instance(record)}:{source_id}"
+            extra = _hold_customer_only_title_change(record, values, _link("project", source_id, _source_instance(record)))
             source_type, doctype = "project", "Project"
             snapshot = lambda target: _target_values(target, values)
         else:
