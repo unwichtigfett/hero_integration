@@ -152,6 +152,12 @@ def validate_spec(spec: MappingSpec, metadata) -> None:
 
 
 def transformed_value(spec: MappingSpec, value: object) -> object | None:
+    # Authoritative business identifiers are never trimmed by a generic text rule.
+    if (spec.target_doctype, spec.target_field, spec.source_path) in {
+        ("Customer", "custom_hero_customer_number", "nr"),
+        ("Project", "custom_hero_display_id", "display_id"),
+    } and isinstance(value, str):
+        return value
     if spec.transformation == TRANSFORM_IDENTITY:
         return value
     if spec.transformation == TRANSFORM_TRIM:

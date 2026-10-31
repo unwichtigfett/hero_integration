@@ -128,7 +128,7 @@ class TestProjectCompanyMigration(FakeFrappeMigrationHarness, unittest.TestCase)
 
         self.assertEqual((created.code, repeated.code), ("CREATED", "SKIPPED"))
         self.assertEqual(self.frappe.customers[0], {
-            "name": "CUST-0001", "customer_name": "Synthetic Ada", "customer_type": "Individual",
+            "name": created.target_name, "customer_name": "Synthetic Ada", "customer_type": "Individual",
             "first_name": "Ada", "last_name": "Lovelace", "email_id": "ada@synthetic.invalid",
             "mobile_no": "+49 555 101", "custom_hero_source_id": "301",
         })

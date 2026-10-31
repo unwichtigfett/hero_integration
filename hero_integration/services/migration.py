@@ -5,6 +5,7 @@ import json
 import re
 from dataclasses import dataclass
 from datetime import timedelta
+from uuid import uuid4
 
 import frappe
 from frappe.utils import get_datetime, now_datetime
@@ -626,7 +627,9 @@ def _migrate_customer(record: dict[str, object], run) -> Result:
             # HERO customers are German unless HERO names another country.
             address["country_code"] = DEFAULT_ADDRESS_COUNTRY
             address_note = " The HERO address has no country; Germany was assumed."
-        document_name, name_note = _document_name(customer_document_name, record, "customer number")
+        document_name, name_note = _document_name(
+            customer_document_name, record, "customer number", internal_prefix="HERO-CUSTOMER",
+        )
     except MappingPlanError as error:
         return Result("BLOCKED_RECORD", str(error))
     if plan.source_deleted(record):
@@ -642,7 +645,7 @@ def _migrate_customer(record: dict[str, object], run) -> Result:
     tracks_home_phone = plan.has_home_phone()
     drift = _business_number_drift(
         "customer", source_id, _source_instance(record), "Customer", "custom_hero_customer_number",
-        values.get("custom_hero_customer_number"), "customer number", run,
+        record.get("nr"), "customer number", run, observed="nr" in record,
     )
     if drift:
         return drift
@@ -1281,7 +1284,7 @@ def _migrate_project(record: dict[str, object], run) -> Result:
         return Result("BLOCKED_RECORD", "Configured project record name is empty.")
     drift = _business_number_drift(
         "project", source_id, source_instance, "Project", "custom_hero_display_id",
-        values.get("custom_hero_display_id"), "project display_id", run,
+        record.get("display_id"), "project display_id", run, observed="display_id" in record,
     )
     if drift:
         return drift
@@ -1296,25 +1299,35 @@ def _migrate_project(record: dict[str, object], run) -> Result:
     return result
 
 
-def _document_name(name_for, record, label: str) -> tuple[str | None, str]:
-    """The HERO business number that names a new document, or ``None`` and the reason."""
+def _document_name(name_for, record, label: str, *, internal_prefix=None) -> tuple[str | None, str]:
+    """Use the exact HERO number, or an explicitly reported technical fallback."""
     try:
         name = name_for(record)
+        if name is not None:
+            return name, ""
+        reason = f"HERO has no {label}."
     except BusinessNumberError as error:
-        return None, f" {error} ERPNext's naming series names the new document; the HERO value stays in its field."
-    if name is None:
-        return None, f" HERO has no {label}; ERPNext's naming series names the new document."
-    return name, ""
+        reason = str(error)
+    if internal_prefix:
+        return f"{internal_prefix}-{uuid4().hex}", (
+            f" {reason} A collision-safe internal ID names the document; no replacement business number "
+            "was generated. The original HERO value stays in its field."
+        )
+    return None, f" {reason} ERPNext's naming series names the new document; the HERO value stays in its field."
 
 
 def _creates(result: Result) -> bool:
     return result.code == "CREATED" or (result.code == "PREVIEW_OK" and not result.target_name)
 
 
-def _business_number_drift(source_type, source_id, source_instance, doctype, field, incoming, label, run) -> Result | None:
+def _business_number_drift(
+    source_type, source_id, source_instance, doctype, field, incoming, label, run, *, observed=True,
+) -> Result | None:
     """A linked record keeps its HERO number until someone reviews a change made in HERO."""
-    if not incoming:
+    if not observed:
         return None
+    if isinstance(incoming, int) and not isinstance(incoming, bool):
+        incoming = str(incoming)
     link = _link(source_type, source_id, source_instance)
     if not link or link.target_doctype != doctype or not frappe.db.exists(doctype, link.target_name):
         return None
@@ -1585,6 +1598,18 @@ def _upsert(
     except (HomePhoneConflict, CustomerAddressError) as error:
         frappe.db.rollback(save_point=savepoint)
         return Result("CONFLICT", str(error), doctype)
+    except getattr(frappe, "UniqueValidationError", ()) as error:
+        # A competing worker may have claimed the unique source_key after our
+        # initial lookup. Roll back the target and all relations with the claim.
+        if not error.args or error.args[0] != "HERO Integration Link":
+            raise
+        frappe.db.rollback(save_point=savepoint)
+        if hasattr(frappe, "clear_messages"):
+            frappe.clear_messages()
+        return Result(
+            "CONFLICT", "HERO source identity was claimed concurrently; no new target or relations were kept. "
+            "Retry the same source identity to reuse its established link.", doctype,
+        )
     except frappe.DuplicateEntryError as error:
         # Another import committed this name after the existence check above.
         if not document_name or tuple(error.args[:2]) != (doctype, document_name):
