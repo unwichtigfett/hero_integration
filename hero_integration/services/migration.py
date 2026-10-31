@@ -26,6 +26,7 @@ from hero_integration.services.change_detection import (
 from hero_integration.services.conflict_notifications import notify_conflict_once
 from hero_integration.services.integration_events import record_output
 from hero_integration.services.mapping_runtime import MappingPlanError, active_mapping_plan
+from hero_integration.services.business_numbers import BusinessNumberError, customer_document_name, project_reference
 from hero_integration.services.project_naming import ProjectTitleValidationError, build_project_title
 from hero_integration.services.projection_contracts import CONTRACTS as PROJECTIONS, validate_projection_record
 
@@ -625,6 +626,7 @@ def _migrate_customer(record: dict[str, object], run) -> Result:
             # HERO customers are German unless HERO names another country.
             address["country_code"] = DEFAULT_ADDRESS_COUNTRY
             address_note = " The HERO address has no country; Germany was assumed."
+        document_name, name_note = _document_name(customer_document_name, record, "customer number")
     except MappingPlanError as error:
         return Result("BLOCKED_RECORD", str(error))
     if plan.source_deleted(record):
@@ -638,6 +640,12 @@ def _migrate_customer(record: dict[str, object], run) -> Result:
     if _source_instance(record) != 'default':
         values['custom_hero_source_id'] = f'{_source_instance(record)}:{source_id}'
     tracks_home_phone = plan.has_home_phone()
+    drift = _business_number_drift(
+        "customer", source_id, _source_instance(record), "Customer", "custom_hero_customer_number",
+        values.get("custom_hero_customer_number"), "customer number", run,
+    )
+    if drift:
+        return drift
 
     def after_insert(customer):
         _synchronize_customer_relations(
@@ -665,8 +673,9 @@ def _migrate_customer(record: dict[str, object], run) -> Result:
         source_instance=_source_instance(record),
         comparison_extra={"hero_phone_home": home_phone} if tracks_home_phone else None,
         required_on_create=("customer_type",),
+        document_name=document_name,
     )
-    note = email_note + phone_note + address_note
+    note = email_note + phone_note + address_note + (name_note if _creates(result) else "")
     if note and result.code != "BLOCKED_RECORD":
         from dataclasses import replace
         result = replace(result, detail=(result.detail or "") + note)
@@ -1263,16 +1272,68 @@ def _migrate_project(record: dict[str, object], run) -> Result:
             _project_title_for_record,
         )
         values["custom_hero_source_id"] = f"{source_instance}:{source_id}"
+        document_name, name_note = _document_name(project_reference, record, "project display_id")
     except (MappingPlanError, ProjectTitleValidationError) as error:
         return Result("BLOCKED_RECORD", str(error))
     existing = _link("project", source_id, source_instance)
     title_basis = _hold_customer_only_title_change(record, values, existing)
     if not values.get("project_name") and not ("project_name" in values.missing and existing):
         return Result("BLOCKED_RECORD", "Configured project record name is empty.")
-    return _upsert(
+    drift = _business_number_drift(
+        "project", source_id, source_instance, "Project", "custom_hero_display_id",
+        values.get("custom_hero_display_id"), "project display_id", run,
+    )
+    if drift:
+        return drift
+    result = _upsert(
         "project", source_id, record, values, "Project", "project_name", plan.mapping_version, run,
         source_instance=source_instance, required_on_create=("customer", "project_name"),
-        comparison_extra=title_basis,
+        comparison_extra=title_basis, document_name=document_name,
+    )
+    if name_note and _creates(result):
+        from dataclasses import replace
+        result = replace(result, detail=(result.detail or "") + name_note)
+    return result
+
+
+def _document_name(name_for, record, label: str) -> tuple[str | None, str]:
+    """The HERO business number that names a new document, or ``None`` and the reason."""
+    try:
+        name = name_for(record)
+    except BusinessNumberError as error:
+        return None, f" {error} ERPNext's naming series names the new document; the HERO value stays in its field."
+    if name is None:
+        return None, f" HERO has no {label}; ERPNext's naming series names the new document."
+    return name, ""
+
+
+def _creates(result: Result) -> bool:
+    return result.code == "CREATED" or (result.code == "PREVIEW_OK" and not result.target_name)
+
+
+def _business_number_drift(source_type, source_id, source_instance, doctype, field, incoming, label, run) -> Result | None:
+    """A linked record keeps its HERO number until someone reviews a change made in HERO."""
+    if not incoming:
+        return None
+    link = _link(source_type, source_id, source_instance)
+    if not link or link.target_doctype != doctype or not frappe.db.exists(doctype, link.target_name):
+        return None
+    stored = frappe.db.get_value(doctype, link.target_name, field)
+    if not stored or stored == incoming:
+        return None
+    detail = (
+        f"HERO {label} changed from {stored!r} to {incoming!r}. {doctype} {link.target_name} keeps its name "
+        f"and number until reviewed; set {field} to {incoming!r} to accept the new number."
+    )
+    if run.mode != "Preview":
+        _mark_link_conflict(link, detail)
+    return Result("CONFLICT", detail, doctype, link.target_name)
+
+
+def _name_taken(doctype: str, name: str) -> str:
+    return (
+        f"{doctype} {name!r} already exists without this HERO record's link. The HERO number is not reassigned, "
+        f"suffixed or merged; check whether {name!r} is the same {doctype.lower()} and link or rename it."
     )
 
 
@@ -1391,6 +1452,7 @@ def _upsert(
     preserve_omitted: bool = False,
     comparison_extra: dict | None = None,
     required_on_create: tuple[str, ...] = (),
+    document_name: str | None = None,
 ) -> Result:
     if not _target_available(doctype):
         return Result("UNAVAILABLE", f"{doctype} is not installed on this site.")
@@ -1488,8 +1550,13 @@ def _upsert(
         duplicate = _unlinked_namesake(doctype, name_field, values[name_field])
     if duplicate:
         return Result("SKIPPED_AMBIGUOUS", f"Existing {doctype} has no stable HERO link.", doctype, duplicate)
+    # A new document takes the HERO business number as its name; a name already
+    # in use is never suffixed, reassigned or merged.
+    if document_name and frappe.db.exists(doctype, document_name):
+        return Result("CONFLICT", _name_taken(doctype, document_name), doctype)
     if run.mode == "Preview":
-        return Result("PREVIEW_OK", "A new target record would be created.", doctype)
+        named = f" named {document_name!r}" if document_name else ""
+        return Result("PREVIEW_OK", f"A new target record would be created{named}.", doctype)
     # A target, its required relation(s), and the provenance link are one
     # integration unit.  A handled relation conflict must not leave the newly
     # inserted ERPNext document behind for a later run to mistake as manual.
@@ -1497,7 +1564,10 @@ def _upsert(
     frappe.db.savepoint(savepoint)
     try:
         target = frappe.get_doc({"doctype": doctype, **(creation_values or {}), **values})
-        target.insert()
+        if document_name:
+            target.insert(set_name=document_name)
+        else:
+            target.insert()
         if after_insert:
             after_insert(target)
         snapshot = target_snapshot or (lambda item: _target_values(item, values))
@@ -1515,6 +1585,14 @@ def _upsert(
     except (HomePhoneConflict, CustomerAddressError) as error:
         frappe.db.rollback(save_point=savepoint)
         return Result("CONFLICT", str(error), doctype)
+    except frappe.DuplicateEntryError as error:
+        # Another import committed this name after the existence check above.
+        if not document_name or tuple(error.args[:2]) != (doctype, document_name):
+            raise
+        frappe.db.rollback(save_point=savepoint)
+        if hasattr(frappe, "clear_messages"):
+            frappe.clear_messages()
+        return Result("CONFLICT", _name_taken(doctype, document_name), doctype)
     return Result("CREATED", "Target created through native Frappe validation.", doctype, target.name)
 
 
