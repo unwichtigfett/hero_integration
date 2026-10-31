@@ -146,14 +146,18 @@ def run_monitor() -> None:
         result = run_materialized_monitor(frappe_module=frappe)
         detail = "Materialized monitoring observed one bounded read page; full coverage is not claimed and no business records were written."
         event = _record_event("MONITOR", "Incomplete", detail, result)
+        settings = frappe.get_single("HERO Integration Settings")
         settings.last_successful_sync = frappe.utils.now_datetime()
         settings.sync_status, settings.sync_error = "MONITOR incomplete", ""
         settings.save(ignore_permissions=True)
         if plan["notifications"]:
             _notify_polling_event(event, detail)
     except RuntimeBridgeError as error:
+        frappe.db.rollback()
         record_scheduler_outcome("MONITOR", "Skipped", f"Materialized monitoring is blocked: {error}")
     except Exception:
+        frappe.db.rollback()
+        settings = frappe.get_single("HERO Integration Settings")
         _record_event("MONITOR", "Failed", "Materialized monitoring failed; see the redacted server error log.")
         settings.sync_status = "MONITOR failed"
         settings.sync_error = "Materialized monitoring failed or is not approved; see the redacted server error log."

@@ -396,3 +396,34 @@ def active_mapping_plan(operation: str, *, definition_ids: tuple[str, ...] = (),
                 except ValueError as error:
                     raise MappingPlanError('Native field authorization is no longer valid.') from error
     return plan_from_definitions(operation, definitions, target_operation=target_operation, native_task=native_task)
+
+
+def effective_rule_fingerprint(definition_ids, mapping_name, *, lock=False, frappe_module=None):
+    """Hash exactly the selected active rule content, not unrelated mapping edits.
+
+    A locking caller must hold the existing mapping-root exchange lock first.
+    Current reads fence publication/disablement until the checkpoint transaction
+    ends; ordinary reads are for lock-free transport preflight only.
+    """
+    if frappe_module is None:
+        import frappe as frappe_module
+    ids = tuple(sorted(definition_ids))
+    if not ids or len(ids) != len(set(ids)) or not mapping_name:
+        raise MappingPlanError("A checkpoint requires explicit unique mapping rule identities.")
+    fields = ("definition_id", "operation", "source_path", "source_type", "target_doctype", "target_field",
+              "purpose", "transformation", "relation", "priority", "personal_graphql_mapping", "status",
+              "schema_snapshot", "schema_fingerprint", "mapping_revision", "schema_manifest", "schema_dependencies")
+    if lock:
+        placeholders = ", ".join(["%s"] * len(ids))
+        rows = frappe_module.db.sql(
+            "SELECT " + ", ".join(fields) + " FROM `tabHERO Frappe Mapping` "
+            "WHERE definition_id IN (" + placeholders + ") ORDER BY definition_id FOR UPDATE", ids, as_dict=True)
+    else:
+        rows = frappe_module.get_all("HERO Frappe Mapping", filters={"definition_id": ["in", list(ids)]},
+                                     fields=list(fields), limit_page_length=0)
+    if (len(rows) != len(ids) or {row.get("definition_id") for row in rows} != set(ids)
+            or any(row.get("status") != "Active" or row.get("personal_graphql_mapping") not in
+                   (None, "", mapping_name) for row in rows)):
+        raise MappingPlanError("Selected checkpoint field rules are missing, inactive or belong to another mapping.")
+    content = [{field: row.get(field) for field in fields} for row in sorted(rows, key=lambda row: row['definition_id'])]
+    return hashlib.sha256(json.dumps(content, sort_keys=True, separators=(",", ":")).encode()).hexdigest()

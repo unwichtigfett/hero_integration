@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from datetime import timedelta
 from uuid import uuid4
@@ -107,6 +108,93 @@ class _Comparison:
         )
 
 
+def _run_checkpoint_contract(run, *, lock=False):
+    """The effective reader/rule contract on the existing Run, without credentials."""
+    from hero_integration.services.mapping_runtime import effective_rule_fingerprint
+    from hero_integration.services.read_contract import from_documents
+    from hero_integration.hero_integration.doctype.hero_graphql_mapping.hero_graphql_mapping import lock_exchange_context
+
+    if not getattr(run, "graphql_service", "") or not getattr(run, "graphql_mapping", ""):
+        raise MappingPlanError("Legacy run has no explicit checkpoint reader/mapping evidence; queue a new run.")
+    if lock:
+        frappe.db.sql("SELECT field FROM `tabSingles` WHERE doctype=%s FOR UPDATE", ("HERO Integration Settings",))
+    config = get_configuration()
+    signatures = []
+    readers = [(run.graphql_service, run.graphql_mapping, run.service_revision, run.mapping_revision)]
+    if getattr(run, 'customer_service', ''):
+        readers.append((run.customer_service, run.customer_mapping,
+                        run.customer_service_revision, run.customer_mapping_revision))
+    for service_name, mapping_name, service_revision, mapping_revision in sorted(readers):
+        observed = frappe.get_doc("HERO GraphQL Mapping", mapping_name)
+        scope = (observed.source_instance or '', observed.schema_snapshot, observed.direction)
+        if lock:
+            lock_exchange_context(*scope)
+        mapping = frappe.get_doc("HERO GraphQL Mapping", mapping_name, for_update=lock)
+        if (mapping.source_instance or '', mapping.schema_snapshot, mapping.direction) != scope:
+            raise MappingPlanError("Checkpoint mapping context changed concurrently.")
+        service = frappe.get_doc("HERO GraphQL Service", service_name, for_update=lock)
+        snapshot = frappe.get_doc("HERO GraphQL Schema Snapshot", service.schema_snapshot, for_update=lock)
+        _validate_run_source_binding(run, config, snapshot)
+        contract = from_documents(service, mapping, snapshot)
+        if contract.service_revision != int(service_revision) or contract.mapping_revision != int(mapping_revision):
+            raise MappingPlanError("Checkpoint reader/mapping revision changed.")
+        signatures.append({
+            "service": service_name, "service_revision": contract.service_revision,
+            "mapping": mapping_name, "mapping_revision": contract.mapping_revision,
+            "reader": _digest({"query": service.query_document, "mapping": json.loads(mapping.mapping_json)}),
+            "schema": snapshot.name, "schema_fingerprint": snapshot.schema_fingerprint,
+            "schema_content": _digest(json.loads(snapshot.snapshot_json)),
+            "field_rules": effective_rule_fingerprint(contract.definition_ids, mapping_name, lock=lock),
+        })
+    return {"version": 1, "site": frappe.local.site, "source_instance": config.source_instance,
+            "actor": getattr(run, 'owner', '') or frappe.session.user,
+            "action": getattr(run, 'action', ''), "mode": getattr(run, 'mode', ''),
+            "source_binding_revision": int(config.source_binding_revision), "readers": signatures}
+
+
+def bind_run_checkpoint(run):
+    """Called only at acceptance of a new run; never upgrade a legacy checkpoint."""
+    config = get_configuration()
+    run.source_instance = config.source_instance
+    run.owner = getattr(run, 'owner', '') or frappe.session.user
+    run.checkpoint_contract_json = json.dumps(_run_checkpoint_contract(run, lock=True), sort_keys=True)
+
+
+def _assert_checkpoint_contract(run, *, lock=False):
+    try:
+        expected = json.loads(getattr(run, "checkpoint_contract_json", "") or "")
+    except (ValueError, TypeError):
+        raise MappingPlanError("Legacy checkpoint has no bound contract; queue a newly approved run.") from None
+    if not isinstance(expected, dict) or expected.get("version") != 1:
+        raise MappingPlanError("Unsupported or legacy checkpoint contract; queue a new run.")
+    if _run_checkpoint_contract(run, lock=lock) != expected:
+        raise MappingPlanError("Source, schema, reader or effective field rules changed; checkpoint was not advanced.")
+
+
+@contextmanager
+def _checkpoint_transaction(run, claim_started_on):
+    """Fence the existing lease/owner and atomically acknowledge one unit of work."""
+    frappe.db.rollback()  # End the previous read snapshot; no unacknowledged writes cross this boundary.
+    try:
+        if _locked_active_run() != run.name:
+            raise MappingPlanError("Run reservation was replaced; checkpoint was not advanced.")
+        current = frappe.get_doc("HERO Integration Run", run.name, for_update=True)
+        if (current.state != "Running" or current.started_on != claim_started_on
+                or current.owner != frappe.session.user or not current.lease_expires_on
+                or get_datetime(current.lease_expires_on) <= now_datetime()
+                or current.checkpoint_contract_json != run.checkpoint_contract_json):
+            raise MappingPlanError("Run ownership, generation, lease or bound contract changed.")
+        _assert_checkpoint_contract(run, lock=True)
+        yield
+        _assert_checkpoint_contract(run, lock=True)
+        run.lease_expires_on = now_datetime() + timedelta(seconds=RUN_LEASE_SECONDS)
+        run.save()
+        frappe.db.commit()
+    except BaseException:
+        frappe.db.rollback()
+        raise
+
+
 def execute_run(run_name: str) -> None:
     run = frappe.get_doc("HERO Integration Run", run_name)
     frappe.set_user(run.owner)
@@ -118,36 +206,33 @@ def execute_run(run_name: str) -> None:
     claim_started_on = run.started_on
     failed = False
     try:
+        _assert_checkpoint_contract(run)
         validate_run_mappings(run)
         config = get_configuration()
         source = _source_for_run(run, config)
         if _testing_preview_enabled(run):
             testing_source = TestingPreviewSource(source, int(run.testing_max_actions or 0))
             source = testing_source
-        _process_requested_phases(run, source)
+        _process_requested_phases(run, source, checkpoint=lambda: _checkpoint_transaction(run, claim_started_on))
         run.reload()
-        if run.state == "Running" and run.started_on == claim_started_on:
-            run.state = "Completed With Conflicts" if run.conflict_records else "Completed"
-            run.finished_on = now_datetime()
-            run.save()
-            _mark_sync_success(run)
+        if run.state == "Running":
+            with _checkpoint_transaction(run, claim_started_on):
+                run.reload()
+                run.state = "Completed With Conflicts" if run.conflict_records else "Completed"
+                run.finished_on = now_datetime()
+                run.save()
+                _mark_sync_success(run)
     except RepeatedProjectionPageError as error:
         failed = True
         frappe.db.rollback()
         _finalize_blocked_run(run.name, claim_started_on, str(error))
     except MappingPlanError as error:
-        run.reload()
-        _mark_running_phase_failed(run)
-        run.state = "Blocked"
-        run.error_message = str(error)
-        run.finished_on = now_datetime()
-        run.save()
-        _mark_sync_error(run)
+        failed = True
+        frappe.db.rollback()
+        _finalize_blocked_run(run.name, claim_started_on, str(error))
     except _Cancelled:
-        run.reload()
-        run.state = "Cancelled"
-        run.finished_on = now_datetime()
-        run.save()
+        frappe.db.rollback()
+        run.reload()  # The cancelling request owns its persisted state; do not overwrite a newer claim.
     except Exception as error:
         failed = True
         frappe.db.rollback()
@@ -161,7 +246,10 @@ def execute_run(run_name: str) -> None:
         if not failed:
             if testing_source is not None:
                 _persist_testing_result(run, testing_source)
-            _release_run(run.name)
+            if _locked_active_run() == run.name:
+                current = frappe.get_doc("HERO Integration Run", run.name, for_update=True)
+                if current.started_on == claim_started_on:
+                    _release_run(run.name)
 
 
 def _validate_run_source_binding(run, config, snapshot=None):
@@ -203,30 +291,36 @@ def _source_for_run(run, config):
     if int(run.service_revision or 0) != contract.service_revision or int(run.mapping_revision or 0) != contract.mapping_revision:
         raise MappingPlanError("The queued run no longer matches its approved service or mapping revision.")
     def revalidate_generated():
-        observed = frappe.get_doc('HERO GraphQL Mapping', run.graphql_mapping)
-        scope = (observed.source_instance or '', observed.schema_snapshot, observed.direction)
-        from hero_integration.hero_integration.doctype.hero_graphql_mapping.hero_graphql_mapping import lock_exchange_context
-        lock_exchange_context(*scope)
-        current_mapping = frappe.get_doc('HERO GraphQL Mapping', run.graphql_mapping, for_update=True)
-        if (current_mapping.source_instance or '', current_mapping.schema_snapshot, current_mapping.direction) != scope:
-            raise MappingPlanError('The generated mapping context changed before execution.')
-        current_service = frappe.get_doc('HERO GraphQL Service', run.graphql_service, for_update=True)
-        current_snapshot = frappe.get_doc('HERO GraphQL Schema Snapshot', current_service.schema_snapshot, for_update=True)
-        current = from_documents(current_service, current_mapping, current_snapshot)
-        if (current.service_revision != int(run.service_revision) or current.mapping_revision != int(run.mapping_revision)
-                or current_snapshot.source_instance != getattr(run, 'source_instance', '')):
-            raise MappingPlanError('The approved generated read context changed before execution.')
+        # Every record/phase checkpoint has already committed. End any read
+        # snapshot and release all transaction callbacks before external HTTP.
+        frappe.db.rollback()
+        _assert_checkpoint_contract(run)
+        current = from_documents(
+            frappe.get_doc('HERO GraphQL Service', run.graphql_service),
+            frappe.get_doc('HERO GraphQL Mapping', run.graphql_mapping),
+            frappe.get_doc('HERO GraphQL Schema Snapshot', service.schema_snapshot),
+        )
+        frappe.db.rollback()
         return current
     source = GraphQLServiceSource(HeroGraphQLClient(
         config.endpoint, lambda: config.api_token, config.timeout_seconds,
         max_retries=0 if _testing_preview_enabled(run) else 2,
         requests_per_minute=_request_rate(),
     ), service, contract, getattr(snapshot, "source_instance", "") or config.source_instance,
-       revalidate=revalidate_generated if getattr(contract, 'materialized_request', None) is not None else None)
+       revalidate=revalidate_generated)
     if contract.target_operation == 'HeroProjectMatches':
         customer_service, customer_mapping, customer_snapshot = _customer_read_documents(run)
         customer_contract = from_documents(customer_service, customer_mapping, customer_snapshot)
-        source.customer_source = GraphQLServiceSource(source.client, customer_service, customer_contract, source.source_instance)
+        def revalidate_customer():
+            frappe.db.rollback()
+            _assert_checkpoint_contract(run)
+            current_service, current_mapping, current_snapshot = _customer_read_documents(run)
+            current = from_documents(current_service, current_mapping, current_snapshot)
+            frappe.db.rollback()
+            return current
+        source.customer_source = GraphQLServiceSource(
+            source.client, customer_service, customer_contract, source.source_instance, revalidate=revalidate_customer,
+        )
     return source
 
 
@@ -430,30 +524,33 @@ def _release_active_run_lock() -> None:
     frappe.db.sql("SELECT RELEASE_LOCK(%s)", ("hero_integration:active_run",))
 
 
-def _process_requested_phases(run, source: HeroSource) -> None:
+def _process_requested_phases(run, source: HeroSource, *, checkpoint=None) -> None:
     # A project run is never allowed to bypass its own complete Customer pass.
     # This is intentionally stricter than a mere lookup during project creation:
     # the gate belongs to the same run and source instance, and survives retries.
+    checkpoint = checkpoint or nullcontext
     _bind_source_instance(run, source.source_instance)
     if run.action in PROJECTION_ACTIONS:
-        _process_projection(run, source)
+        _process_projection(run, source, checkpoint=checkpoint)
         return
     needs_customer_phase = run.action in CUSTOMER_ACTIONS or run.action in PROJECT_ACTIONS
-    if needs_customer_phase and not _process_phase(run, "customer", source.customers):
+    if needs_customer_phase and not _process_phase(run, "customer", source.customers, checkpoint=checkpoint):
         return
     if run.action in PROJECT_ACTIONS:
         if not _customer_phase_completed(run, source.source_instance):
-            _block_run(run, "Project phase requires a completed Customer phase for this source instance and run.")
+            with checkpoint():
+                _block_run(run, "Project phase requires a completed Customer phase for this source instance and run.")
             return
-        if not _process_phase(run, "project", source.projects):
+        if not _process_phase(run, "project", source.projects, checkpoint=checkpoint):
             return
     if run.action == "Full Data Migration":
-        _record_result(
-            run,
-            "attachment",
-            {"id": "hero-v1-contract"},
-            Result("UNAVAILABLE", "No approved HERO attachment query exists in the V1 source contract."),
-        )
+        with checkpoint():
+            _record_result(
+                run,
+                "attachment",
+                {"id": "hero-v1-contract"},
+                Result("UNAVAILABLE", "No approved HERO attachment query exists in the V1 source contract."),
+            )
 
 
 def validate_run_mappings(run) -> None:
@@ -509,7 +606,7 @@ def _mapping_plan_for_run(run, target_operation: str):
         target_operation=contract.target_operation,
         mapping_name=contract.mapping_name,
         native_task=json.loads(mapping.mapping_json).get('native_task_onboarding') is not None,
-        lock_rules=getattr(contract, 'materialized_request', None) is not None,
+        lock_rules=False,
     )
 
 
@@ -529,17 +626,20 @@ def _validate_enumeration_page(page: SourcePage, offset: int, seen_ids: set[str]
     seen_ids.update(identities)
 
 
-def _process_phase(run, phase: str, reader) -> bool:
+def _process_phase(run, phase: str, reader, *, checkpoint=None) -> bool:
+    checkpoint = checkpoint or nullcontext
     if _phase_state(run, phase) == "Completed":
         return True
-    _set_phase_state(run, phase, "Running")
+    with checkpoint():
+        _set_phase_state(run, phase, "Running")
     offset = int(run.resume_offset or 0) if run.resume_phase == phase else 0
     record_index = int(run.resume_record_index or 0) if run.resume_phase == phase else 0
     if offset or record_index:
         # Offset continuation requires a stable source snapshot; mid-page
         # continuation additionally requires persisted page identity evidence.
-        _set_phase_state(run, phase, "Blocked")
-        _block_run(run, "Cannot resume without a verified source snapshot and page identity evidence.")
+        with checkpoint():
+            _set_phase_state(run, phase, "Blocked")
+            _block_run(run, "Cannot resume without a verified source snapshot and page identity evidence.")
         return False
     seen_ids: set[str] = set()
     while True:
@@ -547,39 +647,42 @@ def _process_phase(run, phase: str, reader) -> bool:
         page: SourcePage = reader(offset)
         testing_source = getattr(reader, "__self__", None)
         if isinstance(testing_source, TestingPreviewSource) and testing_source.status in {"BLOCKED", "LIMIT_REACHED"}:
-            _set_phase_state(run, phase, "Blocked")
             detail = (
                 "Testing preview blocked because newest-first ordering is not verified for the selected HERO source."
                 if testing_source.status == "BLOCKED"
                 else "Testing preview reached its shared HERO request budget; no resume is permitted."
             )
-            _block_run(run, detail)
+            with checkpoint():
+                _set_phase_state(run, phase, "Blocked")
+                _block_run(run, detail)
             return False
         _validate_enumeration_page(page, offset, seen_ids)
         for index, record in enumerate(page.records):
             if index < record_index:
                 continue
             _cancel_if_requested(run)
-            migrate = _migrate_customer if phase == "customer" else _migrate_project
-            result = _migrate_isolated(lambda: migrate(record, run))
-            _record_result(run, phase, record, result)
-            _record_phase_result(run, phase, result)
+            with checkpoint():
+                migrate = _migrate_customer if phase == "customer" else _migrate_project
+                result = _migrate_isolated(lambda: migrate(record, run))
+                _record_result(run, phase, record, result)
+                _record_phase_result(run, phase, result)
+                run.resume_phase = phase
+                run.resume_offset = offset
+                run.resume_record_index = index + 1
+                run.save()
+        with checkpoint():
             run.resume_phase = phase
-            run.resume_offset = offset
-            run.resume_record_index = index + 1
+            run.resume_offset = page.next_offset or 0
+            run.resume_record_index = 0
             run.save()
-        run.resume_phase = phase
-        run.resume_offset = page.next_offset or 0
-        run.resume_record_index = 0
-        run.save()
-        if page.next_offset is None:
-            # Every Customer was processed; a blocked Customer only blocks its own Projects.
-            if phase == "project" and _phase_has_blockers(run, phase):
-                _set_phase_state(run, phase, "Blocked")
-                _block_run(run, "Project phase contains unresolved records.")
-                return False
-            _set_phase_state(run, phase, "Completed")
-            return True
+            if page.next_offset is None:
+                # Every Customer was processed; a blocked Customer only blocks its own Projects.
+                if phase == "project" and _phase_has_blockers(run, phase):
+                    _set_phase_state(run, phase, "Blocked")
+                    _block_run(run, "Project phase contains unresolved records.")
+                    return False
+                _set_phase_state(run, phase, "Completed")
+                return True
         offset = page.next_offset
         record_index = 0
 
@@ -772,8 +875,9 @@ def _migrate_isolated(migrate) -> Result:
         return Result("BLOCKED_RECORD", f"ERPNext rejected the record ({type(error).__name__}); see Error Log.")
 
 
-def _process_projection(run, source) -> None:
+def _process_projection(run, source, *, checkpoint=None) -> None:
     """Reuse the existing run, read service, mapping plan and conflict-safe writer."""
+    checkpoint = checkpoint or nullcontext
     operation = source.contract.target_operation
     plan = _mapping_plan_for_run(run, operation)
     from hero_integration.services.read_contract import from_documents
@@ -791,7 +895,8 @@ def _process_projection(run, source) -> None:
     offset = int(run.resume_offset or 0)
     index_start = int(run.resume_record_index or 0)
     if offset or index_start:
-        _block_run(run, 'Cannot resume without a verified source snapshot and page identity evidence.')
+        with checkpoint():
+            _block_run(run, 'Cannot resume without a verified source snapshot and page identity evidence.')
         return
     seen_ids: set[str] = set()
     while True:
@@ -803,7 +908,8 @@ def _process_projection(run, source) -> None:
                 if source.status == "BLOCKED"
                 else "Testing preview reached its shared HERO request budget; no resume is permitted."
             )
-            _block_run(run, detail)
+            with checkpoint():
+                _block_run(run, detail)
             return
         try:
             _validate_enumeration_page(page, offset, seen_ids)
@@ -813,24 +919,27 @@ def _process_projection(run, source) -> None:
             if index < index_start:
                 continue
             _cancel_if_requested(run)
-            if task_scope is not None:
-                task_record = record if any(item.source_path == 'comment' for item in plan.definitions) else {k: v for k, v in record.items() if k != 'comment'}
-                result = _migrate_isolated(lambda: _migrate_native_task(task_record, run, plan, task_scope))
-                if (result.code in {'CREATED', 'UPDATED', 'SKIPPED', 'PREVIEW_OK'}
-                        and result.target_doctype == 'Task'
-                        and any(item.source_path == 'target_user_id' for item in plan.definitions)):
-                    _record_task_assignment_pending(run, record, result.target_name, task_scope['source_instance'])
-            else:
-                result = _migrate_isolated(lambda: _migrate_projection(record, run, plan))
-            _record_result(run, PROJECTIONS[operation]['source_type'], record, result)
-            run.resume_phase = operation
-            run.resume_offset, run.resume_record_index = offset, index + 1
-            run.save()
+            with checkpoint():
+                if task_scope is not None:
+                    task_record = record if any(item.source_path == 'comment' for item in plan.definitions) else {k: v for k, v in record.items() if k != 'comment'}
+                    result = _migrate_isolated(lambda: _migrate_native_task(task_record, run, plan, task_scope))
+                    if (result.code in {'CREATED', 'UPDATED', 'SKIPPED', 'PREVIEW_OK'}
+                            and result.target_doctype == 'Task'
+                            and any(item.source_path == 'target_user_id' for item in plan.definitions)):
+                        _record_task_assignment_pending(run, record, result.target_name, task_scope['source_instance'])
+                else:
+                    result = _migrate_isolated(lambda: _migrate_projection(record, run, plan))
+                _record_result(run, PROJECTIONS[operation]['source_type'], record, result)
+                run.resume_phase = operation
+                run.resume_offset, run.resume_record_index = offset, index + 1
+                run.save()
         if page.next_offset is None:
             return
         offset, index_start = page.next_offset, 0
-        run.resume_offset, run.resume_record_index = offset, 0
-        run.save()
+        with checkpoint():
+            run.resume_offset, run.resume_record_index = offset, 0
+            run.save()
+
 
 
 @dataclass(frozen=True)

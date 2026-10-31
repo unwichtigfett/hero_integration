@@ -92,7 +92,7 @@ def from_documents(service, mapping, snapshot) -> ReadContract:
             from hero_integration.services.mapping_runtime import active_mapping_plan
             try:
                 plan = active_mapping_plan(service.operation_name, definition_ids=definition_ids,
-                    target_operation=target, mapping_name=mapping.name, native_task=True, lock_rules=True)
+                    target_operation=target, mapping_name=mapping.name, native_task=True, lock_rules=False)
                 request, seal = task_materialization(snapshot, config, plan)
             except (ValueError, TypeError, KeyError) as error:
                 raise ReadContractError('Generated Task mapping cannot be reconstructed.') from error

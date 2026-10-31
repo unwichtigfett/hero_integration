@@ -241,6 +241,8 @@ def _start_migration(
         frappe.throw("Unsupported HERO migration action.")
     if not graphql_service:
         frappe.throw("An explicitly approved GraphQL service is required for a new migration run.")
+    if not frappe.get_meta("HERO Integration Run").has_field("checkpoint_contract_json"):
+        frappe.throw("Run checkpoint schema is not installed; apply the reviewed app schema before queueing a run.")
     service, mapping = _approved_read_service(graphql_service)
     is_preview = bool(int(dry_run))
     testing = _testing_preview_configuration() if is_preview else {"enabled": False, "max_actions": 0}
@@ -272,6 +274,8 @@ def _start_migration(
             **dependencies,
         }
     )
+    from hero_integration.services.migration import bind_run_checkpoint
+    bind_run_checkpoint(run)
     run.insert()
     frappe.enqueue(
         "hero_integration.services.migration.execute_run",
@@ -399,7 +403,13 @@ def resume_run(run_name: str) -> dict[str, str]:
         frappe.throw("Testing previews cannot resume because their shared HERO request budget is run-bound.")
     from hero_integration.services.migration import validate_run_mappings
 
+    from hero_integration.services.migration import _assert_checkpoint_contract
+    _assert_checkpoint_contract(run, lock=True)
     validate_run_mappings(run)
+    # Replay from the beginning through durable identity links. Offset-only
+    # continuation cannot prove a stable external dataset or page identity.
+    run.resume_phase, run.resume_offset, run.resume_record_index = "", 0, 0
+    run.customer_phase_state = run.project_phase_state = "Queued"
     run.state = "Queued"
     run.error_message = ""
     run.save()

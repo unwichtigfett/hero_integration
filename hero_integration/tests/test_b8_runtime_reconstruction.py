@@ -43,7 +43,7 @@ def _context():
     )
     docs = {("HERO GraphQL Schema Snapshot", snapshot.name): snapshot, ("HERO GraphQL Service", service.name): service, ("HERO GraphQL Mapping", mapping.name): mapping}
     return selection, request, mapping, SimpleNamespace(
-        local=SimpleNamespace(site="test-site"), get_doc=lambda doctype, name: docs[(doctype, name)],
+        local=SimpleNamespace(site="test-site"), get_doc=lambda doctype, name, **kwargs: docs[(doctype, name)],
     )
 
 
