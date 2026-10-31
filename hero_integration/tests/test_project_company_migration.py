@@ -26,7 +26,9 @@ def _project_title_inputs(**overrides):
     values.update(overrides)
     return values
 
-class TestProjectCompanyMigration(unittest.TestCase):
+class FakeFrappeMigrationHarness:
+    """Imports migration against an in-memory Frappe; shared by migration test classes."""
+
     @classmethod
     def setUpClass(cls):
         cls.frappe = _FakeFrappe()
@@ -63,6 +65,7 @@ class TestProjectCompanyMigration(unittest.TestCase):
         frappe_module.get_single = cls.frappe.get_single
         frappe_module.has_permission = cls.frappe.has_permission
         frappe_module.log_error = lambda **kwargs: None
+        frappe_module.DuplicateEntryError = _DuplicateEntryError
         utils_module = types.ModuleType("frappe.utils")
         utils_module.now_datetime = lambda: "2026-10-16 00:00:00"
         utils_module.get_datetime = lambda value: value
@@ -84,6 +87,8 @@ class TestProjectCompanyMigration(unittest.TestCase):
         self.migration._synchronize_customer_relations = lambda *args: None
         self.migration.notify_conflict_once = lambda *args, **kwargs: False
 
+
+class TestProjectCompanyMigration(FakeFrappeMigrationHarness, unittest.TestCase):
     def test_confirmed_company_creates_project_with_customer_and_stable_link(self):
         record = _project_title_inputs(id=201, customer_id=101, project_title="Synthetic HERO Project")
 
@@ -796,7 +801,10 @@ class TestProjectCompanyMigration(unittest.TestCase):
         self.assertEqual(len(self.frappe.projects), 40)
         self.assertEqual(self.frappe.customers[0]["email_id"], "person1-updated@synthetic.invalid")
         self.assertTrue(all(project["company"] == "Executing Company" for project in self.frappe.projects))
-        self.assertTrue(all(project["customer"].startswith("CUST-") for project in self.frappe.projects))
+        # Customers are named by their HERO number; projects link to those names.
+        self.assertTrue(all(customer["name"] == customer["custom_hero_customer_number"] for customer in self.frappe.customers))
+        customer_names = {customer["name"] for customer in self.frappe.customers}
+        self.assertTrue(all(project["customer"] in customer_names for project in self.frappe.projects))
 
 
 class _FakeFrappe:
@@ -821,6 +829,7 @@ class _FakeFrappe:
                 "custom_hero_source_modified",
             },
         }
+        self.taken_on_insert = None
         self.links = {
             ("customer", "101"): SimpleNamespace(target_name="Synthetic Customer", target_doctype="Customer"),
         }
@@ -868,6 +877,10 @@ class _FakeFrappe:
         return self.links.get((source_type, source_id, source_instance)) or self.links.get((source_type, source_id))
 
 
+class _DuplicateEntryError(Exception):
+    pass
+
+
 class _FakeDatabase:
     def __init__(self, frappe_api):
         self.frappe_api = frappe_api
@@ -901,8 +914,10 @@ class _FakeDatabase:
             return next((record["name"] for record in records if record.get(fieldname) == filters[fieldname]), None)
         raise AssertionError(f"unexpected exists: {doctype}, {filters}")
 
-    @staticmethod
-    def get_value(doctype, name, fieldname):
+    def get_value(self, doctype, name, fieldname):
+        if doctype in {"Customer", "Project"}:
+            records = self.frappe_api.customers if doctype == "Customer" else self.frappe_api.projects
+            return next((record.get(fieldname) for record in records if record["name"] == name), None)
         if (doctype, name, fieldname) != ("Company", "Executing Company", "disabled"):
             raise AssertionError(f"unexpected get_value: {doctype}, {name}, {fieldname}")
         return 0
@@ -914,11 +929,14 @@ class _TargetDocument:
         self.values = {key: value for key, value in values.items() if key != "doctype"}
         self.name = ""
 
-    def insert(self):
+    def insert(self, set_name=None):
         is_customer = self.values.get("customer_name") is not None
         records = self.frappe_api.customers if is_customer else self.frappe_api.projects
         prefix = "CUST" if is_customer else "PROJ"
-        self.name = f"{prefix}-{len(records) + 1:04d}"
+        if set_name and self.frappe_api.taken_on_insert == set_name:
+            # Another import committed this name after the existence check.
+            raise _DuplicateEntryError("Customer" if is_customer else "Project", set_name)
+        self.name = set_name or f"{prefix}-{len(records) + 1:04d}"
         self.values["name"] = self.name
         records.append(self.values)
 
