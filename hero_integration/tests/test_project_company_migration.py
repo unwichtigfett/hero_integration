@@ -603,6 +603,70 @@ class TestProjectCompanyMigration(unittest.TestCase):
         self.assertIn(("project", "777", "one"), self.frappe.links)
         self.assertIn(("project", "777", "two"), self.frappe.links)
 
+    def _project(self, record, mode="Execute"):
+        return self.migration._migrate_project(record, SimpleNamespace(mode=mode))
+
+    def test_project_title_replay_without_changes_is_idempotent(self):
+        record = _project_title_inputs(id=780, customer_id=101)
+        self.assertEqual(self._project(record).code, "CREATED")
+        title = self.frappe.projects[0]["project_name"]
+        for _ in range(2):
+            self.assertEqual(self._project(record).code, "SKIPPED")
+        self.assertEqual(self.frappe.projects[0]["project_name"], title)
+
+    def test_hero_customer_change_alone_never_renames_a_project(self):
+        # User decision 2026-10-31: a changed customer name or salutation does
+        # not rename an existing Project; trade, number and address still do.
+        record = _project_title_inputs(id=781, customer_id=101)
+        self.assertEqual(self._project(record).code, "CREATED")
+        title = self.frappe.projects[0]["project_name"]
+        renamed = {**record, "customer": {"title": "Frau", "full_name": "Erika Muster"}}
+        self.assertEqual(self._project(renamed, "Preview").code, "PREVIEW_OK")
+        self.assertEqual(self.migration.observe_monitor_record("HeroProjectMatches", renamed).code, "OBSERVED")
+        self.assertEqual(self.frappe.projects[0]["project_name"], title)
+        # The observed customer fields follow HERO; the title does not.
+        self.assertEqual(self._project(renamed).code, "UPDATED")
+        self.assertEqual(self.frappe.projects[0]["custom_hero_customer_full_name"], "Erika Muster")
+        self.assertEqual(self.frappe.projects[0]["project_name"], title)
+        self.assertEqual(self._project(renamed).code, "SKIPPED")
+        self.assertEqual(self.frappe.projects[0]["project_name"], title)
+        self.assertEqual(self._project({**renamed, "project_nr": "1112"}).code, "UPDATED")
+        self.assertEqual(self.frappe.projects[0]["project_name"],
+                         "PV-1112 | Photovoltaik, Frau Erika Muster, Musterstraße 10, 77777 Musterstadt")
+
+    def test_local_project_title_survives_customer_and_title_component_changes(self):
+        record = _project_title_inputs(id=782, customer_id=101)
+        self._project(record)
+        project = self.frappe.projects[0]
+        project["project_name"] = "Locally edited title"
+        self.assertEqual(self._project(record).code, "OBSERVED")
+        renamed = {**record, "customer": {"title": "Frau", "full_name": "Erika Muster"}}
+        result = self._project(renamed)
+        self.assertEqual(result.code, "UPDATED")
+        self.assertEqual(project["project_name"], "Locally edited title")
+        for _ in range(2):  # replay never resolves the conflict by itself
+            result = self._project({**renamed, "project_nr": "1112"})
+            self.assertEqual(result.code, "CONFLICT")
+            self.assertIn("project_name", result.detail)
+            self.assertEqual(project["project_name"], "Locally edited title")
+
+    def test_baseline_without_title_basis_preserves_the_title_once(self):
+        # Links created before the title basis existed cannot tell a customer
+        # change from a number change: the existing title is preserved and the
+        # basis recorded, so the next component change applies again.
+        record = _project_title_inputs(id=783, customer_id=101)
+        self._project(record)
+        title = self.frappe.projects[0]["project_name"]
+        link = self.migration._link("project", "783", "default")
+        hashes = self.migration.decode_hashes(link.source_field_hashes)
+        hashes.pop(self.migration.PROJECT_TITLE_BASIS)
+        link.source_field_hashes = self.migration.encode_hashes(hashes)
+        changed = {**record, "project_nr": "1112"}
+        self.assertNotEqual(self._project(changed).code, "CONFLICT")
+        self.assertEqual(self.frappe.projects[0]["project_name"], title)
+        self.assertEqual(self._project({**record, "project_nr": "1113"}).code, "UPDATED")
+        self.assertTrue(self.frappe.projects[0]["project_name"].startswith("PV-1113 |"))
+
     def test_changed_title_contract_updates_when_the_target_field_is_unchanged(self):
         record = _project_title_inputs(id=778, customer_id=101, project_nr="0001")
         self.assertEqual(self.migration._migrate_project(record, SimpleNamespace(mode="Execute")).code, "CREATED")
