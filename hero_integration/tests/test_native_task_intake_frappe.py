@@ -55,11 +55,94 @@ class TestNativeTaskEmptyTitleOffline(TestCase):
         scope = {'confirmed': True, 'source_instance': 'fixture-task32a', 'source_type': 'Task'}
         with patch.object(migration, 'frappe', fake), patch.object(hero_frappe_mapping, '_lock_active_target'), \
              patch.object(migration, 'managed_target_update', return_value=nullcontext()):
-            result = _migrate_native_task(record, SimpleNamespace(mapping_revision=1, mode='Execute'), _Plan(), scope)
+            result = migration._migrate_native_task(record, SimpleNamespace(mapping_revision=1, mode='Execute'), _Plan(), scope)
         self.assertEqual(result.code, 'CONFLICT')
         self.assertEqual(values, {'subject': 'Local title', 'description': '<p>New</p>'})
         self.assertEqual(decode(link.source_field_hashes)['subject'], baseline['subject'])
         self.assertIn('subject', link.conflict_detail)
+
+
+class _OptionalPlan(_Plan):
+    definitions = [SimpleNamespace(source_path=path)
+                   for path in ('id', 'title', 'comment', 'target_project_match_id', 'due_date')]
+
+
+class TestNativeTaskEmptyOptionalFieldsOffline(TestCase):
+    """Empty optional HERO values are normal and need no review (point 2, 2026-10-31)."""
+
+    scope = {'confirmed': True, 'source_instance': 'fixture-task32a', 'source_type': 'Task'}
+
+    def _existing(self, record, values, status='Conflict', detail='Task optional fields require review.'):
+        from hero_integration.services import migration
+        from hero_integration.services.change_detection import encode, field_hashes
+        from hero_integration.hero_integration.doctype.hero_frappe_mapping import hero_frappe_mapping
+
+        baseline = field_hashes(values)
+        class Task:
+            name = 'TASK-SYNTHETIC'
+            def get(self, field): return values.get(field)
+            def set(self, field, value): values[field] = value
+            def save(self): pass
+        link = SimpleNamespace(name='LINK', target_doctype='Task', target_name='TASK-SYNTHETIC',
+            mapping_version='native-task-v1:1:fixture-v1', source_field_hashes=encode(baseline),
+            target_field_hashes=encode(baseline), sync_status=status, conflict_detail=detail, save=lambda: None)
+        fake_db = SimpleNamespace(sql=lambda query, *args, **kwargs: [SimpleNamespace(name='LINK')]
+                                  if 'HERO Integration Link' in query else [], exists=lambda *args: True,
+                                  get_single_value=lambda *args: 'Europe/Berlin')
+        fake = SimpleNamespace(only_for=lambda role: None, conf=SimpleNamespace(db_name='synthetic'), db=fake_db,
+            get_doc=lambda doctype, *args, **kwargs: link if doctype == 'HERO Integration Link' else Task())
+        with patch.object(migration, 'frappe', fake), patch.object(hero_frappe_mapping, '_lock_active_target'), \
+             patch.object(migration, 'managed_target_update', return_value=nullcontext()):
+            result = migration._migrate_native_task(record, SimpleNamespace(mapping_revision=1, mode='Execute'), _OptionalPlan(), self.scope)
+        return result, link
+
+    def test_empty_optional_values_release_a_falsely_held_task(self):
+        for empty in (None, '', '   '):
+            with self.subTest(empty=empty):
+                record = {'id': 7, '_hero_source_instance': 'fixture-task32a', 'title': 'Call customer',
+                          'comment': empty, 'target_project_match_id': 0, 'due_date': empty}
+                result, link = self._existing(record, {'subject': 'Call customer'})
+                self.assertEqual(result.code, 'SKIPPED')
+                self.assertEqual((link.sync_status, link.conflict_detail), ('Synchronized', ''))
+
+    def test_unusable_optional_value_still_requires_review(self):
+        record = {'id': 7, '_hero_source_instance': 'fixture-task32a', 'title': 'Call customer',
+                  'comment': None, 'target_project_match_id': None, 'due_date': 'next week'}
+        result, link = self._existing(record, {'subject': 'Call customer'}, status='Synchronized', detail='')
+        self.assertEqual(result.code, 'CONFLICT')
+        self.assertIn('custom_hero_due_date', link.conflict_detail)
+
+    def test_hero_clearing_an_imported_value_still_requires_review(self):
+        record = {'id': 7, '_hero_source_instance': 'fixture-task32a', 'title': 'Call customer',
+                  'comment': None, 'target_project_match_id': None, 'due_date': None}
+        result, link = self._existing(record, {'subject': 'Call customer', 'description': '<p>Old</p>'},
+                                      status='Synchronized', detail='')
+        self.assertEqual(result.code, 'CONFLICT')
+        self.assertIn('description', link.conflict_detail)
+
+    def test_new_task_with_empty_optional_values_is_synchronized(self):
+        from hero_integration.services import migration
+        from hero_integration.hero_integration.doctype.hero_frappe_mapping import hero_frappe_mapping
+
+        created = {}
+        class Doc:
+            def __init__(self, values): self.values = values; self.name = 'TASK-NEW'
+            def get(self, field): return self.values.get(field)
+            def insert(self):
+                created[self.values['doctype']] = self.values
+                return self
+        fake_db = SimpleNamespace(sql=lambda *args, **kwargs: [], savepoint=lambda name: None,
+                                  rollback=lambda **kwargs: None, get_single_value=lambda *args: 'Europe/Berlin')
+        fake = SimpleNamespace(only_for=lambda role: None, conf=SimpleNamespace(db_name='synthetic'), db=fake_db,
+                               get_doc=lambda values: Doc(values))
+        record = {'id': 8, '_hero_source_instance': 'fixture-task32a', 'title': 'Call customer',
+                  'comment': '', 'target_project_match_id': None, 'due_date': None}
+        with patch.object(migration, 'frappe', fake), patch.object(hero_frappe_mapping, '_lock_active_target'), \
+             patch.object(migration, 'managed_target_update', return_value=nullcontext()), \
+             patch.object(migration, 'now_datetime', return_value='2026-10-31 00:00:00'):
+            result = migration._migrate_native_task(record, SimpleNamespace(mapping_revision=1, mode='Execute'), _OptionalPlan(), self.scope)
+        self.assertEqual(result.code, 'CREATED')
+        self.assertEqual(created['HERO Integration Link']['sync_status'], 'Synchronized')
 
 
 class TestNativeTaskIntake(TestCase):

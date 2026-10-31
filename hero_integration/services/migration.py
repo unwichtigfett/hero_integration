@@ -1036,8 +1036,8 @@ def _migrate_native_task(record, run, plan, scope) -> Result:
     if record.get('is_deleted') is True:
         return Result('SKIPPED_SOURCE_DELETED', 'Source deletion does not delete or close a Task.')
     if _no_project_match(record.get('target_project_match_id')):
-        # No project: treated as omitted, so it neither links nor clears nor needs review.
-        record = {key: value for key, value in record.items() if key != 'target_project_match_id'}
+        # No project: an explicitly empty value that neither links, clears nor needs review.
+        record = {**record, 'target_project_match_id': None}
     values = {}
     try:
         if ('title' in record and record['title'] is not None
@@ -1082,10 +1082,14 @@ def _migrate_native_task(record, run, plan, scope) -> Result:
                 task = frappe.get_doc({'doctype': 'Task', **values}).insert()
             source_fields = field_hashes(values)
             target_fields = field_hashes({field: task.get(field) for field in values})
-            pending_comment = 'comment' in selected_paths and 'comment' in record and 'description' not in values
-            pending_project = ('target_project_match_id' in selected_paths and 'target_project_match_id' in record
-                               and 'project' not in values)
-            pending_deadline = 'due_date' in selected_paths and 'due_date' in record and 'custom_hero_due_date' not in values
+            # Review only a HERO value that exists but could not be written;
+            # an empty optional value is normal (point 2, 2026-10-31).
+            pending_comment = ('comment' in selected_paths and _task_value_present(record.get('comment'))
+                               and 'description' not in values)
+            pending_project = ('target_project_match_id' in selected_paths
+                               and _task_value_present(record.get('target_project_match_id')) and 'project' not in values)
+            pending_deadline = ('due_date' in selected_paths and _task_value_present(record.get('due_date'))
+                                and 'custom_hero_due_date' not in values)
             frappe.get_doc({
                 'doctype': 'HERO Integration Link', 'source_system': 'HERO', 'source_type': 'Task',
                 'source_id': source_id, 'source_instance': instance, 'sync_status': 'Conflict' if pending_comment or pending_project or pending_deadline else 'Synchronized',
@@ -1130,8 +1134,14 @@ def _migrate_native_task(record, run, plan, scope) -> Result:
             source_base[field], target_base[field] = source_hash, target_hash
         elif decision in {'CONFLICT', 'UNACKNOWLEDGED', 'MAPPING_CHANGED'}: conflicts.append(field)
         elif decision == 'OMITTED':
-            omitted.append(field)
-            if source_path in record: pending.append(field)
+            if source_path not in record:
+                omitted.append(field)  # not returned: no evidence either way
+            elif field == 'subject' or _task_value_present(record[source_path]) or source_base.get(field) is not None:
+                # A blank title, an unusable HERO value or a HERO clear of an
+                # imported value requires review; Frappe keeps its value.
+                omitted.append(field)
+                pending.append(field)
+            # An optional field that HERO never filled is neither a change nor a review case.
     if run.mode == 'Preview':
         return Result('CONFLICT' if conflicts or pending else 'PREVIEW_OK', 'Native Task field comparison completed.', 'Task', task.name)
     if updates:
@@ -1152,6 +1162,10 @@ def _migrate_native_task(record, run, plan, scope) -> Result:
     link.save()
     return Result('CONFLICT' if conflicts or pending or link.sync_status == 'Conflict' else ('UPDATED' if updates else 'SKIPPED'),
                   link.conflict_detail or 'Native Task field comparison completed.', 'Task', task.name)
+
+
+def _task_value_present(value) -> bool:
+    return value is not None and not (isinstance(value, str) and not value.strip())
 
 
 def _external_task_deadline(value):
