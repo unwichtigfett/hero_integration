@@ -130,14 +130,18 @@ def run_materialized_monitor(*, frappe_module=None, client=None):
     from hero_integration.graphql_protocol.transport import Response
     from hero_integration.client.settings import get_configuration
     from hero_integration.client.graphql import HeroGraphQLClient
+    from hero_integration.services.mapping_runtime import effective_rule_fingerprint
+    from hero_integration.hero_integration.doctype.hero_graphql_mapping.hero_graphql_mapping import lock_exchange_context
     import json
 
     frappe = _frappe(frappe_module)
+    frappe.db.rollback()  # MONITOR owns no business writes; start with current committed evidence.
     settings = frappe.get_single("HERO Integration Settings")
     if effective_mode(settings) != "MONITOR":
         raise RuntimeBridgeError("Materialized monitoring requires MONITOR mode.")
     _require_confirmed_source_binding(settings)
     polling = runtime_plan(settings)
+    binding_revision = int(getattr(settings, "source_binding_revision", 0) or 0)
     if polling["unsupported_sources"]:
         raise RuntimeBridgeError("Materialized monitoring configuration is not supported; review the approved query variables.")
     if polling["reconciliation"]:
@@ -168,9 +172,40 @@ def run_materialized_monitor(*, frappe_module=None, client=None):
     _require_latest_validated_snapshot(frappe, settings, source, current.selection)
     if current.selection != executable.selection:
         raise RuntimeBridgeError("Approved monitoring plan changed before the read.")
+    rule_hash = effective_rule_fingerprint(materialized.sealed.contract.definition_ids,
+        executable.selection.graphql_mapping, frappe_module=frappe)
+    # No row/advisory lock or stale read snapshot may survive into HTTP.
+    frappe.db.rollback()
     request = materialized.request
     data = transport.query(request.document, dict(request.variables))
     decode_graphql_result(request, Response(True, json.dumps({"data": data}), True))
+    frappe.db.rollback()
+    # Reuse the existing runtime generation, mapping-root and field-rule locks.
+    # These locks protect only acknowledgement, after transport has completed.
+    rows = frappe.db.sql("SELECT generation FROM `tabHERO Runtime Plan` WHERE plan_key=%s FOR UPDATE",
+                         (approved.plan_key,))
+    if len(rows) != 1 or int(rows[0][0]) != approved.generation:
+        raise RuntimeBridgeError("Monitoring runtime generation changed during transport.")
+    frappe.db.sql("SELECT field FROM `tabSingles` WHERE doctype=%s FOR UPDATE", ("HERO Integration Settings",))
+    latest_settings = frappe.get_single("HERO Integration Settings")
+    _require_confirmed_source_binding(latest_settings)
+    if (int(getattr(latest_settings, "source_binding_revision", 0) or 0) != binding_revision
+            or effective_mode(latest_settings) != "MONITOR" or runtime_plan(latest_settings) != polling
+            or str(getattr(latest_settings, "hero_source_instance", "default") or "default").strip() != source):
+        raise RuntimeBridgeError("Monitoring source/configuration changed during transport.")
+    mapping = frappe.get_doc("HERO GraphQL Mapping", executable.selection.graphql_mapping)
+    lock_exchange_context(mapping.source_instance or '', mapping.schema_snapshot, mapping.direction)
+    for doctype, name in (("HERO GraphQL Mapping", mapping.name),
+                          ("HERO GraphQL Service", executable.selection.graphql_service),
+                          ("HERO GraphQL Schema Snapshot", executable.selection.schema_snapshot)):
+        frappe.get_doc(doctype, name, for_update=True)
+    current = plans.resolve_executable_plan(site, source, approved.generation, True, actor)
+    _require_latest_validated_snapshot(frappe, latest_settings, source, current.selection)
+    if (current.selection != executable.selection
+            or reconstruct_materialized_read_plan(current.selection, frappe_module=frappe) != materialized
+            or effective_rule_fingerprint(materialized.sealed.contract.definition_ids,
+                mapping.name, lock=True, frappe_module=frappe) != rule_hash):
+        raise RuntimeBridgeError("Monitoring reader, schema or effective field rules changed during transport.")
     contract = materialized.sealed.contract
     records = value_at(data, contract.records_path)
     if not isinstance(records, list) or len(records) > contract.page_size or not all(isinstance(row, dict) for row in records):

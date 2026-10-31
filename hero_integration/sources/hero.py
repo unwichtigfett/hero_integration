@@ -196,10 +196,12 @@ class GraphQLServiceSource:
             raise ReadContractError('Read offset is invalid or exceeds the reviewed run bound.')
         if operation != self.contract.target_operation:
             return SourcePage((), None)
+        if callable(self.revalidate) and self.revalidate() != self.contract:
+            raise ReadContractError('Read approval changed before transport.')
         request = getattr(self.contract, 'materialized_request', None)
         if request is not None:
-            if not callable(self.revalidate) or self.revalidate() != self.contract:
-                raise ReadContractError('Generated read approval changed before execution.')
+            if not callable(self.revalidate):
+                raise ReadContractError('Generated read approval changed or revalidation is missing.')
             variables = request.variables
             offsets = [binding.variable_name for binding in request.argument_bindings if binding.argument_name == 'offset']
             if len(offsets) != 1:
@@ -211,6 +213,8 @@ class GraphQLServiceSource:
                 if value == "$offset": variables[name] = offset
                 elif value == "$page_size": variables[name] = self.contract.page_size
         data = self.client.query(self.service.query_document, variables)
+        if callable(self.revalidate) and self.revalidate() != self.contract:
+            raise ReadContractError('Read approval changed during transport.')
         if request is not None:
             import json
             from hero_integration.graphql_protocol.graphql_result_decoder import decode_graphql_result

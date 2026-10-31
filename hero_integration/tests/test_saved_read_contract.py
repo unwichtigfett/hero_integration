@@ -121,7 +121,9 @@ class TestGeneratedTaskRead(unittest.TestCase):
         rows = {spec.definition_id: {**asdict(spec), 'personal_graphql_mapping': 'MAP',
                     'schema_snapshot': 'SNAP', 'schema_fingerprint': fingerprint, 'status': 'Active'} for spec in specs}
         db = SimpleNamespace(sql=lambda query, params, **kwargs: [rows[params[0]]] if params[0] in rows else [])
-        fake_frappe = SimpleNamespace(db=db, get_doc=lambda *args, **kwargs: self.mapping)
+        fake_frappe = SimpleNamespace(db=db, get_doc=lambda *args, **kwargs: self.mapping,
+            get_all=lambda doctype, **kw: [{key: row.get(key) for key in kw.get('fields', row)}
+                                          for row in rows.values() if row['status'] == 'Active'])
         self.rows, self.fake_frappe = rows, fake_frappe
         metadata = SimpleNamespace(ensure_write=lambda doctype: None, field=lambda doctype, field: SimpleNamespace(
             fieldtype='Datetime' if field == 'custom_hero_due_date' else 'Link' if field in {'allocated_to', 'project'} else 'Data',
@@ -248,7 +250,7 @@ class TestGeneratedTaskRead(unittest.TestCase):
         class FakeDB:
             def sql(_, query, values=(), **kwargs):
                 if 'tabHERO Frappe Mapping' in query:
-                    return [self.rows[values[0]]] if values[0] in self.rows else []
+                    return [self.rows[identity] for identity in values if identity in self.rows]
                 if 'tabHERO Integration Link' in query:
                     return [SimpleNamespace(name='LINK-1')] if records['link'] else []
                 return []
@@ -270,6 +272,7 @@ class TestGeneratedTaskRead(unittest.TestCase):
         self.fake_frappe.get_doc = get_doc
         self.fake_frappe.conf = SimpleNamespace(db_name='isolated-fake')
         self.fake_frappe.local = SimpleNamespace(site='test-site')
+        self.fake_frappe.session = SimpleNamespace(user='Administrator')
         self.fake_frappe.only_for = lambda role: None
         self.fake_frappe.has_permission = lambda *args, **kwargs: True
         run = SimpleNamespace(graphql_service='SERVICE', graphql_mapping='MAP', service_revision=7,
@@ -277,16 +280,23 @@ class TestGeneratedTaskRead(unittest.TestCase):
             resume_offset=0, resume_record_index=0, processed=0, created_records=0, conflict_records=0,
             skipped_records=0, save=lambda: None, reload=lambda: None)
         config = SimpleNamespace(endpoint=HeroEndpoint('https://example.invalid/graphql', 'example.invalid'),
-                                 api_token='synthetic', timeout_seconds=5, source_instance='synthetic')
+                                 api_token='synthetic', timeout_seconds=5, source_instance='synthetic',
+                                 source_binding_revision=1, source_binding_confirmed=True)
+        run.source_binding_revision = 1
+        from hero_integration.services.introspection import endpoint_fingerprint
+        self.snapshot.endpoint_fingerprint = endpoint_fingerprint(config.endpoint.url, config.source_instance)
+        self.fake_frappe.get_single = lambda _: SimpleNamespace(polling_rate_limit=10000)
         response = {'tasks': [{'id': 41, 'title': 'Synthetic Task', 'is_deleted': False,
                                'target_user_id': 99, 'author_user_id': None, 'target_project_match_id': 101,
                                'due_date': '2026-10-29T12:30:00+00:00'}]}
         with patch.object(migration, 'frappe', self.fake_frappe), \
+             patch.object(migration, 'get_configuration', return_value=config), \
              patch.object(hero_frappe_mapping, '_lock_active_target'), \
              patch.object(hero_graphql_mapping, 'lock_exchange_context'), \
              patch.object(migration, 'now_datetime', return_value='synthetic-time'), \
-             patch.object(HeroGraphQLClient, '_post', return_value=response) as transport, \
+             patch.object(HeroGraphQLClient, '_post', side_effect=[response, {'tasks': []}, response, {'tasks': []}]) as transport, \
              patch.object(migration, 'record_output') as output:
+            migration.bind_run_checkpoint(run)
             source = migration._source_for_run(run, config)
             migration._process_projection(run, source)
             run.resume_offset = run.resume_record_index = 0
@@ -298,7 +308,7 @@ class TestGeneratedTaskRead(unittest.TestCase):
         self.assertEqual(records['task'].project, 'PROJECT-1')
         self.assertEqual(str(records['task'].custom_hero_due_date), '2026-10-29 13:30:00')
         self.assertTrue(any('PENDING_IDENTITY' in event.get('detail', '') for event in events))
-        self.assertEqual(transport.call_count, 2)
+        self.assertEqual(transport.call_count, 4)
 
 
 class _Client:

@@ -46,14 +46,28 @@ class TestMappingExchange(unittest.TestCase):
             result = mapping_exchange._preview_item(item, {item['definition_id']: local}, set())
         self.assertEqual('Conflict', result['state'])
 
-    def test_migration_is_blocked_before_enqueue_when_active_mapping_is_missing(self):
-        calls = []
-        fake_api_frappe = SimpleNamespace(
+    def _fake_api_frappe(self, calls, *, checkpoint_schema=True):
+        return SimpleNamespace(
             only_for=lambda role: calls.append(("only_for", role)),
             enqueue=lambda *args, **kwargs: calls.append(("enqueue", args, kwargs)),
             throw=lambda message: (_ for _ in ()).throw(ValueError(message)),
             get_single=lambda doctype: SimpleNamespace(testing_enabled=0, testing_max_actions=5) if doctype == "HERO Integration Settings" else (_ for _ in ()).throw(AssertionError(f"Unexpected singleton: {doctype}")),
+            get_meta=lambda doctype: SimpleNamespace(
+                has_field=lambda field: checkpoint_schema and (doctype, field) == ("HERO Integration Run", "checkpoint_contract_json")),
         )
+
+    def test_migration_is_blocked_before_enqueue_without_the_checkpoint_schema(self):
+        calls = []
+        with patch.object(api, "frappe", self._fake_api_frappe(calls, checkpoint_schema=False)), \
+                patch.object(api, "_approved_read_service") as service:
+            with self.assertRaisesRegex(ValueError, "checkpoint schema is not installed"):
+                api.start_migration("Customer Migration", graphql_service="SERVICE")
+        service.assert_not_called()
+        self.assertEqual(calls, [("only_for", "System Manager")])
+
+    def test_migration_is_blocked_before_enqueue_when_active_mapping_is_missing(self):
+        calls = []
+        fake_api_frappe = self._fake_api_frappe(calls)
         service = SimpleNamespace(name="SERVICE", service_revision=1)
         mapping = SimpleNamespace(name="MAPPING", mapping_revision=1)
         with patch.object(api, "frappe", fake_api_frappe), patch.object(
