@@ -130,6 +130,15 @@ class TestProjectTrades(unittest.TestCase):
         record['measure'] = {'short': 'X1', 'name': 'Dachsanierung'}
         self.assertTrue(build_project_title(record).startswith('DS-1042 | Dachsanierung,'))
 
+    def test_conflicting_confirmed_measure_values_block_the_title(self):
+        from hero_integration.services.project_naming import ProjectTitleValidationError, build_project_title
+        record = {**self.record('UNMANAGED'), 'measure': {'short': 'PV', 'name': 'Klimatechnik'}}
+        with self.assertRaises(ProjectTitleValidationError):
+            build_project_title(record)
+        record['measure'] = {'short': 'X1', 'name': 'Y2'}
+        with self.assertRaises(ProjectTitleValidationError):
+            build_project_title(record)
+
     def test_project_query_v2_reads_the_measure_and_v1_is_unchanged(self):
         from hero_integration.sources import hero
         self.assertEqual(hero.project_query('v1'), hero.PROJECT_QUERY_V1)
