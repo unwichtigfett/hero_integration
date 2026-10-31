@@ -24,11 +24,11 @@ from hero_integration.sources.hero import GraphQLServiceSource, HeroSource, Sour
 from hero_integration.services.change_detection import (
     changed_fields, decode as decode_hashes, encode as encode_hashes, field_hashes, managed_target_update, next_baseline, reconcile,
 )
-from hero_integration.services.conflict_notifications import notify_conflict_once
+from hero_integration.services.conflict_notifications import notify_conflict_once, notify_review, notify_run_summary
 from hero_integration.services.integration_events import record_output
 from hero_integration.services.mapping_runtime import MappingPlanError, active_mapping_plan
 from hero_integration.services.business_numbers import BusinessNumberError, customer_document_name, project_reference
-from hero_integration.services.project_naming import ProjectTitleValidationError, build_project_title
+from hero_integration.services.project_naming import ProjectAddressError, ProjectTitleValidationError, build_project_title
 from hero_integration.services.projection_contracts import CONTRACTS as PROJECTIONS, validate_projection_record
 
 
@@ -131,6 +131,7 @@ def execute_run(run_name: str) -> None:
             run.finished_on = now_datetime()
             run.save()
             _mark_sync_success(run)
+            _notify_not_imported(run)
     except RepeatedProjectionPageError as error:
         failed = True
         frappe.db.rollback()
@@ -143,6 +144,7 @@ def execute_run(run_name: str) -> None:
         run.finished_on = now_datetime()
         run.save()
         _mark_sync_error(run)
+        _notify_not_imported(run)
     except _Cancelled:
         run.reload()
         run.state = "Cancelled"
@@ -162,6 +164,17 @@ def execute_run(run_name: str) -> None:
             if testing_source is not None:
                 _persist_testing_result(run, testing_source)
             _release_run(run.name)
+
+
+def _notify_not_imported(run) -> None:
+    """Every record a run could not import reaches the administrators (user decision 2026-10-31)."""
+    if getattr(run, "mode", "") == "Preview":
+        return
+    try:
+        notify_run_summary(run.name)
+    except Exception:
+        # A notification failure never changes the outcome of a finished run.
+        frappe.log_error(title="HERO run summary notification failed")
 
 
 def _validate_run_source_binding(run, config, snapshot=None):
@@ -1173,6 +1186,10 @@ def _migrate_projection(record, run, plan) -> Result:
         # held before resolving the saved native options.  This makes Preview
         # fail closed even when it is invoked with a minimal test/run context,
         # and guarantees the protected target is never updated.
+        held = _review_hold(existing)
+        if held:
+            return held
+        target = None
         if existing:
             if existing.target_doctype != 'Event':
                 return Result('CONFLICT', 'Stored calendar binding is not a native Event.')
@@ -1190,6 +1207,9 @@ def _migrate_projection(record, run, plan) -> Result:
             if contract.get('native_kind') == 'event' and options['target_timezone'] != frappe.db.get_single_value('System Settings', 'time_zone'):
                 raise MappingPlanError('Configured event target timezone differs from the native System Settings timezone.')
             defaults = creation_defaults(contract, options)
+            if target is not None and target.get('custom_hero_is_recurring') and record.get('is_recurring') is True:
+                # An approved recurring event keeps its reviewed times silently.
+                review = [reason for reason in review if not reason.startswith('Recurring HERO event')]
         values = plan.values(record, project_link=lambda value: _project_name_for_source(value, instance),
                              native_value=lambda target: native_values[target], allow_partial=bool(existing))
         values['custom_hero_key'] = _digest([instance, contract['source_type'], source_id])
@@ -1199,8 +1219,9 @@ def _migrate_projection(record, run, plan) -> Result:
     result = _upsert(contract['source_type'], source_id, record, values, contract['target_doctype'],
                    'item_code' if contract['target_doctype'] == 'Item' else 'custom_hero_key', plan.mapping_version, run, source_instance=instance,
                    target_snapshot=lambda target: _projection_target_values(target, values, contract), creation_values=defaults,
-                   preserve_omitted=contract.get('native_kind') == 'event')
-    if review and result.code in {'UPDATED', 'SKIPPED', 'OBSERVED', 'PREVIEW_OK'}:
+                   preserve_omitted=contract.get('native_kind') == 'event',
+                   review_reason=' '.join(review) if review and not existing else None)
+    if review and existing and result.code in {'UPDATED', 'SKIPPED', 'OBSERVED', 'PREVIEW_OK'}:
         detail = 'Event time or recurrence requires review; unrelated field changes were considered. ' + review[0]
         if run.mode != 'Preview':
             _mark_link_conflict(frappe.get_doc('HERO Integration Link', existing.name), detail)
@@ -1257,6 +1278,8 @@ def _project_name_for_source(value, source_instance):
     if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
         raise MappingPlanError('ProjectMatch reference must be a positive integer.')
     link = _link('project', str(value), source_instance)
+    if getattr(link, 'sync_status', '') in {REVIEW_PENDING, REVIEW_REJECTED}:
+        raise MappingPlanError('ProjectMatch reference awaits or failed administrator review; linked records wait.')
     if not link or link.target_doctype != 'Project' or not frappe.db.exists('Project', link.target_name):
         raise MappingPlanError('ProjectMatch reference has no verified native Project binding.')
     frappe.has_permission('Project', 'read', doc=frappe.get_doc('Project', link.target_name), throw=True)
@@ -1270,15 +1293,42 @@ def _migrate_project(record: dict[str, object], run) -> Result:
         plan = _mapping_plan_for_run(run, "HeroProjectMatches")
         source_id = plan.source_identity(record)
         source_instance = _source_instance(record)
-        values = plan.values(
-            record, lambda value: _customer_name_for_source(value, source_instance), _confirmed_company_name,
-            _project_title_for_record,
-        )
+        existing = _link("project", source_id, source_instance)
+        held = _review_hold(existing)
+        if held:
+            return held
+        review, keep = [], set()
+
+        def customer_for(value):
+            try:
+                return _customer_name_for_source(value, source_instance)
+            except UnlinkedCustomerError:
+                if existing:
+                    keep.add("customer")
+                    return None
+                review.append("The HERO customer has no unambiguous ERPNext link; the Project has no customer.")
+                return None
+
+        def title_for(source):
+            try:
+                return _project_title_for_record(source)
+            except ProjectAddressError as error:
+                if existing:
+                    keep.add("project_name")
+                    return "-"
+                review.append(f"The project address is missing or incomplete ({error}); the title omits it.")
+                return _project_title_for_record(source, include_address=False)
+
+        values = plan.values(record, customer_for, _confirmed_company_name, title_for)
+        # An existing Project keeps its current customer/title when HERO no
+        # longer supplies a usable value; nothing is cleared or renamed.
+        for field in keep:
+            values.pop(field, None)
+            values.missing.add(field)
         values["custom_hero_source_id"] = f"{source_instance}:{source_id}"
         document_name, name_note = _document_name(project_reference, record, "project display_id")
     except (MappingPlanError, ProjectTitleValidationError) as error:
         return Result("BLOCKED_RECORD", str(error))
-    existing = _link("project", source_id, source_instance)
     title_basis = _hold_customer_only_title_change(record, values, existing)
     if not values.get("project_name") and not ("project_name" in values.missing and existing):
         return Result("BLOCKED_RECORD", "Configured project record name is empty.")
@@ -1292,6 +1342,7 @@ def _migrate_project(record: dict[str, object], run) -> Result:
         "project", source_id, record, values, "Project", "project_name", plan.mapping_version, run,
         source_instance=source_instance, required_on_create=("customer", "project_name"),
         comparison_extra=title_basis, document_name=document_name,
+        review_reason=" ".join(review) or None,
     )
     if name_note and _creates(result):
         from dataclasses import replace
@@ -1466,11 +1517,15 @@ def _upsert(
     comparison_extra: dict | None = None,
     required_on_create: tuple[str, ...] = (),
     document_name: str | None = None,
+    review_reason: str | None = None,
 ) -> Result:
     if not _target_available(doctype):
         return Result("UNAVAILABLE", f"{doctype} is not installed on this site.")
     source_hash = _digest(record)
     existing = _link(source_type, source_id, source_instance)
+    held = _review_hold(existing)
+    if held:
+        return held
     if existing:
         if existing.target_doctype != doctype:
             return Result('CONFLICT', 'Stored binding has an incompatible target DocType.')
@@ -1589,8 +1644,9 @@ def _upsert(
         target_hash = _digest(target_values)
         frappe.get_doc({
             "doctype": "HERO Integration Link", "source_system": "HERO", "source_type": source_type,
-            "source_id": source_id, "source_instance": source_instance, "sync_status": "Synchronized",
-            "conflict_detail": "", "last_synced_on": now_datetime(),
+            "source_id": source_id, "source_instance": source_instance,
+            "sync_status": REVIEW_PENDING if review_reason else "Synchronized",
+            "conflict_detail": review_reason or "", "last_synced_on": now_datetime(),
             "target_doctype": doctype, "target_name": target.name, "source_payload_hash": source_hash,
             "target_payload_hash": target_hash, "source_field_hashes": encode_hashes(comparison.source_hashes),
             "target_field_hashes": encode_hashes(field_hashes(target_values)), "mapping_version": mapping_version,
@@ -1618,7 +1674,69 @@ def _upsert(
         if hasattr(frappe, "clear_messages"):
             frappe.clear_messages()
         return Result("CONFLICT", _name_taken(doctype, document_name), doctype)
+    if review_reason:
+        notify_review(_link(source_type, source_id, source_instance), review_reason)
+        return Result("PENDING_REVIEW", review_reason + " Linked records wait for an administrator decision.",
+                      doctype, target.name)
     return Result("CREATED", "Target created through native Frappe validation.", doctype, target.name)
+
+
+REVIEW_PENDING, REVIEW_REJECTED = "Pending Review", "Rejected"
+
+
+def _review_hold(link) -> Result | None:
+    """A record awaiting or refused by an administrator is never written by a run."""
+    status = getattr(link, "sync_status", "") if link else ""
+    if status == REVIEW_PENDING:
+        return Result("PENDING_REVIEW", "Awaits administrator approval: " + (link.conflict_detail or ""),
+                      link.target_doctype, link.target_name)
+    if status == REVIEW_REJECTED:
+        return Result("SKIPPED_REJECTED", "An administrator rejected this HERO record; it is not imported.",
+                      link.target_doctype)
+    return None
+
+
+def _references_besides_hero(doctype: str, name: str) -> str | None:
+    """Name the first static or dynamic reference other than the HERO binding itself."""
+    from frappe.model.delete_doc import get_dynamic_linked_docs
+    from frappe.desk.form.linked_with import get_linked_docs, get_linked_doctypes
+
+    document = frappe.get_doc(doctype, name)
+    for reference in get_dynamic_linked_docs(document):
+        if reference["reference_doctype"] != "HERO Integration Link":
+            return f"{reference['reference_doctype']} {reference['reference_docname']}"
+    linked = get_linked_docs(doctype, name, linkinfo=get_linked_doctypes(doctype)) or {}
+    for reference_doctype, found in linked.items():
+        # Frappe v16: {"docs": [...permitted rows], "hidden_count": n}
+        docs, hidden = found.get("docs") or [], int(found.get("hidden_count") or 0)
+        if reference_doctype != "HERO Integration Link" and (docs or hidden):
+            return f"{reference_doctype} {docs[0].get('name') if docs else '(not permitted)'}"
+    return None
+
+
+def decide_review(link, decision: str) -> None:
+    """Administrator decision for a held record: approve releases it, reject deletes the target.
+
+    There is deliberately no edit path (user decision 2026-10-31).
+    """
+    if getattr(link, "sync_status", "") != REVIEW_PENDING:
+        raise MappingPlanError("Only a record that awaits review can be approved or rejected.")
+    if decision == "approve":
+        link.sync_status, link.conflict_detail = "Synchronized", ""
+    elif decision == "reject":
+        if link.target_name and frappe.db.exists(link.target_doctype, link.target_name):
+            other = _references_besides_hero(link.target_doctype, link.target_name)
+            if other:
+                raise MappingPlanError(
+                    f"{link.target_doctype} {link.target_name} is referenced by {other}; it was not deleted.")
+            # Only this binding still points to the held target; Frappe's own
+            # link check would always refuse because of it.
+            frappe.delete_doc(link.target_doctype, link.target_name, force=True)
+        link.sync_status = REVIEW_REJECTED
+        link.conflict_detail = "Rejected by an administrator; HERO changes are not imported."
+    else:
+        raise MappingPlanError("Review decision must be approve or reject.")
+    _save_link(link)
 
 
 def _record_result(run, source_type: str, record: dict[str, object], result: Result) -> None:
@@ -1631,7 +1749,7 @@ def _record_result(run, source_type: str, record: dict[str, object], result: Res
     run.processed = int(run.processed or 0) + 1
     if result.code == "CREATED":
         run.created_records = int(run.created_records or 0) + 1
-    elif result.code in {"CONFLICT", "SKIPPED_AMBIGUOUS", "BLOCKED_RECORD", "UNAVAILABLE"}:
+    elif result.code in {"CONFLICT", "SKIPPED_AMBIGUOUS", "BLOCKED_RECORD", "UNAVAILABLE", "PENDING_REVIEW"}:
         run.conflict_records = int(run.conflict_records or 0) + 1
     else:
         run.skipped_records = int(run.skipped_records or 0) + 1
@@ -1726,13 +1844,17 @@ def _save_link(link) -> None:
         link.save()
 
 
+class UnlinkedCustomerError(MappingPlanError):
+    """The HERO customer has no unambiguous ERPNext Customer link."""
+
+
 def _customer_name_for_source(value: object, source_instance: str = "default") -> str:
     if type(value) is not int or value <= 0:
         raise MappingPlanError("The configured HERO customer relation requires a positive integer identity.")
     source_id = str(value)
     customer_link = _link("customer", source_id, source_instance)
     if not customer_link or customer_link.target_doctype != "Customer":
-        raise MappingPlanError("The configured HERO customer relation has no unambiguous ERPNext link.")
+        raise UnlinkedCustomerError("The configured HERO customer relation has no unambiguous ERPNext link.")
     return customer_link.target_name
 
 
@@ -1968,13 +2090,13 @@ def _confirmed_company_name() -> str:
     return company.name
 
 
-def _project_title_for_record(record: dict[str, object]) -> str:
+def _project_title_for_record(record: dict[str, object], include_address: bool = True) -> str:
     """Resolve the ERPNext field limit before constructing a deterministic title."""
     field = frappe.get_meta("Project").get_field("project_name")
     limit = getattr(field, "length", None)
     # Frappe Data fields use 140 when no site-specific explicit length is set.
     max_length = int(limit) if isinstance(limit, int) and not isinstance(limit, bool) and limit > 0 else 140
-    return build_project_title(record, max_length=max_length)
+    return build_project_title(record, max_length=max_length, include_address=include_address)
 
 
 def _mark_sync_success(run) -> None:

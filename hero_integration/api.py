@@ -3564,3 +3564,17 @@ def _require_selected_mappings(action: str, service, mapping, dependencies=None)
         )
     except MappingPlanError as error:
         frappe.throw(str(error))
+
+
+@frappe.whitelist(methods=["POST"])
+def decide_hero_review(link: str, decision: str) -> dict[str, str]:
+    """Approve or reject one HERO record held for administrator review (no edit path)."""
+    frappe.only_for("System Manager")
+    from hero_integration.services.migration import MappingPlanError, decide_review
+
+    document = frappe.get_doc("HERO Integration Link", link, for_update=True)
+    try:
+        decide_review(document, decision)
+    except MappingPlanError as error:
+        frappe.throw(str(error))
+    return {"status": document.sync_status}

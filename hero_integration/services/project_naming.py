@@ -27,6 +27,10 @@ class ProjectTitleValidationError(ValueError):
     """Raised before a Project document is created when title data is incomplete."""
 
 
+class ProjectAddressError(ProjectTitleValidationError):
+    """The project address is missing or incomplete (admin review, user decision 2026-10-31)."""
+
+
 def project_title_missing(record: Mapping[str, object]) -> bool:
     """Identify omitted title inputs without treating explicit null as absence."""
     if "project_nr" not in record or ("project_type" not in record and "confirmed_project_type" not in record):
@@ -41,19 +45,26 @@ def project_title_missing(record: Mapping[str, object]) -> bool:
     return False
 
 
-def build_project_title(record: Mapping[str, object], *, max_length: int = PROJECT_NAME_MAX_LENGTH) -> str:
-    """Build the native ``Project.project_name`` without guessing domain values."""
+def build_project_title(
+    record: Mapping[str, object], *, max_length: int = PROJECT_NAME_MAX_LENGTH, include_address: bool = True,
+) -> str:
+    """Build the native ``Project.project_name`` without guessing domain values.
+
+    A missing salutation is no block (user decision 2026-10-31).  Without
+    ``include_address`` the title ends after the customer, for a new Project
+    that waits for administrator review of its missing address.
+    """
     if not isinstance(max_length, int) or isinstance(max_length, bool) or max_length < 1:
         raise ProjectTitleValidationError("ERPNext Project.project_name has no valid maximum length.")
 
     trade_code, trade_name = project_trade(record)
     project_number = _project_number(record, trade_code)
     customer = _mapping(record.get("customer"), "ProjectMatch.customer")
-    salutation = _required_text(customer.get("title"), "ProjectMatch.customer.title")
+    salutation = customer.get("title") if isinstance(customer.get("title"), str) else ""
     customer_name = _required_text(customer.get("full_name"), "ProjectMatch.customer.full_name")
-    address = _project_address(record.get("address"))
-
-    title = f"{trade_code}-{project_number} | {trade_name}, {salutation} {customer_name}, {address}"
+    title = f"{trade_code}-{project_number} | {trade_name}, {salutation} {customer_name}"
+    if include_address:
+        title += f", {_project_address(record.get('address'))}"
     title = " ".join(title.split())
     if len(title) > max_length:
         raise ProjectTitleValidationError(
@@ -103,15 +114,20 @@ def _project_number(record: Mapping[str, object], trade_code: str) -> str:
 
 
 def _project_address(value: object) -> str:
-    address = _mapping(value, "ProjectMatch.address")
-    formatted = address.get("full_address") or address.get("formatted_address")
-    if isinstance(formatted, str) and formatted.strip():
-        return _normalise_address_text(formatted, "ProjectMatch.address.full_address")
+    try:
+        address = _mapping(value, "ProjectMatch.address")
+        formatted = address.get("full_address") or address.get("formatted_address")
+        if isinstance(formatted, str) and formatted.strip():
+            return _normalise_address_text(formatted, "ProjectMatch.address.full_address")
 
-    street = _required_text(address.get("street"), "ProjectMatch.address.street")
-    house_number = _required_text(address.get("house_number"), "ProjectMatch.address.house_number")
-    postal_code = _required_text(address.get("postal_code"), "ProjectMatch.address.postal_code")
-    city = _required_text(address.get("city"), "ProjectMatch.address.city")
+        street = _required_text(address.get("street"), "ProjectMatch.address.street")
+        house_number = _required_text(address.get("house_number"), "ProjectMatch.address.house_number")
+        postal_code = _required_text(address.get("postal_code"), "ProjectMatch.address.postal_code")
+        city = _required_text(address.get("city"), "ProjectMatch.address.city")
+    except ProjectAddressError:
+        raise
+    except ProjectTitleValidationError as error:
+        raise ProjectAddressError(str(error)) from error
     return f"{street} {house_number}, {postal_code} {city}"
 
 
