@@ -20,7 +20,7 @@ PREVIEW = SimpleNamespace(mode="Preview")
 
 class TestBusinessNumber(unittest.TestCase):
     def test_a_hero_number_is_kept_as_text(self):
-        for value, expected in (("2222", "2222"), ("0022", "0022"), (2222, "2222"), (" 2222 ", "2222"), ("C-401", "C-401")):
+        for value, expected in (("2222", "2222"), ("0022", "0022"), (2222, "2222"), ("C-401", "C-401")):
             with self.subTest(value=value):
                 self.assertEqual(business_number(value), expected)
 
@@ -30,7 +30,7 @@ class TestBusinessNumber(unittest.TestCase):
                 self.assertIsNone(business_number(value))
 
     def test_a_number_that_cannot_be_a_document_name_is_refused(self):
-        for value in ("22 22", "22/22", "-22", "22-", "x" * 141, True, 22.5, {"nr": 1}):
+        for value in (" 2222 ", "22 22", "22/22", "-22", "22-", "x" * 141, True, 22.5, {"nr": 1}):
             with self.subTest(value=value), self.assertRaises(BusinessNumberError):
                 business_number(value)
 
@@ -54,6 +54,14 @@ class TestProjectReference(unittest.TestCase):
         for record in ({"display_id": "3333"}, {"display_id": "3333", "measure": {"short": "XYZ"}}):
             with self.subTest(record=record), self.assertRaises(ProjectTitleValidationError):
                 project_reference(record)
+
+    def test_conflicting_measure_code_and_name_are_ambiguous(self):
+        with self.assertRaises(ProjectTitleValidationError):
+            project_reference({"display_id": "3333", "measure": {"short": "PV", "name": "Elektrohandwerk"}})
+
+    def test_combined_reference_must_fit_the_native_name_limit(self):
+        with self.assertRaises(BusinessNumberError):
+            project_reference({"display_id": "1" * 138, "measure": {"short": "PV"}})
 
     def test_without_display_id_there_is_no_reference(self):
         self.assertIsNone(project_reference({"measure": {"short": "PV"}}))
@@ -87,16 +95,30 @@ class TestBusinessNumberMigration(FakeFrappeMigrationHarness, unittest.TestCase)
         self.assertEqual(self.frappe.customers[0]["name"], "0022")
         self.assertEqual(self.frappe.customers[0]["custom_hero_customer_number"], "0022")
 
-    def test_a_customer_without_number_gets_the_site_series_and_a_note(self):
+    def test_a_customer_without_number_gets_an_internal_id_and_a_note(self):
         result = self.migrate_customer(self.customer(nr=None))
-        self.assertEqual((result.code, result.target_name), ("CREATED", "CUST-0001"))
+        self.assertEqual(result.code, "CREATED")
+        self.assertTrue(result.target_name.startswith("HERO-CUSTOMER-"))
         self.assertIn("HERO has no customer number", result.detail)
 
     def test_an_unusable_number_stays_visible_and_the_reason_is_reported(self):
         result = self.migrate_customer(self.customer(nr="22/22"))
-        self.assertEqual((result.code, result.target_name), ("CREATED", "CUST-0001"))
+        self.assertEqual(result.code, "CREATED")
+        self.assertTrue(result.target_name.startswith("HERO-CUSTOMER-"))
         self.assertEqual(self.frappe.customers[0]["custom_hero_customer_number"], "22/22")
         self.assertIn("'22/22'", result.detail)
+
+    def test_whitespace_number_is_retained_without_fabricating_a_business_number(self):
+        result = self.migrate_customer(self.customer(nr=" 0022 "))
+        self.assertEqual(result.code, "CREATED")
+        self.assertTrue(result.target_name.startswith("HERO-CUSTOMER-"))
+        self.assertEqual(self.frappe.customers[0]["custom_hero_customer_number"], " 0022 ")
+
+    def test_explicitly_cleared_business_number_is_a_drift_conflict(self):
+        self.migrate_customer(self.customer())
+        result = self.migrate_customer(self.customer(nr=""))
+        self.assertEqual(result.code, "CONFLICT")
+        self.assertEqual(self.frappe.customers[0]["custom_hero_customer_number"], "2222")
 
     def test_a_repeated_import_is_idempotent(self):
         self.migrate_customer(self.customer())
@@ -153,6 +175,13 @@ class TestBusinessNumberMigration(FakeFrappeMigrationHarness, unittest.TestCase)
         self.assertNotIn(("customer", "302", "account-b"), self.frappe.links)
         self.assertEqual(self.frappe.links[("customer", "301")].target_name, "2222")
 
+    def test_two_source_identities_with_the_same_customer_number_conflict(self):
+        self.migrate_customer(self.customer())
+        result = self.migrate_customer(self.customer(id=302, full_name="Synthetic other customer"))
+        self.assertEqual(result.code, "CONFLICT")
+        self.assertEqual(len(self.frappe.customers), 1)
+        self.assertNotIn(("customer", "302"), self.frappe.links)
+
     def test_preview_names_the_new_document_and_writes_nothing(self):
         result = self.migrate_customer(self.customer(), PREVIEW)
         self.assertEqual(result.code, "PREVIEW_OK")
@@ -175,6 +204,24 @@ class TestBusinessNumberMigration(FakeFrappeMigrationHarness, unittest.TestCase)
         self.assertEqual(project["custom_hero_source_id"], "default:201")
         self.assertEqual(self.frappe.links[("project", "201")].target_name, "PV-3333")
 
+    def test_legacy_project_id_and_historical_title_are_preserved_on_reimport(self):
+        record = self.project()
+        self.migrate_project(record)
+        project, = self.frappe.projects
+        historical_title = project["project_name"]
+        project["name"] = "PROJ-LEGACY-0007"
+        self.frappe.links[("project", "201")].target_name = "PROJ-LEGACY-0007"
+        result = self.migrate_project(record)
+        self.assertEqual((result.code, result.target_name), ("SKIPPED", "PROJ-LEGACY-0007"))
+        self.assertEqual(len(self.frappe.projects), 1)
+        self.assertEqual(project["project_name"], historical_title)
+
+    def test_distinct_projects_with_the_same_trade_and_display_id_conflict(self):
+        self.migrate_project(self.project())
+        result = self.migrate_project(self.project(id=202))
+        self.assertEqual(result.code, "CONFLICT")
+        self.assertEqual(len(self.frappe.projects), 1)
+
     def test_the_hero_measure_decides_the_prefix(self):
         record = self.project(project_nr="1769", display_id="1769", measure={"short": "ELEK"})
         self.assertEqual(self.migrate_project(record).target_name, "ELEK-1769")
@@ -194,6 +241,13 @@ class TestBusinessNumberMigration(FakeFrappeMigrationHarness, unittest.TestCase)
         result = self.migrate_project(self.project())
         self.assertEqual(result.code, "CONFLICT")
         self.assertEqual(len(self.frappe.projects), 1)
+
+    def test_identical_project_reference_never_cross_links_source_instances(self):
+        self.migrate_project(self.project())
+        result = self.migrate_project(self.project(id=202, _hero_source_instance="account-b"))
+        self.assertEqual(result.code, "CONFLICT")
+        self.assertEqual(len(self.frappe.projects), 1)
+        self.assertNotIn(("project", "202", "account-b"), self.frappe.links)
 
     def test_a_changed_display_id_is_reported_and_not_applied(self):
         self.migrate_project(self.project())
@@ -216,14 +270,12 @@ class TestRenamePreview(unittest.TestCase):
         return {"doctype": doctype, "current_name": current, "proposed_name": proposed, "link_status": status,
                 "links_to_target": links, "collision": "", "safe_rename": False, "reason": ""}
 
-    def test_the_project_trade_comes_from_the_validated_title_only(self):
+    def test_project_preview_never_guesses_trade_from_a_title(self):
         propose = self.preview._project_proposal
-        self.assertEqual(propose({"project_name": "ELEK-1769 | Elektrohandwerk, Herr X"}, "1769"), ("ELEK-1769", ""))
-        self.assertEqual(propose({"project_name": "PV-0042 | Photovoltaik, Herr X"}, "0042"), ("PV-0042", ""))
-        for title in ("XYZ-1769 | Unknown", "Freitext 1769", "PV-1770 | Photovoltaik"):
-            with self.subTest(title=title):
-                self.assertIsNone(propose({"project_name": title}, "1769")[0])
-        self.assertEqual(propose({"project_name": "PV-1 | x"}, None), (None, "no HERO display_id"))
+        for title in ("ELEK-1769 | Elektrohandwerk, Herr X", "PV-1769 | Historical title"):
+            self.assertIsNone(propose({"project_name": title}, "1769")[0])
+        self.assertEqual(propose({}, "0017", trade="ELEK"), ("ELEK-0017", ""))
+        self.assertEqual(propose({"custom_hero_project_type": "Photovoltaik"}, "0033"), ("PV-0033", ""))
 
     def test_only_unambiguous_synchronized_records_are_safe_to_rename(self):
         rows = [
@@ -234,7 +286,9 @@ class TestRenamePreview(unittest.TestCase):
             self.row("KD-00006", "6666", links=2),
             self.row("7777", "7777"),
         ]
-        with mock.patch.object(self.preview.frappe.db, "exists", side_effect=lambda doctype, name: name == "3333"):
+        with mock.patch.object(self.preview, "frappe", SimpleNamespace(db=SimpleNamespace(
+                exists=lambda doctype, name: name == "3333"),
+                get_meta=lambda doctype: SimpleNamespace(allow_rename=True))):
             self.preview._judge(rows)
         self.assertEqual([row["safe_rename"] for row in rows], [True, False, False, False, False, False, False])
         self.assertEqual(rows[1]["collision"], "name used by Customer 3333")

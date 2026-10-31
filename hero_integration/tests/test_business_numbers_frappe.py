@@ -108,6 +108,71 @@ class TestBusinessNumbersOnERPNext(unittest.TestCase):
         self.assertEqual(self.link_target("project"), reference)
         self.assertEqual(frappe.db.get_value("Project", reference, "custom_hero_display_id"), f"0{self.digits}")
 
+    def test_legacy_customer_id_is_reused_without_rename(self):
+        legacy = f"KD-TEST-{self.digits}"
+        values = {"customer_name": f"BN Test {self.digits}", "customer_type": "Individual",
+                  "custom_hero_customer_number": self.digits}
+        first = migration._upsert("customer", self.source_id, {"id": self.source_id}, values,
+                                  "Customer", "customer_name", "bn-test", EXECUTE, document_name=legacy)
+        repeated = migration._upsert("customer", self.source_id, {"id": self.source_id}, values,
+                                     "Customer", "customer_name", "bn-test", EXECUTE, document_name=self.digits)
+        self.assertEqual((first.code, repeated.code, repeated.target_name), ("CREATED", "SKIPPED", legacy))
+        self.assertFalse(frappe.db.exists("Customer", self.digits))
+
+    def test_invalid_number_keeps_raw_value_and_uses_an_internal_id(self):
+        raw = f" 0{self.digits}/22 "
+        name, note = migration._document_name(migration.customer_document_name, {"nr": raw},
+                                              "customer number", internal_prefix="HERO-CUSTOMER")
+        result = migration._upsert("customer", self.source_id, {"id": self.source_id},
+            {"customer_name": f"BN Test {self.digits}", "customer_type": "Individual",
+             "custom_hero_customer_number": raw}, "Customer", "customer_name", "bn-test", EXECUTE,
+            document_name=name)
+        self.assertEqual(result.code, "CREATED")
+        self.assertTrue(name.startswith("HERO-CUSTOMER-"))
+        self.assertIn("internal ID", note)
+        self.assertEqual(frappe.db.get_value("Customer", name, "custom_hero_customer_number"), raw)
+
+    def test_business_number_changes_and_explicit_clears_require_review(self):
+        self.upsert_customer(self.digits)
+        for incoming in (self.digits + "1", "", None):
+            with self.subTest(incoming=incoming):
+                result = migration._business_number_drift("customer", self.source_id, "default", "Customer",
+                    "custom_hero_customer_number", incoming, "customer number", SimpleNamespace(mode="Preview"))
+                self.assertEqual(result.code, "CONFLICT")
+                self.assertEqual(frappe.db.get_value("Customer", self.digits, "custom_hero_customer_number"), self.digits)
+
+    def test_source_instances_never_cross_link_on_identical_numbers(self):
+        for instance, expected in (("bn-account-a", "CREATED"), ("bn-account-b", "CONFLICT")):
+            result = migration._upsert("customer", self.source_id, {"id": self.source_id},
+                {"customer_name": f"BN Test {instance} {self.digits}", "customer_type": "Individual",
+                 "custom_hero_customer_number": self.digits}, "Customer", "customer_name", "bn-test", EXECUTE,
+                document_name=self.digits, source_instance=instance)
+            self.assertEqual(result.code, expected)
+        self.assertFalse(frappe.db.exists("HERO Integration Link", {
+            "source_instance": "bn-account-b", "source_type": "customer", "source_id": self.source_id}))
+
+    def test_identity_link_uniqueness_race_rolls_back_the_unlinked_customer(self):
+        self.assertEqual(self.upsert_customer(self.digits).code, "CREATED")
+        other_name = self.digits + "RACE"
+        with mock.patch.object(migration, "_link", return_value=None):
+            result = migration._upsert("customer", self.source_id, {"id": self.source_id},
+                {"customer_name": f"BN Race {self.digits}", "customer_type": "Individual"},
+                "Customer", "customer_name", "bn-test", EXECUTE, document_name=other_name)
+        self.assertEqual(result.code, "CONFLICT")
+        self.assertFalse(frappe.db.exists("Customer", other_name))
+        self.assertEqual(self.link_target(), self.digits)
+
+    def test_read_only_preview_lists_identity_and_referencing_records(self):
+        from hero_integration.services import business_number_preview as preview
+        self.upsert_customer(self.digits)
+        rows = preview.preview_rows()
+        row = next(row for row in rows if row["doctype"] == "Customer" and row["current_name"] == self.digits)
+        self.assertEqual(row["hero_number"], self.digits)
+        self.assertEqual(row["hero_source_id"], self.source_id)
+        self.assertEqual(row["reason"], "already named by its HERO number")
+        self.assertIn("HERO Integration Link", row["referencing_records"])
+        self.assertEqual(self.link_target(), self.digits)
+
 
 if __name__ == "__main__":
     unittest.main()
