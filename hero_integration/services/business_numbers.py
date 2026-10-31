@@ -32,7 +32,7 @@ def business_number(value: object) -> str | None:
         value = str(value)
     if not isinstance(value, str):
         raise BusinessNumberError(f"HERO number {value!r} is not text.")
-    number = value.strip()
+    number = value
     if len(number) > NAME_MAX_LENGTH or not _NAME_PATTERN.fullmatch(number):
         raise BusinessNumberError(
             f"HERO number {number[:40]!r} cannot be an ERPNext document name "
@@ -56,4 +56,4 @@ def project_reference(record: Mapping[str, object]) -> str | None:
     if number is None:
         return None
     trade_code, _trade_name = project_trade(record)
-    return f"{trade_code}-{number}"
+    return business_number(f"{trade_code}-{number}")

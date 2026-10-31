@@ -54,17 +54,26 @@ def project_trade(record: Mapping[str, object]) -> tuple[str, str]:
     measure = record.get("measure")
     if isinstance(measure, Mapping):
         candidates += [measure.get("short"), measure.get("name")]
-    for field in ("project_type", "confirmed_project_type"):
-        value = record.get(field)
-        candidates.append(value.get("code") if isinstance(value, Mapping) else value)
+    # An explicit measure is authoritative; project_type is only a fallback.
+    if not any(isinstance(value, str) and value.strip() for value in candidates):
+        for field in ("project_type", "confirmed_project_type"):
+            value = record.get(field)
+            candidates.append(value.get("code") if isinstance(value, Mapping) else value)
     values = [value.strip() for value in candidates if isinstance(value, str) and value.strip()]
     if not values:
         raise ProjectTitleValidationError("ProjectMatch.measure, project_type or a confirmed ProjectType is required.")
+    codes = set()
     for value in values:
         code = value.upper() if value.upper() in TRADE_CATALOG else _TRADE_BY_NAME.get(value.casefold())
-        if code:
-            return code, TRADE_CATALOG[code]
-    raise ProjectTitleValidationError(f"Project trade {values[0][:40]!r} has no confirmed HERO-to-ERPNext title mapping.")
+        if not code:
+            raise ProjectTitleValidationError(
+                f"Project trade {value[:40]!r} has no confirmed HERO-to-ERPNext title mapping."
+            )
+        codes.add(code)
+    if len(codes) != 1:
+        raise ProjectTitleValidationError("Conflicting project trade values require review.")
+    code = codes.pop()
+    return code, TRADE_CATALOG[code]
 
 
 def _project_number(record: Mapping[str, object], trade_code: str) -> str:
