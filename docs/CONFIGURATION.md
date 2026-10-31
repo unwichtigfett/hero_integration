@@ -124,10 +124,26 @@ Frappe and waits while a migration run is active. Out-of-range polling
 settings block polling with a visible Skipped event instead of falling back
 to defaults.
 
-A run is one queue job and one database transaction: a failure rolls back the
-whole attempt, and Resume starts the run again. A run claim expires after the
-job timeout plus a grace period (30 minutes); the next claim releases a claim
-whose worker stopped, so a killed worker no longer blocks later runs.
+A run is one queue job with short, per-record acknowledgement transactions.
+Each target/identity update and its Run checkpoint commit together, fenced by
+the existing run owner, monotonic claim timestamp, live lease and active slot.
+A failure rolls back only unacknowledged work; previously committed records
+remain. Resume validates the original bound contract and replays from offset
+zero through existing identity links. It never treats a stored offset as proof
+of a stable HERO dataset. Legacy runs without bound evidence require a new
+approved run, rather than silently receiving a new contract.
+
+The Run's `checkpoint_contract_json` binds site/source, confirmed source revision,
+reader and mapping revisions/content, schema identity/content and the effective
+selected field rules (including the Customer dependency of a Project run).
+Mapping-root and rule locks protect checkpoint acknowledgement, never external
+HTTP. MONITOR revalidates runtime generation, source configuration, schema,
+reader and rules after HTTP before recording an observation. New runs fail
+closed if the reviewed Run schema has not been installed. No schema migration
+or deployment is implicit in these checks.
+
+The existing run lease is renewed by valid checkpoints; a worker stopped beyond
+the lease window can be replaced without allowing its stale claim to commit.
 
 HERO reads are checked before any request: a document must contain exactly
 one GraphQL query operation. Every HERO client in one worker process shares
