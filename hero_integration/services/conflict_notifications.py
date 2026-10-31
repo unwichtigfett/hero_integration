@@ -39,3 +39,45 @@ def notify_conflict_once(link, fields: set[str], detail: str) -> bool:
             "subject": marker, "email_content": detail,
         }).insert(ignore_permissions=True)
     return True
+
+
+# Results that leave a HERO record without an imported, current ERPNext target.
+NOT_IMPORTED_RESULTS = ("BLOCKED_RECORD", "CONFLICT", "SKIPPED_AMBIGUOUS", "UNAVAILABLE", "PENDING_REVIEW")
+
+
+def _notify(subject: str, detail: str, document_type: str, document_name: str) -> bool:
+    recipients = configured_recipients()
+    for user in recipients:
+        frappe.get_doc({
+            "doctype": "Notification Log", "for_user": user, "type": "Alert",
+            "document_type": document_type, "document_name": document_name,
+            "subject": subject, "email_content": detail,
+        }).insert(ignore_permissions=True)
+    return bool(recipients)
+
+
+def notify_review(link, detail: str) -> bool:
+    """Ask administrators to approve or reject one held HERO record."""
+    if not link:
+        return False
+    subject = f"HERO {link.target_doctype} {link.target_name} awaits approval or rejection"
+    return _notify(subject, detail, "HERO Integration Link", link.name)
+
+
+def notify_run_summary(run_name: str) -> bool:
+    """One notice per run listing every record that was not imported, grouped by reason."""
+    rows = frappe.get_all(
+        "HERO Integration Record",
+        filters={"run": run_name, "result": ["in", list(NOT_IMPORTED_RESULTS)]},
+        fields=["source_type", "result", "detail"], limit_page_length=0,
+    )
+    if not rows:
+        return False
+    groups: dict[tuple[str, str, str], int] = {}
+    for row in rows:
+        key = (row.source_type or "", row.result or "", (row.detail or "")[:200])
+        groups[key] = groups.get(key, 0) + 1
+    lines = [f"{count} × {source} {result}: {detail}" for (source, result, detail), count
+             in sorted(groups.items(), key=lambda item: (-item[1], item[0]))]
+    subject = f"HERO run {run_name}: {len(rows)} records were not imported"
+    return _notify(subject, "\n".join(lines), "HERO Integration Run", run_name)

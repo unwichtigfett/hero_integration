@@ -92,6 +92,10 @@ def _instant(value, zone):
     return first
 
 
+RECURRING_REVIEW = ('HERO marks this event as recurring but supplies no recurrence rule; '
+                    'only the delivered occurrence was imported as a single event.')
+
+
 def values(contract, record, identity, instance, options, *, lookup, item_link=None, allow_partial=False, review=None):
     """Resolve native values before _upsert; lookup must enforce native read permission."""
     kind = contract.get('native_kind')
@@ -120,7 +124,12 @@ def values(contract, record, identity, instance, options, *, lookup, item_link=N
         if type(record.get('is_recurring')) is not bool:
             raise ValueError('Calendar recurrence flag must be explicit; null is not false.')
         if record['is_recurring']:
-            raise ValueError('Recurring HERO event has no reviewed recurrence rule; native recurrence is blocked.')
+            # HERO exposes no recurrence rule.  A new event imports only the
+            # delivered occurrence and waits for administrator review (user
+            # decision 2026-10-31); an existing event keeps its times.
+            if allow_partial or review is None:
+                raise ValueError('Recurring HERO event has no reviewed recurrence rule; native recurrence is blocked.')
+            review.append(RECURRING_REVIEW)
         if type(record.get('all_day')) is not bool:
             raise ValueError('Calendar all_day must be explicit; null is not false.')
         if allow_partial and record.get('end') is None:

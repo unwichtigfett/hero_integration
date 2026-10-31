@@ -52,6 +52,38 @@ class TestNativeProjections(unittest.TestCase):
             for field in ('starts_on', 'ends_on', 'all_day', 'custom_hero_original_start', 'custom_hero_original_end'):
                 self.assertNotIn(field, out)
 
+    def test_new_recurring_event_imports_the_occurrence_for_review(self):
+        row = event(); row['is_recurring'] = True
+        review = []
+        out = values(CONTRACTS['HeroCalendarEvents'], row, '9', 'a', EVENT_OPTIONS, lookup=lambda *args: {}, review=review)
+        self.assertEqual(out['starts_on'], '2026-10-22 08:00:00')
+        self.assertEqual(len(review), 1)
+        self.assertIn('recurring', review[0])
+
+    def test_new_recurring_event_is_created_pending_review(self):
+        plan = __import__("hero_integration.services.mapping_runtime", fromlist=["plan_from_definitions"]).plan_from_definitions(
+            "HeroCalendarEvents", definitions("HeroCalendarEvents"))
+        fake = SimpleNamespace(
+            get_doc=lambda *args: SimpleNamespace(mapping_json=json.dumps({"native_options": EVENT_OPTIONS})),
+            db=SimpleNamespace(get_single_value=lambda *args: "UTC"))
+        row = event(); row['is_recurring'] = True
+        with patch.object(migration, "frappe", fake), patch.object(migration, "_link", return_value=None), patch.object(
+            migration, "_upsert", return_value=migration.Result("PENDING_REVIEW", "test")) as write:
+            result = migration._migrate_projection(row, SimpleNamespace(mode="Execute", graphql_mapping="M"), plan)
+        self.assertEqual(result.code, "PENDING_REVIEW")
+        self.assertIn("recurring", write.call_args.kwargs["review_reason"])
+        self.assertEqual(write.call_args.kwargs["creation_values"]["repeat_this_event"], 0)
+
+    def test_events_wait_while_their_record_is_held_or_rejected(self):
+        for status, code in (("Pending Review", "PENDING_REVIEW"), ("Rejected", "SKIPPED_REJECTED")):
+            link = SimpleNamespace(sync_status=status, conflict_detail="x", target_doctype="Event", target_name="EV-1")
+            plan = __import__("hero_integration.services.mapping_runtime", fromlist=["plan_from_definitions"]).plan_from_definitions(
+                "HeroCalendarEvents", definitions("HeroCalendarEvents"))
+            with patch.object(migration, "_link", return_value=link), patch.object(migration, "_upsert") as write:
+                result = migration._migrate_projection(event(), SimpleNamespace(mode="Execute", graphql_mapping="M"), plan)
+            self.assertEqual(result.code, code)
+            write.assert_not_called()
+
     def test_optional_end_is_not_invented_for_a_new_event(self):
         row = event(); row['end'] = None
         out = values(CONTRACTS['HeroCalendarEvents'], row, '9', 'a', EVENT_OPTIONS, lookup=lambda *args: {})

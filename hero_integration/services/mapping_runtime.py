@@ -135,6 +135,10 @@ class MappingPlan:
                 )
                 # Project naming also accepts the established structured trade
                 # representation used by existing contracts and test fixtures.
+                # A missing salutation is no block (user decision 2026-10-31);
+                # the stored rule keeps its approved "string" type.
+                if definition.source_path == "customer.title" and raw is None:
+                    valid = True
                 if definition.source_path == "project_type" and isinstance(raw, dict):
                     valid = isinstance(raw.get("code"), str)
                 if definition.transformation == TRANSFORM_POSITIVE_INT_TO_TEXT and raw is not None:

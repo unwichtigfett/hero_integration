@@ -41,12 +41,26 @@ class TestProjectNaming(unittest.TestCase):
     def test_missing_personal_or_trade_data_blocks_instead_of_guessing(self):
         for key, value in (
             ("project_type", {"code": "Unknown"}),
-            ("customer", {"full_name": "Max Mustermann"}),
             ("customer", {"title": "Herr"}),
             ("address", {"street": "Musterstraße", "house_number": "10", "postal_code": "77777"}),
         ):
             with self.subTest(key=key, value=value), self.assertRaises(ProjectTitleValidationError):
                 build_project_title(project_match(**{key: value}))
+
+    def test_missing_salutation_is_optional(self):
+        # User decision 2026-10-31: a missing salutation never blocks a Project.
+        for customer in ({"full_name": "Max Mustermann"}, {"title": None, "full_name": "Max Mustermann"}):
+            with self.subTest(customer=customer):
+                self.assertTrue(build_project_title(project_match(customer=customer)).startswith(
+                    "PV-1111 | Photovoltaik, Max Mustermann, "))
+
+    def test_missing_address_is_reported_separately_and_can_be_omitted(self):
+        from hero_integration.services.project_naming import ProjectAddressError
+
+        record = project_match(address={"street": "Musterstraße", "house_number": "10", "postal_code": "77777"})
+        with self.assertRaises(ProjectAddressError):
+            build_project_title(record)
+        self.assertEqual(build_project_title(record, include_address=False), "PV-1111 | Photovoltaik, Herr Max Mustermann")
 
     def test_title_is_not_silently_truncated(self):
         with self.assertRaisesRegex(ProjectTitleValidationError, "field limit"):

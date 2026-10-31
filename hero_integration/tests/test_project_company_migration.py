@@ -64,6 +64,7 @@ class FakeFrappeMigrationHarness:
         frappe_module.get_meta = cls.frappe.get_meta
         frappe_module.get_single = cls.frappe.get_single
         frappe_module.has_permission = cls.frappe.has_permission
+        frappe_module.delete_doc = lambda *args, **kwargs: cls.frappe.delete_doc(*args, **kwargs)
         frappe_module.log_error = lambda **kwargs: None
         frappe_module.DuplicateEntryError = _DuplicateEntryError
         utils_module = types.ModuleType("frappe.utils")
@@ -86,6 +87,9 @@ class FakeFrappeMigrationHarness:
         self.migration.active_mapping_plan = fixture_plan
         self.migration._synchronize_customer_relations = lambda *args: None
         self.migration.notify_conflict_once = lambda *args, **kwargs: False
+        self.reviews = []
+        self.migration._references_besides_hero = lambda doctype, name: None
+        self.migration.notify_review = lambda link, detail: self.reviews.append((link.source_id, detail))
 
 
 class TestProjectCompanyMigration(FakeFrappeMigrationHarness, unittest.TestCase):
@@ -577,19 +581,20 @@ class TestProjectCompanyMigration(FakeFrappeMigrationHarness, unittest.TestCase)
         )
 
         result = self.migration._migrate_project(
-            _project_title_inputs(id=203, customer_id=101, project_title="Blocked Reference"),
+            _project_title_inputs(id=203, customer_id=101, project_title="Held Reference"),
             SimpleNamespace(mode="Execute"),
         )
 
-        self.assertEqual(result.code, "BLOCKED_RECORD")
-        self.assertFalse(self.frappe.projects)
+        # User decision 2026-10-31: created without customer and held for review.
+        self.assertEqual(result.code, "PENDING_REVIEW")
+        self.assertIsNone(self.frappe.projects[0].get("customer"))
 
-    def test_unlinked_customer_relation_is_blocked_without_target_mutation(self):
+    def test_unlinked_customer_relation_is_held_for_review_without_customer(self):
         result = self.migration._migrate_project(AMBIGUOUS_PROJECT, SimpleNamespace(mode="Execute"))
 
-        self.assertEqual(result.code, "BLOCKED_RECORD")
-        self.assertFalse(self.frappe.projects)
-        self.assertNotIn(("project", str(AMBIGUOUS_PROJECT["id"])), self.frappe.links)
+        self.assertEqual(result.code, "PENDING_REVIEW")
+        self.assertIsNone(self.frappe.projects[0].get("customer"))
+        self.assertEqual(self.frappe.links[("project", str(AMBIGUOUS_PROJECT["id"]))].sync_status, "Pending Review")
 
     def test_same_project_match_id_from_distinct_source_instances_creates_distinct_projects(self):
         self.frappe.links[("customer", "101", "one")] = SimpleNamespace(
@@ -671,6 +676,77 @@ class TestProjectCompanyMigration(FakeFrappeMigrationHarness, unittest.TestCase)
         self.assertEqual(self.frappe.projects[0]["project_name"], title)
         self.assertEqual(self._project({**record, "project_nr": "1113"}).code, "UPDATED")
         self.assertTrue(self.frappe.projects[0]["project_name"].startswith("PV-1113 |"))
+
+    def test_missing_salutation_is_not_a_block(self):
+        record = _project_title_inputs(id=790, customer_id=101, customer={"title": None, "full_name": "Max Mustermann"})
+        self.assertEqual(self._project(record).code, "CREATED")
+        self.assertEqual(self.frappe.projects[0]["project_name"],
+                         "PV-1111 | Photovoltaik, Max Mustermann, Musterstraße 10, 77777 Musterstadt")
+        self.assertEqual(self.reviews, [])
+
+    def test_title_over_the_field_limit_stays_rejected(self):
+        record = _project_title_inputs(id=791, customer_id=101, customer={"title": "Herr", "full_name": "M" * 140})
+        self.assertEqual(self._project(record).code, "BLOCKED_RECORD")
+        self.assertFalse(self.frappe.projects)
+
+    def test_incomplete_address_creates_a_project_held_for_review(self):
+        record = _project_title_inputs(id=792, customer_id=101, address={
+            "formatted_address": "", "street": None, "house_number": "10", "postal_code": "77777", "city": "Musterstadt"})
+        self.assertEqual(self._project(record, "Preview").code, "PREVIEW_OK")
+        self.assertFalse(self.frappe.projects)
+        result = self._project(record)
+        self.assertEqual(result.code, "PENDING_REVIEW")
+        self.assertEqual(self.frappe.projects[0]["project_name"], "PV-1111 | Photovoltaik, Herr Max Mustermann")
+        link = self.migration._link("project", "792", "default")
+        self.assertEqual(link.sync_status, "Pending Review")
+        self.assertIn("address", link.conflict_detail)
+        self.assertEqual([source for source, _ in self.reviews], ["792"])
+        # While held, HERO changes are not applied and linked records wait.
+        self.assertEqual(self._project({**record, "project_nr": "1112"}).code, "PENDING_REVIEW")
+        self.assertEqual(self.frappe.projects[0]["project_name"], "PV-1111 | Photovoltaik, Herr Max Mustermann")
+        with self.assertRaises(self.migration.MappingPlanError):
+            self.migration._project_name_for_source(792, "default")
+        self.assertEqual(len(self.reviews), 1)
+
+    def test_unlinked_customer_creates_a_project_without_customer_for_review(self):
+        record = _project_title_inputs(id=793, customer_id=999)
+        self.assertEqual(self._project(record).code, "PENDING_REVIEW")
+        self.assertIsNone(self.frappe.projects[0].get("customer"))
+        self.assertIn("customer", self.migration._link("project", "793", "default").conflict_detail)
+
+    def test_admin_approval_releases_the_project_for_normal_sync(self):
+        record = _project_title_inputs(id=794, customer_id=999)
+        self._project(record)
+        link = self.migration._link("project", "794", "default")
+        self.migration.decide_review(link, "approve")
+        self.assertEqual((link.sync_status, link.conflict_detail), ("Synchronized", ""))
+        self.assertEqual(self._project(record).code, "SKIPPED")
+        self.assertEqual(self._project({**record, "project_nr": "1112"}).code, "UPDATED")
+        with self.assertRaises(self.migration.MappingPlanError):
+            self.migration.decide_review(link, "approve")  # only pending links are decided
+
+    def test_admin_rejection_deletes_the_project_and_is_never_recreated(self):
+        record = _project_title_inputs(id=795, customer_id=999)
+        self._project(record)
+        link = self.migration._link("project", "795", "default")
+        self.migration.decide_review(link, "reject")
+        self.assertEqual(link.sync_status, "Rejected")
+        self.assertFalse(self.frappe.projects)
+        for _ in range(2):
+            self.assertEqual(self._project(record).code, "SKIPPED_REJECTED")
+        self.assertFalse(self.frappe.projects)
+        with self.assertRaises(self.migration.MappingPlanError):
+            self.migration._project_name_for_source(795, "default")
+
+    def test_rejection_keeps_a_target_that_other_records_reference(self):
+        record = _project_title_inputs(id=796, customer_id=999)
+        self._project(record)
+        link = self.migration._link("project", "796", "default")
+        self.migration._references_besides_hero = lambda doctype, name: "Timesheet TS-1"
+        with self.assertRaises(self.migration.MappingPlanError):
+            self.migration.decide_review(link, "reject")
+        self.assertEqual(link.sync_status, "Pending Review")
+        self.assertEqual(len(self.frappe.projects), 1)
 
     def test_changed_title_contract_updates_when_the_target_field_is_unchanged(self):
         record = _project_title_inputs(id=778, customer_id=101, project_nr="0001")
@@ -875,6 +951,11 @@ class _FakeFrappe:
 
     def link(self, source_type, source_id, source_instance="default"):
         return self.links.get((source_type, source_id, source_instance)) or self.links.get((source_type, source_id))
+
+    def delete_doc(self, doctype, name, **kwargs):
+        if doctype != "Project":
+            raise AssertionError(f"unexpected delete: {doctype}")
+        self.projects = [project for project in self.projects if project["name"] != name]
 
 
 class _DuplicateEntryError(Exception):
