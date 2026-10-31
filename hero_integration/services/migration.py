@@ -1813,6 +1813,12 @@ def _customer_target_values(
         for field, value in primary_contact_values(target, set(contact_fields)).items()
         if value is not None
     })
+    # ERPNext v16 fills these Customer fields from the primary Contact
+    # (fetch_from) and stores an empty projection as ''; HERO's empty value
+    # is null.  Both mean empty and are no local change.
+    for field in set(contact_fields) | {"first_name", "last_name", "email_id", "mobile_no"}:
+        if snapshot.get(field, target.get(field)) == "":
+            snapshot[field] = None
     if home_phone or track_home_phone:
         snapshot["hero_phone_home"] = home_phone_for_customer(target)
     return snapshot

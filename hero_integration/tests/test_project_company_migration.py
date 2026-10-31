@@ -117,6 +117,19 @@ class TestProjectCompanyMigration(FakeFrappeMigrationHarness, unittest.TestCase)
         )
         self.assertEqual(self.frappe.links[("project", "201")].target_name, "PROJ-0001")
 
+    def test_empty_contact_projection_of_a_company_is_no_local_change(self):
+        # ERPNext fetches Customer.first_name etc. from the primary Contact and
+        # stores an empty projection as ''; HERO sent null (point 5, 2026-10-31).
+        record = {"id": 301, "full_name": "Synthetic Person", "company_name": "Synthetic Company", "category": "A",
+                  "first_name": None, "last_name": None, "email": None, "mobile": None}
+        self.assertEqual(self._execute(record).code, "CREATED")
+        customer = self.frappe.customers[0]
+        for field in ("first_name", "last_name", "email_id", "mobile_no"):
+            customer[field] = ""
+        self.assertEqual(self._execute(record).code, "SKIPPED")
+        self.assertEqual(self.migration.observe_monitor_record("HeroCustomers", record), None)
+        self.assertEqual(self._execute({**record, "category": "B"}).code, "UPDATED")
+
     def test_customer_contact_values_are_dry_run_safe_and_idempotent(self):
         record = {
             "id": 301, "full_name": "Synthetic Ada", "company_name": None, "first_name": "Ada", "last_name": "Lovelace",
