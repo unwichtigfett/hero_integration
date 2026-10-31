@@ -65,10 +65,39 @@ HERO data that ERPNext would reject does not stop a run:
   marked `BLOCKED_RECORD`; see the Error Log. A blocked Customer blocks only
   its own Projects.
 
-ERPNext names a Customer's primary Contact `<name>-<Customer ID>`. With
-Customer IDs taken from long Customer names this exceeds the 140-character
-limit, so name Customers by a naming series (Selling Settings → Customer
-Naming By → Naming Series, for example `KD-.#####`).
+HERO customer IDs use the exact `Customer.nr` where it is a valid, available
+ERPNext name: `2222` stays `2222`, and `0022` retains its leading zeros.
+`customer_name` remains the person's or company's name. The existing
+`custom_hero_customer_number` mapping preserves the original string, even if a
+legacy mapping specifies Trim. Missing or unsuitable customer numbers use a
+`HERO-CUSTOMER-<UUID>` technical ID with an explanation, not a competing KD
+business number. Unrelated manual customers keep the site's naming settings.
+
+New Project IDs use the confirmed trade and exact `ProjectMatch.display_id`,
+for example `PV-3333` or `ELEK-1769`. The shared trade catalog validates the
+measure; conflicting codes/names require review. `project_nr` remains separate
+and the protected project-title rule is unchanged. Missing or invalid project
+IDs retain native Project naming and report the constraint.
+
+Technical HERO IDs and source instances remain the identity keys. Reimports
+reuse linked IDs, including existing KD customers and legacy projects. Changes
+or explicit clears of an established business number require review; omitted
+source fields are not treated as clears. Number collisions never merge,
+suffix, rename or cross-link records. A failed concurrent identity claim rolls
+back the new target and its relations.
+
+`hero_integration.services.business_number_preview.preview_rows()` reads
+existing links, business numbers, collisions and native referencing records.
+`write_csv(path, project_trades=None)` writes a new CSV without overwriting an
+existing file or changing the database. Projects use the stored mapped
+`custom_hero_project_type` or an explicitly reviewed source-scoped configuration,
+for example `{"source-a": {"201": "PV"}}`. Project titles are never used to guess
+a trade. Without usable trade evidence the preview marks the project for
+review. The preview covers metadata-defined static and dynamic links, including
+child rows and Single fields; external references and arbitrary text fields
+remain outside its coverage. A positive `safe_rename` is preliminary, not
+permission: actual renames require separate authorization, a database backup
+and a fresh reference/collision review. This change performs no renames.
 
 Create a reviewed GraphQL schema snapshot before configuring mappings. The
 Mapping Editor exports deterministic JSON packages with the snapshot
