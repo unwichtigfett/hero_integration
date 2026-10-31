@@ -75,7 +75,8 @@ business number. Unrelated manual customers keep the site's naming settings.
 
 New Project IDs use the confirmed trade and exact `ProjectMatch.display_id`,
 for example `PV-3333` or `ELEK-1769`. The shared trade catalog validates the
-measure; conflicting codes/names require review. `project_nr` remains separate
+measure; an unknown code or name is ignored when the other value is
+confirmed, while two different confirmed trades require review. `project_nr` remains separate
 and the protected project-title rule is unchanged. Missing or invalid project
 IDs retain native Project naming and report the constraint.
 

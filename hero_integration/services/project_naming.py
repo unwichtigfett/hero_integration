@@ -76,14 +76,16 @@ def project_trade(record: Mapping[str, object]) -> tuple[str, str]:
     values = [value.strip() for value in candidates if isinstance(value, str) and value.strip()]
     if not values:
         raise ProjectTitleValidationError("ProjectMatch.measure, project_type or a confirmed ProjectType is required.")
-    codes = set()
-    for value in values:
-        code = value.upper() if value.upper() in TRADE_CATALOG else _TRADE_BY_NAME.get(value.casefold())
-        if not code:
-            raise ProjectTitleValidationError(
-                f"Project trade {value[:40]!r} has no confirmed HERO-to-ERPNext title mapping."
-            )
-        codes.add(code)
+    # An unknown code or name is ignored when the other value is confirmed;
+    # two confirmed but different trades still require review.
+    codes = {
+        value.upper() if value.upper() in TRADE_CATALOG else _TRADE_BY_NAME.get(value.casefold())
+        for value in values
+    } - {None}
+    if not codes:
+        raise ProjectTitleValidationError(
+            f"Project trade {values[0][:40]!r} has no confirmed HERO-to-ERPNext title mapping."
+        )
     if len(codes) != 1:
         raise ProjectTitleValidationError("Conflicting project trade values require review.")
     code = codes.pop()
