@@ -55,6 +55,16 @@ class FakeFrappeMigrationHarness:
             else:
                 sys.modules[name] = original
 
+        # importlib also binds submodules on their parent package. Restore that
+        # alias as well as sys.modules so later tests patch the actual executor.
+        services = sys.modules.get("hero_integration.services")
+        original = cls._original_modules.get("hero_integration.services.migration")
+        if services is not None:
+            if original is not None:
+                services.migration = original
+            elif getattr(services, "migration", None) is cls.migration:
+                delattr(services, "migration")
+
     @classmethod
     def _install_fake_frappe(cls):
         frappe_module = types.ModuleType("frappe")
@@ -497,7 +507,7 @@ class TestProjectCompanyMigration(FakeFrappeMigrationHarness, unittest.TestCase)
         source = SimpleNamespace(source_instance="synthetic", customers=object(), projects=object())
         original = self.migration._process_phase
         try:
-            self.migration._process_phase = lambda item, phase, reader: events.append(phase) or phase == "customer"
+            self.migration._process_phase = lambda item, phase, reader, **kwargs: events.append(phase) or phase == "customer"
             self.migration._process_requested_phases(run, source)
         finally:
             self.migration._process_phase = original
@@ -513,7 +523,7 @@ class TestProjectCompanyMigration(FakeFrappeMigrationHarness, unittest.TestCase)
         source = SimpleNamespace(source_instance="synthetic", customers=object(), projects=object())
         original = self.migration._process_phase
         try:
-            def phase(item, name, reader):
+            def phase(item, name, reader, **kwargs):
                 events.append(name)
                 if name == "customer":
                     item.customer_phase_state = "Completed"
