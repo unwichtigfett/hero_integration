@@ -142,6 +142,19 @@ test('result dialog: readable default, raw JSON toggle and copy of the visible v
   assert.equal(dialogs[0].options.primary_action_label, 'Close');
 });
 
+test('GraphQL response markup remains text in readable and raw views', () => {
+  const {dialogs, Workspace} = load();
+  const payload = '<img src=x onerror=alert(1)>';
+  editorState(Workspace).renderExecution({...OK, data: {value: payload}});
+  const root = dialogs[0].fields_dict.result.$wrapper[0];
+  const output = root.find((node) => node.attributes['aria-label'] === 'GraphQL Query Result');
+  assert.match(output.textContent, /<img src=x onerror=alert\(1\)>/);
+  assert.equal(output.find((node) => node.tag === 'img'), null);
+  root.find((node) => node.tag === 'button' && node._text === 'Raw JSON').click();
+  assert.equal(output.textContent, JSON.stringify({value: payload}, null, 2));
+  assert.equal(output.find((node) => node.tag === 'img'), null);
+});
+
 test('result dialog: coloured readable view copies exactly the plain text', () => {
   const {dialogs, copied, Workspace} = load();
   editorState(Workspace).renderExecution(OK);
