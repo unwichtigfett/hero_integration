@@ -178,3 +178,29 @@ class TestTypedMutationPreview(unittest.TestCase):
         for value in ({'input': {'name': 'Ada', 'unknown': 'x'}}, {'input': {'state': 'ACTIVE'}}):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 self.preview(value)
+
+
+class TestMutationReservationBoundary(unittest.TestCase):
+    def test_duplicate_active_reservation_rejects_without_commit(self):
+        from unittest.mock import Mock
+
+        class DuplicateEntryError(Exception):
+            pass
+
+        audit = SimpleNamespace(insert=Mock(side_effect=DuplicateEntryError()))
+        commit = Mock()
+
+        def throw(message):
+            raise ValueError(message)
+
+        fake = SimpleNamespace(
+            DuplicateEntryError=DuplicateEntryError,
+            session=SimpleNamespace(user='synthetic'), local=SimpleNamespace(site='test.local'),
+            db=SimpleNamespace(commit=commit), get_doc=Mock(return_value=audit), throw=throw,
+        )
+        with patch.object(api, 'frappe', fake):
+            with self.assertRaisesRegex(ValueError, 'mutation is currently in progress'):
+                api._reserve_mutation(operation_name='update', schema_fingerprint='synthetic',
+                                      mapping_revision=1, request_fingerprint='synthetic')
+        audit.insert.assert_called_once_with(ignore_permissions=True)
+        commit.assert_not_called()
