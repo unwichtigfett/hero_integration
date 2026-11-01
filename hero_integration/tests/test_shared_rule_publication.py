@@ -97,6 +97,22 @@ class TestSharedRulePublication(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'authorized preceding revision'):
                 hero_frappe_mapping.HEROFrappeMapping.validate(Doc())
 
+    def test_rule_fingerprint_binds_context_and_ignores_object_key_order(self):
+        from hero_integration.services.mapping_rule_lineage import semantic_fingerprint
+        fields = {key: None for key in RULE_FIELDS}
+        fields.update(source_path='email', source_type='string', target_doctype='Customer', target_field='custom_email')
+        manifest = {'custom_fields': [], 'relations': [], 'custom_doctypes': []}
+        base = semantic_fingerprint('HeroCustomers', 'schema-a', fields, schema_manifest=manifest)
+        self.assertEqual(base, semantic_fingerprint('HeroCustomers', 'schema-a', dict(reversed(list(fields.items()))),
+                                                   schema_manifest=json.dumps(manifest, sort_keys=True)))
+        for operation, fingerprint, rule in (
+            ('HeroProjects', 'schema-a', fields),
+            ('HeroCustomers', 'schema-b', fields),
+            ('HeroCustomers', 'schema-a', {**fields, 'source_path': 'phone'}),
+        ):
+            with self.subTest(operation=operation, fingerprint=fingerprint, source=rule['source_path']):
+                self.assertNotEqual(base, semantic_fingerprint(operation, fingerprint, rule, schema_manifest=manifest))
+
     def test_lineage_rejects_unenrolled_predecessor_and_invalid_payload(self):
         row = {'portable_definition_id':'', 'operation':'HeroCustomers', 'schema_fingerprint':'fingerprint',
                **{key:None for key in RULE_FIELDS}}
