@@ -44,6 +44,11 @@ class TestGraphQLContract(unittest.TestCase):
         with self.assertRaisesRegex(GraphQLContractError, "unknown input"):
             validate_mutation(SCHEMA, contract, {"input": {"name": "Ada", "unknown": 1}})
 
+    def test_root_literal_arguments_are_not_write_contract_bindings(self):
+        for literal in ("123456", "true", "ACTIVE"):
+            with self.subTest(literal=literal), self.assertRaises(GraphQLContractError):
+                parse_mutation(f"mutation {{ changeCustomer(value: {literal}) {{ id }} }}")
+
     def test_literals_and_extra_operations_cannot_hide_a_second_mutation(self):
         with self.assertRaisesRegex(GraphQLContractError, "exactly one operation"):
             parse_mutation("mutation { changeCustomer { id } } query { x }")
