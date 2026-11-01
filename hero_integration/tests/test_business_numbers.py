@@ -279,6 +279,17 @@ class TestBusinessNumberMigration(FakeFrappeMigrationHarness, unittest.TestCase)
         self.assertEqual(project["custom_hero_source_id"], "default:201")
         self.assertEqual(self.frappe.links[("project", "201")].target_name, "PV-3333")
 
+    def test_project_reference_and_title_keep_separate_source_numbers(self):
+        record = self.project(id=202, display_id="0033", project_nr="9876")
+        created = self.migrate_project(record)
+        self.assertEqual((created.code, created.target_name), ("CREATED", "PV-0033"))
+        project, = self.frappe.projects
+        self.assertEqual(project["custom_hero_display_id"], "0033")
+        self.assertTrue(project["project_name"].startswith("PV-9876 | Photovoltaik,"))
+        self.assertEqual(self.frappe.links[("project", "202")].target_name, "PV-0033")
+        self.assertEqual(self.migrate_project(record).code, "SKIPPED")
+        self.assertEqual(len(self.frappe.projects), 1)
+
     def test_legacy_project_id_and_historical_title_are_preserved_on_reimport(self):
         record = self.project()
         self.migrate_project(record)
