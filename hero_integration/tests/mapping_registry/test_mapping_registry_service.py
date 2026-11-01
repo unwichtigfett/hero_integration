@@ -98,6 +98,20 @@ class TestMappingRegistryService(unittest.TestCase):
         with self.assertRaises(MappingRegistryOperationError):
             service.add_definition(_definition("another"), expected_revision=first.revision + 1)
 
+    def test_tampered_import_preserves_active_registry_and_does_not_echo_value(self):
+        service, _ = self._service()
+        first = service.import_complete_json(_raw((_definition(),)), expected_revision=None)
+        before = service.export_active_json("test.local")
+        incoming = json.loads(_raw((_definition("replacement"),)))
+        sensitive = "synthetic-not-for-diagnostics"
+        incoming["provenance"]["source_instance"] = sensitive
+
+        with self.assertRaises(MappingRegistryOperationError) as caught:
+            service.import_complete_json(json.dumps(incoming), expected_revision=first.revision)
+
+        self.assertNotIn(sensitive, str(caught.exception))
+        self.assertEqual(service.export_active_json("test.local"), before)
+
     def test_injected_activation_failure_preserves_previous_active_version(self):
         service, storage = self._service()
         first = service.import_complete_json(_raw((_definition(),)), expected_revision=None)
