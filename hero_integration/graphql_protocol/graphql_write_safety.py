@@ -34,7 +34,11 @@ class GraphQLWriteRequest:
 
     @property
     def variables(self) -> Mapping[str, object]:
-        """Return a detached immutable view of the exact safety-bound values."""
+        """Return a detached view with a read-only top-level mapping.
+
+        Nested containers belong to the returned copy and may be mutated without
+        changing the safety-bound values.
+        """
 
         return MappingProxyType(json.loads(self._canonical_variables))
 

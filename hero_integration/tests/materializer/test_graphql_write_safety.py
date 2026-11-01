@@ -299,6 +299,9 @@ def test_request_retains_detached_variables_and_fingerprints_scope() -> None:
     assert first.fingerprint != other_scope.fingerprint
     with pytest.raises(TypeError):
         first.variables["input"] = {}  # type: ignore[index]
+    returned = first.variables
+    returned["input"]["name"] = "local change"  # type: ignore[index]
+    assert first.variables == {"input": {"name": "Ada"}}
 
 
 def test_variable_key_order_does_not_change_fingerprint() -> None:
