@@ -181,10 +181,6 @@ class TestMutationExecutionContract(_Base):
         self.assertEqual(self.finalize.call_args.args[1], "Failed")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TestServiceDraftOrigin(_Base):
     def test_graph_viewer_origin_is_recorded_and_unknown_origins_are_rejected(self):
         draft = api.workspace_analyzer_service_draft("SNAPSHOT", "operation:query:contact")
@@ -196,3 +192,7 @@ class TestServiceDraftOrigin(_Base):
         with self.assertRaisesRegex(ValueError, "Unknown service draft origin"):
             api.workspace_analyzer_service_save("SNAPSHOT", "operation:query:contact", payload, "GraphQL Services")
         self.client.query.assert_not_called()
+
+
+if __name__ == "__main__":
+    unittest.main()

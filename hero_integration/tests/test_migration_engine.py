@@ -91,8 +91,6 @@ class TestEngine(unittest.TestCase):
   run=self.authorized(); self.reader.pages={0:SourcePage(({"name":"Ada"},),None)}; failed=self.engine.process("run-1",self.plan,run.generation); self.assertEqual(failed.state,RunState.FAILED)
   bad=MigrationRequest("run-2","site.test","admin","hero-a","hero.query.Contacts","b"*64,1,"erpnext","Customer","Contact",True)
   with self.assertRaises(MigrationConflict): self.engine.prepare(bad)
-if __name__ == "__main__": unittest.main()
-
 class _Doc:
  def __init__(self,frappe,payload): self._frappe=frappe; self.__dict__.update(payload)
  def insert(self):
@@ -123,3 +121,5 @@ class TestFrappeAdapters(unittest.TestCase):
   self.assertEqual(writer.resolve_or_write("site.test","erpnext","Customer","1",{"customer_name":"Ada"}),"1")
   self.assertEqual(writer.resolve_or_write("site.test","erpnext","Customer","1",{"customer_name":"Ada Lovelace"}),"1")
   self.assertEqual(frappe.docs["Customer"]["1"].customer_name,"Ada Lovelace")
+
+if __name__ == "__main__": unittest.main()
