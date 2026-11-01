@@ -33,6 +33,13 @@ class TestNativeProjections(unittest.TestCase):
         self.assertEqual(out["custom_hero_resources"][0]["custom_hero_source_id"], "2")
         self.assertEqual(out["custom_hero_partners"][0]["custom_hero_partner_name"], "Example partner")
 
+    def test_event_description_treats_hero_markup_as_text(self):
+        row = event()
+        row["description"] = '<img src="https://synthetic.invalid/x" onerror="run()">\nA & B'
+        out = values(CONTRACTS["HeroCalendarEvents"], row, "9", "a", EVENT_OPTIONS, lookup=lambda *a: {})
+        self.assertEqual(out["description"],
+                         '<p>&lt;img src=&quot;https://synthetic.invalid/x&quot; onerror=&quot;run()&quot;&gt;<br>A &amp; B</p>')
+
     def test_event_dst_recurrence_and_null_boolean_block(self):
         for change in ({"start": "2026-10-25T02:30:00"}, {"start": "2026-03-29T02:30:00"},
                        {"is_recurring": True}, {"is_recurring": None}, {"all_day": None}):
