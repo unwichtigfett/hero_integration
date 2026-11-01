@@ -41,6 +41,30 @@ class TestSchemaOperations(unittest.TestCase):
         with self.assertRaises(SchemaOperationError):
             operation_service_draft(schema, "operation:mutation:heroCustomers")
 
+    def test_input_catalog_bounds_cycles_depth_and_list_mapping(self):
+        schema = copy.deepcopy(SCHEMA)
+        mutation = next(item for item in schema["__schema"]["types"] if item["name"] == "Mutation")
+        mutation["fields"][0]["args"] = [{"name": "input", "type": {"kind": "INPUT_OBJECT", "name": "A"}}]
+        for current, child in zip("ABCD", "BCDE"):
+            fields = [{"name": "next", "type": {"kind": "INPUT_OBJECT", "name": child}}]
+            if current == "A":
+                fields.extend([
+                    {"name": "cycle", "type": {"kind": "INPUT_OBJECT", "name": "A"}},
+                    {"name": "many", "type": {"kind": "LIST", "ofType": {"kind": "SCALAR", "name": "String"}}},
+                ])
+            schema["__schema"]["types"].append({"kind": "INPUT_OBJECT", "name": current, "inputFields": fields})
+        schema["__schema"]["types"].append({"kind": "INPUT_OBJECT", "name": "E", "inputFields": [
+            {"name": "value", "type": {"kind": "SCALAR", "name": "String"}},
+        ]})
+        fields = catalog(schema, "MUTATION")[0]["input_fields"]["input"]
+        by_path = {item["path"]: item for item in fields}
+        self.assertIn("next.next.next.next", by_path)
+        self.assertNotIn("next.next.next.next.value", by_path)
+        self.assertIn("cycle", by_path)
+        self.assertFalse(any(path.startswith("cycle.") for path in by_path))
+        self.assertFalse(by_path["many"]["selectable"])
+        self.assertIn("collection resolver", by_path["many"]["reason"])
+
     def test_suggestions_are_explainable_and_draft_only_by_callers(self):
         result = suggest("customer_name", ["customerName", "projectTitle"])
         self.assertEqual(result[0]["candidate"], "customerName")
