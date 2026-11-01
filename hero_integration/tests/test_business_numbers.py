@@ -133,6 +133,12 @@ class TestBusinessNumberMigration(FakeFrappeMigrationHarness, unittest.TestCase)
         self.assertEqual(result.code, "CONFLICT")
         self.assertEqual(self.frappe.customers[0]["custom_hero_customer_number"], "2222")
 
+    def test_explicit_null_customer_number_is_a_drift_conflict(self):
+        self.migrate_customer(self.customer(nr="0022"))
+        result = self.migrate_customer(self.customer(nr=None))
+        self.assertEqual((result.code, result.target_name), ("CONFLICT", "0022"))
+        self.assertEqual(self.frappe.customers[0]["custom_hero_customer_number"], "0022")
+
     def test_a_repeated_import_is_idempotent(self):
         self.migrate_customer(self.customer())
         result = self.migrate_customer(self.customer())
@@ -321,6 +327,12 @@ class TestBusinessNumberMigration(FakeFrappeMigrationHarness, unittest.TestCase)
         result = self.migrate_project(self.project(display_id="3334"))
         self.assertEqual((result.code, result.target_name), ("CONFLICT", "PV-3333"))
         self.assertEqual(self.frappe.projects[0]["custom_hero_display_id"], "3333")
+
+    def test_explicit_null_display_id_is_a_drift_conflict(self):
+        self.migrate_project(self.project(display_id="0033"))
+        result = self.migrate_project(self.project(display_id=None))
+        self.assertEqual((result.code, result.target_name), ("CONFLICT", "PV-0033"))
+        self.assertEqual(self.frappe.projects[0]["custom_hero_display_id"], "0033")
 
     def test_an_omitted_display_id_preserves_the_linked_reference(self):
         self.migrate_project(self.project(display_id="0033"))
