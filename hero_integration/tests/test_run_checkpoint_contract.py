@@ -142,6 +142,27 @@ class TestReplayAcceptance(TestCase):
         self.assertEqual(run.state, 'Blocked')
 
 
+class TestFailureFinalizationOwnership(TestCase):
+    def test_stale_worker_cannot_finalize_another_or_newer_claim(self):
+        old = datetime(2026, 1, 1, 10, 0)
+        newer = datetime(2026, 1, 1, 10, 1)
+        run = SimpleNamespace(state='Running', started_on=newer, save=mock.Mock())
+        fake = SimpleNamespace(get_doc=mock.Mock(return_value=run), db=SimpleNamespace(commit=mock.Mock()))
+        with mock.patch.object(migration, 'frappe', fake), \
+             mock.patch.object(migration, '_locked_active_run', return_value='OTHER'), \
+             mock.patch.object(migration, '_release_run') as release:
+            migration._finalize_failed_run('RUN', old)
+            fake.get_doc.assert_not_called()
+            release.assert_not_called()
+        with mock.patch.object(migration, 'frappe', fake), \
+             mock.patch.object(migration, '_locked_active_run', return_value='RUN'), \
+             mock.patch.object(migration, '_release_run') as release:
+            migration._finalize_failed_run('RUN', old)
+            run.save.assert_not_called()
+            release.assert_not_called()
+        fake.db.commit.assert_not_called()
+
+
 class TestEnumerationEvidence(TestCase):
     def test_invalid_page_cannot_partially_advance_seen_identity_evidence(self):
         from hero_integration.sources.hero import SourcePage
