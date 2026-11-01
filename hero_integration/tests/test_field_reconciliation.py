@@ -64,6 +64,16 @@ class TestReconcile(unittest.TestCase):
         self.assertEqual(outcome.acknowledged, {"f"})
         self.assertFalse(outcome.apply)
 
+    def test_source_clear_conflicts_with_an_independent_local_change(self):
+        prior = _h(f="original")
+        outcome = reconcile(prior, prior, _h(f=None), _h(f="local"), tracked={"f"},
+                            source_empty={"f"}, unwritable={"f"})
+        self.assertEqual(outcome.conflicts, {"f"})
+        self.assertFalse(outcome.apply | outcome.acknowledged)
+        self.assertFalse(outcome.advances_baseline)
+        self.assertEqual(next_baseline(prior, _h(f=None), outcome, tracked={"f"}), prior)
+        self.assertEqual(next_baseline(prior, _h(f="local"), outcome, tracked={"f"}), prior)
+
     def test_newly_tracked_field_without_baseline(self):
         # Empty Frappe value: a new HERO value applies.
         outcome = reconcile({}, {}, _h(f="v"), _h(f=None), tracked={"f"}, target_empty={"f"})
