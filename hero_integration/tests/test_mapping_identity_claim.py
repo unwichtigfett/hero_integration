@@ -159,6 +159,24 @@ class TestMappingIdentityClaim(unittest.TestCase):
             fake.session.user = 'Guest'
             with self.assertRaises(PermissionError): claims.reserve_claims(fake, self.batch())
 
+    def test_unauthorized_claim_stops_before_schema_check_or_identity_lock(self):
+        fake = self.fake
+        for user, roles in (('Guest', ['System Manager']), ('employee', ['Employee'])):
+            with self.subTest(user=user), patch.object(fake, 'get_roles', return_value=roles), \
+                 patch.object(claims, 'assert_claim_schema') as schema_check, \
+                 patch.object(claims, 'assert_reconciliation_ready') as reconciliation, \
+                 patch.object(hero_frappe_mapping, '_lock_active_target') as lock, \
+                 patch.object(fake.db, 'savepoint') as savepoint:
+                fake.session.user = user
+                before = deepcopy(fake.rows)
+                with self.assertRaises(PermissionError):
+                    claims.reserve_claims(fake, self.batch())
+                self.assertEqual(fake.rows, before)
+                schema_check.assert_not_called()
+                reconciliation.assert_not_called()
+                lock.assert_not_called()
+                savepoint.assert_not_called()
+
     def test_rollback_failure_requires_transaction_abort_and_clears_scopes(self):
         fake = self.fake
         fake.fail_insert = True
