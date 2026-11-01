@@ -1861,20 +1861,24 @@ def _review_hold(link) -> Result | None:
     return None
 
 
-def _references_besides_hero(doctype: str, name: str) -> str | None:
-    """Name the first static or dynamic reference other than the HERO binding itself."""
+def _references_besides_hero(doctype: str, name: str, ignore=()) -> str | None:
+    """Name the first static or dynamic reference other than the HERO binding itself.
+
+    ``ignore`` names further referencing DocTypes that go away with the target.
+    """
+    skipped = {"HERO Integration Link", *ignore}
     from frappe.model.delete_doc import get_dynamic_linked_docs
     from frappe.desk.form.linked_with import get_linked_docs, get_linked_doctypes
 
     document = frappe.get_doc(doctype, name)
     for reference in get_dynamic_linked_docs(document):
-        if reference["reference_doctype"] != "HERO Integration Link":
+        if reference["reference_doctype"] not in skipped:
             return f"{reference['reference_doctype']} {reference['reference_docname']}"
     linked = get_linked_docs(doctype, name, linkinfo=get_linked_doctypes(doctype)) or {}
     for reference_doctype, found in linked.items():
         # Frappe v16: {"docs": [...permitted rows], "hidden_count": n}
         docs, hidden = found.get("docs") or [], int(found.get("hidden_count") or 0)
-        if reference_doctype != "HERO Integration Link" and (docs or hidden):
+        if reference_doctype not in skipped and (docs or hidden):
             return f"{reference_doctype} {docs[0].get('name') if docs else '(not permitted)'}"
     return None
 
