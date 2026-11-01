@@ -87,6 +87,14 @@ class TestCheckpointTransaction(TestCase):
         self.db.commit.assert_not_called()
         self.assertEqual(self.db.rollback.call_count, 2)
 
+    def test_checkpoint_commit_exception_is_propagated_and_rollback_requested(self):
+        self.db.commit.side_effect = RuntimeError('synthetic commit failure')
+        with self.assertRaisesRegex(RuntimeError, 'commit failure'):
+            with migration._checkpoint_transaction(self.run, self.started):
+                pass
+        self.db.commit.assert_called_once()
+        self.assertEqual(self.db.rollback.call_count, 2)
+
     def test_replaced_cancelled_expired_or_foreign_claim_cannot_commit(self):
         changes = ({'started_on': self.started + timedelta(seconds=1)}, {'state': 'Cancelled'},
                    {'lease_expires_on': self.started}, {'owner': 'Other'})
