@@ -53,7 +53,17 @@ class TestCheckpointTransaction(TestCase):
         with self.assertRaises(migration.MappingPlanError):
             with migration._checkpoint_transaction(self.run, self.started): pass
         self.db.commit.assert_not_called()
-        self.assertTrue(self.db.rollback.called)
+        self.assertEqual(self.db.rollback.call_count, 2)
+        self.run.save.assert_not_called()
+
+    def test_interruption_rolls_back_inflight_work_without_advancing_checkpoint(self):
+        with self.assertRaises(KeyboardInterrupt):
+            with migration._checkpoint_transaction(self.run, self.started):
+                raise KeyboardInterrupt()
+        self.assertEqual(self.db.rollback.call_count, 2)
+        self.db.commit.assert_not_called()
+        self.run.save.assert_not_called()
+        self.assert_contract.assert_called_once_with(self.run, lock=True)
 
     def test_replaced_cancelled_expired_or_foreign_claim_cannot_commit(self):
         changes = ({'started_on': self.started + timedelta(seconds=1)}, {'state': 'Cancelled'},
