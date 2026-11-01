@@ -112,6 +112,18 @@ test('an unvalidatable saved query is not executed', async () => {
   assert.deepEqual(rpc.map((entry) => entry.method), ['validate_saved_query']);
 });
 
+test('editing during validation prevents execution of the saved revision', async () => {
+  const {window, rpc, Workspace} = load();
+  const ws = editorState(Workspace, {query: {query_id: 'Q1', revision: 3, status: 'Draft'}});
+  let finishValidation;
+  window.rpcResult = () => new Promise((resolve) => { finishValidation = resolve; });
+  const execution = ws.executeQuery();
+  ws.editor.text += '\n# local change during validation';
+  finishValidation({query: {status: 'Validated'}});
+  await assert.rejects(execution, /changed during validation. Nothing was executed/);
+  assert.deepEqual(rpc.map((entry) => entry.method), ['validate_saved_query']);
+});
+
 test('invalid variables and mutations are rejected before any request', async () => {
   const {rpc, Workspace} = load();
   const ws = editorState(Workspace);
