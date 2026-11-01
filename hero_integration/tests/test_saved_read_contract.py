@@ -72,6 +72,16 @@ class TestSavedReadContract(unittest.TestCase):
             source.customers()
         self.assertEqual(len(calls), 1)
 
+    def test_mapping_approval_revoked_before_read_blocks_transport(self):
+        contract = from_documents(self.service, self.mapping, self.snapshot)
+        self.service.approved_mapping_revision = 2
+        client = _Client({"contacts": [{"id": 41}]})
+        source = GraphQLServiceSource(client, self.service, contract, "synthetic",
+                                      revalidate=lambda: from_documents(self.service, self.mapping, self.snapshot))
+        with self.assertRaisesRegex(ReadContractError, "mapping approval is stale"):
+            source.customers()
+        self.assertEqual(client.calls, [])
+
     def test_other_source_is_rejected_before_transport(self):
         self.mapping.source_instance = 'other-source'
         with self.assertRaisesRegex(ReadContractError, 'snapshot source'):
