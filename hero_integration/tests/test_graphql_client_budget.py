@@ -187,6 +187,15 @@ class TestGraphQLClientBudget(unittest.TestCase):
         error, _ = self._query(_Opener({"data": None}), max_retries=0)
         self.assertEqual(error.code, "MISSING_DATA")
 
+    def test_nonempty_malformed_error_metadata_never_returns_partial_data(self):
+        for errors in ({"message": "synthetic"}, "synthetic", [None]):
+            with self.subTest(errors=errors):
+                opener = _Opener({"data": {"viewer": {"id": "synthetic"}}, "errors": errors})
+                error, sleep = self._query(opener, max_retries=3)
+                self.assertEqual(error.code, "GRAPHQL_ERRORS")
+                self.assertEqual(opener.calls, 1)
+                sleep.assert_not_called()
+
     def test_upstream_error_details_remain_sensitive_even_when_exception_text_is_generic(self):
         upstream = "synthetic confidential upstream detail"
         partial = {"viewer": {"id": "synthetic private value"}}
