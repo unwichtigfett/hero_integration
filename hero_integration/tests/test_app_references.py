@@ -36,13 +36,13 @@ def _fake(projects=None, contact_emails=None, contact_customers=None):
 
     return SimpleNamespace(
         db=SimpleNamespace(get_value=lambda doctype, name, field: projects.get(name)),
-        get_all=get_all, throw=lambda message: (_ for _ in ()).throw(_Throw(message)),
+        get_all=get_all, throw=lambda message: (_ for _ in ()).throw(_Throw(message)), _=lambda text: text,
     )
 
 
 class TestFillReferences(unittest.TestCase):
     def _fill(self, doc, **fake):
-        with patch.object(refs, "frappe", _fake(**fake)), patch.object(refs, "_", lambda text: text):
+        with patch.object(refs, "frappe", _fake(**fake)):
             refs.fill_references(doc)
         return doc
 
