@@ -61,3 +61,16 @@ def test_tampered_or_expired_approval_does_not_change_stored_state():
     with pytest.raises(ProvisioningLifecycleError, match="stale, forged, expired"):
         store.consume(plan(), approved, "admin", 31.0)
     assert fake.documents[approved.approval_id].approval_state == "APPROVED"
+
+
+def test_revoked_manager_role_prevents_consumption_before_lock_lookup():
+    fake = FakeFrappe()
+    store = FrappeProvisioningApprovalStore(fake, clock=lambda: 1.0)
+    approved = store.issue(plan(), "synthetic-correlation", ttl_seconds=30)
+    fake.get_roles = lambda *_args: []
+
+    with pytest.raises(PermissionError, match="System Manager"):
+        store.consume(plan(), approved, "admin", 2.0)
+
+    assert fake.queries == []
+    assert fake.documents[approved.approval_id].approval_state == "APPROVED"
