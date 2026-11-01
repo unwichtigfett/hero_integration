@@ -94,6 +94,11 @@ class TestCompanyStructure(unittest.TestCase):
             ("PV-1-H", {"department": "Photovoltaik - RSE", "project_type": "Photovoltaik"}),
             ("ELEK-2-H", {"project_type": "Elektrohandwerk"}),
         ])
+        fake.updates.clear()
+        with patch.object(structure, "frappe", fake), \
+                patch.object(project_form, "project_type_for_trade", side_effect=lambda code: types.get(code)):
+            structure.backfill_project_departments(dry_run=0, fields="project_type")
+        self.assertEqual(fake.updates[0], ("PV-1-H", {"project_type": "Photovoltaik"}))
 
 
 if __name__ == "__main__":

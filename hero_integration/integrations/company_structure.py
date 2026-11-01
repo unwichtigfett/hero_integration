@@ -99,7 +99,7 @@ def _trade_of(project) -> str | None:
     return None
 
 
-def backfill_project_departments(dry_run: int | bool = 1) -> dict:
+def backfill_project_departments(dry_run: int | bool = 1, fields: str = "department,project_type") -> dict:
     """Fill the department and the Project Type (Gewerk) of HERO projects where they are empty.
 
     Only Projects bound by a HERO Integration Link are touched; projects created in
@@ -109,6 +109,7 @@ def backfill_project_departments(dry_run: int | bool = 1) -> dict:
     from hero_integration.integrations.project_form import project_type_for_trade
 
     dry_run = bool(int(dry_run))
+    wanted = {field.strip() for field in str(fields).split(",") if field.strip()}
     bound = set(frappe.get_all("HERO Integration Link", filters={"source_system": "HERO", "target_doctype": "Project"},
                                pluck="target_name", limit_page_length=0))
     counts: dict[str, int] = {}
@@ -120,9 +121,9 @@ def backfill_project_departments(dry_run: int | bool = 1) -> dict:
             continue
         trade = _trade_of(project)
         updates = {}
-        if not project.department and (department := department_for_trade(trade, project.company)):
+        if "department" in wanted and not project.department and (department := department_for_trade(trade, project.company)):
             updates["department"] = department
-        if not project.project_type and (project_type := project_type_for_trade(trade)):
+        if "project_type" in wanted and not project.project_type and (project_type := project_type_for_trade(trade)):
             updates["project_type"] = project_type
         for field, value in updates.items():
             counts[f"{field}: {value}"] = counts.get(f"{field}: {value}", 0) + 1
