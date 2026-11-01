@@ -138,9 +138,10 @@ class TestLegacyCheckpoint(TestCase):
 
     def test_each_relevant_contract_dimension_invalidates_a_checkpoint(self):
         bound = dict(version=1, site='site', source_instance='a', source_binding_revision=1,
+                     actor='Administrator', action='Customer Migration', mode='Execute',
                      readers=[dict(reader='query', schema='snapshot', field_rules='rules')])
         run = SimpleNamespace(checkpoint_contract_json=json.dumps(bound))
-        for key in ('site', 'source_instance', 'source_binding_revision', 'readers'):
+        for key in ('site', 'source_instance', 'source_binding_revision', 'actor', 'action', 'mode', 'readers'):
             current = {**bound, key: 'changed'}
             with self.subTest(key=key), mock.patch.object(migration, '_run_checkpoint_contract', return_value=current):
                 with self.assertRaises(migration.MappingPlanError): migration._assert_checkpoint_contract(run)
