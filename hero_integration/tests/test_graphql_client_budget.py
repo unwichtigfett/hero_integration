@@ -20,6 +20,7 @@ class _Response(io.BytesIO):
         return self
 
     def __exit__(self, *exc):
+        self.close()
         return False
 
 
@@ -50,6 +51,9 @@ class TestGraphQLClientBudget(unittest.TestCase):
         self.endpoint = validate_endpoint("https://hero.synthetic.invalid/graphql", {"hero.synthetic.invalid"})
 
     def _query(self, opener, **client_args):
+        for outcome in opener.outcomes:
+            if isinstance(outcome, urllib.error.HTTPError):
+                self.addCleanup(outcome.close)
         client = HeroGraphQLClient(self.endpoint, lambda: "synthetic", **client_args)
         with mock.patch("hero_integration.client.graphql.urllib.request.build_opener", return_value=opener), \
              mock.patch("hero_integration.client.graphql.time.sleep") as sleep:
