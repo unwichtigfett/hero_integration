@@ -82,3 +82,19 @@ class TestAssignmentHookScope(unittest.TestCase):
         frappe.db.exists.assert_not_called()
         frappe.db.sql.assert_not_called()
         self.assertFalse(state.managed_assignment_active())
+
+    def test_todo_observer_skips_managed_and_migration_writes(self):
+        frappe = types.ModuleType("frappe")
+        frappe.db = types.SimpleNamespace(exists=Mock(), sql=Mock())
+        frappe.flags = types.SimpleNamespace(in_migrate=True)
+        frappe.get_doc = Mock()
+        todo = types.SimpleNamespace(name="TODO-SYNTHETIC", reference_type="Task", reference_name="TASK-SYNTHETIC")
+        with patch.dict(sys.modules, {"frappe": frappe}):
+            state.observe_local_todo(todo)
+            frappe.flags.in_migrate = False
+            with state.managed_assignment():
+                state.observe_local_todo(todo)
+        frappe.db.exists.assert_not_called()
+        frappe.db.sql.assert_not_called()
+        frappe.get_doc.assert_not_called()
+        self.assertFalse(state.managed_assignment_active())
