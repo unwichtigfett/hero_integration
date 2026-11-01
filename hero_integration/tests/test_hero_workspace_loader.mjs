@@ -65,3 +65,26 @@ test("workspace routes remain local and encode untrusted parameter text", () => 
     assert.equal(parsed.searchParams.get("hero_tool"), "graph");
     assert.equal(parsed.hash, "");
 });
+
+test("API summary renders an upstream error as text in the status region", async () => {
+    class Element {
+        constructor(tag) { this.tag = tag; this.children = []; this.dataset = {}; this.attributes = {}; this.textContent = ""; }
+        append(...children) { this.children.push(...children); }
+        replaceChildren(...children) { this.children = children; }
+        setAttribute(name, value) { this.attributes[name] = String(value); }
+        addEventListener() {}
+        find(predicate) { if (predicate(this)) return this; for (const child of this.children) { const found = child.find(predicate); if (found) return found; } }
+    }
+    const markup = '<img src=x onerror=alert(1)>';
+    const api = async () => { throw new Error(markup); };
+    const window = {hero_integration_platform: {api, url: () => "/app/hero-integration"}};
+    const document = {createElement: tag => new Element(tag)};
+    const summary = await readFile(new URL("../public/js/hero_api_summary.js", import.meta.url), "utf8");
+    vm.runInNewContext(summary, {window, document});
+    const workspace = new Element("main");
+    await window.hero_integration_api_summary.mount(workspace);
+    const status = workspace.find(element => element.attributes.role === "status");
+    assert.equal(status.textContent, markup);
+    assert.equal(status.dataset.state, "error");
+    assert.equal(workspace.find(element => element.tag === "img"), undefined);
+});
