@@ -70,6 +70,19 @@ class TestInstallContract(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Project.notes must remain editable"):
             locked.call(install.before_install)
 
+    def test_conflicting_existing_field_blocks_creation_of_other_missing_fields(self):
+        environment = _InstallEnvironment(apps=["frappe", "erpnext"], version="16.35.0")
+        install = environment.load()
+        definition = next(row for row in install.HERO_CUSTOM_FIELDS["Project"]
+                          if row["fieldname"] == "custom_hero_display_id")
+        environment.custom_fields[("Project", "custom_hero_display_id")] = {**definition, "fieldtype": "Int"}
+
+        with self.assertRaisesRegex(RuntimeError, "conflicts with the HERO schema"):
+            environment.call(install.after_migrate)
+
+        self.assertEqual(environment.create_calls, [])
+        self.assertEqual(len(environment.custom_fields), 1)
+
 
 class _InstallEnvironment:
     def __init__(self, apps, version, doctypes=None, project_notes=True, project_notes_read_only=False):
