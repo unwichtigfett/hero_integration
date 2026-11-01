@@ -78,6 +78,21 @@ class ObjectMappingCatalogTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             field(altered, 'Customer', first['path'], first['schema_context'])
 
+    def test_oversized_schema_context_cannot_be_selected_or_saved_as_field_context(self):
+        snapshot = schema()
+        task = next(item for item in snapshot['__schema']['types'] if item['name'] == 'Task')
+        task['fields'][0]['args'] = [
+            {'name': 'locale', 'type': ref('SCALAR', 'String'), 'defaultValue': 'x' * 4200},
+        ]
+        selected = catalog(snapshot, 'Task')['items'][0]
+        self.assertGreater(len(selected['schema_context']), 4096)
+        self.assertFalse(selected['selectable'])
+        self.assertFalse(selected['activation_allowed'])
+        content = {'mapping_definition_ids': ['task-rule'], 'field_rules': {'task-rule': {'source_path': 'title'}},
+                   'field_contexts': {'task-rule': {'object_type': 'Task', 'schema_context': selected['schema_context']}}}
+        with self.assertRaises(MappingDraftError):
+            validate_edits({}, content)
+
     def test_context_survives_draft_and_forged_shape_fails(self):
         selected = catalog(schema(), 'Task')['items'][0]
         content = {'mapping_definition_ids': ['task-rule'], 'field_rules': {'task-rule': {'source_path': 'title'}},
