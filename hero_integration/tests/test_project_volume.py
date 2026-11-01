@@ -47,6 +47,8 @@ class TestProjectVolume(unittest.TestCase):
             lambda customer: "CUST", lambda: "Company", lambda record: "Title")
         for volume in (12500.5, 9000, None):
             self.assertEqual(values(volume).get("custom_hero_volume"), volume)
+        # Whole numbers arrive as int but are stored and read back as float.
+        self.assertIs(type(values(35713).get("custom_hero_volume")), float)
         for volume in ("12500", True):
             with self.assertRaises(MappingPlanError):
                 values(volume)
