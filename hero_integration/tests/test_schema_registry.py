@@ -84,6 +84,27 @@ def test_registry_catalogs_nested_outputs_inputs_wrappers_deprecation_interfaces
     assert registry.operation("QUERY", "search").return_type.list_depth == 1
 
 
+def test_depth_limit_is_separate_from_path_count_truncation_flag():
+    schema = _schema()
+    types = schema["__schema"]["types"]
+    case = next(item for item in types if item["name"] == "Case")
+    case["fields"].append({"name": "deep", "type": _named("OBJECT", "Level1")})
+    for index in range(1, 4):
+        types.append({"kind": "OBJECT", "name": f"Level{index}", "fields": [
+            {"name": "child", "type": _named("OBJECT", f"Level{index + 1}")}
+        ]})
+    types.append({"kind": "OBJECT", "name": "Level4", "fields": [
+        {"name": "value", "type": _named("SCALAR", "String")}
+    ]})
+    registry = build_schema_registry(_stored(schema))
+    operation = registry.operation("QUERY", "case")
+    deep_paths = {field.reference_id for field in operation.output_fields if ".deep" in field.reference_id}
+    assert "hero.query.case.deep.child.child" in deep_paths
+    assert "hero.query.case.deep.child.child.child" not in deep_paths
+    assert registry.max_reference_path_depth == 3
+    assert not operation.output_paths_truncated
+
+
 def test_registry_is_deterministic_and_rejects_snapshot_and_schema_mismatches():
     first, second = build_schema_registry(_stored()), build_schema_registry(_stored())
     assert first == second
