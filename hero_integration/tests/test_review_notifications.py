@@ -57,6 +57,17 @@ class TestReviewNotifications(unittest.TestCase):
         self.assertFalse(notices.notify_run_summary("HERO-RUN-2"))
         self.assertEqual(self.sent, [])
 
+    def test_conflict_notice_is_only_created_for_changed_evidence(self):
+        link = SimpleNamespace(name="LINK-1", conflict_detail="existing evidence")
+        self.assertFalse(notices.notify_conflict_once(link, {"email_id"}, "existing evidence"))
+        self.assertEqual(self.sent, [])
+
+        self.assertTrue(notices.notify_conflict_once(link, {"email_id", "customer_name"}, "new evidence"))
+        (notice,) = self.sent
+        self.assertEqual(notice["subject"], "Field conflict: customer_name, email_id")
+        self.assertEqual(notice["email_content"], "new evidence")
+        self.assertEqual((notice["document_type"], notice["document_name"]), ("HERO Integration Link", "LINK-1"))
+
 
 if __name__ == "__main__":
     unittest.main()
