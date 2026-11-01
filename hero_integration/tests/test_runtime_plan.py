@@ -170,6 +170,15 @@ class TestRuntimePlan(unittest.TestCase):
                 else:
                     self.assertEqual(changed.plan_key, original.plan_key)
 
+    def test_scope_delimiter_and_boolean_revisions_are_rejected(self):
+        original = selection()
+        for field in ("site_scope", "source_instance"):
+            with self.subTest(field=field), self.assertRaises(RuntimePlanError):
+                replace(original, **{field: "part|other"})
+        for field in ("service_revision", "operation_revision", "mapping_revision"):
+            with self.subTest(field=field), self.assertRaises(RuntimePlanError):
+                replace(original, **{field: True})
+
     def test_approval_checks_authority_and_current_references_before_transition(self):
         draft = self.service.create_draft(selection(), actor="manager")
         with self.assertRaises(PermissionError):
