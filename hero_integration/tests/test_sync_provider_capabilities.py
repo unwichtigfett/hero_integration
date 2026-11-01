@@ -94,6 +94,29 @@ class TestProviderCapabilityContracts(unittest.TestCase):
         with self.assertRaises(ProviderCapabilityError):
             provider.changes(None)
 
+    def test_unverified_final_watermark_preserves_cursor_and_releases_run(self):
+        registry = BindingRegistryService(InMemoryBindingStorage())
+        parent = registry.create_or_resolve_object_binding(
+            site_scope="site", source_instance="hero", object_type="Contact", external_object_id="1",
+            target_app="erpnext", target_doctype="Customer", target_name="C1", mapping_definition_id="definition", mapping_revision=1,
+        )
+        binding = registry.create_or_resolve_field_binding(
+            parent, source_field="name", target_field="customer_name", mapping_definition_id="definition", mapping_revision=1,
+            direction=MappingDirection.HERO_TO_FRAPPE,
+        )
+        pages = {None: ChangePage(({"id": "1", "name": "Ada"},), "next", False),
+                 "next": ChangePage((), None, True, "unverified")}
+        provider = guarded_provider(ProviderContract(ProviderCapability.VERIFIED_TUPLE_WATERMARK),
+                                    lambda cursor: pages[cursor], tuple_watermark_verified=lambda page: False)
+        ledger, processor = InMemorySyncLedger(), _Processor()
+        engine = SyncEngine(ledger, _plan(), provider, _Index((BoundField("1", binding, ("name",)),)), processor)
+        initial = engine.configure(PollingConfiguration("site", False, 60, "hero", 1, FP))
+        with self.assertRaises(ProviderCapabilityError):
+            engine.pending_sync(SyncRun("manual", "site", "manager", initial.generation, False))
+        self.assertEqual(ledger.state("site"), initial)
+        self.assertIsNone(ledger.active_run("site"))
+        self.assertEqual([row[0]["id"] for row in processor.rows], ["1"])
+
     def test_pending_sync_is_bound_only_and_records_completed_coverage(self):
         registry = BindingRegistryService(InMemoryBindingStorage())
         parent = registry.create_or_resolve_object_binding(
