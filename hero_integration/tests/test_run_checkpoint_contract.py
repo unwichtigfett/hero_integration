@@ -130,3 +130,27 @@ class TestReplayAcceptance(TestCase):
             migration.execute_run('RUN')
         success.assert_not_called()
         self.assertEqual(run.state, 'Blocked')
+
+
+class TestEnumerationEvidence(TestCase):
+    def test_invalid_page_cannot_partially_advance_seen_identity_evidence(self):
+        from hero_integration.sources.hero import SourcePage
+
+        cases = (
+            SourcePage(({'id': 2}, {'id': 1}), None),
+            SourcePage(({'id': 2}, {'id': None}), None),
+            SourcePage(({'id': 2}, {'id': '2'}), None),
+            SourcePage(({'id': 2},), 0),
+        )
+        for page in cases:
+            seen = {'1'}
+            with self.subTest(page=page), self.assertRaises(migration.MappingPlanError):
+                migration._validate_enumeration_page(page, 0, seen)
+            self.assertEqual(seen, {'1'})
+
+    def test_valid_pages_advance_identity_evidence_after_validation(self):
+        from hero_integration.sources.hero import SourcePage
+
+        seen = {'1'}
+        migration._validate_enumeration_page(SourcePage(({'id': 2}, {'id': '003'}), 2), 0, seen)
+        self.assertEqual(seen, {'1', '2', '003'})
