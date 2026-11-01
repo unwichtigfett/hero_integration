@@ -99,6 +99,35 @@ class TestCheckpointTransaction(TestCase):
         self.db.commit.assert_not_called()
 
 
+class TestReaderTransportFence(TestCase):
+    def test_automatic_reader_requests_rollback_and_revalidates_around_transport(self):
+        from hero_integration.services.read_contract import ReadContract
+
+        events = []
+        contract = ReadContract('service', 7, 'mapping', 3, 'HeroCustomers', 'contacts', 'id',
+                                ('rule',), {'first': '$page_size', 'offset': '$offset'}, 2)
+        service = SimpleNamespace(schema_snapshot='snapshot', query_document='synthetic query')
+        snapshot = SimpleNamespace(source_instance='synthetic')
+        documents = {'HERO GraphQL Service': service, 'HERO GraphQL Mapping': object(),
+                     'HERO GraphQL Schema Snapshot': snapshot}
+        fake = SimpleNamespace(get_doc=lambda doctype, name: documents[doctype],
+                               db=SimpleNamespace(rollback=lambda: events.append('rollback')))
+        client = SimpleNamespace(query=lambda document, variables: events.append('query') or {'contacts': []})
+        run = SimpleNamespace(graphql_service='service', graphql_mapping='mapping', service_revision=7,
+                              mapping_revision=3, mode='Execute', testing_enabled=0)
+        config = SimpleNamespace(endpoint=object(), api_token='synthetic', timeout_seconds=5,
+                                 source_instance='synthetic')
+        with mock.patch.object(migration, 'frappe', fake), \
+             mock.patch.object(migration, '_validate_run_source_binding'), \
+             mock.patch.object(migration, '_assert_checkpoint_contract', side_effect=lambda run: events.append('check')), \
+             mock.patch.object(migration, '_request_rate', return_value=10000), \
+             mock.patch.object(migration, 'HeroGraphQLClient', return_value=client), \
+             mock.patch('hero_integration.services.read_contract.from_documents', return_value=contract):
+            source = migration._source_for_run(run, config)
+            self.assertEqual(source.customers().records, ())
+        self.assertEqual(events, ['rollback', 'check', 'rollback', 'query', 'rollback', 'check', 'rollback'])
+
+
 class TestLegacyCheckpoint(TestCase):
     def test_absent_malformed_or_unsupported_evidence_never_gets_rebound(self):
         for raw in (None, '', '{}', '{not-json', '{"version":0}'):
