@@ -32,7 +32,7 @@ class _Frappe:
                     or (doctype == "DocType" and name in {"HD Team", "HD Ticket Type"}),
             get_value=lambda doctype, name, field: "RSE" if doctype == "Company" else None,
             get_single_value=lambda doctype, field: "Firma",
-            set_value=lambda doctype, name, field, value, update_modified=True: self.updates.append((name, value)),
+            set_value=lambda doctype, name, values, update_modified=True: self.updates.append((name, values)),
             commit=lambda: None,
         )
 
@@ -45,7 +45,9 @@ class _Frappe:
     def get_doc(self, values):
         return _Doc(self.inserted, values)
 
-    def get_all(self, doctype, filters=None, fields=None, limit_page_length=None):
+    def get_all(self, doctype, filters=None, fields=None, pluck=None, limit_page_length=None):
+        if doctype == "HERO Integration Link":
+            return list(getattr(self, "bound", []))
         return [SimpleNamespace(**p) for p in self.projects]
 
 
@@ -73,18 +75,25 @@ class TestCompanyStructure(unittest.TestCase):
             self.assertIsNone(structure.department_for_trade("KLIM", "Firma"))  # awaits a decision
             self.assertIsNone(structure.department_for_trade(None, "Firma"))
 
-    def test_backfill_fills_only_empty_departments_and_dry_run_writes_nothing(self):
-        projects = [{"name": "PV-1", "project_name": "PV-1 | Photovoltaik", "company": "Firma"},
-                    {"name": "ELEK-2", "project_name": "ELEK-2 | Elektro", "company": "Firma"},
-                    {"name": "PROJ-0003", "project_name": "SONS-3 | Sonstiges", "company": "Firma"},
-                    {"name": "PROJ-0004", "project_name": "PV-4 | Photovoltaik", "company": "Firma"}]
+    def test_backfill_touches_only_hero_projects_and_only_empty_fields(self):
+        from hero_integration.integrations import project_form
+        projects = [{"name": "PV-1-H", "project_name": "PV-1 | Photovoltaik", "company": "Firma", "department": None, "project_type": None},
+                    {"name": "ELEK-2-H", "project_name": "ELEK-2 | Elektro", "company": "Firma", "department": "IT - RSE", "project_type": None},
+                    {"name": "SONS-3-H", "project_name": "SONS-3 | Sonstiges", "company": "Firma", "department": None, "project_type": "Sonstiges"},
+                    {"name": "PV-0001", "project_name": "PV-0001 | created in ERPNext", "company": "Firma", "department": None, "project_type": None}]
         fake = _Frappe(existing={("Department", "Photovoltaik - RSE"), ("Department", "Elektro - RSE")}, projects=projects)
-        with patch.object(structure, "frappe", fake):
+        fake.bound = ["PV-1-H", "ELEK-2-H", "SONS-3-H"]
+        types = {"PV": "Photovoltaik", "ELEK": "Elektrohandwerk", "SONS": "Sonstiges"}
+        with patch.object(structure, "frappe", fake), \
+                patch.object(project_form, "project_type_for_trade", side_effect=lambda code: types.get(code)):
             report = structure.backfill_project_departments()
             self.assertEqual(fake.updates, [])
-            self.assertEqual(report["projects"], {"Photovoltaik - RSE": 2, "Elektro - RSE": 1, "unmapped": 1})
+            self.assertEqual(report["projects"]["not_from_hero"], 1)
             structure.backfill_project_departments(dry_run=0)
-        self.assertEqual(fake.updates, [("PV-1", "Photovoltaik - RSE"), ("ELEK-2", "Elektro - RSE"), ("PROJ-0004", "Photovoltaik - RSE")])
+        self.assertEqual(fake.updates, [
+            ("PV-1-H", {"department": "Photovoltaik - RSE", "project_type": "Photovoltaik"}),
+            ("ELEK-2-H", {"project_type": "Elektrohandwerk"}),
+        ])
 
 
 if __name__ == "__main__":
