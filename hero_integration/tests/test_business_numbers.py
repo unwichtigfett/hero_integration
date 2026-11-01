@@ -187,6 +187,16 @@ class TestBusinessNumberMigration(FakeFrappeMigrationHarness, unittest.TestCase)
         self.assertEqual({row["name"]: row["customer_name"] for row in self.frappe.customers},
                          {"2222": "Synthetic Ada", "3333": "Synthetic other customer"})
 
+    def test_same_technical_and_business_numbers_on_two_sources_conflict_without_merge(self):
+        self.migrate_customer(self.customer())
+        result = self.migrate_customer(self.customer(full_name="Synthetic other customer",
+                                                     _hero_source_instance="account-b"))
+        self.assertEqual(result.code, "CONFLICT")
+        self.assertEqual(len(self.frappe.customers), 1)
+        self.assertEqual(self.frappe.customers[0]["customer_name"], "Synthetic Ada")
+        self.assertEqual(self.frappe.links[("customer", "301")].target_name, "2222")
+        self.assertNotIn(("customer", "301", "account-b"), self.frappe.links)
+
     def test_two_source_identities_with_the_same_customer_number_conflict(self):
         self.migrate_customer(self.customer())
         result = self.migrate_customer(self.customer(id=302, full_name="Synthetic other customer"))
