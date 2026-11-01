@@ -116,6 +116,15 @@ class TestMaterializedMonitor(unittest.TestCase):
         self.client.query.side_effect = reply
         with self.assertRaises(sync_runtime_adapter.RuntimeBridgeError): self.run_monitor()
 
+    def test_area_disabled_during_http_cannot_be_acknowledged(self):
+        def reply(*args):
+            self.settings.sync_area_projects = 0
+            return {"things": [{"id": "1", "name": "test"}]}
+        self.client.query.side_effect = reply
+        with self.assertRaisesRegex(sync_runtime_adapter.RuntimeBridgeError, "source/configuration changed"):
+            self.run_monitor()
+        self.client.query.assert_called_once()
+
     def test_transport_boundary_has_released_prior_transactions(self):
         def reply(*args):
             self.assertGreaterEqual(self.frappe.db.rollback.call_count, 2)
