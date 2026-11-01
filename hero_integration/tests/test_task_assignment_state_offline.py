@@ -8,6 +8,17 @@ from hero_integration.services import task_assignment_state as state
 
 
 class TestAssignmentHookScope(unittest.TestCase):
+    def test_nested_managed_scope_restores_prior_state_after_failure(self):
+        self.assertFalse(state.managed_assignment_active())
+        with state.managed_assignment():
+            self.assertTrue(state.managed_assignment_active())
+            with self.assertRaisesRegex(RuntimeError, "synthetic failure"):
+                with state.managed_assignment():
+                    self.assertTrue(state.managed_assignment_active())
+                    raise RuntimeError("synthetic failure")
+            self.assertTrue(state.managed_assignment_active())
+        self.assertFalse(state.managed_assignment_active())
+
     def test_framework_version_and_every_hook_are_required(self):
         hook_names = {
             "assignment_intent_before": "hero_integration.services.task_assignment_state.before_native_assignment",
