@@ -437,7 +437,8 @@ def run_lease_alive(run_name: str, now=None) -> bool:
     """Whether a non-terminal run may still be executing in a live worker.
 
     Runs claimed before leases existed have no expiry; their ``started_on``
-    plus the lease window is used instead.  A Queued run holds no claim.
+    plus the lease window is used instead. A non-terminal, non-Running row
+    is conservatively reported alive.
     """
     row = frappe.db.get_value("HERO Integration Run", run_name, ["state", "lease_expires_on", "started_on"], as_dict=True)
     if not row or row.state in TERMINAL_STATES:
