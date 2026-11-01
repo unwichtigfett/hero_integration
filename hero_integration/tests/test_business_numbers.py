@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest import mock
 
@@ -381,6 +383,16 @@ class TestRenamePreview(unittest.TestCase):
     def row(self, current, proposed, status="Synchronized", links=1, doctype="Customer"):
         return {"doctype": doctype, "current_name": current, "proposed_name": proposed, "link_status": status,
                 "links_to_target": links, "collision": "", "safe_rename": False, "reason": ""}
+
+    def test_preview_export_does_not_replace_an_existing_file(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "preview.csv"
+            original = b"synthetic preexisting content\n"
+            path.write_bytes(original)
+            with mock.patch.object(self.preview, "preview_rows", return_value=[]):
+                with self.assertRaises(FileExistsError):
+                    self.preview.write_csv(str(path))
+            self.assertEqual(path.read_bytes(), original)
 
     def test_project_preview_never_guesses_trade_from_a_title(self):
         propose = self.preview._project_proposal
