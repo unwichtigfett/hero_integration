@@ -92,12 +92,12 @@ users to ERPNext users and employees is an open step (section 6).
 | Helpdesk/CRM mirrors | Enabling ERPNext HD Settings, or CRM's "create customer on status change", is refused on save |
 | Read access for other apps | Agent/Agent Manager read Customer/Project/Contact; Sales User/Manager read Project |
 | Development data | Anonymized package outside the repo (`/home/frappe/hero-dev-packages`) |
-| Backups | **Open**: only 3 local backups, not encrypted, no off-site copy (see 6) |
+| Backups | Every 6 h by cron (`bench --site all backup`). Retention was only 3 backups (hourly cleanup) plus 23 h, which had already deleted the pre-import backups. Since 2026-11-01: `backup_limit` 30 and `keep_backups_for_hours` 720 (~7 days of 6-hourly backups), and a manual archive in `/home/frappe/backups-archive`. **Open**: encryption and an off-site copy |
 | Secrets | HERO token and passwords encrypted in `__Auth`; the site `encryption_key` must be backed up separately, otherwise restored backups cannot decrypt them |
 
 ## 6. Open steps (in recommended order)
 
-1. **Backups**: daily encrypted backups (`encrypt_backup`), off-site copy to ci-server
+1. **Backups**: encrypted backups (`encrypt_backup`, the key must be stored outside the server), an off-site copy to ci-server
    (`/srv/backups/hero_integration`), longer retention, and a separate copy of
    `encryption_key`. A restore test in the ci-server CI pipeline is preferable, because that
    environment is rebuilt and discarded anyway.
