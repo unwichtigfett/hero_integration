@@ -5,6 +5,8 @@ stored introspection only and never contacts HERO.  Supported syntax is the
 subset the GraphQL Services editor needs: one (optionally named) query with
 variable definitions, fields with aliases and arguments, inline fragments and
 ``@include``/``@skip``.  Named fragments and subscriptions are rejected.
+This is a subset validator, not a complete GraphQL specification validator;
+in particular, inline-fragment type overlap is not checked here.
 """
 from __future__ import annotations
 
