@@ -136,6 +136,13 @@ class TestMaterializedMonitor(unittest.TestCase):
         self.client.query.return_value = {"things": [{"id": None, "name": "test"}]}
         with self.assertRaises(ValueError): self.run_monitor()
 
+    def test_oversized_materialized_page_is_not_reported_as_success(self):
+        self.client.query.return_value = {"things": [{"id": "1", "name": "one"},
+                                                       {"id": "2", "name": "two"}]}
+        with self.assertRaisesRegex(sync_runtime_adapter.RuntimeBridgeError, "bounded read contract"):
+            self.run_monitor()
+        self.client.query.assert_called_once()
+
 
 class TestScheduledMonitor(unittest.TestCase):
     def test_scheduler_records_only_bounded_observation_and_no_sync_checkpoint(self):
