@@ -147,6 +147,22 @@ class TestSync(unittest.TestCase):
   self.assertEqual((retry.status,retry.cursor),(SyncStatus.PARTIAL,None))
   self.assertIsNone(self.ledger.active_run("site"))
 
+ def test_provider_conflict_after_first_page_keeps_state_and_releases_claim(self):
+  class ConflictingProvider(Provider):
+   def changes(self,cursor):
+    if cursor == "page-2":
+     self.calls.append(cursor)
+     raise SyncConflict("synthetic provider conflict")
+    return super().changes(cursor)
+  provider=ConflictingProvider({None:ChangePage(({"id":"1","name":"first"},),"page-2",False)})
+  processor=Processor(); engine=self.engine(provider,processor); state=self.configured(engine)
+  with self.assertRaisesRegex(SyncConflict,"synthetic provider conflict"):
+   engine.pending_sync(SyncRun("conflict","site","admin",state.generation,False))
+  self.assertEqual(provider.calls,[None,"page-2"])
+  self.assertEqual(len(processor.rows),1)
+  self.assertEqual(self.ledger.state("site"),state)
+  self.assertIsNone(self.ledger.active_run("site"))
+
  def test_partial_batch_replays_from_committed_cursor_before_advancing(self):
   class FailsOnceOnSecond(Processor):
    def process(self,row,fields):
