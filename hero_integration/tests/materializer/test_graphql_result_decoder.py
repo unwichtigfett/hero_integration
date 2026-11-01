@@ -491,6 +491,18 @@ class GraphQLResultDecoderTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             values[("name",)] = "Changed"
 
+    def test_projected_lists_are_immutable_and_detached_from_source_payload(self):
+        payload = {"data": {"result": [{"tags": ["one", "two"]}, {"tags": ["three"]}]}}
+        request = make_request(make_binding(("tags",), ("data", "result", "tags"), "[String]"))
+        response = make_response(payload)
+        payload["data"]["result"][0]["tags"][0] = "changed"
+
+        decoded = decode_graphql_result(request, response)
+        tags = decoded.value_for(("tags",))
+        self.assertEqual(tags, (("one", "two"), ("three",)))
+        with self.assertRaises(TypeError):
+            tags[0][0] = "changed"
+
 
 if __name__ == "__main__":
     unittest.main()
