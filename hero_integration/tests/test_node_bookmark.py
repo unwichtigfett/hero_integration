@@ -81,6 +81,25 @@ class TestNodeBookmarkHelpers(unittest.TestCase):
             mapping_context(SCHEMA, "field:Project.unknown")
 
 
+@unittest.skipUnless(hasattr(frappe, "__path__"), "Frappe controller requires the framework package")
+class TestNodeBookmarkController(unittest.TestCase):
+    def test_owner_alias_and_existing_identity_validation(self):
+        from hero_integration.hero_integration.doctype.hero_graphql_node_bookmark import hero_graphql_node_bookmark as controller
+
+        fake = _Frappe()
+        doc = SimpleNamespace(owner=fake.session.user, alias="  Project   title  ", is_new=lambda: False,
+                              has_value_changed=lambda field: False)
+        with patch.object(controller, "frappe", fake):
+            controller.HEROGraphQLNodeBookmark.validate(doc)
+            self.assertEqual((doc.alias, doc.alias_key), ("Project title", "project title"))
+            doc.has_value_changed = lambda field: field == "schema_fingerprint"
+            with self.assertRaisesRegex(ValueError, "identity is immutable"):
+                controller.HEROGraphQLNodeBookmark.validate(doc)
+            doc.owner = "someone-else@example.com"
+            with self.assertRaises(PermissionError):
+                controller.HEROGraphQLNodeBookmark.validate(doc)
+
+
 class _Doc(SimpleNamespace):
     def __init__(self, store, values):
         super().__init__(**values)
