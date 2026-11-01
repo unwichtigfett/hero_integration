@@ -100,21 +100,36 @@ def _trade_of(project) -> str | None:
 
 
 def backfill_project_departments(dry_run: int | bool = 1) -> dict:
-    """Set the department of imported Projects that have none, from their trade prefix.
+    """Fill the department and the Project Type (Gewerk) of HERO projects where they are empty.
 
-    Never overwrites a department that someone already set.
+    Only Projects bound by a HERO Integration Link are touched; projects created in
+    ERPNext keep what their author set.  Existing values are never overwritten.
     """
     frappe.only_for("System Manager")
+    from hero_integration.integrations.project_form import project_type_for_trade
+
     dry_run = bool(int(dry_run))
+    bound = set(frappe.get_all("HERO Integration Link", filters={"source_system": "HERO", "target_doctype": "Project"},
+                               pluck="target_name", limit_page_length=0))
     counts: dict[str, int] = {}
-    projects = frappe.get_all("Project", filters={"department": ["in", ["", None]]},
-                              fields=["name", "project_name", "company"], limit_page_length=0)
+    projects = frappe.get_all("Project", fields=["name", "project_name", "company", "department", "project_type"],
+                              limit_page_length=0)
     for project in projects:
-        department = department_for_trade(_trade_of(project), project.company)
-        key = department or "unmapped"
-        counts[key] = counts.get(key, 0) + 1
-        if department and not dry_run:
-            frappe.db.set_value("Project", project.name, "department", department, update_modified=False)
+        if project.name not in bound:
+            counts["not_from_hero"] = counts.get("not_from_hero", 0) + 1
+            continue
+        trade = _trade_of(project)
+        updates = {}
+        if not project.department and (department := department_for_trade(trade, project.company)):
+            updates["department"] = department
+        if not project.project_type and (project_type := project_type_for_trade(trade)):
+            updates["project_type"] = project_type
+        for field, value in updates.items():
+            counts[f"{field}: {value}"] = counts.get(f"{field}: {value}", 0) + 1
+        if not updates:
+            counts["unchanged"] = counts.get("unchanged", 0) + 1
+        elif not dry_run:
+            frappe.db.set_value("Project", project.name, updates, update_modified=False)
     if not dry_run:
         frappe.db.commit()
     return {"dry_run": dry_run, "projects": counts}

@@ -8,3 +8,4 @@ hero_integration.patches.v0_1.backfill_snapshot_parents
 hero_integration.patches.v0_1.remove_polling_source_settings
 hero_integration.patches.v0_2.setup_app_references
 hero_integration.patches.v0_2.index_integration_link_targets
+hero_integration.patches.v0_2.setup_project_form
