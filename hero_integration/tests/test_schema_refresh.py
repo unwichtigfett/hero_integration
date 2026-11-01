@@ -63,6 +63,11 @@ class TestSchemaRefreshDue(unittest.TestCase):
 
 
 class TestSchemaRefreshRecording(unittest.TestCase):
+    def setUp(self):
+        clock = patch.object(schema_refresh, "now_datetime", return_value=NOW)
+        clock.start()
+        self.addCleanup(clock.stop)
+
     def test_success_verifies_the_binding_that_was_current_at_start(self):
         settings = _settings(schema_verified_on=None, source_binding_revision=3)
         fake = _frappe(settings)
