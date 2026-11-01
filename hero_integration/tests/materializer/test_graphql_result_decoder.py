@@ -421,6 +421,15 @@ class GraphQLResultDecoderTests(unittest.TestCase):
             ),
         )
 
+    def test_successful_transport_with_partial_graphql_errors_still_fails_closed(self):
+        request = make_request(make_binding(("name",), ("data", "result", "name")))
+        response = make_response({
+            "data": {"result": {"name": "visible"}},
+            "errors": [{"message": "synthetic upstream detail", "path": ["result", "other"]}],
+        }, success=True)
+        error = self.assert_code("RESULT_GRAPHQL_ERROR", lambda: decode_graphql_result(request, response))
+        self.assertNotIn("synthetic upstream detail", str(error))
+
     def test_malformed_json_is_rejected(self):
         self.assert_code(
             "RESULT_RESPONSE_INVALID",
