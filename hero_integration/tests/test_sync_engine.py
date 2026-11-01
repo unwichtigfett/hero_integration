@@ -116,6 +116,15 @@ class TestSync(unittest.TestCase):
   with self.assertRaises(PermissionError): execute_sync_hero(intent,OutboundApproval(False,True,True,True,True,1),Transport(OutboundAck(True,"e","a"*64,"b"*64)),self.bindings)
   with self.assertRaises(SyncConflict): execute_sync_hero(intent,OutboundApproval(True,True,True,True,True,1),Transport(OutboundAck(False,"e","a"*64,"b"*64)),self.bindings)
   with self.assertRaises(SyncError): execute_sync_hero(OutboundIntent(self.binding,1,FP,"local",False,"m",{}),OutboundApproval(True,True,True,True,True,1),Transport(OutboundAck(True,"e","a"*64,"b"*64)),self.bindings)
+ def test_each_missing_outbound_approval_blocks_transport(self):
+  from dataclasses import replace
+  intent=OutboundIntent(self.binding,1,FP,"local",True,"mutation X { x { id } }",{})
+  approval=OutboundApproval(True,True,True,True,True,1)
+  for field in ("actor_authorized","mutation_approved","preview_confirmed","audit_reserved","no_retry"):
+   transport=Transport(OutboundAck(True,"e","a"*64,"b"*64))
+   with self.subTest(missing=field), self.assertRaises(PermissionError):
+    execute_sync_hero(intent,replace(approval,**{field:False}),transport,self.bindings)
+   self.assertEqual(transport.calls,0)
  def test_unproven_change_provider_never_queries_or_reads_bound_index(self):
   provider=Provider({},ChangeCapabilities(False,False,False))
   engine=self.engine(provider); state=self.configured(engine)
