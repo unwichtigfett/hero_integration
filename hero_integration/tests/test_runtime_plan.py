@@ -4,9 +4,11 @@ import unittest
 from dataclasses import replace
 
 from hero_integration.services.runtime_plan import (
+    FrappeRuntimePlanAudit,
     FrappeRuntimePlanReferences,
     InMemoryRuntimePlanAudit,
     InMemoryRuntimePlanStorage,
+    RuntimePlanAuditEvent,
     RuntimePlanConflict,
     RuntimePlanError,
     RuntimePlanService,
@@ -80,6 +82,31 @@ def selection(*, source="hero-one", mapping_revision=1, operation_revision=1, op
         operation_name=operation,
         execution_mode=execution_mode,
     )
+
+
+class TestRuntimePlanAuditBoundary(unittest.TestCase):
+    def test_duplicate_with_changed_semantic_evidence_is_rejected(self):
+        class DuplicateEntryError(Exception):
+            pass
+
+        event = RuntimePlanAuditEvent('a' * 64, 'site', 'source', 'APPROVED', 'manager', 2, 2, 'b' * 64)
+        existing = SimpleNamespace(runtime_plan=event.plan_key, action=event.action,
+                                   plan_revision=event.revision, generation=event.generation,
+                                   semantic_hash=event.semantic_hash)
+
+        def get_doc(*args):
+            if len(args) == 1:
+                def insert():
+                    raise DuplicateEntryError()
+                return SimpleNamespace(insert=insert)
+            return existing
+
+        fake = SimpleNamespace(local=SimpleNamespace(site='site'), get_doc=get_doc)
+        audit = FrappeRuntimePlanAudit(fake)
+        audit.record(event)
+        existing.semantic_hash = 'c' * 64
+        with self.assertRaises(RuntimePlanConflict):
+            audit.record(event)
 
 
 class TestRuntimePlan(unittest.TestCase):
