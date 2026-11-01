@@ -71,3 +71,27 @@ class TestInMemoryMappingRegistryStorage(unittest.TestCase):
         worker.join(timeout=2)
         self.assertFalse(worker.is_alive())
         self.assertIn(seen[0], {(1, ("one",)), (2, ("two",))})
+
+    def test_competing_writers_cannot_both_replace_the_same_revision(self) -> None:
+        first = self.storage.replace("site.test", None, {"definitions": ["original"]})
+        start = threading.Barrier(2)
+        outcomes = []
+
+        def writer(value):
+            start.wait(timeout=2)
+            try:
+                result = self.storage.replace("site.test", first.revision, {"definitions": [value]})
+                outcomes.append(("accepted", result.payload["definitions"]))
+            except MappingRegistryRevisionConflict:
+                outcomes.append(("stale", (value,)))
+
+        workers = [threading.Thread(target=writer, args=(name,)) for name in ("first", "second")]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join(timeout=2)
+        self.assertTrue(all(not worker.is_alive() for worker in workers))
+        self.assertEqual(sorted(status for status, _ in outcomes), ["accepted", "stale"])
+        self.assertEqual(len(self.storage.history("site.test")), 2)
+        self.assertEqual(self.storage.read_active("site.test").payload["definitions"],
+                         next(value for status, value in outcomes if status == "accepted"))
