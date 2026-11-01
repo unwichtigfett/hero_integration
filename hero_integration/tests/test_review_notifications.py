@@ -57,6 +57,29 @@ class TestReviewNotifications(unittest.TestCase):
         self.assertFalse(notices.notify_run_summary("HERO-RUN-2"))
         self.assertEqual(self.sent, [])
 
+    def test_summary_insertion_failure_is_logged_after_prior_recipient_attempt(self):
+        from hero_integration.services import migration
+
+        self.records = [SimpleNamespace(source_type="project", result="CONFLICT", detail="synthetic")]
+        logged = []
+
+        def get_doc(values):
+            if values["for_user"] == "second@example.invalid":
+                def fail_insert(**_kwargs):
+                    raise RuntimeError("synthetic insert failure")
+                return SimpleNamespace(insert=fail_insert)
+            return _Inserted(self.sent, values)
+
+        self.fake.get_doc = get_doc
+        self.fake.log_error = lambda **kwargs: logged.append(kwargs["title"])
+        with patch.object(migration, "frappe", self.fake), patch.object(
+            notices, "configured_recipients", return_value=["first@example.invalid", "second@example.invalid"]
+        ):
+            migration._notify_not_imported(SimpleNamespace(name="RUN-1", mode="Execute"))
+
+        self.assertEqual([row["for_user"] for row in self.sent], ["first@example.invalid"])
+        self.assertEqual(logged, ["HERO run summary notification failed"])
+
     def test_conflict_notice_is_only_created_for_changed_evidence(self):
         link = SimpleNamespace(name="LINK-1", conflict_detail="existing evidence")
         self.assertFalse(notices.notify_conflict_once(link, {"email_id"}, "existing evidence"))
