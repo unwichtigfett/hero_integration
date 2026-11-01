@@ -156,3 +156,25 @@ class TestScheduledMonitor(unittest.TestCase):
         old.save.assert_not_called()
         current.save.assert_called_once()
         fake.db.rollback.assert_called_once()
+
+    def test_unexpected_failure_rolls_back_and_does_not_publish_exception_text(self):
+        from hero_integration.services import polling
+        sensitive = 'synthetic-secret-from-exception'
+        settings = SimpleNamespace(polling_mode='MONITOR', save=Mock())
+        fake = types.ModuleType('frappe')
+        fake.db = SimpleNamespace(rollback=Mock())
+        fake.get_single = Mock(return_value=settings)
+        fake.log_error = Mock()
+
+        def record_event(*args):
+            fake.db.rollback.assert_called_once()
+
+        with patch.dict(sys.modules, {'frappe': fake}), \
+             patch.object(sync_runtime_adapter, 'run_materialized_monitor', side_effect=ValueError(sensitive)), \
+             patch.object(polling, '_record_event', side_effect=record_event) as event:
+            polling.run_monitor()
+
+        event.assert_called_once()
+        self.assertNotIn(sensitive, str(event.call_args))
+        self.assertNotIn(sensitive, settings.sync_error)
+        self.assertNotIn(sensitive, str(fake.log_error.call_args))
