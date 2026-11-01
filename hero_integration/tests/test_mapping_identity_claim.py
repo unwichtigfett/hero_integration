@@ -143,6 +143,20 @@ class TestMappingIdentityClaim(unittest.TestCase):
             fake.session.user = 'Guest'
             with self.assertRaises(PermissionError): claims.reserve_claims(fake, self.batch())
 
+    def test_rollback_failure_requires_transaction_abort_and_clears_scopes(self):
+        fake = self.fake
+        fake.fail_insert = True
+        def fail_rollback(**kwargs):
+            raise RuntimeError('rollback unavailable')
+        fake.db.rollback = fail_rollback
+        with patch.dict(sys.modules, {'frappe':fake}), patch.object(hero_mapping_identity_claim, 'frappe', fake), \
+             patch.object(hero_frappe_mapping, '_lock_active_target'):
+            with self.assertRaisesRegex(RuntimeError, 'Claim rollback failed; abort the transaction') as caught:
+                claims.reserve_claims(fake, self.batch())
+        self.assertEqual(str(caught.exception.__cause__), 'rollback unavailable')
+        self.assertFalse(claims._batch_scope.get())
+        self.assertIsNone(claims._insert_scope.get())
+
     def test_late_conflict_rolls_back_inserted_claims(self):
         fake = self.fake
         with patch.dict(sys.modules, {'frappe':fake}), patch.object(hero_mapping_identity_claim, 'frappe', fake), \
