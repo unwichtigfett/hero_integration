@@ -70,6 +70,11 @@ for _doctype in ("HD Ticket", "CRM Lead", "CRM Deal"):
     doc_events[_doctype] = {"validate": "hero_integration.integrations.app_references.fill_references"}
 for _doctype in ("ERPNext HD Settings", "ERPNext CRM Settings"):
     doc_events[_doctype] = {"validate": "hero_integration.integrations.app_references.refuse_record_mirrors"}
+# Project IDs ending in -H are reserved for HERO (owner decision 2026-11-01).
+doc_events["Project"] = {
+    "validate": "hero_integration.services.guards.protect_hero_project_ids",
+    "before_rename": "hero_integration.services.guards.protect_hero_project_rename",
+}
 doc_events["Task"] = {"validate": "hero_integration.services.change_detection.protect_external_task_deadline"}
 
 # Requires the separately distributed Frappe assignment-intent v2 patch.

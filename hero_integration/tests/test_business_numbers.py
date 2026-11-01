@@ -41,13 +41,13 @@ class TestBusinessNumber(unittest.TestCase):
 
 class TestProjectReference(unittest.TestCase):
     def test_trade_and_display_id_form_the_reference(self):
-        self.assertEqual(project_reference({"display_id": "3333", "measure": {"short": "PV"}}), "PV-3333")
-        self.assertEqual(project_reference({"display_id": "1769", "measure": {"name": "Elektrohandwerk"}}), "ELEK-1769")
-        self.assertEqual(project_reference({"display_id": "0042", "project_type": {"code": "KLIM"}}), "KLIM-0042")
+        self.assertEqual(project_reference({"display_id": "3333", "measure": {"short": "PV"}}), "PV-3333-H")
+        self.assertEqual(project_reference({"display_id": "1769", "measure": {"name": "Elektrohandwerk"}}), "ELEK-1769-H")
+        self.assertEqual(project_reference({"display_id": "0042", "project_type": {"code": "KLIM"}}), "KLIM-0042-H")
 
     def test_project_nr_is_not_the_reference(self):
         self.assertEqual(
-            project_reference({"display_id": "3333", "project_nr": "999", "measure": {"short": "PV"}}), "PV-3333",
+            project_reference({"display_id": "3333", "project_nr": "999", "measure": {"short": "PV"}}), "PV-3333-H",
         )
 
     def test_a_missing_or_unknown_trade_invents_no_prefix(self):
@@ -197,12 +197,12 @@ class TestBusinessNumberMigration(FakeFrappeMigrationHarness, unittest.TestCase)
 
     def test_a_new_project_is_named_by_trade_and_display_id(self):
         result = self.migrate_project(self.project())
-        self.assertEqual((result.code, result.target_name), ("CREATED", "PV-3333"))
+        self.assertEqual((result.code, result.target_name), ("CREATED", "PV-3333-H"))
         project, = self.frappe.projects
         self.assertTrue(project["project_name"].startswith("PV-3333 | Photovoltaik,"))
         self.assertEqual(project["custom_hero_display_id"], "3333")
         self.assertEqual(project["custom_hero_source_id"], "default:201")
-        self.assertEqual(self.frappe.links[("project", "201")].target_name, "PV-3333")
+        self.assertEqual(self.frappe.links[("project", "201")].target_name, "PV-3333-H")
 
     def test_legacy_project_id_and_historical_title_are_preserved_on_reimport(self):
         record = self.project()
@@ -224,7 +224,7 @@ class TestBusinessNumberMigration(FakeFrappeMigrationHarness, unittest.TestCase)
 
     def test_the_hero_measure_decides_the_prefix(self):
         record = self.project(project_nr="1769", display_id="1769", measure={"short": "ELEK"})
-        self.assertEqual(self.migrate_project(record).target_name, "ELEK-1769")
+        self.assertEqual(self.migrate_project(record).target_name, "ELEK-1769-H")
 
     def test_an_unknown_trade_blocks_the_project(self):
         result = self.migrate_project(self.project(project_type={"code": "XYZ"}))
@@ -237,10 +237,16 @@ class TestBusinessNumberMigration(FakeFrappeMigrationHarness, unittest.TestCase)
         self.assertIn("HERO has no project display_id", result.detail)
 
     def test_a_reference_held_by_another_project_is_a_conflict(self):
-        self.frappe.projects.append({"name": "PV-3333", "project_name": "Manual project"})
+        self.frappe.projects.append({"name": "PV-3333-H", "project_name": "Manual project"})
         result = self.migrate_project(self.project())
         self.assertEqual(result.code, "CONFLICT")
         self.assertEqual(len(self.frappe.projects), 1)
+
+    def test_a_project_created_in_erpnext_never_takes_the_hero_id(self):
+        # Owner decision 2026-11-01: HERO projects end in -H; ERPNext keeps its own numbers.
+        self.frappe.projects.append({"name": "PV-3333", "project_name": "Created in ERPNext"})
+        result = self.migrate_project(self.project())
+        self.assertEqual((result.code, result.target_name), ("CREATED", "PV-3333-H"))
 
     def test_identical_project_reference_never_cross_links_source_instances(self):
         self.migrate_project(self.project())
@@ -252,7 +258,7 @@ class TestBusinessNumberMigration(FakeFrappeMigrationHarness, unittest.TestCase)
     def test_a_changed_display_id_is_reported_and_not_applied(self):
         self.migrate_project(self.project())
         result = self.migrate_project(self.project(display_id="3334"))
-        self.assertEqual((result.code, result.target_name), ("CONFLICT", "PV-3333"))
+        self.assertEqual((result.code, result.target_name), ("CONFLICT", "PV-3333-H"))
         self.assertEqual(self.frappe.projects[0]["custom_hero_display_id"], "3333")
 
     def test_a_project_links_to_its_customer_by_the_customer_number(self):
@@ -274,8 +280,8 @@ class TestRenamePreview(unittest.TestCase):
         propose = self.preview._project_proposal
         for title in ("ELEK-1769 | Elektrohandwerk, Herr X", "PV-1769 | Historical title"):
             self.assertIsNone(propose({"project_name": title}, "1769")[0])
-        self.assertEqual(propose({}, "0017", trade="ELEK"), ("ELEK-0017", ""))
-        self.assertEqual(propose({"custom_hero_project_type": "Photovoltaik"}, "0033"), ("PV-0033", ""))
+        self.assertEqual(propose({}, "0017", trade="ELEK"), ("ELEK-0017-H", ""))
+        self.assertEqual(propose({"custom_hero_project_type": "Photovoltaik"}, "0033"), ("PV-0033-H", ""))
 
     def test_only_unambiguous_synchronized_records_are_safe_to_rename(self):
         rows = [
