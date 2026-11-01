@@ -79,3 +79,23 @@ def test_audit_reservation_reports_commit_failure():
     api.db.commit = fail_commit
     with pytest.raises(ProvisioningLifecycleError, match="transaction boundary failed"):
         FrappeProvisioningAuditStore(api).reserve(plan(), approval(plan()))
+
+
+def test_finalized_audit_rejects_new_outcomes_and_a_different_terminal_state():
+    api = FakeFrappe()
+    store = FrappeProvisioningAuditStore(api)
+    value = plan()
+    audit_id = store.reserve(value, approval(value))
+    store.record(audit_id, value.operations[0].operation_id, "APPLIED")
+    store.finalize(audit_id, ProvisioningState.APPLIED)
+    payload = api.docs[audit_id].audit_payload_json
+    commits = api.commits
+
+    with pytest.raises(ProvisioningLifecycleError, match="finalized"):
+        store.record(audit_id, "synthetic-late-operation", "APPLIED")
+    with pytest.raises(ProvisioningLifecycleError, match="immutable"):
+        store.finalize(audit_id, ProvisioningState.PARTIAL)
+
+    assert api.docs[audit_id].lifecycle_state == "APPLIED"
+    assert api.docs[audit_id].audit_payload_json == payload
+    assert api.commits == commits
