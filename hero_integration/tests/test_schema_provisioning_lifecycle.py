@@ -101,6 +101,18 @@ class TestProvisioningLifecycle(unittest.TestCase):
             ProvisioningExecutor(audit, adapter, InMemoryProvisioningApprovalAuthority(), clock=lambda: 1).apply_authorized(value, approval(value))
         self.assertEqual(adapter.writes, [])
 
+    def test_changed_operation_id_is_rejected_before_approval_consumption(self):
+        original = plan()
+        changed = replace(original, operations=(replace(original.operations[0], operation_id="synthetic-other"),))
+        adapter, audit, authority = FakeAdapter("meta-1"), InMemoryProvisioningAudit(), InMemoryProvisioningApprovalAuthority()
+        executor = ProvisioningExecutor(audit, adapter, authority, clock=lambda: 1)
+
+        with self.assertRaisesRegex(ProvisioningLifecycleError, "does not bind"):
+            executor.apply_authorized(changed, approval(original))
+        self.assertEqual(adapter.writes, [])
+        self.assertEqual(audit.events, [])
+        self.assertEqual(executor.apply_authorized(original, approval(original)).state.value, "APPLIED")
+
     def test_metadata_change_after_reservation_prevents_first_schema_write(self):
         class ChangingAdapter(FakeAdapter):
             def metadata_fingerprint(self, site):
