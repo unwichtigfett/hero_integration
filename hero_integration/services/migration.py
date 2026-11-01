@@ -555,7 +555,7 @@ def _process_requested_phases(run, source: HeroSource, *, checkpoint=None) -> No
                 _block_run(run, "Project phase requires a completed Customer phase for this source instance and run.")
             return
         completed = _process_phase(run, "project", source.projects, checkpoint=checkpoint)
-        _refresh_project_phases(run, source, checkpoint)
+        _refresh_project_phases(run, source)
         if not completed:
             return
     if run.action == "Full Data Migration":
@@ -568,15 +568,24 @@ def _process_requested_phases(run, source: HeroSource, *, checkpoint=None) -> No
             )
 
 
-def _refresh_project_phases(run, source, checkpoint) -> None:
-    """Show each HERO project's status step as Phase, as HERO does (one read-only query)."""
+def _refresh_project_phases(run, source) -> None:
+    """Show each HERO project's status step as Phase, as HERO does (one read-only query).
+
+    Phase is a display value derived from the imported step ID, not sync state,
+    so it is refreshed outside the run checkpoint: a project phase that ends
+    Blocked (e.g. a rejected title) has already left the Running state.
+    """
     reader = getattr(source, "project_status_steps", None)
     if getattr(run, "mode", "Preview") != "Execute" or reader is None:
         return  # Preview and test doubles without a mode never write
     from hero_integration.integrations.project_form import refresh_project_phases
 
-    with checkpoint():
+    try:
         refresh_project_phases(reader())
+        frappe.db.commit()
+    except Exception:
+        frappe.db.rollback()
+        frappe.log_error(title="HERO project phase refresh failed")
 
 
 def validate_run_mappings(run) -> None:
