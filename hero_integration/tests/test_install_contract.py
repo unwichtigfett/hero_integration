@@ -97,11 +97,23 @@ class _InstallEnvironment:
             "erpnext": erpnext_module,
             "frappe.custom.doctype.custom_field.custom_field": custom_field_module,
         }
+        package = importlib.import_module("hero_integration")
+        missing = object()
+        previous_alias = getattr(package, "install", missing)
         previous = sys.modules.pop("hero_integration.install", None)
-        with mock.patch.dict(sys.modules, self.modules):
-            module = importlib.import_module("hero_integration.install")
-        if previous is not None:
-            sys.modules["hero_integration.install"] = previous
+        try:
+            with mock.patch.dict(sys.modules, self.modules):
+                module = importlib.import_module("hero_integration.install")
+        finally:
+            if previous is None:
+                sys.modules.pop("hero_integration.install", None)
+            else:
+                sys.modules["hero_integration.install"] = previous
+            if previous_alias is missing:
+                if hasattr(package, "install"):
+                    delattr(package, "install")
+            else:
+                package.install = previous_alias
         return module
 
     def call(self, function):
