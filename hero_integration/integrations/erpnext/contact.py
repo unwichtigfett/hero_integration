@@ -31,7 +31,7 @@ def synchronize_primary_contact(customer, source_values: dict[str, object]) -> N
     """
     values = {
         field: _text(source_values.get(field))
-        for field in ("first_name", "last_name", "email_id", "mobile_no")
+        for field in ("first_name", "last_name", "email_id", "mobile_no", "salutation")
     }
     if not any(values.values()):
         return
@@ -42,7 +42,7 @@ def synchronize_primary_contact(customer, source_values: dict[str, object]) -> N
         raise HomePhoneConflict("The Customer primary Contact is shared or not linked to this Customer.")
 
     changed = False
-    for field in ("first_name", "last_name"):
+    for field in ("first_name", "last_name", "salutation"):
         if values[field] and _field_value(contact, field) != values[field]:
             _set_field(contact, field, values[field])
             changed = True
@@ -62,7 +62,7 @@ def primary_contact_values(customer, fields: set[str]) -> dict[str, object]:
     contact = _primary_contact(customer)
     if contact is None or not _is_exclusive_customer_contact(contact, customer.name):
         return result
-    for field in {"first_name", "last_name"} & fields:
+    for field in {"first_name", "last_name", "salutation"} & fields:
         result[field] = _text(_field_value(contact, field))
     if "email_id" in fields:
         result["email_id"] = _primary_child_value(contact, "email_ids", "email_id", "is_primary")
