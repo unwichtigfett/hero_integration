@@ -37,6 +37,15 @@ class TestEngine(unittest.TestCase):
   partial=self.engine.process("run-1",self.plan,run.generation)
   self.assertEqual((partial.state,partial.checkpoint,partial.record_index,partial.completed),(RunState.PARTIAL,0,0,0)); self.assertEqual(self.ledger.progress[("run-1","1")].state,ProgressState.FAILED)
   self.writer.fail=False; done=self.engine.process("run-1",self.plan,partial.generation); self.assertEqual((done.state,done.completed),(RunState.COMPLETED,1))
+ def test_binding_failure_after_write_returns_partial_without_writer_rollback(self):
+  class FailingBindings:
+   def create_or_resolve_object_binding(self, **kwargs): raise RuntimeError("binding failure")
+  self.engine.bindings=FailingBindings()
+  run=self.authorized(); self.reader.pages={0:SourcePage(({"id":"1","name":"Ada"},),None)}
+  partial=self.engine.process("run-1",self.plan,run.generation)
+  self.assertEqual((partial.state,partial.record_index,partial.completed),(RunState.PARTIAL,0,0))
+  self.assertEqual(self.ledger.progress[("run-1","1")].state,ProgressState.FAILED)
+  self.assertEqual(self.writer.docs, {("site.test","1"): {"customer_name":"Ada"}})
  def test_partial_page_resume_requires_same_page_and_continues_after_completed_record(self):
   run=self.authorized(); self.reader.pages={0:SourcePage(({"id":"1","name":"Ada"},{"id":"2","name":"Bob"}),None)}
   original=self.writer.resolve_or_write
