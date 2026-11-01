@@ -76,3 +76,27 @@ def test_adapter_rejects_cross_site_context_before_metadata_access():
 
     with pytest.raises(FrappeMetadataProviderError, match="does not match"):
         provider.doctypes("other-site")
+
+
+def test_denied_metadata_permission_stops_before_field_loading():
+    frappe = FakeFrappe()
+    provider = FrappeV16FieldMetadataProvider(frappe)
+    doctype = provider.doctypes("site-a")[0]
+    for denied in ("Customer", "Property Setter"):
+        calls = []
+
+        def has_permission(name, action, throw=False):
+            calls.append(name)
+            if name == denied:
+                raise PermissionError(name)
+            return True
+
+        def get_meta(_doctype):
+            raise AssertionError("field metadata must not be read after denied permission")
+
+        frappe.has_permission = has_permission
+        frappe.get_meta = get_meta
+        with pytest.raises(PermissionError, match=denied):
+            provider.effective_fields("site-a", doctype)
+        assert denied in calls
+        assert not any(name == "Property Setter" for name, _ in frappe.calls)
