@@ -119,6 +119,20 @@ class TestProviderCapabilityContracts(unittest.TestCase):
         with self.assertRaises(ProviderCapabilityError):
             provider.changes(None)
 
+    def test_invalid_page_and_missing_final_evidence_fail_closed(self):
+        checks = []
+        for page in (None, {}, ChangePage((), None, False, "watermark"),
+                     ChangePage((), None, True, None), ChangePage((), None, True, "")):
+            with self.subTest(page=page):
+                provider = guarded_provider(
+                    ProviderContract(ProviderCapability.VERIFIED_TUPLE_WATERMARK),
+                    lambda _cursor, page=page: page,
+                    tuple_watermark_verified=lambda value: checks.append(value) or True,
+                )
+                with self.assertRaises(ProviderCapabilityError):
+                    provider.changes(None)
+        self.assertEqual(checks, [])
+
     def test_unverified_final_watermark_preserves_cursor_and_releases_run(self):
         registry = BindingRegistryService(InMemoryBindingStorage())
         parent = registry.create_or_resolve_object_binding(
