@@ -1,20 +1,13 @@
 from __future__ import annotations
 
 import json
-import sys
-import types
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-try:
-    import frappe  # noqa: F401
-except ModuleNotFoundError:
-    frappe = types.ModuleType("frappe")
-    frappe.whitelist = lambda: lambda function: function
-    sys.modules["frappe"] = frappe
+from hero_integration.tests._frappe_test_import import load_api
 
-from hero_integration import api
+api = load_api()
 
 
 SCHEMA = {"__schema": {"mutationType": {"name": "Mutation"}, "types": [
