@@ -77,6 +77,16 @@ class TestProviderCapabilityContracts(unittest.TestCase):
         unsupported = ProviderContract(ProviderCapability.UNSUPPORTED).change_capabilities()
         self.assertEqual((unsupported.cursor, unsupported.complete_change_discovery, unsupported.bounded_comparison), (False, False, False))
 
+    def test_untyped_capability_and_missing_tuple_verifier_fail_before_read(self):
+        calls = []
+        for capability in ("COMPLETE_DELTA_CURSOR", True, None):
+            with self.subTest(capability=capability), self.assertRaises(ProviderCapabilityError):
+                ProviderContract(capability)
+        with self.assertRaises(ProviderCapabilityError):
+            guarded_provider(ProviderContract(ProviderCapability.VERIFIED_TUPLE_WATERMARK),
+                             lambda cursor: calls.append(cursor))
+        self.assertEqual(calls, [])
+
     def test_verified_tuple_watermark_is_checked_at_the_terminal_page(self):
         first = ChangePage(({"id": "1"},), "next", False)
         last = ChangePage((), None, True, "verified-watermark")
