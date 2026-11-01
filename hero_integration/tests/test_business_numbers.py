@@ -139,6 +139,16 @@ class TestBusinessNumberMigration(FakeFrappeMigrationHarness, unittest.TestCase)
         self.assertEqual((result.code, result.target_name), ("SKIPPED", "2222"))
         self.assertEqual(len(self.frappe.customers), 1)
 
+    def test_an_omitted_customer_number_preserves_the_linked_number(self):
+        self.migrate_customer(self.customer(nr="0022"))
+        record = self.customer()
+        del record["nr"]
+        result = self.migrate_customer(record)
+        self.assertEqual(result.target_name, "0022")
+        self.assertEqual(len(self.frappe.customers), 1)
+        self.assertEqual(self.frappe.customers[0]["custom_hero_customer_number"], "0022")
+        self.assertEqual(self.frappe.links[("customer", "301")].target_name, "0022")
+
     def test_an_existing_kd_customer_is_reused_and_keeps_its_name(self):
         self.migrate_customer(self.customer())
         # As imported by the previous version, under the site naming series.
@@ -311,6 +321,16 @@ class TestBusinessNumberMigration(FakeFrappeMigrationHarness, unittest.TestCase)
         result = self.migrate_project(self.project(display_id="3334"))
         self.assertEqual((result.code, result.target_name), ("CONFLICT", "PV-3333"))
         self.assertEqual(self.frappe.projects[0]["custom_hero_display_id"], "3333")
+
+    def test_an_omitted_display_id_preserves_the_linked_reference(self):
+        self.migrate_project(self.project(display_id="0033"))
+        record = self.project()
+        del record["display_id"]
+        result = self.migrate_project(record)
+        self.assertEqual(result.target_name, "PV-0033")
+        self.assertEqual(len(self.frappe.projects), 1)
+        self.assertEqual(self.frappe.projects[0]["custom_hero_display_id"], "0033")
+        self.assertEqual(self.frappe.links[("project", "201")].target_name, "PV-0033")
 
     def test_a_project_links_to_its_customer_by_the_customer_number(self):
         self.migrate_customer(self.customer(id=401, nr="2222"))
