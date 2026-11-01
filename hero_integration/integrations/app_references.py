@@ -11,7 +11,6 @@ from __future__ import annotations
 import json
 
 import frappe
-from frappe import _
 
 CUSTOMER_FIELD, PROJECT_FIELD = "erp_customer", "erp_project"
 REFERENCE_DOCTYPES = {
@@ -106,7 +105,7 @@ def fill_references(doc, method=None) -> None:
         if project_customer and not doc.get(CUSTOMER_FIELD):
             doc.set(CUSTOMER_FIELD, project_customer)
         elif project_customer and doc.get(CUSTOMER_FIELD) != project_customer:
-            frappe.throw(_("ERPNext Project {0} belongs to Customer {1}, not {2}.").format(
+            frappe.throw(frappe._("ERPNext Project {0} belongs to Customer {1}, not {2}.").format(
                 project, project_customer, doc.get(CUSTOMER_FIELD)))
     if not doc.get(CUSTOMER_FIELD):
         customer = _customer_for(doc)
