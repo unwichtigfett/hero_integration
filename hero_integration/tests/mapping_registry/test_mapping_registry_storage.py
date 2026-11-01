@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import threading
 import unittest
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 from hero_integration.services.mapping_registry_storage import (
     InMemoryMappingRegistryStorage,
+    FrappeMappingRegistryStorage,
     MappingRegistryInjectedFailure,
     MappingRegistryRevisionConflict,
 )
@@ -95,3 +98,23 @@ class TestInMemoryMappingRegistryStorage(unittest.TestCase):
         self.assertEqual(len(self.storage.history("site.test")), 2)
         self.assertEqual(self.storage.read_active("site.test").payload["definitions"],
                          next(value for status, value in outcomes if status == "accepted"))
+
+
+class TestFrappeRegistryFailureBoundary(unittest.TestCase):
+    def test_failed_version_insert_rolls_back_before_publishing_pointer(self):
+        registry = SimpleNamespace(name="registry", active_revision=1, active_version="version-1", save=Mock())
+        version = SimpleNamespace(insert=Mock(side_effect=RuntimeError("synthetic insert failure")))
+        db = SimpleNamespace(savepoint=Mock(), rollback=Mock(), commit=Mock())
+        frappe = SimpleNamespace(local=SimpleNamespace(site="site.test"), session=SimpleNamespace(user="Administrator"),
+                                 has_permission=Mock(), db=db, get_doc=Mock(return_value=version))
+        storage = FrappeMappingRegistryStorage(frappe)
+
+        with patch.object(storage, "_locked_registry", return_value=registry):
+            with self.assertRaisesRegex(RuntimeError, "synthetic insert failure"):
+                storage.replace("site.test", 1, {"definitions": []})
+
+        db.savepoint.assert_called_once_with("hero_mapping_registry_v3_replace")
+        db.rollback.assert_called_once_with(save_point="hero_mapping_registry_v3_replace")
+        db.commit.assert_not_called()
+        registry.save.assert_not_called()
+        self.assertEqual((registry.active_revision, registry.active_version), (1, "version-1"))
