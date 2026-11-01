@@ -105,6 +105,28 @@ class TestGraphQLClientBudget(unittest.TestCase):
         self.assertEqual((error.code, opener.calls), ("HTTP_400", 1))
         sleep.assert_not_called()
 
+    def test_redirect_response_is_not_retried_or_followed(self):
+        opener = _Opener(_http_error(302), {"data": {}})
+        error, sleep = self._query(opener, max_retries=3)
+        self.assertEqual((error.code, opener.calls), ("HTTP_302", 1))
+        sleep.assert_not_called()
+        handler = graphql._NoRedirectHandler()
+        self.assertIsNone(handler.redirect_request(None, None, 302, "Found", {},
+                                                   "https://attacker.synthetic.invalid/"))
+
+    def test_query_constructs_an_opener_with_proxy_disabled_and_verified_tls(self):
+        opener = _Opener({"data": {}})
+        client = HeroGraphQLClient(self.endpoint, lambda: "synthetic")
+        with mock.patch("hero_integration.client.graphql.urllib.request.build_opener", return_value=opener) as build:
+            self.assertEqual(client.query(QUERY, {}), {})
+        proxy, https, redirect = build.call_args.args
+        self.assertIsInstance(proxy, graphql.urllib.request.ProxyHandler)
+        self.assertEqual(proxy.proxies, {})
+        self.assertIsInstance(https, graphql.urllib.request.HTTPSHandler)
+        self.assertTrue(https._context.check_hostname)
+        self.assertEqual(https._context.verify_mode, graphql.ssl.CERT_REQUIRED)
+        self.assertIsInstance(redirect, graphql._NoRedirectHandler)
+
     def test_timeouts_are_retried_within_budget(self):
         opener = _Opener(TimeoutError("synthetic"), {"data": {"viewer": None}})
         result, _ = self._query(opener, max_retries=1, retry_backoff_seconds=0)
