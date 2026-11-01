@@ -103,7 +103,10 @@ class _Comparison:
             prior_source, prior_target, self.source_hashes, field_hashes(target_values),
             tracked=self.tracked, missing=self.missing,
             source_empty={field for field, value in self.source_values.items() if _is_empty(value)},
-            target_empty={field for field, value in target_values.items() if _is_empty(value)},
+            # Only consulted for fields without a baseline: a numeric field that
+            # was just added holds Frappe's default 0, which is no local change.
+            target_empty={field for field, value in target_values.items()
+                          if _is_empty(value) or (type(value) in (int, float) and value == 0)},
             unwritable=self.unwritable,
         )
 

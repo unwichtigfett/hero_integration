@@ -82,5 +82,23 @@ class TestMissingNullEmpty(unittest.TestCase):
         self.assertIn("customer_type", partial.missing)
 
 
+class TestNewNumericFieldDefault(unittest.TestCase):
+    """A new Currency/Float field starts at 0 in ERPNext; that is no local change (2026-11-02)."""
+
+    def test_zero_default_of_a_new_field_takes_the_hero_value(self):
+        from hero_integration.services.migration import _Comparison
+        comparison = _Comparison({"custom_hero_volume": 12500.0}, None)
+        outcome = comparison.reconcile({}, {}, {"custom_hero_volume": 0.0})
+        self.assertEqual((set(outcome.apply), set(outcome.conflicts)), ({"custom_hero_volume"}, set()))
+
+    def test_a_real_local_zero_with_a_baseline_is_still_a_local_change(self):
+        from hero_integration.services.change_detection import field_hashes
+        from hero_integration.services.migration import _Comparison
+        base = field_hashes({"custom_hero_volume": 9000.0})
+        comparison = _Comparison({"custom_hero_volume": 9000.0}, None)
+        outcome = comparison.reconcile(base, base, {"custom_hero_volume": 0.0})
+        self.assertEqual(set(outcome.local), {"custom_hero_volume"})
+
+
 if __name__ == "__main__":
     unittest.main()
