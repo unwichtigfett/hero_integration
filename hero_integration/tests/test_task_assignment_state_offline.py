@@ -1,4 +1,5 @@
 """Offline boundaries for native assignment hooks; no Frappe site is used."""
+import asyncio
 import sys
 import types
 import unittest
@@ -17,6 +18,27 @@ class TestAssignmentHookScope(unittest.TestCase):
                     self.assertTrue(state.managed_assignment_active())
                     raise RuntimeError("synthetic failure")
             self.assertTrue(state.managed_assignment_active())
+        self.assertFalse(state.managed_assignment_active())
+
+    def test_managed_scope_is_isolated_between_concurrent_tasks(self):
+        async def exercise():
+            entered, release = asyncio.Event(), asyncio.Event()
+
+            async def managed():
+                with state.managed_assignment():
+                    entered.set()
+                    await release.wait()
+                    return state.managed_assignment_active()
+
+            async def unrelated():
+                await entered.wait()
+                active = state.managed_assignment_active()
+                release.set()
+                return active
+
+            return await asyncio.gather(managed(), unrelated())
+
+        self.assertEqual(asyncio.run(exercise()), [True, False])
         self.assertFalse(state.managed_assignment_active())
 
     def test_framework_version_and_every_hook_are_required(self):
