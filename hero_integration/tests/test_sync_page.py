@@ -36,6 +36,11 @@ import hero_integration.tests.test_workspace_snapshot_binding
 assert 'frappe' not in sys.modules
 assert 'hero_integration.api' not in sys.modules
 assert not hasattr(hero_integration, 'api')
+for name in ('test_workspace_snapshot_selection', 'test_workspace_overview_contract', 'test_node_bookmark'):
+    __import__('hero_integration.tests.' + name)
+    assert 'frappe' not in sys.modules
+    assert 'hero_integration.api' not in sys.modules
+    assert not hasattr(hero_integration, 'api')
 """
         subprocess.run(
             [sys.executable, "-I", "-S", "-B", "-c", script, str(Path(__file__).resolve().parents[2])],
