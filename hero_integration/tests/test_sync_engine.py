@@ -116,4 +116,26 @@ class TestSync(unittest.TestCase):
   with self.assertRaises(PermissionError): execute_sync_hero(intent,OutboundApproval(False,True,True,True,True,1),Transport(OutboundAck(True,"e","a"*64,"b"*64)),self.bindings)
   with self.assertRaises(SyncConflict): execute_sync_hero(intent,OutboundApproval(True,True,True,True,True,1),Transport(OutboundAck(False,"e","a"*64,"b"*64)),self.bindings)
   with self.assertRaises(SyncError): execute_sync_hero(OutboundIntent(self.binding,1,FP,"local",False,"m",{}),OutboundApproval(True,True,True,True,True,1),Transport(OutboundAck(True,"e","a"*64,"b"*64)),self.bindings)
+ def test_unproven_change_provider_never_queries_or_reads_bound_index(self):
+  provider=Provider({},ChangeCapabilities(False,False,False))
+  engine=self.engine(provider); state=self.configured(engine)
+  class RejectIndex:
+   def fields(self,*args): raise AssertionError("unproven provider must not enumerate bindings")
+  engine.index=RejectIndex()
+  result=engine.pending_sync(SyncRun("unproven","site","admin",state.generation,False))
+  self.assertEqual((result.status,result.cursor),(SyncStatus.INCOMPLETE,None))
+  self.assertEqual(provider.calls,[])
+  self.assertIsNone(self.ledger.active_run("site"))
+
+ def test_failed_processor_releases_claim_for_next_run_without_advancing_cursor(self):
+  provider=Provider({None:ChangePage(({"id":"1","name":"Ada"},),None,True,"w1")})
+  engine=self.engine(provider,Processor(False)); state=self.configured(engine)
+  result=engine.pending_sync(SyncRun("failed","site","admin",state.generation,False))
+  self.assertEqual((result.status,result.cursor),(SyncStatus.PARTIAL,None))
+  self.assertIsNone(self.ledger.active_run("site"))
+  current=self.ledger.state("site")
+  retry=engine.pending_sync(SyncRun("retry","site","admin",current.generation,False))
+  self.assertEqual((retry.status,retry.cursor),(SyncStatus.PARTIAL,None))
+  self.assertIsNone(self.ledger.active_run("site"))
+
 if __name__=="__main__": unittest.main()
