@@ -239,10 +239,6 @@ class TestScheduledEntry(unittest.TestCase):
         self.assertIn("no materialized runtime", fake.events[-1]["detail"])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TestPollingSettingsSave(unittest.TestCase):
     def save(self, **values):
         package = importlib.import_module("hero_integration")
@@ -290,3 +286,7 @@ class TestPollingSettingsSave(unittest.TestCase):
         saved = self.save(page_size=50, timezone=" Europe/Berlin ")
         self.assertEqual((saved.polling_page_size, saved.polling_timezone), (50, "Europe/Berlin"))
         self.assertFalse(hasattr(saved, "polling_data_sources") or hasattr(saved, "polling_filters_json"))
+
+
+if __name__ == "__main__":
+    unittest.main()
