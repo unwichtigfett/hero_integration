@@ -146,6 +146,16 @@ class TestScheduledSchemaRefresh(unittest.TestCase):
             schema_refresh.scheduled_refresh_job()
         refresh.assert_called_once_with("admin@example.com")
 
+    def test_job_rechecks_binding_before_starting_capture(self):
+        for settings in (_settings(schema_verified_revision=1), _settings(hero_api_url=""),
+                         _settings(token=None)):
+            with self.subTest(settings=settings):
+                fake = _frappe(settings)
+                with patch.object(schema_refresh, "frappe", fake), \
+                     patch.object(schema_refresh, "refresh") as refresh:
+                    schema_refresh.scheduled_refresh_job()
+                refresh.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
