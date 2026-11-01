@@ -43,7 +43,9 @@ class _Opener:
 
 class TestGraphQLClientBudget(unittest.TestCase):
     def setUp(self):
-        graphql._NEXT_REQUEST_AT.clear()
+        rate_budget = mock.patch.dict(graphql._NEXT_REQUEST_AT, {}, clear=True)
+        rate_budget.start()
+        self.addCleanup(rate_budget.stop)
         self.endpoint = validate_endpoint("https://hero.synthetic.invalid/graphql", {"hero.synthetic.invalid"})
 
     def _query(self, opener, **client_args):
