@@ -146,6 +146,7 @@ class TestScheduledMonitor(unittest.TestCase):
         event.assert_called_once()
         self.assertEqual(event.call_args.args[:2], ("MONITOR", "Incomplete"))
         self.assertEqual(settings.sync_status, "MONITOR incomplete")
+        self.assertEqual(settings.last_successful_sync, datetime(2026, 1, 1))
         self.assertEqual(fake.get_single.call_count, 2)
 
     def test_unapproved_plan_is_a_visible_skip_not_a_legacy_query(self):
