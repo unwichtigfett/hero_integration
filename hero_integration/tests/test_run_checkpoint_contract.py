@@ -100,6 +100,26 @@ class TestCheckpointTransaction(TestCase):
 
 
 class TestReaderTransportFence(TestCase):
+    def test_unconfirmed_or_stale_source_binding_blocks_client_construction(self):
+        service = SimpleNamespace(schema_snapshot='snapshot')
+        documents = {'HERO GraphQL Service': service, 'HERO GraphQL Mapping': object(),
+                     'HERO GraphQL Schema Snapshot': object()}
+        fake = SimpleNamespace(get_doc=lambda doctype, name: documents[doctype])
+        run = SimpleNamespace(graphql_service='service', graphql_mapping='mapping',
+                              source_instance='synthetic', source_binding_revision=2)
+        cases = (SimpleNamespace(source_instance='synthetic', source_binding_confirmed=False,
+                                 source_binding_revision=2),
+                 SimpleNamespace(source_instance='synthetic', source_binding_confirmed=True,
+                                 source_binding_revision=3))
+        for config in cases:
+            with self.subTest(config=config), mock.patch.object(migration, 'frappe', fake), \
+                 mock.patch.object(migration, 'HeroGraphQLClient') as client, \
+                 mock.patch('hero_integration.services.read_contract.from_documents') as read_contract:
+                with self.assertRaises(migration.MappingPlanError):
+                    migration._source_for_run(run, config)
+                client.assert_not_called()
+                read_contract.assert_not_called()
+
     def test_automatic_reader_requests_rollback_and_revalidates_around_transport(self):
         from hero_integration.services.read_contract import ReadContract
 
