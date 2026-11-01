@@ -28,9 +28,13 @@ class TestBindingRegistry(unittest.TestCase):
 
     def test_identity_separates_source_type_target_and_mapping_revision(self):
         first = self.obj()
+        self.assertNotEqual(first.identity_key, self.obj(site_scope="two.test").identity_key)
         self.assertNotEqual(first.identity_key, self.obj(source_instance="hero-b").identity_key)
         self.assertNotEqual(first.identity_key, self.obj(object_type="Company").identity_key)
+        self.assertNotEqual(first.identity_key, self.obj(external_object_id="43").identity_key)
+        self.assertNotEqual(first.identity_key, self.obj(target_app="other-app").identity_key)
         self.assertNotEqual(first.identity_key, self.obj(target_name="CUST-2").identity_key)
+        self.assertNotEqual(first.identity_key, self.obj(mapping_definition_id="other-rule").identity_key)
         self.assertNotEqual(first.identity_key, self.obj(mapping_revision=2).identity_key)
 
     def test_user_binding_accepts_canonical_email_identifier(self):
