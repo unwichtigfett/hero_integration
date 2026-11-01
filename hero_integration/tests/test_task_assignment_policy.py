@@ -4,7 +4,7 @@ import types
 from unittest.mock import Mock, patch
 
 from hero_integration.services.task_assignment_policy import (
-    PolicyError, approve_policy, create_policy, revoke_policy, validate_policy_payload,
+    PolicyError, _fingerprint, approve_policy, create_policy, revoke_policy, validate_policy_payload,
 )
 
 
@@ -29,6 +29,15 @@ class TestTaskAssignmentPolicy(unittest.TestCase):
             with self.subTest(changes=changes):
                 with self.assertRaises(PolicyError):
                     validate_policy_payload({**self.payload, **changes}, 'isolated.test')
+
+    def test_policy_fingerprint_is_stable_for_binding_order_and_bound_to_scope(self):
+        first = validate_policy_payload({**self.payload, 'user_bindings': ['b', 'a']}, 'site-a')
+        reordered = validate_policy_payload({**self.payload, 'user_bindings': ['a', 'b']}, 'site-a')
+        other_site = validate_policy_payload({**self.payload, 'user_bindings': ['a', 'b']}, 'site-b')
+        transfer = validate_policy_payload({**self.payload, 'user_bindings': ['a', 'b'], 'allow_transfer': True}, 'site-a')
+        self.assertEqual(_fingerprint(first), _fingerprint(reordered))
+        self.assertNotEqual(_fingerprint(first), _fingerprint(other_site))
+        self.assertNotEqual(_fingerprint(first), _fingerprint(transfer))
 
     def test_native_effects_require_explicit_bounded_decisions(self):
         effects = {'date_rule': 'LOCAL_TODAY', 'allow_notifications': True, 'allow_follow': False}
