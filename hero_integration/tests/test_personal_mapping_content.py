@@ -38,6 +38,18 @@ class TestPersonalMappingContent(unittest.TestCase):
         self.assertEqual(value,bounded(value))
         with self.assertRaises(MappingDraftError): bounded({'x':'a'*65529})
 
+    def test_complexity_limit_rejects_excess_depth_and_node_count(self):
+        def nested(depth):
+            value = None
+            for _ in range(depth): value = [value]
+            return value
+        self.assertEqual(bounded(nested(16)), nested(16))
+        with self.assertRaisesRegex(MappingDraftError, 'complexity'):
+            bounded(nested(17))
+        self.assertEqual(len(bounded([None] * 4095)), 4095)
+        with self.assertRaisesRegex(MappingDraftError, 'complexity'):
+            bounded([None] * 4096)
+
     def test_immutable_values_preserve_json_types_and_presence(self):
         prior={'extra':{'flag':False,'zero':0,'empty':'','list':[]},'source':{'field':'before','extension':{'keep':False}}}
         changed=deepcopy(prior);changed['source']['field']='after'
