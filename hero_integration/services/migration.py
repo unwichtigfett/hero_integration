@@ -1811,10 +1811,13 @@ def _upsert(
     frappe.db.savepoint(savepoint)
     try:
         target = frappe.get_doc({"doctype": doctype, **(creation_values or {}), **values})
-        if document_name:
-            target.insert(set_name=document_name)
-        else:
-            target.insert()
+        from hero_integration.services.guards import hero_project_naming
+
+        with hero_project_naming():  # HERO business IDs may end in the reserved -H
+            if document_name:
+                target.insert(set_name=document_name)
+            else:
+                target.insert()
         if after_insert:
             after_insert(target)
         snapshot = target_snapshot or (lambda item: _target_values(item, values))

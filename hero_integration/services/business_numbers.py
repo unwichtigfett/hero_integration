@@ -46,8 +46,13 @@ def customer_document_name(record: Mapping[str, object]) -> str | None:
     return business_number(record.get("nr"))
 
 
+# HERO projects end in "-H" so that projects created in ERPNext can never take
+# a HERO ID (owner decision 2026-11-01).
+HERO_PROJECT_SUFFIX = "-H"
+
+
 def project_reference(record: Mapping[str, object]) -> str | None:
-    """``<trade>-<display_id>``, e.g. ``PV-3333``; ``None`` without a display_id.
+    """``<trade>-<display_id>-H``, e.g. ``PV-3333-H``; ``None`` without a display_id.
 
     The trade comes from the confirmed trade catalog; a missing or unknown trade
     raises instead of guessing a prefix.
@@ -56,4 +61,4 @@ def project_reference(record: Mapping[str, object]) -> str | None:
     if number is None:
         return None
     trade_code, _trade_name = project_trade(record)
-    return business_number(f"{trade_code}-{number}")
+    return business_number(f"{trade_code}-{number}{HERO_PROJECT_SUFFIX}")

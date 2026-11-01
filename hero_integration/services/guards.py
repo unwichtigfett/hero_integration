@@ -55,3 +55,37 @@ def protect_hero_bound_target(doc, method=None) -> None:
             "reject it in its HERO Integration Link while it awaits review, or use the HERO data purge.",
             frappe.PermissionError,
         )
+
+
+@contextmanager
+def hero_project_naming():
+    """Only the HERO import and the HERO rename tool may give a Project an ID ending in -H."""
+    try:
+        flags = frappe.flags
+        previous = getattr(flags, "hero_project_naming", False)
+    except (AttributeError, RuntimeError):  # no site context (offline doubles)
+        yield
+        return
+    flags.hero_project_naming = True
+    try:
+        yield
+    finally:
+        flags.hero_project_naming = previous
+
+
+def _reserved_for_hero(name) -> bool:
+    from hero_integration.services.business_numbers import HERO_PROJECT_SUFFIX
+
+    return isinstance(name, str) and name.upper().endswith(HERO_PROJECT_SUFFIX)
+
+
+def protect_hero_project_ids(doc, method=None) -> None:
+    """Project validate: a new Project created outside the HERO import must not end in -H."""
+    if doc.is_new() and _reserved_for_hero(doc.name) and not getattr(frappe.flags, "hero_project_naming", False):
+        frappe.throw("Project IDs ending in -H are reserved for projects imported from HERO.")
+
+
+def protect_hero_project_rename(doc, method=None, olddn=None, newdn=None, merge=False) -> None:
+    """Project before_rename: only the HERO tools may rename a Project to an ID ending in -H."""
+    if _reserved_for_hero(newdn) and not getattr(frappe.flags, "hero_project_naming", False):
+        frappe.throw("Project IDs ending in -H are reserved for projects imported from HERO.")
