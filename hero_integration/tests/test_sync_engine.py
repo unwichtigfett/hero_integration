@@ -147,4 +147,20 @@ class TestSync(unittest.TestCase):
   self.assertEqual((retry.status,retry.cursor),(SyncStatus.PARTIAL,None))
   self.assertIsNone(self.ledger.active_run("site"))
 
+ def test_partial_batch_replays_from_committed_cursor_before_advancing(self):
+  class FailsOnceOnSecond(Processor):
+   def process(self,row,fields):
+    self.rows.append((row,fields))
+    return len(self.rows)!=2
+  provider=Provider({None:ChangePage(({"id":"1","name":"first"},),"page-2",False),
+                     "page-2":ChangePage(({"id":"1","name":"second"},),None,True,"w1")})
+  processor=FailsOnceOnSecond(); engine=self.engine(provider,processor); state=self.configured(engine)
+  partial=engine.pending_sync(SyncRun("first","site","admin",state.generation,False))
+  self.assertEqual((partial.status,partial.cursor),(SyncStatus.PARTIAL,None))
+  retry=engine.pending_sync(SyncRun("retry","site","admin",partial.generation,False))
+  self.assertEqual((retry.status,retry.cursor),(SyncStatus.SUCCEEDED,"w1"))
+  self.assertEqual(provider.calls,[None,"page-2",None,"page-2"])
+  self.assertEqual([row[0]["name"] for row in processor.rows],["first","second","first","second"])
+  self.assertIsNone(self.ledger.active_run("site"))
+
 if __name__=="__main__": unittest.main()
