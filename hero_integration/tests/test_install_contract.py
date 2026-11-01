@@ -70,6 +70,16 @@ class TestInstallContract(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Project.notes must remain editable"):
             locked.call(install.before_install)
 
+    def test_install_and_migrate_refuse_missing_project_notes_before_creating_fields(self):
+        for hook in ("after_install", "after_migrate"):
+            with self.subTest(hook=hook):
+                environment = _InstallEnvironment(apps=["frappe", "erpnext"], version="16.35.0", project_notes=False)
+                install = environment.load()
+                with self.assertRaisesRegex(RuntimeError, "Project.notes is required"):
+                    environment.call(getattr(install, hook))
+                self.assertEqual(environment.create_calls, [])
+                self.assertEqual(environment.custom_fields, {})
+
     def test_conflicting_existing_field_blocks_creation_of_other_missing_fields(self):
         environment = _InstallEnvironment(apps=["frappe", "erpnext"], version="16.35.0")
         install = environment.load()
