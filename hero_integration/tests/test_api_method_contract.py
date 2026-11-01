@@ -16,6 +16,11 @@ WRITE_RPC_NAMES = {
     "mapping_draft_exchange_save", "workspace_service_execute", "workspace_analyzer_service_save",
     "workspace_node_bookmark_save", "workspace_node_bookmark_rename", "workspace_node_bookmark_delete",
     "workspace_snapshot_inherit_mappings", "sync_area_start", "sync_service_set",
+    "approve_read_service", "task_assignment_policy_create", "task_assignment_policy_approve",
+    "task_assignment_policy_revoke", "mapping_draft_enroll_portable_rule",
+    "mapping_draft_enroll_portable_identity", "mapping_draft_exchange_preview",
+    "mapping_draft_materialize_plan", "mapping_draft_reconcile_preview",
+    "mapping_draft_reconcile_apply", "mapping_field_rule_activate", "decide_hero_review",
 }
 READ_RPC_NAMES = {"frontend_mapping_list", "frontend_mapping_detail", "runtime_plan_status",
                   "mapping_draft_read", "mapping_draft_revisions", "mapping_draft_exchange_export",
@@ -24,7 +29,7 @@ READ_RPC_NAMES = {"frontend_mapping_list", "frontend_mapping_detail", "runtime_p
 
 
 class TestApiMethodContract(unittest.TestCase):
-    def test_every_mutating_rpc_is_registered_for_post_only(self):
+    def test_selected_write_and_preview_rpcs_are_registered_for_post_only(self):
         tree = ast.parse(API.read_text())
         methods = {}
         for node in tree.body:
