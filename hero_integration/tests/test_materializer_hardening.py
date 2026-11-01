@@ -40,6 +40,23 @@ class TestStrictGraphQLJson(unittest.TestCase):
             with self.subTest(text=text[:30]), self.assertRaises(GraphQLResponseEnvelopeError):
                 parse_graphql_response(text)
 
+    def test_error_metadata_must_have_valid_message_and_path_tokens(self):
+        invalid = (
+            '{"errors": null}',
+            '{"errors": ["not-an-object"]}',
+            '{"errors": [{"message": ""}]}',
+            '{"errors": [{"message": "bad", "path": []}]}',
+            '{"errors": [{"message": "bad", "path": [true]}]}',
+            '{"errors": [{"message": "bad", "path": ["result", false]}]}',
+        )
+        for text in invalid:
+            with self.subTest(text=text), self.assertRaises(GraphQLResponseEnvelopeError):
+                parse_graphql_response(text)
+        envelope = parse_graphql_response('{"data": null, "errors": [{"message": "bad", "path": ["result", 0]}]}')
+        self.assertTrue(envelope.data_present)
+        self.assertIsNone(envelope.data)
+        self.assertEqual(envelope.errors[0].path, ("result", 0))
+
     def test_read_client_treats_invalid_graphql_json_as_an_invalid_response(self):
         client = HeroGraphQLClient(HeroEndpoint("https://hero.example/graphql", "hero.example"), lambda: "token", max_retries=3)
         for text in ('{"data": {"v": NaN}}', '{"data": {"a": 1, "a": 2}}', "[" * 100000 + "]" * 100000):
