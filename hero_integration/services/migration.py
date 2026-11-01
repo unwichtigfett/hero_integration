@@ -571,8 +571,8 @@ def _process_requested_phases(run, source: HeroSource, *, checkpoint=None) -> No
 def _refresh_project_phases(run, source, checkpoint) -> None:
     """Show each HERO project's status step as Phase, as HERO does (one read-only query)."""
     reader = getattr(source, "project_status_steps", None)
-    if run.mode == "Preview" or reader is None:
-        return
+    if getattr(run, "mode", "Preview") != "Execute" or reader is None:
+        return  # Preview and test doubles without a mode never write
     from hero_integration.integrations.project_form import refresh_project_phases
 
     with checkpoint():
