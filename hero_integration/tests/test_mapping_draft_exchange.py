@@ -9,6 +9,16 @@ from unittest.mock import patch
 from hero_integration.services import mapping_draft_exchange as exchange
 
 
+class TestExchangeInputSize(unittest.TestCase):
+    def test_multibyte_payload_is_limited_by_encoded_size_before_parsing(self):
+        payload = 'é' * 500_001
+        self.assertLess(len(payload), 1_000_000)
+        for parse in (lambda: exchange._portable_version(payload),
+                      lambda: exchange._parse(payload, 'source', 'snapshot', 'QUERY_TO_FRAPPE')):
+            with self.subTest(parser=parse), self.assertRaisesRegex(exchange.MappingDraftExchangeError, 'size'):
+                parse()
+
+
 class _Frappe:
     def __init__(self):
         self.local = SimpleNamespace(site="draft-exchange.test", conf={'encryption_key': 'test-only-key'})
