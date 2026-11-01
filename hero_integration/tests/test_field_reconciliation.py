@@ -123,5 +123,29 @@ class TestEmptyFloatStoredAsZero(unittest.TestCase):
         self.assertEqual(current, {"all_day": 0, "flag": False})
 
 
+class TestFloatZeroBothSides(unittest.TestCase):
+    """HERO volume 0 with an old integer baseline converged instead of conflicting (2026-11-02)."""
+
+    def test_old_integer_zero_baseline_converges(self):
+        from types import SimpleNamespace
+        from hero_integration.services.change_detection import field_hashes
+        from hero_integration.services.migration import _Comparison
+        base = field_hashes({"custom_hero_volume": 0})  # recorded before float normalization
+        comparison = _Comparison({"custom_hero_volume": 0.0}, None)
+        current = comparison.target_values(SimpleNamespace(get=lambda f: 0.0), lambda doc: {"custom_hero_volume": 0.0})
+        outcome = comparison.reconcile(base, base, current)
+        self.assertEqual((set(outcome.converged), set(outcome.conflicts)), ({"custom_hero_volume"}, set()))
+
+    def test_after_convergence_the_field_stays_quiet(self):
+        from types import SimpleNamespace
+        from hero_integration.services.change_detection import field_hashes
+        from hero_integration.services.migration import _Comparison
+        base = field_hashes({"custom_hero_volume": None})
+        comparison = _Comparison({"custom_hero_volume": 0.0}, None)
+        current = comparison.target_values(SimpleNamespace(get=lambda f: 0.0), lambda doc: {"custom_hero_volume": 0.0})
+        outcome = comparison.reconcile(base, base, current)
+        self.assertEqual(set(outcome.unchanged), {"custom_hero_volume"})
+
+
 if __name__ == "__main__":
     unittest.main()
