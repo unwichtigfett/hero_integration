@@ -245,23 +245,44 @@ if __name__ == "__main__":
 
 class TestPollingSettingsSave(unittest.TestCase):
     def save(self, **values):
+        package = importlib.import_module("hero_integration")
+        missing = object()
+        previous_api = sys.modules.get("hero_integration.api", missing)
+        previous_alias = getattr(package, "api", missing)
+        stubbed = False
         try:
-            import frappe  # noqa: F401
-        except ModuleNotFoundError:
-            stub = types.ModuleType("frappe")
-            stub.whitelist = lambda *args, **kwargs: (lambda function: function)
-            sys.modules["frappe"] = stub
-        from hero_integration import api
+            try:
+                import frappe  # noqa: F401
+            except ModuleNotFoundError as error:
+                if error.name != "frappe":
+                    raise
+                stub = types.ModuleType("frappe")
+                stub.whitelist = lambda *args, **kwargs: (lambda function: function)
+                sys.modules["frappe"] = stub
+                stubbed = True
+            from hero_integration import api
 
-        settings = SimpleNamespace(polling_pagination_strategy="OFFSET")
-        defaults = {"timezone": None, "execution_window": None, "bootstrap": None,
-                    "page_size": None, "pagination_strategy": None, "allow_backfill": None, "full_inventory": None,
-                    "reconciliation": None, "retry_limit": None, "retry_backoff_seconds": None, "timeout_seconds": None,
-                    "rate_limit": None, "concurrency": None, "notifications": None}
-        fake = SimpleNamespace(throw=lambda message: (_ for _ in ()).throw(ValueError(message)))
-        with patch.object(api, "frappe", fake):
-            api._save_polling_configuration(settings, **{**defaults, **values})
-        return settings
+            settings = SimpleNamespace(polling_pagination_strategy="OFFSET")
+            defaults = {"timezone": None, "execution_window": None, "bootstrap": None,
+                        "page_size": None, "pagination_strategy": None, "allow_backfill": None, "full_inventory": None,
+                        "reconciliation": None, "retry_limit": None, "retry_backoff_seconds": None, "timeout_seconds": None,
+                        "rate_limit": None, "concurrency": None, "notifications": None}
+            fake = SimpleNamespace(throw=lambda message: (_ for _ in ()).throw(ValueError(message)))
+            with patch.object(api, "frappe", fake):
+                api._save_polling_configuration(settings, **{**defaults, **values})
+            return settings
+        finally:
+            if stubbed:
+                sys.modules.pop("frappe", None)
+                if previous_api is missing:
+                    sys.modules.pop("hero_integration.api", None)
+                else:
+                    sys.modules["hero_integration.api"] = previous_api
+                if previous_alias is missing:
+                    if hasattr(package, "api"):
+                        delattr(package, "api")
+                else:
+                    package.api = previous_alias
 
     def test_only_reviewed_reader_controls_are_saved(self):
         with self.assertRaisesRegex(ValueError, "must be OFFSET"):
