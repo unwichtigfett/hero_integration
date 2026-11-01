@@ -19,6 +19,26 @@ class TestExchangeInputSize(unittest.TestCase):
                 parse()
 
 
+class TestPreviewBinding(unittest.TestCase):
+    def test_preview_binding_covers_site_actor_package_and_preview(self):
+        fake = SimpleNamespace(local=SimpleNamespace(site='site-a', conf={'encryption_key': 'synthetic-key'}),
+                               session=SimpleNamespace(user='owner-a'))
+        package, preview = {'mapping': 'one'}, {'can_save': True}
+        with patch.object(exchange, 'frappe', fake):
+            original = exchange._preview_binding(package, preview)
+            self.assertEqual(original, exchange._preview_binding(package, preview))
+            self.assertNotEqual(original, exchange._preview_binding({'mapping': 'two'}, preview))
+            self.assertNotEqual(original, exchange._preview_binding(package, {'can_save': False}))
+            fake.local.site = 'site-b'
+            self.assertNotEqual(original, exchange._preview_binding(package, preview))
+            fake.local.site = 'site-a'
+            fake.session.user = 'owner-b'
+            self.assertNotEqual(original, exchange._preview_binding(package, preview))
+            fake.local.conf['encryption_key'] = ''
+            with self.assertRaisesRegex(exchange.MappingDraftExchangeError, 'encryption key'):
+                exchange._preview_binding(package, preview)
+
+
 class _Frappe:
     def __init__(self):
         self.local = SimpleNamespace(site="draft-exchange.test", conf={'encryption_key': 'test-only-key'})
