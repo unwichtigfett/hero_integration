@@ -67,9 +67,8 @@ class TestPortableRelease(unittest.TestCase):
         content = "\n".join(path.read_text() for path in files)
 
         self.assertFalse([marker for marker in FORBIDDEN_RUNTIME_MARKERS if marker in content])
-        self.assertNotIn("auto_domain", content)
-        self.assertNotIn("hero_connector", content)
-        self.assertNotIn("import helpdesk", content)
+        for marker in ("auto_domain", "hero_connector", "import helpdesk"):
+            self.assertFalse(marker in content, f"Forbidden runtime marker found: {marker}")
         self.assertIn("from erpnext import __version__", (PACKAGE / "install.py").read_text())
 
     def test_security_and_permissions_contract(self):
