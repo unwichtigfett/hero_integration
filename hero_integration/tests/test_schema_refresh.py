@@ -123,6 +123,32 @@ class TestSchemaRefreshRecording(unittest.TestCase):
                 message = schema_refresh._client_error_message(HeroClientError("HERO request failed.", code=code))
                 self.assertIn("rejected the API token", message)
 
+    def test_compatibility_query_is_attempted_only_after_graphql_error(self):
+        from hero_integration.client.graphql import HeroClientError
+        from hero_integration.services.introspection import COMPATIBILITY_INTROSPECTION_QUERY, INTROSPECTION_QUERY
+
+        configuration = SimpleNamespace(endpoint=SimpleNamespace(url='https://synthetic.invalid/graphql'),
+                                        source_instance='synthetic', timeout_seconds=30, api_token='synthetic')
+        class StopBeforePersistence(Exception):
+            pass
+
+        for code in ('GRAPHQL_ERRORS', 'HTTP_401', 'TRANSPORT'):
+            with self.subTest(code=code):
+                client = SimpleNamespace(introspect=MagicMock(side_effect=[HeroClientError('synthetic', code=code), {}]))
+                with patch('hero_integration.client.settings.get_configuration', return_value=configuration), \
+                     patch('hero_integration.client.graphql.HeroGraphQLClient', return_value=client), \
+                     patch('hero_integration.services.introspection.canonical_schema', side_effect=StopBeforePersistence):
+                    if code == 'GRAPHQL_ERRORS':
+                        with self.assertRaises(StopBeforePersistence):
+                            schema_refresh._capture('synthetic-actor')
+                        self.assertEqual(client.introspect.call_args_list,
+                                         [unittest.mock.call(INTROSPECTION_QUERY),
+                                          unittest.mock.call(COMPATIBILITY_INTROSPECTION_QUERY)])
+                    else:
+                        with self.assertRaises(schema_refresh.SchemaRefreshError):
+                            schema_refresh._capture('synthetic-actor')
+                        client.introspect.assert_called_once_with(INTROSPECTION_QUERY)
+
 
 class TestScheduledSchemaRefresh(unittest.TestCase):
     def test_tick_enqueues_one_deduplicated_job_only_when_due(self):
