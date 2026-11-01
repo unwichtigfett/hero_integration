@@ -692,6 +692,22 @@ class TestPortableDraftExchange(unittest.TestCase):
         self.assertEqual(len([call for call in calls if call[0] == 'close']), 2)
         self.assertTrue(all('for update' not in query.lower() for query, _ in calls))
 
+    def test_candidate_discovery_closes_fresh_connection_when_query_fails(self):
+        import frappe.database
+        from unittest.mock import Mock
+
+        conf = SimpleNamespace(db_socket=None, db_host='synthetic', db_port=0, db_user='fixture',
+                               db_name='fixture', db_password='synthetic')
+        fake = SimpleNamespace(local=SimpleNamespace(site='target.test', conf=conf))
+        for discover in (frappe_mapping_draft_storage._fresh_identity_candidates,
+                         frappe_mapping_draft_storage._fresh_definition_candidates):
+            with self.subTest(discover=discover.__name__):
+                db = SimpleNamespace(sql=Mock(side_effect=RuntimeError('synthetic query failure')), close=Mock())
+                with patch.object(frappe.database, 'get_db', return_value=db):
+                    with self.assertRaisesRegex(RuntimeError, 'synthetic query failure'):
+                        discover(fake, IDENTITY)
+                db.close.assert_called_once_with()
+
     def test_missing_identity_index_fails_closed(self):
         fake = Fake('target.test', 'source-B', 'snapshot-B')
         fake.db.sql = lambda *args, **kwargs: []
