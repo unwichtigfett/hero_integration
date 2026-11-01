@@ -147,6 +147,10 @@ class MappingPlan:
                 if not valid:
                     raise MappingPlanError("Project response has an incompatible field: " + definition.source_path)
             value = None if raw is MISSING else raw
+            if definition.source_type.split("|")[0] == "float" and type(value) is int:
+                # HERO sends whole numbers as integers; Frappe reads Float/Currency
+                # back as float.  One representation keeps the baselines equal.
+                value = float(value)
             if (self.target_operation or self.operation) == 'HeroCalendarEvents' and (
                 value is None or (definition.source_path in {'description', 'full_address'}
                                   and isinstance(value, str) and not value.strip())
