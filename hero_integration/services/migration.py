@@ -912,6 +912,7 @@ def _process_projection(run, source, *, checkpoint=None) -> None:
             _block_run(run, 'Cannot resume without a verified source snapshot and page identity evidence.')
         return
     seen_ids: set[str] = set()
+    _PROJECT_REFERENCE_STATES.clear()
     while True:
         _cancel_if_requested(run)
         page = source.projection(offset)
@@ -928,6 +929,7 @@ def _process_projection(run, source, *, checkpoint=None) -> None:
             _validate_enumeration_page(page, offset, seen_ids)
         except MappingPlanError as error:
             raise RepeatedProjectionPageError(str(error)) from error
+        _prefetch_project_references(source, operation, page.records)
         for index, record in enumerate(page.records):
             if index < index_start:
                 continue
@@ -1155,7 +1157,10 @@ def _migrate_native_task(record, run, plan, scope) -> Result:
         if 'comment' in selected_paths and 'comment' in record and record['comment'] is not None and (not isinstance(record['comment'], str) or record['comment'].strip()):
             values['description'] = _html(_text(record['comment'], 'Task comment'))
         if 'target_project_match_id' in selected_paths and record.get('target_project_match_id') is not None:
-            values['project'] = _project_name_for_source(record['target_project_match_id'], instance)
+            try:
+                values['project'] = _project_name_for_source(record['target_project_match_id'], instance)
+            except DeletedSourceProjectError as error:
+                return Result('SKIPPED_SOURCE_DELETED', str(error))
         if 'due_date' in selected_paths and record.get('due_date') is not None:
             deadline = _external_task_deadline(record['due_date'])
             if deadline is not None:
@@ -1337,6 +1342,8 @@ def _migrate_projection(record, run, plan) -> Result:
                              native_value=lambda target: native_values[target], allow_partial=bool(existing))
         values['custom_hero_key'] = _digest([instance, contract['source_type'], source_id])
         values['custom_hero_source_instance'] = instance
+    except DeletedSourceProjectError as error:
+        return Result('SKIPPED_SOURCE_DELETED', str(error))
     except (ValueError, MappingPlanError) as error:
         return Result('BLOCKED_RECORD', str(error))
     result = _upsert(contract['source_type'], source_id, record, values, contract['target_doctype'],
@@ -1390,6 +1397,33 @@ def _projection_target_values(target, values, contract):
     return snapshot
 
 
+class DeletedSourceProjectError(MappingPlanError):
+    """The referenced HERO project is deleted; the referencing record is not imported."""
+
+
+# Run-scoped classification of ProjectMatch IDs the HERO project list omits:
+# {(source_instance, id): "DELETED" | "LEAD" | "UNLISTED"}.
+_PROJECT_REFERENCE_STATES: dict[tuple[str, int], str] = {}
+
+
+def _prefetch_project_references(source, operation: str, records) -> None:
+    """Classify unbound project references of one page with one bundled HERO read."""
+    path = PROJECTIONS.get(operation, {}).get('project_path')
+    probe = getattr(source, 'project_reference_states', None)
+    if not path or probe is None:
+        return
+    instance = getattr(source, 'source_instance', '') or 'default'
+    unbound = {
+        record.get(path) for record in records
+        if type(record.get(path)) is int and record.get(path) > 0
+        and (instance, record.get(path)) not in _PROJECT_REFERENCE_STATES
+        and not _link('project', str(record.get(path)), instance)
+    }
+    if unbound:
+        for value, state in probe(unbound).items():
+            _PROJECT_REFERENCE_STATES[(instance, value)] = state
+
+
 def _no_project_match(value) -> bool:
     """HERO uses ProjectMatch ID 0 for records that belong to no project."""
     return type(value) is int and value == 0
@@ -1403,6 +1437,14 @@ def _project_name_for_source(value, source_instance):
     link = _link('project', str(value), source_instance)
     if getattr(link, 'sync_status', '') in {REVIEW_PENDING, REVIEW_REJECTED}:
         raise MappingPlanError('ProjectMatch reference awaits or failed administrator review; linked records wait.')
+    if not link:
+        # User decision 2026-11-01: a deleted HERO project skips its records;
+        # a contact request (KONT-) is no project, so the record has none.
+        state = _PROJECT_REFERENCE_STATES.get((source_instance or 'default', value))
+        if state == 'DELETED':
+            raise DeletedSourceProjectError('The referenced HERO project is deleted; the record is not imported.')
+        if state == 'LEAD':
+            return None
     if not link or link.target_doctype != 'Project' or not frappe.db.exists('Project', link.target_name):
         raise MappingPlanError('ProjectMatch reference has no verified native Project binding.')
     frappe.has_permission('Project', 'read', doc=frappe.get_doc('Project', link.target_name), throw=True)
