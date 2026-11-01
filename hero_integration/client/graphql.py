@@ -27,12 +27,12 @@ _NEXT_REQUEST_AT: dict[str, float] = {}
 
 
 class HeroClientError(RuntimeError):
-    """A redacted, machine-readable HERO transport or GraphQL failure."""
+    """Machine-readable failure; upstream details and partial data may be sensitive."""
 
     def __init__(self, message: str, *, code: str = "UNKNOWN", details: tuple[str, ...] = (), data: dict | None = None):
         super().__init__(message)
         self.code = code
-        # Bounded GraphQL error messages only; never request data or credentials.
+        # Messages are bounded but upstream-controlled; callers must handle them as sensitive.
         self.details = tuple(details)
         # Partial GraphQL data delivered together with errors; kept in memory only.
         self.data = data
