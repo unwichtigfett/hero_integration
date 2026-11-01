@@ -91,6 +91,22 @@ class TestBindingRegistry(unittest.TestCase):
         self.assertIs(ack, self.service.record_verified_acknowledgment(ack, expected_revision=2, mapping_definition_id="contact-name", mapping_revision=1, source_fingerprint=source, target_fingerprint=target, evidence_id="migration-1", version=1))
         with self.assertRaises(BindingConflict): self.service.record_verified_acknowledgment(ack, expected_revision=1, mapping_definition_id="contact-name", mapping_revision=1, source_fingerprint=source, target_fingerprint=target, evidence_id="migration-2", version=0)
 
+    def test_same_acknowledgment_version_rejects_different_fingerprints(self):
+        field = self.field(self.obj())
+        source = state_fingerprint("source", present=True)
+        target = state_fingerprint("target", present=True)
+        ack = self.service.record_verified_acknowledgment(
+            field, expected_revision=1, mapping_definition_id="contact-name", mapping_revision=1,
+            source_fingerprint=source, target_fingerprint=target, evidence_id="migration-1", version=1,
+        )
+        with self.assertRaisesRegex(BindingConflict, "conflicts with recorded evidence"):
+            self.service.record_verified_acknowledgment(
+                ack, expected_revision=2, mapping_definition_id="contact-name", mapping_revision=1,
+                source_fingerprint=source, target_fingerprint=state_fingerprint("other", present=True),
+                evidence_id="migration-2", version=1,
+            )
+        self.assertEqual(self.service.get_field_bindings("one.test", ack.object_binding_key), (ack,))
+
     def test_change_state_distinguishes_missing_null_empty_false_zero_and_mapping_change(self):
         field = self.field(self.obj())
         self.assertNotEqual(state_fingerprint(None, present=False), state_fingerprint(None, present=True))
