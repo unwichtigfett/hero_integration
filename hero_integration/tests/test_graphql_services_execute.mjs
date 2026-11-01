@@ -167,6 +167,16 @@ test('GraphQL response markup remains text in readable and raw views', () => {
   assert.equal(output.find((node) => node.tag === 'img'), null);
 });
 
+test('upstream GraphQL error markup is rendered as text', () => {
+  const {dialogs, Workspace} = load();
+  const markup = '<img src=x onerror=alert(1)>';
+  editorState(Workspace).renderExecution({status: 'ERROR', error_kind: 'GRAPHQL', error_code: 'GRAPHQL_ERRORS',
+    message: markup, graphql_errors: [markup], revision: 3});
+  const root = dialogs[0].fields_dict.result.$wrapper[0];
+  assert.equal(root.textContent.split(markup).length - 1, 2);
+  assert.equal(root.find((node) => node.tag === 'img'), null);
+});
+
 test('result dialog: coloured readable view copies exactly the plain text', () => {
   const {dialogs, copied, Workspace} = load();
   editorState(Workspace).renderExecution(OK);
