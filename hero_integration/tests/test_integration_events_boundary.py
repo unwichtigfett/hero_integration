@@ -7,6 +7,20 @@ from hero_integration.services import integration_events
 
 
 class TestIntegrationOutputBoundary(unittest.TestCase):
+    def test_record_output_does_not_commit_or_publish_before_caller_transaction(self):
+        document = SimpleNamespace(name="synthetic-result", insert=Mock())
+        fake = SimpleNamespace(get_doc=Mock(return_value=document),
+                               db=SimpleNamespace(commit=Mock()), publish_realtime=Mock())
+        with patch.object(integration_events, "frappe", fake), \
+             patch.object(integration_events, "now_datetime", return_value="synthetic-time"):
+            name = integration_events.record_output(source_type="Contact", source_id="1", result="OBSERVED",
+                                                    action="review", changed_fields=["status", "name"])
+        self.assertEqual(name, "synthetic-result")
+        self.assertEqual(fake.get_doc.call_args.args[0]["changed_fields"], "name, status")
+        document.insert.assert_called_once_with(ignore_permissions=True)
+        fake.db.commit.assert_not_called()
+        fake.publish_realtime.assert_not_called()
+
     def test_non_manager_cannot_read_output_records(self):
         query = Mock()
         fake = SimpleNamespace(
