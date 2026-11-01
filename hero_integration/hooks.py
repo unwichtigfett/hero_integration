@@ -56,7 +56,11 @@ doc_events = {
 # Target DocTypes are intentionally not hard-coded.  The observer only acts
 # when an app-owned Integration Link identifies this document as a mapped
 # target; it never starts polling, queues work, or sends a HERO request.
-doc_events["*"] = {"on_update": "hero_integration.services.change_detection.observe_frappe_target_change"}
+doc_events["*"] = {
+    "on_update": "hero_integration.services.change_detection.observe_frappe_target_change",
+    # A HERO-bound record is deleted only by the purge or a review rejection.
+    "on_trash": "hero_integration.services.guards.protect_hero_bound_target",
+}
 doc_events["ToDo"] = {
     "on_update": "hero_integration.services.task_assignment_state.observe_local_todo",
     "on_trash": "hero_integration.services.task_assignment_state.observe_local_todo",
