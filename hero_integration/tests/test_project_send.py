@@ -12,7 +12,7 @@ from hero_integration.services.change_detection import decode, encode, field_has
 
 SCHEMA = json.dumps({"data": {"__schema": {"types": [
     {"kind": "INPUT_OBJECT", "name": "ProjectMatchInput",
-     "inputFields": [{"name": n} for n in ("id", "partner_notes", "current_project_match_status_id", "step_id")]}]}}})
+     "inputFields": [{"name": n} for n in ("id", "partner_notes", "current_project_match_status", "step_id")]}]}}})
 
 
 class _Hero:
@@ -42,8 +42,8 @@ class _Hero:
         values = variables["project_match"]
         if "partner_notes" in values:
             self.row["partner_notes"] = values["partner_notes"]
-        if "step_id" in values:
-            self.step = values["step_id"]
+        if "current_project_match_status" in values:
+            self.step = values["current_project_match_status"]["step_id"]
         # The client returns the GraphQL "data" object itself.
         return {"update_project_match": {"id": 501, "partner_notes": self.row["partner_notes"],
                                          "current_project_match_status": {"step_id": self.step}}}
@@ -127,7 +127,7 @@ class TestProjectSend(unittest.TestCase):
         result = ps.send("PV-1-H", 2, fingerprint, 1, client=hero, mutation_client=hero)
         self.assertEqual(result["changes"], ["Notes", "Phase"])
         self.assertEqual(hero.mutations, [{"project_match": {"id": 501, "partner_notes": "New note",
-                                                             "step_id": 2}}])
+                                                             "current_project_match_status": {"step_id": 2}}}])
         self.assertEqual(audits, [["reserved"], ["Succeeded"]])
         project_update = next(values for doctype, values in fake.set_values if doctype == "Project")
         self.assertEqual(project_update[ps.PHASE_NAME_FIELD], "Montage")

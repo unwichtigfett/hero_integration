@@ -20,9 +20,10 @@ NOTES_FIELD = "custom_hero_partner_notes"
 PHASE_ID_FIELD = "custom_hero_observed_status_id"
 PHASE_NAME_FIELD = "custom_hero_observed_status_name"
 # A phase is a ProjectStatusStep of the project's HERO project type; the project's
-# statuses are its history.  HERO sets the phase through ProjectMatchInput.step_id
-# (to be confirmed by the first test on the HERO test project).
-PHASE_INPUT = "step_id"
+# statuses are its history.  The first live test (2026-11-01) showed that HERO
+# ignores ProjectMatchInput.step_id; a new status is passed as the nested
+# ProjectMatchInput.current_project_match_status { step_id }.
+PHASE_INPUT = "current_project_match_status"
 READ_DOCUMENT = (
     "query HeroProjectSendRead($id: Int) { project_match(project_match_id: $id) { id partner_notes "
     "current_project_match_status_id current_project_match_status { id name step_id } "
@@ -73,7 +74,7 @@ def preview(project: str, phase_id=None, client=None) -> dict:
             name = next(phase["name"] for phase in phases if phase["id"] == phase_id)
             current_name = (hero.get("current_project_match_status") or {}).get("name")
             changes.append({"field": PHASE_INPUT, "label": "Phase", "hero": current_name, "new": name,
-                            "value": phase_id})
+                            "value": {"step_id": phase_id}})
 
     fingerprint = hashlib.sha256(json.dumps(
         [project, link.source_instance, link.source_id, hero_notes, current_phase, changes], sort_keys=True, default=str,
@@ -119,9 +120,10 @@ def send(project: str, phase_id=None, fingerprint: str = "", confirmed=0, client
             raise ProjectSendError("HERO did not confirm the project.")
         after = _read_hero(read_client, link)
         for change in current["changes"]:
-            stored = (after.get("current_project_match_status") or {}).get("step_id") \
-                if change["field"] == PHASE_INPUT else after.get(change["field"])
-            expected = change.get("value", change["new"])
+            if change["field"] == PHASE_INPUT:
+                stored, expected = (after.get("current_project_match_status") or {}).get("step_id"), change["value"]["step_id"]
+            else:
+                stored, expected = after.get(change["field"]), change.get("value", change["new"])
             if (_text(stored) if change["field"] == "partner_notes" else stored) != expected:
                 raise ProjectSendError(f"HERO did not store {change['label']}.")
     except Exception:
