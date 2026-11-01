@@ -162,6 +162,15 @@ class TestGraphQLClientBudget(unittest.TestCase):
         error, _ = self._query(_Opener({"data": None}), max_retries=0)
         self.assertEqual(error.code, "MISSING_DATA")
 
+    def test_upstream_error_details_remain_sensitive_even_when_exception_text_is_generic(self):
+        upstream = "synthetic confidential upstream detail"
+        partial = {"viewer": {"id": "synthetic private value"}}
+        error, _ = self._query(_Opener({"data": partial, "errors": [{"message": upstream}]}), max_retries=0)
+        self.assertEqual(error.code, "GRAPHQL_ERRORS")
+        self.assertNotIn(upstream, str(error))
+        self.assertEqual(error.details, (upstream,))
+        self.assertEqual(error.data, partial)
+
     def test_rate_budget_is_shared_by_all_clients_of_one_host(self):
         first, second = (HeroGraphQLClient(self.endpoint, lambda: "synthetic", requests_per_minute=30) for _ in range(2))
         opener = _Opener({"data": {}}, {"data": {}})
