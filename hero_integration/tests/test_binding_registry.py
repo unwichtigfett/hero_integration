@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import threading
 import unittest
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 from hero_integration.services.binding_registry import (
     BindingConflict, BindingRegistryError, BindingRegistryService, BindingState,
@@ -45,6 +47,20 @@ class TestBindingRegistry(unittest.TestCase):
         self.assertIs(field, self.field(parent))
         self.assertEqual(self.service.get_field_bindings("one.test", parent.identity_key), (field,))
         self.assertIsNone(self.service.get_object_binding("two.test", parent.identity_key))
+
+    def test_frappe_storage_rejects_cross_site_reads_and_unprivileged_writes_before_access(self):
+        frappe = SimpleNamespace(
+            local=SimpleNamespace(site="one.test"), session=SimpleNamespace(user="employee@example.invalid"),
+            get_roles=lambda: ("Employee",), get_all=Mock(), get_doc=Mock(), has_permission=Mock(),
+        )
+        storage = FrappeBindingStorage(frappe)
+        with self.assertRaises(BindingRegistryError):
+            storage.object("two.test", "some-key")
+        with self.assertRaises(PermissionError):
+            storage.put_object(self.obj())
+        frappe.get_all.assert_not_called()
+        frappe.get_doc.assert_not_called()
+        frappe.has_permission.assert_not_called()
 
     def test_field_requires_persisted_matching_parent_and_multiple_fields_are_allowed(self):
         parent = self.obj()
