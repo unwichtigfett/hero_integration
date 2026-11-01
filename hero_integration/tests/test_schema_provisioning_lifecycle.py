@@ -101,6 +101,22 @@ class TestProvisioningLifecycle(unittest.TestCase):
             ProvisioningExecutor(audit, adapter, InMemoryProvisioningApprovalAuthority(), clock=lambda: 1).apply_authorized(value, approval(value))
         self.assertEqual(adapter.writes, [])
 
+    def test_metadata_change_after_reservation_prevents_first_schema_write(self):
+        class ChangingAdapter(FakeAdapter):
+            def metadata_fingerprint(self, site):
+                self.sites.append(site)
+                return 'meta-1' if len(self.sites) == 1 else 'changed'
+
+        value = plan()
+        audit, adapter = InMemoryProvisioningAudit(), ChangingAdapter('meta-1')
+        executor = ProvisioningExecutor(audit, adapter, InMemoryProvisioningApprovalAuthority(), clock=lambda: 1)
+        with self.assertRaisesRegex(ProvisioningLifecycleError, 'reconciliation is required'):
+            executor.apply_authorized(value, approval(value))
+        self.assertEqual(adapter.writes, [])
+        self.assertEqual([event[1] for event in audit.events], ['RESERVED', 'RECONCILIATION_REQUIRED'])
+        with self.assertRaisesRegex(ProvisioningLifecycleError, 'already consumed'):
+            executor.apply_authorized(value, approval(value))
+
     def test_record_failure_preserves_reconciliation_requirement_and_prevents_replay(self):
         value = plan()
         audit, adapter = InMemoryProvisioningAudit(), FakeAdapter("meta-1")
