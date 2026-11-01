@@ -3,10 +3,22 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
+from hero_integration import hooks
 from hero_integration.services import guards
 
 
 class TestDeletionGuard(unittest.TestCase):
+    def test_hook_registration_covers_listed_doctypes_without_overriding_native_hooks(self):
+        handler = "hero_integration.services.guards.assert_app_document_deletion_allowed"
+        for doctype in hooks._HERO_OWNED_DOCTYPES:
+            with self.subTest(doctype=doctype):
+                self.assertEqual(hooks.doc_events[doctype], {"on_trash": handler})
+        self.assertEqual(hooks.doc_events["ToDo"]["on_trash"],
+                         "hero_integration.services.task_assignment_state.observe_local_todo")
+        self.assertEqual(hooks.doc_events["Task"]["validate"],
+                         "hero_integration.services.change_detection.protect_external_task_deadline")
+        self.assertNotIn("HERO GraphQL Node Bookmark", hooks._HERO_OWNED_DOCTYPES)
+
     def setUp(self):
         self.get_setting = Mock(return_value=0)
 
