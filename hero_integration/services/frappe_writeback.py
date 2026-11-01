@@ -45,11 +45,11 @@ DEFINITIONS = {
     "Project": WritebackDefinition(
         doctype="Project", source_type="project", operation="update_project_match",
         argument="project_match", input_type="ProjectMatchInput",
-        fields={
-            "project_name": "project_title", "custom_hero_project_number": "project_nr",
-            "custom_hero_project_type": "project_type", "custom_hero_partner_notes": "partner_notes",
-            "custom_hero_display_id": "display_id",
-        },
+        # Owner decision 2026-11-01: only Notes are written back per field (the
+        # Phase goes through the Project's "Send to HERO" button).  The ERPNext
+        # title is composed and would overwrite HERO's own title; project number,
+        # display ID and type are HERO identity/naming data.
+        fields={"custom_hero_partner_notes": "partner_notes"},
     ),
 }
 _TRANSFORMS = frozenset({"Identity", "Trim"})

@@ -69,9 +69,15 @@ class TestFrappeWritebackContract(unittest.TestCase):
             {"operation": "update_contact", "argument": "contact", "input_type": "CustomerInput", "field": "phone_mobile", "graphql_type": "String"},
         )
         self.assertEqual(
-            reviewed_input_target("Project", "project_name", schema()),
-            {"operation": "update_project_match", "argument": "project_match", "input_type": "ProjectMatchInput", "field": "project_title", "graphql_type": "String"},
+            reviewed_input_target("Project", "custom_hero_partner_notes", schema()),
+            {"operation": "update_project_match", "argument": "project_match", "input_type": "ProjectMatchInput", "field": "partner_notes", "graphql_type": "String"},
         )
+
+    def test_project_title_number_and_type_are_never_written_back(self):
+        # Owner decision 2026-11-01: per-field Project writeback is limited to Notes.
+        for field in ("project_name", "custom_hero_project_number", "custom_hero_project_type", "custom_hero_display_id"):
+            with self.subTest(field=field), self.assertRaisesRegex(WritebackContractError, "not approved"):
+                reviewed_input_target("Project", field, schema())
 
     def test_picker_rejects_unapproved_or_missing_schema_input(self):
         with self.assertRaisesRegex(WritebackContractError, "not approved"):
