@@ -1,3 +1,4 @@
+import builtins
 import unittest
 from unittest.mock import patch
 
@@ -24,3 +25,17 @@ class TestGraphQLReadBoundary(unittest.TestCase):
     def test_accepts_query_with_fragments_and_operation_words_in_string(self):
         assert_read_only('query Q { viewer(filter:"mutation") { ...Fields } } fragment Fields on User { id }')
         assert_read_only('{ viewer { id } }')
+
+    def test_missing_graphql_parser_fails_closed_before_transport(self):
+        original_import = builtins.__import__
+
+        def import_without_parser(name, *args, **kwargs):
+            if name == "graphql":
+                raise ImportError("synthetic missing parser")
+            return original_import(name, *args, **kwargs)
+
+        client = HeroGraphQLClient(HeroEndpoint('https://example.invalid/', 'example.invalid'), lambda: 'test')
+        with patch('builtins.__import__', side_effect=import_without_parser), patch.object(client, '_post') as post:
+            with self.assertRaisesRegex(HeroClientError, 'validation is unavailable'):
+                client.query('query Q { viewer { id } }', {})
+        post.assert_not_called()
