@@ -1,8 +1,8 @@
 """Read-only preview: could existing HERO Customers and Projects take their business number as name?
 
 Nothing is renamed or written to the database. Renaming an existing record needs
-a separate, explicit approval and a fresh database backup; ``rename_doc`` would
-then also move every reference counted here and the HERO Integration Link.
+a separate, explicit approval and a fresh database backup. Reference counts are
+point-in-time evidence, not a guarantee that every reference can be renamed.
 
     bench --site <site> execute hero_integration.services.business_number_preview.write_csv \
         --kwargs "{'path': '/path/to/preview.csv'}"
