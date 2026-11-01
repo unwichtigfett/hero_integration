@@ -171,6 +171,24 @@ class TestGraphQLClientBudget(unittest.TestCase):
         self.assertEqual((caught.exception.code, opener.calls), ("TRANSPORT", 1))
         sleep.assert_not_called()
 
+    def test_mutation_response_read_failure_closes_stream_without_retry(self):
+        class FailedRead(_Response):
+            def read(self, size=-1):
+                raise OSError("synthetic response read failure")
+
+        response = FailedRead(b"")
+        opener = mock.Mock()
+        opener.open.return_value = response
+        client = HeroMutationClient(self.endpoint, lambda: "synthetic")
+        with mock.patch("hero_integration.client.graphql.urllib.request.build_opener", return_value=opener), \
+             mock.patch("hero_integration.client.graphql.time.sleep") as sleep:
+            with self.assertRaises(HeroClientError) as caught:
+                client.execute_once("mutation M { updateThing { id } }", {})
+        self.assertEqual(caught.exception.code, "TRANSPORT")
+        opener.open.assert_called_once()
+        self.assertTrue(response.closed)
+        sleep.assert_not_called()
+
     def test_mutation_retryable_http_errors_never_trigger_a_second_send(self):
         for status in (429, 500, 503):
             with self.subTest(status=status):
