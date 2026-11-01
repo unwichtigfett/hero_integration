@@ -64,6 +64,15 @@ class TestReconcile(unittest.TestCase):
         self.assertEqual(outcome.acknowledged, {"f"})
         self.assertFalse(outcome.apply)
 
+    def test_false_check_value_is_a_change_not_a_null_clear(self):
+        prior = _h(f=True)
+        source = _h(f=False)
+        target = _h(f=1)
+        outcome = reconcile(prior, prior, source, target, tracked={"f"})
+        self.assertEqual(outcome.apply, {"f"})
+        self.assertFalse(outcome.acknowledged | outcome.conflicts)
+        self.assertEqual(next_baseline(prior, source, outcome, tracked={"f"}), source)
+
     def test_source_clear_conflicts_with_an_independent_local_change(self):
         prior = _h(f="original")
         outcome = reconcile(prior, prior, _h(f=None), _h(f="local"), tracked={"f"},
