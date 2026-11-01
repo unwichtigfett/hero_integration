@@ -149,6 +149,20 @@ class TestGraphQLClientBudget(unittest.TestCase):
         self.assertEqual((caught.exception.code, opener.calls), ("TRANSPORT", 1))
         sleep.assert_not_called()
 
+    def test_mutation_retryable_http_errors_never_trigger_a_second_send(self):
+        for status in (429, 500, 503):
+            with self.subTest(status=status):
+                failure = _http_error(status, "7")
+                self.addCleanup(failure.close)
+                opener = _Opener(failure, {"data": {"updateThing": {"id": "unexpected"}}})
+                client = HeroMutationClient(self.endpoint, lambda: "synthetic")
+                with mock.patch("hero_integration.client.graphql.urllib.request.build_opener", return_value=opener), \
+                     mock.patch("hero_integration.client.graphql.time.sleep") as sleep:
+                    with self.assertRaises(HeroClientError) as caught:
+                        client.execute_once("mutation M { updateThing { id } }", {})
+                self.assertEqual((caught.exception.code, opener.calls), (f"HTTP_{status}", 1))
+                sleep.assert_not_called()
+
     def test_oversized_non_json_and_partial_responses_are_rejected(self):
         error, _ = self._query(_Opener(b'{"data": {"v": "' + b"x" * 2048 + b'"}}'), max_retries=3, max_response_bytes=1024)
         self.assertEqual(error.code, "RESPONSE_TOO_LARGE")
