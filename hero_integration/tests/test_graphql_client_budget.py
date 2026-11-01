@@ -90,6 +90,15 @@ class TestGraphQLClientBudget(unittest.TestCase):
         self.assertEqual(result, {"viewer": {"id": 1}})
         sleep.assert_called_once_with(7.0)
 
+    def test_429_retry_after_is_capped_and_invalid_values_use_backoff(self):
+        for header, delay in (("9999", 300), ("not-a-date", 0), ("-2", 0)):
+            with self.subTest(header=header):
+                opener = _Opener(_http_error(429, header), {"data": {"viewer": {"id": 1}}})
+                result, sleep = self._query(opener, max_retries=1, retry_backoff_seconds=0)
+                self.assertEqual(result, {"viewer": {"id": 1}})
+                self.assertEqual(opener.calls, 2)
+                sleep.assert_called_once_with(delay)
+
     def test_429_honours_an_http_date_retry_after(self):
         from email.utils import format_datetime
         from datetime import datetime, timedelta, timezone
