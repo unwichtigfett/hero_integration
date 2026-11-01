@@ -148,6 +148,20 @@ class TestWritebackPreviewBoundary(unittest.TestCase):
                     api.writeback_execute('mapping', 'Customer', 'CUST-1', fingerprint, confirmed)
                 reserve.assert_not_called()
 
+    def test_failed_writeback_reservation_never_constructs_transport(self):
+        context = {'fingerprint': 'current', 'mapping': {'target': {'operation': 'update_contact'}},
+                   'snapshot': self.snapshot, 'mapping_row': self.row}
+        with patch.object(api, 'frappe', self.frappe), \
+             patch.object(api, '_assert_mutation_execution_released'), \
+             patch.object(api, '_writeback_context', return_value=context), \
+             patch.object(api, '_reserve_mutation', side_effect=RuntimeError('synthetic reservation failure')), \
+             patch.object(api, '_finalize_mutation') as finalize, \
+             patch('hero_integration.client.graphql_mutation.HeroMutationClient') as transport:
+            with self.assertRaisesRegex(RuntimeError, 'synthetic reservation failure'):
+                api.writeback_execute('mapping', 'Customer', 'CUST-1', 'current', 1)
+        transport.assert_not_called()
+        finalize.assert_not_called()
+
     def sync_context(self):
         from hero_integration.services import binding_registry, sync_runtime_adapter
         binding = SimpleNamespace(object_binding_key='object', source_instance='hero', mapping_revision=3,
