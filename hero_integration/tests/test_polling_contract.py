@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from datetime import datetime, timedelta
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from hero_integration.services.polling import PaginationProgressError, effective_mode, monitor, runtime_plan, scheduler_due
 from hero_integration.sources.hero import SourcePage
@@ -29,6 +30,16 @@ class TestPollingContract(unittest.TestCase):
     def test_monitor_reads_pages_without_claiming_watermarks_or_business_writes(self):
         result = monitor(_Source())
         self.assertEqual((result.customer_records, result.project_records, result.source_instance), (3, 1, "synthetic"))
+
+    def test_monitor_waits_between_pages_according_to_rate_limit(self):
+        plan = {"sources": ["HeroCustomers"], "max_pages": 2, "rate_limit": 30}
+        with patch("hero_integration.services.polling.time.monotonic", side_effect=[100.0, 100.1, 100.6, 102.1]), \
+             patch("hero_integration.services.polling.time.sleep") as sleep:
+            result = monitor(_Source(), plan)
+        self.assertEqual(result.customer_records, 3)
+        self.assertEqual(result.customer_next_offset, 0)
+        sleep.assert_called_once()
+        self.assertAlmostEqual(sleep.call_args.args[0], 1.5)
 
     def test_runtime_plan_always_reads_every_reviewed_source_and_ignores_legacy_values(self):
         settings = SimpleNamespace(polling_mode="AUTO_SYNC", scheduled_sync_enabled=0, polling_data_sources="{}",
