@@ -3588,3 +3588,25 @@ def decide_hero_review(link: str, decision: str) -> dict[str, str]:
     except MappingPlanError as error:
         frappe.throw(str(error))
     return {"status": document.sync_status}
+
+
+@frappe.whitelist(methods=["POST"])
+def project_send_preview(project: str, phase_id: str | int | None = None) -> dict:
+    """Preview of the Project changes the Send to HERO button would send (reads HERO)."""
+    from hero_integration.services.project_send import ProjectSendError, preview
+
+    try:
+        return preview(project, phase_id)
+    except ProjectSendError as error:
+        frappe.throw(str(error))
+
+
+@frappe.whitelist(methods=["POST"])
+def project_send(project: str, fingerprint: str, confirmed: int | str = 0, phase_id: str | int | None = None) -> dict:
+    """Send the previewed Project Notes/Phase to HERO once and verify them."""
+    from hero_integration.services.project_send import ProjectSendError, send
+
+    try:
+        return send(project, phase_id, fingerprint, confirmed)
+    except ProjectSendError as error:
+        frappe.throw(str(error))

@@ -25,7 +25,7 @@ scheduler_events = {
 # on every form refresh and never observes or sends values by itself.
 doctype_js = {
     "Customer": "public/js/hero_writeback.js",
-    "Project": "public/js/hero_writeback.js",
+    "Project": ["public/js/hero_writeback.js", "public/js/hero_project_send.js"],
 }
 
 # The gate intentionally covers only HERO-owned documents. It cannot block a
