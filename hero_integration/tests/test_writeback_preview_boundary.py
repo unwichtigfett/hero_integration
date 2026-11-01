@@ -94,6 +94,22 @@ class TestWritebackPreviewBoundary(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'contract|service'):
             self.preview()
 
+    def test_disabled_global_gate_blocks_execute_before_document_or_audit_access(self):
+        endpoints = (
+            lambda: api.writeback_execute('mapping', 'Customer', 'CUST-1', 'fingerprint', 1),
+            lambda: api.execute_graphql_service('service', '{}', 'fingerprint', 1),
+        )
+        with patch.object(api, 'frappe', self.frappe), \
+             patch.object(api, '_mutation_execution_state', return_value={'mutation_execution_enabled': False}), \
+             patch.object(self.frappe, 'get_doc') as get_doc, \
+             patch.object(api, '_reserve_mutation') as reserve:
+            for call in endpoints:
+                with self.subTest(endpoint=call), self.assertRaisesRegex(ValueError, api.MUTATION_EXECUTION_DISABLED):
+                    call()
+            get_doc.assert_not_called()
+            reserve.assert_not_called()
+        self.assertEqual(self.calls, [('role', 'System Manager'), ('role', 'System Manager')])
+
     def test_execute_missing_field_fails_before_reservation_or_transport(self):
         self.doc = Document({})
         with patch.object(api, 'frappe', self.frappe), patch.object(api, '_validated_snapshot', return_value=(self.snapshot, schema())), \
