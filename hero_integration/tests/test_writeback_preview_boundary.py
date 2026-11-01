@@ -137,6 +137,17 @@ class TestWritebackPreviewBoundary(unittest.TestCase):
                 api.writeback_execute('mapping', 'Customer', 'CUST-1', 'fingerprint', 1)
             reserve.assert_not_called()
 
+    def test_writeback_requires_current_fingerprint_and_confirmation_before_reservation(self):
+        for fingerprint, confirmed in (('current', 0), ('stale', 1), ('', 1)):
+            with self.subTest(fingerprint=fingerprint, confirmed=confirmed), \
+                 patch.object(api, 'frappe', self.frappe), \
+                 patch.object(api, '_assert_mutation_execution_released'), \
+                 patch.object(api, '_writeback_context', return_value={'fingerprint': 'current'}), \
+                 patch.object(api, '_reserve_mutation') as reserve:
+                with self.assertRaisesRegex(ValueError, 'confirmation for this exact writeback preview'):
+                    api.writeback_execute('mapping', 'Customer', 'CUST-1', fingerprint, confirmed)
+                reserve.assert_not_called()
+
     def sync_context(self):
         from hero_integration.services import binding_registry, sync_runtime_adapter
         binding = SimpleNamespace(object_binding_key='object', source_instance='hero', mapping_revision=3,
