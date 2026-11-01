@@ -106,6 +106,10 @@ class TestScheduledEntry(unittest.TestCase):
         if adapter is not None:
             modules["hero_integration.services.sync_runtime_adapter"] = adapter
         previous = {name: sys.modules.get(name) for name in modules}
+        package = importlib.import_module("hero_integration")
+        missing = object()
+        previous_alias = getattr(package, "tasks", missing)
+        previous_tasks = sys.modules.get("hero_integration.tasks")
         sys.modules.pop("hero_integration.tasks", None)
         sys.modules.update(modules)
         try:
@@ -115,7 +119,15 @@ class TestScheduledEntry(unittest.TestCase):
                 tasks.run_scheduled_sync()
             return fake, tasks
         finally:
-            sys.modules.pop("hero_integration.tasks", None)
+            if previous_tasks is None:
+                sys.modules.pop("hero_integration.tasks", None)
+            else:
+                sys.modules["hero_integration.tasks"] = previous_tasks
+            if previous_alias is missing:
+                if hasattr(package, "tasks"):
+                    delattr(package, "tasks")
+            else:
+                package.tasks = previous_alias
             for name, module in previous.items():
                 if module is None:
                     sys.modules.pop(name, None)
