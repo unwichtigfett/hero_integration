@@ -84,6 +84,19 @@ class TestNativeProjections(unittest.TestCase):
             self.assertEqual(result.code, code)
             write.assert_not_called()
 
+    def test_blank_title_keeps_the_subject_of_an_existing_event(self):
+        plan = __import__("hero_integration.services.mapping_runtime", fromlist=["plan_from_definitions"]).plan_from_definitions(
+            "HeroCalendarEvents", definitions("HeroCalendarEvents"))
+        for title in ("", "   "):
+            row = event(); row["title"] = title
+            native = values(CONTRACTS["HeroCalendarEvents"], row, "9", "a", EVENT_OPTIONS, lookup=lambda *a: {},
+                            allow_partial=True, review=[])
+            out = plan.values(row, project_link=lambda value: None, native_value=lambda target: native[target],
+                              allow_partial=True)
+            self.assertNotIn("subject", out)
+            created = values(CONTRACTS["HeroCalendarEvents"], row, "9", "a", EVENT_OPTIONS, lookup=lambda *a: {})
+            self.assertTrue(created["subject"])  # a new event is named after its type
+
     def test_optional_end_is_not_invented_for_a_new_event(self):
         row = event(); row['end'] = None
         out = values(CONTRACTS['HeroCalendarEvents'], row, '9', 'a', EVENT_OPTIONS, lookup=lambda *args: {})

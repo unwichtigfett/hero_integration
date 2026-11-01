@@ -149,6 +149,9 @@ class MappingPlan:
             if (self.target_operation or self.operation) == 'HeroCalendarEvents' and (
                 value is None or (definition.source_path in {'description', 'full_address'}
                                   and isinstance(value, str) and not value.strip())
+                # An existing Event keeps its subject when HERO's title is blank.
+                or (allow_partial and definition.source_path == 'title'
+                    and isinstance(value, str) and not value.strip())
                 or (definition.source_path in {'partners', 'resources'} and value == [])
             ):
                 # Missing, NULL and unconfirmed empty values do not clear Event fields.
