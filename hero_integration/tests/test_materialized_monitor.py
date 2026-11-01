@@ -83,6 +83,25 @@ class TestMaterializedMonitor(unittest.TestCase):
         with self.assertRaises(sync_runtime_adapter.RuntimeBridgeError):
             self.run_monitor()
 
+    def test_changed_persisted_generation_after_http_fails_before_settings_lock(self):
+        original_sql = self.frappe.db.sql
+        post_read_queries = []
+
+        def reply(*args):
+            def changed_generation(query, *params, **kwargs):
+                post_read_queries.append(query)
+                if 'tabHERO Runtime Plan' in query:
+                    return [(8,)]
+                return original_sql(query, *params, **kwargs)
+            self.frappe.db.sql = changed_generation
+            return {"things": [{"id": "1", "name": "test"}]}
+
+        self.client.query.side_effect = reply
+        with self.assertRaisesRegex(sync_runtime_adapter.RuntimeBridgeError, "generation changed during transport"):
+            self.run_monitor()
+        self.assertEqual(len(post_read_queries), 1)
+        self.assertIn('tabHERO Runtime Plan', post_read_queries[0])
+
     def test_field_rule_change_during_http_is_rejected_without_root_revision_change(self):
         def reply(*args):
             self.rule['source_path'] = 'other'
