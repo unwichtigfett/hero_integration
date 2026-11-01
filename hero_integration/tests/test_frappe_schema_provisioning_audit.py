@@ -68,3 +68,14 @@ def test_audit_rejects_actor_or_site_substitution_without_payload_leakage():
     api.local.site = "other.site"
     with pytest.raises(ProvisioningLifecycleError):
         store.record(audit_id, value.operations[0].operation_id, "APPLIED")
+
+
+def test_audit_reservation_reports_commit_failure():
+    api = FakeFrappe()
+
+    def fail_commit():
+        raise RuntimeError("synthetic commit failure")
+
+    api.db.commit = fail_commit
+    with pytest.raises(ProvisioningLifecycleError, match="transaction boundary failed"):
+        FrappeProvisioningAuditStore(api).reserve(plan(), approval(plan()))
