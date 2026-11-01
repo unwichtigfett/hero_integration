@@ -294,6 +294,19 @@ class TestBusinessNumberMigration(FakeFrappeMigrationHarness, unittest.TestCase)
         self.migrate_project(self.project(customer_id=401))
         self.assertEqual(self.frappe.projects[0]["customer"], "2222")
 
+    def test_equal_source_ids_keep_project_customer_relations_source_scoped(self):
+        self.migrate_customer(self.customer(id=401, nr="2222"))
+        self.migrate_customer(self.customer(id=401, nr="4444", full_name="Synthetic other customer",
+                                            _hero_source_instance="account-b"))
+        first = self.migrate_project(self.project(customer_id=401))
+        second = self.migrate_project(self.project(customer_id=401, display_id="5555", project_nr="5555",
+                                                   _hero_source_instance="account-b"))
+        self.assertEqual((first.code, second.code), ("CREATED", "CREATED"))
+        self.assertEqual({row["name"]: row["customer"] for row in self.frappe.projects},
+                         {"PV-3333": "2222", "PV-5555": "4444"})
+        self.assertEqual(self.frappe.links[("project", "201")].target_name, "PV-3333")
+        self.assertEqual(self.frappe.links[("project", "201", "account-b")].target_name, "PV-5555")
+
 
 class TestRenamePreview(unittest.TestCase):
     def setUp(self):
