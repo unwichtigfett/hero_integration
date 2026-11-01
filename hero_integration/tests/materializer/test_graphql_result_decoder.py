@@ -244,6 +244,18 @@ class GraphQLResultDecoderTests(unittest.TestCase):
             ),
         )
 
+    def test_nested_collections_preserve_nullable_ancestors_and_reject_bad_leaf(self):
+        request = make_request(make_binding(("children", "name"), ("data", "result", "children", "name")))
+        rows = [{"children": [{"name": "first"}, None, {"name": "second"}]},
+                {"children": None}, {"children": []}]
+        decoded = decode_graphql_result(request, make_response({"data": {"result": rows}}))
+        self.assertEqual(decoded.value_for(("children", "name")), (("first", None, "second"), None, ()))
+
+        rows[0]["children"][2]["name"] = 42
+        self.assert_code("RESULT_TYPE_INVALID", lambda: decode_graphql_result(
+            request, make_response({"data": {"result": rows}})
+        ))
+
     def test_scalar_list_leaf_is_not_projection(self):
         decoded = decode_graphql_result(
             make_request(
