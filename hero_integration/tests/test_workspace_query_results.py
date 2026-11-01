@@ -62,13 +62,19 @@ class TestQueryResults(_Base):
         self.client.query.side_effect = HeroClientError("HERO GraphQL response contains no data.", code="MISSING_DATA")
         self.assertEqual(self.execute()["error_kind"], "RESPONSE")
 
-    def test_error_details_never_echo_submitted_variable_values(self):
+    def test_error_details_redact_an_exact_long_variable_value(self):
         self.client.query.side_effect = HeroClientError(
             "HERO GraphQL rejected the request.", code="GRAPHQL_ERRORS",
             details=('Contact "secret-4711" not found',))
         result = self.execute('{"id": "secret-4711"}')
         self.assertEqual(result["graphql_errors"], ['Contact "[redacted]" not found'])
         self.assertNotIn("secret-4711", json.dumps(result))
+
+    def test_nested_overlapping_values_are_redacted_longest_first(self):
+        variables = {"filters": [{"name": "Alice"}, {"name": "Alice Cooper"}], "number": 12345}
+        details = ["Alice Cooper and Alice: 12345", "unrelated"]
+        self.assertEqual(api._redacted_messages(details, variables),
+                         ["[redacted] and [redacted]: [redacted]", "unrelated"])
 
     def test_transport_keeps_partial_data_on_graphql_errors(self):
         client = HeroGraphQLClient(HeroEndpoint("https://hero.example/graphql", "hero.example"), lambda: "token")
