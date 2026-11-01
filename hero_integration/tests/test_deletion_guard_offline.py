@@ -1,13 +1,25 @@
 """Offline tests for the shared deletion gate; no Frappe site is opened."""
+import json
+from pathlib import Path
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
+from frappe.utils import cast
 from hero_integration import hooks
 from hero_integration.services import guards
 
 
 class TestDeletionGuard(unittest.TestCase):
+    def test_deletion_setting_uses_check_type_with_frappe_integer_cast(self):
+        path = (Path(__file__).resolve().parents[1] / "hero_integration" / "doctype" /
+                "hero_integration_settings" / "hero_integration_settings.json")
+        metadata = json.loads(path.read_text())
+        field = next(field for field in metadata["fields"] if field["fieldname"] == "allow_deletion")
+        self.assertEqual((field["fieldtype"], field["default"]), ("Check", "0"))
+        self.assertEqual(cast(field["fieldtype"], "0"), 0)
+        self.assertEqual(cast(field["fieldtype"], "1"), 1)
+
     def test_hook_registration_covers_listed_doctypes_without_overriding_native_hooks(self):
         handler = "hero_integration.services.guards.assert_app_document_deletion_allowed"
         for doctype in hooks._HERO_OWNED_DOCTYPES:
