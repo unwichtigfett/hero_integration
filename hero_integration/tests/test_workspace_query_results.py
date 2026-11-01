@@ -150,6 +150,14 @@ class TestMutationExecutionContract(_Base):
                 self.contract.status = "Active"
         self.mutation_class.assert_not_called()
 
+    def test_failed_reservation_never_constructs_transport(self):
+        self.gate.return_value = {"mutation_execution_enabled": True}
+        api._reserve_mutation.side_effect = ValueError("reservation unavailable")
+        with self.assertRaisesRegex(ValueError, "reservation unavailable"):
+            self.run_mutation()
+        self.mutation_class.assert_not_called()
+        self.finalize.assert_not_called()
+
     def test_released_gate_with_contract_and_confirmation_sends_exactly_once_to_the_mock(self):
         self.gate.return_value = {"mutation_execution_enabled": True}
         result = self.run_mutation()
