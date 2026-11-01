@@ -109,6 +109,7 @@ class TestTestingPreviewContract(unittest.TestCase):
         processed = []
         with patch.object(migration, '_phase_state', return_value='Pending'), \
              patch.object(migration, '_set_phase_state'), patch.object(migration, '_block_run'), \
+             patch.object(migration, '_migrate_isolated', side_effect=lambda action: action()), \
              patch.object(migration, '_migrate_customer', side_effect=lambda record, _run: processed.append(record['id'])), \
              patch.object(migration, '_record_result'), patch.object(migration, '_record_phase_result'), \
              patch.object(migration, '_phase_has_blockers', return_value=False):
@@ -159,6 +160,22 @@ class TestTestingPreviewContract(unittest.TestCase):
         limited.projects(0)
 
         self.assertEqual(source.calls, [("customers", 0)])
+        self.assertEqual(limited.results["HeroProjectMatches"]["status"], "SKIPPED_LIMIT")
+
+    def test_failed_preview_request_consumes_budget_without_retry(self):
+        source = _VerifiedSource()
+        calls = []
+        def fail(offset):
+            calls.append(offset)
+            raise RuntimeError("synthetic transport failure")
+        source.customers = fail
+        limited = TestingPreviewSource(source, 1)
+
+        with self.assertRaisesRegex(RuntimeError, "transport failure"):
+            limited.customers(0)
+        self.assertEqual((calls, limited.executed_actions, limited.status), ([0], 1, "FAILED"))
+        self.assertEqual(limited.projects(0).records, ())
+        self.assertEqual(source.calls, [])
         self.assertEqual(limited.results["HeroProjectMatches"]["status"], "SKIPPED_LIMIT")
 
     def test_unverified_descending_id_is_not_accepted_as_newest_first(self):
