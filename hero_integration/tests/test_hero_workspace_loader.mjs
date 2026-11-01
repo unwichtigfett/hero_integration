@@ -5,7 +5,7 @@ import vm from "node:vm";
 
 const source = await readFile(new URL("../public/js/hero_workspace.js", import.meta.url), "utf8");
 
-function workspaceUi({ styleFailure = false, loaded = {}, requests = [] } = {}) {
+function workspaceUi({ styleFailure = false, loaded = {}, requests = [], capture = () => {} } = {}) {
     const sandbox = {
         URL,
         URLSearchParams,
@@ -27,6 +27,7 @@ function workspaceUi({ styleFailure = false, loaded = {}, requests = [] } = {}) 
         },
     };
     vm.runInNewContext(source, sandbox, { filename: "hero_workspace.js" });
+    capture(sandbox.window);
     return sandbox.window.hero_integration_ui;
 }
 
@@ -49,4 +50,18 @@ test("the content-addressed editor is reused rather than loading an unhashed leg
     const loaded = Object.fromEntries(["hero_workspace_tools", "hero_integration_overview", "hero_integration_settings_ui", "hero_integration_api_summary", "hero_integration_mapping_editor", "hero_integration_migration"].map((name) => [name, {}]));
     await workspaceUi({loaded, requests}).ensureStyles();
     assert.deepEqual(requests, []);
+});
+
+test("workspace routes remain local and encode untrusted parameter text", () => {
+    let platform;
+    workspaceUi({capture: (window) => { platform = window.hero_integration_platform; }});
+    const value = "snapshot&hero_section=settings#fragment";
+    const route = platform.url("api", {hero_tool: "graph", snapshot: value});
+    const parsed = new URL(route, "https://example.invalid");
+    assert.equal(parsed.origin, "https://example.invalid");
+    assert.equal(parsed.pathname, "/app/hero-integration");
+    assert.equal(parsed.searchParams.get("snapshot"), value);
+    assert.equal(parsed.searchParams.get("hero_section"), "api");
+    assert.equal(parsed.searchParams.get("hero_tool"), "graph");
+    assert.equal(parsed.hash, "");
 });
