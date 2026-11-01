@@ -77,6 +77,21 @@ class TestProviderCapabilityContracts(unittest.TestCase):
         unsupported = ProviderContract(ProviderCapability.UNSUPPORTED).change_capabilities()
         self.assertEqual((unsupported.cursor, unsupported.complete_change_discovery, unsupported.bounded_comparison), (False, False, False))
 
+    def test_verified_tuple_watermark_is_checked_at_the_terminal_page(self):
+        first = ChangePage(({"id": "1"},), "next", False)
+        last = ChangePage((), None, True, "verified-watermark")
+        pages = {None: first, "next": last}
+        verified = []
+        provider = guarded_provider(
+            ProviderContract(ProviderCapability.VERIFIED_TUPLE_WATERMARK),
+            lambda cursor: pages[cursor],
+            tuple_watermark_verified=lambda page: verified.append(page) or True,
+        )
+        self.assertIs(provider.changes(None), first)
+        self.assertEqual(verified, [])
+        self.assertIs(provider.changes("next"), last)
+        self.assertEqual(verified, [last])
+
     def test_offset_reader_is_never_adapted_as_a_change_provider(self):
         calls = []
         provider = offset_provider(lambda offset: calls.append(offset))
