@@ -108,6 +108,7 @@ def from_documents(service, mapping, snapshot) -> ReadContract:
             CUSTOMER_CONTRACT_V1,
             CUSTOMER_CONTRACT_V2,
             CUSTOMER_CONTRACT_V3,
+            CUSTOMER_CONTRACT_V4,
             PROJECT_CONTRACT_V1,
             customer_query,
             project_query,
@@ -121,8 +122,16 @@ def from_documents(service, mapping, snapshot) -> ReadContract:
                 raise ReadContractError("Customer read-contract version is not supported.") from error
             line2_definition = "customer-primary-address-line2"
             legal_form_definition = "customer-company-legal-form"
+            salutation_definition = "customer-salutation"
             selected_literals = _customer_selected_literals(definition_ids, mapping)
-            if customer_contract_version == CUSTOMER_CONTRACT_V3:
+            if customer_contract_version == CUSTOMER_CONTRACT_V4:
+                if line2_definition not in selected_literals or salutation_definition not in selected_literals:
+                    raise ReadContractError("Customer V4 requires the selected line_2 and salutation bindings.")
+                if legal_form_definition in selected_literals:
+                    raise ReadContractError("Customer V4 cannot select the company legal-form binding.")
+            elif salutation_definition in selected_literals:
+                raise ReadContractError("Only Customer V4 reads the salutation.")
+            elif customer_contract_version == CUSTOMER_CONTRACT_V3:
                 if line2_definition not in selected_literals or legal_form_definition not in selected_literals:
                     raise ReadContractError("Customer V3 requires the selected primary-address line_2 and company legal-form bindings.")
             elif customer_contract_version == CUSTOMER_CONTRACT_V2:

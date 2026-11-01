@@ -15,6 +15,7 @@ SOURCE_CONTRACTS = {
         # expected field type, transformation. No business approvals yet.
         "native_field_bindings": frozenset(),
         "paths": {
+            "title": "string|null",
             "id": "int", "nr": "string|null", "first_name": "string|null",
             "last_name": "string|null", "full_name": "string|null", "email": "string|null",
             "phone_mobile": "string|null", "phone_home": "string|null",
@@ -71,6 +72,11 @@ TRANSFORMATIONS = {
 }
 TRANSFORMATIONS.update({'JSON Value', 'Scalar Text', 'HERO Project Link'})
 TRANSFORMATIONS.update({'Native Adapter', 'Nonempty String ID'})
+TRANSFORM_SALUTATION = "Salutation Table"
+TRANSFORMATIONS.add(TRANSFORM_SALUTATION)
+# HERO customer title -> Frappe Salutation (owner decision 2026-11-02). Unknown
+# values are not written; the stored Contact salutation then stays as it is.
+SALUTATION_TABLE = {"herr": "Herr", "frau": "Frau", "familie": "Familie", "eheleute": "Eheleute", "dr.": "Dr", "dr": "Dr"}
 
 ALLOWED_TARGET_TYPES = {"Data", "Small Text", "Int", "Float", "Currency", "Check", "Date", "Datetime", "Link"}
 # Read-only HERO observation fields that are not text: (operation, path, field, transform) -> fieldtype.
@@ -165,6 +171,8 @@ def transformed_value(spec: MappingSpec, value: object) -> object | None:
         return value
     if spec.transformation == TRANSFORM_IDENTITY:
         return value
+    if spec.transformation == TRANSFORM_SALUTATION:
+        return SALUTATION_TABLE.get(value.strip().lower()) if isinstance(value, str) else None
     if spec.transformation == TRANSFORM_TRIM:
         return value.strip() if isinstance(value, str) and value.strip() else None
     if spec.transformation == TRANSFORM_POSITIVE_INT_TO_TEXT:
@@ -239,6 +247,9 @@ def _validate_binding(spec: MappingSpec, metadata) -> None:
     if spec.purpose == PURPOSE_CUSTOMER_CONTACT:
         if spec.operation != "HeroCustomers" or spec.target_doctype != "Customer":
             raise DirectMappingError("Customer contact mappings only apply to HeroCustomers.")
+        if spec.target_field == "salutation":
+            _require(spec, "title", "string|null", "Customer", "salutation", TRANSFORM_SALUTATION)
+            return
         if spec.target_field not in {"first_name", "last_name", "email_id", "mobile_no"} or spec.transformation != TRANSFORM_TRIM:
             raise DirectMappingError("Customer contact mapping is not an approved native binding.")
         return

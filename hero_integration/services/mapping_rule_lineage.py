@@ -87,6 +87,8 @@ _CUSTOMER_LEGACY = {
                                        'Native Binding', 'Trim', 'Customer Primary Address'),
     'customer-company-legal-form': ('company_legal_form', 'string|null', 'Customer', 'custom_hero_company_legal_form',
                                     'Field', 'Trim', ''),
+    'customer-salutation': ('title', 'string|null', 'Customer', 'salutation',
+                            'Customer Primary Contact', 'Salutation Table', ''),
 }
 
 

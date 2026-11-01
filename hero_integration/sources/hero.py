@@ -35,6 +35,10 @@ query HeroCustomers($first: Int!, $offset: Int!, $orderBy: String!, $showDeleted
 CUSTOMER_CONTRACT_V1 = "v1"
 CUSTOMER_CONTRACT_V2 = "v2"
 CUSTOMER_CONTRACT_V3 = "v3"
+CUSTOMER_CONTRACT_V4 = "v4"
+# V4 = V2 plus the salutation `title` (owner decision 2026-11-02: salutation table
+# only, no legal form).
+CUSTOMER_QUERY_V4 = CUSTOMER_QUERY_V2.replace("id nr first_name last_name full_name ", "id nr title first_name last_name full_name ")
 PROJECT_QUERY_V1 = """
 query HeroProjectMatches($first: Int!, $offset: Int!, $orderBy: String!) {
   project_matches(first: $first, offset: $offset, orderBy: $orderBy) {
@@ -60,6 +64,7 @@ CUSTOMER_SELECTED_PATHS = (
 )
 CUSTOMER_SELECTED_PATHS_V2 = (*CUSTOMER_SELECTED_PATHS, "address.line_2")
 CUSTOMER_SELECTED_PATHS_V3 = (*CUSTOMER_SELECTED_PATHS_V2, "company_legal_form")
+CUSTOMER_SELECTED_PATHS_V4 = (*CUSTOMER_SELECTED_PATHS_V2, "title")
 PROJECT_SELECTED_PATHS = (
     "id", "customer_id", "project_id", "project_title", "project_nr", "project_type", "partner_notes",
     "customer.title", "customer.full_name", "address.full_address", "display_id", "created", "modified",
@@ -96,6 +101,8 @@ def customer_query(contract_version: str) -> str:
         return CUSTOMER_QUERY_V2
     if contract_version == CUSTOMER_CONTRACT_V3:
         return CUSTOMER_QUERY_V3
+    if contract_version == CUSTOMER_CONTRACT_V4:
+        return CUSTOMER_QUERY_V4
     raise ValueError("Unsupported Customer read-contract version.")
 
 
