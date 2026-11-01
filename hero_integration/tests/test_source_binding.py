@@ -11,6 +11,9 @@ from types import SimpleNamespace
 class TestSourceBinding(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        cls.package = importlib.import_module("hero_integration.client")
+        cls._missing = object()
+        cls._saved_alias = getattr(cls.package, "settings", cls._missing)
         cls._saved = {name: sys.modules.get(name) for name in ("frappe", "hero_integration.client.settings")}
         cls.frappe = types.ModuleType("frappe")
         sys.modules["frappe"] = cls.frappe
@@ -24,6 +27,11 @@ class TestSourceBinding(unittest.TestCase):
                 sys.modules.pop(name, None)
             else:
                 sys.modules[name] = module
+        if cls._saved_alias is cls._missing:
+            if getattr(cls.package, "settings", None) is cls.settings_module:
+                delattr(cls.package, "settings")
+        else:
+            cls.package.settings = cls._saved_alias
 
     def test_any_endpoint_token_or_label_change_opens_an_unconfirmed_revision(self):
         rule = self.settings_module.next_source_binding
