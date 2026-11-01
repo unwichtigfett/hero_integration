@@ -70,6 +70,35 @@ assert not hasattr(hero_integration, 'api')
             check=True,
         )
 
+    def test_failed_offline_api_import_restores_preexisting_package_alias(self):
+        script = """\
+import importlib
+import sys
+sys.path.insert(0, sys.argv[1])
+import hero_integration
+sentinel = object()
+hero_integration.api = sentinel
+original_import = importlib.import_module
+def failing_import(name, *args, **kwargs):
+    if name == 'hero_integration.api':
+        raise RuntimeError('synthetic import failure')
+    return original_import(name, *args, **kwargs)
+importlib.import_module = failing_import
+try:
+    import hero_integration.tests.test_sync_page
+except RuntimeError as error:
+    assert str(error) == 'synthetic import failure'
+else:
+    raise AssertionError('synthetic import did not fail')
+assert 'frappe' not in sys.modules
+assert 'hero_integration.api' not in sys.modules
+assert hero_integration.api is sentinel
+"""
+        subprocess.run(
+            [sys.executable, "-I", "-S", "-B", "-c", script, str(Path(__file__).resolve().parents[2])],
+            check=True,
+        )
+
     def test_four_areas_use_the_new_names_and_keep_the_stored_run_actions(self):
         self.assertEqual([item.action_label for item in sync_page.AREAS],
                          ["Contact Migration", "Project Migration", "Event Migration", "Task Migration"])
