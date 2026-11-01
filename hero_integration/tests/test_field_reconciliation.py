@@ -7,7 +7,7 @@ import types
 from unittest.mock import Mock, patch
 
 from hero_integration.services.change_detection import (
-    EMPTY_HASH, field_hashes, managed_target_update, managed_target_update_active, next_baseline,
+    EMPTY_HASH, encode, field_hashes, managed_target_update, managed_target_update_active, next_baseline,
     observe_frappe_target_change, reconcile,
 )
 from hero_integration.services.direct_mapping import MISSING, lookup, source_value
@@ -134,6 +134,40 @@ class TestGlobalObserverLifecycle(unittest.TestCase):
                     observe_frappe_target_change(types.SimpleNamespace(doctype="Customer", name="synthetic"))
         frappe.get_all.assert_not_called()
         utils.now_datetime.assert_not_called()
+
+    def test_inbound_owner_is_skipped_but_other_link_observes_local_change(self):
+        class Row(dict):
+            __getattr__ = dict.__getitem__
+
+        baseline = encode(_h(customer_name="old"))
+        rows = [Row(name=name, source_type="customer", source_id=name,
+                    target_field_hashes=baseline, observed_target_hash="")
+                for name in ("owner", "other")]
+        saved_link = types.SimpleNamespace(save=Mock())
+        frappe = types.ModuleType("frappe")
+        frappe.flags = types.SimpleNamespace(in_migrate=False, in_uninstall=False)
+        frappe.get_all = Mock(return_value=rows)
+        frappe.get_doc = Mock(return_value=saved_link)
+        utils = types.ModuleType("frappe.utils")
+        utils.now_datetime = Mock(return_value="synthetic time")
+        drafts = types.ModuleType("hero_integration.services.frappe_mapping_draft_storage")
+        drafts.personal_publication_active = Mock(return_value=False)
+        events = types.ModuleType("hero_integration.services.integration_events")
+        events.record_output = Mock()
+        doc = types.SimpleNamespace(doctype="Customer", name="customer-1", get=lambda key: "new")
+        modules = {"frappe": frappe, "frappe.utils": utils, drafts.__name__: drafts, events.__name__: events}
+
+        with patch.dict(sys.modules, modules), managed_target_update("Customer", "customer-1", "owner"):
+            observe_frappe_target_change(doc)
+
+        frappe.get_doc.assert_called_once_with("HERO Integration Link", "other")
+        saved_link.save.assert_called_once_with(ignore_permissions=True)
+        self.assertEqual(saved_link.last_observed_on, "synthetic time")
+        self.assertEqual(rows[0]["target_field_hashes"], baseline)
+        self.assertEqual(rows[1]["target_field_hashes"], baseline)
+        events.record_output.assert_called_once()
+        self.assertEqual(events.record_output.call_args.kwargs["source_id"], "other")
+        self.assertEqual(events.record_output.call_args.kwargs["changed_fields"], ["customer_name"])
 
 
 if __name__ == "__main__":
