@@ -21,6 +21,8 @@ SHOWN = {
     "custom_hero_observed_status_name": "Phase",
     "custom_hero_partner_notes": "Notes",
 }
+# Edited in ERPNext and sent with the Project's "Send to HERO" button.
+EDITABLE = {"custom_hero_partner_notes"}
 HIDDEN = (
     "custom_hero_source_id", "custom_hero_project_number", "custom_hero_customer_title",
     "custom_hero_customer_full_name", "custom_hero_project_type", "custom_hero_project_type_copy",
@@ -41,11 +43,13 @@ PLACEMENT = (
 
 
 def setup_project_form() -> dict:
-    """Create the trade Project Types and the Project form Property Setters (idempotent)."""
+    """Create the trade Project Types, the HERO Writeback role and the Project form Property Setters (idempotent)."""
     from frappe.custom.doctype.property_setter.property_setter import make_property_setter
 
     from hero_integration.services.project_naming import TRADE_CATALOG
 
+    if not frappe.db.exists("Role", "HERO Writeback"):
+        frappe.get_doc({"doctype": "Role", "role_name": "HERO Writeback", "desk_access": 1}).insert(ignore_permissions=True)
     created_types = []
     for trade_name in TRADE_CATALOG.values():
         if not frappe.db.exists("Project Type", trade_name):
@@ -56,7 +60,8 @@ def setup_project_form() -> dict:
     for fieldname, label in SHOWN.items():
         if fieldname in present:
             make_property_setter("Project", fieldname, "label", label, "Data", validate_fields_for_doctype=False)
-            make_property_setter("Project", fieldname, "read_only", "1", "Check", validate_fields_for_doctype=False)
+            read_only = "0" if fieldname in EDITABLE else "1"
+            make_property_setter("Project", fieldname, "read_only", read_only, "Check", validate_fields_for_doctype=False)
             make_property_setter("Project", fieldname, "hidden", "0", "Check", validate_fields_for_doctype=False)
     for fieldname in HIDDEN:
         if fieldname in present:

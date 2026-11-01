@@ -30,7 +30,7 @@ class TestProjectForm(unittest.TestCase):
         setters, inserted = [], []
         fake = SimpleNamespace(
             db=SimpleNamespace(exists=lambda doctype, name: name == "Photovoltaik"),
-            get_doc=lambda values: SimpleNamespace(insert=lambda **k: inserted.append(values["project_type"])),
+            get_doc=lambda values: SimpleNamespace(insert=lambda **k: inserted.append(values.get("project_type") or values["role_name"])),
             get_meta=lambda doctype: SimpleNamespace(fields=[SimpleNamespace(fieldname=f) for f in CURRENT]),
             clear_cache=lambda **k: None,
         )
@@ -43,6 +43,8 @@ class TestProjectForm(unittest.TestCase):
         self.assertEqual(labels["custom_hero_partner_notes"], "Notes")
         self.assertIn(("Project", "custom_hero_source_id", "hidden", "1", "Check"), setters)
         self.assertIn(("Project", "custom_hero_observed_status_name", "read_only", "1", "Check"), setters)
+        self.assertIn(("Project", "custom_hero_partner_notes", "read_only", "0", "Check"), setters)  # sent to HERO
+        self.assertIn("HERO Writeback", inserted)
         order = json.loads(next(a[3] for a in setters if a[2] == "field_order"))
         self.assertEqual(len(order), len(CURRENT))  # Frappe applies field_order only when complete
         self.assertNotIn("Photovoltaik", inserted)
