@@ -77,6 +77,22 @@ class Fake:
 class TestMappingIdentityClaim(unittest.TestCase):
     def setUp(self): self.fake = Fake()
 
+    def test_claim_schema_requires_full_single_column_unique_index(self):
+        full = {'Key_name':'claim_key', 'Column_name':'claim_key', 'Seq_in_index':1,
+                'Non_unique':0, 'Sub_part':None}
+        cases = {
+            'nonunique': [{**full, 'Non_unique':1}],
+            'prefix': [{**full, 'Sub_part':16}],
+            'composite': [full, {**full, 'Column_name':'site_scope', 'Seq_in_index':2}],
+            'wrong_column': [{**full, 'Column_name':'site_scope'}],
+        }
+        for label, rows in cases.items():
+            with self.subTest(index=label), patch.object(self.fake.db, 'sql', return_value=rows):
+                with self.assertRaisesRegex(MappingDraftError, 'unique index'):
+                    claims.assert_claim_schema(self.fake)
+        with patch.object(self.fake.db, 'sql', return_value=[full]):
+            claims.assert_claim_schema(self.fake)
+
     def batch(self):
         root = {**claim(), 'identity_kind':'LOGICAL_ROOT', 'portable_id':ROOT, 'logical_id':ROOT, 'predecessor_id':None, 'mapping_id':None}
         return [root, {**root, 'identity_kind':'RULE_REVISION'}, claim()]
