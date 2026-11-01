@@ -157,7 +157,11 @@ def normalise_draft_mapping(value: object, schema: object) -> dict[str, object]:
 
 
 def draft_source_type_compatible(frappe_type: str, graphql_type: str) -> bool:
-    """Allow only direct scalar/enum pairs in a non-executable Draft."""
+    """Compare source type with a schema-validated scalar or enum type label.
+
+    Callers must first resolve the label through ``normalise_draft_mapping``;
+    this helper alone cannot distinguish a custom scalar from an enum name.
+    """
     scalar = graphql_type.rstrip("!")
     if scalar in {"String", "ID"}:
         return frappe_type in {"Data", "Small Text", "Long Text", "Text", "Code", "Select"}
@@ -167,8 +171,8 @@ def draft_source_type_compatible(frappe_type: str, graphql_type: str) -> bool:
         return frappe_type in {"Int", "Float"}
     if scalar == "Boolean":
         return frappe_type == "Check"
-    # Schema enums retain their named type, while Frappe Select remains the
-    # only direct enum source; arbitrary custom scalars fail closed.
+    # The schema resolver rejects unsupported custom scalars before this
+    # comparison; the remaining named type is treated as an enum.
     return frappe_type == "Select"
 
 
