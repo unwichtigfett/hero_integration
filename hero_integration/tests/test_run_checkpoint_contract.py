@@ -23,6 +23,18 @@ class TestRuleFingerprint(TestCase):
                 mapping_runtime.effective_rule_fingerprint(('rule-1',), 'MAP',
                     frappe_module=SimpleNamespace(get_all=lambda *a, **kw: rows))
 
+    def test_rule_order_and_locked_read_produce_the_same_fingerprint(self):
+        rows = [dict(definition_id='rule-1', status='Active', personal_graphql_mapping='MAP', source_path='nr'),
+                dict(definition_id='rule-2', status='Active', personal_graphql_mapping='MAP', source_path='id')]
+        sql = mock.Mock(return_value=rows)
+        fake = SimpleNamespace(get_all=lambda *a, **kw: list(reversed(rows)), db=SimpleNamespace(sql=sql))
+        unlocked = mapping_runtime.effective_rule_fingerprint(('rule-2', 'rule-1'), 'MAP', frappe_module=fake)
+        locked = mapping_runtime.effective_rule_fingerprint(('rule-1', 'rule-2'), 'MAP', lock=True,
+                                                             frappe_module=fake)
+        self.assertEqual(unlocked, locked)
+        self.assertEqual(sql.call_args.args[1], ('rule-1', 'rule-2'))
+        self.assertIn('FOR UPDATE', sql.call_args.args[0])
+
 
 class TestCheckpointTransaction(TestCase):
     def setUp(self):
