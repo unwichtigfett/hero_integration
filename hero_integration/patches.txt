@@ -11,3 +11,4 @@ hero_integration.patches.v0_2.index_integration_link_targets
 hero_integration.patches.v0_2.setup_project_form
 hero_integration.patches.v0_2.project_send_to_hero
 hero_integration.patches.v0_2.project_phase_field
+hero_integration.patches.v0_2.project_volume_field

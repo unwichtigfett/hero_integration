@@ -69,6 +69,10 @@ PROJECT_SELECTED_PATHS = (
     "current_project_match_status.step_id",
 )
 PROJECT_SELECTED_PATHS_V2 = (*PROJECT_SELECTED_PATHS, "measure.short", "measure.name")
+PROJECT_CONTRACT_V3 = "v3"
+# V3 also reads the project volume in euros (owner confirmation 2026-11-01).
+PROJECT_QUERY_V3 = PROJECT_QUERY_V2.replace("    measure { short name }\n", "    measure { short name }\n    volume\n")
+PROJECT_SELECTED_PATHS_V3 = (*PROJECT_SELECTED_PATHS_V2, "volume")
 
 
 def project_query(contract_version: str) -> str:
@@ -78,6 +82,8 @@ def project_query(contract_version: str) -> str:
         return PROJECT_QUERY_V1
     if contract_version == PROJECT_CONTRACT_V2:
         return PROJECT_QUERY_V2
+    if contract_version == PROJECT_CONTRACT_V3:
+        return PROJECT_QUERY_V3
     raise ValueError("Unsupported Project read-contract version.")
 
 
