@@ -153,6 +153,10 @@ class TestRunLeaseStatus(TestCase):
             (SimpleNamespace(state='Running', lease_expires_on=now + timedelta(seconds=1), started_on=None), True),
             (SimpleNamespace(state='Running', lease_expires_on=now, started_on=None), False),
             (SimpleNamespace(state='Running', lease_expires_on=None, started_on=None), False),
+            (SimpleNamespace(state='Running', lease_expires_on=None,
+                             started_on=now - timedelta(seconds=migration.RUN_LEASE_SECONDS - 1)), True),
+            (SimpleNamespace(state='Running', lease_expires_on=None,
+                             started_on=now - timedelta(seconds=migration.RUN_LEASE_SECONDS)), False),
         )
         with mock.patch.object(migration, 'frappe', fake):
             for row, expected in cases:
