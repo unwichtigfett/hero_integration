@@ -53,3 +53,25 @@ class TestPersonalMappingAccess(unittest.TestCase):
                 self.frappe.get_roles.return_value = ["Employee"]
                 self.assertFalse(access.personal_version_permission(doc))
                 self.frappe.get_roles.return_value = ["System Manager"]
+
+    def test_version_extension_denies_foreign_document_before_native_permission(self):
+        native_check = Mock(return_value='native-result')
+
+        class NativeVersion:
+            def check_permission(self, *args, **kwargs):
+                return native_check(*args, **kwargs)
+
+        class Version(access.PersonalMappingVersionAccess, NativeVersion):
+            ref_doctype = 'HERO Mapping Draft'
+            docname = 'synthetic'
+
+        self.frappe.PermissionError = PermissionError
+        self.frappe.throw = lambda message, error: (_ for _ in ()).throw(error(message))
+        self.frappe.db.get_value.return_value = 'other@example.invalid'
+        with self.assertRaisesRegex(PermissionError, 'version access denied'):
+            Version().check_permission('read')
+        native_check.assert_not_called()
+
+        self.frappe.db.get_value.return_value = 'owner@example.invalid'
+        self.assertEqual(Version().check_permission('read'), 'native-result')
+        native_check.assert_called_once_with('read')
