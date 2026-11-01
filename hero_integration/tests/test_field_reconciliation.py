@@ -2,9 +2,13 @@
 from __future__ import annotations
 
 import unittest
+import sys
+import types
+from unittest.mock import Mock, patch
 
 from hero_integration.services.change_detection import (
-    EMPTY_HASH, field_hashes, managed_target_update, managed_target_update_active, next_baseline, reconcile,
+    EMPTY_HASH, field_hashes, managed_target_update, managed_target_update_active, next_baseline,
+    observe_frappe_target_change, reconcile,
 )
 from hero_integration.services.direct_mapping import MISSING, lookup, source_value
 from hero_integration.tests.mapping_fixture import fixture_plan
@@ -98,6 +102,21 @@ class TestManagedTargetOwnership(unittest.TestCase):
             self.assertTrue(managed_target_update_active("Task", "outer"))
             self.assertFalse(managed_target_update_active("Task", "inner"))
         self.assertFalse(managed_target_update_active("Task", "outer"))
+
+
+class TestGlobalObserverLifecycle(unittest.TestCase):
+    def test_install_and_uninstall_guards_return_before_link_query(self):
+        frappe = types.ModuleType("frappe")
+        frappe.get_all = Mock(side_effect=AssertionError("link query during schema transition"))
+        utils = types.ModuleType("frappe.utils")
+        utils.now_datetime = Mock()
+        with patch.dict(sys.modules, {"frappe": frappe, "frappe.utils": utils}):
+            for migrating, uninstalling in ((True, False), (False, True)):
+                frappe.flags = types.SimpleNamespace(in_migrate=migrating, in_uninstall=uninstalling)
+                with self.subTest(migrating=migrating, uninstalling=uninstalling):
+                    observe_frappe_target_change(types.SimpleNamespace(doctype="Customer", name="synthetic"))
+        frappe.get_all.assert_not_called()
+        utils.now_datetime.assert_not_called()
 
 
 if __name__ == "__main__":
