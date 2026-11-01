@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import unittest
 
-from hero_integration.services.change_detection import EMPTY_HASH, field_hashes, next_baseline, reconcile
+from hero_integration.services.change_detection import (
+    EMPTY_HASH, field_hashes, managed_target_update, managed_target_update_active, next_baseline, reconcile,
+)
 from hero_integration.services.direct_mapping import MISSING, lookup, source_value
 from hero_integration.tests.mapping_fixture import fixture_plan
 
@@ -80,6 +82,22 @@ class TestMissingNullEmpty(unittest.TestCase):
         partial = plan.values({"id": 1, "full_name": "Ada"})
         self.assertNotIn("customer_type", partial)
         self.assertIn("customer_type", partial.missing)
+
+
+class TestManagedTargetOwnership(unittest.TestCase):
+    def test_nested_ownership_is_restored_after_failure_and_does_not_leak(self):
+        self.assertFalse(managed_target_update_active("Task", "outer"))
+        with managed_target_update("Task", "outer", "link-outer"):
+            self.assertTrue(managed_target_update_active("Task", "outer"))
+            self.assertFalse(managed_target_update_active("Task", "other"))
+            with self.assertRaisesRegex(ValueError, "interrupted"):
+                with managed_target_update("Task", "inner", "link-inner"):
+                    self.assertTrue(managed_target_update_active("Task", "inner"))
+                    self.assertFalse(managed_target_update_active("Task", "outer"))
+                    raise ValueError("interrupted")
+            self.assertTrue(managed_target_update_active("Task", "outer"))
+            self.assertFalse(managed_target_update_active("Task", "inner"))
+        self.assertFalse(managed_target_update_active("Task", "outer"))
 
 
 if __name__ == "__main__":
