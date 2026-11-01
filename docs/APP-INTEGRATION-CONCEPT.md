@@ -89,6 +89,7 @@ users to ERPNext users and employees is an open step (section 6).
 | Removing all imported data | `hero_integration.services.purge.purge_hero_data` (dry run by default, phrase + "Allow deletion" + no active run; referenced records are kept) |
 | Held records | Pending Review with Approve/Reject only **(decided)** |
 | Reporting of not imported records | One notice per run, one per held record |
+| Helpdesk/CRM mirrors | Enabling ERPNext HD Settings, or CRM's "create customer on status change", is refused on save |
 | Read access for other apps | Agent/Agent Manager read Customer/Project/Contact; Sales User/Manager read Project |
 | Development data | Anonymized package outside the repo (`/home/frappe/hero-dev-packages`) |
 | Backups | **Open**: only 3 local backups, not encrypted, no off-site copy (see 6) |

@@ -131,3 +131,18 @@ def _customer_for(doc) -> str | None:
         pluck="link_name",
     ))
     return customers.pop() if len(customers) == 1 else None
+
+
+def refuse_record_mirrors(doc, method=None) -> None:
+    """doc_events validate: the apps' own ERPNext integrations would copy or create records.
+
+    ERPNext HD Settings mirrors every Customer as an HD Customer; ERPNext CRM
+    Settings can create Customers from deals.  Both contradict option A
+    (docs/APP-INTEGRATION-CONCEPT.md): ERPNext data is referenced, not copied.
+    """
+    if doc.doctype == "ERPNext HD Settings" and doc.get("enabled"):
+        frappe.throw(frappe._("The Helpdesk ERPNext mirror stays disabled: tickets reference the ERPNext Customer "
+                              "and Project directly (HERO integration, option A)."))
+    if doc.doctype == "ERPNext CRM Settings" and doc.get("enabled") and doc.get("create_customer_on_status_change"):
+        frappe.throw(frappe._("CRM must not create ERPNext Customers: customers are created in HERO and imported; "
+                              "deals reference them (HERO integration, option A)."))
