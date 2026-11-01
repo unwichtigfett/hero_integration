@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 
 from hero_integration.services.change_detection import (
     EMPTY_HASH, encode, field_hashes, managed_target_update, managed_target_update_active, next_baseline,
-    observe_frappe_target_change, reconcile,
+    observe_frappe_target_change, protect_external_task_deadline, reconcile,
 )
 from hero_integration.services.direct_mapping import MISSING, lookup, source_value
 from hero_integration.tests.mapping_fixture import fixture_plan
@@ -119,6 +119,26 @@ class TestManagedTargetOwnership(unittest.TestCase):
             self.assertTrue(managed_target_update_active("Task", "outer"))
             self.assertFalse(managed_target_update_active("Task", "inner"))
         self.assertFalse(managed_target_update_active("Task", "outer"))
+
+    def test_external_deadline_change_requires_managed_task_context(self):
+        frappe = types.ModuleType("frappe")
+        frappe.flags = types.SimpleNamespace(in_migrate=False)
+        frappe.PermissionError = PermissionError
+        def fail(message, error):
+            raise error(message)
+        frappe.throw = fail
+        utils = types.ModuleType("frappe.utils")
+        utils.get_datetime = lambda value: value
+        doc = types.SimpleNamespace(name="TASK-1", get=lambda key: "new-deadline",
+                                    get_doc_before_save=lambda: {"custom_hero_due_date": "old-deadline"})
+
+        with patch.dict(sys.modules, {"frappe": frappe, "frappe.utils": utils}):
+            with self.assertRaisesRegex(PermissionError, "managed by HERO Integration"):
+                protect_external_task_deadline(doc)
+            with managed_target_update("Task", "TASK-1", "link-1"):
+                protect_external_task_deadline(doc)
+            with self.assertRaises(PermissionError):
+                protect_external_task_deadline(doc)
 
 
 class TestGlobalObserverLifecycle(unittest.TestCase):
