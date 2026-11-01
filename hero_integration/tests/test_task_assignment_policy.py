@@ -1,6 +1,11 @@
 import unittest
+import sys
+import types
+from unittest.mock import Mock, patch
 
-from hero_integration.services.task_assignment_policy import PolicyError, validate_policy_payload
+from hero_integration.services.task_assignment_policy import (
+    PolicyError, approve_policy, create_policy, revoke_policy, validate_policy_payload,
+)
 
 
 class TestTaskAssignmentPolicy(unittest.TestCase):
@@ -33,3 +38,17 @@ class TestTaskAssignmentPolicy(unittest.TestCase):
                         {**effects, 'unexpected': True}):
             with self.subTest(invalid=invalid), self.assertRaises(PolicyError):
                 validate_policy_payload({**self.payload, 'native_effects': invalid}, 'isolated.test')
+
+    def test_policy_writes_deny_non_manager_before_document_access(self):
+        frappe = types.ModuleType('frappe')
+        frappe.only_for = Mock(side_effect=PermissionError('denied'))
+        frappe.get_doc = Mock(side_effect=AssertionError('document access before authorization'))
+        frappe.session = types.SimpleNamespace(user='synthetic-employee')
+        with patch.dict(sys.modules, {'frappe': frappe}):
+            for action in (lambda: create_policy(self.payload),
+                           lambda: approve_policy('policy', 1),
+                           lambda: revoke_policy('policy', 1)):
+                with self.subTest(action=action), self.assertRaises(PermissionError):
+                    action()
+        self.assertEqual(frappe.only_for.call_count, 3)
+        frappe.get_doc.assert_not_called()
