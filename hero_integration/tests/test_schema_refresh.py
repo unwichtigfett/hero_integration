@@ -79,6 +79,24 @@ class TestSchemaRefreshRecording(unittest.TestCase):
         self.assertEqual(fake.db.values["schema_verified_by"], "admin@example.com")
         self.assertIsNotNone(fake.db.values["schema_verified_on"])
 
+    def test_binding_changed_during_capture_is_not_verified_for_new_revision(self):
+        settings = _settings(schema_verified_on=None, source_binding_revision=3)
+        fake = _frappe(settings)
+
+        def capture(_actor):
+            settings.source_binding_revision = 4
+            return {"status": "CAPTURED", "snapshot_name": "synthetic"}
+
+        with patch.object(schema_refresh, "frappe", fake), patch.object(schema_refresh, "_capture", side_effect=capture):
+            schema_refresh.refresh("admin@example.com")
+        self.assertEqual(fake.db.values["schema_verified_revision"], 3)
+        current = _settings(source_binding_revision=4,
+                            schema_verified_revision=fake.db.values["schema_verified_revision"],
+                            schema_verified_on=fake.db.values["schema_verified_on"])
+        self.assertFalse(schema_refresh.binding_verified(current))
+        self.assertFalse(schema_refresh.periodic_due(current, NOW))
+        self.assertTrue(schema_refresh.check_due_after_save(current))
+
     def test_unchanged_schema_reports_that_the_snapshot_stays(self):
         fake = _frappe(_settings())
         with patch.object(schema_refresh, "frappe", fake), \
