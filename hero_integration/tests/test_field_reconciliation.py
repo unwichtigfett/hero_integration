@@ -10,7 +10,7 @@ from hero_integration.services.change_detection import (
     EMPTY_HASH, encode, field_hashes, managed_target_update, managed_target_update_active, next_baseline,
     observe_frappe_target_change, protect_external_task_deadline, reconcile,
 )
-from hero_integration.services.direct_mapping import MISSING, lookup, source_value
+from hero_integration.services.direct_mapping import MISSING, MappingSpec, lookup, source_value, transformed_value
 from hero_integration.tests.mapping_fixture import fixture_plan
 
 
@@ -97,6 +97,17 @@ class TestReconcile(unittest.TestCase):
 
 
 class TestMissingNullEmpty(unittest.TestCase):
+    def test_json_value_transform_is_canonical_and_rejects_nonfinite_numbers(self):
+        spec = MappingSpec("HeroTasks", "value", "Task", "custom_value", "string|null",
+                           transformation="JSON Value")
+        self.assertEqual(transformed_value(spec, {"z": [False, None], "a": "ä"}),
+                         '{"a":"ä","z":[false,null]}')
+        self.assertEqual(transformed_value(spec, {"a": "ä", "z": [False, None]}),
+                         transformed_value(spec, {"z": [False, None], "a": "ä"}))
+        for value in (float("nan"), float("inf"), -float("inf")):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                transformed_value(spec, {"nested": [value]})
+
     def test_lookup_distinguishes_missing_null_and_values(self):
         record = {"a": {"b": None, "zero": 0, "no": False, "empty": "", "items": []}, "parent": None}
         self.assertIs(lookup(record, "a.missing"), MISSING)
