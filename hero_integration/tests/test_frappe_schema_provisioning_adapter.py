@@ -64,3 +64,26 @@ def test_adapter_rejects_scope_mismatch_before_any_framework_write():
     with pytest.raises(ProvisioningLifecycleError):
         adapter.apply("other.site", op)
     assert api.created == []
+
+
+@pytest.mark.parametrize("denied", ["role", "custom_field_create", "target_write"])
+def test_adapter_denied_authority_stops_before_document_insertion(denied):
+    api = FakeFrappe()
+    api.session.user = "synthetic-user"
+    api.get_roles = lambda: [] if denied == "role" else ["System Manager"]
+
+    def permission(doctype, action, throw=False):
+        if (denied, doctype, action) in {
+            ("custom_field_create", "Custom Field", "create"),
+            ("target_write", "Target", "write"),
+        }:
+            raise PermissionError("synthetic denial")
+        return True
+
+    api.has_permission = permission
+    adapter = FrappeSchemaProvisioningAdapter(api)
+    op = ProvisioningOperation("create", ProvisioningOperationKind.CREATE_CUSTOM_FIELD,
+                               "app", "Module", "Target", "value", "Data")
+    with pytest.raises(PermissionError):
+        adapter.apply("site.test", op)
+    assert api.created == []
