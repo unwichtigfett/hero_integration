@@ -23,6 +23,7 @@ SHOWN = {
 # Edited in ERPNext and sent with the Project's "Send to HERO" button.
 EDITABLE = {"custom_hero_partner_notes"}
 PHASE_FIELD = "custom_hero_phase"  # app-owned display field: the HERO status step name
+VOLUME_FIELD = "custom_hero_volume"  # HERO volume: project volume in euros (read-only)
 HIDDEN = (
     "custom_hero_observed_status_name",
     "custom_hero_source_id", "custom_hero_project_number", "custom_hero_customer_title",
@@ -39,6 +40,7 @@ PLACEMENT = (
     ("custom_hero_source_created", "column_break_5"),
     ("custom_hero_source_modified", "custom_hero_source_created"),
     ("custom_hero_address_full_address", "custom_hero_source_modified"),
+    (VOLUME_FIELD, "custom_hero_address_full_address"),
     ("custom_hero_partner_notes", "notes"),
 )
 
@@ -97,6 +99,12 @@ def ensure_phase_field() -> None:
     """Create-only: the read-only Phase field shows the HERO status step, as HERO does."""
     from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
 
+    if not frappe.db.exists("Custom Field", {"dt": "Project", "fieldname": VOLUME_FIELD}):
+        create_custom_fields({"Project": [{
+            "fieldname": VOLUME_FIELD, "label": "Project Volume", "fieldtype": "Currency", "read_only": 1,
+            "insert_after": "custom_hero_address_full_address",
+            "description": "Project volume in euros from HERO.",
+        }]}, update=False)
     if not frappe.db.exists("Custom Field", {"dt": "Project", "fieldname": PHASE_FIELD}):
         create_custom_fields({"Project": [{
             "fieldname": PHASE_FIELD, "label": "Phase", "fieldtype": "Data", "read_only": 1,

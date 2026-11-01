@@ -131,7 +131,8 @@ class MappingPlan:
                 valid = (raw is None and "|null" in definition.source_type) or (
                     (kind == "string" and isinstance(raw, str)) or
                     (kind == "int" and type(raw) is int) or
-                    (kind == "boolean" and type(raw) is bool)
+                    (kind == "boolean" and type(raw) is bool) or
+                    (kind == "float" and type(raw) in (int, float))
                 )
                 # Project naming also accepts the established structured trade
                 # representation used by existing contracts and test fixtures.

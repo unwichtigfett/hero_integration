@@ -240,7 +240,9 @@ class TestMappingExchange(unittest.TestCase):
         # Country is consumed by the native Address relation adapter.  The
         # fixture represents the approved V1 Customer contract, so it also
         # intentionally omits separately selected V2 and V3 draft bindings.
-        native_relation_paths = {"HeroCustomers": {"address.country.code", "address.line_2", "company_legal_form"}}
+        # Likewise the Project V3 contract adds the separately selected `volume` binding.
+        native_relation_paths = {"HeroCustomers": {"address.country.code", "address.line_2", "company_legal_form"},
+                                 "HeroProjectMatches": {"volume"}}
         legacy = {operation: set(contract['paths']) for operation, contract in SOURCE_CONTRACTS.items() if operation not in CONTRACTS}
         legacy['HeroProjectMatches'] -= set(STATUS_PATHS)
         for operation, excluded in native_relation_paths.items():

@@ -28,6 +28,7 @@ SOURCE_CONTRACTS = {
     "HeroProjectMatches": {
         "target_doctype": "Project",
         "paths": {
+            "volume": "float|null",
             "id": "int", "customer_id": "int|null", "project_id": "int|null",
             "project_title": "string", "project_nr": "string", "project_type": "string|null",
             "partner_notes": "string|null", "customer.title": "string", "customer.full_name": "string",
@@ -71,7 +72,11 @@ TRANSFORMATIONS = {
 TRANSFORMATIONS.update({'JSON Value', 'Scalar Text', 'HERO Project Link'})
 TRANSFORMATIONS.update({'Native Adapter', 'Nonempty String ID'})
 
-ALLOWED_TARGET_TYPES = {"Data", "Small Text", "Int", "Float", "Check", "Date", "Datetime", "Link"}
+ALLOWED_TARGET_TYPES = {"Data", "Small Text", "Int", "Float", "Currency", "Check", "Date", "Datetime", "Link"}
+# Read-only HERO observation fields that are not text: (operation, path, field, transform) -> fieldtype.
+NATIVE_TYPED_OBSERVATIONS = {
+    ("HeroProjectMatches", "volume", "custom_hero_volume", "Identity"): "Currency",  # euros, owner 2026-11-01
+}
 SYSTEM_FIELDS = {"name", "owner", "creation", "modified", "modified_by", "docstatus", "idx"}
 PROTECTED_FIELDS = {
     "Customer": {"name", "customer_name", "customer_type", "customer_primary_contact", "disabled", "status"},
@@ -284,8 +289,9 @@ def _validate_custom_field(spec: MappingSpec, metadata) -> None:
         ('HeroProjectMatches', 'created', 'custom_hero_source_created', 'Trim'),
         ('HeroProjectMatches', 'modified', 'custom_hero_source_modified', 'Trim'),
     }
-    is_native = (spec.operation, spec.source_path, spec.target_field, spec.transformation) in native
-    if is_native and (field is None or field.fieldtype != 'Data'):
+    key = (spec.operation, spec.source_path, spec.target_field, spec.transformation)
+    is_native = key in native or key in NATIVE_TYPED_OBSERVATIONS
+    if is_native and (field is None or field.fieldtype != NATIVE_TYPED_OBSERVATIONS.get(key, 'Data')):
         raise DirectMappingError('Native HERO observation field has an incompatible type.')
     if field is None or field.fieldtype not in ALLOWED_TARGET_TYPES or (field.read_only and not is_native):
         raise DirectMappingError("Target field is not a writable supported Frappe field.")

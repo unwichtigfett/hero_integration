@@ -13,7 +13,7 @@ CURRENT = ["project_name", "status", "project_type", "is_active", "column_break_
            "section_break0", "notes", "custom_hero_source_id", "custom_hero_related_project_id",
            "custom_hero_display_id", "custom_hero_source_created", "custom_hero_source_modified",
            "custom_hero_partner_notes", "custom_hero_address_full_address", "custom_hero_observed_status_name",
-           "custom_hero_project_type", "custom_hero_phase", "costing_tab"]
+           "custom_hero_project_type", "custom_hero_phase", "custom_hero_volume", "costing_tab"]
 
 
 class TestProjectForm(unittest.TestCase):
@@ -25,6 +25,7 @@ class TestProjectForm(unittest.TestCase):
         self.assertEqual(order[order.index("column_break_5") + 1:order.index("column_break_5") + 4],
                          ["custom_hero_source_created", "custom_hero_source_modified", "custom_hero_address_full_address"])
         self.assertEqual(order[order.index("notes") + 1], "custom_hero_partner_notes")
+        self.assertEqual(order[order.index("custom_hero_address_full_address") + 1], "custom_hero_volume")
 
     def test_setup_relabels_hides_and_orders_without_touching_field_definitions(self):
         setters, inserted = [], []
