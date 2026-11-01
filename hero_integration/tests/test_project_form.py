@@ -88,5 +88,24 @@ class TestProjectPhases(unittest.TestCase):
         self.assertTrue(documents[0].startswith("query "))
 
 
+class TestPhaseRefreshInRuns(unittest.TestCase):
+    def test_refresh_runs_after_a_blocked_project_phase_and_never_breaks_the_run(self):
+        from hero_integration.services import migration
+        from hero_integration.integrations import project_form as pf
+        calls, db = [], SimpleNamespace(commit=lambda: calls.append("commit"), rollback=lambda: calls.append("rollback"))
+        fake = SimpleNamespace(db=db, log_error=lambda **k: calls.append("logged"))
+        source = SimpleNamespace(project_status_steps=lambda: {1: "Neu"})
+        with patch.object(migration, "frappe", fake), patch.object(pf, "refresh_project_phases",
+                                                                     side_effect=lambda names: calls.append(names)):
+            migration._refresh_project_phases(SimpleNamespace(mode="Execute", state="Blocked"), source)
+            migration._refresh_project_phases(SimpleNamespace(mode="Preview"), source)
+        self.assertEqual(calls, [{1: "Neu"}, "commit"])
+        failing = SimpleNamespace(project_status_steps=lambda: (_ for _ in ()).throw(RuntimeError("HERO down")))
+        calls.clear()
+        with patch.object(migration, "frappe", fake):
+            migration._refresh_project_phases(SimpleNamespace(mode="Execute"), failing)
+        self.assertEqual(calls, ["rollback", "logged"])
+
+
 if __name__ == "__main__":
     unittest.main()
