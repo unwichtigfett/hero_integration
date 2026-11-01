@@ -10,6 +10,7 @@ from unittest import mock
 
 from hero_integration.client import graphql
 from hero_integration.client.graphql import HeroClientError, HeroGraphQLClient, validate_endpoint
+from hero_integration.client.graphql_mutation import HeroMutationClient
 
 QUERY = "query Q { viewer { id } }"
 
@@ -133,6 +134,16 @@ class TestGraphQLClientBudget(unittest.TestCase):
         opener = _Opener(TimeoutError("synthetic"), {"data": {"viewer": None}})
         result, _ = self._query(opener, max_retries=1, retry_backoff_seconds=0)
         self.assertEqual(result, {"viewer": None})
+
+    def test_mutation_timeout_is_never_retried(self):
+        opener = _Opener(TimeoutError("synthetic"), {"data": {}})
+        client = HeroMutationClient(self.endpoint, lambda: "synthetic")
+        with mock.patch("hero_integration.client.graphql.urllib.request.build_opener", return_value=opener), \
+             mock.patch("hero_integration.client.graphql.time.sleep") as sleep:
+            with self.assertRaises(HeroClientError) as caught:
+                client.execute_once("mutation M { updateThing { id } }", {})
+        self.assertEqual((caught.exception.code, opener.calls), ("TRANSPORT", 1))
+        sleep.assert_not_called()
 
     def test_oversized_non_json_and_partial_responses_are_rejected(self):
         error, _ = self._query(_Opener(b'{"data": {"v": "' + b"x" * 2048 + b'"}}'), max_retries=3, max_response_bytes=1024)
