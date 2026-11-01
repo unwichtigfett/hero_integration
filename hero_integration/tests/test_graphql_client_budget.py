@@ -55,6 +55,28 @@ class TestGraphQLClientBudget(unittest.TestCase):
             except HeroClientError as error:
                 return error, sleep
 
+    def test_endpoint_rejects_untrusted_authority_and_url_components(self):
+        allowed = {"hero.synthetic.invalid"}
+        for url in (
+            "http://hero.synthetic.invalid/graphql",
+            "https://attacker.synthetic.invalid/graphql",
+            "https://hero.synthetic.invalid@attacker.synthetic.invalid/graphql",
+            "https://user:password@hero.synthetic.invalid/graphql",
+            "https://hero.synthetic.invalid/graphql?token=synthetic",
+            "https://hero.synthetic.invalid/graphql#fragment",
+        ):
+            with self.subTest(url=url), self.assertRaises(HeroClientError):
+                validate_endpoint(url, allowed)
+
+    def test_mutation_does_not_request_credentials_or_open_transport(self):
+        token = mock.Mock(return_value="synthetic")
+        client = HeroGraphQLClient(self.endpoint, token)
+        with mock.patch("hero_integration.client.graphql.urllib.request.build_opener") as opener:
+            with self.assertRaises(HeroClientError):
+                client.query("mutation M { updateThing { id } }", {})
+        token.assert_not_called()
+        opener.assert_not_called()
+
     def test_429_honours_bounded_retry_after(self):
         opener = _Opener(_http_error(429, "7"), {"data": {"viewer": {"id": 1}}})
         result, sleep = self._query(opener, max_retries=1)
