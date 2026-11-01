@@ -65,6 +65,16 @@ class TestCheckpointTransaction(TestCase):
         self.run.save.assert_not_called()
         self.assert_contract.assert_called_once_with(self.run, lock=True)
 
+    def test_checkpoint_save_failure_rolls_back_and_never_commits(self):
+        self.run.save.side_effect = RuntimeError('synthetic checkpoint save failure')
+        with self.assertRaisesRegex(RuntimeError, 'checkpoint save failure'):
+            with migration._checkpoint_transaction(self.run, self.started):
+                pass
+        self.assertEqual(self.assert_contract.call_count, 2)
+        self.run.save.assert_called_once()
+        self.db.commit.assert_not_called()
+        self.assertEqual(self.db.rollback.call_count, 2)
+
     def test_replaced_cancelled_expired_or_foreign_claim_cannot_commit(self):
         changes = ({'started_on': self.started + timedelta(seconds=1)}, {'state': 'Cancelled'},
                    {'lease_expires_on': self.started}, {'owner': 'Other'})
