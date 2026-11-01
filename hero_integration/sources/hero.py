@@ -176,6 +176,40 @@ class GraphQLServiceSource:
     def projects(self, offset: int = 0) -> SourcePage:
         return self._page(offset, "HeroProjectMatches")
 
+    def project_reference_states(self, ids) -> dict[int, str]:
+        """Classify ProjectMatch IDs that the project list does not return (read-only).
+
+        HERO lists neither deleted projects nor contact requests (``KONT-``)
+        in ``project_matches``, but Tasks and Events still reference them.
+        Returns DELETED, LEAD or UNLISTED per ID; IDs HERO cannot resolve are
+        left out.  One aliased query per 50 IDs keeps the request count low.
+        """
+        from hero_integration.client.graphql import HeroClientError
+
+        wanted = sorted({value for value in ids if type(value) is int and value > 0})
+        states: dict[int, str] = {}
+        for start in range(0, len(wanted), 50):
+            chunk = wanted[start:start + 50]
+            document = "query HeroProjectReferenceStates { " + " ".join(
+                f"p{value}: project_match(project_match_id: {value}) {{ id is_deleted project_nr }}" for value in chunk
+            ) + " }"
+            try:
+                data = self.client.query(document, {})
+            except HeroClientError as error:
+                data = getattr(error, "data", None) or {}
+            data = data.get("data", data) if isinstance(data, dict) else {}
+            for value in chunk:
+                row = data.get(f"p{value}") if isinstance(data, dict) else None
+                if not isinstance(row, dict) or row.get("id") != value:
+                    continue
+                if row.get("is_deleted") is True:
+                    states[value] = "DELETED"
+                elif isinstance(row.get("project_nr"), str) and row["project_nr"].upper().startswith("KONT-"):
+                    states[value] = "LEAD"
+                else:
+                    states[value] = "UNLISTED"
+        return states
+
     def projection(self, offset: int = 0) -> SourcePage:
         from hero_integration.services.projection_contracts import CONTRACTS
         if self.contract.target_operation not in CONTRACTS:

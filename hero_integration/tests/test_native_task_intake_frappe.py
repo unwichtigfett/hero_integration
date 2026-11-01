@@ -120,7 +120,18 @@ class TestNativeTaskEmptyOptionalFieldsOffline(TestCase):
         self.assertEqual(result.code, 'CONFLICT')
         self.assertIn('description', link.conflict_detail)
 
-    def test_new_task_with_empty_optional_values_is_synchronized(self):
+    def test_task_of_a_deleted_hero_project_is_skipped(self):
+        from hero_integration.services import migration
+        record = {'id': 9, '_hero_source_instance': 'fixture-task32a', 'title': 'Call customer',
+                  'comment': None, 'target_project_match_id': 4711, 'due_date': None}
+        migration._PROJECT_REFERENCE_STATES[('fixture-task32a', 4711)] = 'DELETED'
+        self.addCleanup(migration._PROJECT_REFERENCE_STATES.clear)
+        fake = SimpleNamespace(only_for=lambda role: None, db=SimpleNamespace(sql=lambda *a, **k: self.fail('no write')))
+        with patch.object(migration, 'frappe', fake), patch.object(migration, '_link', return_value=None):
+            result = migration._migrate_native_task(record, SimpleNamespace(mapping_revision=1, mode='Execute'), _OptionalPlan(), self.scope)
+        self.assertEqual(result.code, 'SKIPPED_SOURCE_DELETED')
+
+    def _create(self, record):
         from hero_integration.services import migration
         from hero_integration.hero_integration.doctype.hero_frappe_mapping import hero_frappe_mapping
 
@@ -135,13 +146,29 @@ class TestNativeTaskEmptyOptionalFieldsOffline(TestCase):
                                   rollback=lambda **kwargs: None, get_single_value=lambda *args: 'Europe/Berlin')
         fake = SimpleNamespace(only_for=lambda role: None, conf=SimpleNamespace(db_name='synthetic'), db=fake_db,
                                get_doc=lambda values: Doc(values))
-        record = {'id': 8, '_hero_source_instance': 'fixture-task32a', 'title': 'Call customer',
-                  'comment': '', 'target_project_match_id': None, 'due_date': None}
         with patch.object(migration, 'frappe', fake), patch.object(hero_frappe_mapping, '_lock_active_target'), \
              patch.object(migration, 'managed_target_update', return_value=nullcontext()), \
-             patch.object(migration, 'now_datetime', return_value='2026-10-31 00:00:00'):
+             patch.object(migration, 'now_datetime', return_value='2026-10-31 00:00:00'), \
+             patch.object(migration, '_link', return_value=None):
             result = migration._migrate_native_task(record, SimpleNamespace(mapping_revision=1, mode='Execute'), _OptionalPlan(), self.scope)
+        return result, created
+
+    def test_new_task_with_empty_optional_values_is_synchronized(self):
+        record = {'id': 8, '_hero_source_instance': 'fixture-task32a', 'title': 'Call customer',
+                  'comment': '', 'target_project_match_id': None, 'due_date': None}
+        result, created = self._create(record)
         self.assertEqual(result.code, 'CREATED')
+        self.assertEqual(created['HERO Integration Link']['sync_status'], 'Synchronized')
+
+    def test_new_task_of_a_contact_request_is_created_without_project(self):
+        from hero_integration.services import migration
+        migration._PROJECT_REFERENCE_STATES[('fixture-task32a', 4712)] = 'LEAD'
+        self.addCleanup(migration._PROJECT_REFERENCE_STATES.clear)
+        record = {'id': 10, '_hero_source_instance': 'fixture-task32a', 'title': 'Call customer',
+                  'comment': None, 'target_project_match_id': 4712, 'due_date': None}
+        result, created = self._create(record)
+        self.assertEqual(result.code, 'CREATED')
+        self.assertIsNone(created['Task'].get('project'))
         self.assertEqual(created['HERO Integration Link']['sync_status'], 'Synchronized')
 
 
