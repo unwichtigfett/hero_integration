@@ -131,6 +131,8 @@ class TestFrappeMappingCatalog(unittest.TestCase):
         self.assertEqual((match["target_app"], match["target_doctype"]), ("acme_app", "Acme Case"))
         self.assertTrue(match["draft_only"])
         self.assertIn(match["confidence"], {"high", "medium", "low"})
+        self.assertTrue(all(item["requires_approval"] for item in matches))
+        self.assertTrue({"customer", "items"}.isdisjoint(item["target_field"] for item in matches))
 
     def test_field_search_includes_type_and_description_within_the_selected_doctype(self):
         self.metadata._fields["Acme Case"].append(_field(
