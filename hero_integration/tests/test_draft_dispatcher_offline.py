@@ -46,3 +46,7 @@ class TestDraftDispatcherOffline(unittest.TestCase):
     def test_post_only_create_cannot_be_dispatched_by_get(self):
         with self.assertRaises(PermissionError):
             self.dispatch('mapping_draft_create', 'GET', 'System Manager')
+
+    def test_employee_post_cannot_create_personal_draft(self):
+        with self.assertRaisesRegex(PermissionError, 'not authorized'):
+            self.dispatch('mapping_draft_create', 'POST', 'Employee')
