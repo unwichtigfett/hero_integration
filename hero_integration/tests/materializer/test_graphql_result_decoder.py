@@ -76,6 +76,11 @@ class GraphQLResultDecoderTests(unittest.TestCase):
 
         return caught.exception
 
+    def test_float_result_rejects_json_exponent_overflow(self):
+        request = make_request(make_binding(("value",), ("data", "result", "value"), "Float"))
+        response = Response(True, '{"data":{"result":{"value":1e999}}}', True)
+        self.assert_code("RESULT_TYPE_INVALID", lambda: decode_graphql_result(request, response))
+
     def test_nested_scalar_path(self):
         decoded = decode_graphql_result(
             make_request(
