@@ -39,6 +39,19 @@ test('variables: JSON arrays and nested objects', () => {
     {ids: [5, 7, 9], filter: {status: 'active', year: 2026, tags: ['pv', {x: null}]}});
 });
 
+test('variables: unusual GraphQL names remain own values without changing the prototype', () => {
+  for (const text of ['__proto__ := {"polluted":true}\nconstructor := "value"',
+                      '{"__proto__":{"polluted":true},"constructor":"value"}']) {
+    const values = parseVariablesText(text);
+    assert.equal(Object.hasOwn(values, '__proto__'), true);
+    assert.equal(Object.hasOwn(values, 'constructor'), true);
+    assert.equal(values.__proto__.polluted, true);
+    assert.equal(values.constructor, 'value');
+    assert.equal(Object.getPrototypeOf(values).polluted, undefined);
+    assert.equal(({}).polluted, undefined);
+  }
+});
+
 test('variables: clear errors for duplicates, missing operator, invalid values and names', () => {
   assert.throws(() => parseVariablesText('id := 1\nid := 2'), /Line 2: variable "id" is defined more than once/);
   assert.throws(() => parseVariablesText('id = 1'), /Line 1: expected "name := value;"/);
