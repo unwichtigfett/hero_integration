@@ -182,6 +182,28 @@ class TestBusinessNumberMigration(FakeFrappeMigrationHarness, unittest.TestCase)
         self.assertEqual(len(self.frappe.customers), 1)
         self.assertNotIn(("customer", "302"), self.frappe.links)
 
+    def test_concurrent_source_identity_claim_rolls_back_only_new_target(self):
+        self.migrate_customer(self.customer())
+        original_get_doc = self.migration.frappe.get_doc
+
+        class UniqueClaimError(Exception):
+            pass
+
+        def get_doc(*args, **kwargs):
+            if args and isinstance(args[0], dict) and args[0].get("doctype") == "HERO Integration Link":
+                return SimpleNamespace(insert=mock.Mock(side_effect=UniqueClaimError("HERO Integration Link")))
+            return original_get_doc(*args, **kwargs)
+
+        with mock.patch.object(self.migration.frappe, "UniqueValidationError", UniqueClaimError, create=True), \
+             mock.patch.object(self.migration.frappe, "get_doc", side_effect=get_doc):
+            result = self.migrate_customer(self.customer(id=302, nr="3333", full_name="Synthetic other customer"))
+
+        self.assertEqual(result.code, "CONFLICT")
+        self.assertIn("claimed concurrently", result.detail)
+        self.assertEqual([row["name"] for row in self.frappe.customers], ["2222"])
+        self.assertEqual(self.frappe.links[("customer", "301")].target_name, "2222")
+        self.assertNotIn(("customer", "302"), self.frappe.links)
+
     def test_preview_names_the_new_document_and_writes_nothing(self):
         result = self.migrate_customer(self.customer(), PREVIEW)
         self.assertEqual(result.code, "PREVIEW_OK")
