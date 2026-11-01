@@ -68,6 +68,8 @@ doc_events["ToDo"] = {
 # Helpdesk and CRM keep plain references to ERPNext Customer/Project.
 for _doctype in ("HD Ticket", "CRM Lead", "CRM Deal"):
     doc_events[_doctype] = {"validate": "hero_integration.integrations.app_references.fill_references"}
+for _doctype in ("ERPNext HD Settings", "ERPNext CRM Settings"):
+    doc_events[_doctype] = {"validate": "hero_integration.integrations.app_references.refuse_record_mirrors"}
 doc_events["Task"] = {"validate": "hero_integration.services.change_detection.protect_external_task_deadline"}
 
 # Requires the separately distributed Frappe assignment-intent v2 patch.

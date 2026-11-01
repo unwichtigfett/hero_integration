@@ -91,5 +91,24 @@ class TestSetup(unittest.TestCase):
         self.assertEqual([f["options"] for f in created["HD Ticket"]], ["Customer", "Project"])
 
 
+class TestRecordMirrors(unittest.TestCase):
+    def _check(self, doctype, **values):
+        doc = SimpleNamespace(doctype=doctype, get=values.get)
+        fake = SimpleNamespace(throw=lambda message: (_ for _ in ()).throw(_Throw(message)), _=lambda text: text)
+        with patch.object(refs, "frappe", fake):
+            refs.refuse_record_mirrors(doc)
+
+    def test_mirrors_that_copy_or_create_records_are_refused(self):
+        with self.assertRaises(_Throw):
+            self._check("ERPNext HD Settings", enabled=1)
+        with self.assertRaises(_Throw):
+            self._check("ERPNext CRM Settings", enabled=1, create_customer_on_status_change=1)
+
+    def test_harmless_settings_are_allowed(self):
+        self._check("ERPNext HD Settings", enabled=0)
+        self._check("ERPNext CRM Settings", enabled=1, create_customer_on_status_change=0)
+        self._check("ERPNext CRM Settings", enabled=0, create_customer_on_status_change=1)
+
+
 if __name__ == "__main__":
     unittest.main()
