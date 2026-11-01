@@ -152,6 +152,26 @@ class TestMappingExchange(unittest.TestCase):
             with self.subTest(stored=stored), self.assertRaises(mapping_exchange.MappingExchangeError):
                 mapping_exchange._exportable({"schema_dependencies": stored})
 
+    def test_legacy_import_requests_savepoint_rollback_after_a_later_insert_fails(self):
+        payload = json.dumps(fixture_payload(FINGERPRINT))
+        original_insert = _Document.insert
+        calls = []
+
+        def fail_on_second_insert(document):
+            calls.append(document.row["definition_id"])
+            if len(calls) == 2:
+                raise RuntimeError("synthetic insert failure")
+            original_insert(document)
+
+        with patch.object(_Document, "insert", fail_on_second_insert), \
+             patch.object(self.frappe.db, "savepoint") as savepoint, \
+             patch.object(self.frappe.db, "rollback") as rollback:
+            with self.assertRaisesRegex(RuntimeError, "synthetic insert failure"):
+                mapping_exchange.import_json("SYNTHETIC", payload)
+        self.assertEqual(len(calls), 2)
+        savepoint.assert_called_once_with("hero_mapping_import")
+        rollback.assert_called_once_with(save_point="hero_mapping_import")
+
     def test_identical_import_is_idempotent(self):
         payload = json.dumps(fixture_payload(FINGERPRINT))
         mapping_exchange.import_json("SYNTHETIC", payload)
