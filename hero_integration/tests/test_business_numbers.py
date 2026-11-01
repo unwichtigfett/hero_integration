@@ -349,6 +349,16 @@ class TestBusinessNumberMigration(FakeFrappeMigrationHarness, unittest.TestCase)
         self.migrate_project(self.project(customer_id=401))
         self.assertEqual(self.frappe.projects[0]["customer"], "2222")
 
+    def test_project_never_uses_another_sources_customer_with_the_same_id(self):
+        self.migrate_customer(self.customer(id=401, nr="2222"))
+        result = self.migrate_project(self.project(customer_id=401, _hero_source_instance="account-b"))
+        self.assertEqual(result.code, "PENDING_REVIEW")
+        self.assertIsNone(self.frappe.projects[0].get("customer"))
+        project_link = self.frappe.links[("project", "201", "account-b")]
+        self.assertIn("customer", project_link.conflict_detail)
+        self.assertEqual(self.frappe.links[("customer", "401")].target_name, "2222")
+        self.assertNotIn(("customer", "401", "account-b"), self.frappe.links)
+
     def test_equal_source_ids_keep_project_customer_relations_source_scoped(self):
         self.migrate_customer(self.customer(id=401, nr="2222"))
         self.migrate_customer(self.customer(id=401, nr="4444", full_name="Synthetic other customer",
