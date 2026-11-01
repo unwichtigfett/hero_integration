@@ -11,6 +11,9 @@ class Element {
     replaceChildren(...children) { this.children = children; }
     setAttribute(name, value) { this.attributes[name] = String(value); }
     addEventListener(name, handler) { this.handlers[name] = handler; }
+    cloneNode() { return new Element(this.tag); }
+    replaceWith(replacement) { this.replacement = replacement; }
+    remove() { this.removed = true; }
     find(predicate) { if (predicate(this)) return this; for (const child of this.children) { const found = child.find(predicate); if (found) return found; } }
 }
 
@@ -76,6 +79,35 @@ test("settings save announces progress and disables controls until completion", 
     assert.equal(status.attributes.role, "status");
     assert.equal(save.disabled, false);
     assert.equal(reset.disabled, false);
+});
+
+test("a late settings response does not update a destroyed view", async () => {
+    const settings = {enabled: true, api_url: "https://example.invalid/graphql", timeout_seconds: 30,
+        allowed_hero_hosts: "example.invalid", hero_source_instance: "default", api_token_status: "NOT_CONFIGURED",
+        polling: {mode: "OFF", bootstrap: false}, testing: {enabled: false, max_actions: 5}};
+    let finishSave;
+    const calls = [];
+    const api = async (method) => {
+        calls.push(method);
+        if (method === "workspace_settings_get") return settings;
+        assert.equal(method, "workspace_settings_save");
+        return new Promise(resolve => { finishSave = resolve; });
+    };
+    const sandbox = {window: {hero_integration_platform: {api}}, document: {createElement: tag => new Element(tag)}};
+    vm.runInNewContext(source, sandbox);
+    const workspace = new Element("main");
+    const view = await sandbox.window.hero_integration_settings_ui.mount(workspace);
+    const root = workspace.children[0];
+    const save = workspace.find(el => el.tag === "button" && el.textContent === "Save Settings");
+    const pending = save.handlers.click();
+    const status = workspace.find(el => el.textContent === "Saving …");
+    view.destroy();
+    finishSave({...settings, schema_refresh: {check_due: true}});
+    await pending;
+    assert.equal(root.removed, true);
+    assert.equal(status.textContent, "Saving …");
+    assert.equal(save.disabled, true);
+    assert.deepEqual(calls, ["workspace_settings_get", "workspace_settings_save"]);
 });
 
 test("failed settings save reports an error and restores controls", async () => {
