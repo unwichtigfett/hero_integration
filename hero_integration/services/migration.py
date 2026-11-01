@@ -82,6 +82,10 @@ class _Comparison:
         self.missing = set(getattr(values, "missing", ())) - set(values) - set(extra)
         empty = set(getattr(values, "empty", ())) - set(values)
         self.source_values = {**{field: None for field in empty}, **values, **extra}
+        # Compare a float 0.0 as empty on the HERO side too, like Frappe's stored
+        # 0.0 on the target side; writes still use the original values.
+        self.source_values = {field: (None if type(value) is float and value == 0.0 else value)
+                              for field, value in self.source_values.items()}
         self.unwritable = empty | {field for field, value in extra.items() if _is_empty(value)}
         self.tracked = set(self.source_values) | self.missing
         self.source_hashes = field_hashes(self.source_values)
