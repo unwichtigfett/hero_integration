@@ -43,6 +43,13 @@ class TestSchedulerTime(unittest.TestCase):
                         "a success time in the future must not block polling indefinitely")
         self.assertFalse(scheduler_due(settings, now, None, system_timezone="Invalid/Zone"), "unknown system timezone fails closed")
 
+    def test_overnight_window_uses_configured_local_time(self):
+        settings = _settings(polling_timezone="Europe/Berlin", polling_execution_window="22:00-02:00")
+        for hour, minute, expected in ((20, 59, False), (21, 0, True), (0, 59, True), (1, 0, True), (1, 1, False)):
+            with self.subTest(utc=(hour, minute)):
+                now = datetime(2026, 11, 10, hour, minute, tzinfo=timezone.utc)
+                self.assertEqual(scheduler_due(settings, now, None), expected)
+
 
 class TestPollingConfiguration(unittest.TestCase):
     def test_left_over_sources_and_filters_from_older_versions_no_longer_block_polling(self):
