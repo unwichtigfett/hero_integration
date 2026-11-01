@@ -61,6 +61,9 @@ doc_events["ToDo"] = {
     "on_update": "hero_integration.services.task_assignment_state.observe_local_todo",
     "on_trash": "hero_integration.services.task_assignment_state.observe_local_todo",
 }
+# Helpdesk and CRM keep plain references to ERPNext Customer/Project.
+for _doctype in ("HD Ticket", "CRM Lead", "CRM Deal"):
+    doc_events[_doctype] = {"validate": "hero_integration.integrations.app_references.fill_references"}
 doc_events["Task"] = {"validate": "hero_integration.services.change_detection.protect_external_task_deadline"}
 
 # Requires the separately distributed Frappe assignment-intent v2 patch.
