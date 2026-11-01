@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from hero_integration.services import migration
-from hero_integration.services.native_projections import creation_defaults, validate_options, values
+from hero_integration.services.native_projections import creation_defaults, key_for, validate_options, values
 from hero_integration.services.projection_contracts import CONTRACTS
 from hero_integration.tests.test_projection_contracts import definitions, documents, record
 from hero_integration.services.read_contract import from_documents
@@ -26,6 +26,15 @@ def event():
 
 
 class TestNativeProjections(unittest.TestCase):
+    def test_native_identity_key_binds_source_type_and_exact_identity(self):
+        key = key_for("source-a", "product", "0022")
+        self.assertEqual(key, key_for("source-a", "product", "0022"))
+        for source, kind, identity in (("source-b", "product", "0022"),
+                                       ("source-a", "service", "0022"),
+                                       ("source-a", "product", "22")):
+            with self.subTest(source=source, kind=kind, identity=identity):
+                self.assertNotEqual(key, key_for(source, kind, identity))
+
     def test_event_times_and_child_rows(self):
         out = values(CONTRACTS["HeroCalendarEvents"], event(), "9", "a", EVENT_OPTIONS, lookup=lambda *a: {})
         self.assertEqual(out["starts_on"], "2026-10-22 08:00:00")
