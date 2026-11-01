@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 import unittest
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -43,6 +44,21 @@ class TestBindingRegistry(unittest.TestCase):
         self.assertEqual(self.field(user).target_name, user.target_name)
         with self.assertRaises(BindingRegistryError):
             self.obj(object_type='User', target_app='frappe', target_doctype='User', target_name='not a user')
+
+    def test_creation_rejects_incompatible_existing_object_under_same_key(self):
+        canonical = self.obj()
+        inconsistent = replace(canonical, external_object_id="99")
+        storage = SimpleNamespace(object=Mock(return_value=inconsistent), put_object=Mock())
+        service = BindingRegistryService(storage)
+        with self.assertRaisesRegex(BindingConflict, "incompatible"):
+            service.create_or_resolve_object_binding(
+                site_scope=canonical.site_scope, source_instance=canonical.source_instance,
+                object_type=canonical.object_type, external_object_id=canonical.external_object_id,
+                target_app=canonical.target_app, target_doctype=canonical.target_doctype,
+                target_name=canonical.target_name, mapping_definition_id=canonical.mapping_definition_id,
+                mapping_revision=canonical.mapping_revision,
+            )
+        storage.put_object.assert_not_called()
 
     def test_object_and_field_creation_are_idempotent_and_site_scoped(self):
         parent = self.obj()
