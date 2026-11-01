@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
@@ -8,6 +9,7 @@ from hero_integration.services.frappe_field_metadata_provider import (
     FrappeMetadataProviderError,
     FrappeV16FieldMetadataProvider,
 )
+from hero_integration.services.frappe_field_registry import DocTypeMetadata
 
 
 class FakeFrappe:
@@ -72,10 +74,21 @@ def test_adapter_uses_site_scoped_permission_aware_metadata_apis():
 
 
 def test_adapter_rejects_cross_site_context_before_metadata_access():
-    provider = FrappeV16FieldMetadataProvider(FakeFrappe())
-
-    with pytest.raises(FrappeMetadataProviderError, match="does not match"):
-        provider.doctypes("other-site")
+    frappe = FakeFrappe()
+    frappe.get_installed_apps = Mock(side_effect=AssertionError("apps accessed before site check"))
+    frappe.get_meta = Mock(side_effect=AssertionError("metadata accessed before site check"))
+    provider = FrappeV16FieldMetadataProvider(frappe)
+    document = DocTypeMetadata("Customer", "Selling")
+    for call in (lambda: provider.installed_apps("other-site"),
+                 lambda: provider.module_definitions("other-site"),
+                 lambda: provider.doctypes("other-site"),
+                 lambda: provider.effective_fields("other-site", document)):
+        with pytest.raises(FrappeMetadataProviderError, match="does not match"):
+            call()
+    assert frappe.permissions == []
+    assert frappe.calls == []
+    frappe.get_installed_apps.assert_not_called()
+    frappe.get_meta.assert_not_called()
 
 
 def test_denied_metadata_permission_stops_before_field_loading():
