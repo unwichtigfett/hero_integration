@@ -1900,7 +1900,10 @@ def decide_review(link, decision: str) -> None:
                     f"{link.target_doctype} {link.target_name} is referenced by {other}; it was not deleted.")
             # Only this binding still points to the held target; Frappe's own
             # link check would always refuse because of it.
-            frappe.delete_doc(link.target_doctype, link.target_name, force=True)
+            from hero_integration.services.guards import bound_target_deletion
+
+            with bound_target_deletion():
+                frappe.delete_doc(link.target_doctype, link.target_name, force=True)
         link.sync_status = REVIEW_REJECTED
         link.conflict_detail = "Rejected by an administrator; HERO changes are not imported."
     else:
