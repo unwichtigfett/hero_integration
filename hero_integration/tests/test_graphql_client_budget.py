@@ -84,6 +84,17 @@ class TestGraphQLClientBudget(unittest.TestCase):
         token.assert_not_called()
         opener.assert_not_called()
 
+    def test_invalid_credentials_are_rejected_before_opening_transport(self):
+        for token in (None, "", "   ", "synthetic\r\nX-Injected: value", "synthetic\x00tail"):
+            with self.subTest(token=repr(token)), \
+                 mock.patch("hero_integration.client.graphql.urllib.request.build_opener") as opener:
+                client = HeroGraphQLClient(self.endpoint, lambda: token)
+                with self.assertRaises(HeroClientError) as caught:
+                    client.query(QUERY, {})
+                self.assertIn("token is missing or invalid", str(caught.exception))
+                self.assertNotIn("X-Injected", str(caught.exception))
+                opener.assert_not_called()
+
     def test_429_honours_bounded_retry_after(self):
         opener = _Opener(_http_error(429, "7"), {"data": {"viewer": {"id": 1}}})
         result, sleep = self._query(opener, max_retries=1)
