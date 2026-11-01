@@ -4,11 +4,12 @@ Status: concept, 2026-11-01. Decisions already taken by the owner are marked **(
 
 ## 1. Principles
 
-1. **One owner per record type.** Every business object has exactly one system that
+1. **One owner per record.** Every business record has exactly one system that
    creates and changes it. All other systems hold references, never copies.
 2. **HERO is the operational source; ERPNext is the shared master copy.** Customers,
-   contacts, addresses, projects, tasks and appointments are created and changed in HERO
-   and imported one-way into ERPNext. Writing back to HERO comes later and is not a
+   contacts, addresses, tasks and appointments are created and changed in HERO and imported
+   one-way into ERPNext. Projects come from HERO **or are created directly in ERPNext**
+   **(owner correction 2026-11-01)**. Writing back to HERO comes later and is not a
    priority **(decided)**.
 3. **Helpdesk and CRM reference ERPNext.** Tickets, leads and deals carry
    `erp_customer` and `erp_project` links. No HD Customer or CRM Organization copies are
@@ -25,16 +26,21 @@ Status: concept, 2026-11-01. Decisions already taken by the owner are marked **(
 | Customer | HERO | Customer | `erp_customer` link | `erp_customer` link |
 | Contact person | HERO (primary contact); Helpdesk/CRM may add contacts for new inquiries | Contact | `contact` (native) | `contacts` (native) |
 | Address | HERO | Address | via Customer | via Customer |
-| Project | HERO | Project (+ trade, business number) | `erp_project` link | `erp_project` link |
+| Project | HERO (imported) **or** ERPNext (created there) | Project (+ trade, business number for HERO projects) | `erp_project` link | `erp_project` link |
 | Task / appointment | HERO | Task / Event | – | – |
 | Inquiry / lead | CRM (later also HERO `KONT-` requests) | – | – | CRM Lead / Deal |
 | Support case, grid-operator request | Helpdesk | – | HD Ticket | – |
 | Employee, department, team | HRMS / ERPNext | Employee, Department | HD Team (members only) | – |
 | User and role | System administrator | User, Role Profile | Agent roles | Sales roles |
 
-Consequence: **nobody creates ERPNext Customers or Projects by hand.** A manually
-created Customer would later meet its HERO namesake and be reported as ambiguous instead
-of being linked.
+Consequences:
+- **Customers are not created by hand in ERPNext.** A manual Customer would later meet its
+  HERO namesake and be reported as ambiguous instead of being linked.
+- **Projects may be created in ERPNext.** Such a project has no HERO binding, so the import
+  never changes it, the deletion guard and the purge do not touch it, and its department
+  is set by the person who creates it. The same project must not also be created in HERO:
+  the import never merges records, and a HERO project with the same number or title is
+  reported as a conflict or as ambiguous instead.
 
 ## 3. Flows
 
@@ -42,7 +48,8 @@ of being linked.
 1. The inquiry arrives by phone, e-mail or web form and becomes a **CRM Lead**. Its
    contact is a Frappe Contact.
 2. Qualification happens in CRM (deal, offer status).
-3. When it is won, the office creates the customer and the project **in HERO**.
+3. When it is won, the office creates the customer **in HERO** and the project either in
+   HERO or directly in ERPNext (never in both).
 4. The next import creates the ERPNext Customer and Project. The deal is then linked
    with `erp_customer` / `erp_project`. A chosen project fills the customer automatically.
 5. *Later:* HERO contact requests (`KONT-…`) can become CRM Leads automatically. Today
