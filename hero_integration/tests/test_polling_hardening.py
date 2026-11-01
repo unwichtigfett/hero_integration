@@ -155,6 +155,17 @@ class TestScheduledEntry(unittest.TestCase):
             self.run_tasks(settings)
         run_monitor.assert_called_once()
 
+    def test_off_paused_and_invalid_window_never_start_a_poll(self):
+        for overrides in ({"polling_mode": "OFF"}, {"sync_service_paused": 1},
+                          {"polling_execution_window": "not-a-window"}):
+            with self.subTest(settings=overrides):
+                settings = _settings(sync_status="", sync_error="", **overrides)
+                with patch.object(polling, "run_monitor") as run_monitor:
+                    fake, _ = self.run_tasks(settings)
+                run_monitor.assert_not_called()
+                self.assertNotIn("last_poll_started_on", fake.db.state)
+                self.assertEqual(fake.db.commits, 0)
+
     def test_interval_counts_from_the_last_started_poll_so_failures_are_not_retried_every_tick(self):
         settings = _settings(sync_status="", sync_error="")
         with patch.object(polling, "run_monitor") as run_monitor:
