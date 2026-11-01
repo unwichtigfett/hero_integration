@@ -34,6 +34,12 @@ class TestBusinessNumber(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(BusinessNumberError):
                 business_number(value)
 
+    def test_maximum_length_preserves_leading_zeros(self):
+        number = "0" * 139 + "2"
+        self.assertEqual(business_number(number), number)
+        with self.assertRaises(BusinessNumberError):
+            business_number("0" + number)
+
     def test_the_customer_name_is_the_hero_nr(self):
         self.assertEqual(customer_document_name({"id": 7, "nr": "0022"}), "0022")
         self.assertIsNone(customer_document_name({"id": 7}))
@@ -44,6 +50,13 @@ class TestProjectReference(unittest.TestCase):
         self.assertEqual(project_reference({"display_id": "3333", "measure": {"short": "PV"}}), "PV-3333")
         self.assertEqual(project_reference({"display_id": "1769", "measure": {"name": "Elektrohandwerk"}}), "ELEK-1769")
         self.assertEqual(project_reference({"display_id": "0042", "project_type": {"code": "KLIM"}}), "KLIM-0042")
+
+    def test_project_reference_length_includes_the_trade_prefix(self):
+        display_id = "0" * 136 + "2"
+        self.assertEqual(project_reference({"display_id": display_id, "measure": {"short": "PV"}}),
+                         "PV-" + display_id)
+        with self.assertRaises(BusinessNumberError):
+            project_reference({"display_id": "0" + display_id, "measure": {"short": "PV"}})
 
     def test_project_nr_is_not_the_reference(self):
         self.assertEqual(
