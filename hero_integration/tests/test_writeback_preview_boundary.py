@@ -94,6 +94,25 @@ class TestWritebackPreviewBoundary(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'contract|service'):
             self.preview()
 
+    def test_non_manager_cannot_probe_mutation_gate_or_access_execute_targets(self):
+        def deny(role):
+            raise PermissionError(role)
+        self.frappe.only_for = deny
+        endpoints = (
+            lambda: api.writeback_execute('mapping', 'Customer', 'CUST-1', 'fingerprint', 1),
+            lambda: api.execute_graphql_service('service', '{}', 'fingerprint', 1),
+        )
+        with patch.object(api, 'frappe', self.frappe), \
+             patch.object(api, '_mutation_execution_state') as gate, \
+             patch.object(self.frappe, 'get_doc') as get_doc, \
+             patch.object(api, '_reserve_mutation') as reserve:
+            for call in endpoints:
+                with self.subTest(endpoint=call), self.assertRaises(PermissionError):
+                    call()
+            gate.assert_not_called()
+            get_doc.assert_not_called()
+            reserve.assert_not_called()
+
     def test_disabled_global_gate_blocks_execute_before_document_or_audit_access(self):
         endpoints = (
             lambda: api.writeback_execute('mapping', 'Customer', 'CUST-1', 'fingerprint', 1),
