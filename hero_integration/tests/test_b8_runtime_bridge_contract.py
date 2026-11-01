@@ -20,6 +20,25 @@ from hero_integration.services import sync_runtime_adapter
 
 
 class TestB8RuntimeBridgeContract(unittest.TestCase):
+    def setUp(self):
+        package = importlib.import_module("hero_integration")
+        missing = object()
+        previous_module = sys.modules.get("hero_integration.tasks")
+        previous_alias = getattr(package, "tasks", missing)
+
+        def restore():
+            if previous_module is None:
+                sys.modules.pop("hero_integration.tasks", None)
+            else:
+                sys.modules["hero_integration.tasks"] = previous_module
+            if previous_alias is missing:
+                if hasattr(package, "tasks"):
+                    delattr(package, "tasks")
+            else:
+                package.tasks = previous_alias
+
+        self.addCleanup(restore)
+
     def test_auto_sync_hands_off_only_to_the_canonical_runtime_adapter(self):
         frappe_module = types.ModuleType("frappe")
         frappe_module.get_single = lambda _doctype: SimpleNamespace(
