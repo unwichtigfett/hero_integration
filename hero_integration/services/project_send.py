@@ -26,12 +26,12 @@ PHASE_NAME_FIELD = "custom_hero_observed_status_name"
 PHASE_INPUT = "current_project_match_status"
 READ_DOCUMENT = (
     "query HeroProjectSendRead($id: Int) { project_match(project_match_id: $id) { id partner_notes "
-    "current_project_match_status_id current_project_match_status { id name step_id } "
-    "type { project_status_steps { id name sort_order is_active } } } }"
+    "current_project_match_status_id current_project_match_status { id name step_id step { name } } "
+    "type { project_status_steps { id name sort_order is_active status_code } } } }"
 )
 MUTATION_DOCUMENT = (
     "mutation HeroProjectSend($project_match: ProjectMatchInput) { update_project_match(project_match: $project_match) "
-    "{ id partner_notes current_project_match_status { step_id } } }"
+    "{ id partner_notes current_project_match_status { step_id step { name } } } }"
 )
 
 
@@ -54,7 +54,7 @@ def preview(project: str, phase_id=None, client=None) -> dict:
     steps = [row for row in ((hero.get("type") or {}).get("project_status_steps") or [])
              if isinstance(row, dict) and type(row.get("id")) is int and row.get("is_active") is not False]
     phases = [{"id": row["id"], "name": row.get("name")}
-              for row in sorted(steps, key=lambda row: (row.get("sort_order") is None, row.get("sort_order") or 0))]
+              for row in sorted(steps, key=_hero_step_order)]
     baseline = _decode(link.source_field_hashes)
     changes, conflicts = [], []
 
@@ -72,7 +72,7 @@ def preview(project: str, phase_id=None, client=None) -> dict:
             raise ProjectSendError("The selected phase is not an active phase of this project's HERO project type.")
         if phase_id != current_phase:
             name = next(phase["name"] for phase in phases if phase["id"] == phase_id)
-            current_name = (hero.get("current_project_match_status") or {}).get("name")
+            current_name = _step_name(hero)
             changes.append({"field": PHASE_INPUT, "label": "Phase", "hero": current_name, "new": name,
                             "value": {"step_id": phase_id}})
 
@@ -84,7 +84,7 @@ def preview(project: str, phase_id=None, client=None) -> dict:
     return {
         "project": project, "hero_id": link.source_id,
         "hero": {"notes": hero_notes, "phase_id": current_phase,
-                 "phase_name": (hero.get("current_project_match_status") or {}).get("name")},
+                 "phase_name": _step_name(hero)},
         "phases": phases, "changes": changes, "conflicts": conflicts, "fingerprint": fingerprint,
         "can_send": bool(changes) and not conflicts and bool(_mutation_execution_state()["mutation_execution_enabled"]),
         "sending_enabled": bool(_mutation_execution_state()["mutation_execution_enabled"]),
@@ -147,6 +147,8 @@ def _apply_locally(project, link, changes, after) -> None:
     if any(change["field"] == PHASE_INPUT for change in changes):
         updates[PHASE_ID_FIELD] = str(after.get("current_project_match_status_id"))
         updates[PHASE_NAME_FIELD] = (after.get("current_project_match_status") or {}).get("name")
+        updates["custom_hero_phase"] = _step_name(after)
+        updates["custom_hero_observed_status_step_id"] = str((after.get("current_project_match_status") or {}).get("step_id"))
     frappe.db.set_value("Project", project, updates, update_modified=False)
     source, target = _decode(link.source_field_hashes), _decode(link.target_field_hashes)
     for field, value in updates.items():
@@ -154,6 +156,17 @@ def _apply_locally(project, link, changes, after) -> None:
     frappe.db.set_value("HERO Integration Link", link.name,
                         {"source_field_hashes": encode(source), "target_field_hashes": encode(target)},
                         update_modified=False)
+
+
+def _hero_step_order(step) -> tuple:
+    """HERO lists steps by status code, then sort order, then ID (matches the HERO screen)."""
+    return tuple((step.get(key) is None, step.get(key) or 0) for key in ("status_code", "sort_order", "id"))
+
+
+def _step_name(row) -> str | None:
+    """HERO shows the step of the current status as the project's status."""
+    status = row.get("current_project_match_status") or {}
+    return (status.get("step") or {}).get("name") or status.get("name")
 
 
 def _bound_link(project: str):

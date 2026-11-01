@@ -554,7 +554,9 @@ def _process_requested_phases(run, source: HeroSource, *, checkpoint=None) -> No
             with checkpoint():
                 _block_run(run, "Project phase requires a completed Customer phase for this source instance and run.")
             return
-        if not _process_phase(run, "project", source.projects, checkpoint=checkpoint):
+        completed = _process_phase(run, "project", source.projects, checkpoint=checkpoint)
+        _refresh_project_phases(run, source, checkpoint)
+        if not completed:
             return
     if run.action == "Full Data Migration":
         with checkpoint():
@@ -564,6 +566,17 @@ def _process_requested_phases(run, source: HeroSource, *, checkpoint=None) -> No
                 {"id": "hero-v1-contract"},
                 Result("UNAVAILABLE", "No approved HERO attachment query exists in the V1 source contract."),
             )
+
+
+def _refresh_project_phases(run, source, checkpoint) -> None:
+    """Show each HERO project's status step as Phase, as HERO does (one read-only query)."""
+    reader = getattr(source, "project_status_steps", None)
+    if run.mode == "Preview" or reader is None:
+        return
+    from hero_integration.integrations.project_form import refresh_project_phases
+
+    with checkpoint():
+        refresh_project_phases(reader())
 
 
 def validate_run_mappings(run) -> None:

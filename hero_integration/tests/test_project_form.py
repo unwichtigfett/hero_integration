@@ -13,7 +13,7 @@ CURRENT = ["project_name", "status", "project_type", "is_active", "column_break_
            "section_break0", "notes", "custom_hero_source_id", "custom_hero_related_project_id",
            "custom_hero_display_id", "custom_hero_source_created", "custom_hero_source_modified",
            "custom_hero_partner_notes", "custom_hero_address_full_address", "custom_hero_observed_status_name",
-           "custom_hero_project_type", "costing_tab"]
+           "custom_hero_project_type", "custom_hero_phase", "costing_tab"]
 
 
 class TestProjectForm(unittest.TestCase):
@@ -21,7 +21,7 @@ class TestProjectForm(unittest.TestCase):
         order = form.field_order(CURRENT)
         self.assertEqual(sorted(order), sorted(CURRENT))
         self.assertEqual(order[:6], ["project_name", "custom_hero_related_project_id", "custom_hero_display_id",
-                                     "status", "project_type", "custom_hero_observed_status_name"])
+                                     "status", "project_type", "custom_hero_phase"])
         self.assertEqual(order[order.index("column_break_5") + 1:order.index("column_break_5") + 4],
                          ["custom_hero_source_created", "custom_hero_source_modified", "custom_hero_address_full_address"])
         self.assertEqual(order[order.index("notes") + 1], "custom_hero_partner_notes")
@@ -29,7 +29,7 @@ class TestProjectForm(unittest.TestCase):
     def test_setup_relabels_hides_and_orders_without_touching_field_definitions(self):
         setters, inserted = [], []
         fake = SimpleNamespace(
-            db=SimpleNamespace(exists=lambda doctype, name: name == "Photovoltaik"),
+            db=SimpleNamespace(exists=lambda doctype, name: name == "Photovoltaik" or doctype == "Custom Field"),
             get_doc=lambda values: SimpleNamespace(insert=lambda **k: inserted.append(values.get("project_type") or values["role_name"])),
             get_meta=lambda doctype: SimpleNamespace(fields=[SimpleNamespace(fieldname=f) for f in CURRENT]),
             clear_cache=lambda **k: None,
@@ -42,7 +42,8 @@ class TestProjectForm(unittest.TestCase):
         self.assertEqual(labels["custom_hero_display_id"], "Project Nr.")
         self.assertEqual(labels["custom_hero_partner_notes"], "Notes")
         self.assertIn(("Project", "custom_hero_source_id", "hidden", "1", "Check"), setters)
-        self.assertIn(("Project", "custom_hero_observed_status_name", "read_only", "1", "Check"), setters)
+        self.assertIn(("Project", "custom_hero_observed_status_name", "hidden", "1", "Check"), setters)
+        self.assertIn(("Project", "custom_hero_address_full_address", "read_only", "1", "Check"), setters)
         self.assertIn(("Project", "custom_hero_partner_notes", "read_only", "0", "Check"), setters)  # sent to HERO
         self.assertIn("HERO Writeback", inserted)
         order = json.loads(next(a[3] for a in setters if a[2] == "field_order"))
@@ -57,6 +58,34 @@ class TestProjectForm(unittest.TestCase):
             self.assertEqual(form.project_type_for_trade("ds"), "Dachsanierung")
             self.assertIsNone(form.project_type_for_trade("ELEK"))  # Project Type not created yet
             self.assertIsNone(form.project_type_for_trade(None))
+
+
+class TestProjectPhases(unittest.TestCase):
+    def test_phase_is_the_step_name_and_only_hero_projects_change(self):
+        updates = []
+        projects = [{"name": "PV-1-H", "custom_hero_observed_status_step_id": "4730", "custom_hero_phase": None},
+                    {"name": "PV-2-H", "custom_hero_observed_status_step_id": "4727", "custom_hero_phase": "Neu Kontakt"},
+                    {"name": "PV-3", "custom_hero_observed_status_step_id": "4730", "custom_hero_phase": None}]
+        fake = SimpleNamespace(
+            db=SimpleNamespace(has_column=lambda doctype, field: True,
+                               set_value=lambda doctype, name, field, value, update_modified=True: updates.append((name, value))),
+            get_all=lambda doctype, **kwargs: ["PV-1-H", "PV-2-H"] if doctype == "HERO Integration Link"
+            else [SimpleNamespace(**p, get=p.get) for p in projects],
+        )
+        with patch.object(form, "frappe", fake):
+            changed = form.refresh_project_phases({4730: "ANG Nachfassung", 4727: "Neu Kontakt"})
+        self.assertEqual((changed, updates), (1, [("PV-1-H", "ANG Nachfassung")]))
+
+    def test_source_reads_all_step_names_once(self):
+        from hero_integration.sources.hero import GraphQLServiceSource
+        documents = []
+        client = SimpleNamespace(query=lambda document, variables: documents.append(document) or {
+            "project_types": [{"id": 1, "project_status_steps": [{"id": 4730, "name": "ANG Nachfassung"}]},
+                              {"id": 2, "project_status_steps": [{"id": 5, "name": "Neu"}, {"id": None}]}]})
+        source = GraphQLServiceSource(client, SimpleNamespace(), SimpleNamespace(), "default")
+        self.assertEqual(source.project_status_steps(), {4730: "ANG Nachfassung", 5: "Neu"})
+        self.assertEqual(len(documents), 1)
+        self.assertTrue(documents[0].startswith("query "))
 
 
 if __name__ == "__main__":

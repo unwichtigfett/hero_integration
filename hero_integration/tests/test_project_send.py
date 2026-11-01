@@ -18,9 +18,10 @@ SCHEMA = json.dumps({"data": {"__schema": {"types": [
 class _Hero:
     """In-memory HERO project; phases are the steps of its project type, statuses its history."""
 
-    STEPS = [{"id": 2, "name": "Montage", "sort_order": 20, "is_active": True},
-             {"id": 1, "name": "Angebot", "sort_order": 10, "is_active": True},
-             {"id": 3, "name": "Alt", "sort_order": 30, "is_active": False}]
+    # HERO orders by status code, then sort order, then ID.
+    STEPS = [{"id": 2, "name": "Montage", "sort_order": 0, "status_code": 700, "is_active": True},
+             {"id": 1, "name": "Angebot", "sort_order": 5, "status_code": 100, "is_active": True},
+             {"id": 3, "name": "Alt", "sort_order": 0, "status_code": 50, "is_active": False}]
 
     def __init__(self, notes="Old note", step=1):
         self.row = {"id": 501, "partner_notes": notes}
@@ -29,7 +30,7 @@ class _Hero:
 
     def _status(self):
         name = next(s["name"] for s in self.STEPS if s["id"] == self.step)
-        return {"id": 700 + self.step, "name": name, "step_id": self.step}
+        return {"id": 700 + self.step, "name": "Status group", "step_id": self.step, "step": {"name": name}}
 
     def query(self, document, variables):
         status = self._status()
@@ -46,7 +47,8 @@ class _Hero:
             self.step = values["current_project_match_status"]["step_id"]
         # The client returns the GraphQL "data" object itself.
         return {"update_project_match": {"id": 501, "partner_notes": self.row["partner_notes"],
-                                         "current_project_match_status": {"step_id": self.step}}}
+                                         "current_project_match_status": {"step_id": self.step,
+                                                                          "step": {"name": self._status()["step"]["name"]}}}}
 
 
 class _Frappe:
@@ -130,7 +132,7 @@ class TestProjectSend(unittest.TestCase):
                                                              "current_project_match_status": {"step_id": 2}}}])
         self.assertEqual(audits, [["reserved"], ["Succeeded"]])
         project_update = next(values for doctype, values in fake.set_values if doctype == "Project")
-        self.assertEqual(project_update[ps.PHASE_NAME_FIELD], "Montage")
+        self.assertEqual(project_update["custom_hero_phase"], "Montage")  # the step, as HERO shows it
         link_update = next(values for doctype, values in fake.set_values if doctype == "HERO Integration Link")
         self.assertEqual(decode(link_update["source_field_hashes"])[ps.NOTES_FIELD],
                          field_hashes({ps.NOTES_FIELD: "New note"})[ps.NOTES_FIELD])
