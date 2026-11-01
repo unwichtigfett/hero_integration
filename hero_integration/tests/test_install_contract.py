@@ -33,6 +33,13 @@ class TestInstallContract(unittest.TestCase):
             schema_environment.call(install.before_install)
         self.assertEqual(schema_environment.create_calls, [])
 
+    def test_empty_erpnext_schema_is_rejected_before_schema_writes(self):
+        environment = _InstallEnvironment(apps=["frappe", "erpnext"], version="16.35.0", doctypes=set())
+        install = environment.load()
+        with self.assertRaisesRegex(RuntimeError, "schema is incomplete: Customer"):
+            environment.call(install.after_migrate)
+        self.assertEqual(environment.create_calls, [])
+
     def test_schema_creation_is_create_only_idempotent_and_conflict_safe(self):
         environment = _InstallEnvironment(apps=["frappe", "erpnext"], version="16.35.0")
         install = environment.load()
@@ -98,7 +105,8 @@ class _InstallEnvironment:
     def __init__(self, apps, version, doctypes=None, project_notes=True, project_notes_read_only=False):
         self.apps = apps
         self.version = version
-        self.doctypes = doctypes or {"Customer", "Contact", "Contact Email", "Contact Phone", "Address", "Project"}
+        self.doctypes = ({"Customer", "Contact", "Contact Email", "Contact Phone", "Address", "Project"}
+                         if doctypes is None else doctypes)
         self.custom_fields: dict[tuple[str, str], dict[str, object]] = {}
         self.create_calls: list[tuple[dict[str, list[dict[str, object]]], bool]] = []
         self.project_notes = project_notes
