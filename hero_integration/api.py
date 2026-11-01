@@ -2672,7 +2672,10 @@ def workspace_service_execute(snapshot_name: str, query_id: str, expected_revisi
 
 
 def _redacted_messages(messages, variables) -> list[str]:
-    """HERO error texts can echo submitted values; never return variable values in error details."""
+    """Redact exact scalar values of at least three characters from HERO error text.
+
+    Short values, booleans and transformed representations are not covered.
+    """
     secrets: set[str] = set()
 
     def collect(value):
