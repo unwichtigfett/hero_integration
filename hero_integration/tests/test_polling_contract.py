@@ -116,6 +116,19 @@ class TestPollingContract(unittest.TestCase):
                     record_observer=lambda *_: observed.append(True))
         self.assertEqual(observed, [])
 
+    def test_oversized_later_page_is_rejected_before_observing_its_records(self):
+        class OversizedSource:
+            source_instance = "synthetic"
+            @staticmethod
+            def customers(offset):
+                return SourcePage(({"id": 1},), 1) if offset == 0 else SourcePage(({"id": 2}, {"id": 3}), None)
+        observed = []
+        with self.assertRaisesRegex(PaginationProgressError, "page size"):
+            monitor(OversizedSource(), {"sources": ["HeroCustomers"], "page_size": 1,
+                                        "max_pages": 2, "rate_limit": 10000},
+                    record_observer=lambda _operation, row: observed.append(row["id"]))
+        self.assertEqual(observed, [1])
+
     def test_runtime_plan_exposes_the_effective_reader_controls(self):
         settings = SimpleNamespace(
             polling_mode="MONITOR", scheduled_sync_enabled=0, polling_timezone="Europe/Berlin",
