@@ -93,11 +93,13 @@ class TestGraphQLClientBudget(unittest.TestCase):
     def test_429_honours_an_http_date_retry_after(self):
         from email.utils import format_datetime
         from datetime import datetime, timedelta, timezone
-        moment = format_datetime(datetime.now(timezone.utc) + timedelta(seconds=30), usegmt=True)
+        now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        moment = format_datetime(now + timedelta(seconds=30), usegmt=True)
         opener = _Opener(_http_error(429, moment), {"data": {"viewer": {"id": 1}}})
-        result, sleep = self._query(opener, max_retries=1)
+        with mock.patch("hero_integration.client.graphql.time.time", return_value=now.timestamp()):
+            result, sleep = self._query(opener, max_retries=1)
         self.assertEqual(result, {"viewer": {"id": 1}})
-        self.assertTrue(25 <= sleep.call_args.args[0] <= 30, sleep.call_args)
+        sleep.assert_called_once_with(30.0)
 
     def test_server_errors_back_off_exponentially_with_jitter_then_stop(self):
         opener = _Opener(_http_error(503), _http_error(502), _http_error(500))
