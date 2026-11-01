@@ -222,3 +222,27 @@ test('result dialog: transport errors are never shown as an empty success', () =
   assert.equal(dialogs[0].shown, false, 'a new result replaces the previous dialog');
   assert.match(dialogs[1].fields_dict.result.$wrapper[0].textContent, /Nothing was truncated silently/);
 });
+
+test('graph overview card exposes a label and supports Enter and Space', () => {
+  const {Workspace} = load();
+  const ws = Object.create(Workspace.prototype);
+  Object.assign(ws, {
+    graphSearch: {value: 'old search'}, graphKind: {value: ''}, relationKind: {value: 'old relation'},
+    graphFilterActive: false, loads: 0, loadGraph() { this.loads += 1; },
+  });
+  const canvas = new Node('svg'), notice = new Node('p');
+  ws.renderGraphOverview(canvas, {nodes: [{node_id: 'type:Customer', kind: 'OBJECT'}], edges: []}, null, null, notice, 'marker');
+  const card = canvas.find(node => node.attributes['data-overview-kind'] === 'OBJECT');
+  assert.equal(card.attributes.role, 'button');
+  assert.equal(card.attributes.tabindex, '0');
+  assert.match(card.attributes['aria-label'], /Object Types: 1 nodes/);
+  for (const key of ['Enter', ' ']) {
+    let prevented = false;
+    for (const listener of card.listeners.keydown) listener({key, preventDefault() { prevented = true; }});
+    assert.equal(prevented, true);
+  }
+  assert.equal(ws.graphKind.value, 'OBJECT');
+  assert.equal(ws.graphSearch.value, '');
+  assert.equal(ws.relationKind.value, '');
+  assert.equal(ws.loads, 2);
+});
