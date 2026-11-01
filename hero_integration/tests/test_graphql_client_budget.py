@@ -198,6 +198,33 @@ class TestGraphQLClientBudget(unittest.TestCase):
         error, _ = self._query(_Opener({"data": None}), max_retries=0)
         self.assertEqual(error.code, "MISSING_DATA")
 
+    def test_response_stream_is_bounded_and_closed_on_success_or_failure(self):
+        class TrackedResponse(_Response):
+            def __init__(self, body):
+                super().__init__(body)
+                self.read_sizes = []
+
+            def read(self, size=-1):
+                self.read_sizes.append(size)
+                return super().read(size)
+
+        client = HeroGraphQLClient(self.endpoint, lambda: "synthetic", max_retries=0, max_response_bytes=1024)
+        for body, expected_error in ((b'{"data": {}}', None), (b'{' + b'x' * 2048, "RESPONSE_TOO_LARGE"),
+                                     (b'<not-json>', "INVALID_RESPONSE")):
+            with self.subTest(expected_error=expected_error):
+                response = TrackedResponse(body)
+                opener = mock.Mock()
+                opener.open.return_value = response
+                if expected_error:
+                    with self.assertRaises(HeroClientError) as caught:
+                        client._request_with_retry(opener, object())
+                    self.assertEqual(caught.exception.code, expected_error)
+                else:
+                    self.assertEqual(client._request_with_retry(opener, object()), {"data": {}})
+                self.assertEqual(response.read_sizes, [1025])
+                self.assertTrue(response.closed)
+                opener.open.assert_called_once()
+
     def test_nonempty_malformed_error_metadata_never_returns_partial_data(self):
         for errors in ({"message": "synthetic"}, "synthetic", [None]):
             with self.subTest(errors=errors):
