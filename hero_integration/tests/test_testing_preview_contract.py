@@ -4,7 +4,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from hero_integration.sources.hero import SourcePage, TestingPreviewSource
+from hero_integration.sources.hero import SourcePage, TestingPreviewSource as PreviewSource
 
 try:
     import frappe  # noqa: F401
@@ -128,7 +128,7 @@ class TestTestingPreviewContract(unittest.TestCase):
 
     def test_shared_budget_limits_multiple_sources_and_pagination(self):
         source = _VerifiedSource()
-        limited = TestingPreviewSource(source, 2)
+        limited = PreviewSource(source, 2)
 
         customers = limited.customers(0)
         projects = limited.projects(0)
@@ -144,7 +144,7 @@ class TestTestingPreviewContract(unittest.TestCase):
 
     def test_missing_descending_order_blocks_before_any_request(self):
         source = _UnverifiedSource()
-        limited = TestingPreviewSource(source, 5)
+        limited = PreviewSource(source, 5)
 
         page = limited.customers(0)
 
@@ -154,7 +154,7 @@ class TestTestingPreviewContract(unittest.TestCase):
 
     def test_source_that_never_receives_budget_is_marked_skipped_limit(self):
         source = _VerifiedSource()
-        limited = TestingPreviewSource(source, 1)
+        limited = PreviewSource(source, 1)
 
         limited.customers(0)
         limited.projects(0)
@@ -169,7 +169,7 @@ class TestTestingPreviewContract(unittest.TestCase):
             calls.append(offset)
             raise RuntimeError("synthetic transport failure")
         source.customers = fail
-        limited = TestingPreviewSource(source, 1)
+        limited = PreviewSource(source, 1)
 
         with self.assertRaisesRegex(RuntimeError, "transport failure"):
             limited.customers(0)
@@ -181,7 +181,7 @@ class TestTestingPreviewContract(unittest.TestCase):
     def test_unverified_descending_id_is_not_accepted_as_newest_first(self):
         source = _VerifiedSource()
         source.testing_ordering = lambda operation: {"verified": True, "order": "id"}
-        limited = TestingPreviewSource(source, 5)
+        limited = PreviewSource(source, 5)
 
         self.assertEqual(limited.customers(0).records, ())
         self.assertEqual(limited.status, "BLOCKED")
