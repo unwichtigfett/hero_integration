@@ -3156,7 +3156,7 @@ def resume_mapping_adoption(adoption_name: str) -> dict[str, object]:
 
 @frappe.whitelist()
 def workspace_mutation_preview(contract_name: str, variables_json: str) -> dict[str, object]:
-    """Return a redacted, exact-effect preview.  It never contacts HERO or writes state."""
+    """Return a redacted operation summary and confirmation fingerprint without contacting HERO."""
     frappe.only_for("System Manager")
     contract, service, snapshot, variables, request_fingerprint = _validated_mutation_request(contract_name, variables_json)
     return {

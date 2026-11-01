@@ -174,6 +174,27 @@ class TestTypedMutationPreview(unittest.TestCase):
         self.assertEqual(result['variables_validated'], ['input'])
         self.assertNotIn('Ada', json.dumps(result))
 
+    def test_optional_document_default_is_fingerprinted_but_not_returned_as_effective_value(self):
+        from hero_integration.services.graphql_contract import parse_mutation
+        schema = {"__schema": {"mutationType": {"name": "Mutation"}, "types": [
+            {"kind": "OBJECT", "name": "Mutation", "fields": [{"name": "changeCustomer",
+             "args": [{"name": "value", "type": {"kind": "SCALAR", "name": "Int"}}]}]},
+            {"kind": "SCALAR", "name": "Int"},
+        ]}}
+        self.snapshot.snapshot_json = json.dumps(schema)
+        document = "mutation Change($value: Int = 7) { changeCustomer(value: $value) }"
+        self.service.query_document = document
+        self.contract.contract_fingerprint = parse_mutation(document).fingerprint
+        first = self.preview({})
+        self.assertEqual(first["variables_validated"], [])
+        self.assertNotIn("value", first)
+        self.assertNotIn(document, json.dumps(first))
+        changed = document.replace("= 7", "= 8")
+        self.service.query_document = changed
+        self.contract.contract_fingerprint = parse_mutation(changed).fingerprint
+        second = self.preview({})
+        self.assertNotEqual(first["request_fingerprint"], second["request_fingerprint"])
+
     def test_unknown_and_missing_required_input_rejected(self):
         for value in ({'input': {'name': 'Ada', 'unknown': 'x'}}, {'input': {'state': 'ACTIVE'}}):
             with self.subTest(value=value), self.assertRaises(ValueError):
