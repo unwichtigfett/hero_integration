@@ -210,6 +210,21 @@ class GraphQLServiceSource:
                     states[value] = "UNLISTED"
         return states
 
+    def project_status_steps(self) -> dict[int, str]:
+        """{step_id: name} of all HERO project status steps (read-only, one query).
+
+        HERO shows the step of a project's current status as its status
+        ("☎️ANG Nachfassung"), not the status group name ("Detailgespräch").
+        """
+        data = self.client.query("query HeroProjectStatusSteps { project_types { id project_status_steps { id name } } }", {})
+        data = data.get("data", data) if isinstance(data, dict) else {}
+        steps = {}
+        for project_type in (data.get("project_types") or []) if isinstance(data, dict) else []:
+            for step in (project_type or {}).get("project_status_steps") or []:
+                if isinstance(step, dict) and type(step.get("id")) is int and isinstance(step.get("name"), str):
+                    steps[step["id"]] = step["name"]
+        return steps
+
     def projection(self, offset: int = 0) -> SourcePage:
         from hero_integration.services.projection_contracts import CONTRACTS
         if self.contract.target_operation not in CONTRACTS:
