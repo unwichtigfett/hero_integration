@@ -100,5 +100,28 @@ class TestNewNumericFieldDefault(unittest.TestCase):
         self.assertEqual(set(outcome.local), {"custom_hero_volume"})
 
 
+class TestEmptyFloatStoredAsZero(unittest.TestCase):
+    """Frappe stores an empty Currency/Float as 0.0; that equals an empty HERO value (2026-11-02)."""
+
+    def test_stored_zero_for_an_empty_hero_value_is_no_local_change(self):
+        from types import SimpleNamespace
+        from hero_integration.services.change_detection import field_hashes
+        from hero_integration.services.migration import _Comparison
+        base = field_hashes({"custom_hero_volume": None})
+        comparison = _Comparison({"custom_hero_volume": None}, None)
+        target = SimpleNamespace(get=lambda field: 0.0)
+        current = comparison.target_values(target, lambda doc: {"custom_hero_volume": 0.0})
+        self.assertIsNone(current["custom_hero_volume"])
+        outcome = comparison.reconcile(base, base, current)
+        self.assertEqual((set(outcome.local), set(outcome.conflicts)), (set(), set()))
+
+    def test_integer_zero_and_false_are_kept(self):
+        from types import SimpleNamespace
+        from hero_integration.services.migration import _Comparison
+        comparison = _Comparison({"all_day": 0, "flag": False}, None)
+        current = comparison.target_values(SimpleNamespace(get=lambda f: None), lambda doc: {"all_day": 0, "flag": False})
+        self.assertEqual(current, {"all_day": 0, "flag": False})
+
+
 if __name__ == "__main__":
     unittest.main()

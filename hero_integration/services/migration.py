@@ -96,7 +96,9 @@ class _Comparison:
         current = dict(snapshot(target))
         for field in self.tracked - set(current):
             current[field] = target.get(field)
-        return current
+        # Frappe stores an empty Float/Currency as 0.0; compare it as empty.
+        # Integers (Check, Int) keep 0, which is a real value there.
+        return {field: (None if type(value) is float and value == 0.0 else value) for field, value in current.items()}
 
     def reconcile(self, prior_source, prior_target, target_values):
         return reconcile(
