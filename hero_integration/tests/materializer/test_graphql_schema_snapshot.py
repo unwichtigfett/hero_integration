@@ -8,7 +8,7 @@ from hero_integration.graphql_protocol.schema import (
     GraphQLArgument, GraphQLField, GraphQLSchema, GraphQLType, GraphQLTypeRef,
 )
 from hero_integration.graphql_protocol.schema_snapshot import (
-    GraphQLSchemaSnapshot, GraphQLSchemaSnapshotError, schema_fingerprint,
+    GraphQLSchemaSnapshot, GraphQLSchemaSnapshotError, GraphQLSchemaSnapshotStore, schema_fingerprint,
 )
 
 
@@ -45,3 +45,23 @@ def test_snapshot_rejects_modified_schema_under_existing_fingerprint():
     stored["schema"]["types"][0]["description"] = "tampered"
     with pytest.raises(GraphQLSchemaSnapshotError, match="fingerprint does not match"):
         GraphQLSchemaSnapshot.from_dict(stored)
+
+
+def test_incomplete_snapshot_cannot_replace_complete_and_previous_is_preserved(tmp_path):
+    store = GraphQLSchemaSnapshotStore(tmp_path)
+    first = GraphQLSchemaSnapshot.create(
+        _schema(), connection_id="connection", endpoint_fingerprint="endpoint", complete_analysis=True,
+    )
+    changed_schema = replace(first.schema, types=(replace(first.schema.types[0], description="changed"),
+                                                  first.schema.types[1]))
+    store.save(first)
+    store.save(GraphQLSchemaSnapshot.create(changed_schema))
+    assert store.load() == first
+    assert store.load_previous() is None
+
+    next_snapshot = GraphQLSchemaSnapshot.create(
+        changed_schema, connection_id="connection", endpoint_fingerprint="endpoint", complete_analysis=True,
+    )
+    store.save(next_snapshot)
+    assert store.load() == next_snapshot
+    assert store.load_previous() == first
