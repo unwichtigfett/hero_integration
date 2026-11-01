@@ -142,6 +142,25 @@ class TestReplayAcceptance(TestCase):
         self.assertEqual(run.state, 'Blocked')
 
 
+class TestRunLeaseStatus(TestCase):
+    def test_terminal_running_and_unexpected_queued_slot_states(self):
+        now = datetime(2026, 1, 1, 12)
+        fake = SimpleNamespace(db=SimpleNamespace(get_value=mock.Mock()))
+        cases = (
+            (None, False),
+            (SimpleNamespace(state='Completed', lease_expires_on=None, started_on=None), False),
+            (SimpleNamespace(state='Queued', lease_expires_on=None, started_on=None), True),
+            (SimpleNamespace(state='Running', lease_expires_on=now + timedelta(seconds=1), started_on=None), True),
+            (SimpleNamespace(state='Running', lease_expires_on=now, started_on=None), False),
+            (SimpleNamespace(state='Running', lease_expires_on=None, started_on=None), False),
+        )
+        with mock.patch.object(migration, 'frappe', fake):
+            for row, expected in cases:
+                with self.subTest(row=row):
+                    fake.db.get_value.return_value = row
+                    self.assertEqual(migration.run_lease_alive('RUN', now), expected)
+
+
 class TestFailureFinalizationOwnership(TestCase):
     def test_stale_worker_cannot_finalize_another_or_newer_claim(self):
         old = datetime(2026, 1, 1, 10, 0)
