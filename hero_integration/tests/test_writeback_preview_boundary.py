@@ -85,6 +85,28 @@ class TestWritebackPreviewBoundary(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'contract.*schema'):
             self.preview()
 
+    def test_foreign_instance_conflict_and_changed_source_link_are_rejected(self):
+        cases = ({'source_instance': 'other'}, {'sync_status': 'Conflict'}, {'observed_source_hash': 'changed'})
+        for changes in cases:
+            original = vars(self.link).copy()
+            try:
+                vars(self.link).update(changes)
+                with self.subTest(changes=changes), self.assertRaisesRegex(ValueError, 'link|source'):
+                    self.preview()
+            finally:
+                vars(self.link).clear()
+                vars(self.link).update(original)
+
+    def test_missing_or_multiple_links_are_rejected(self):
+        original_get_all = self.frappe.get_all
+        for links in ([], [self.link, self.link]):
+            with self.subTest(link_count=len(links)):
+                self.frappe.get_all = lambda doctype, **kwargs: (
+                    links if doctype == 'HERO Integration Link' else original_get_all(doctype, **kwargs)
+                )
+                with self.assertRaisesRegex(ValueError, 'Exactly one valid HERO Integration Link'):
+                    self.preview()
+
     def test_changed_contract_service_and_document_are_rejected(self):
         self.service.query_document = 'mutation Other($contact: CustomerInput!) { update_contact(contact: $contact) { id } }'
         with self.assertRaisesRegex(ValueError, 'contract|service'):
