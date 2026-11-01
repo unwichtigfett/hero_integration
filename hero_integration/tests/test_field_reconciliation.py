@@ -42,6 +42,23 @@ class TestReconcile(unittest.TestCase):
         self.assertEqual(target["g"], prior["g"])
         self.assertEqual(target["f"], _h(f="b")["f"])
 
+    def test_conflict_and_missing_keep_both_baselines_when_another_field_advances(self):
+        prior = _h(apply="old", conflict="old", missing="old")
+        source = _h(apply="new", conflict="remote")
+        target = _h(apply="old", conflict="local", missing="local")
+        tracked = set(prior)
+
+        outcome = reconcile(prior, prior, source, target, tracked=tracked, missing={"missing"})
+
+        self.assertEqual(outcome.apply, {"apply"})
+        self.assertEqual(outcome.conflicts, {"conflict"})
+        self.assertTrue(outcome.advances_baseline)
+        for current in (source, target):
+            baseline = next_baseline(prior, current, outcome, tracked=tracked)
+            self.assertEqual(baseline["conflict"], prior["conflict"])
+            self.assertEqual(baseline["missing"], prior["missing"])
+        self.assertEqual(next_baseline(prior, source, outcome, tracked=tracked)["apply"], source["apply"])
+
     def test_unwritable_source_clear_is_acknowledged_only(self):
         outcome = reconcile(_h(f="a"), _h(f="a"), _h(f=None), _h(f="a"), tracked={"f"}, source_empty={"f"}, unwritable={"f"})
         self.assertEqual(outcome.acknowledged, {"f"})
