@@ -1508,6 +1508,7 @@ def _migrate_project(record: dict[str, object], run) -> Result:
         source_instance=source_instance, required_on_create=("customer", "project_name"),
         comparison_extra=title_basis, document_name=document_name,
         review_reason=" ".join(review) or None,
+        creation_values=_project_creation_values(record, values.get("company")),
     )
     if name_note and _creates(result):
         from dataclasses import replace
@@ -1567,6 +1568,19 @@ def _name_taken(doctype: str, name: str) -> str:
 
 
 PROJECT_TITLE_BASIS = "hero_project_title_basis"
+
+
+def _project_creation_values(record, company) -> dict | None:
+    """A new Project belongs to the department of its HERO trade (company structure concept)."""
+    from hero_integration.integrations.company_structure import department_for_trade
+    from hero_integration.services.project_naming import project_trade
+
+    try:
+        trade_code = project_trade(record)[0]
+    except ProjectTitleValidationError:
+        return None
+    department = department_for_trade(trade_code, company)
+    return {"department": department} if department else None
 
 
 def _hold_customer_only_title_change(record, values, link) -> dict | None:

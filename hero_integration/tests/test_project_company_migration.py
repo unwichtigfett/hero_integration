@@ -99,6 +99,7 @@ class FakeFrappeMigrationHarness:
         self.migration.notify_conflict_once = lambda *args, **kwargs: False
         self.reviews = []
         self.migration._references_besides_hero = lambda doctype, name: None
+        self.migration._project_creation_values = lambda record, company: None
         self.migration.notify_review = lambda link, detail: self.reviews.append((link.source_id, detail))
 
 
@@ -770,6 +771,15 @@ class TestProjectCompanyMigration(FakeFrappeMigrationHarness, unittest.TestCase)
             self.migration.decide_review(link, "reject")
         self.assertEqual(link.sync_status, "Pending Review")
         self.assertEqual(len(self.frappe.projects), 1)
+
+    def test_new_project_gets_the_department_of_its_trade_existing_one_is_untouched(self):
+        self.migration._project_creation_values = lambda record, company: {"department": "Photovoltaik - RSE"}
+        record = _project_title_inputs(id=797, customer_id=101)
+        self.assertEqual(self._project(record).code, "CREATED")
+        self.assertEqual(self.frappe.projects[0]["department"], "Photovoltaik - RSE")
+        self.frappe.projects[0]["department"] = "Elektro - RSE"
+        self._project({**record, "project_nr": "1112"})
+        self.assertEqual(self.frappe.projects[0]["department"], "Elektro - RSE")
 
     def test_changed_title_contract_updates_when_the_target_field_is_unchanged(self):
         record = _project_title_inputs(id=778, customer_id=101, project_nr="0001")
