@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
+from hero_integration import hooks
 from hero_integration.services import mapping_draft_access as access
 
 
@@ -28,6 +29,12 @@ class TestPersonalMappingAccess(unittest.TestCase):
                 query = access.personal_mapping_query(user="owner'example", doctype=doctype)
                 self.assertIn(f"`tab{doctype}`.`{column}` = <escaped-user>", query)
                 self.frappe.db.escape.assert_called_with("owner'example")
+
+    def test_personal_mapping_query_hook_is_registered_only_for_owned_doctypes(self):
+        handler = "hero_integration.services.mapping_draft_access.personal_mapping_query"
+        registered = {doctype for doctype, method in hooks.permission_query_conditions.items() if method == handler}
+        self.assertEqual(registered, {"HERO Mapping Draft", "HERO Mapping Revision"})
+        self.assertNotIn("*", registered)
 
     def test_personal_version_list_filter_escapes_owner_and_preserves_other_versions(self):
         query = access.personal_version_query(user="owner'example")
