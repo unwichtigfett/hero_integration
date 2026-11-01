@@ -28,6 +28,9 @@ class TestIntegrationOutputBoundary(unittest.TestCase):
         self.assertNotIn("detail", fields)
         self.assertNotIn("source_payload", fields)
 
-    def test_changed_fields_are_sorted_deduplicated_and_do_not_include_values(self):
+    def test_supplied_changed_field_names_are_sorted_and_deduplicated(self):
         self.assertEqual(integration_events.redacted_changed_fields(["name", "status", "name", ""]),
                          "name, status")
+
+    def test_changed_fields_formatter_does_not_validate_or_redact_input(self):
+        self.assertEqual(integration_events.redacted_changed_fields(["synthetic value"]), "synthetic value")
