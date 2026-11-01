@@ -40,6 +40,14 @@ class TestSavedReadContract(unittest.TestCase):
         # A short page may be a server page cap; only an empty page ends the scan.
         self.assertEqual(page.next_offset, 1)
 
+    def test_saved_reader_overwrites_response_source_annotation(self):
+        contract = from_documents(self.service, self.mapping, self.snapshot)
+        for instance in ("default", "synthetic"):
+            with self.subTest(instance=instance):
+                client = _Client({"contacts": [{"id": 41, "_hero_source_instance": "other-source"}]})
+                page = GraphQLServiceSource(client, self.service, contract, instance).customers()
+                self.assertEqual(page.records[0]["_hero_source_instance"], instance)
+
     def test_unapproved_or_stale_contract_is_rejected_before_transport(self):
         self.service.execution_status = "Pending Approval"
         with self.assertRaisesRegex(ReadContractError, "explicit execution approval"):
