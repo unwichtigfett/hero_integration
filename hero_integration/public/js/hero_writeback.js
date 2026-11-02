@@ -14,7 +14,7 @@
             const preview = response.message;
             const dialog = new frappe.ui.Dialog({title: __("Send to HERO"), fields: [{fieldtype: "HTML", fieldname: "preview"}], primary_action_label: __("Confirm and send once")});
             dialog.fields_dict.preview.$wrapper.empty().append(
-                $("<p class='text-muted'></p>").text(preview.effect_summary),
+                $("<p class='text-muted'></p>").text(__(preview.effect_summary)),
                 detailRows([
                     [__("HERO target"), `${preview.target.source_instance}:${preview.target.external_id}`],
                     [__("Frappe field"), `${preview.source.doctype}.${preview.source.field}`],

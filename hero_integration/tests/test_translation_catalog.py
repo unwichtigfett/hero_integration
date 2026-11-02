@@ -209,6 +209,23 @@ class TestGermanCatalog(unittest.TestCase):
                         missing.append(f"{path.name}:{value.lineno}: {value.value}")
         self.assertEqual(missing, [])
 
+    def test_send_preview_labels_and_effect_summaries_have_german_entries(self):
+        with (APP / "translations" / "de.csv").open(encoding="utf-8", newline="") as stream:
+            messages = dict(csv.reader(stream))
+        labels = {"Notes", "Phase", "Project"}
+        for filename, names in (("customer_send.py", {"CUSTOMER_FIELDS", "ADDRESS_FIELDS"}), ("task_send.py", {"FIELDS"})):
+            tree = ast.parse((APP / "services" / filename).read_text(encoding="utf-8"))
+            for node in tree.body:
+                if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id in names for target in node.targets):
+                    labels.update(ast.literal_eval(entry.elts[0]) for entry in node.value.elts)
+        tree = ast.parse((APP / "api.py").read_text(encoding="utf-8"))
+        effects = {value.value for node in ast.walk(tree) if isinstance(node, ast.Dict)
+                   for key, value in zip(node.keys, node.values)
+                   if isinstance(key, ast.Constant) and key.value == "effect_summary"
+                   and isinstance(value, ast.Constant) and isinstance(value.value, str)}
+        self.assertTrue(effects)
+        self.assertEqual(sorted((labels | effects) - messages.keys()), [])
+
     def test_static_migration_results_have_german_entries(self):
         with (APP / "translations" / "de.csv").open(encoding="utf-8", newline="") as stream:
             messages = dict(csv.reader(stream))
