@@ -39,6 +39,11 @@ class TestFrappeTranslationBridge(unittest.TestCase):
             detail = 'Field conflict requires review: customer_name, custom_id.'
             self.assertEqual(recipient_diagnostic('de@example.invalid', detail), 'Feldkonflikt erfordert Prüfung: customer_name, custom_id.')
             self.assertEqual(recipient_diagnostic('en@example.invalid', detail), detail)
+            combined = (detail + ' The HERO email address is not valid in ERPNext; it was not imported.'
+                        ' A HERO phone text is not a valid ERPNext number; the first number was imported and the full text kept as a comment.')
+            self.assertEqual(recipient_diagnostic('en@example.invalid', combined), combined)
+            self.assertEqual(recipient_diagnostic('de@example.invalid', combined),
+                             'Feldkonflikt erfordert Prüfung: customer_name, custom_id. Die HERO-E-Mail-Adresse ist in ERPNext ungültig; sie wurde nicht importiert. Ein HERO-Telefontext ist keine gültige ERPNext-Nummer; die erste Nummer wurde importiert und der vollständige Text als Kommentar gespeichert.')
             nested = 'Recheck requested: Awaits administrator approval: ' + detail
             self.assertEqual(recipient_diagnostic('de@example.invalid', nested),
                              'Erneute Prüfung angefordert: Wartet auf Freigabe durch einen Administrator: Feldkonflikt erfordert Prüfung: customer_name, custom_id.')
