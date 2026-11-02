@@ -4,7 +4,8 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const input = JSON.parse(fs.readFileSync(0, 'utf8'));
 
-for (const [language, messages] of Object.entries(input.catalogs)) {
+for (const language of input.languages) {
+    const messages = input.catalogs[language];
     const window = {};
     const frappe = {_messages: messages, boot: {lang: language, user: {roles: []}}};
     const context = vm.createContext({window, frappe, URLSearchParams, console});
