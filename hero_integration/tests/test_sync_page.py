@@ -178,8 +178,10 @@ class TestAreaStart(unittest.TestCase):
         fake = _Frappe(_settings())
         fake._ = lambda value: messages.get(value, value)
         with patch.object(api, 'frappe', fake):
-            result = api._sync_area_blocker(sync_page.area('events'), 'source-42')
+            result = api._sync_area_blocker(sync_page.area('events'), 'source-42', translate=True)
+            stored = api._sync_area_blocker(sync_page.area('events'), 'source-42')
         self.assertEqual(result, 'Event-Migration benötigt ein aktives Mapping für Termine in Quelle "source-42".')
+        self.assertEqual(stored, source.format('Event Migration', 'Events', 'source-42'))
 
     def test_one_click_uses_the_resolved_service_and_source_instance(self):
         result, start = self.start({"HeroCalendarEvents": [{"service": "SVC-NEW", "mapping": "MAP", "snapshot": "SNAP"}]})

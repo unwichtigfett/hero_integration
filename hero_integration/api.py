@@ -553,7 +553,7 @@ def sync_area_start(area: str) -> dict[str, object]:
         frappe.throw(frappe._("Another HERO run is still queued or running. Start this area when it has finished."))
     services = _sync_area_read_services(instance).get(item.operation) or []
     if not services:
-        frappe.throw(_sync_area_blocker(item, instance))
+        frappe.throw(_sync_area_blocker(item, instance, translate=True))
     result = _start_migration(action=item.run_action, dry_run=0, scheduled=False,
                               graphql_service=services[0]["service"], source_instance=instance)
     return {**result, "area": item.key}
@@ -684,11 +684,12 @@ def _sync_area(key: str):
         frappe.throw(translate_error(error, frappe._))
 
 
-def _sync_area_blocker(item, instance: str) -> str:
-    return frappe._(
-        '{0} needs an approved read service with an active mapping for {1} '
-        'on a snapshot of the HERO source instance "{2}". Approve one under API & Schema and Mapping.'
-    ).format(frappe._(item.action_label), frappe._(item.label), instance)
+def _sync_area_blocker(item, instance: str, *, translate: bool = False) -> str:
+    # Scheduler outcomes are persisted and must remain language-independent.
+    message = ('{0} needs an approved read service with an active mapping for {1} '
+               'on a snapshot of the HERO source instance "{2}". Approve one under API & Schema and Mapping.')
+    localize = frappe._ if translate else lambda value: value
+    return localize(message).format(localize(item.action_label), localize(item.label), instance)
 
 
 def _sync_area_read_services(instance: str) -> dict[str, list[dict[str, str]]]:
@@ -751,7 +752,7 @@ def _sync_area_state(item, instance: str, services: list[dict[str, str]], active
         "last_successful": last[0]["finished_on"] if last else None,
         "running_run": running["name"] if running else "",
         "ready": service is not None,
-        "blocker": "" if service else _sync_area_blocker(item, instance),
+        "blocker": "" if service else _sync_area_blocker(item, instance, translate=True),
         "service": service,
         "sync_enabled": bool(plan["areas"].get(item.key)),
         "polled": item.operation in plan["sources"],
