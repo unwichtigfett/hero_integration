@@ -8,6 +8,9 @@ import frappe
 from frappe.tests import IntegrationTestCase
 
 from hero_integration.services import migration
+from hero_integration.services.introspection import endpoint_fingerprint
+from hero_integration.services.read_contract import ReadContractError
+from hero_integration.sources.hero import CUSTOMER_QUERY_V1
 
 
 class TestSavedReadContractNativeE2E(IntegrationTestCase):
@@ -50,11 +53,12 @@ class TestSavedReadContractNativeE2E(IntegrationTestCase):
         return doc
 
     def _saved_contract(self, *, definition_ids: list[str] | None = None, suffix: str = ""):
-        operation = "synthetic_" + self.token.rsplit("-", 1)[-1] + suffix
+        operation = "contacts"
         snapshot = self._insert(
             {
                 "doctype": "HERO GraphQL Schema Snapshot",
                 "source_instance": "synthetic",
+                "endpoint_fingerprint": endpoint_fingerprint("https://synthetic.invalid/graphql", "synthetic"),
                 "snapshot_json": json.dumps(
                     {
                         "__schema": {
@@ -79,7 +83,7 @@ class TestSavedReadContractNativeE2E(IntegrationTestCase):
             }
         )
         definitions = [
-            ("id", "int", "HERO Integration Link", "custom_hero_source_id", "Source Identity", "Positive Int To Text"),
+            ("id", "int", "Customer", "custom_hero_source_id", "Source Identity", "Positive Int To Text"),
             ("full_name", "string|null", "Customer", "customer_name", "Record Name", "Trim"),
             ("company_name", "string|null", "Customer", "customer_type", "Customer Type", "Customer Type From Company Name"),
             ("is_deleted", "boolean|null", "HERO Integration Link", "sync_status", "Lifecycle Flag", "Identity"),
@@ -132,7 +136,7 @@ class TestSavedReadContractNativeE2E(IntegrationTestCase):
                         "records_path": operation,
                         "identity_path": "id",
                         "mapping_definition_ids": selected,
-                        "variables": {"first": "$page_size", "offset": "$offset"},
+                        "variables": {"first": "$page_size", "offset": "$offset", "orderBy": "id", "showDeleted": True},
                         "page_size": 10,
                     }
                 ),
@@ -143,24 +147,23 @@ class TestSavedReadContractNativeE2E(IntegrationTestCase):
             {
                 "doctype": "HERO GraphQL Service",
                 "service_name": self.token + suffix,
-                "operation_name": "SyntheticContacts",
-                "query_document": (
-                    f"query SyntheticContacts($first: Int!, $offset: Int!) "
-                    f"{{ {operation} {{ id full_name company_name is_deleted nr }} }}"
-                ),
+                "operation_name": "HeroCustomers",
+                "query_document": CUSTOMER_QUERY_V1,
                 "schema_snapshot": snapshot.name,
                 "status": "Validated",
             }
         )
         service.read_mapping = mapping.name
-        service.execution_status = "Approved"
-        service.approved_service_revision = service.service_revision
-        service.approved_mapping_revision = mapping.mapping_revision
         service.save()
+        frappe.db.set_value("HERO GraphQL Service", service.name, {
+            "execution_status": "Approved", "approved_service_revision": service.service_revision,
+            "approved_mapping_revision": mapping.mapping_revision,
+        })
+        service.reload()
         return service, mapping, ignored
 
     def _run(self, service, mapping):
-        return self._insert(
+        run = self._insert(
             {
                 "doctype": "HERO Integration Run",
                 "action": "Customer Migration",
@@ -171,6 +174,16 @@ class TestSavedReadContractNativeE2E(IntegrationTestCase):
                 "mapping_revision": mapping.mapping_revision,
             }
         )
+        with patch.object(migration, "get_configuration", return_value=self._configuration()):
+            migration.bind_run_checkpoint(run)
+        run.save()
+        return run
+
+    @staticmethod
+    def _configuration():
+        return SimpleNamespace(endpoint=SimpleNamespace(url="https://synthetic.invalid/graphql"), api_token="synthetic",
+                               timeout_seconds=1, source_instance="synthetic", source_binding_revision=0,
+                               source_binding_confirmed=True)
 
     def _execute(self, run, record):
         _Client.calls = []
@@ -179,9 +192,7 @@ class TestSavedReadContractNativeE2E(IntegrationTestCase):
             patch.object(
                 migration,
                 "get_configuration",
-                return_value=SimpleNamespace(
-                    endpoint=object(), api_token="synthetic", timeout_seconds=1, source_instance="synthetic"
-                ),
+                return_value=self._configuration(),
             ),
             patch.object(migration, "HeroGraphQLClient", _Client),
         ):
@@ -206,26 +217,31 @@ class TestSavedReadContractNativeE2E(IntegrationTestCase):
             "HERO Integration Link",
             {"source_type": "customer", "source_id": self.source_id, "source_instance": "synthetic"},
         )
-        self.assertEqual(run.state, "Completed")
+        self.assertEqual(run.state, "Completed", run.error_message)
         self.assertEqual((run.graphql_service, run.service_revision), (service.name, service.service_revision))
         self.assertEqual((run.graphql_mapping, run.mapping_revision), (mapping.name, mapping.mapping_revision))
-        self.assertEqual(_Client.calls, [(service.query_document, {"first": 10, "offset": 0})])
+        self.assertEqual(_Client.calls, [
+            (service.query_document, {"first": 10, "offset": 0, "orderBy": "id", "showDeleted": True}),
+            (service.query_document, {"first": 10, "offset": 1, "orderBy": "id", "showDeleted": True}),
+        ])
         self.assertEqual(customer.customer_name, record["full_name"])
         self.assertNotEqual(customer.customer_name, record["nr"])
         self.assertEqual((link.target_doctype, link.target_name), ("Customer", customer.name))
         self.assertNotIn(ignored.definition_id, json.loads(mapping.mapping_json)["mapping_definition_ids"])
 
     def test_unavailable_selected_definition_blocks_before_transport_or_target_write(self):
-        service, mapping, _ignored = self._saved_contract(definition_ids=["not-a-selected-definition"], suffix="-invalid")
+        service, mapping, _ignored = self._saved_contract(suffix="-invalid")
         run = self._run(service, mapping)
-        self._execute(
-            run,
-            {"id": int(self.source_id), "full_name": self.token + "-blocked", "company_name": "", "is_deleted": False},
-        )
+        selected = json.loads(mapping.mapping_json)["mapping_definition_ids"][0]
+        frappe.db.set_value("HERO Frappe Mapping", {"definition_id": selected}, "status", "Disabled")
+        with self.assertRaisesRegex(ReadContractError, "lineage cannot be verified"):
+            self._execute(
+                run,
+                {"id": int(self.source_id), "full_name": self.token + "-blocked", "company_name": "", "is_deleted": False},
+            )
 
         run.reload()
-        self.assertEqual(run.state, "Blocked")
-        self.assertIn("selected active mapping definitions", run.error_message)
+        self.assertEqual(run.state, "Failed")
         self.assertEqual(_Client.calls, [])
         self.assertFalse(frappe.db.exists("Customer", {"customer_name": self.token + "-blocked"}))
         self.assertFalse(
@@ -241,14 +257,14 @@ class TestSavedReadContractNativeE2E(IntegrationTestCase):
         mapping.mapping_json = mapping.mapping_json + " "
         mapping.save()
 
-        self._execute(
-            run,
-            {"id": int(self.source_id), "full_name": self.token + "-stale", "company_name": "", "is_deleted": False},
-        )
+        with self.assertRaisesRegex(ReadContractError, "read mapping is not active"):
+            self._execute(
+                run,
+                {"id": int(self.source_id), "full_name": self.token + "-stale", "company_name": "", "is_deleted": False},
+            )
 
         run.reload()
-        self.assertEqual(run.state, "Blocked")
-        self.assertIn("selected read mapping is not active", run.error_message)
+        self.assertEqual(run.state, "Failed")
         self.assertEqual(_Client.calls, [])
         self.assertFalse(frappe.db.exists("Customer", {"customer_name": self.token + "-stale"}))
 
@@ -262,5 +278,4 @@ class _Client:
 
     def query(self, document, variables):
         self.__class__.calls.append((document, variables))
-        root = document.split("{")[1].strip().split()[0]
-        return {root: [dict(self.__class__.record)]}
+        return {"contacts": [dict(self.__class__.record)] if variables.get("offset") == 0 else []}

@@ -87,14 +87,24 @@ class TestRC16NativeSafety(IntegrationTestCase):
         run = self._run()
         frappe.db.commit()
 
-        def fail_after_write(_run, _source):
+        def fail_after_write(_run, _source, *, checkpoint):
             frappe.db.set_value("Customer", customer.name, "customer_name", self.token + "-uncommitted")
             raise RuntimeError("synthetic job failure")
 
-        with patch.object(migration, "validate_run_mappings"), patch.object(migration, "get_configuration"), \
-                patch.object(migration, "_source_for_run"), patch.object(migration, "_process_requested_phases", side_effect=fail_after_write):
-            with self.assertRaisesRegex(RuntimeError, "synthetic job failure"):
-                execute_job(frappe.local.site, migration.execute_run, None, self.token, {"run_name": run.name}, user="Administrator", is_async=False)
+        previous_job = getattr(frappe.local, "job", None)
+        try:
+            with patch.object(migration, "_assert_checkpoint_contract"), \
+                    patch.object(migration, "validate_run_mappings"), patch.object(migration, "get_configuration"), \
+                    patch.object(migration, "_source_for_run"), patch.object(migration, "_process_requested_phases", side_effect=fail_after_write):
+                with self.assertRaisesRegex(RuntimeError, "synthetic job failure"):
+                    execute_job(frappe.local.site, migration.execute_run, None, self.token, {"run_name": run.name}, user="Administrator", is_async=False)
+        finally:
+            # Synchronous Frappe jobs retain this context; it must not leak to HTTP tests.
+            if previous_job is None:
+                if hasattr(frappe.local, "job"):
+                    del frappe.local.job
+            else:
+                frappe.local.job = previous_job
 
         self.assertEqual(frappe.db.get_value("Customer", customer.name, "customer_name"), self.token)
         self.assertEqual(frappe.db.get_value("HERO Integration Run", run.name, "state"), "Failed")

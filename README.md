@@ -29,6 +29,14 @@ Install from the branch `hero_int_1.0`:
 - [Mapping matrix](docs/mapping_matrix_1.0.md)
 - [Desk workspace](docs/ui_overview_1.0.md)
 
+## CI tests
+
+Woodpecker runs database-independent tests and then the complete Frappe site
+suite on a disposable site. Tests that require a Frappe database run in the
+site suite only. Both test commands must succeed; no failure baseline is
+accepted. Optional schema and configuration imports use a separate CI site.
+GitHub Actions also provides an isolated selectable-app installation test.
+
 ## Adapter tools
 
 The app stores GraphQL schema snapshots, versioned services and cyclic polling. The API Analyzer builds a deterministic graph from a saved snapshot without contacting HERO.
