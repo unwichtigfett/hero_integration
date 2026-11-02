@@ -243,11 +243,17 @@ class TestGermanCatalog(unittest.TestCase):
     def test_frappe_catalog_loader_and_language_precedence(self):
         try:
             import frappe
-            from frappe.translate import get_translation_dict_from_file, get_user_lang
+            from frappe.translate import get_translation_dict_from_file, get_translations_from_apps, get_user_lang
         except ModuleNotFoundError:
             self.skipTest("Frappe is not installed")
         catalog = get_translation_dict_from_file(str(APP / "translations" / "de.csv"), "de", "hero_integration", throw=True)
+        with (APP / "translations" / "de.csv").open(encoding="utf-8", newline="") as stream:
+            expected = dict(csv.reader(stream))
+        self.assertEqual(catalog, expected)
         self.assertEqual(catalog["HERO Settings"], "HERO-Einstellungen")
+        # Frappe resolves a regional German variant through its parent language.
+        for language in ("de-DE", "de-CH"):
+            self.assertEqual(get_translations_from_apps(language, apps=["hero_integration"])["HERO Settings"], "HERO-Einstellungen")
         with patch.object(frappe, "local", SimpleNamespace(lang="en")), \
              patch.object(frappe, "get_cached_value", return_value="de"), \
              patch.object(frappe, "get_system_settings", return_value="en"):
