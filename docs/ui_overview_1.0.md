@@ -10,7 +10,7 @@ The editor requires an explicitly selected, saved and validated schema snapshot.
 
 | Action | Actual behavior |
 | --- | --- |
-| Workspace context, schema and graph | Read saved validated snapshot information. |
+| `workspace_context`, `workspace_schema`, `workspace_graph` | Read saved validated snapshot information. |
 | GraphQL service list/detail/save/validate/delete | Permission-checked **local** management of saved service definitions. |
 | `workspace_service_execute` | **Explicit read-only Query execution** for System Manager. Requires validated saved Query, matching revision/snapshot and checked variables. Mutations are rejected before transport; no migration or record acknowledgment occurs. |
 | `execute_graphql_service` | **Separate mutation endpoint** guarded by active contract, global switch, role/confirmation and one-shot audit/transport. A Mutation Draft alone cannot execute. |

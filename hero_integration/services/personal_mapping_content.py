@@ -216,7 +216,12 @@ def validate_exchange_action(content, schema, operation_name):
             raise WritebackContractError('Action contains an unsupported parameter.')
         if 'version' in content and (type(content['version']) is not int or content['version'] != 1):
             raise WritebackContractError('Unsupported action version.')
-        action = normalise_mapping(content, schema)
+        # These optional review annotations are validated below; they are not
+        # part of the runtime writeback mapping accepted by normalise_mapping.
+        runtime_content = dict(content)
+        runtime_content['target'] = {key: value for key, value in incoming_target.items()
+                                     if key not in {'field_path', 'graphql_type'}}
+        action = normalise_mapping(runtime_content, schema)
         source, target = action['source'], action['target']
         reviewed = reviewed_input_target(source['doctype'], source['field'], schema)
         if target['operation'] != operation_name:

@@ -31,6 +31,7 @@ class TestB8UniversalRuntimeFrappeIntegration(IntegrationTestCase):
             self.settings.hero_source_instance, self.settings.polling_mode,
             self.settings.allow_graphql_mutation_execution,
         )
+        self.original_binding = (self.settings.source_binding_revision, self.settings.source_binding_confirmed_revision)
         self.settings.hero_source_instance, self.settings.polling_mode = self.source, "AUTO_SYNC"
         self.settings.save()
         self._create_approved_universal_plan()
@@ -52,11 +53,14 @@ class TestB8UniversalRuntimeFrappeIntegration(IntegrationTestCase):
         )
 
     def tearDown(self):
+        self.settings.reload()
         (
             self.settings.hero_source_instance, self.settings.polling_mode,
             self.settings.allow_graphql_mutation_execution,
         ) = self.original_settings
         self.settings.save()
+        frappe.db.set_single_value("HERO Integration Settings", "source_binding_revision", self.original_binding[0])
+        frappe.db.set_single_value("HERO Integration Settings", "source_binding_confirmed_revision", self.original_binding[1])
         self._remove()
         for name in (self.bound.name, self.unbound.name):
             frappe.db.delete("Customer", name)
@@ -136,7 +140,7 @@ class TestB8UniversalRuntimeFrappeIntegration(IntegrationTestCase):
         self.plan = plans.approve(draft_plan.plan_key, expected_revision=draft_plan.revision, actor="Administrator")
         self.assertEqual(b8_runtime.reconstruct_materialized_read_plan(self.selection).request, request)
 
-    def test_scheduler_and_pending_sync_use_the_approved_universal_contract(self):
+    def test_scheduler_dispatch_and_pending_sync_use_the_approved_contract(self):
         calls: list[str | None] = []
         phase = {"name": "scheduler"}
 
@@ -152,8 +156,18 @@ class TestB8UniversalRuntimeFrappeIntegration(IntegrationTestCase):
             ), None, True, "wm-1")
 
         provider = guarded_provider(ProviderContract(ProviderCapability.COMPLETE_DELTA_CURSOR), read_page)
-        with patch("hero_integration.services.sync_runtime_adapter._UnprovenProvider", return_value=provider):
+        # Automatic sync now queues the configured areas; it no longer invokes
+        # the legacy bound-only provider directly from the scheduler.
+        with patch.object(tasks, "_auto_sync_tick") as tick:
             tasks.run_scheduled_sync()
+        tick.assert_called_once()
+        self.assertEqual(calls, [])
+        self.settings.reload()
+        self.settings.polling_mode = "OFF"
+        self.settings.save()
+        frappe.db.set_single_value("HERO Integration Settings", "source_binding_confirmed_revision", self.settings.source_binding_revision)
+        with patch("hero_integration.services.sync_runtime_adapter._UnprovenProvider", return_value=provider):
+            api.pending_sync(self.plan.generation)
         self.assertEqual(calls, [None])
         self.assertEqual(frappe.get_doc("Customer", self.bound.name).customer_name, self.bound_old)
         self.assertEqual(frappe.get_doc("Customer", self.unbound.name).customer_name, self.unbound_old)
@@ -162,18 +176,16 @@ class TestB8UniversalRuntimeFrappeIntegration(IntegrationTestCase):
         self.assertEqual(FrappeBindingStorage().field(frappe.local.site, self.binding.identity_key).revision, self.binding.revision)
 
         with patch("hero_integration.services.sync_runtime_adapter._UnprovenProvider", return_value=provider):
-            tasks.run_scheduled_sync()
+            api.pending_sync(self.plan.generation)
         self.assertEqual(calls, [None, None])
         self.assertIsNone(FrappeSyncLedger().state(frappe.local.site).cursor)
 
         phase["name"] = "failure"
         with patch("hero_integration.services.sync_runtime_adapter._UnprovenProvider", return_value=provider):
-            tasks.run_scheduled_sync()
+            api.pending_sync(self.plan.generation)
         failed = FrappeSyncLedger().state(frappe.local.site)
         self.assertEqual((failed.cursor, failed.status), (None, SyncStatus.FAILED))
 
-        self.settings.polling_mode = "OFF"
-        self.settings.save()
         phase["name"] = "pending"
         with patch("hero_integration.services.sync_runtime_adapter._UnprovenProvider", return_value=provider):
             result = api.pending_sync(self.plan.generation)
