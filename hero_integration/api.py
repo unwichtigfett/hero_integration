@@ -3634,3 +3634,25 @@ def project_send(project: str, fingerprint: str, confirmed: int | str = 0, phase
         return send(project, phase_id, fingerprint, confirmed)
     except ProjectSendError as error:
         frappe.throw(str(error))
+
+
+@frappe.whitelist(methods=["POST"])
+def task_send_preview(task: str) -> dict:
+    """Preview of the Task changes the Send to HERO button would send (reads HERO)."""
+    from hero_integration.services.task_send import TaskSendError, preview
+
+    try:
+        return preview(task)
+    except TaskSendError as error:
+        frappe.throw(str(error))
+
+
+@frappe.whitelist(methods=["POST"])
+def task_send(task: str, fingerprint: str, confirmed: int | str = 0) -> dict:
+    """Send the previewed Task to HERO once (update or create) and verify it."""
+    from hero_integration.services.task_send import TaskSendError, send
+
+    try:
+        return send(task, fingerprint, confirmed)
+    except TaskSendError as error:
+        frappe.throw(str(error))

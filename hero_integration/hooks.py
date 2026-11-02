@@ -26,6 +26,7 @@ scheduler_events = {
 doctype_js = {
     "Customer": "public/js/hero_writeback.js",
     "Project": ["public/js/hero_writeback.js", "public/js/hero_project_send.js"],
+    "Task": ["public/js/hero_task_send.js"],
 }
 
 # The deletion gate applies to the explicitly listed HERO-owned DocTypes.
