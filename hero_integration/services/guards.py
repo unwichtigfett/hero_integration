@@ -14,7 +14,7 @@ def deletion_is_allowed() -> bool:
 def assert_deletion_allowed(*, action: str) -> None:
     if not deletion_is_allowed():
         frappe.throw(
-            f"HERO Integration deletion is disabled; refusing {action}.",
+            frappe._("HERO Integration deletion is disabled; refusing {0}.").format(action),
             frappe.PermissionError,
         )
 
@@ -51,8 +51,9 @@ def protect_hero_bound_target(doc, method=None) -> None:
         return
     if frappe.db.exists("HERO Integration Link", {"target_doctype": doc.doctype, "target_name": doc.name}):
         frappe.throw(
-            f"{doc.doctype} {doc.name} is imported from HERO and cannot be deleted here. Change it in HERO, "
-            "reject it in its HERO Integration Link while it awaits review, or use the HERO data purge.",
+            frappe._("{0} {1} is imported from HERO and cannot be deleted here. Change it in HERO, "
+                     "reject it in its HERO Integration Link while it awaits review, or use the HERO data purge.")
+            .format(doc.doctype, doc.name),
             frappe.PermissionError,
         )
 
@@ -82,10 +83,10 @@ def _reserved_for_hero(name) -> bool:
 def protect_hero_project_ids(doc, method=None) -> None:
     """Project validate: a new Project created outside the HERO import must not end in -H."""
     if doc.is_new() and _reserved_for_hero(doc.name) and not getattr(frappe.flags, "hero_project_naming", False):
-        frappe.throw("Project IDs ending in -H are reserved for projects imported from HERO.")
+        frappe.throw(frappe._("Project IDs ending in -H are reserved for projects imported from HERO."))
 
 
 def protect_hero_project_rename(doc, method=None, olddn=None, newdn=None, merge=False) -> None:
     """Project before_rename: only the HERO tools may rename a Project to an ID ending in -H."""
     if _reserved_for_hero(newdn) and not getattr(frappe.flags, "hero_project_naming", False):
-        frappe.throw("Project IDs ending in -H are reserved for projects imported from HERO.")
+        frappe.throw(frappe._("Project IDs ending in -H are reserved for projects imported from HERO."))

@@ -26,5 +26,8 @@ def ensure_doctype_write(doctype: str, frappe_api=None) -> None:
     for parent in sorted(set(parents)):
         if frappe_api.db.exists("DocType", parent) and frappe_api.has_permission(parent, "write"):
             return
-    frappe_api.throw(f"You need write permission for a DocType that contains {doctype} (e.g. Contact) "
-                     "to activate HERO mappings into it.", frappe_api.PermissionError)
+    frappe_api.throw(
+        frappe_api._("You need write permission for a DocType that contains {0} (e.g. Contact) "
+                     "to activate HERO mappings into it.").format(doctype),
+        frappe_api.PermissionError,
+    )

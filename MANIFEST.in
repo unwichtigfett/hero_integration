@@ -4,3 +4,4 @@ include installation_guide_1.0.md
 recursive-include docs *.md
 recursive-include hero_integration *.json *.js *.txt
 recursive-include hero_integration *.css
+recursive-include hero_integration/translations *.csv

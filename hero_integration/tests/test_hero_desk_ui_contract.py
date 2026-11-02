@@ -421,11 +421,11 @@ class TestHeroDeskUiContract(unittest.TestCase):
         self.assertIn("hero-sync-cards", migration)
         self.assertIn("Field mapping details", mapping)
 
-    def test_hero_owned_ui_strings_are_not_routed_through_frappe_translation(self):
-        sources = [WORKSPACE_JS, TOOLS_JS, SETTINGS_JS, MAPPING_EDITOR_JS, MIGRATION_JS]
-        for source_path in sources:
+    def test_hero_owned_ui_strings_use_frappe_translation(self):
+        self.assertIn('text: (value) => __(String(value))', WORKSPACE_JS.read_text())
+        for source_path in (TOOLS_JS, SETTINGS_JS, MAPPING_EDITOR_JS, MIGRATION_JS):
             with self.subTest(source=source_path.name):
-                self.assertNotIn("__(", source_path.read_text())
+                self.assertIn("hero_integration_i18n", source_path.read_text())
 
     def test_native_page_rpc_and_visual_mapping_failures_are_not_routed_to_legacy_or_rendered_as_objects(self):
         workspace = WORKSPACE_JS.read_text()

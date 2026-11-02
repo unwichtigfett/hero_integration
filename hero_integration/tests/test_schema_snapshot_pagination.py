@@ -7,6 +7,8 @@ from hero_integration import api
 
 
 class SnapshotFrappe:
+    _ = staticmethod(lambda message: message)
+
     def __init__(self, allowed=True):
         self.allowed = allowed
         self.calls = []

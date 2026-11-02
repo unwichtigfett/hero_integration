@@ -520,7 +520,7 @@
         const status = $("<p role='status' aria-live='polite'></p>");
         const toolbar = $("<div class='hero-mapping-actions'></div>");
         const body = $("<div class='hero-mapping-body'></div>");
-        const tabs = $("<div role='tablist' aria-label='Mapping sections' class='hero-mapping-actions'></div>");
+        const tabs = $("<div role='tablist' class='hero-mapping-actions'></div>").attr("aria-label", text("Mapping sections"));
         const panel = $("<section role='tabpanel' id='hero-mapping-tabpanel'></section>").append(toolbar, body);
         const heading = $("<header class='hero-mapping-title'></header>").append($("<h2 tabindex='-1'></h2>").text(text("HERO Mapping Editor")), tabs);
         root.append(heading, status, panel);
@@ -664,8 +664,8 @@
             let viewEpoch = epoch, request = 0;
             const viewTab = tab, section = $("<section data-field-picker></section>"), explorer = $("<details class='hero-mapping-schema-explorer'></details>").append($('<summary></summary>').text(text('Inspect saved schema')));
             section.append(explorer);
-            const snapshot = $("<select class='form-control' aria-label='Saved schema snapshot'></select>");
-            const operations = $("<select class='form-control' aria-label='Schema operation'></select>");
+            const snapshot = $("<select class='form-control'></select>").attr("aria-label", text("Saved schema snapshot"));
+            const operations = $("<select class='form-control'></select>").attr("aria-label", text("Schema operation"));
             const info = $("<p role='status'></p>"), limitNotice = $("<p role='status'></p>"), details = $('<pre></pre>');
             const currentView = (number) => !disposed && epoch === viewEpoch && tab === viewTab && number === request && section[0].isConnected;
             const resetOperations = () => operations.empty().append($('<option></option>').val('').text(text('Choose an operation'))).prop('disabled', true);
@@ -719,7 +719,7 @@
                     const heading = $('<h3></h3>').text(text(creating ? 'Create shared writeback draft' : 'Edit shared writeback draft'));
                     dialog.attr('aria-label', text(creating ? 'Create shared writeback draft' : 'Edit shared writeback draft')).append(heading,
                         $('<p></p>').text(text('This is a shared draft, separate from personal drafts. Saving never activates it.')));
-                    const state = $("<p role='status'></p>"), choices = $("<select class='form-control' aria-label='Reviewed shared source'></select>");
+                    const state = $("<p role='status'></p>"), choices = $("<select class='form-control'></select>").attr("aria-label", text("Reviewed shared source"));
                     const candidates = creating ? catalog.fields.filter((item) => item.selectable === true && item.target) : [];
                     if (creating) {
                         choices.append($('<option></option>').val('').text(text('Choose a reviewed source and target')));
@@ -727,9 +727,9 @@
                         dialog.append($('<label></label>').text(text('Reviewed source and target')).append(choices));
                     } else dialog.append($('<p></p>').text(`${text('Shared draft')}: ${doc.name} · ${text('Status')}: ${doc.status} · ${text('Revision')}: ${doc.mapping_revision} · ${text('Last editor')}: ${doc.modified_by}`));
                     const initial = doc ? JSON.parse(doc.mapping_json) : null;
-                    const transform = $("<select class='form-control' aria-label='Shared draft transformation'><option value='Identity'>Identity</option><option value='Trim'>Trim</option></select>").val(initial?.transformation || 'Identity');
-                    const reason = $("<textarea class='form-control' aria-label='Shared draft review reason' maxlength='1000'></textarea>").val(doc?.suggestion_reason || '');
-                    const confidence = $("<input class='form-control' type='number' min='0' max='1' step='any' aria-label='Shared draft confidence'>").val(doc?.confidence ?? 0);
+                    const transform = $("<select class='form-control'><option value='Identity'>Identity</option><option value='Trim'>Trim</option></select>").attr("aria-label", text("Shared draft transformation")).val(initial?.transformation || 'Identity');
+                    const reason = $("<textarea class='form-control' maxlength='1000'></textarea>").attr("aria-label", text("Shared draft review reason")).val(doc?.suggestion_reason || '');
+                    const confidence = $("<input class='form-control' type='number' min='0' max='1' step='any'>").attr("aria-label", text("Shared draft confidence")).val(doc?.confidence ?? 0);
                     const initialReason = String(reason.val()), initialConfidence = String(confidence.val()), initialTransform = transform.val();
                     let consumed = false;
                     const update = () => { sharedDirty = creating ? Boolean(choices.val() || reason.val() || Number(confidence.val()) !== 0 || transform.val() !== 'Identity') :
@@ -842,7 +842,7 @@
             const store = window.hero_integration_bookmarks;
             if (!store) return;
             const box = $("<details class='hero-mapping-saved-nodes'></details>").append($('<summary></summary>').text(text('Saved HERO Nodes')));
-            const search = $("<input class='form-control' aria-label='Search saved HERO nodes'>").attr('placeholder', text('Search alias or original name'));
+            const search = $("<input class='form-control'>").attr('aria-label', text('Search saved HERO nodes')).attr('placeholder', text('Search alias or original name'));
             const list = $("<div class='hero-mapping-saved-node-list' role='list'></div>"), state = $("<p role='status'></p>");
             let request = 0;
             const wanted = view.viewTab === 'Query' ? 'QUERY' : 'MUTATION';
@@ -1077,16 +1077,18 @@
                 }, true], ["Cancel", () => {}]]);
         }
         function renderMappingsTable(parent) {
-            const section = $("<section class='hero-mapping-active' aria-label='Active Mappings'></section>").appendTo(parent);
+            const section = $("<section class='hero-mapping-active'></section>").attr("aria-label", text("Active Mappings")).appendTo(parent);
             section.append($("<h3></h3>").text(text("Active Mappings")));
             const filters = $("<div class='hero-mapping-table-filters'></div>").appendTo(section);
-            const operation = $("<select class='form-control' aria-label='Operation filter'><option value=''>All operations</option></select>");
+            const operation = $("<select class='form-control'></select>").attr("aria-label", text("Operation filter"))
+                .append($("<option value=''></option>").text(text("All operations")));
             $("<label></label>").append($("<span></span>").text(text("Operation")), operation).appendTo(filters);
             const searchInput = field("Search active mappings", search, () => {}, filters).attr("maxlength", 120);
             const fieldSearch = field("Filter field mappings", fieldFilter, () => {}, filters);
             const tableWrap = $("<div class='hero-mapping-table-wrap'></div>").appendTo(section);
             const table = $("<table class='table table-sm hero-mapping-table'><thead><tr><th>Status</th><th>Operation</th><th></th><th>App</th><th>Target</th><th>Revision</th></tr></thead><tbody></tbody></table>").appendTo(tableWrap);
-            table.find("th").eq(2).text(tab === "Mutation" ? "Source Frappe" : "Source HERO");
+            table.find("th").each((index, th) => { $(th).text(text($(th).text())); });
+            table.find("th").eq(2).text(text(tab === "Mutation" ? "Source Frappe" : "Source HERO"));
             const pager = $("<div class='hero-mapping-actions'></div>").appendTo(section);
             let offset = 0, sequence = 0, tableEpoch = epoch, data, apps = new Map(), pending = false;
             const valid = (n) => !disposed && epoch === tableEpoch && n === sequence && section[0].isConnected;
@@ -1131,7 +1133,8 @@
             rowChangeHandler = () => { if (data && section[0].isConnected) draw(); };
             root.off("hero-mapping-content-change").on("hero-mapping-content-change", rowChangeHandler);
             const load = async () => {
-                const n = ++sequence; pending = true; table.find("tbody").html("<tr><td colspan='6'>Loading active mappings…</td></tr>");
+                const n = ++sequence; pending = true;
+                table.find("tbody").empty().append($("<tr><td colspan='6'></td></tr>").find("td").text(text("Loading active mappings…")).end());
                 try {
                     const result = await rpc("frontend_mapping_list", {search: searchInput.val(), start: offset, page_size: 20, direction: directionForTab(tab)});
                     if (!valid(n)) return;
@@ -1200,14 +1203,14 @@
             };
             // Personal draft actions live directly in Map Fields; there is no separate lower draft area.
             if (editable && model) {
-                const actions = $("<div class='hero-mapping-draft-actions' role='group' aria-label='Personal draft actions'></div>");
+                const actions = $("<div class='hero-mapping-draft-actions' role='group'></div>").attr("aria-label", text("Personal draft actions"));
                 if (!model.creation) {
                     actions.append(button("Create Mapping", () => { model.creation = {}; renderDetail(); }).attr("data-create-mapping", ""));
                 } else {
                     actions.append($("<p class='hero-mapping-draft-hint'></p>").text(text("Choose source and target for the new mapping; existing mappings remain unchanged.")),
                         button("Add mapping to draft", () => {
                             try { model.createAdditional(); selected = rows(model.content).length - 1; renderDetail(); say("New mapping added locally. Save the draft to keep it."); }
-                            catch (error) { contextSection.find("[role='status']").first().text(error.message); }
+                            catch (error) { contextSection.find("[role='status']").first().text(text(error.message)); }
                         }, true).attr("data-create-mapping", ""),
                         button("Cancel new mapping", () => { model.creation = null; renderDetail(); }));
                 }
@@ -1222,7 +1225,7 @@
             // Transformation, rule parameters and definition settings stay available as collapsible details under Map Fields.
             const parameters = $("<details class='hero-mapping-parameters hero-mapping-rule-details'></details>")
                 .append($("<summary></summary>").text(text("Rule details (transformation and parameters)")));
-            const detail = $("<section class='hero-mapping-row-detail' aria-label='Selected field mapping'></section>").attr("data-editable", String(editable)).appendTo(parameters);
+            const detail = $("<section class='hero-mapping-row-detail'></section>").attr("aria-label", text("Selected field mapping")).attr("data-editable", String(editable)).appendTo(parameters);
             for (const key of ["records_path", "record_path", "identity_path", "target_operation"]) {
                 if (!(key in value)) continue;
                 if (editable && typeof value[key] === "string") field(key.replaceAll("_", " "), value[key], (v) => model.set([key], v), parameters);
@@ -1248,7 +1251,7 @@
         }
         function renderContext(value) {
             const mutation = tab === "Mutation", frappeSide = mutation ? "source" : "target";
-            const context = $("<section class='hero-mapping-context' aria-label='Map Fields'></section>").append($("<h3></h3>").text(text("Map Fields")));
+            const context = $("<section class='hero-mapping-context'></section>").attr("aria-label", text("Map Fields")).append($("<h3></h3>").text(text("Map Fields")));
             const fieldNotice = $("<p role='status'></p>");
             let openFieldDraft;
             if (admin && active && active.mapping_type === "graphql") {
@@ -1426,7 +1429,7 @@
                 return fields;
             };
             const heroMeta = metadata(heroPane), frappeMeta = metadata(frappePane);
-            const relationship = $('<section class="hero-mapping-context-note" aria-label="Relationship details"></section>');
+            const relationship = $('<section class="hero-mapping-context-note"></section>').attr("aria-label", text("Relationship details"));
             let appNames = new Map();
             const refresh = () => {
                 const value = active ? content() : {}, row = rows(value)[selected], rule = !model?.creation && row?.reference ? ownRule(value, row.id) || ruleCache.get(row.id) : null;
@@ -1692,7 +1695,7 @@
                     $("<p></p>").text(`${text("Your draft")}:`), safeJson(parseContent(item.draft_json)));
                 if (item.identities?.length) detail.append($("<p class='text-muted'></p>").text(`${text("Referenced identities")}: ${item.identities.join(", ")}`));
                 if (item.state === "CONFLICT") {
-                    const select = $("<select class='form-control' aria-label='Conflict resolution'></select>")
+                    const select = $("<select class='form-control'></select>").attr("aria-label", text("Conflict resolution"))
                         .append($("<option value='DRAFT'></option>").text(text("Keep my draft")), $("<option value='ACTIVE'></option>").text(text("Use current active")));
                     select.on("change", () => { choices[item.identifier] = select.val(); });
                     choices[item.identifier] = "DRAFT"; detail.append($("<label></label>").text(text("Conflict resolution")).append(select));
@@ -1780,6 +1783,7 @@
                     if (disposed || request !== epoch || linkSerial !== linkRequest) return;
                     status.remove();
                     const table = $("<table class='table table-sm hero-mapping-table'><thead><tr><th>Status</th><th>Source instance</th><th>Source type</th><th>Source ID</th><th>Target</th><th>Last synchronized</th></tr></thead><tbody></tbody></table>").appendTo(linksHost);
+                    table.find("th").each((index, th) => { $(th).text(text($(th).text())); });
                     if (!data.items.length) table.find("tbody").append($("<tr><td colspan='6'></td></tr>").find("td").text(text("No existing integration links.")).end());
                     data.items.forEach((item) => {
                         const row = $("<tr></tr>");
@@ -1796,6 +1800,7 @@
             body.append($("<h4></h4>").text(text("Field bindings for selected definition")));
             const wrap = $("<div class='hero-mapping-table-wrap'></div>").appendTo(body);
             const table = $("<table class='table table-sm hero-mapping-table'><thead><tr><th>Status</th><th>Direction</th><th>Source HERO</th><th>App</th><th>Target</th><th>Mapping revision</th><th>Binding revision</th><th>Identity</th></tr></thead><tbody></tbody></table>").appendTo(wrap);
+            table.find("th").each((index, th) => { $(th).text(text($(th).text())); });
             const message = (value) => table.find("tbody").empty().append($("<tr><td colspan='8'></td></tr>").find("td").text(text(value)).end());
             if (!active?.definition_id) { message("Choose a binding definition above to load existing bindings."); say(""); pendingView = null; return; }
             message("Loading bindings…"); say("");

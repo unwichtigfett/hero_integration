@@ -17,6 +17,21 @@ class Element {
     find(predicate) { if (predicate(this)) return this; for (const child of this.children) { const found = child.find(predicate); if (found) return found; } }
 }
 
+test("settings use translated labels and interpolate the confirmed binding revision", async () => {
+    const translations = {"HERO Settings": "HERO-Einstellungen", "Save Settings": "Einstellungen speichern",
+        "Source binding confirmed (revision {0}).": "Quellenbindung bestätigt (Revision {0})."};
+    const settings = {enabled: false, source_binding_confirmed: true, source_binding_revision: 42,
+        api_token_status: "NOT_CONFIGURED", polling: {}, testing: {}};
+    const window = {hero_integration_platform: {api: async () => settings},
+        hero_integration_i18n: {text: value => translations[value] || value}};
+    vm.runInNewContext(source, {window, document: {createElement: tag => new Element(tag)}});
+    const workspace = new Element("main");
+    await window.hero_integration_settings_ui.mount(workspace);
+    assert.ok(workspace.find(el => el.textContent === "HERO-Einstellungen"));
+    assert.ok(workspace.find(el => el.textContent === "Einstellungen speichern"));
+    assert.ok(workspace.find(el => el.textContent === "Quellenbindung bestätigt (Revision 42)."));
+});
+
 test("settings save omits removed fields and preserves other controls", async () => {
     const settings = {enabled: true, api_url: "https://example.invalid/graphql", timeout_seconds: 30,
         allowed_hero_hosts: "example.invalid", hero_source_instance: "default", api_token_status: "NOT_CONFIGURED",

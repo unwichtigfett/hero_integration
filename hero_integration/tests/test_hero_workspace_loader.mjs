@@ -13,6 +13,7 @@ function workspaceUi({ styleFailure = false, loaded = {}, requests = [], capture
         setTimeout,
         window: {...loaded},
         location: { search: "" },
+        __: value => value,
         frappe: {
             csrf_token: "",
             pages: { "hero-integration": {} },
@@ -30,6 +31,16 @@ function workspaceUi({ styleFailure = false, loaded = {}, requests = [], capture
     capture(sandbox.window);
     return sandbox.window.hero_integration_ui;
 }
+
+test("workspace delegates its text to the current Frappe translation dictionary", () => {
+    const messages = {"Settings": "Einstellungen"};
+    const sandbox = {window: {}, frappe: {}, __: value => messages[value] || value};
+    vm.runInNewContext(source, sandbox, {filename: "hero_workspace.js"});
+    assert.equal(sandbox.window.hero_integration_i18n.text("Settings"), "Einstellungen");
+    assert.equal(sandbox.window.hero_integration_i18n.text("Unknown text"), "Unknown text");
+    delete messages.Settings;
+    assert.equal(sandbox.window.hero_integration_i18n.text("Settings"), "Settings");
+});
 
 test("a stylesheet failure reaches the HERO error boundary", async () => {
     await assert.rejects(

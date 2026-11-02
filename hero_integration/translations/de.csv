@@ -1,0 +1,1386 @@
+0 of 0,0 von 0
+0 through 3 retries.,0 bis 3 Wiederholungen.
+1 through 100 external HERO GraphQL requests for one manual test preview.,1 bis 100 externe HERO-GraphQL-Anfragen für eine manuelle Testvorschau.
+1 through 120 seconds.,1 bis 120 Sekunden.
+10 through 240 minutes. The live HERO schema is reloaded on this interval once the API token is verified; an unchanged schema keeps its snapshot.,10 bis 240 Minuten. Das aktuelle HERO-Schema wird nach Prüfung des API-Tokens in diesem Intervall neu geladen; ein unverändertes Schema behält seinen Snapshot.
+"10–240 minutes, once the token is verified.","10–240 Minuten, sobald das Token geprüft wurde."
+1–1440 minutes; the Frappe scheduler evaluates cadence server-side.,1–1440 Minuten; der Frappe-Scheduler prüft das Intervall serverseitig.
+A HERO run is active ({0}); wait for it to finish.,"Ein HERO-Lauf ist aktiv ({0}); warten Sie, bis er abgeschlossen ist."
+A HERO run is active; wait for it to finish.,"Ein HERO-Lauf ist aktiv; warten Sie, bis er abgeschlossen ist."
+A Running run whose lease expired belongs to a stopped worker and is released automatically.,Ein laufender Prozess mit abgelaufener Lease gehört zu einem gestoppten Worker und wird automatisch freigegeben.
+A company with an abbreviation is required.,Ein Unternehmen mit einer Abkürzung ist erforderlich.
+A compatible validated schema snapshot is required for a mutation contract.,Für einen Mutation-Vertrag ist ein kompatibler validierter Schema-Snapshot erforderlich.
+A compatible validated schema snapshot is required.,Ein kompatibler validierter Schema-Snapshot ist erforderlich.
+A new GraphQL mapping cannot specify an existing revision.,Ein neues GraphQL-Mapping kann keine vorhandene Revision angeben.
+A node bookmark identity is immutable; remove it and remember the node again.,Die Identität eines Knotenlesezeichens ist unveränderlich; entfernen Sie es und merken Sie den Knoten erneut.
+A read service entry is incomplete or duplicated.,Ein Lese-Service-Eintrag ist unvollständig oder doppelt vorhanden.
+A readable name for the Mapping Editor. It never replaces the technical node identity.,Ein lesbarer Name für den Mapping Editor. Er ersetzt niemals die technische Knotenidentität.
+A remembered saved-schema GraphQL node with a personal alias. The alias is a label only; it never replaces the technical node identity.,Ein gemerkter GraphQL-Knoten eines gespeicherten Schemas mit persönlichem Alias. Der Alias ist nur eine Bezeichnung und ersetzt niemals die technische Knotenidentität.
+A validated GraphQL schema snapshot is required.,Ein validierter GraphQL-Schema-Snapshot ist erforderlich.
+A validated schema snapshot is required.,Ein validierter Schema-Snapshot ist erforderlich.
+API & Schema,API & Schema
+API & Schema tools,API- und Schema-Werkzeuge
+API Analyzer,API Analyzer
+API Endpoint,API-Endpunkt
+API Token,API-Token
+API Token Verified By,API-Token geprüft von
+API Token Verified On,API-Token geprüft am
+API Type Categories,API-Typkategorien
+API Types,API-Typen
+API URL,API-URL
+Ace editor loader is not available.,Der Ace-Editor-Loader ist nicht verfügbar.
+Acknowledged User Binding,Bestätigte Benutzerbindung
+Acknowledged User Binding Revision,Revision der bestätigten Benutzerbindung
+Action,Aktion
+Action selected for browsing. Choose its matching definition before saving.,Aktion zur Ansicht ausgewählt. Wählen Sie vor dem Speichern die zugehörige Definition.
+Actions,Aktionen
+Actions & tools,Aktionen und Werkzeuge
+Activate Mapping,Mapping aktivieren
+Active,Aktiv
+Active Content Hash,Hash des aktiven Inhalts
+Active Integration Run,Aktiver Integrationslauf
+Active Mapping Version,Aktive Mapping-Version
+Active Mappings,Aktive Mappings
+Active Revision,Aktive Revision
+Active field rules cannot be changed directly; use a personal draft and publication.,Aktive Feldregeln können nicht direkt geändert werden; verwenden Sie einen persönlichen Entwurf und dessen Veröffentlichung.
+Active mapping identity changed.,Die Identität des aktiven Mappings wurde geändert.
+Active mapping is read-only. Open your personal draft to change either field.,"Das aktive Mapping ist schreibgeschützt. Öffnen Sie Ihren persönlichen Entwurf, um ein Feld zu ändern."
+Active mapping not found.,Aktives Mapping nicht gefunden.
+Active readback differs from publication.,Das aktive Rückleseergebnis unterscheidet sich von der Veröffentlichung.
+Active rule search exceeds the readable page range.,Die Suche aktiver Regeln überschreitet den lesbaren Seitenbereich.
+Active search results,Aktive Suchergebnisse
+Active version,Aktive Version
+Actor,Ausführender Benutzer
+Add existing field rule,Vorhandene Feldregel hinzufügen
+Add field mapping,Feld-Mapping hinzufügen
+Add mapping to draft,Mapping zum Entwurf hinzufügen
+Additional local changes are not saved.,Weitere lokale Änderungen sind nicht gespeichert.
+Administrator Notification Recipients,Empfänger von Administrator-Benachrichtigungen
+Adoption Outcome,Ergebnis der Übernahme
+Alias,Alias
+Alias Key,Alias-Schlüssel
+All configured rule parameters,Alle konfigurierten Regelparameter
+All operations,Alle Operationen
+All visible relationships are labeled.,Alle sichtbaren Beziehungen sind beschriftet.
+Allow Backfill,Backfill erlauben
+Allow Bootstrap,Bootstrap erlauben
+Allow Full Inventory,Vollständige Bestandsaufnahme erlauben
+Allow GraphQL Mutation Execution,Ausführung von GraphQL-Mutations erlauben
+Allow Reconciliation,Reconciliation erlauben
+Allow backfill,Backfill erlauben
+Allow bootstrap,Bootstrap erlauben
+Allow deletion,Löschen erlauben
+Allow full inventory,Vollständige Bestandsaufnahme erlauben
+Allow mutation execution,Mutation-Ausführung erlauben
+Allow reconciliation,Reconciliation erlauben
+Allowed,Erlaubt
+Allowed HERO Hosts,Erlaubte HERO-Hosts
+Allowed hosts,Erlaubte Hosts
+Allows a bounded scan of up to 100 pages per source instead of one page.,Erlaubt eine begrenzte Prüfung von bis zu 100 Seiten pro Quelle statt einer Seite.
+Always the newest validated snapshot; selected automatically.,Immer der neueste validierte Snapshot; wird automatisch ausgewählt.
+An active mapping already owns this target field.,Ein aktives Mapping ist diesem Zielfeld bereits zugeordnet.
+An active mapping definition direction is immutable; create a separate definition for the other direction.,Die Richtung einer aktiven Mapping-Definition ist unveränderlich; erstellen Sie eine separate Definition für die andere Richtung.
+An active writeback mapping already owns this Frappe field.,Ein aktives Writeback-Mapping ist diesem Frappe-Feld bereits zugeordnet.
+An active writeback source cannot be safely inspected.,Eine aktive Writeback-Quelle kann nicht sicher geprüft werden.
+"An enabled global gate does not execute anything by itself: each mutation needs a compatible snapshot, an active per-operation contract, validated variables, preview, and explicit confirmation.","Eine aktivierte globale Freigabe führt selbst nichts aus: Jede Mutation benötigt einen kompatiblen Snapshot, einen aktiven Vertrag für die Operation, validierte Variablen, eine Vorschau und eine ausdrückliche Bestätigung."
+An existing GraphQL mapping cannot change direction.,Ein vorhandenes GraphQL-Mapping kann die Richtung nicht ändern.
+An existing-definition draft requires its active baseline.,Ein Entwurf für eine vorhandene Definition benötigt deren aktiven Basisstand.
+An explicitly approved GraphQL service is required for a new migration run.,Ein neuer Migrationslauf erfordert einen ausdrücklich freigegebenen GraphQL Service.
+Analysis Detail,Analysedetails
+Analysis Status,Analysestatus
+Another HERO mutation is currently in progress.,Eine andere HERO-Mutation wird gerade ausgeführt.
+Another HERO run is still queued or running. Start this area when it has finished.,Ein anderer HERO-Lauf wartet noch oder läuft bereits. Starten Sie diesen Bereich nach dessen Abschluss.
+Any time,Jederzeit
+App,App
+Apply Connection,Verbindung übernehmen
+Apply mutation setting,Mutation-Einstellung übernehmen
+Apply reconciliation choices locally,Reconciliation-Auswahl lokal übernehmen
+Applying reconciliation choices locally…,Reconciliation-Auswahl wird lokal übernommen…
+Approval Payload,Freigabedaten
+Approval State,Freigabestatus
+Approve,Freigeben
+Approve / Decline,Freigeben / Ablehnen
+Approve selected,Auswahl freigeben
+Approved,Freigegeben
+Approved By,Freigegeben von
+Approved Mapping Revision,Freigegebene Mapping-Revision
+Approved Read Mapping,Freigegebenes Lese-Mapping
+Approved Revision,Freigegebene Revision
+Approved Service Revision,Freigegebene Service-Revision
+Approving a field conflict requests a recheck on the next synchronization. Declining keeps the existing record and stops further updates. Records that were not imported at all come from the latest run of each area and have nothing to approve.,Die Freigabe eines Feldkonflikts veranlasst eine erneute Prüfung bei der nächsten Synchronisierung. Eine Ablehnung behält den vorhandenen Datensatz bei und stoppt weitere Aktualisierungen. Gar nicht importierte Datensätze stammen aus dem letzten Lauf des jeweiligen Bereichs und können nicht freigegeben werden.
+Area selected for browsing. Saved mappings and fetch configuration are unchanged.,Bereich zur Ansicht ausgewählt. Gespeicherte Mappings und Abrufkonfiguration bleiben unverändert.
+"Asks to save and validate the changes, then runs that revision once, read-only.",Fordert zum Speichern und Validieren der Änderungen auf und führt diese Revision anschließend einmal schreibgeschützt aus.
+Audit Payload,Audit-Daten
+Automatic Synchronization,Automatische Synchronisierung
+Automatic sync,Automatische Synchronisierung
+Available,Verfügbar
+Available for Query and Mutation operations and their root fields.,Verfügbar für Query- und Mutation-Operationen und deren Root-Felder.
+Available rules on this page,Verfügbare Regeln auf dieser Seite
+Back to definition,Zurück zur Definition
+Back to draft,Zurück zum Entwurf
+Back to mappings,Zurück zu Mappings
+Base Active Hash,Hash der aktiven Basis
+Base Active Mapping,Aktives Basis-Mapping
+Base Active Revision,Aktive Basisrevision
+Base Schema Fingerprint,Fingerprint des Basisschemas
+Binding,Bindung
+Binding Generation,Generation der Bindung
+Binding definition,Bindungsdefinition
+Binding generation,Generation der Bindung
+Binding revision,Bindungsrevision
+Bindings,Bindungen
+Bindings are available to administrators.,Bindungen sind für Administratoren verfügbar.
+Bindings — read only,Bindungen — schreibgeschützt
+Blocked,Blockiert
+Bookmark Key,Lesezeichenschlüssel
+Bound Checkpoint Contract,Gebundener Checkpoint-Vertrag
+Browse mappings,Mappings durchsuchen
+"CRM must not create ERPNext Customers: customers are created in HERO and imported; deals reference them (HERO integration, option A).","CRM darf keine ERPNext-Kunden erstellen: Kunden werden in HERO erstellt und importiert; Deals referenzieren sie (HERO-Integration, Option A)."
+Cadence and scope,Intervall und Umfang
+Cancel,Abbrechen
+Cancel new mapping,Neues Mapping abbrechen
+Cancel this run at the next safe point? Records already written stay in place.,Diesen Lauf am nächsten sicheren Punkt abbrechen? Bereits geschriebene Datensätze bleiben erhalten.
+Cancelled,Abgebrochen
+Canonical Claim,Kanonischer Claim
+Capabilities & permissions,Funktionen und Berechtigungen
+Captured At (UTC),Erfasst am (UTC)
+Category,Kategorie
+Changed Fields,Geänderte Felder
+Changed settings,Geänderte Einstellungen
+Changes belong to your personal draft. The active field rule stays unchanged.,Änderungen gehören zu Ihrem persönlichen Entwurf. Die aktive Feldregel bleibt unverändert.
+"Changing the API URL, token or source instance opens a new source binding. Runs, MONITOR and AUTO_SYNC stay blocked until it is confirmed.","Eine Änderung der API-URL, des Tokens oder der Quellinstanz erstellt eine neue Quellenbindung. Läufe, MONITOR und AUTO_SYNC bleiben bis zur Bestätigung gesperrt."
+Cheap Data Migration,Kleine Datenmigration
+Check failed,Prüfung fehlgeschlagen
+Check saved draft,Gespeicherten Entwurf prüfen
+Checking package …,Paket wird geprüft …
+Checking the saved node against its snapshot…,Gespeicherter Knoten wird anhand seines Snapshots geprüft…
+Child Draft Definition ID,Definitions-ID des untergeordneten Entwurfs
+Child Snapshot,Untergeordneter Snapshot
+Choose a HERO object first.,Wählen Sie zuerst ein HERO-Objekt.
+Choose a binding definition above to load existing bindings.,"Wählen Sie oben eine Bindungsdefinition, um vorhandene Bindungen zu laden."
+Choose a definition or mapping row. Unavailable metadata is marked Not provided.,Wählen Sie eine Definition oder Mapping-Zeile. Nicht verfügbare Metadaten sind als „Nicht angegeben“ markiert.
+Choose a field mapping row.,Wählen Sie eine Feld-Mapping-Zeile.
+Choose a polling mode under Settings first.,Wählen Sie zuerst einen Polling-Modus in den Einstellungen.
+Choose a reviewed source and target,Geprüfte Quelle und geprüftes Ziel auswählen
+Choose a reviewed source and target.,Wählen Sie eine geprüfte Quelle und ein geprüftes Ziel.
+Choose a source path or a target field.,Wählen Sie einen Quellpfad oder ein Zielfeld.
+Choose a validated GraphQL schema snapshot,Validierten GraphQL-Schema-Snapshot auswählen
+Choose a validated schema snapshot first.,Wählen Sie zuerst einen validierten Schema-Snapshot.
+Choose a validated snapshot,Validierten Snapshot auswählen
+Choose a validated snapshot again to refresh shared mappings.,"Wählen Sie erneut einen validierten Snapshot, um geteilte Mappings zu aktualisieren."
+Choose a validated snapshot first.,Wählen Sie zuerst einen validierten Snapshot.
+Choose a validated snapshot to inspect shared writeback mappings.,"Wählen Sie einen validierten Snapshot, um geteilte Writeback-Mappings zu prüfen."
+Choose a validated snapshot.,Wählen Sie einen validierten Snapshot.
+Choose an action first.,Wählen Sie zuerst eine Aktion.
+Choose an active mapping row or definition to inspect it. Reading and selection do not create a draft.,Wählen Sie eine aktive Mapping-Zeile oder Definition zur Prüfung. Lesen und Auswählen erstellen keinen Entwurf.
+Choose an available App and DocType before choosing a Frappe field.,"Wählen Sie eine verfügbare App und einen DocType, bevor Sie ein Frappe-Feld auswählen."
+Choose an exported file. You see a preview and confirm once.,Wählen Sie eine exportierte Datei. Sie sehen eine Vorschau und bestätigen einmal.
+Choose an operation,Operation auswählen
+Choose an operation to inspect its schema.,"Wählen Sie eine Operation, um ihr Schema zu prüfen."
+Choose both source and target fields first.,Wählen Sie zuerst sowohl Quell- als auch Zielfelder.
+Choose exactly one reviewed source and target.,Wählen Sie genau eine geprüfte Quelle und ein geprüftes Ziel.
+Choose source and target for the new mapping; existing mappings remain unchanged.,Wählen Sie Quelle und Ziel für das neue Mapping; vorhandene Mappings bleiben unverändert.
+Choose the matching saved definition before editing this action.,"Wählen Sie die passende gespeicherte Definition, bevor Sie diese Aktion bearbeiten."
+Choose…,Auswählen…
+Claim Hash,Claim-Hash
+Claim Key,Claim-Schlüssel
+Close,Schließen
+Close field search,Feldsuche schließen
+Close or save the shared draft editor before leaving.,"Schließen oder speichern Sie den Editor für geteilte Entwürfe, bevor Sie die Ansicht verlassen."
+Colours are turned off for this large result; the text is complete.,Für dieses große Ergebnis sind Farben ausgeschaltet; der Text ist vollständig.
+Compare active changes,Aktive Änderungen vergleichen
+"Comparing the original base, current active mapping, and your local draft…","Ursprüngliche Basis, aktuelles aktives Mapping und lokaler Entwurf werden verglichen…"
+Compatible,Kompatibel
+Complete Introspection,Vollständige Introspection
+Complete Mapping Payload,Vollständige Mapping-Daten
+Completed,Abgeschlossen
+Completed With Conflicts,Mit Konflikten abgeschlossen
+Concurrency,Parallelität
+Confidence,Konfidenz
+Confidence 0–1,Konfidenz 0–1
+Confidence must be between 0 and 1.,Die Konfidenz muss zwischen 0 und 1 liegen.
+Configuration changed or is new. Apply the connection before using the tools.,"Die Konfiguration ist neu oder wurde geändert. Übernehmen Sie die Verbindung, bevor Sie die Werkzeuge verwenden."
+Configuration package,Konfigurationspaket
+Configuration package exported.,Konfigurationspaket exportiert.
+Configuration package file,Datei des Konfigurationspakets
+Configure the connection stored by HERO Integration.,Konfigurieren Sie die von HERO Integration gespeicherte Verbindung.
+Configured,Konfiguriert
+Configured special rule; preserved unchanged,Konfigurierte Sonderregel; bleibt unverändert erhalten
+Configured structure and additional rules,Konfigurierte Struktur und zusätzliche Regeln
+Confirm Source Binding,Quellenbindung bestätigen
+Confirm and send once,Bestätigen und einmal senden
+Confirm source binding,Quellenbindung bestätigen
+"Confirm that the configured endpoint and API token belong to the HERO account named by the source instance. Required after the endpoint, token or source instance changes; use a new source instance for a different HERO account.","Bestätigen Sie, dass der konfigurierte Endpunkt und das API-Token zum HERO-Konto der Quellinstanz gehören. Nach einer Änderung von Endpunkt, Token oder Quellinstanz erforderlich; verwenden Sie für ein anderes HERO-Konto eine neue Quellinstanz."
+Confirm that the endpoint and API token belong to the HERO account named by the source instance. The token is never used as an identity.,"Bestätigen Sie, dass Endpunkt und API-Token zum HERO-Konto der Quellinstanz gehören. Das Token wird niemals als Identität verwendet."
+Confirm the import first.,Bestätigen Sie zuerst den Import.
+Confirmation pending,Bestätigung ausstehend
+Confirmed Company,Bestätigtes Unternehmen
+Confirmed ERPNext Company,Bestätigtes ERPNext-Unternehmen
+Confirmed Source Binding Revision,Bestätigte Quellenbindungsrevision
+Confirmed ToDo Version,Bestätigte ToDo-Version
+Conflict,Konflikt
+Conflict Detail,Konfliktdetails
+Conflict Records,Konfliktdatensätze
+Conflict notification recipient is not an enabled System Manager: {0},Empfänger der Konfliktbenachrichtigung ist kein aktivierter System Manager: {0}
+Conflict requires review.,Konflikt muss geprüft werden.
+Conflict resolution,Konfliktlösung
+Conflicts,Konflikte
+Conflicts in this run,Konflikte in diesem Lauf
+Connection ID,Verbindungs-ID
+Connection and schema capabilities,Verbindungs- und Schema-Funktionen
+Connection and schema status,Verbindungs- und Schema-Status
+Connection context unavailable. Check HERO Settings.,Verbindungskontext nicht verfügbar. Prüfen Sie die HERO-Einstellungen.
+Connection details,Verbindungsdetails
+Connector,Connector
+Consumed At Epoch,Verwendet zum Epoch-Zeitpunkt
+Contact Migration,Kontaktmigration
+"Contact and customer data with the objects, fields and relations of the active mapping.","Kontakt- und Kundendaten mit den Objekten, Feldern und Beziehungen des aktiven Mappings."
+Contacts,Kontakte
+Contacts phase,Kontaktphase
+Content Json,Inhalt als JSON
+Content Revision,Inhaltsrevision
+Continue,Fortfahren
+Continue this run from its saved position? It keeps its original mapping version; current approvals are checked again.,Diesen Lauf an der gespeicherten Position fortsetzen? Seine ursprüngliche Mapping-Version bleibt erhalten; aktuelle Freigaben werden erneut geprüft.
+Contract Fingerprint,Vertrags-Fingerprint
+Contract Revision,Vertragsrevision
+Copy Result,Ergebnis kopieren
+Correlation ID,Korrelations-ID
+Could not load HERO settings. {0},HERO-Einstellungen konnten nicht geladen werden. {0}
+Could not load stored HERO API metadata.,Gespeicherte HERO-API-Metadaten konnten nicht geladen werden.
+Could not save HERO settings. {0},HERO-Einstellungen konnten nicht gespeichert werden. {0}
+Could not save testing settings. {0},Test-Einstellungen konnten nicht gespeichert werden. {0}
+Create Mapping,Mapping erstellen
+Create shared draft,Geteilten Entwurf erstellen
+Create shared writeback draft,Geteilten Writeback-Entwurf erstellen
+Created,Erstellt
+Created / processed,Erstellt / verarbeitet
+Creates an unsaved service draft from this operation. No HERO operation is executed.,Erstellt aus dieser Operation einen ungespeicherten Service-Entwurf. Es wird keine HERO-Operation ausgeführt.
+Credential,Zugangsdaten
+Credential error,Fehler bei den Zugangsdaten
+Current,Aktuell
+Current active,Aktuell aktiv
+Current integration gates and execution availability.,Aktuelle Integrationssperren und Ausführungsverfügbarkeit.
+Current value,Aktueller Wert
+Cursor watermarks are advanced only after complete successful processing. Offset pagination does not invent watermarks.,Cursor-Watermarks werden nur nach vollständig erfolgreicher Verarbeitung fortgeschrieben. Offset-Paginierung erzeugt keine Watermarks.
+Custom Field {0}.{1} conflicts with the HERO schema ({2}).,Das benutzerdefinierte Feld {0}.{1} widerspricht dem HERO-Schema ({2}).
+Customer Home Phone,Privattelefon des Kunden
+Customer Mapping,Kunden-Mapping
+Customer Mapping Revision,Revision des Kunden-Mappings
+Customer Migration,Kundenmigration
+Customer Offset,Kunden-Offset
+Customer Phase Blocked,Kundenphase blockiert
+Customer Phase Created,Kundenphase erstellt
+Customer Phase Processed,Kundenphase verarbeitet
+Customer Phase Skipped,Kundenphase übersprungen
+Customer Phase State,Status der Kundenphase
+Customer Records,Kundendatensätze
+Customer Relation,Kundenbeziehung
+Customer Service Revision,Kunden-Service-Revision
+Customer Type From Company Name,Kundentyp aus Firmenname
+Customer Watermark,Kunden-Watermark
+Data sources,Datenquellen
+Decline,Ablehnen
+Decline selected,Auswahl ablehnen
+Definition ID,Definitions-ID
+Definition Id,Definitions-ID
+Definition identity is already enrolled by another mapping.,Die Definitionsidentität ist bereits durch ein anderes Mapping registriert.
+Definition identity is already used by a personal draft.,Die Definitionsidentität wird bereits von einem persönlichen Entwurf verwendet.
+Definition page,Definitionsseite
+Delete,Löschen
+Delete Mapping,Mapping löschen
+Delete changes the personal draft only. Saving keeps a personal draft; Activate publishes a saved valid draft and does not start synchronization.,Löschen ändert nur den persönlichen Entwurf. Speichern behält einen persönlichen Entwurf; Aktivieren veröffentlicht einen gespeicherten gültigen Entwurf und startet keine Synchronisierung.
+Delete the saved service and discard the unsaved draft?,Den gespeicherten Service löschen und den ungespeicherten Entwurf verwerfen?
+Delete the saved service?,Den gespeicherten Service löschen?
+"Deleting requires confirm=""{0}"".","Zum Löschen ist confirm=""{0}"" erforderlich."
+Description,Beschreibung
+Diagnostics Json,Diagnose-JSON
+Direct relations in node focus,Direkte Beziehungen im Knotenfokus
+Direction,Richtung
+Disabled,Deaktiviert
+Discard personal drafts through their service; history must be retained.,Verwerfen Sie persönliche Entwürfe über ihren Service; der Verlauf muss erhalten bleiben.
+Discard saved draft,Gespeicherten Entwurf verwerfen
+Discard the unsaved service draft?,Den ungespeicherten Service-Entwurf verwerfen?
+Discard unsaved shared draft changes?,Ungespeicherte Änderungen am geteilten Entwurf verwerfen?
+Discards unsaved changes and shows the saved settings again.,Verwirft ungespeicherte Änderungen und zeigt wieder die gespeicherten Einstellungen.
+Draft Created,Entwurf erstellt
+Draft Key,Entwurfsschlüssel
+Draft Owner,Eigentümer des Entwurfs
+Draft owner must be the current administrator.,Der Eigentümer des Entwurfs muss der aktuelle Administrator sein.
+Duplicate,Duplizieren
+Duplicate node identity in the page contract.,Doppelte Knotenidentität im Seitenvertrag.
+Duration,Dauer
+"ERPNext Project {0} belongs to Customer {1}, not {2}.","ERPNext-Projekt {0} gehört zu Kunde {1}, nicht zu {2}."
+ERPNext schema is incomplete: {0}.,Das ERPNext-Schema ist unvollständig: {0}.
+ERPNext v16 must be importable before HERO Integration.,ERPNext v16 muss vor HERO Integration importierbar sein.
+ERPNext v16 must be installed before HERO Integration.,ERPNext v16 muss vor HERO Integration installiert sein.
+Edit my shared draft,Meinen geteilten Entwurf bearbeiten
+Edit shared writeback draft,Geteilten Writeback-Entwurf bearbeiten
+Edit these values under Settings.,Bearbeiten Sie diese Werte in den Einstellungen.
+Effective mutation security status: {0}. {1},Effektiver Mutation-Sicherheitsstatus: {0}. {1}
+Employee or System Manager authority is required to inspect mapping status.,Zum Prüfen des Mapping-Status ist die Rolle Employee oder System Manager erforderlich.
+Employee read-only view,Schreibgeschützte Mitarbeiteransicht
+Enable Scheduled Sync,Geplante Synchronisierung aktivieren
+Enable or disable local HERO Integration configuration.,Lokale Konfiguration der HERO Integration aktivieren oder deaktivieren.
+Enable or disable synchronization per area.,Synchronisierung je Bereich aktivieren oder deaktivieren.
+Enabled,Aktiviert
+Endpoint Fingerprint,Endpunkt-Fingerprint
+Enter a synthetic JSON object.,Geben Sie ein synthetisches JSON-Objekt ein.
+Entity Type,Entitätstyp
+Event Migration,Terminmigration
+Events,Termine
+Exactly one active schema-bound HERO Mutation Contract is required for writeback activation.,Für die Writeback-Aktivierung ist genau ein aktiver schemagebundener HERO-Mutation-Vertrag erforderlich.
+Exactly one active schema-bound HERO Mutation Contract is required for writeback.,Für Writeback ist genau ein aktiver schemagebundener HERO-Mutation-Vertrag erforderlich.
+Exactly one valid HERO Integration Link is required for writeback.,Für Writeback ist genau eine gültige HERO-Integrationsverknüpfung erforderlich.
+Exec. time,Ausführungszeit
+Execute Mutation,Mutation ausführen
+Execute Query,Query ausführen
+"Execute Query reads data from HERO once on an explicit click, using the saved and validated revision. Results open in a separate window and are never stored, synchronized or written to Frappe.","„Query ausführen“ liest nach ausdrücklichem Klick einmalig Daten aus HERO mit der gespeicherten und validierten Revision. Ergebnisse werden in einem separaten Fenster geöffnet und niemals gespeichert, synchronisiert oder nach Frappe geschrieben."
+Executing {0} {1} · Revision {2} once against HERO …,{0} {1} · Revision {2} wird einmal gegen HERO ausgeführt …
+Execution Contract Status,Status des Ausführungsvertrags
+Execution window,Ausführungszeitraum
+"Existing binding identities, mappings and status. No write actions are available.","Vorhandene Bindungsidentitäten, Mappings und Status. Schreibaktionen sind nicht verfügbar."
+Existing integration links,Vorhandene Integrationsverknüpfungen
+Existing writeback mapping cannot be safely replaced; preserve its parameters.,Das vorhandene Writeback-Mapping kann nicht sicher ersetzt werden; erhalten Sie seine Parameter.
+Existing writeback mapping contains parameters that would not be preserved.,"Das vorhandene Writeback-Mapping enthält Parameter, die nicht erhalten blieben."
+Existing writeback mapping source cannot be safely inspected.,Die vorhandene Writeback-Mapping-Quelle kann nicht sicher geprüft werden.
+Existing writeback source contains parameters that cannot be safely reconciled.,"Die vorhandene Writeback-Quelle enthält Parameter, die nicht sicher abgeglichen werden können."
+Expected value,Erwarteter Wert
+Expires At Epoch,Läuft zum Epoch-Zeitpunkt ab
+Explicit confirmation for this exact Sync Hero preview is required.,Für genau diese Sync-Hero-Vorschau ist eine ausdrückliche Bestätigung erforderlich.
+Explicit confirmation for this exact mutation preview is required.,Für genau diese Mutation-Vorschau ist eine ausdrückliche Bestätigung erforderlich.
+Explicit confirmation for this exact writeback preview is required.,Für genau diese Writeback-Vorschau ist eine ausdrückliche Bestätigung erforderlich.
+"Explore the saved schema graph, relations and focus views.","Den gespeicherten Schema-Graph, Beziehungen und Fokusansichten erkunden."
+Export configuration package,Konfigurationspaket exportieren
+Export failed.,Export fehlgeschlagen.
+Exporting configuration package …,Konfigurationspaket wird exportiert …
+Fail,Fehlgeschlagen
+Failed,Fehlgeschlagen
+Failed to load HERO status.,HERO-Status konnte nicht geladen werden.
+Failed to refresh HERO schema.,Schema konnte nicht aktualisiert werden.
+Failed to synchronize HERO binding.,HERO-Bindung konnte nicht synchronisiert werden.
+Field,Feld
+Field bindings for selected definition,Feldbindungen der ausgewählten Definition
+Field mapping details,Details zum Feld-Mapping
+Field selection does not grant read access. Inclusion in the approved fetch configuration must be checked separately.,Die Feldauswahl gewährt keinen Lesezugriff. Die Aufnahme in die freigegebene Abrufkonfiguration muss separat geprüft werden.
+Field-rule definition identity is immutable.,Die Identität der Feldregeldefinition ist unveränderlich.
+Field-rule deletion is unavailable until all mapping references are reconciled.,"Das Löschen von Feldregeln ist erst möglich, wenn alle Mapping-Referenzen abgeglichen sind."
+Field-rule identity is already enrolled by another mapping.,Die Feldregelidentität ist bereits durch ein anderes Mapping registriert.
+Field-rule identity is already used by a personal draft.,Die Feldregelidentität wird bereits von einem persönlichen Entwurf verwendet.
+Field-rule revision is managed by the mapping controller.,Die Feldregelrevision wird vom Mapping-Controller verwaltet.
+Filter changed. Filtered View loads the current selection.,Filter geändert. Die gefilterte Ansicht lädt die aktuelle Auswahl.
+Filter usages,Verwendungen filtern
+Filtered View,Gefilterte Ansicht
+Filtered overview,Gefilterte Übersicht
+Filtered view: {0} matches + direct relationship partners,Gefilterte Ansicht: {0} Treffer + direkte Beziehungspartner
+Finished,Beendet
+Finished On,Beendet am
+Fit,Einpassen
+Fix in HERO; the next run imports it.,In HERO korrigieren; der nächste Lauf importiert den Datensatz.
+Foreign legacy mapping drafts cannot be overwritten.,Fremde Legacy-Mapping-Entwürfe können nicht überschrieben werden.
+Frappe field,Frappe-Feld
+Full Data Migration,Vollständige Datenmigration
+Full Schema,Vollständiges Schema
+Function Details,Funktionsdetails
+Generated mapping service requires selected definition IDs.,Ein generierter Mapping-Service erfordert ausgewählte Definitions-IDs.
+Generated service input requires query direction and no supplied document.,Generierte Service-Eingaben erfordern Query-Richtung und dürfen kein übergebenes Dokument enthalten.
+Generation,Generation
+Global HERO mutation execution is currently OFF.,Die globale HERO-Mutation-Ausführung ist derzeit auf OFF gesetzt.
+"Global fail-closed deletion gate. Turning this off blocks manual, queued and automatic HERO Integration deletions and invalidates prepared destructive work.","Globale standardmäßig geschlossene Löschsperre. Das Ausschalten blockiert manuelle, vorgemerkte und automatische Löschungen der HERO Integration und macht vorbereitete destruktive Arbeiten ungültig."
+Global fail-closed gate. System Manager activation still requires an active schema-bound contract and explicit confirmation for every individual mutation.,Globale standardmäßig geschlossene Sperre. Die Aktivierung durch System Manager erfordert weiterhin einen aktiven schemagebundenen Vertrag und eine ausdrückliche Bestätigung für jede einzelne Mutation.
+Graph Search,Graph durchsuchen
+Graph Viewer,Graph Viewer
+GraphQL Mutations remain disabled until the server-side security gates are satisfied.,"GraphQL-Mutations bleiben deaktiviert, bis die serverseitigen Sicherheitsbedingungen erfüllt sind."
+GraphQL Node ID,GraphQL-Knoten-ID
+GraphQL Query Document,GraphQL-Query-Dokument
+GraphQL Query Result,GraphQL-Query-Ergebnis
+GraphQL Service,GraphQL Service
+GraphQL Services,GraphQL Services
+GraphQL base scalar usages,Verwendungen des GraphQL-Basis-Skalars
+GraphQL base scalar: usages are shown as a list instead of a relationship graph.,GraphQL-Basis-Skalar: Verwendungen werden als Liste statt als Beziehungsgraph angezeigt.
+GraphQL draft,GraphQL-Entwurf
+GraphQL error returned by HERO,HERO hat einen GraphQL-Fehler zurückgegeben
+GraphQL errors,GraphQL-Fehler
+GraphQL mapping JSON must be an object.,Das GraphQL-Mapping-JSON muss ein Objekt sein.
+GraphQL mapping definition identity is immutable.,Die Identität der GraphQL-Mapping-Definition ist unveränderlich.
+GraphQL mapping direction and operation kind must agree.,GraphQL-Mapping-Richtung und Operationsart müssen übereinstimmen.
+GraphQL mapping revision is stale; reload the current Draft.,Die GraphQL-Mapping-Revision ist veraltet; laden Sie den aktuellen Draft erneut.
+GraphQL mutations,GraphQL-Mutations
+GraphQL node ID,GraphQL-Knoten-ID
+GraphQL variables must be a JSON object.,GraphQL-Variablen müssen ein JSON-Objekt sein.
+GraphQL variables must be a JSON object: {0},GraphQL-Variablen müssen ein JSON-Objekt sein: {0}
+HERO API Graph,HERO-API-Graph
+HERO API Token,HERO-API-Token
+HERO Connection,HERO-Verbindung
+HERO Customer Link,HERO-Kundenverknüpfung
+HERO Entity Type,HERO-Entitätstyp
+HERO External ID,Externe HERO-ID
+HERO Field Binding,HERO Feldbindung
+HERO Frappe Mapping,HERO Frappe Mapping
+HERO GraphQL Endpoint,HERO-GraphQL-Endpunkt
+HERO GraphQL Mapping,HERO GraphQL Mapping
+HERO GraphQL Node Bookmark,HERO GraphQL-Knotenlesezeichen
+HERO GraphQL Schema Snapshot,HERO GraphQL-Schema-Snapshot
+HERO GraphQL Service,HERO GraphQL Service
+HERO Integration Link,HERO Integrationsverknüpfung
+HERO Integration Record,HERO Integrationsdatensatz
+HERO Integration Run,HERO Integrationslauf
+HERO Integration Settings,HERO Integrationseinstellungen
+HERO Integration Sync State,HERO Integrations-Sync-Status
+HERO Integration deletion is disabled; refusing {0}.,Löschen durch HERO Integration ist deaktiviert; {0} wird abgelehnt.
+HERO Integration requires ERPNext {0}.,HERO Integration benötigt ERPNext {0}.
+HERO Integration sections,Bereiche der HERO Integration
+HERO Mapping Adoption,HERO Mapping-Übernahme
+HERO Mapping Draft,HERO Mapping-Entwurf
+HERO Mapping Editor,HERO Mapping Editor
+HERO Mapping Identity Claim,HERO Mapping-Identitätsanspruch
+HERO Mapping Registry,HERO Mapping-Registry
+HERO Mapping Registry Version,HERO Mapping-Registry-Version
+HERO Mapping Revision,HERO Mapping-Revision
+HERO Migration Progress Ledger,HERO Migrationsfortschritts-Ledger
+HERO Migration Run Ledger,HERO Migrationslauf-Ledger
+HERO Mutation Audit,HERO Mutation-Audit
+HERO Mutation Contract,HERO Mutation-Vertrag
+HERO Mutation Execution,HERO-Mutation-Ausführung
+HERO Object Binding,HERO Objektbindung
+HERO Operation,HERO-Operation
+HERO Operation Name,Name der HERO-Operation
+HERO Overview,HERO-Übersicht
+HERO Polling Event,HERO Polling-Ereignis
+HERO Project Link,HERO-Projektverknüpfung
+HERO Runtime Plan,HERO Laufzeitplan
+HERO Runtime Plan Audit,HERO Laufzeitplan-Audit
+HERO Schema Provisioning Approval,HERO Schema-Bereitstellungsfreigabe
+HERO Schema Provisioning Audit,HERO Schema-Bereitstellungs-Audit
+HERO Schema Snapshot,HERO-Schema-Snapshot
+HERO Settings,HERO-Einstellungen
+HERO Snapshot Mapping Inheritance,HERO Snapshot-Mapping-Vererbung
+HERO Source ID,HERO-Quell-ID
+HERO Source Instance,HERO-Quellinstanz
+HERO Source Key,HERO-Quellschlüssel
+HERO Source Path,HERO-Quellpfad
+HERO Source Type,HERO-Quelltyp
+HERO Sync Run Ledger,HERO Sync-Lauf-Ledger
+HERO Sync State Ledger,HERO Sync-Status-Ledger
+HERO Task Assignment Policy,HERO Aufgabenzuweisungs-Policy
+HERO Task Assignment State,HERO Aufgabenzuweisungsstatus
+HERO Tools,HERO-Werkzeuge
+HERO field,HERO-Feld
+HERO integration availability,Verfügbarkeit der HERO Integration
+HERO mutation failed safely; no automatic retry was performed.,Die HERO-Mutation ist sicher fehlgeschlagen; es wurde kein automatischer erneuter Versuch durchgeführt.
+HERO mutations are disabled in the connection settings.,HERO-Mutations sind in den Verbindungseinstellungen deaktiviert.
+HERO request failed,HERO-Anfrage fehlgeschlagen
+HERO response,HERO-Antwort
+HERO response too large to display,HERO-Antwort ist zu groß zur Anzeige
+HERO status is current.,HERO-Status ist aktuell.
+HERO target,HERO-Ziel
+HERO writeback completed,HERO-Writeback abgeschlossen
+HERO writeback is blocked or uncertain; no automatic retry was performed.,Das HERO-Writeback ist blockiert oder ungewiss; es wurde kein automatischer erneuter Versuch durchgeführt.
+HERO · Node Focus,HERO · Knotenfokus
+HTTP/transport error,HTTP-/Transportfehler
+HTTPS GraphQL endpoint used by the connector.,"HTTPS-GraphQL-Endpunkt, den der Connector verwendet."
+Hero Migration / Synchronization,HERO-Migration / Synchronisierung
+ID,ID
+Identity,Identität
+Identity and resolver have not been confirmed for this path.,Identität und Resolver wurden für diesen Pfad nicht bestätigt.
+Immutable Base Content Json,Unveränderliches Basisinhalts-JSON
+Import and activate this configuration now?,Diese Konfiguration jetzt importieren und aktivieren?
+Import and synchronize data from HERO to Frappe.,Daten von HERO nach Frappe importieren und synchronisieren.
+Import calendar events from HERO GraphQL.,Kalendertermine aus HERO GraphQL importieren.
+Import contact information from HERO GraphQL.,Kontaktinformationen aus HERO GraphQL importieren.
+Import failed; the configuration was not activated.,Import fehlgeschlagen; die Konfiguration wurde nicht aktiviert.
+Import package,Paket importieren
+Import project information from HERO GraphQL.,Projektinformationen aus HERO GraphQL importieren.
+Import task information from HERO GraphQL.,Aufgabeninformationen aus HERO GraphQL importieren.
+Imported,Importiert
+Importing Conflicts,Importkonflikte
+Importing …,Wird importiert …
+In HERO,In HERO
+Incompatible,Inkompatibel
+Incomplete,Unvollständig
+Inheritance Key,Vererbungsschlüssel
+Inheriting parent mappings as personal drafts…,Mappings des Vorgängers werden als persönliche Entwürfe übernommen…
+"Inspect read-only operations, fields and arguments from a validated schema.","Schreibgeschützte Operationen, Felder und Argumente eines validierten Schemas prüfen."
+Inspect saved GraphQL schema metadata and open the protected analysis tools.,Gespeicherte GraphQL-Schema-Metadaten prüfen und die geschützten Analysewerkzeuge öffnen.
+Inspect saved schema,Gespeichertes Schema prüfen
+Inspect shared mapping,Geteiltes Mapping prüfen
+Integration Run,Integrationslauf
+Integration status,Integrationsstatus
+Integrity Hash,Integritäts-Hash
+Invalid HERO mutation contract: {0},Ungültiger HERO-Mutation-Vertrag: {0}
+Invalid HERO response,Ungültige HERO-Antwort
+Invalid directional import preview.,Ungültige Vorschau für den richtungsbezogenen Import.
+Invalid generated mapping service specification.,Ungültige generierte Mapping-Service-Spezifikation.
+Invalid legacy preview response.,Ungültige Antwort der Legacy-Vorschau.
+Invalid package context.,Ungültiger Paketkontext.
+Invalid package preview.,Ungültige Paketvorschau.
+Invalid personal Task generation specification.,Ungültige Spezifikation für die persönliche Aufgaben-Generierung.
+Invalid personal draft list.,Ungültige Liste persönlicher Entwürfe.
+Invalid publication result.,Ungültiges Veröffentlichungsergebnis.
+Invalid reconciliation result.,Ungültiges Reconciliation-Ergebnis.
+Invalid response,Ungültige Antwort
+Invalid review values.,Ungültige Prüfwerte.
+Invalid reviewed writeback selection.,Ungültige geprüfte Writeback-Auswahl.
+Invalid shared mapping list.,Ungültige Liste geteilter Mappings.
+Invalid snapshot page.,Ungültige Snapshot-Seite.
+Invalid transformation.,Ungültige Transformation.
+JSON Value,JSON-Wert
+Keep my draft,Meinen Entwurf behalten
+Last Observed HERO Source Hash,Zuletzt beobachteter HERO-Quell-Hash
+Last Observed On,Zuletzt beobachtet am
+Last Observed Target Hash,Zuletzt beobachteter Ziel-Hash
+Last Poll Started On,Letzter Polling-Start am
+Last Successful Sync,Letzte erfolgreiche Synchronisierung
+Last Successfully Synced HERO Source Hash,Zuletzt erfolgreich synchronisierter HERO-Quell-Hash
+Last Successfully Synced Target Hash,Zuletzt erfolgreich synchronisierter Ziel-Hash
+Last Synchronized On,Zuletzt synchronisiert am
+Last check:,Letzte Prüfung:
+Last editor,Zuletzt bearbeitet von
+Last successful,Zuletzt erfolgreich
+Last synchronized,Zuletzt synchronisiert
+Last {0} days,Letzte {0} Tage
+Lease Expires On,Lease läuft ab am
+Leave blank to keep the existing token,"Leer lassen, um das vorhandene Token zu behalten"
+Legacy (unknown),Legacy (unbekannt)
+Lifecycle Flag,Lebenszyklus-Flag
+Lifecycle State,Lebenszyklusstatus
+Limits manual synchronization previews only. It never starts work by itself.,Begrenzt nur manuelle Synchronisierungsvorschauen. Startet niemals selbstständig eine Verarbeitung.
+Linked records per area,Verknüpfte Datensätze je Bereich
+Links,Verknüpfungen
+Loading active definition…,Aktive Definition wird geladen…
+Loading active mappings…,Aktive Mappings werden geladen…
+Loading bindings…,Bindungen werden geladen…
+Loading conflicts …,Konflikte werden geladen …
+Loading details …,Details werden geladen …
+Loading direct relations …,Direkte Beziehungen werden geladen …
+Loading integration links…,Integrationsverknüpfungen werden geladen…
+Loading options…,Optionen werden geladen…
+Loading personal drafts…,Persönliche Entwürfe werden geladen…
+Loading run details …,Laufdetails werden geladen …
+Loading runtime history …,Laufverlauf wird geladen …
+Loading saved HERO nodes…,Gespeicherte HERO-Knoten werden geladen…
+Loading saved snapshots…,Gespeicherte Snapshots werden geladen…
+Loading schema operations…,Schema-Operationen werden geladen…
+Loading schema status …,Schema-Status wird geladen …
+Loading schema · nodes and cross-page relationships are being combined …,Schema wird geladen · Knoten und seitenübergreifende Beziehungen werden zusammengeführt …
+Loading shared mapping…,Geteiltes Mapping wird geladen…
+Loading shared writeback mappings…,Geteilte Writeback-Mappings werden geladen…
+Loading stored metadata …,Gespeicherte Metadaten werden geladen …
+Loading stored synchronization state …,Gespeicherter Synchronisierungsstatus wird geladen …
+Loading your saved draft…,Ihr gespeicherter Entwurf wird geladen…
+Loading your saved revisions…,Ihre gespeicherten Revisionen werden geladen…
+Loading · {0}/{1} nodes · {2}/{3} relationships,Lädt · {0}/{1} Knoten · {2}/{3} Beziehungen
+Loading …,Wird geladen …
+Local Configuration Access,Zugriff auf lokale Konfiguration
+Local changes — not saved,Lokale Änderungen — nicht gespeichert
+Local configuration permission,Lokale Konfigurationsberechtigung
+MAPPING_CONFIRMATION_REQUIRED: Explicit discard confirmation is required.,MAPPING_CONFIRMATION_REQUIRED: Eine ausdrückliche Bestätigung zum Verwerfen ist erforderlich.
+MAPPING_DRAFT_CONFLICT: Reload the current personal draft.,MAPPING_DRAFT_CONFLICT: Laden Sie den aktuellen persönlichen Entwurf erneut.
+MAPPING_DRAFT_INVALID: Invalid content or unavailable active definition.,MAPPING_DRAFT_INVALID: Ungültiger Inhalt oder aktive Definition nicht verfügbar.
+MAPPING_INPUT_INVALID: Invalid accepted reconciliation suggestions.,MAPPING_INPUT_INVALID: Ungültige angenommene Reconciliation-Vorschläge.
+MAPPING_INPUT_INVALID: Invalid direction.,MAPPING_INPUT_INVALID: Ungültige Richtung.
+MAPPING_INPUT_INVALID: Invalid mapping_type.,MAPPING_INPUT_INVALID: Ungültiger mapping_type.
+MAPPING_INPUT_INVALID: Invalid or over-complex mapping JSON object.,MAPPING_INPUT_INVALID: Ungültiges oder zu komplexes Mapping-JSON-Objekt.
+MAPPING_INPUT_INVALID: Invalid warning fingerprint.,MAPPING_INPUT_INVALID: Ungültiger Warnungs-Fingerprint.
+MAPPING_INPUT_INVALID: Invalid {0} JSON.,MAPPING_INPUT_INVALID: Ungültiges {0}-JSON.
+MAPPING_INPUT_INVALID: Invalid {0}.,MAPPING_INPUT_INVALID: Ungültiges {0}.
+MAPPING_INPUT_INVALID: Unsupported request field.,MAPPING_INPUT_INVALID: Nicht unterstütztes Anfragefeld.
+MAPPING_INPUT_INVALID: expected draft states must be JSON.,MAPPING_INPUT_INVALID: Erwartete Entwurfszustände müssen JSON sein.
+MAPPING_INPUT_INVALID: mapping_json must be JSON text of at most 65536 bytes.,MAPPING_INPUT_INVALID: mapping_json muss JSON-Text mit höchstens 65536 Bytes sein.
+MAPPING_INPUT_INVALID: sample_values_json must be JSON text.,MAPPING_INPUT_INVALID: sample_values_json muss JSON-Text sein.
+MAPPING_INPUT_INVALID: {0} must be JSON text within its size limit.,MAPPING_INPUT_INVALID: {0} muss JSON-Text innerhalb des Größenlimits sein.
+MAPPING_INPUT_INVALID: {0} must be a JSON object.,MAPPING_INPUT_INVALID: {0} muss ein JSON-Objekt sein.
+Managed ToDo,Verwaltetes ToDo
+Manual Actions,Manuelle Aktionen
+Map Fields,Felder zuordnen
+"Mapped appointment data with its project, participant and resource relations.","Zugeordnete Termindaten mit ihren Projekt-, Teilnehmer- und Ressourcenbeziehungen."
+Mapped objects,Zugeordnete Objekte
+Mapped project data. The referenced contacts are processed first in the same run.,Zugeordnete Projektdaten. Die referenzierten Kontakte werden zuerst im selben Lauf verarbeitet.
+Mapped task fields with their approved relations and assignments.,Zugeordnete Aufgabenfelder mit ihren freigegebenen Beziehungen und Zuweisungen.
+Mapping,Mapping
+Mapping Count,Anzahl der Mappings
+Mapping Editor,Mapping Editor
+Mapping Format Version,Mapping-Formatversion
+Mapping JSON,Mapping-JSON
+Mapping Package,Mapping-Paket
+Mapping Purpose,Mapping-Zweck
+Mapping Registry,Mapping-Registry
+Mapping Registry versions are immutable.,Mapping-Registry-Versionen sind unveränderlich.
+Mapping Revision,Mapping-Revision
+Mapping Version,Mapping-Version
+Mapping adoption records are managed by the adoption service.,Mapping-Übernahmedatensätze werden durch den Übernahmeservice verwaltet.
+Mapping context must be locked before saving an active definition; use the mapping service.,Der Mapping-Kontext muss vor dem Speichern einer aktiven Definition gesperrt werden; verwenden Sie den Mapping-Service.
+Mapping identity claims are immutable.,Mapping-Identitätsansprüche sind unveränderlich.
+Mapping identity claims can only be inserted by the claim service.,Mapping-Identitätsansprüche können nur durch den Claim-Service eingefügt werden.
+Mapping identity claims cannot be renamed.,Mapping-Identitätsansprüche können nicht umbenannt werden.
+Mapping identity claims must be retained.,Mapping-Identitätsansprüche müssen erhalten bleiben.
+Mapping removed locally. Undo is available until a successful save.,Mapping lokal entfernt. Rückgängig ist bis zum erfolgreichen Speichern verfügbar.
+Mapping revision,Mapping-Revision
+Mapping revision history must be retained.,Der Verlauf der Mapping-Revisionen muss erhalten bleiben.
+Mapping revisions are immutable.,Mapping-Revisionen sind unveränderlich.
+Mapping sections,Mapping-Bereiche
+Mapping target is busy; retry the transaction.,Das Mapping-Ziel ist belegt; versuchen Sie die Transaktion erneut.
+Mapping target lock was lost; restart the transaction.,Die Mapping-Zielsperre wurde verloren; starten Sie die Transaktion erneut.
+Mapping target must be locked before activating or retargeting an existing rule.,"Das Mapping-Ziel muss gesperrt werden, bevor eine vorhandene Regel aktiviert oder ihr Ziel geändert wird."
+Mapping version,Mapping-Version
+Mappings,Mappings
+Max. Actions,Max. Aktionen
+Maximum duration of a HERO API request.,Maximale Dauer einer HERO-API-Anfrage.
+Migration,Migration
+Mode,Modus
+Monitor only,Nur überwachen
+Monitor only reads Contacts and Projects; it never changes data.,Monitor liest nur Kontakte und Projekte; Daten werden niemals geändert.
+"Monitor only: reads and reports, no data changes","Nur überwachen: liest und meldet, ändert keine Daten"
+More than one stored writeback mapping owns this Frappe field; resolve the duplicate before saving.,Mehr als ein gespeichertes Writeback-Mapping ist diesem Frappe-Feld zugeordnet; beheben Sie das Duplikat vor dem Speichern.
+Mutation Operation,Mutation-Operation
+Mutation Reservation,Mutation-Reservierung
+Mutation Security,Mutation-Sicherheit
+Mutation mapping must be an object with mode ADMIN_INPUT or VALIDATED_RESOLVER.,Das Mutation-Mapping muss ein Objekt mit dem Modus ADMIN_INPUT oder VALIDATED_RESOLVER sein.
+Mutation setting was not saved. The global gate remains fail-closed until the server accepts it.,"Die Mutation-Einstellung wurde nicht gespeichert. Die globale Sperre bleibt geschlossen, bis der Server sie akzeptiert."
+Mutation variables must be a JSON object.,Mutation-Variablen müssen ein JSON-Objekt sein.
+My new personal drafts,Meine neuen persönlichen Entwürfe
+My saved revisions,Meine gespeicherten Revisionen
+My saved revisions — read only,Meine gespeicherten Revisionen — schreibgeschützt
+Name,Name
+"Name, ID or type","Name, ID oder Typ"
+Native Adapter,Nativer Adapter
+Native Binding,Native Bindung
+"Never included: HERO URL and API token, allowed hosts, notification recipients, the mutation and deletion switches, testing mode and data. The mutation switch stays off after an import.","Nicht enthalten sind HERO-URL und API-Token, erlaubte Hosts, Empfänger von Benachrichtigungen, Schalter für Mutation und Löschen sowie Testmodus und Daten. Der Mutation-Schalter bleibt nach einem Import ausgeschaltet."
+New Definition Context Json,JSON des neuen Definitionskontexts
+New mapping added locally. Save the draft to keep it.,"Neues Mapping lokal hinzugefügt. Speichern Sie den Entwurf, um es zu behalten."
+"New snapshot captured. Inherited {0} parent mapping(s) as personal drafts ({1} incompatible, {2} skipped). Nothing was activated.","Neuer Snapshot erfasst. {0} übergeordnete Mappings als persönliche Entwürfe übernommen ({1} inkompatibel, {2} übersprungen). Es wurde nichts aktiviert."
+New snapshot captured; mapping inheritance did not complete. Retry it in the Mapping Editor.,Neuer Snapshot erfasst; die Mapping-Vererbung wurde nicht abgeschlossen. Versuchen Sie es im Mapping Editor erneut.
+New unsaved draft,Neuer ungespeicherter Entwurf
+New-definition context is immutable within a generation.,Der Kontext für eine neue Definition ist innerhalb einer Generation unveränderlich.
+New-definition draft cannot claim an active baseline.,Ein Entwurf für eine neue Definition kann keinen aktiven Basisstand beanspruchen.
+New-definition draft context is invalid.,Der Kontext des Entwurfs für eine neue Definition ist ungültig.
+Next,Weiter
+Next bindings,Nächste Bindungen
+Next drafts,Nächste Entwürfe
+Next links,Nächste Verknüpfungen
+Next mappings,Nächste Mappings
+Next page,Nächste Seite
+Next revisions,Nächste Revisionen
+Next rules,Nächste Regeln
+No active mapping,Kein aktives Mapping
+No active mapping rules exist for this area. Create and activate them under Mapping.,Für diesen Bereich gibt es keine aktiven Mapping-Regeln. Erstellen und aktivieren Sie diese unter Mapping.
+"No active mappings match this context or filter. Try another snapshot, search or page.","Keine aktiven Mappings entsprechen diesem Kontext oder Filter. Versuchen Sie einen anderen Snapshot, Suchbegriff oder eine andere Seite."
+No changes to save.,Keine Änderungen zu speichern.
+No changes to save. Personal draft unchanged.,Keine Änderungen zu speichern. Persönlicher Entwurf unverändert.
+No changes to send.,Keine Änderungen zum Senden.
+No check yet. Saving enabled settings with an API token loads the schema.,Noch keine Prüfung. Das Speichern aktivierter Einstellungen mit einem API-Token lädt das Schema.
+No complete visualization is available.,Keine vollständige Visualisierung verfügbar.
+No data was delivered.,Es wurden keine Daten geliefert.
+No differences from the original base were found. Save draft can record this checked active revision.,Keine Unterschiede zur ursprünglichen Basis gefunden. „Entwurf speichern“ kann diese geprüfte aktive Revision festhalten.
+No directives are present in the saved schema.,Im gespeicherten Schema sind keine Direktiven vorhanden.
+No existing bindings use this mapping definition.,Keine vorhandenen Bindungen verwenden diese Mapping-Definition.
+No existing integration links.,Keine Integrationsverknüpfungen vorhanden.
+No field mappings in this definition.,Keine Feld-Mappings in dieser Definition.
+No open conflicts.,Keine offenen Konflikte.
+No options match this selection.,Keine Optionen entsprechen dieser Auswahl.
+No personal drafts on this page.,Keine persönlichen Entwürfe auf dieser Seite.
+No required variables.,Keine erforderlichen Variablen.
+No runs yet. Start a manual action to create the first run.,"Noch keine Läufe vorhanden. Starten Sie eine manuelle Aktion, um den ersten Lauf zu erstellen."
+No saved GraphQL schema is available. Query and Mutation drafts remain disabled until a validated schema is selected.,"Kein gespeichertes GraphQL-Schema verfügbar. Query- und Mutation-Entwürfe bleiben deaktiviert, bis ein validiertes Schema ausgewählt wird."
+No saved HERO nodes. Use “Remember for Mapping” in the API Analyzer or Graph Viewer.,Keine HERO-Knoten gespeichert. Verwenden Sie „Für Mapping merken“ im API Analyzer oder Graph Viewer.
+No saved personal revisions.,Keine persönlichen Revisionen gespeichert.
+No saved reconciliation evidence.,Keine gespeicherten Reconciliation-Nachweise.
+No saved services are available without a validated schema.,Ohne validiertes Schema sind keine gespeicherten Services verfügbar.
+No schema is available for this connection and revision.,Für diese Verbindung und Revision ist kein Schema verfügbar.
+No schema is available for this connection. Refresh Schema retrieves the defined introspection only.,Für diese Verbindung ist kein Schema verfügbar. „Schema aktualisieren“ ruft nur die definierte Introspection ab.
+No selection,Keine Auswahl
+No types match this filter.,Keine Typen entsprechen diesem Filter.
+No validated HERO schema snapshot exists and the file contains none.,Es gibt keinen validierten HERO-Schema-Snapshot und die Datei enthält keinen.
+No validated HERO schema snapshot exists; refresh the HERO schema first.,Es gibt keinen validierten HERO-Schema-Snapshot; aktualisieren Sie zuerst das HERO-Schema.
+No validated saved GraphQL snapshot is available.,Kein validierter gespeicherter GraphQL-Snapshot verfügbar.
+No validated schema is selected. Existing tools remain available once a snapshot is selected.,"Es ist kein validiertes Schema ausgewählt. Die vorhandenen Werkzeuge sind verfügbar, sobald ein Snapshot ausgewählt ist."
+No validated schema snapshot,Kein validierter Schema-Snapshot
+No validated snapshot available,Kein validierter Snapshot verfügbar
+Node Class,Knotenklasse
+Node Kind,Knotenart
+Node actions,Knotenaktionen
+Node bookmarks can only be changed by their owner.,Knotenlesezeichen können nur von ihrem Eigentümer geändert werden.
+Node bookmarks can only be used by their owner.,Knotenlesezeichen können nur von ihrem Eigentümer verwendet werden.
+Node remembered for mapping. No mapping was created.,Knoten für Mapping gemerkt. Es wurde kein Mapping erstellt.
+Node type,Knotentyp
+Nonempty String ID,Nicht leere String-ID
+Not all nodes were delivered.,Nicht alle Knoten wurden geliefert.
+Not available,Nicht verfügbar
+Not bound,Nicht gebunden
+Not configured,Nicht konfiguriert
+Not displayed,Nicht angezeigt
+Not imported ({0}),Nicht importiert ({0})
+Not provided,Nicht angegeben
+Not ready,Nicht bereit
+Not ready: approved read service missing.,Nicht bereit: Ein freigegebener Lese-Service fehlt.
+Not verified yet,Noch nicht geprüft
+Note: a newer validated snapshot exists; the bookmark still refers to its original snapshot.,Hinweis: Ein neuerer validierter Snapshot ist vorhanden; das Lesezeichen verweist weiterhin auf seinen ursprünglichen Snapshot.
+Notification,Benachrichtigung
+Notifications,Benachrichtigungen
+OFF blocks every HERO Integration deletion route on the server. Turning it on is only a necessary prerequisite.,OFF blockiert serverseitig alle Löschwege der HERO Integration. Die Aktivierung ist nur eine notwendige Voraussetzung.
+OFF never polls HERO records automatically; the schema refresh is separate. MONITOR observes and records technical results only. AUTO_SYNC is limited to approved HERO-to-Frappe mappings; it never executes HERO mutations.,OFF ruft HERO-Datensätze niemals automatisch per Polling ab; die Schema-Aktualisierung erfolgt unabhängig davon. MONITOR beobachtet und erfasst nur technische Ergebnisse. AUTO_SYNC ist auf freigegebene HERO-zu-Frappe-Mappings beschränkt und führt niemals HERO-Mutations aus.
+OFF never polls HERO records automatically; the schema refresh is separate. MONITOR records internal run metadata only; AUTO_SYNC requires active approved HERO-to-Frappe mappings.,"OFF ruft HERO-Datensätze niemals automatisch per Polling ab; die Schema-Aktualisierung ist unabhängig davon. MONITOR erfasst nur interne Laufmetadaten; AUTO_SYNC erfordert aktive, freigegebene HERO-zu-Frappe-Mappings."
+Object links are separate from field bindings and are not filtered by the selected definition.,Objektverknüpfungen sind von Feldbindungen getrennt und werden nicht nach der ausgewählten Definition gefiltert.
+Object selected for browsing. Field selection does not grant access or change the fetch configuration.,Objekt zur Ansicht ausgewählt. Die Feldauswahl gewährt keinen Zugriff und ändert nicht die Abrufkonfiguration.
+Observed At,Beobachtet am
+Off,Aus
+On,Ein
+On · read by polling,Ein · wird per Polling gelesen
+One enabled System Manager user ID per line. Empty uses all enabled System Managers for internal Frappe notifications.,Eine aktivierte System-Manager-Benutzer-ID pro Zeile. Leer verwendet alle aktivierten System Manager für interne Frappe-Benachrichtigungen.
+One exact HTTPS hostname per line.,Ein exakter HTTPS-Hostname pro Zeile.
+One exact HTTPS hostname per line; the endpoint host must be present.,Ein exakter HTTPS-Hostname pro Zeile; der Host des Endpunkts muss enthalten sein.
+"One file with the whole HERO setup: schema snapshot, settings, field mappings with their HERO fields and DocTypes, and the read services. Importing it on another site activates everything in one step.","Eine Datei mit der gesamten HERO-Einrichtung: Schema-Snapshot, Einstellungen, Feld-Mappings mit ihren HERO-Feldern und DocTypes sowie den Lese-Services. Der Import auf einer anderen Site aktiviert alles in einem Schritt."
+"One variable per line: name := value; (the semicolon is optional). Strings use double quotes; numbers, true, false and null have no quotes; arrays and objects use JSON. Values are not stored with the service.","Eine Variable pro Zeile: name := value; (das Semikolon ist optional). Strings verwenden doppelte Anführungszeichen; Zahlen, true, false und null stehen ohne Anführungszeichen; Arrays und Objekte verwenden JSON. Werte werden nicht mit dem Service gespeichert."
+Only GraphQL query and local-only mutation draft definitions are supported.,Nur GraphQL-Query- und ausschließlich lokale Mutation-Entwurfsdefinitionen werden unterstützt.
+Only System Managers can change this global gate. It is OFF by default.,Nur System Manager können diese globale Sperre ändern. Sie ist standardmäßig auf OFF gesetzt.
+Only a current Draft may be activated.,Nur ein aktueller Draft darf aktiviert werden.
+Only a current shared draft can be edited.,Nur ein aktueller geteilter Entwurf kann bearbeitet werden.
+Only a validated service and active mapping on the same snapshot can be approved.,Nur ein validierter Service und ein aktives Mapping auf demselben Snapshot können freigegeben werden.
+"Only failed, cancelled, or blocked runs can resume.","Nur fehlgeschlagene, abgebrochene oder blockierte Läufe können fortgesetzt werden."
+Only the administrator who last changed this Draft may activate it.,"Nur der Administrator, der diesen Draft zuletzt geändert hat, darf ihn aktivieren."
+Only the last editor can change this shared draft.,Nur der letzte Bearbeiter kann diesen geteilten Entwurf ändern.
+Only the owner may change a shared field-rule Draft.,Nur der Eigentümer darf einen geteilten Feldregel-Draft ändern.
+Open Analyzer,Analyzer öffnen
+Open Graph Viewer,Graph Viewer öffnen
+Open in Graph Viewer,Im Graph Viewer öffnen
+Open in GraphQL Services,In GraphQL Services öffnen
+Open my draft,Meinen Entwurf öffnen
+Open my draft to edit fields,Meinen Entwurf zum Bearbeiten der Felder öffnen
+Operation,Operation
+Operation Kind,Operationsart
+Operation filter,Operationsfilter
+Operation plan ready; no operation was executed.,Operationsplan bereit; es wurde keine Operation ausgeführt.
+Optional HH:MM-HH:MM local-time window; empty means no additional window.,Optionales lokales Zeitfenster HH:MM-HH:MM; leer bedeutet kein zusätzliches Zeitfenster.
+Optional local time window in HH:MM-HH:MM.,Optionales lokales Zeitfenster im Format HH:MM-HH:MM.
+Origin,Ursprung
+"Origin of the definition, for example GraphQL Services or API Analyzer.","Ursprung der Definition, zum Beispiel GraphQL Services oder API Analyzer."
+Original Node Name,Ursprünglicher Knotenname
+Original base,Ursprüngliche Basis
+Original node,Ursprünglicher Knoten
+Output Schema Version,Ausgabeschemaversion
+Overview,Übersicht
+Owner User,Besitzender Benutzer
+PERSONAL_DRAFT_REQUIRED: Use the personal mapping draft API.,PERSONAL_DRAFT_REQUIRED: Verwenden Sie die API für persönliche Mapping-Entwürfe.
+Package Fingerprint,Paket-Fingerprint
+Page size,Seitengröße
+Pagination,Paginierung
+Pagination strategy,Paginierungsstrategie
+Parent Definition ID,ID der übergeordneten Definition
+Parent Mapping,Übergeordnetes Mapping
+Parent Snapshot,Übergeordneter Snapshot
+Partial HERO response with GraphQL errors,Teilweise HERO-Antwort mit GraphQL-Fehlern
+Partial State,Teilweiser Stand
+Pass,Erfolgreich
+Path selected for browsing. Mapping content is unchanged; choose a field in your personal draft to edit it.,Pfad zur Ansicht ausgewählt. Der Mapping-Inhalt bleibt unverändert; wählen Sie ein Feld in Ihrem persönlichen Entwurf zur Bearbeitung.
+Pending Sync requires a positive current runtime-plan generation.,Pending Sync erfordert eine positive aktuelle Laufzeitplan-Generation.
+Personal draft,Persönlicher Entwurf
+Personal draft actions,Aktionen für persönlichen Entwurf
+Personal draft discarded.,Persönlicher Entwurf verworfen.
+Personal draft identity is immutable.,Die Identität eines persönlichen Entwurfs ist unveränderlich.
+Personal draft matches your edits. Save status confirmed.,Der persönliche Entwurf entspricht Ihren Änderungen. Speicherstatus bestätigt.
+Personal draft opened.,Persönlicher Entwurf geöffnet.
+Personal draft opened. It has no active definition.,Persönlicher Entwurf geöffnet. Er hat keine aktive Definition.
+Personal draft revision,Revision des persönlichen Entwurfs
+Personal draft save confirmed by reading it again.,Speicherung des persönlichen Entwurfs durch erneutes Lesen bestätigt.
+Personal draft saved. Not validated or activated.,Persönlicher Entwurf gespeichert. Nicht validiert oder aktiviert.
+Personal draft: selecting a field changes this draft locally. Save draft to keep the changes.,"Persönlicher Entwurf: Die Auswahl eines Feldes ändert diesen Entwurf lokal. Speichern Sie den Entwurf, um die Änderungen zu behalten."
+Personal field rule,Persönliche Feldregel
+Personal mapping document access denied.,Zugriff auf das persönliche Mapping-Dokument verweigert.
+Personal mapping document write denied.,Schreibzugriff auf das persönliche Mapping-Dokument verweigert.
+Personal mapping draft access denied.,Zugriff auf den persönlichen Mapping-Entwurf verweigert.
+Personal mapping draft base_content_json is immutable.,base_content_json eines persönlichen Mapping-Entwurfs ist unveränderlich.
+Personal mapping draft reopen must start a new generation.,Das erneute Öffnen eines persönlichen Mapping-Entwurfs muss eine neue Generation starten.
+Personal mapping draft {0} is immutable.,Der persönliche Mapping-Entwurf {0} ist unveränderlich.
+Personal mapping revision not found.,Persönliche Mapping-Revision nicht gefunden.
+Personal mapping version access denied.,Zugriff auf die persönliche Mapping-Version verweigert.
+Phase,Phase
+Please check the saved HERO settings and try again.,Prüfen Sie die gespeicherten HERO-Einstellungen und versuchen Sie es erneut.
+Policy Fingerprint,Policy-Fingerprint
+Policy Revision,Policy-Revision
+Polling,Polling
+Polling / Update,Polling / Update
+Polling Concurrency,Polling-Parallelität
+Polling Execution Window,Polling-Ausführungszeitraum
+Polling Interval Minutes,Polling-Intervall in Minuten
+Polling Mode,Polling-Modus
+Polling Notifications,Polling-Benachrichtigungen
+Polling Page Size,Polling-Seitengröße
+Polling Pagination Strategy,Polling-Paginierungsstrategie
+Polling Rate Limit,Polling-Anfragelimit
+Polling Retry Backoff Seconds,Polling-Wartezeit zwischen Wiederholungen in Sekunden
+Polling Retry Limit,Maximale Polling-Wiederholungen
+Polling Settings,Polling-Einstellungen
+Polling Timeout Seconds,Polling-Zeitüberschreitung in Sekunden
+Polling Timezone,Polling-Zeitzone
+Polling configuration,Polling-Konfiguration
+Polling interval,Polling-Intervall
+Polling interval (minutes),Polling-Intervall (Minuten)
+Polling interval must be between 1 and 1440 minutes.,Das Polling-Intervall muss zwischen 1 und 1440 Minuten liegen.
+Polling is off in Settings,Polling ist in den Einstellungen ausgeschaltet
+Polling is switched off in Settings. Choose a polling mode there before switching the sync on.,"Polling ist in den Einstellungen ausgeschaltet. Wählen Sie dort einen Polling-Modus, bevor Sie die Synchronisierung einschalten."
+Polling mode,Polling-Modus
+"Polling mode must be OFF, MONITOR, or AUTO_SYNC.","Der Polling-Modus muss OFF, MONITOR oder AUTO_SYNC sein."
+Polling pagination strategy must be OFFSET for the approved HERO V1 reader.,Für den freigegebenen HERO-V1-Reader muss die Polling-Paginierungsstrategie OFFSET sein.
+Polling timeout seconds,Polling-Zeitüberschreitung (Sekunden)
+Portable Definition ID,Portable Definitions-ID
+Portable Rule Lineage,Portable Regelabstammung
+Portable Schema Dependencies,Portable Schema-Abhängigkeiten
+Portable Schema Manifest,Portables Schema-Manifest
+Portable identity may only be enrolled through the identity service.,Eine portable Identität darf nur über den Identitätsservice registriert werden.
+Portable mapping schema provenance is immutable and service-managed.,Die portable Mapping-Schema-Herkunft ist unveränderlich und wird durch den Service verwaltet.
+Portable rule identity and lineage are immutable.,Portable Regelidentität und Abstammung sind unveränderlich.
+Portable rule identity and lineage are service-managed.,Portable Regelidentität und Abstammung werden durch den Service verwaltet.
+Portable rule lineage does not match the authorized preceding revision.,Die portable Regelabstammung stimmt nicht mit der autorisierten vorherigen Revision überein.
+Positive Int To Text,Positive Ganzzahl in Text
+Prepare new shared writeback draft,Neuen geteilten Writeback-Entwurf vorbereiten
+Preparing a non-executable plan…,Ein nicht ausführbarer Plan wird vorbereitet…
+Prerequisites,Voraussetzungen
+Preview only. This plan grants no execution permission.,Nur Vorschau. Dieser Plan erteilt keine Ausführungsberechtigung.
+Preview saved operation plan,Gespeicherten Operationsplan anzeigen
+Previous,Zurück
+Previous bindings,Vorherige Bindungen
+Previous drafts,Vorherige Entwürfe
+Previous links,Vorherige Verknüpfungen
+Previous mappings,Vorherige Mappings
+Previous page,Vorherige Seite
+Previous revisions,Vorherige Revisionen
+Previous rules,Vorherige Regeln
+Previous snapshot of the same HERO source and endpoint. New snapshots inherit its mappings as personal drafts.,Vorheriger Snapshot derselben HERO-Quelle und desselben Endpunkts. Neue Snapshots erben dessen Mappings als persönliche Entwürfe.
+"Priority (0 first, 10 last)","Priorität (0 zuerst, 10 zuletzt)"
+Processed,Verarbeitet
+Processing,Verarbeitung
+Progress,Fortschritt
+Project IDs ending in -H are reserved for projects imported from HERO.,Projekt-IDs mit der Endung -H sind für aus HERO importierte Projekte reserviert.
+Project Migration,Projektmigration
+Project Offset,Projekt-Offset
+Project Phase Blocked,Projektphase blockiert
+Project Phase Created,Projektphase erstellt
+Project Phase Processed,Projektphase verarbeitet
+Project Phase Skipped,Projektphase übersprungen
+Project Phase State,Status der Projektphase
+Project Records,Projektdatensätze
+Project Relation,Projektbeziehung
+Project Watermark,Projekt-Watermark
+Projection Migration,Projektionsmigration
+Projects,Projekte
+Projects phase,Projektphase
+Protected Source Field Comparison,Geschützter Quellfeldvergleich
+Protected Target Field Comparison,Geschützter Zielfeldvergleich
+Provenance,Herkunft
+Publication failed or its outcome is unknown. Check the active version before trying again.,"Veröffentlichung fehlgeschlagen oder Ergebnis unbekannt. Prüfen Sie die aktive Version, bevor Sie es erneut versuchen."
+Published Mapping Scope,Veröffentlichter Mapping-Umfang
+Published mapping scope is immutable and service-managed.,Der veröffentlichte Mapping-Umfang ist unveränderlich und wird durch den Service verwaltet.
+Published rule versions are immutable.,Veröffentlichte Regelversionen sind unveränderlich.
+Published rule versions cannot be renamed.,Veröffentlichte Regelversionen können nicht umbenannt werden.
+Published rule versions must be retained.,Veröffentlichte Regelversionen müssen erhalten bleiben.
+Queued,In Warteschlange
+Rate limit,Anfragelimit
+Raw JSON,Rohes JSON
+Read Execution Status,Status der Leseausführung
+Read only,Schreibgeschützt
+Read service,Lese-Service
+Read services,Lese-Services
+Read-only exploration of the selected validated schema,Schreibgeschützte Erkundung des ausgewählten validierten Schemas
+Read-only information from the current HERO source.,Schreibgeschützte Informationen zur aktuellen HERO-Quelle.
+Readable,Lesbar
+Ready,Bereit
+Reason,Grund
+Recheck requested,Erneute Prüfung angefordert
+Reconcile active changes,Aktive Änderungen abgleichen
+Reconciliation Evidence Json,JSON der Reconciliation-Nachweise
+Reconciliation Revision,Reconciliation-Revision
+Reconciliation choices are local only. Save draft to persist them.,"Die Reconciliation-Auswahl gilt nur lokal. Speichern Sie den Entwurf, um sie dauerhaft zu übernehmen."
+Reconciliation may report discrepancies; it never deletes ERPNext records automatically.,Reconciliation kann Abweichungen melden; ERPNext-Datensätze werden niemals automatisch gelöscht.
+Reconciliation reports discrepancies and never auto-deletes ERPNext records.,Reconciliation meldet Abweichungen und löscht niemals automatisch ERPNext-Datensätze.
+Record Name,Datensatzname
+Records Created,Erstellte Datensätze
+Records Processed,Verarbeitete Datensätze
+Records Skipped,Übersprungene Datensätze
+Redacted Detail,Redigierte Details
+Referenced identities,Referenzierte Identitäten
+Refresh,Aktualisieren
+Refresh Schema,Schema aktualisieren
+Refresh Status,Status aktualisieren
+Refresh shared writeback mappings,Geteilte Writeback-Mappings aktualisieren
+Refreshing schema …,Schema wird aktualisiert …
+Relation,Beziehung
+Relationship,Beziehung
+Relationship details,Beziehungsdetails
+Reliability and notifications,Zuverlässigkeit und Benachrichtigungen
+Reload saved draft,Gespeicherten Entwurf neu laden
+Remember for Mapping,Für Mapping merken
+Remember this node under your own alias for the Mapping Editor. No mapping is created.,Diesen Knoten unter einem eigenen Alias für den Mapping Editor merken. Es wird kein Mapping erstellt.
+Remove,Entfernen
+Remove this saved HERO node? Mappings are not affected.,Diesen gespeicherten HERO-Knoten entfernen? Mappings sind nicht betroffen.
+Rename,Umbenennen
+Rename saved HERO node,Gespeicherten HERO-Knoten umbenennen
+"Renaming requires confirm=""{0}"".","Zum Umbenennen ist confirm=""{0}"" erforderlich."
+Replace local edits and Undo history with your currently saved draft?,Lokale Änderungen und den Rückgängig-Verlauf durch Ihren aktuell gespeicherten Entwurf ersetzen?
+Request Fingerprint,Anfrage-Fingerprint
+Requests per minute,Anfragen pro Minute
+Reset,Zurücksetzen
+Resolve the Customer using the source instance and external ID through HERO Integration Link.,Den Kunden über HERO Integration Link anhand der Quellinstanz und externen ID auflösen.
+Resolve the Project using the source instance and external ID through HERO Integration Link.,Das Projekt über HERO Integration Link anhand der Quellinstanz und externen ID auflösen.
+Result Detail,Ergebnisdetails
+Resume Offset,Offset für Fortsetzung
+Resume Phase,Phase für Fortsetzung
+Resume Record Index,Datensatzindex für Fortsetzung
+Retry backoff,Wartezeit zwischen Wiederholungen
+Retry backoff seconds,Wartezeit zwischen Wiederholungen (Sekunden)
+Retry bindings,Bindungen erneut laden
+Retry limit,Maximale Wiederholungen
+Retry mappings,Mappings erneut laden
+Retry options,Optionen erneut laden
+Retry saved schema,Gespeichertes Schema erneut laden
+Return to mappings and reopen the draft to refresh the active definition.,"Kehren Sie zu den Mappings zurück und öffnen Sie den Entwurf erneut, um die aktive Definition zu aktualisieren."
+Review metadata can only be edited on a Draft.,Prüfmetadaten können nur in einem Draft bearbeitet werden.
+Review reason,Prüfgrund
+Review saved query and mutation contracts without changing their state.,"Gespeicherte Query- und Mutation-Verträge prüfen, ohne deren Status zu ändern."
+Review the existing relationship contract.,Prüfen Sie den vorhandenen Beziehungsvertrag.
+Review the existing resolver and identity contract.,Prüfen Sie den vorhandenen Resolver- und Identitätsvertrag.
+Reviewed HERO target,Geprüftes HERO-Ziel
+Reviewed shared source,Geprüfte geteilte Quelle
+Reviewed source and target,Geprüfte Quelle und geprüftes Ziel
+Revision,Revision
+Revoked By,Widerrufen von
+Roots,Roots
+Rule details (transformation and parameters),Regeldetails (Transformation und Parameter)
+Run checkpoint schema is not installed; apply the reviewed app schema before queueing a run.,"Das Schema für Lauf-Checkpoints ist nicht installiert; übernehmen Sie das geprüfte App-Schema, bevor Sie einen Lauf einreihen."
+Run {0} is being cancelled.,Lauf {0} wird abgebrochen.
+Run {0} is queued to continue.,Lauf {0} wurde zur Fortsetzung in die Warteschlange eingereiht.
+Run {0} is still in progress.,Lauf {0} ist noch aktiv.
+Running,Läuft
+Running …,Läuft …
+Runs,Läufe
+"Runs the saved revision once, read-only.",Führt die gespeicherte Revision einmal schreibgeschützt aus.
+Runtime,Laufzeit
+Runtime History,Laufverlauf
+Runtime plans may only be changed through the canonical lifecycle service.,Laufzeitpläne dürfen nur über den kanonischen Lebenszyklusservice geändert werden.
+Safety and conflict notifications,Sicherheit und Konfliktbenachrichtigungen
+Salutation Table,Anredetabelle
+Save,Speichern
+Save GraphQL mapping changes as a Draft before activation.,Speichern Sie GraphQL-Mapping-Änderungen vor der Aktivierung als Draft.
+Save Mutation,Mutation speichern
+Save Query,Query speichern
+Save Service,Service speichern
+Save Settings,Einstellungen speichern
+Save Testing Settings,Test-Einstellungen speichern
+Save as GraphQL Service,Als GraphQL Service speichern
+Save as GraphQL Service is available for Query and Mutation operations and their root fields.,„Als GraphQL Service speichern“ ist für Query- und Mutation-Operationen und deren Root-Felder verfügbar.
+Save draft,Entwurf speichern
+"Save failed or its outcome is unknown. Status, owner or revision may have changed. Your inputs are kept; close this editor and reload before trying again. No retry was made.","Speichern fehlgeschlagen oder Ergebnis unbekannt. Status, Eigentümer oder Revision können sich geändert haben. Ihre Eingaben bleiben erhalten; schließen Sie diesen Editor und laden Sie neu, bevor Sie es erneut versuchen. Es wurde kein erneuter Versuch ausgeführt."
+Save or discard the unsaved changes in the other mapping tab before leaving.,"Speichern oder verwerfen Sie die ungespeicherten Änderungen im anderen Mapping-Tab, bevor Sie die Ansicht verlassen."
+Save shared draft,Geteilten Entwurf speichern
+Save status is uncertain. Your edits and Undo have been kept. Check the saved draft before continuing.,"Der Speicherstatus ist ungewiss. Ihre Änderungen und „Rückgängig“ bleiben erhalten. Prüfen Sie den gespeicherten Entwurf, bevor Sie fortfahren."
+Save the customer before sending it to HERO.,"Speichern Sie den Kunden, bevor Sie ihn an HERO senden."
+Save the project before sending it to HERO.,"Speichern Sie das Projekt, bevor Sie es an HERO senden."
+Save the task before sending it to HERO.,"Speichern Sie die Aufgabe, bevor Sie sie an HERO senden."
+Saved GraphQL schema and local integration status.,Gespeichertes GraphQL-Schema und lokaler Integrationsstatus.
+Saved GraphQL schema snapshot,Gespeicherter GraphQL-Schema-Snapshot
+Saved HERO Nodes,Gespeicherte HERO-Knoten
+Saved Mutations,Gespeicherte Mutations
+Saved Queries,Gespeicherte Queries
+Saved operation plan,Gespeicherter Operationsplan
+Saved personal draft,Gespeicherter persönlicher Entwurf
+Saved personal draft published.,Gespeicherter persönlicher Entwurf veröffentlicht.
+Saved personal draft reloaded.,Gespeicherter persönlicher Entwurf neu geladen.
+Saved reconciliation evidence is current only for its recorded draft content.,Gespeicherte Reconciliation-Nachweise gelten nur für ihren aufgezeichneten Entwurfsinhalt.
+Saved schema metadata,Gespeicherte Schema-Metadaten
+Saved schema operation details.,Gespeicherte Schema-Operationsdetails.
+Saved schema snapshot,Gespeicherter Schema-Snapshot
+Saved · Revision {0},Gespeichert · Revision {0}
+"Saves a service without executing it. For object results, __typename is preselected; add the required fields.",Speichert einen Service ohne Ausführung. Für Objektergebnisse ist __typename vorausgewählt; fügen Sie die erforderlichen Felder hinzu.
+"Saves connection, sources, safety and polling settings. A new or unverified API token loads the HERO schema right away.","Speichert Verbindung, Quellen, Sicherheit und Polling-Einstellungen. Ein neues oder ungeprüftes API-Token lädt sofort das HERO-Schema."
+Saving mutation setting …,Mutation-Einstellung wird gespeichert …
+Saving personal draft…,Persönlicher Entwurf wird gespeichert…
+Saving shared draft…,Geteilter Entwurf wird gespeichert…
+Saving testing settings …,Test-Einstellungen werden gespeichert …
+Saving …,Wird gespeichert …
+Say whether the area is switched on or off.,"Geben Sie an, ob der Bereich ein- oder ausgeschaltet ist."
+Scalar Text,Skalarer Text
+Schedule Migration,Terminmigration
+Schema,Schema
+Schema & API tools,Schema- und API-Werkzeuge
+Schema Check Message,Meldung der Schema-Prüfung
+Schema Check Status,Status der Schema-Prüfung
+Schema Dependencies,Schema-Abhängigkeiten
+Schema Fingerprint,Schema-Fingerprint
+Schema Format Version,Schema-Formatversion
+Schema Last Checked On,Schema zuletzt geprüft am
+Schema Manifest,Schema-Manifest
+Schema Overview,Schemaübersicht
+Schema Overview condenses large graphs for performance. Select a node to open its focus view; search or class filters open detailed views.,Die Schemaübersicht fasst große Graphen aus Performance-Gründen zusammen. Wählen Sie einen Knoten für seine Fokusansicht; Suche oder Klassenfilter öffnen Detailansichten.
+Schema Refresh Interval Minutes,Schema-Aktualisierungsintervall in Minuten
+Schema Snapshot,Schema-Snapshot
+Schema Snapshot JSON,Schema-Snapshot-JSON
+Schema Verified Source Binding Revision,Mit Schema geprüfte Quellenbindungsrevision
+Schema binding state,Status der Schema-Bindung
+Schema explorer,Schema-Explorer
+Schema fingerprint,Schema-Fingerprint
+Schema operation,Schema-Operation
+Schema refresh (minutes),Schema-Aktualisierung (Minuten)
+Schema snapshot,Schema-Snapshot
+Schema status is not loaded yet.,Schema-Status wurde noch nicht geladen.
+Schema —,Schema —
+Search,Suchen
+Search Type,Typ suchen
+Search alias or original name,Alias oder ursprünglichen Namen suchen
+Search mappings,Mappings suchen
+Search options,Optionen suchen
+Search rules,Regeln suchen
+Search saved HERO nodes,Gespeicherte HERO-Knoten durchsuchen
+Search: {0},Suche: {0}
+Select,Auswählen
+Select Query or Mutation.,Wählen Sie Query oder Mutation.
+Select a Query or Mutation operation.,Wählen Sie eine Query- oder Mutation-Operation.
+Select a run to view details.,"Wählen Sie einen Lauf, um Details anzuzeigen."
+Select a type on the left to inspect its definition and relations.,"Wählen Sie links einen Typ, um seine Definition und Beziehungen zu prüfen."
+Select a validated saved schema before opening the existing read-only explorer tools.,"Wählen Sie ein validiertes gespeichertes Schema, bevor Sie die schreibgeschützten Explorer-Werkzeuge öffnen."
+Select all required dependencies first.,Wählen Sie zuerst alle erforderlichen Abhängigkeiten.
+Select at least one valid change.,Wählen Sie mindestens eine gültige Änderung.
+Select exactly one mapping generation source.,Wählen Sie genau eine Mapping-Generierungsquelle.
+Select operation,Operation auswählen
+Select or save a validated schema before creating a service draft.,"Wählen oder speichern Sie ein validiertes Schema, bevor Sie einen Service-Entwurf erstellen."
+Select {0},{0} auswählen
+Selected Definition IDs,Ausgewählte Definitions-IDs
+Selected GraphQL Service,Ausgewählter GraphQL Service
+Selected Mapping Revision,Ausgewählte Mapping-Revision
+Selected Read Mapping,Ausgewähltes Lese-Mapping
+Selected Service Revision,Ausgewählte Service-Revision
+Selected checklist items must be JSON: {0},Ausgewählte Checklistenpunkte müssen JSON sein: {0}
+Selected checklist items must be a JSON list of IDs.,Ausgewählte Checklistenpunkte müssen eine JSON-Liste von IDs sein.
+Selected field mapping,Ausgewähltes Feld-Mapping
+Send to HERO,An HERO senden
+Sending to HERO is switched off globally.,Das Senden an HERO ist global ausgeschaltet.
+Sent to HERO: {0},An HERO gesendet: {0}
+Server-side mutation gate,Serverseitige Mutation-Sperre
+Service Information,Service-Informationen
+Service Name,Service-Name
+Service Revision,Service-Revision
+Service name,Service-Name
+Service operation name must be text.,Der Service-Operationsname muss Text sein.
+Service payload must be JSON: {0},Service-Nutzdaten müssen JSON sein: {0}
+Service payload must be an object.,Die Service-Nutzdaten müssen ein Objekt sein.
+Service saved. No HERO operation was executed.,Service gespeichert. Es wurde keine HERO-Operation ausgeführt.
+Service {0} is required.,Service {0} ist erforderlich.
+Set on the Synchronization page. Pausing stops new automatic runs without changing any polling setting.,"Auf der Synchronisierungsseite festgelegt. Das Pausieren stoppt neue automatische Läufe, ohne Polling-Einstellungen zu ändern."
+Settings,Einstellungen
+Settings loaded.,Einstellungen geladen.
+"Settings saved, but the API token could not be verified. {0}","Einstellungen gespeichert, aber das API-Token konnte nicht geprüft werden. {0}"
+Settings saved.,Einstellungen gespeichert.
+Settings saved. API token is valid; the HERO schema is unchanged.,Einstellungen gespeichert. Das API-Token ist gültig; das HERO-Schema ist unverändert.
+Settings saved. API token is valid; the HERO schema was loaded.,Einstellungen gespeichert. Das API-Token ist gültig; das HERO-Schema wurde geladen.
+Settings saved. Loading the HERO schema to verify the API token …,"Einstellungen gespeichert. Das HERO-Schema wird geladen, um das API-Token zu prüfen …"
+Shared draft,Geteilter Entwurf
+Shared draft confidence,Konfidenz des geteilten Entwurfs
+Shared draft review reason,Prüfgrund des geteilten Entwurfs
+Shared draft transformation,Transformation des geteilten Entwurfs
+Shared mapping changed. Refresh the list before inspecting it.,Geteiltes Mapping wurde geändert. Aktualisieren Sie die Liste vor der Prüfung.
+Shared mappings are separate from personal drafts. Inspection is read only; it does not establish activation eligibility or publish a personal draft.,Geteilte Mappings sind von persönlichen Entwürfen getrennt. Die Prüfung ist schreibgeschützt; sie stellt weder die Aktivierbarkeit fest noch veröffentlicht sie einen persönlichen Entwurf.
+Shared writeback mappings,Geteilte Writeback-Mappings
+Show function details,Funktionsdetails anzeigen
+Site Scope,Site-Geltungsbereich
+Skipped,Übersprungen
+Snapshot,Snapshot
+Snapshot list changed or contains invalid identities.,Die Snapshot-Liste wurde geändert oder enthält ungültige Identitäten.
+Snapshot list exceeds the supported range.,Die Snapshot-Liste überschreitet den unterstützten Bereich.
+Snapshot not provided,Snapshot nicht angegeben
+Snapshots can change while pages load. Retry saved schema to refresh the list.,"Snapshots können sich beim Laden der Seiten ändern. Laden Sie das gespeicherte Schema erneut, um die Liste zu aktualisieren."
+Source Binding Confirmed By,Quellenbindung bestätigt von
+Source Binding Confirmed On,Quellenbindung bestätigt am
+Source Binding Revision,Quellenbindungsrevision
+Source Deleted,Quelle gelöscht
+Source Frappe,Quelle Frappe
+Source HERO,Quelle HERO
+Source HERO · Connection {0} · Binding {1} · Schema {2},Quelle HERO · Verbindung {0} · Bindung {1} · Schema {2}
+Source ID,Quell-ID
+Source Identity,Quellidentität
+Source Instance,Quellinstanz
+Source System,Quellsystem
+Source binding changed and is not confirmed. HERO reads are blocked.,Die Quellenbindung wurde geändert und ist nicht bestätigt. HERO-Lesezugriffe sind gesperrt.
+Source binding confirmed (revision {0}).,Quellenbindung bestätigt (Revision {0}).
+Source binding is not loaded yet.,Quellenbindung wurde noch nicht geladen.
+Source instance,Quellinstanz
+Source path is not selected by the approved HERO operation.,Der Quellpfad ist nicht in der freigegebenen HERO-Operation ausgewählt.
+Source record must be JSON: {0},Der Quelldatensatz muss JSON sein: {0}
+Source record must be a JSON object.,Der Quelldatensatz muss ein JSON-Objekt sein.
+Source type,Quelltyp
+Sources,Quellen
+Stable identity for this external source.,Stabile Identität für diese externe Quelle.
+Stable source-instance identity used together with ProjectMatch.id. Change only for a separate HERO source.,Stabile Quellinstanzidentität zur Verwendung mit ProjectMatch.id. Nur für eine separate HERO-Quelle ändern.
+Start,Starten
+"Start / Update migrates the object fields included in the active mapping. Existing records are matched by source identity, bindings remain stable, and newly mapped fields are backfilled subject to validation and conflict rules.","Start / Update migriert die im aktiven Mapping enthaltenen Objektfelder. Vorhandene Datensätze werden anhand der Quellidentität zugeordnet, Bindungen bleiben stabil und neu zugeordnete Felder werden unter Beachtung der Validierungs- und Konfliktregeln nachgefüllt."
+Start or update migrations for individual data areas,Migrationen für einzelne Datenbereiche starten oder aktualisieren
+"Start runs the first import for the HERO source instance ""{0}"". You do not choose GraphQL services; the server resolves them from the active mapping.",Start führt den ersten Import für die HERO-Quellinstanz „{0}“ aus. Sie wählen keine GraphQL-Services; der Server ermittelt sie anhand des aktiven Mappings.
+Started,Gestartet
+Started On,Gestartet am
+State Revision,Statusrevision
+States,Status
+Status,Status
+Stored GraphQL schema fingerprint is stale.,Der gespeicherte GraphQL-Schema-Fingerprint ist veraltet.
+Stored credential,Gespeicherte Zugangsdaten
+Stored credential state,Status der gespeicherten Zugangsdaten
+Stored mapping JSON:,Gespeichertes Mapping-JSON:
+Stored metadata unavailable,Gespeicherte Metadaten nicht verfügbar
+Stored schema metadata is current.,Gespeicherte Schema-Metadaten sind aktuell.
+Stores a local-only disabled mutation draft.,"Speichert einen ausschließlich lokalen, deaktivierten Mutation-Entwurf."
+Stores permission for an initial load; the current polling reader does not perform bootstrap.,Speichert die Erlaubnis für einen initialen Ladevorgang; der aktuelle Polling-Reader führt keinen Bootstrap durch.
+Stores permission to fetch older records; the current polling reader does not perform backfill.,Speichert die Erlaubnis zum Abrufen älterer Datensätze; der aktuelle Polling-Reader führt keinen Backfill durch.
+Structural Diff JSON,JSON der strukturellen Unterschiede
+Subscription Service,Subscription-Service
+Subscriptions are not supported as services.,Subscriptions werden nicht als Services unterstützt.
+Suggestion Reason,Begründung des Vorschlags
+Switches automatic processing on or off. Polling settings stay unchanged.,Schaltet die automatische Verarbeitung ein oder aus. Die Polling-Einstellungen bleiben unverändert.
+Sync,Sync
+Sync Error,Sync-Fehler
+Sync Events,Termine synchronisieren
+Sync Hero binding changed; reload its preview.,Die Sync-Hero-Bindung wurde geändert; laden Sie ihre Vorschau erneut.
+Sync Hero binding has no current source object.,Die Sync-Hero-Bindung hat kein aktuelles Quellobjekt.
+Sync Hero binding mapping revision is stale.,Die Mapping-Revision der Sync-Hero-Bindung ist veraltet.
+Sync Hero binding revision is invalid.,Die Sync-Hero-Bindungsrevision ist ungültig.
+Sync Hero is blocked or uncertain; no automatic retry was performed.,Sync Hero ist blockiert oder ungewiss; es wurde kein automatischer erneuter Versuch durchgeführt.
+Sync Hero mapping does not match the bound target field.,Das Sync-Hero-Mapping stimmt nicht mit dem gebundenen Zielfeld überein.
+Sync Hero mapping is no longer schema-safe.,Das Sync-Hero-Mapping ist nicht mehr schemakonform.
+Sync Hero mutation mapping is not active for this source instance.,Das Sync-Hero-Mutation-Mapping ist für diese Quellinstanz nicht aktiv.
+Sync Hero mutation snapshot does not match the approved runtime plan.,Der Sync-Hero-Mutation-Snapshot stimmt nicht mit dem freigegebenen Laufzeitplan überein.
+Sync Hero requires a positive current runtime-plan generation.,Sync Hero erfordert eine positive aktuelle Laufzeitplan-Generation.
+Sync Hero requires an existing field binding.,Sync Hero erfordert eine vorhandene Feldbindung.
+Sync Projects,Projekte synchronisieren
+Sync Service Paused,Sync-Service pausiert
+Sync Services,Sync-Services
+Sync State,Sync-Status
+Sync Status,Sync-Status
+Sync Tasks,Aufgaben synchronisieren
+Sync off,Sync aus
+Sync on,Sync ein
+Sync service updated.,Sync-Service aktualisiert.
+Sync {0},{0} synchronisieren
+Synchronization,Synchronisierung
+Synchronization Status,Synchronisierungsstatus
+Synchronization views,Synchronisierungsansichten
+Synchronize Binding,Bindung synchronisieren
+Synchronized,Synchronisiert
+Synchronizing binding …,Bindung wird synchronisiert …
+System Issuer,Systemaussteller
+System Manager role is required,Die Rolle System Manager ist erforderlich
+Target,Ziel
+Target DocType,Ziel-DocType
+Target Field,Zielfeld
+Target Frappe,Ziel Frappe
+Target HERO,Ziel HERO
+Target Record,Zieldatensatz
+Task Migration,Aufgabenmigration
+Task Source Binding,Quellenbindung der Aufgabe
+Task assignment policies are managed by the authorized policy service.,Aufgabenzuweisungs-Policies werden vom autorisierten Policy-Service verwaltet.
+Task assignment policies must be retained and revoked.,Aufgabenzuweisungs-Policies müssen erhalten bleiben und widerrufen werden.
+Task assignment policy identity is immutable.,Die Identität der Aufgabenzuweisungs-Policy ist unveränderlich.
+Task assignment state identity is immutable.,Die Identität des Aufgabenzuweisungsstatus ist unveränderlich.
+Task assignment state is managed by the integration.,Der Status der Aufgabenzuweisung wird von der Integration verwaltet.
+Task assignment state must be retained.,Der Status der Aufgabenzuweisung muss erhalten bleiben.
+Tasks,Aufgaben
+Technical Action,Technische Aktion
+Technical contract is not ready.,Der technische Vertrag ist nicht bereit.
+Technical contract status unavailable.,Status des technischen Vertrags nicht verfügbar.
+Technical details,Technische Details
+Testing,Testen
+Testing Enabled,Testen aktiviert
+Testing Executed HERO Requests,Im Test ausgeführte HERO-Anfragen
+Testing Max. Actions,Max. Testaktionen
+Testing Max. Actions must be an integer.,Max. Testaktionen muss eine Ganzzahl sein.
+Testing Max. Actions must be between 1 and 100.,Max. Testaktionen muss zwischen 1 und 100 liegen.
+Testing Records Received,Im Test empfangene Datensätze
+Testing Results,Testergebnisse
+Testing Status,Teststatus
+Testing previews cannot resume because their shared HERO request budget is run-bound.,"Testvorschauen können nicht fortgesetzt werden, weil ihr gemeinsames HERO-Anfragebudget an den Lauf gebunden ist."
+Testing results,Testergebnisse
+Testing settings are not loaded yet.,Test-Einstellungen wurden noch nicht geladen.
+Testing settings saved.,Test-Einstellungen gespeichert.
+The GraphQL mapping belongs to another schema snapshot.,Das GraphQL-Mapping gehört zu einem anderen Schema-Snapshot.
+The GraphQL mapping must contain a valid JSON object and schema operation.,Das GraphQL-Mapping muss ein gültiges JSON-Objekt und eine Schema-Operation enthalten.
+The GraphQL schema snapshot is not valid.,Der GraphQL-Schema-Snapshot ist ungültig.
+The GraphQL text does not match the saved schema.,Der GraphQL-Text stimmt nicht mit dem gespeicherten Schema überein.
+"The HERO Integration Link is stale, conflicting, or belongs to another source instance.","Die HERO-Integrationsverknüpfung ist veraltet, widersprüchlich oder gehört zu einer anderen Quellinstanz."
+The HERO connection is disabled.,Die HERO-Verbindung ist deaktiviert.
+The HERO connection is not configured completely.,Die HERO-Verbindung ist nicht vollständig konfiguriert.
+"The HERO endpoint, token or source instance changed; confirm the source binding before starting a run.","HERO-Endpunkt, Token oder Quellinstanz wurden geändert; bestätigen Sie die Quellenbindung, bevor Sie einen Lauf starten."
+"The Helpdesk ERPNext mirror stays disabled: tickets reference the ERPNext Customer and Project directly (HERO integration, option A).","Die Helpdesk-ERPNext-Spiegelung bleibt deaktiviert: Tickets referenzieren ERPNext-Kunden und -Projekte direkt (HERO-Integration, Option A)."
+The active mapping changed. Compare active changes before saving.,Das aktive Mapping wurde geändert. Vergleichen Sie aktive Änderungen vor dem Speichern.
+The active mapping could not be refreshed. Return to mappings and reopen the draft before editing.,Das aktive Mapping konnte nicht aktualisiert werden. Kehren Sie zu den Mappings zurück und öffnen Sie den Entwurf vor der Bearbeitung erneut.
+The active mutation contract no longer matches its schema snapshot.,Der aktive Mutation-Vertrag stimmt nicht mehr mit seinem Schema-Snapshot überein.
+The active writeback mapping is no longer safe.,Das aktive Writeback-Mapping ist nicht mehr sicher.
+The alias is already used for {0}. Choose another alias.,Der Alias wird bereits für {0} verwendet. Wählen Sie einen anderen Alias.
+The analyzer draft must keep exactly the selected operation as its root field.,Der Analyzer-Entwurf muss genau die ausgewählte Operation als Root-Feld behalten.
+The approved HERO V1 reader has no cursor contract.,Der freigegebene HERO-V1-Reader hat keinen Cursor-Vertrag.
+The approved V1 source reader executes one request at a time.,Der freigegebene V1-Quell-Reader führt jeweils eine Anfrage aus.
+The approved V1 source reader is intentionally single-worker.,Der freigegebene V1-Quell-Reader verwendet bewusst nur einen Worker.
+The complete relationship set could not be verified.,Die vollständige Menge der Beziehungen konnte nicht geprüft werden.
+The configuration file is not valid JSON.,Die Konfigurationsdatei enthält kein gültiges JSON.
+The configured Frappe writeback field no longer exists.,Das konfigurierte Frappe-Writeback-Feld existiert nicht mehr.
+The current token is never returned to the browser. An empty field keeps it unchanged.,Das aktuelle Token wird niemals an den Browser zurückgegeben. Ein leeres Feld behält es unverändert bei.
+The current warnings are unavailable. Reload the saved draft before activation.,Die aktuellen Warnungen sind nicht verfügbar. Laden Sie den gespeicherten Entwurf vor der Aktivierung erneut.
+The declared GraphQL service kind does not match the document.,Die angegebene GraphQL-Service-Art stimmt nicht mit dem Dokument überein.
+"The editor has unsaved changes. Save them as a new revision, validate the query and then execute it once?","Der Editor enthält ungespeicherte Änderungen. Als neue Revision speichern, die Query validieren und anschließend einmal ausführen?"
+The exact mutation must be confirmed before execution.,Die genaue Mutation muss vor der Ausführung bestätigt werden.
+The external HERO deadline is managed by HERO Integration.,Der externe HERO-Termin wird von HERO Integration verwaltet.
+The file cannot be imported.,Die Datei kann nicht importiert werden.
+The file contains settings that are never transferred (e.g. credentials).,"Die Datei enthält Einstellungen, die niemals übertragen werden (z. B. Zugangsdaten)."
+The graph size changed while loading.,Die Graphgröße hat sich während des Ladens geändert.
+The linked HERO source changed after its synchronized baseline; writeback is blocked.,Die verknüpfte HERO-Quelle wurde nach ihrem synchronisierten Basisstand geändert; Writeback ist blockiert.
+The mapping context changed; reload it before approval.,Der Mapping-Kontext wurde geändert; laden Sie ihn vor der Freigabe erneut.
+The mapping source context changed; retry the save.,Der Mapping-Quellkontext wurde geändert; versuchen Sie das Speichern erneut.
+The mutation contract belongs to another GraphQL service.,Der Mutation-Vertrag gehört zu einem anderen GraphQL Service.
+The mutation contract is not active.,Der Mutation-Vertrag ist nicht aktiv.
+The mutation contract no longer matches its schema snapshot.,Der Mutation-Vertrag stimmt nicht mehr mit seinem Schema-Snapshot überein.
+The mutation contract or variables are invalid.,Der Mutation-Vertrag oder die Variablen sind ungültig.
+The mutation contract service no longer matches its approved document.,Der Service des Mutation-Vertrags stimmt nicht mehr mit seinem freigegebenen Dokument überein.
+The mutation contract service no longer matches its schema snapshot.,Der Service des Mutation-Vertrags stimmt nicht mehr mit seinem Schema-Snapshot überein.
+The mutation schema snapshot is not executable.,Der Mutation-Schema-Snapshot ist nicht ausführbar.
+The mutation service no longer matches its schema snapshot.,Der Mutation-Service stimmt nicht mehr mit seinem Schema-Snapshot überein.
+The node detail does not belong to the requested schema.,Das Knotendetail gehört nicht zum angeforderten Schema.
+"The polling interval counts from the last started poll, so a failing poll is not retried on every scheduler tick.","Das Polling-Intervall zählt ab dem zuletzt gestarteten Polling-Lauf, damit ein fehlgeschlagener Lauf nicht bei jedem Scheduler-Tick wiederholt wird."
+The previously selected snapshot is not available in this result. Select a validated snapshot again.,Der zuvor ausgewählte Snapshot ist in diesem Ergebnis nicht verfügbar. Wählen Sie erneut einen validierten Snapshot.
+The referenced rule is not visible in these active search results.,Die referenzierte Regel ist in diesen aktiven Suchergebnissen nicht sichtbar.
+The request failed. Your changes have been kept.,Die Anfrage ist fehlgeschlagen. Ihre Änderungen bleiben erhalten.
+The response was not displayed because it exceeds the display limit. Nothing was truncated silently.,"Die Antwort wurde nicht angezeigt, weil sie das Anzeigelimit überschreitet. Es wurde nichts stillschweigend abgeschnitten."
+The result is shown in the GraphQL Query Result window and is not stored.,Das Ergebnis wird im Fenster „GraphQL-Query-Ergebnis“ angezeigt und nicht gespeichert.
+The review belongs to a different HERO source.,Die Prüfung gehört zu einer anderen HERO-Quelle.
+The saved content differs from your edits. Your local changes have been kept. Check the saved draft before continuing.,"Der gespeicherte Inhalt unterscheidet sich von Ihren Änderungen. Ihre lokalen Änderungen bleiben erhalten. Prüfen Sie den gespeicherten Entwurf, bevor Sie fortfahren."
+The saved draft differs. Your local edits remain. Reload only if you want to replace them.,"Der gespeicherte Entwurf unterscheidet sich. Ihre lokalen Änderungen bleiben erhalten. Laden Sie nur neu, wenn Sie diese ersetzen möchten."
+The saved draft or active version changed. Your edits and Undo have been kept. Check the saved draft before continuing.,"Der gespeicherte Entwurf oder die aktive Version wurde geändert. Ihre Änderungen und „Rückgängig“ bleiben erhalten. Prüfen Sie den gespeicherten Entwurf, bevor Sie fortfahren."
+The saved mutation document differs from its approved contract.,Das gespeicherte Mutation-Dokument unterscheidet sich von seinem freigegebenen Vertrag.
+The saved query was validated against another schema fingerprint; validate it again.,Die gespeicherte Query wurde gegen einen anderen Schema-Fingerprint validiert; validieren Sie sie erneut.
+The saved service belongs to another schema snapshot.,Der gespeicherte Service gehört zu einem anderen Schema-Snapshot.
+The saved service changed or belongs to another schema snapshot.,Der gespeicherte Service wurde geändert oder gehört zu einem anderen Schema-Snapshot.
+The saved service changed or belongs to another schema snapshot; reload it before executing.,Der gespeicherte Service wurde geändert oder gehört zu einem anderen Schema-Snapshot; laden Sie ihn vor der Ausführung erneut.
+The saved service has changed; reload it before deleting.,Der gespeicherte Service wurde geändert; laden Sie ihn vor dem Löschen erneut.
+The saved service has changed; reload it before saving.,Der gespeicherte Service wurde geändert; laden Sie ihn vor dem Speichern erneut.
+The schema changed while the node was selected. Reload the snapshot and select the node again.,"Das Schema wurde geändert, während der Knoten ausgewählt war. Laden Sie den Snapshot neu und wählen Sie den Knoten erneut."
+The schema response does not match the requested context.,Die Schema-Antwort stimmt nicht mit dem angeforderten Kontext überein.
+The schema snapshot in the file is incomplete.,Der Schema-Snapshot in der Datei ist unvollständig.
+The selected Frappe source and HERO scalar or enum input types are incompatible.,Die ausgewählte Frappe-Quelle und die HERO-Skalar- oder Enum-Eingabetypen sind inkompatibel.
+The selected GraphQL schema snapshot is stale.,Der ausgewählte GraphQL-Schema-Snapshot ist veraltet.
+The selected GraphQL service has no approved read mapping.,Der ausgewählte GraphQL Service hat kein freigegebenes Lese-Mapping.
+The selected operation is not present in the selected schema snapshot.,Die ausgewählte Operation ist im ausgewählten Schema-Snapshot nicht vorhanden.
+The selected schema snapshot does not exist.,Der ausgewählte Schema-Snapshot existiert nicht.
+The selected source is not available.,Die ausgewählte Quelle ist nicht verfügbar.
+The selected writeback field is missing from the loaded document.,Das ausgewählte Writeback-Feld fehlt im geladenen Dokument.
+The selection contains an unavailable item.,Die Auswahl enthält ein nicht verfügbares Element.
+The server did not provide additional details.,Der Server hat keine weiteren Details bereitgestellt.
+The service or mapping changed; reload it before approval.,Der Service oder das Mapping wurde geändert; laden Sie ihn beziehungsweise es vor der Freigabe erneut.
+The snapshot list could not be loaded completely. Retry before choosing a snapshot.,"Die Snapshot-Liste konnte nicht vollständig geladen werden. Versuchen Sie es erneut, bevor Sie einen Snapshot auswählen."
+The synchronized binding has no local change to send.,Die synchronisierte Bindung hat keine lokale Änderung zum Senden.
+The task does not exist in HERO yet and will be created there.,Die Aufgabe existiert noch nicht in HERO und wird dort erstellt.
+The tool action could not be completed on the server.,Die Werkzeugaktion konnte auf dem Server nicht abgeschlossen werden.
+The writeback mapping does not belong to this Frappe document type.,Das Writeback-Mapping gehört nicht zu diesem Frappe-Dokumenttyp.
+The writeback mapping is not active.,Das Writeback-Mapping ist nicht aktiv.
+The writeback mapping schema or source no longer matches its approved snapshot.,Schema oder Quelle des Writeback-Mappings stimmen nicht mehr mit dem freigegebenen Snapshot überein.
+There is no open saved draft. Your local changes remain.,Es gibt keinen geöffneten gespeicherten Entwurf. Ihre lokalen Änderungen bleiben erhalten.
+This area is running.,Dieser Bereich wird ausgeführt.
+This browser cannot preserve mapping JSON numbers.,Dieser Browser kann Mapping-JSON-Zahlen nicht unverändert erhalten.
+This browser cannot preserve preview numbers.,Dieser Browser kann Vorschauzahlen nicht unverändert erhalten.
+This definition references a separately maintained field rule.,Diese Definition verweist auf eine separat verwaltete Feldregel.
+This field mapping already exists in your draft.,Dieses Feld-Mapping ist bereits in Ihrem Entwurf vorhanden.
+This historic action has no native compatibility mapping.,Für diese historische Aktion gibt es kein natives Kompatibilitäts-Mapping.
+"This is a shared draft, separate from personal drafts. Saving never activates it.","Dies ist ein geteilter Entwurf, getrennt von persönlichen Entwürfen. Speichern aktiviert ihn niemals."
+This list is read only and is separate from personal drafts.,Diese Liste ist schreibgeschützt und von persönlichen Entwürfen getrennt.
+This node is already remembered as “{0}”. Rename that entry instead.,Dieser Knoten ist bereits als „{0}“ gemerkt. Benennen Sie stattdessen diesen Eintrag um.
+This node is already remembered under this alias.,Dieser Knoten ist bereits unter diesem Alias gemerkt.
+This operation cannot be run here.,Diese Operation kann hier nicht ausgeführt werden.
+This referenced active rule is read-only. Its existing personal-rule contract is required before editing.,Diese referenzierte aktive Regel ist schreibgeschützt. Vor der Bearbeitung ist ihr bestehender Vertrag für persönliche Regeln erforderlich.
+This shared draft cannot be edited without losing parameters.,Dieser geteilte Entwurf kann nicht ohne Verlust von Parametern bearbeitet werden.
+This shared draft remains read only because editing could discard parameters or change JSON tokens.,"Dieser geteilte Entwurf bleibt schreibgeschützt, weil die Bearbeitung Parameter verwerfen oder JSON-Tokens ändern könnte."
+Timeout,Zeitüberschreitung
+Timeout (seconds),Zeitüberschreitung (Sekunden)
+Timeout Seconds,Zeitüberschreitung in Sekunden
+Timeout must be at least one second.,Die Zeitüberschreitung muss mindestens eine Sekunde betragen.
+Timezone,Zeitzone
+Total definitions / field rules,Definitionen / Feldregeln insgesamt
+Transformation,Transformation
+Trim,Trim
+Type Class,Typklasse
+Type Details,Typdetails
+Type Name,Typname
+Unavailable,Nicht verfügbar
+Uncertain shared draft result.,Ungewisses Ergebnis des geteilten Entwurfs.
+Undo removal,Entfernen rückgängig machen
+Unexpected plan authority.,Unerwartete Planberechtigung.
+Unknown,Unbekannt
+Unknown service draft origin.,Unbekannter Ursprung des Service-Entwurfs.
+Unsafe number.,Nicht sichere Zahl.
+Unsaved changes discarded.,Ungespeicherte Änderungen verworfen.
+Unsupported GraphQL mapping direction.,Nicht unterstützte GraphQL-Mapping-Richtung.
+Unsupported HERO migration action.,Nicht unterstützte HERO-Migrationsaktion.
+Update,Aktualisieren
+"Update processes new records, changed records and newly mapped fields for the HERO source instance ""{0}"". You do not choose GraphQL services; the server resolves them from the active mapping.","Update verarbeitet neue Datensätze, geänderte Datensätze und neu zugeordnete Felder für die HERO-Quellinstanz „{0}“. Sie wählen keine GraphQL-Services; der Server ermittelt sie anhand des aktiven Mappings."
+Update required,Aktualisierung erforderlich
+Updated by Registry,Durch Registry aktualisiert
+Updated or unchanged,Aktualisiert oder unverändert
+Use New mapping to add another assignment.,"Verwenden Sie „Neues Mapping“, um eine weitere Zuordnung hinzuzufügen."
+Use current active,Aktuell aktive Version verwenden
+Use in Mapping,Im Mapping verwenden
+Use the existing integration operations and analysis tools.,Vorhandene Integrationsoperationen und Analysewerkzeuge verwenden.
+Use the personal draft storage service.,Verwenden Sie den Speicherservice für persönliche Entwürfe.
+Validate,Validieren
+Validate the saved query against its schema before executing it.,Validieren Sie die gespeicherte Query vor der Ausführung gegen ihr Schema.
+Validated,Validiert
+Validated Input Mapping,Validiertes Eingabe-Mapping
+Validated schema available,Validiertes Schema verfügbar
+Validated snapshot,Validierter Snapshot
+Validation Summary,Validierungszusammenfassung
+Variables,Variablen
+Verified,Geprüft
+View,Anzeigen
+View analyzer,Analyzer öffnen
+View graph,Graph öffnen
+View services,Services öffnen
+Wait for the current request before leaving.,"Warten Sie die aktuelle Anfrage ab, bevor Sie die Ansicht verlassen."
+Warning Fingerprint,Warnungs-Fingerprint
+Watermark Status,Watermark-Status
+"When enabled, manual synchronization previews are limited to the configured number of HERO API requests and start with the newest available records. No business data is modified.","Wenn aktiviert, sind Vorschauen manueller Synchronisierungen auf die konfigurierte Anzahl von HERO-API-Anfragen begrenzt und beginnen mit den neuesten verfügbaren Datensätzen. Geschäftsdaten werden nicht verändert."
+"Which parent mapping definition was inherited into which child snapshot as a personal draft, or why not.",Welche übergeordnete Mapping-Definition als persönlicher Entwurf in welchen untergeordneten Snapshot übernommen wurde oder warum nicht.
+Whole number from 0 through 10. Priority never replaces dependency or conflict checks.,Ganzzahl von 0 bis 10. Die Priorität ersetzt niemals Abhängigkeits- oder Konfliktprüfungen.
+Will be sent,Wird gesendet
+"Writeback direction, operation kind and reviewed HERO target must agree.","Writeback-Richtung, Operationsart und geprüftes HERO-Ziel müssen übereinstimmen."
+Writeback mapping contains parameters that would not be preserved.,"Das Writeback-Mapping enthält Parameter, die nicht erhalten blieben."
+Writeback normalization would lose mapping parameters.,Bei der Writeback-Normalisierung würden Mapping-Parameter verloren gehen.
+You do not have permission to use this tool action.,"Sie haben keine Berechtigung, diese Werkzeugaktion zu verwenden."
+You do not have permission to view or change this mapping.,"Sie haben keine Berechtigung, dieses Mapping anzusehen oder zu ändern."
+You need write permission for a DocType that contains {0} (e.g. Contact) to activate HERO mappings into it.,"Sie benötigen Schreibberechtigung für einen DocType, der {0} enthält (z. B. Contact), um HERO-Mappings dafür zu aktivieren."
+Your changes are not saved. Choose Save draft to try again.,"Ihre Änderungen sind nicht gespeichert. Wählen Sie „Entwurf speichern“, um es erneut zu versuchen."
+Your draft,Ihr Entwurf
+Your local draft,Ihr lokaler Entwurf
+Your local draft changed after this comparison. Compare again; your edits have been kept.,Ihr lokaler Entwurf wurde nach diesem Vergleich geändert. Vergleichen Sie erneut; Ihre Änderungen bleiben erhalten.
+checked during import,wird beim Import geprüft
+field,Feld
+fields,Felder
+mapping entries,Mapping-Einträge
+none,keine
+not available,nicht verfügbar
+not bound,nicht gebunden
+object,Objekt
+objects,Objekte
+read services approved,Lese-Services freigegeben
+saved introspection is incomplete,gespeicherte Introspection ist unvollständig
+settings,Einstellungen
+snapshot,Snapshot
+{0} conflicts,{0} Konflikte
+{0} decisions saved. Conflicts marked for recheck are checked on the next synchronization.,{0} Entscheidungen gespeichert. Zur erneuten Prüfung markierte Konflikte werden bei der nächsten Synchronisierung geprüft.
+{0} is being queued …,{0} wird in die Warteschlange eingereiht …
+{0} is invalid.,{0} ist ungültig.
+{0} must be an integer.,{0} muss eine Ganzzahl sein.
+{0} must be between {1} and {2}.,{0} muss zwischen {1} und {2} liegen.
+{0} nodes,{0} Knoten
+{0} of {1} usages,{0} von {1} Verwendungen
+{0} processed,{0} verarbeitet
+{0} processed. {1}: {2},{0} verarbeitet. {1}: {2}
+{0} queued as {1}.,{0} wurde als {1} in die Warteschlange eingereiht.
+{0} results,{0} Treffer
+{0} was changed in HERO since the last import and is not overwritten.,{0} wurde seit dem letzten Import in HERO geändert und wird nicht überschrieben.
+"{0} {1} is imported from HERO and cannot be deleted here. Change it in HERO, reject it in its HERO Integration Link while it awaits review, or use the HERO data purge.","{0} {1} wurde aus HERO importiert und kann hier nicht gelöscht werden. Ändern Sie den Datensatz in HERO, lehnen Sie ihn während der Prüfung in seiner HERO-Integrationsverknüpfung ab oder verwenden Sie die HERO-Datenbereinigung."
+{0} {1}? This migrates the object fields of the active mapping for {2} from HERO into Frappe.,{0}: {1}? Dies migriert die Objektfelder des aktiven Mappings für {2} von HERO nach Frappe.
+{0} · {1} direct usages · list view for GraphQL base scalar,{0} · {1} direkte Verwendungen · Listenansicht für GraphQL-Basis-Skalar
+"{0} · {1} nodes · {2} relationships · fully loaded: {3}/{4} nodes, {5}/{6} relationships{7}","{0} · {1} Knoten · {2} Beziehungen · vollständig geladen: {3}/{4} Knoten, {5}/{6} Beziehungen{7}"
+{0} → {1}: {2} relationships,{0} → {1}: {2} Beziehungen
+{0}: {1} class cards condense {2} saved nodes and {3} relationships. This is not an incomplete graph; select a class card to open its filtered detail view.,{0}: {1} Klassenkarten fassen {2} gespeicherte Knoten und {3} Beziehungen zusammen. Der Graph ist nicht unvollständig; wählen Sie eine Klassenkarte für ihre gefilterte Detailansicht.
+{0}: {1} nodes. Open filtered view.,{0}: {1} Knoten. Gefilterte Ansicht öffnen.
+{0}–{1} of {2},{0}–{1} von {2}
+← Focus Back,← Fokus zurück

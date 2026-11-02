@@ -20,7 +20,7 @@ def check_personal_document(doc):
     # Document.check_permission also covers Administrator, whose native role
     # check bypasses normal has_permission hooks in Frappe v16.
     if not personal_mapping_permission(doc):
-        frappe.throw("Personal mapping document access denied.", frappe.PermissionError)
+        frappe.throw(frappe._("Personal mapping document access denied."), frappe.PermissionError)
 
 
 def personal_version_query(user=None, doctype=None):
@@ -44,7 +44,7 @@ def personal_version_permission(doc, user=None, permission_type=None):
 class PersonalMappingVersionAccess:
     def check_permission(self, *args, **kwargs):
         if personal_version_permission(self) is False:
-            frappe.throw("Personal mapping version access denied.", frappe.PermissionError)
+            frappe.throw(frappe._("Personal mapping version access denied."), frappe.PermissionError)
         return super().check_permission(*args, **kwargs)
 
 
@@ -58,7 +58,7 @@ def protect_managed_mapping(doc):
     fields = ("mapping_json", "schema_snapshot", "operation_kind", "operation_name", "direction", "status", "mapping_revision", "definition_id")
     changed = any(doc.get(field) != previous.get(field) for field in fields)
     if changed and previous.status == "Draft" and previous.modified_by != frappe.session.user:
-        frappe.throw("Foreign legacy mapping drafts cannot be overwritten.", frappe.PermissionError)
+        frappe.throw(frappe._("Foreign legacy mapping drafts cannot be overwritten."), frappe.PermissionError)
     definition = previous.get("definition_id") or previous.name
     if not frappe.db.exists("DocType", "HERO Mapping Draft"):
         return
@@ -71,4 +71,4 @@ def protect_managed_mapping(doc):
         from hero_integration.services.frappe_mapping_draft_storage import is_personal_publication
         if is_personal_publication(doc):
             return
-        frappe.throw("PERSONAL_DRAFT_REQUIRED: Use the personal mapping draft API.", frappe.PermissionError)
+        frappe.throw(frappe._("PERSONAL_DRAFT_REQUIRED: Use the personal mapping draft API."), frappe.PermissionError)

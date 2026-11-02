@@ -10,6 +10,7 @@
             : (
                 value
             ) => value;
+    const format = (message, ...values) => uiText(message).replace(/\{(\d+)\}/g, (_, index) => String(values[index] ?? ""));
 
     if (window.hero_integration_settings_ui) return;
 
@@ -93,7 +94,7 @@
         const url = document.createElement("input");
         url.type = "url";
         url.className = "hero-settings-input";
-        url.placeholder = uiText("https://…/graphql");
+        url.placeholder = "https://…/graphql";
         url.autocomplete = "off";
 
         const allowedHosts = document.createElement("textarea");
@@ -288,9 +289,9 @@
             allowedHosts.value = data.allowed_hero_hosts || "";
             sourceInstance.value = data.hero_source_instance || "default";
             bindingConfirm.checked = false;
-            bindingStatus.textContent = uiText(data.source_binding_confirmed
-                ? "Source binding confirmed (revision " + (data.source_binding_revision || 0) + ")."
-                : "Source binding changed and is not confirmed. HERO reads are blocked.");
+            bindingStatus.textContent = data.source_binding_confirmed
+                ? format("Source binding confirmed (revision {0}).", data.source_binding_revision || 0)
+                : uiText("Source binding changed and is not confirmed. HERO reads are blocked.");
             bindingStatus.dataset.state = data.source_binding_confirmed ? "success" : "error";
             schemaInterval.value = String(data.schema_refresh?.refresh_interval_minutes || 60);
             allowDeletion.checked = Boolean(data.allow_deletion);
@@ -337,7 +338,7 @@
 
         function applyMutationState(data) {
             mutationEnabled.checked = Boolean(data.mutation_execution_requested);
-            mutationStatus.textContent = uiText(`Effective mutation security status: ${data.mutation_execution_status || "DISABLED"}. ${data.mutation_execution_reason || ""}`);
+            mutationStatus.textContent = format("Effective mutation security status: {0}. {1}", data.mutation_execution_status || "DISABLED", uiText(data.mutation_execution_reason || ""));
         }
 
         async function load() {
@@ -352,7 +353,7 @@
                 }
             } catch (error) {
                 if (!destroyed) {
-                    status.textContent = `Could not load HERO settings. ${errorMessage(error)}`;
+                    status.textContent = format("Could not load HERO settings. {0}", errorMessage(error));
                     status.dataset.state = "error";
                 }
             } finally {
@@ -392,7 +393,7 @@
                 }
             } catch (error) {
                 if (!destroyed) {
-                    status.textContent = `Could not save HERO settings. ${errorMessage(error)}`;
+                    status.textContent = format("Could not save HERO settings. {0}", errorMessage(error));
                     status.dataset.state = "error";
                 }
             } finally {
@@ -415,7 +416,7 @@
                 }
             } catch (error) {
                 if (!destroyed) {
-                    testingStatus.textContent = `Could not save testing settings. ${errorMessage(error)}`;
+                    testingStatus.textContent = format("Could not save testing settings. {0}", errorMessage(error));
                     testingStatus.dataset.state = "error";
                 }
             } finally {
@@ -435,7 +436,7 @@
                     : "Settings saved. API token is valid; the HERO schema was loaded.";
                 state = "success";
             } catch (error) {
-                message = `Settings saved, but the API token could not be verified. ${errorMessage(error)}`;
+                message = format("Settings saved, but the API token could not be verified. {0}", errorMessage(error));
                 state = "error";
             }
             try {

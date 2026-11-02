@@ -125,6 +125,8 @@ class TestPollingSwitches(unittest.TestCase):
 
 
 class _Frappe:
+    _ = staticmethod(lambda message: message)
+
     def __init__(self, settings, existing_runs=False):
         self.settings, self.existing_runs, self.started = settings, existing_runs, []
         self.db = SimpleNamespace(exists=lambda doctype, filters: self.existing_runs)

@@ -158,9 +158,8 @@
         return `/app/${CANONICAL_PAGE}?${query.toString()}`;
     }
 
-    // HERO Integration owns these strings. Keep them English even when Desk is
-    // running with another Frappe locale.
-    window.hero_integration_i18n = Object.freeze({text: (value) => String(value)});
+    // Use the language and translation dictionary supplied by Frappe Desk.
+    window.hero_integration_i18n = Object.freeze({text: (value) => __(String(value))});
     window.hero_integration_shell = Object.freeze({
         href: (_page, params = {}) => routeUrl("api", {hero_tool: params.tool}),
         mapping: () => routeUrl("mapping"),
@@ -199,31 +198,31 @@
             const identity = Object.freeze({...selection});
             return new Promise((resolve) => {
                 const dialog = new frappe.ui.Dialog({
-                    title: "Remember for Mapping",
+                    title: __("Remember for Mapping"),
                     fields: [
-                        {fieldname: "node_name", fieldtype: "Data", label: "Original node", read_only: 1, default: identity.node_name},
-                        {fieldname: "node_kind", fieldtype: "Data", label: "Node type", read_only: 1, default: identity.node_kind},
-                        {fieldname: "node_id", fieldtype: "Data", label: "GraphQL node ID", read_only: 1, default: identity.node_id},
+                        {fieldname: "node_name", fieldtype: "Data", label: __("Original node"), read_only: 1, default: identity.node_name},
+                        {fieldname: "node_kind", fieldtype: "Data", label: __("Node type"), read_only: 1, default: identity.node_kind},
+                        {fieldname: "node_id", fieldtype: "Data", label: __("GraphQL node ID"), read_only: 1, default: identity.node_id},
                         // The label is display only; the internal snapshot name is what gets saved.
-                        {fieldname: "snapshot_label", fieldtype: "Data", label: "Snapshot", read_only: 1, default: identity.snapshot_label || identity.snapshot_name},
-                        {fieldname: "alias", fieldtype: "Data", label: "Alias", reqd: 1,
-                            description: "A readable name for the Mapping Editor. It never replaces the technical node identity."},
+                        {fieldname: "snapshot_label", fieldtype: "Data", label: __("Snapshot"), read_only: 1, default: identity.snapshot_label || identity.snapshot_name},
+                        {fieldname: "alias", fieldtype: "Data", label: __("Alias"), reqd: 1,
+                            description: __("A readable name for the Mapping Editor. It never replaces the technical node identity.")},
                     ],
-                    primary_action_label: "Save",
+                    primary_action_label: __("Save"),
                     primary_action: async (values) => {
                         dialog.disable_primary_action();
                         try {
                             const result = await bookmarks.save(identity, values.alias);
                             dialog.hide();
-                            frappe.show_alert({message: result.existing ? "This node is already remembered under this alias." : "Node remembered for mapping. No mapping was created.", indicator: "green"});
+                            frappe.show_alert({message: __(result.existing ? "This node is already remembered under this alias." : "Node remembered for mapping. No mapping was created."), indicator: "green"});
                             resolve(result);
                         } catch (error) {
                             dialog.enable_primary_action();
-                            frappe.msgprint({title: "Remember for Mapping", message: frappe.utils.escape_html(error.message), indicator: "red"});
+                            frappe.msgprint({title: __("Remember for Mapping"), message: frappe.utils.escape_html(error.message), indicator: "red"});
                         }
                     },
                 });
-                dialog.set_secondary_action_label("Cancel");
+                dialog.set_secondary_action_label(__("Cancel"));
                 dialog.set_secondary_action(() => { dialog.hide(); resolve(null); });
                 dialog.show();
             });
@@ -238,12 +237,12 @@
     function navigation(active) {
         const root = document.createElement("nav");
         root.className = "hero-unified-navigation";
-        root.setAttribute("aria-label", "HERO Integration sections");
+        root.setAttribute("aria-label", __("HERO Integration sections"));
         Object.entries(SECTION_NAMES).filter(([section]) => isSystemManager || section === "mapping").forEach(([section, label]) => {
             const button = document.createElement("button");
             button.type = "button";
             button.className = "btn btn-default btn-sm";
-            button.textContent = label;
+            button.textContent = __(label);
             button.toggleAttribute("data-active", section === active);
             button.addEventListener("click", () => setRoute(section));
             root.append(button);
@@ -253,12 +252,12 @@
     function apiNavigation(active) {
         const root = document.createElement("nav");
         root.className = "hero-unified-api-navigation";
-        root.setAttribute("aria-label", "API & Schema tools");
+        root.setAttribute("aria-label", __("API & Schema tools"));
         Object.entries(API_TOOLS).forEach(([tool, label]) => {
             const button = document.createElement("button");
             button.type = "button";
             button.className = "btn btn-default btn-sm";
-            button.textContent = label;
+            button.textContent = __(label);
             button.toggleAttribute("data-active", tool === active);
             button.addEventListener("click", () => setRoute("api", {hero_tool: tool}));
             root.append(button);

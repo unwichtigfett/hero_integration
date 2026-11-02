@@ -28,8 +28,8 @@ class TestGraphQLServicesUiContract(unittest.TestCase):
         self.assertIn("'Execute Query'", TOOLS)
 
     def test_variables_are_runtime_input_in_name_value_lines(self):
-        self.assertIn("$('label','ht-field','Variables'),variablesBox", TOOLS)
-        self.assertIn("this.variables.setAttribute('aria-label','Variables')", TOOLS)
+        self.assertIn("$('label','ht-field',tr('Variables')),variablesBox", TOOLS)
+        self.assertIn("this.variables.setAttribute('aria-label',tr('Variables'))", TOOLS)
         self.assertNotIn("Variables (JSON)", TOOLS)
         # No JSON preview below the Variables field; problems are flagged on the field itself.
         for preview in ("variablesJson", "Advanced: JSON variables", "ht-variables-json"):
@@ -66,7 +66,7 @@ class TestGraphQLServicesUiContract(unittest.TestCase):
         self.assertNotIn("innerHTML", render)
         self.assertNotIn(".html(", render)
         for contract in ("GRAPHQL", "TRANSPORT", "RESPONSE", "TOO_LARGE", "PARTIAL", "'GraphQL Query Result'",
-                         "'Readable'", "'Raw JSON'", "'Copy Result'", "primary_action_label:'Close'", "admin-compat-modal"):
+                         "'Readable'", "'Raw JSON'", "'Copy Result'", "primary_action_label:tr('Close')", "admin-compat-modal"):
             self.assertIn(contract, render)
         self.assertNotIn("call(", render, "showing a result never triggers another request")
 

@@ -54,6 +54,8 @@ class _Settings:
 
 
 class _FrappeSettingsMock:
+    _ = staticmethod(lambda message: message)
+
     def __init__(self, settings: _Settings, permission_error: Exception | None = None):
         self.settings = settings
         self.permission_error = permission_error
@@ -78,6 +80,15 @@ class _FrappeSettingsMock:
 
 
 class TestWorkspaceSettingsContract(unittest.TestCase):
+    def test_validation_uses_the_active_frappe_translation(self):
+        settings = _Settings()
+        frappe_mock = _FrappeSettingsMock(settings)
+        translations = {"Testing Max. Actions must be between 1 and 100.":
+                        "Max. Testaktionen muss zwischen 1 und 100 liegen."}
+        frappe_mock._ = lambda message: translations.get(message, message)
+        with patch.object(api, "frappe", frappe_mock), self.assertRaisesRegex(ValueError, "Max. Testaktionen"):
+            api.workspace_testing_settings_save(False, "101")
+
     def _call(self, settings: _Settings, permission_error: Exception | None = None):
         frappe_mock = _FrappeSettingsMock(settings, permission_error)
         with patch.object(api, "frappe", frappe_mock):
