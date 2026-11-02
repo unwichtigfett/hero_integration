@@ -2308,3 +2308,7 @@ The argument does not belong to a root operation; only navigation is offered.,Da
 The field is a root operation field; the operation is preselected.,Das Feld ist ein Feld einer Root-Operation; die Operation ist vorausgewählt.
 Publish the saved draft and acknowledge these warnings: {0}. No HERO synchronization will be started.,Den gespeicherten Entwurf veröffentlichen und diese Warnungen bestätigen: {0}. Es wird keine HERO-Synchronisation gestartet.
 Publish the saved personal draft? No HERO synchronization will be started.,Den gespeicherten persönlichen Entwurf veröffentlichen? Es wird keine HERO-Synchronisation gestartet.
+"Save your personal draft before leaving, discard local changes, or continue editing.","Speichern Sie Ihren persönlichen Entwurf vor dem Verlassen, verwerfen Sie lokale Änderungen oder bearbeiten Sie ihn weiter."
+No open personal draft exists. Create one from the active definition?,Es gibt keinen offenen persönlichen Entwurf. Einen Entwurf aus der aktiven Definition erstellen?
+Discard your saved personal draft and all unsaved local changes? Saved revisions remain available.,Ihren gespeicherten persönlichen Entwurf und alle ungespeicherten lokalen Änderungen verwerfen? Gespeicherte Revisionen bleiben verfügbar.
+Discard your saved personal draft? Saved revisions remain available.,Ihren gespeicherten persönlichen Entwurf verwerfen? Gespeicherte Revisionen bleiben verfügbar.
