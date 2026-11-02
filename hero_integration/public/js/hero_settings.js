@@ -21,6 +21,34 @@
     const REFRESH_SCHEMA = "workspace_schema_refresh";
     const SET_MUTATION_EXECUTION = "workspace_mutation_execution_set";
 
+    // Labels mirror the exportable HERO Integration Settings fields; keys stay unchanged.
+    const packageSettingLabels = Object.freeze({
+        hero_source_instance: "HERO Source Instance",
+        schema_refresh_interval_minutes: "Schema Refresh Interval Minutes",
+        timeout_seconds: "Timeout Seconds",
+        scheduled_sync_enabled: "Enable Scheduled Sync",
+        sync_service_paused: "Sync Service Paused",
+        sync_area_contacts: "Sync Contacts",
+        sync_area_projects: "Sync Projects",
+        sync_area_events: "Sync Events",
+        sync_area_tasks: "Sync Tasks",
+        polling_mode: "Polling Mode",
+        polling_interval_minutes: "Polling Interval Minutes",
+        polling_timezone: "Polling Timezone",
+        polling_execution_window: "Polling Execution Window",
+        polling_bootstrap: "Allow Bootstrap",
+        polling_page_size: "Polling Page Size",
+        polling_pagination_strategy: "Polling Pagination Strategy",
+        polling_allow_backfill: "Allow Backfill",
+        polling_full_inventory: "Allow Full Inventory",
+        polling_reconciliation: "Allow Reconciliation",
+        polling_retry_limit: "Polling Retry Limit",
+        polling_retry_backoff_seconds: "Polling Retry Backoff Seconds",
+        polling_timeout_seconds: "Polling Timeout Seconds",
+        polling_rate_limit: "Polling Rate Limit",
+        polling_concurrency: "Polling Concurrency",
+        polling_notifications: "Polling Notifications",
+    });
     function packageState(value) {
         const state = String(value ?? '');
         return state.startsWith('Invalid: ')
@@ -33,7 +61,7 @@
             ? Object.entries(preview.mapping_package).filter(([, count]) => count).map(([state, count]) => `${packageState(state)} ${count}`).join(', ')
             : uiText('checked during import');
         const services = preview.read_services.map((row) => `${row.target_operation}: ${packageState(row.state)}`).join(', ');
-        const settings = preview.settings.length ? preview.settings.join(', ') : uiText('none');
+        const settings = preview.settings.length ? preview.settings.map((key) => Object.hasOwn(packageSettingLabels, key) ? `${uiText(packageSettingLabels[key])} (${key})` : key).join(', ') : uiText('none');
         return `${uiText('Schema snapshot')}: ${packageState(preview.snapshot)}. ${uiText('Mappings')}: ${counts}. ` +
             `${uiText('Read services')}: ${services}. ${uiText('Changed settings')}: ${settings}.`;
     }
