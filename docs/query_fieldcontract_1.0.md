@@ -1,5 +1,7 @@
 # Native query field contract
 
+> **Reviewed source contract, not a live target approval.** The accepted bindings below are a code-level allowlist. A saved Draft, configuration import, simulated test binding or generated Task read does not activate a native field or authorize execution. See [Synchronization handoff](sync_handoff_1.0.md) for approval and runtime gates.
+
 `direct_mapping.SOURCE_CONTRACTS` is the existing server-owned operation contract. An operation may declare `native_field_bindings` as a set of exact `(source_path, source_type, target_doctype, target_field, fieldtype, transformation)` tuples. The business-approved generic native Field set is empty. `Customer.alias` is a technical test fixture. It is not an approved mapping for a person's or company's name. Closed purpose-specific native adapters and their reviewed projections stay unchanged.
 
 The rule validator checks:
