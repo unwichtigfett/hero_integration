@@ -2103,3 +2103,19 @@ State,Zustand
 Sync Run ID,Sync-Lauf-ID
 Target App,Ziel-App
 Target Name,Zielname
+Recheck requested: {0},Erneute Prüfung angefordert: {0}
+Field conflict requires review: {0}.,Feldkonflikt erfordert Prüfung: {0}.
+Task fields require review: {0},Task-Felder erfordern Prüfung: {0}
+Another HERO run is active: {0}.,Ein anderer HERO-Lauf ist aktiv: {0}.
+Materialized monitoring failed or is not approved; see the redacted server error log.,Materialisiertes Monitoring ist fehlgeschlagen oder nicht freigegeben; siehe das bereinigte Serverfehlerprotokoll.
+The server rejected the request. Check the server log for details.,Der Server hat die Anfrage abgelehnt. Details stehen im Serverprotokoll.
+Migration failed. See Error Log for the redacted server exception.,Migration fehlgeschlagen. Der bereinigte Serverfehler steht im Fehlerprotokoll.
+Could not acquire the HERO run reservation lock.,Die Reservierungssperre für den HERO-Lauf konnte nicht angefordert werden.
+A resumed migration run cannot change its HERO source instance.,Ein fortgesetzter Migrationslauf kann seine HERO-Quellinstanz nicht ändern.
+Another connection is establishing the HERO run reservation; run was not started.,Eine andere Verbindung reserviert gerade den HERO-Lauf; der Lauf wurde nicht gestartet.
+Cannot resume without a verified source snapshot and page identity evidence.,Ohne geprüften Quell-Snapshot und Nachweis der Seitenidentität kann nicht fortgesetzt werden.
+Project phase requires a completed Customer phase for this source instance and run.,Für die Projektphase muss die Kundenphase für diese Quellinstanz und diesen Lauf abgeschlossen sein.
+Polling configuration is not supported by the approved runtime contract; no HERO request was made.,Die Polling-Konfiguration wird vom freigegebenen Laufzeitvertrag nicht unterstützt; es wurde keine HERO-Anfrage gesendet.
+Materialized monitoring failed; see the redacted server error log.,Materialisiertes Monitoring ist fehlgeschlagen; siehe das bereinigte Serverfehlerprotokoll.
+Testing preview blocked because newest-first ordering is not verified for the selected HERO source.,"Testvorschau blockiert, weil die Sortierung nach neuesten Einträgen für die gewählte HERO-Quelle nicht geprüft ist."
+Testing preview reached its shared HERO request budget; no resume is permitted.,Die Testvorschau hat ihr gemeinsames HERO-Anfragelimit erreicht; eine Fortsetzung ist nicht zulässig.
