@@ -21,6 +21,8 @@ _DIAGNOSTIC_PATTERNS = (
      "A new target record would be created named {0}."),
     (re.compile(r"ERPNext rejected the record \(([A-Za-z_][A-Za-z0-9_]*)\); see Error Log\."),
      "ERPNext rejected the record ({0}); see Error Log."),
+    (re.compile(r"Polling configuration is not supported \((.*)\); no HERO request was made\."),
+     "Polling configuration is not supported ({0}); no HERO request was made."),
     (re.compile(r"Generated Project\.project_name exceeds its (\d+)-character field limit\."),
      "Generated Project.project_name exceeds its {0}-character field limit."),
     (re.compile(r"Project trade (.+) has no confirmed HERO-to-ERPNext title mapping\."),
@@ -86,6 +88,8 @@ def recipient_diagnostic(user: str, message: str) -> str:
     for prefix, template in (
         ("Recheck requested: ", "Recheck requested: {0}"),
         ("Awaits administrator approval: ", "Awaits administrator approval: {0}"),
+        ("Automatic sync is blocked: ", "Automatic sync is blocked: {0}"),
+        ("Materialized monitoring is blocked: ", "Materialized monitoring is blocked: {0}"),
     ):
         if message.startswith(prefix):
             nested = recipient_diagnostic(user, message[len(prefix):])

@@ -2432,3 +2432,9 @@ HERO polling status,HERO-Polling-Status
 The HERO customer has no unambiguous ERPNext link; the Project has no customer.,Der HERO-Kunde hat keine eindeutige ERPNext-Verknüpfung; dem Projekt ist kein Kunde zugeordnet.
 The HERO customer is deleted in HERO; the Project has no customer.,Der HERO-Kunde ist in HERO gelöscht; dem Projekt ist kein Kunde zugeordnet.
 "The HERO customer is a contact person, not a customer; the Project has no customer.","Der HERO-Kunde ist eine Kontaktperson, kein Kunde; dem Projekt ist kein Kunde zugeordnet."
+Materialized monitoring observed one bounded read page; full coverage is not claimed and no business records were written.,Das materialisierte Monitoring hat eine begrenzte Leseseite beobachtet; vollständige Abdeckung wird nicht behauptet und es wurden keine Geschäftsdaten geschrieben.
+HERO pagination repeated an offset; monitoring stopped safely.,Die HERO-Seitennavigation hat einen Offset wiederholt; das Monitoring wurde sicher angehalten.
+HERO response exceeds the configured page size.,Die HERO-Antwort überschreitet die konfigurierte Seitengröße.
+HERO pagination did not advance; monitoring stopped safely.,Die HERO-Seitennavigation ist nicht fortgeschritten; das Monitoring wurde sicher angehalten.
+HERO source identity is missing or invalid; monitoring stopped safely.,Die HERO-Quellidentität fehlt oder ist ungültig; das Monitoring wurde sicher angehalten.
+HERO source identity repeated across pages; monitoring stopped safely.,Eine HERO-Quellidentität wurde auf mehreren Seiten wiederholt; das Monitoring wurde sicher angehalten.

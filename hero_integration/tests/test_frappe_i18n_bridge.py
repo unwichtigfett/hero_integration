@@ -29,6 +29,13 @@ class TestFrappeTranslationBridge(unittest.TestCase):
              patch('frappe.translate.get_all_translations', side_effect=lambda lang: catalog if lang == 'de' else {}):
             self.assertEqual(recipient_text('de@example.invalid', 'HERO polling status'), 'HERO-Polling-Status')
             self.assertEqual(recipient_text('en@example.invalid', 'HERO polling status'), 'HERO polling status')
+            polling = 'Materialized monitoring observed one bounded read page; full coverage is not claimed and no business records were written.'
+            self.assertEqual(recipient_diagnostic('en@example.invalid', polling), polling)
+            self.assertEqual(recipient_diagnostic('de@example.invalid', polling),
+                             'Das materialisierte Monitoring hat eine begrenzte Leseseite beobachtet; vollständige Abdeckung wird nicht behauptet und es wurden keine Geschäftsdaten geschrieben.')
+            blocked = 'Materialized monitoring is blocked: HERO pagination repeated an offset; monitoring stopped safely.'
+            self.assertEqual(recipient_diagnostic('de@example.invalid', blocked),
+                             'Materialisiertes Monitoring ist blockiert: Die HERO-Seitennavigation hat einen Offset wiederholt; das Monitoring wurde sicher angehalten.')
             detail = 'Field conflict requires review: customer_name, custom_id.'
             self.assertEqual(recipient_diagnostic('de@example.invalid', detail), 'Feldkonflikt erfordert Prüfung: customer_name, custom_id.')
             self.assertEqual(recipient_diagnostic('en@example.invalid', detail), detail)
