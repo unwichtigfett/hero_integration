@@ -598,3 +598,17 @@ test('mapping choice context translates descriptions and preserves technical val
   'String · Argumente: id: ID! · Nicht erlaubt');
  delete window.hero_integration_i18n;
 });
+
+test('activation confirmation translates warnings without altering the saved values', () => {
+ const messages = {'Publish the saved draft and acknowledge these warnings: {0}. No HERO synchronization will be started.':
+  'Gespeicherten Entwurf mit diesen Warnungen veröffentlichen: {0}. Keine HERO-Synchronisation wird gestartet.',
+  'Known warning':'Bekannte Warnung',
+  'Publish the saved personal draft? No HERO synchronization will be started.':'Persönlichen Entwurf veröffentlichen? Keine HERO-Synchronisation wird gestartet.'};
+ window.hero_integration_i18n = {text: value => messages[value] || String(value)};
+ const warnings = ['Known warning', 'External detail: RULE-1'];
+ const {activationDescription} = window.hero_integration_mapping_editor;
+ assert.equal(activationDescription(warnings), 'Gespeicherten Entwurf mit diesen Warnungen veröffentlichen: Bekannte Warnung; External detail: RULE-1. Keine HERO-Synchronisation wird gestartet.');
+ assert.deepEqual(warnings, ['Known warning', 'External detail: RULE-1']);
+ assert.match(activationDescription(null), /^Persönlichen Entwurf/);
+ delete window.hero_integration_i18n;
+});

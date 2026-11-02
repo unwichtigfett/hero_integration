@@ -58,6 +58,9 @@
         if (!target || ![target.operation, target.argument, target.field].every((value) => typeof value === "string" && value)) return "";
         return `${target.operation} / ${target.argument}.${target.field}`;
     };
+    const activationDescription = (warnings) => warnings
+        ? format('Publish the saved draft and acknowledge these warnings: {0}. No HERO synchronization will be started.', warnings.map(text).join('; '))
+        : text('Publish the saved personal draft? No HERO synchronization will be started.');
     const writebackContractLabel = (catalog, operation) => {
         if (!Array.isArray(catalog?.contracts) || !operation) return "Technical contract status unavailable.";
         const matching = catalog.contracts.filter((item) => item.operation === operation);
@@ -1623,9 +1626,7 @@
             if (warning && (!Array.isArray(d.warnings) || !d.warnings.length)) {
                 say('The current warnings are unavailable. Reload the saved draft before activation.'); return;
             }
-            modal('Activate personal draft', warning
-                ? `Publish the saved draft and acknowledge these warnings: ${d.warnings.join('; ')}. No HERO synchronization will be started.`
-                : 'Publish the saved personal draft? No HERO synchronization will be started.', [
+            modal('Activate personal draft', activationDescription(warning ? d.warnings : null), [
                 ['Activate saved draft', async () => {
                     if (locked() || model !== state || state.dirty || state.reconciliation || !canSaveDraft(state, active)) return;
                     const request = ++epoch; setBusy(true); let detail = null;
@@ -1881,5 +1882,5 @@
         const controller = {beforeLeave: leaveWorkspace, destroy() { shell.removeClass("hero-mapping-shell"); disposed = true; epoch++; window.removeEventListener("beforeunload", unload); if (router.route === guardedRoute) router.route = originalRoute; document.removeEventListener("click", links, true); document.removeEventListener("pointerdown", closeChoiceOutside, true); }};
         current = controller; loadList(); return controller;
     }
-    window.hero_integration_mapping_editor = Object.freeze({mount, DraftState, stable, readActiveRule, readSnapshotPages, exchangeExpectedStates, exchangeCounts, exchangeCanAdopt, reviewedTargetLabel, writebackContractLabel, legacyWritebackRows, legacyWritebackDetailMatches, sharedWritebackDraftAccess, reviewedWritebackEditable, buildReviewedWriteback, sharedWritebackRequest, sharedWritebackSaveAccepted, finishSharedWritebackSave, legacyWritebackCurrent, legacyPackageSelection, legacyPackageAdoptionArgs, legacyCandidateArgs, legacyCandidateMatches, legacyCandidateRawMessage, legacyCandidateRpc, legacyCandidatePreviewText, isOwnedExportLink, mappingTabs, mappingAreas, objectsInArea, relationshipDescription, directionForTab, definitionChoice, objectFieldContext, actionInputType, bindingAccess, selectedPickerApp, hasCurrentDraftBase, canSaveDraft, publicationResultName, publicationReadbackMatches, tabKeyTarget, MappingTabStates, resumePendingView});
+    window.hero_integration_mapping_editor = Object.freeze({mount, DraftState, stable, readActiveRule, readSnapshotPages, exchangeExpectedStates, exchangeCounts, exchangeCanAdopt, reviewedTargetLabel, writebackContractLabel, activationDescription, legacyWritebackRows, legacyWritebackDetailMatches, sharedWritebackDraftAccess, reviewedWritebackEditable, buildReviewedWriteback, sharedWritebackRequest, sharedWritebackSaveAccepted, finishSharedWritebackSave, legacyWritebackCurrent, legacyPackageSelection, legacyPackageAdoptionArgs, legacyCandidateArgs, legacyCandidateMatches, legacyCandidateRawMessage, legacyCandidateRpc, legacyCandidatePreviewText, isOwnedExportLink, mappingTabs, mappingAreas, objectsInArea, relationshipDescription, directionForTab, definitionChoice, objectFieldContext, actionInputType, bindingAccess, selectedPickerApp, hasCurrentDraftBase, canSaveDraft, publicationResultName, publicationReadbackMatches, tabKeyTarget, MappingTabStates, resumePendingView});
 })();
