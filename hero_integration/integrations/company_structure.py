@@ -1,4 +1,4 @@
-"""Company structure building blocks (docs/COMPANY-STRUCTURE-CONCEPT.md).
+"""Company structure building blocks.
 
 Create-only: existing departments, designations, role profiles, Helpdesk teams and
 ticket types are never changed, and no personal data is created.  Run once after

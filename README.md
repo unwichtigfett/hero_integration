@@ -1,9 +1,9 @@
 # HERO Integration
 
-HERO Integration is a Frappe v16 app for managing HERO-GraphQL data. Requires installed ERPNext v16 site. Creates native Customer and Project records.
+HERO Integration is a Frappe v16 app that manages HERO GraphQL data. It requires a site with ERPNext v16 installed. It creates native Customer and Project records.
 Installation does not contact HERO.
-The pre-install guard verifies erpNext Customer, Contact, Contact Email,
-Contact Phone and Project DocTypes before adding the HERO schema.
+Before it adds the HERO schema, the pre-install guard verifies the ERPNext
+Customer, Contact, Contact Email, Contact Phone and Project DocTypes.
 Helpdesk is optional.
 
 ## Supported scope
@@ -11,40 +11,40 @@ Helpdesk is optional.
 - HERO Customer, Project Match, Calendar Events and Task operations with fixed,
   versioned selection sets.
 - Preview and execute mode, result records, source-to-target bindings,
-  idempotent repeats, conflict detection, retry policy, and scheduled sync.
-- Dataflow after an explicit Company confirmation.
-- Data transmission is defined by linear variable-mappings.
+  idempotent repeats, conflict detection, retry policy and scheduled sync.
+- Data flow only after an explicit Company confirmation.
+- Linear variable mappings define the data transmission.
 
 ## Documentation
 
-- [Installation](INSTALLATION.md)
-- [Configuration](docs/CONFIGURATION.md)
-- [Manual acceptance](docs/MANUAL_ACCEPTANCE.md)
-- [Feature matrix](docs/FEATURE_MATRIX.md)
-- [Portability report](docs/PORTABILITY_REPORT.md)
-- [DocType extensions](docs/DOCTYPE_EXTENSIONS.md)
-- [Mapping matrix](docs/MAPPING_MATRIX.md)
-- [Desk workspace](docs/UI.md)
+- [Installation](installation_guide_1.0.md)
+- [Configuration](docs/configuration_guide_1.0.md)
+- [Manual acceptance](docs/manual_acceptance_1.0.md)
+- [Feature matrix](docs/feature_matrix_1.0.md)
+- [Portability report](docs/portability_report_1.0.md)
+- [DocType extensions](docs/doctype_extensions_1.0.md)
+- [Mapping matrix](docs/mapping_matrix_1.0.md)
+- [Desk workspace](docs/ui_overview_1.0.md)
 
 ## Adapter tools
 
-App stores GraphQL schema snapshots, versioned services and cyclic polling. Deterministic API Analyzer graph from saved snapshot without contacting HERO.
-**Mapping** tab in **HERO Integration** Desk workspace requires an explicit saved, validated schema snapshot before loading source fields, opens the graph, or supplies searchable source and target pickers.
+The app stores GraphQL schema snapshots, versioned services and cyclic polling. The API Analyzer builds a deterministic graph from a saved snapshot without contacting HERO.
+The **Mapping** tab in the **HERO Integration** Desk workspace requires an explicit saved, validated schema snapshot. Only then does it load source fields, open the graph or supply searchable source and target pickers.
 Schema-only fields are visible but disabled.
-Target picker reads the installed site's Frappe metadata, including Custom Fields, identity, Company, status, standard-mapping, standard-fields, and unresolved child-record fields.
-Suggestions are bidirectional, non-binding and can only create a Draft mapping. An administrator must explicitly validate and activate it.
-Custom direct mappings only target writable fields on approved DocTypeS.
-Frappe validates metadata, types, relations, permissions, snapshot fingerprints, and mapping revision pre-activation.
+The target picker reads the installed site's Frappe metadata. This covers Custom Fields, identity, Company, status, standard-mapping, standard fields and unresolved child-record fields.
+Suggestions are bidirectional and non-binding. They can only create a Draft mapping. An administrator must explicitly validate and activate it.
+Custom direct mappings target only writable fields on approved DocTypes.
+Before activation, Frappe validates metadata, types, relations, permissions, snapshot fingerprints and the mapping revision.
 
 Fresh installations contain no mapping definitions. The Mapping Editor exports
-deterministic, versioned packages. The editor shows a checklist for HERO-owned Custom DocTypes, Custom Fields, relations, and mappings after import.
-A System Manager selects entries and confirms adoption action, once.
-Action provisions schema first and activates selected mappings only after
-checks pass. It never triggers a migration by itself.
+deterministic, versioned packages. After an import, the editor shows a checklist for HERO-owned Custom DocTypes, Custom Fields, relations and mappings.
+A System Manager selects entries and confirms the adoption action once.
+The action provisions the schema first. It activates the selected mappings only
+after the checks pass. It never triggers a migration by itself.
 
 ## Security model
 
- - Endpoint must be HTTPS.
- - Exact hostname must appear in **Allowed HERO Hosts**.
- - API token is a Frappe `Password` value, read only by a worker, it
-   is not returned to Desk, written to a log or passed as queue argument.
+ - The endpoint must use HTTPS.
+ - The exact hostname must appear in **Allowed HERO Hosts**.
+ - The API token is a Frappe `Password` value. Only a worker reads it. The app
+   never returns it to Desk, writes it to a log or passes it as a queue argument.

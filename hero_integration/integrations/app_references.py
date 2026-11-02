@@ -138,7 +138,7 @@ def refuse_record_mirrors(doc, method=None) -> None:
 
     ERPNext HD Settings mirrors every Customer as an HD Customer; ERPNext CRM
     Settings can create Customers from deals.  Both contradict option A
-    (docs/APP-INTEGRATION-CONCEPT.md): ERPNext data is referenced, not copied.
+    (docs/app_integration_1.0.md): ERPNext data is referenced, not copied.
     """
     if doc.doctype == "ERPNext HD Settings" and doc.get("enabled"):
         frappe.throw(frappe._("The Helpdesk ERPNext mirror stays disabled: tickets reference the ERPNext Customer "

@@ -1,6 +1,6 @@
 include LICENSE
 include README.md
-include INSTALLATION.md
+include installation_guide_1.0.md
 recursive-include docs *.md
 recursive-include hero_integration *.json *.js *.txt
 recursive-include hero_integration *.css

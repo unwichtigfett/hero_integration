@@ -6,3 +6,11 @@ __pycache__/
 build/
 dist/
 *.egg-info/
+
+# Internal working documents (kept locally, not part of the app)
+docs/COMPANY-STRUCTURE-CONCEPT.md
+docs/hardening-journal.md
+docs/hardening-summary.md
+docs/mapping-delivery-coverage.md
+docs/personal-mapping-content.md
+docs/task-assignment-migration.md

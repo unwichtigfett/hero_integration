@@ -1,20 +1,20 @@
 # HERO ↔ ERPNext: Mapping-Plan
 
-Stand: 2026-11-01. Schema: `Schema.txt`, SHA-256 `7b6d360ba876aad51369c1fd7e6f82a6f3b1c4a683f2a7a4f347793101d33f7c`. Codebasis: `29b32cfeba83cc39b1ac882cbd223f2f86c5c415`; Frappe/ERPNext v16.
+Schema: HERO-Schemadatei `Schema.txt`, SHA-256 `7b6d360ba876aad51369c1fd7e6f82a6f3b1c4a683f2a7a4f347793101d33f7c`. Plattform: Frappe/ERPNext v16.
 
-Status: Planung. Keine Aktivierung, kein Datenimport und keine Mutation. Das Schema beweist Feldnamen und Typen, nicht Berechtigungen, Verhalten, Vollständigkeit oder aktive Site-Konfiguration. Die nachfolgenden Vorschläge ergänzen bestehende Verträge; sie ändern keine Freigaben.
+Status: Planung. Der Plan aktiviert nichts, importiert keine Daten und führt keine Mutation aus. Das Schema belegt Feldnamen und Typen. Es belegt keine Berechtigungen, kein Verhalten, keine Vollständigkeit und keine aktive Site-Konfiguration. Die Vorschläge ergänzen bestehende Verträge und ändern keine Freigaben.
 
 ## Gemeinsame Regeln
 
-- Identität: HERO Integration Link mit Quellsystem, Quellinstanz, Objekttyp und externer ID; verknüpfte Objekte nur über belegte Identitäten auflösen. Keine Zuordnung anhand von Namen oder E-Mail.
-- Eingehend: nur freigegebene Queries und Feldregeln. Nicht gelieferte Werte erhalten; NULL/Leerzeichen erst nach vereinbarter Semantik löschen. Externe Zeitstempel nie als Frappe creation/modified einsetzen.
-- Konflikte: pro Feld bestätigten Ausgangszustand vergleichen; gleichzeitige Änderungen zur Prüfung halten. Erneute Verarbeitung muss idempotent sein. Löschungen, Status, Zuweisungen und Einladungen nicht aus Beobachtungen ableiten.
-- Ausgehend: geprüften Link, Berechtigung, Zieloperation, Eingabetyp, Feld, Vorschau und Änderungsstand binden. Mutationsantwort und unabhängigen Readback auswerten; bei unklarer Antwort kein blindes Wiederholen. Bestehende Mutation-Drafts sind keine Ausführungsfreigabe.
-- Zeitpunkt, Zeitzone, Pagination und Sortierung nicht aus Feldtypen ableiten. Offset-Scans auf Dopplungen und Vollständigkeit prüfen und bei instabiler Quelle keinen vollständigen Lauf behaupten.
+- Identität: Der HERO Integration Link hält Quellsystem, Quellinstanz, Objekttyp und externe ID. Verknüpfte Objekte nur über belegte Identitäten auflösen. Keine Zuordnung über Namen oder E-Mail.
+- Eingehend: Nur freigegebene Queries und Feldregeln nutzen. Nicht gelieferte Werte bleiben erhalten. NULL oder Leerzeichen löschen erst nach vereinbarter Semantik. Externe Zeitstempel nie als Frappe creation/modified einsetzen.
+- Konflikte: Pro Feld den bestätigten Ausgangszustand vergleichen. Gleichzeitige Änderungen zur Prüfung halten. Erneute Verarbeitung muss idempotent sein. Löschungen, Status, Zuweisungen und Einladungen nicht aus Beobachtungen ableiten.
+- Ausgehend: Geprüften Link, Berechtigung, Zieloperation, Eingabetyp, Feld, Vorschau und Änderungsstand binden. Mutationsantwort und unabhängigen Readback auswerten. Bei unklarer Antwort nicht blind wiederholen. Bestehende Mutation-Drafts geben keine Ausführung frei.
+- Zeitpunkt, Zeitzone, Pagination und Sortierung nicht aus Feldtypen ableiten. Offset-Scans auf Dopplungen und Vollständigkeit prüfen. Bei instabiler Quelle keinen vollständigen Lauf melden.
 
 ## Kernbereiche: jedes direkte HERO-Ausgabefeld
 
-Status in diesen Tabellen: Zielangaben sind Planungspositionen; bestehende Implementierung und Site-Aktivierung sind getrennt zu prüfen. „Prüfen“ bezeichnet ausdrücklich keine freigegebene Zuordnung. Nicht spezifizierte Felder werden einzeln als Beobachtung bzw. Beziehungskandidat geführt und nicht automatisch in native Geschäftsprozesse geschrieben.
+Die Zielangaben in diesen Tabellen sind Planungspositionen. Bestehende Implementierung und Site-Aktivierung getrennt prüfen. „Prüfen“ bezeichnet keine freigegebene Zuordnung. Nicht spezifizierte Felder laufen einzeln als Beobachtung oder Beziehungskandidat. Sie fließen nicht automatisch in native Geschäftsprozesse.
 
 ### Projekt / ProjectMatch
 
@@ -170,7 +170,7 @@ Status in diesen Tabellen: Zielangaben sind Planungspositionen; bestehende Imple
 
 ## Ausgangsrichtung: konkreter Vertragsentwurf
 
-Vorhandene Code-Whitelist ist auf Customer und Project beschränkt. Die folgenden weiteren Zeilen sind Kandidaten, keine laufende Ausführung. Jeder Schreibvorgang benötigt nachweislich gültige HERO-ID, Schema und verbindliche Semantik.
+Die Code-Whitelist umfasst nur Customer und Project. Alle weiteren Zeilen sind Kandidaten und laufen nicht. Jeder Schreibvorgang braucht eine nachweislich gültige HERO-ID, ein Schema und eine verbindliche Semantik.
 
 | ERPNext-Quelle | HERO-Mutation / Eingabe | Status und Regel |
 | --- | --- | --- |
@@ -194,11 +194,11 @@ Vorhandene Code-Whitelist ist auf Customer und Project beschränkt. Die folgende
 
 ### Nicht automatisch schreiben
 
-IDs, externe Systemzeitstempel, berechnete Summen, lokale Company, Status-/Workflowwechsel, Löschflags und Zuordnungen von Benutzern oder Ressourcen sind keine generischen Feldmappings. Bestehende Identität wird für die Mutation benötigt, ist aber kein frei editierbares Nutzfeld. Das Schema allein belegt keine Unterstützung für Partial-Updates oder NULL-Löschen.
+IDs, externe Systemzeitstempel, berechnete Summen, lokale Company, Status-/Workflowwechsel, Löschflags und Zuordnungen von Benutzern oder Ressourcen sind keine generischen Feldmappings. Die Mutation braucht die bestehende Identität. Diese Identität ist kein frei editierbares Nutzfeld. Das Schema allein belegt keine Partial-Updates und kein NULL-Löschen.
 
 ## Vollständigkeit der HERO-Eingabefelder für die Kernbereiche
 
-Jedes Eingabefeld ist aufgeführt. „Nicht geplant“ bedeutet, dass aktuell kein automatisches Ausgangsmapping vorgeschlagen wird; die bloße Existenz im Input belegt kein sicheres Update. `id` dient ausschließlich als geprüfte Quellidentität.
+Die Tabellen führen jedes Eingabefeld auf. „Nicht geplant“ heißt: Der Plan schlägt kein automatisches Ausgangsmapping vor. Ein Feld im Input belegt noch kein sicheres Update. `id` dient nur als geprüfte Quellidentität.
 
 ### CustomerInput
 
@@ -336,31 +336,31 @@ Jedes Eingabefeld ist aufgeführt. „Nicht geplant“ bedeutet, dass aktuell ke
 
 ## Umsetzung und Abnahme
 
-1. Bestandsaufnahme der tatsächlichen Site, aktiver Snapshot-Fingerprint, Mapping-/Serviceversionen und vorhandener Custom Fields; historische Dokumente sind kein Laufzeitnachweis.
-2. Kernbereiche zunächst als Entwurf pro Richtung mit konkretem Feldtyp, Transform, Identitäts- und Konfliktregel anlegen; alle „prüfen“-Felder separat entscheiden. Keine fachlich unklaren Ableitungen aktivieren.
-3. Projektlogbuch als separaten Lesevertrag auf `project_histories(project_match_id, first/last, offset, orderBy, show_system_histories)` entwerfen: IDs pro Projekt und Quelle, `created` für Anzeige, `modified` für Aktualisierung, `custom_title`, `custom_text`, `author_name`, Sichtbarkeit. Reihenfolge, serverseitige Limits, Seitennavigation und Löschsemantik anhand des HERO-Vertrags verifizieren. Ausgabe in Timeline mit escaped Inhalt und Projekt-Leseberechtigung; keine Duplikate.
-4. Ausgabe-Mappings auf einzeln geprüfte Mutationen begrenzen; Preview, Konfliktbehandlung, idempotente Fehlerbehandlung und Readback testen. Anlegen und Aktualisieren getrennt behandeln.
-5. Synthetische Tests: Identitätskollisionen, Wiederholung, Pagination bei Datenänderung, Null/fehlend, gemeinsam genutzte Kontakte/Adressen, Zeitzonen/DST, fehlende Rechte, Konflikt, Zeitüberschreitung und unklare Mutationsantwort. Frappe-Integrationstests nur in isolierter Test-Site; keine Live- oder Produktionsausführung aus diesem Plan ableiten.
+1. Bestand der Ziel-Site erfassen: aktiver Snapshot-Fingerprint, Mapping- und Serviceversionen, vorhandene Custom Fields. Historische Dokumente belegen keinen Laufzeitstand.
+2. Kernbereiche als Entwurf pro Richtung anlegen. Jeder Eintrag nennt Feldtyp, Transform, Identitäts- und Konfliktregel. Jedes „prüfen“-Feld einzeln entscheiden. Fachlich unklare Ableitungen nicht aktivieren.
+3. Projektlogbuch als eigenen Lesevertrag auf `project_histories(project_match_id, first/last, offset, orderBy, show_system_histories)` entwerfen. Inhalt: IDs pro Projekt und Quelle, `created` für Anzeige, `modified` für Aktualisierung, `custom_title`, `custom_text`, `author_name`, Sichtbarkeit. Reihenfolge, serverseitige Limits, Seitennavigation und Löschsemantik gegen den HERO-Vertrag prüfen. Ausgabe in der Timeline mit escaped Inhalt und Projekt-Leseberechtigung, ohne Duplikate.
+4. Ausgabe-Mappings auf einzeln geprüfte Mutationen begrenzen. Preview, Konfliktbehandlung, idempotente Fehlerbehandlung und Readback testen. Anlegen und Aktualisieren getrennt behandeln.
+5. Synthetische Tests: Identitätskollisionen, Wiederholung, Pagination bei Datenänderung, Null/fehlend, gemeinsam genutzte Kontakte/Adressen, Zeitzonen/DST, fehlende Rechte, Konflikt, Zeitüberschreitung und unklare Mutationsantwort. Frappe-Integrationstests nur in einer isolierten Test-Site ausführen. Der Plan erlaubt keine Live- oder Produktionsausführung.
 
 ## Nachprüfung des Mutation-Schemas und Testzugriffs
 
-- `add_logbook_entry(logbook_entry: LogbookEntryInput)` liefert `History`. Pflichtfeld im Input ist `custom_text: String!`. `target` ist `HistoryTargetEnum` mit `project_match` oder `field_service_job`; zusätzlich sind `target_id`, `target_project_match_id`, `type_code`, `target_users` und `role_visibility` möglich. Das Schema enthält kein `custom_title` im Input. Welche Ziel-ID-Kombination und Sichtbarkeit HERO verlangt, ist durch das Schema nicht bewiesen.
-- `update_customer_address(customer_address: CustomerAddressInput)` akzeptiert `id`, `customer_id`, `address_id` und verschachtelt `address: AddressInput`. `AddressInput` enthält u. a. `street`, `line_1`, `line_2`, `city`, `zipcode`, `country_id`, `state_id` und `id`. Die Präzedenz von `street` gegenüber `line_1` sowie Länder- und Regionsidentität bleibt offen.
+- `add_logbook_entry(logbook_entry: LogbookEntryInput)` liefert `History`. Pflichtfeld im Input ist `custom_text: String!`. `target` ist `HistoryTargetEnum` mit `project_match` oder `field_service_job`. Zusätzlich sind `target_id`, `target_project_match_id`, `type_code`, `target_users` und `role_visibility` möglich. Der Input enthält kein `custom_title`. Das Schema legt nicht fest, welche Ziel-ID-Kombination und Sichtbarkeit HERO verlangt.
+- `update_customer_address(customer_address: CustomerAddressInput)` akzeptiert `id`, `customer_id`, `address_id` und verschachtelt `address: AddressInput`. `AddressInput` enthält u. a. `street`, `line_1`, `line_2`, `city`, `zipcode`, `country_id`, `state_id` und `id`. Offen sind die Präzedenz von `street` gegenüber `line_1` sowie Länder- und Regionsidentität.
 - `update_tracking_time(tracking_time: Employees_TrackingTimeInput)` akzeptiert u. a. `id`, `uuid`, `project_match_id`, `partner_id`, `start`, `end`, `duration_in_seconds`, `comment`, `status_code` und `tracking_times_category_id`. Zusammenhänge und Bearbeitbarkeit sind unbestätigt.
-- Der Nutzer erlaubte GraphQL-Abfragen und Mutationen des Testprojekts `11997764`. Der Versuch, die konfigurierte Verbindung der Frappe-Site lesend zu laden, scheiterte am Datenbankverbindungsaufbau mit `Can't create TCP/IP socket (1)`. Dieser frühere Versuch wurde nach Freigabe des Netzwerkzugriffs erfolgreich wiederholt; siehe Live-Test unten.
-- Vor einem Schreibtest: Testprojekt lesend identifizieren, Ausgangswerte und Berechtigungen prüfen, eine eng begrenzte Änderung auswählen, Mutation einmalig ausführen und unabhängig zurücklesen. Kein stillschweigendes Zurücksetzen nach einer unklaren Antwort; Logbucheinträge können bleibende Historie erzeugen.
+- GraphQL-Abfragen und Mutationen laufen nur gegen ein ausdrücklich freigegebenes Testprojekt.
+- Ablauf eines Schreibtests: Testprojekt lesend identifizieren, Ausgangswerte und Berechtigungen prüfen, eine eng begrenzte Änderung wählen, Mutation einmal ausführen, unabhängig zurücklesen. Nach einer unklaren Antwort nicht stillschweigend zurücksetzen. Logbucheinträge erzeugen bleibende Historie.
 
-## Live-Test des freigegebenen Projekts (2026-11-01)
+## Live-Test an einem Testprojekt
 
-- Die konfigurierte Quellbindung war bestätigt. Die HERO-Abfrage `project_match(project_match_id: 11997764)` lieferte das angegebene, nicht als gelöscht markierte Projekt.
-- `project_histories` mit `first: 1`, `offset: 0` und `offset: 1`, `orderBy: "id"`, `show_system_histories: true` lieferte eine Zeile und danach keine. Eine weitere Abfrage bestätigte für die gelieferte Historie `target_project_match_id = 11997764` und `type = project_match`. Ein einzelner Eintrag belegt weder Vollständigkeit größerer Paginierungen noch stabile Sortierung bei gleichzeitigen Änderungen.
-- `update_project_match(project_match: {id, partner_notes})` wurde einmalig am autorisierten Testprojekt ausgeführt. Die Antwort bestätigte die Projekt-ID; ein unabhängiger Leseaufruf bestätigte den Testwert. Anschließend wurde der ursprüngliche Wert mit derselben Mutation wiederhergestellt und unabhängig zurückgelesen. Bei beiden Readbacks blieben die überprüften Felder `project_title`, `project_nr`, `project_type`, `display_id`, `customer_id` unverändert. Dies ist eine einzelne Beobachtung, kein allgemeiner Beleg für Partial-Update-, Nebenwirkungs-, NULL- oder Nebenläufigkeitssemantik.
-- Ein nur für den ausführenden Benutzer lesbarer Ausgangszustand liegt unter `/tmp/hero-test-project-rggsdwm7.json`. Der Änderungszeitpunkt und serverseitige Historie können durch die zwei Mutationen verändert worden sein; diese wurden nicht zurückgesetzt.
-- Es wurde kein Logbucheintrag angelegt und keine Mutation an Kunden, Kontakten, Aufgaben, Kalender oder weiteren Objekten ausgeführt. Für diese Bereiche sind die Feldzuordnungen und das Verhalten weiterhin Entwurf.
+- Die konfigurierte Quellbindung war bestätigt. Die HERO-Abfrage `project_match(project_match_id: …)` lieferte das Testprojekt, nicht als gelöscht markiert.
+- `project_histories` mit `first: 1`, `offset: 0` und `offset: 1`, `orderBy: "id"`, `show_system_histories: true` lieferte eine Zeile und danach keine. Die gelieferte Historie trug die ID des Testprojekts in `target_project_match_id` und `type = project_match`. Ein einzelner Eintrag belegt weder die Vollständigkeit größerer Paginierungen noch stabile Sortierung bei gleichzeitigen Änderungen.
+- `update_project_match(project_match: {id, partner_notes})` lief einmal am Testprojekt. Die Antwort bestätigte die Projekt-ID. Ein unabhängiger Leseaufruf bestätigte den Testwert. Dieselbe Mutation stellte danach den ursprünglichen Wert wieder her; ein unabhängiger Readback bestätigte ihn. In beiden Readbacks blieben `project_title`, `project_nr`, `project_type`, `display_id` und `customer_id` unverändert. Diese Einzelbeobachtung belegt keine allgemeine Partial-Update-, Nebenwirkungs-, NULL- oder Nebenläufigkeitssemantik.
+- Mutationen ändern den Änderungszeitpunkt und die serverseitige Historie des Projekts. Ein Zurücksetzen des Feldwerts stellt beide nicht wieder her.
+- Der Test legte keinen Logbucheintrag an. Er mutierte keine Kunden, Kontakte, Aufgaben, Kalendereinträge oder weiteren Objekte. Für diese Bereiche bleiben Feldzuordnungen und Verhalten Entwurf.
 
 ## Quellen
 
-- HERO-Schema: `/home/frappe/Downloads/schema-files/Schema.txt`.
-- `docs/MAPPING_MATRIX.md`, `docs/mapping-delivery-coverage.md`, `docs/synchronization-mapping-handoff.md`.
+- HERO-Schema: `Schema.txt`.
+- `docs/mapping_matrix_1.0.md`, `docs/sync_handoff_1.0.md`.
 - `hero_integration/services/frappe_writeback.py`, `hero_integration/sources/hero.py`, `hero_integration/services/migration.py`.
 - Lokale ERPNext/Frappe v16 DocType-Definitionen für Customer, Contact, Address, Project, Task, Event, Item, Timesheet und File.

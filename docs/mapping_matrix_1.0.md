@@ -4,7 +4,7 @@
 **Updated:** 23 October 2026  
 **Scope:** Customer, Project Match, Calendar Events and Tasks
 
-This document specifies the reviewed source-to-target contracts, approved native projections, and deliberately excluded mappings. The consolidated batch task `HERO_4_DOMAIN_REMAINING_MAPPINGS_BATCH_12` is treated as **completed (PASS)** for the purposes of this documentation. Completion of the batch review or preparation of guarded code does **not** imply that blocked semantics have been approved or that unactivated mapping definitions are active.
+This document specifies the reviewed source-to-target contracts, approved native projections and excluded mappings. A completed review or prepared guarded code does **not** approve blocked semantics. It does **not** activate inactive mapping definitions either.
 
 ## Current four-domain baseline
 
@@ -16,15 +16,15 @@ This document specifies the reviewed source-to-target contracts, approved native
 | `HeroTasks` | 15 | `HERO External Task` | Approved |
 | **Unique active mapping definitions** | **76** | | |
 
-Customer V1 remains separately approved and selects 14 of the same 15 Customer definitions; V2 adds M-099. V1 and V2 are alternatives selected explicitly for a run, **not** two automatic passes. Calendar mapping definitions can exist as Active while the Calendar *service* remains `Pending Approval`; this is not an authorization to execute it. Scheduler and polling remain off.
+Customer V1 has its own approval and selects 14 of the same 15 Customer definitions. V2 adds M-099. A run selects V1 or V2 explicitly; they are alternatives, **not** two automatic passes. Calendar mapping definitions can be Active while the Calendar *service* stays `Pending Approval`. Active definitions do not authorize a Calendar run. Scheduler and polling stay off.
 
-The reviewed isolated-site schema snapshot is `2b55ter0bc`, normalized fingerprint `fee37bfa55a02f7a4d09b6b902e6600a835c992c8fe6644c358f5e511e025201`. This fingerprint is distinct from the original `hero_connector` export digest and historical fingerprints; do not interchange them.
+Each reviewed schema snapshot carries a normalized fingerprint. This fingerprint differs from the original `hero_connector` export digest and from earlier fingerprints. Do not interchange them.
 
-The 76 rows below represent the 75-definition four-domain import contract plus the separately approved M-099 Customer V2 native binding. IDs are mapping `definition_id` values except **M-099**, which is an audit identifier for the added Address binding. See [DocType extensions](DOCTYPE_EXTENSIONS.md) for schema details.
+The 76 rows below cover the 75-definition four-domain import contract plus the separately approved M-099 Customer V2 native binding. IDs are mapping `definition_id` values. **M-099** is the exception: it is an audit identifier for the added Address binding. See [DocType extensions](doctype_extensions_1.0.md) for schema details.
 
 ## Mapping definitions
 
-Source paths in each table are relative to the operation's collection item, respectively `contacts[]`, `project_matches[]`, `calendar_events[]`, and `tasks[]`. “Declared target” reproduces the reviewed mapping contract; protected native purposes can persist through an adapter rather than a direct field assignment.
+Source paths are relative to each operation's collection item: `contacts[]`, `project_matches[]`, `calendar_events[]` and `tasks[]`. “Declared target” reproduces the reviewed mapping contract. Protected native purposes can persist through an adapter instead of a direct field assignment.
 
 ### `HeroCustomers` — Customer
 
@@ -46,7 +46,7 @@ Source paths in each table are relative to the operation's collection item, resp
 | `customer-contact-person` | `is_contact_person` | `Customer.custom_hero_is_contact_person` | Field |
 | `M-099` (Customer V2) | `address.line_2` | `Address.address_line2` | Protected native primary-Address binding |
 
-**Contract boundary:** The Customer identity and record name use protected purposes. First name, last name, email and phones use the primary-Contact adapter; the declared Customer/contact convenience fields are not permission to mutate arbitrary Contacts. `phone_home` is appended only for an exclusively linked Contact. Primary Address uses an owned native Address relation, retains existing data for missing or blank `line_2`, and rejects shared-address updates. M-099 is handled by that adapter, not an unrestricted generic resolver.
+**Contract boundary:** Customer identity and record name use protected purposes. First name, last name, email and phones use the primary-Contact adapter. The declared Customer/contact convenience fields do not permit changes to arbitrary Contacts. The adapter appends `phone_home` only to an exclusively linked Contact. Primary Address uses an owned native Address relation. It keeps existing data when `line_2` is missing or blank and rejects shared-address updates. That adapter handles M-099, not an unrestricted generic resolver.
 
 ### `HeroProjectMatches` — Project
 
@@ -74,7 +74,7 @@ Source paths in each table are relative to the operation's collection item, resp
 | `HeroProjectMatches:custom_hero_observed_status_modified` | `current_project_match_status.modified` | `Project.custom_hero_observed_status_modified` | Field |
 | `HeroProjectMatches:custom_hero_observed_status_step_id` | `current_project_match_status.step_id` | `Project.custom_hero_observed_status_step_id` | Field |
 
-**Contract boundary:** The Customer relation resolves through `HERO Integration Link`; `Project.company` is obtained only from the ERPNext Default Company, **not** the HERO `customer_id`. Project title uses the validated native naming contract. All seven `custom_hero_observed_status_*` fields are observational and never mutate native project status, `docstatus`, state machines or workflows.
+**Contract boundary:** The Customer relation resolves through `HERO Integration Link`. `Project.company` comes only from the ERPNext Default Company, **not** from the HERO `customer_id`. Project title uses the validated native naming contract. All seven `custom_hero_observed_status_*` fields are observational. They never change native project status, `docstatus`, state machines or workflows.
 
 ### `HeroCalendarEvents` — Event
 
@@ -106,7 +106,7 @@ Source paths in each table are relative to the operation's collection item, resp
 | `HeroCalendarEvents:custom_hero_original_start` | `start` | `Event.custom_hero_original_start` | Native Binding |
 | `HeroCalendarEvents:custom_hero_original_end` | `end` | `Event.custom_hero_original_end` | Native Binding |
 
-**Contract boundary:** Native event properties include subject, description, starts/ends, all-day and location; original source times are preserved separately. Resource and partner collections are stored as HERO child observations, not `Employee`/`User` links or invitations. The recurring flag is not a recurrence rule. No Calendar run until timezone/all-day semantics and service acceptance are approved.
+**Contract boundary:** Native event properties cover subject, description, start, end, all-day and location. Separate fields keep the original source times. Resource and partner collections are stored as HERO child observations, not as `Employee`/`User` links or invitations. The recurring flag is not a recurrence rule. Calendar runs stay blocked until timezone/all-day semantics and service acceptance are approved.
 
 ### `HeroTasks` — HERO External Task
 
@@ -128,21 +128,21 @@ Source paths in each table are relative to the operation's collection item, resp
 | `HeroTasks:custom_hero_source_id` | `id` | `HERO External Task.custom_hero_source_id` | Source Identity |
 | `HeroTasks:custom_hero_project` | `target_project_match_id` | `HERO External Task.custom_hero_project` | Project Relation |
 
-**Contract boundary:** External tasks remain in `HERO External Task`; `target_user_id` stays an external identifier. Project references require canonical resolution. No local ERPNext/Frappe Task creation, assignment, workflow transition, or derived completion state.
+**Contract boundary:** External tasks stay in `HERO External Task`. `target_user_id` stays an external identifier. Project references require canonical resolution. The mapping creates no local ERPNext/Frappe Task, assignment, workflow transition or derived completion state.
 
 ## Closed Customer V2 change
 
-M-099 selects `contacts[].address.line_2` and persists a nonblank, normalized value into `Address.address_line2` using the existing, identity-safe Customer Address adapter. The generic `MappingPlan.values()` does not resolve that specialized native binding independently. The previously failing complete Customer V2 synthetic fixture passed after the focused handoff fix, together with null/blank preservation, shared-Address checks, idempotence, stale-revision guards and rollback.
+M-099 selects `contacts[].address.line_2`. It writes a nonblank, normalized value into `Address.address_line2` through the existing identity-safe Customer Address adapter. The generic `MappingPlan.values()` does not resolve this specialized native binding on its own. The complete Customer V2 synthetic fixture covers the binding. It also covers null/blank preservation, shared-Address checks, idempotence, stale-revision guards and rollback.
 
-Customer V2 binding `HERO-MAP-00087` rev. 2 is Active; mapping `HERO-GQL-MAP-00088` rev. 1 is Active; service `HERO-GQL-00089` rev. 1 is Approved. Customer V1 service `HERO-GQL-00080` and mapping `HERO-GQL-MAP-00079` retain their approved/active revision 1. Their execution remains an explicit choice.
+The Customer V2 binding and mapping are Active, and the Customer V2 service is Approved. Customer V1 keeps its own approved service and active mapping. Each run selects V1 or V2 explicitly.
 
 ## Consolidated residual contract decisions
 
-The field-coverage audit contains **108 review positions**, which are not the same as active mapping-definition count. Its Delta-02 baseline had 88 positions recorded as implemented and 20 residual positions. Batch 12 is accepted as completed, with the following protection and business-contract outcomes. A documented or prepared candidate is not an activated mapping.
+The field-coverage audit contains **108 review positions**. This number differs from the count of active mapping definitions. 88 positions are implemented; 20 positions remain residual. The residual positions have the following protection and business-contract outcomes. A documented or prepared candidate is not an activated mapping.
 
 | Audit ID | Scope | Decision / retained gate |
 | --- | --- | --- |
-| M-076 | Customer salutation | Controlled exact-value `Customer.title` / `title_custom` → existing `Contact.salutation` bindings only. Source-value inventory yielded **zero verified Customer values**, so no binding is activated. Person/company ownership still requires proof. |
+| M-076 | Customer salutation | Controlled exact-value `Customer.title` / `title_custom` → existing `Contact.salutation` bindings only. No binding is active without **verified Customer source values**. Person/company ownership still requires proof. |
 | M-082 | House number | **Deferred:** GraphQL `Address.house_number` is absent; retain `street` as `Address.address_line1` unchanged. No heuristic splitting. |
 | M-086 | Company legal form | **Business contract approved:** raw `Customer.company_legal_form` → proposed read-only `Customer.custom_hero_company_legal_form` (`Data`), independent of ERPNext Company, Customer Type and Customer Group. New schema adoption or mapping activation is separately gated. |
 | M-087 | Extra-contact salutation | Requires M-076 vocabulary plus validated identity and relation of each additional Contact; no assignment by name. |
@@ -166,16 +166,16 @@ The field-coverage audit contains **108 review positions**, which are not the sa
 ## Package adoption and execution boundaries
 
 - Reviewed package format: `hero-frappe-mapping-package-v2` with `format_version`, `schema_fingerprint`, `schema.custom_doctypes`, `schema.custom_fields`, `schema.relations` and `mappings`.
-- Upload and preview are non-adopting; they must not provision metadata or import business records. Selected changes require authorized System Manager confirmation, schema-first validation and revision-bound mapping activation.
-- Site-specific custom field mappings are restricted to approved writable targets. Native identity, company, contact, address, relationships, status and lifecycle use explicit protected purposes and existing adapters.
-- Unknown transformations, missing target metadata, unapproved relations, incompatible revisions and unsupported values fail closed. Existing/foreign fields and DocTypes must not be overwritten or deleted by adoption.
-- Frappe DDL is not guaranteed to roll back. A schema-adoption result must record the actual created definitions and be re-previewable before any retry.
-- Synthetic offline data are located at [`hero_mapping_fixture_v1.json`](../hero_integration/tests/fixtures/hero_mapping_fixture_v1.json). This fixture is **not** a Frappe installation fixture and is never imported automatically. Other isolated fixtures are test-only.
-- Source-to-target identity belongs to `HERO Integration Link`, scoped by source system/instance/entity/ID. Hashes, run/record status and mapping revision are retained as provenance; naming similarity does not establish identity.
-- No live HERO requests, scheduled polling, automatic sync, production business-data migration, Calendar execution, native workflow transitions, invitations, or reverse synchronization follow from mapping approval alone.
+- Upload and preview do not adopt anything. They must not provision metadata or import business records. Selected changes require authorized System Manager confirmation, schema-first validation and revision-bound mapping activation.
+- Site-specific custom field mappings may only target approved writable fields. Native identity, company, contact, address, relationships, status and lifecycle use explicit protected purposes and existing adapters.
+- Unknown transformations, missing target metadata, unapproved relations, incompatible revisions and unsupported values fail closed. Adoption must not overwrite or delete existing or foreign fields and DocTypes.
+- Frappe DDL does not guarantee rollback. A schema-adoption result must record the definitions it created. It must allow a new preview before any retry.
+- Synthetic offline data live in [`hero_mapping_fixture_v1.json`](../hero_integration/tests/fixtures/hero_mapping_fixture_v1.json). This fixture is **not** a Frappe installation fixture, and nothing imports it automatically. Other isolated fixtures are test-only.
+- `HERO Integration Link` owns source-to-target identity, scoped by source system/instance/entity/ID. Hashes, run/record status and mapping revision stay as provenance. Similar names do not establish identity.
+- Mapping approval alone triggers no live HERO requests, scheduled polling, automatic sync, production business-data migration, Calendar execution, native workflow transitions, invitations or reverse synchronization.
 
 ## Release consistency
 
-This document describes the **accepted isolated-site four-domain contract**. A clean Git checkout is not assumed to contain the same runtime changes or adopted site metadata. Before publishing a release, compare the Git revision with the isolated site's four-operation registry, DocType/controller definitions, mapping and service revisions, import preview, and focused fixture regressions. **Do not claim the four-domain deployment is present merely because this Markdown file is committed.**
+This document describes the **accepted four-domain contract**. A clean Git checkout may lack the same runtime changes or adopted site metadata. Before a release, compare the Git revision with the target site's four-operation registry, DocType/controller definitions, mapping and service revisions, import preview and focused fixture regressions. **A committed Markdown file does not prove that the four-domain deployment is present.**
 
-[Installation](../INSTALLATION.md) · [DocType extensions](DOCTYPE_EXTENSIONS.md)
+[Installation](../installation_guide_1.0.md) · [DocType extensions](doctype_extensions_1.0.md)
