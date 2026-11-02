@@ -29,6 +29,18 @@ Install from the branch `hero_int_1.0`:
 - [Mapping matrix](docs/mapping_matrix_1.0.md)
 - [Desk workspace](docs/ui_overview_1.0.md)
 
+## Language
+
+HERO Integration uses English source text and includes a German translation
+catalog. It follows Frappe v16 language selection: a language set on the User
+record takes precedence; otherwise Frappe uses the language in System Settings.
+There is no separate HERO language setting. Sign out and sign back in after
+changing a language so Frappe refreshes the session and Desk translations.
+
+Technical names and user-provided or external-system content are retained as
+received. A message without a matching translation remains in its source
+language. Terms such as Mapping and Polling remain in English in the German UI.
+
 ## Adapter tools
 
 The app stores GraphQL schema snapshots, versioned services and cyclic polling. The API Analyzer builds a deterministic graph from a saved snapshot without contacting HERO.
