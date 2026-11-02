@@ -13,6 +13,21 @@ class TestFrappeMappingCatalog(unittest.TestCase):
     def setUp(self):
         self.metadata = _Metadata()
 
+    def test_visible_catalog_reasons_have_german_translations(self):
+        import csv
+        from pathlib import Path
+
+        translation_file = Path(__file__).resolve().parents[1] / 'translations' / 'de.csv'
+        with translation_file.open(encoding='utf-8', newline='') as stream:
+            messages = dict(csv.reader(stream))
+        entries = catalog(self.metadata)['doctypes']
+        reasons = [entry['reason'] for entry in entries if entry['reason']]
+        for entry in entries:
+            if entry['selectable']:
+                reasons.extend(item.reason for item in fields(self.metadata, doctype=entry['doctype']) if item.reason)
+        self.assertTrue(reasons)
+        self.assertEqual([reason for reason in reasons if reason not in messages], [])
+
     def test_reviewed_writeback_source_does_not_unprotect_inbound_target(self):
         self.metadata._fields['Customer'] = [
             _field('customer_name', 'Customer Name', 'Data'),

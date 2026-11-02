@@ -2220,3 +2220,37 @@ Overview without node text; use selection and Inspector for names and details.,�
 Reduced edge labels: {0} of {1} visible relationships are labeled. All relationships remain available in node focus and Inspector.,Reduzierte Kantenbeschriftung: {0} von {1} sichtbaren Beziehungen sind beschriftet. Alle Beziehungen bleiben im Knotenfokus und im Inspector verfügbar.
 {0} saved · Provenance={1},{0} gespeichert · Herkunft={1}
 Mutation execution is not available in this editor.,Die Ausführung von Mutations ist in diesem Editor nicht verfügbar.
+Source type does not match the approved HERO contract.,Der Quelltyp entspricht nicht dem freigegebenen HERO-Vertrag.
+Only ordinary field proposals may target a non-canonical app.,Nur normale Feldvorschläge dürfen eine nicht kanonische App als Ziel haben.
+Source type is not part of the approved HERO operation.,Der Quelltyp ist nicht Teil der freigegebenen HERO-Operation.
+A target DocType and field are required.,Ein Ziel-DocType und ein Zielfeld sind erforderlich.
+The target field is not available in the current site metadata.,Das Zielfeld ist in den aktuellen Site-Metadaten nicht verfügbar.
+Source and target field types are incompatible.,Die Feldtypen von Quelle und Ziel sind nicht kompatibel.
+Only canonical targets may be activated by this app.,Diese App kann nur kanonische Ziele aktivieren.
+The Frappe source field is not available in the current site metadata.,Das Frappe-Quellfeld ist in den aktuellen Site-Metadaten nicht verfügbar.
+Child Table DocType: use an app-owned child-row resolver.,Child-Table-DocType: Verwenden Sie einen zur App gehörenden Resolver für Untertabellenzeilen.
+"Single DocType: it is configuration, not a record target.",Single-DocType: Dies ist eine Konfiguration und kein Datensatzziel.
+Virtual DocType: direct persistence is not available.,Virtueller DocType: Eine direkte Speicherung ist nicht verfügbar.
+No write permission for this DocType.,Keine Schreibberechtigung für diesen DocType.
+Draft proposal only; activation requires an app-owned integration.,Nur Entwurfsvorschlag; die Aktivierung erfordert eine zur App gehörende Integration.
+System field: it cannot be a mapping target.,Systemfeld: Es kann kein Mapping-Ziel sein.
+Read-only field: it cannot be a mapping target.,Schreibgeschütztes Feld: Es kann kein Mapping-Ziel sein.
+Child Table field: an app-owned child-row resolver is required.,Child-Table-Feld: Ein zur App gehörender Resolver für Untertabellenzeilen ist erforderlich.
+Reviewed writeback source; execution requires separate approval.,Geprüfte Writeback-Quelle; die Ausführung erfordert eine separate Freigabe.
+Link field: an approved entity resolver is required.,Link-Feld: Ein freigegebener Entity-Resolver ist erforderlich.
+Unsupported field type for a direct Draft proposal.,Nicht unterstützter Feldtyp für einen direkten Entwurfsvorschlag.
+Type-compatible name and label match.,Typkompatible Übereinstimmung von Name und Bezeichnung.
+Selected by the versioned read-only import operation.,Durch die versionierte schreibgeschützte Importoperation ausgewählt.
+Select values require validation before activation.,Select-Werte müssen vor der Aktivierung geprüft werden.
+Required target field; target creation needs an app-owned contract.,Erforderliches Zielfeld; die Zielerstellung benötigt einen zur App gehörenden Vertrag.
+Draft only for this non-canonical app target.,Für dieses nicht kanonische App-Ziel ist nur ein Entwurf möglich.
+Collection return: an approved collection identity and read-only import contract are required before activation.,Collection-Rückgabe: Eine freigegebene Collection-Identität und ein schreibgeschützter Importvertrag sind vor der Aktivierung erforderlich.
+Schema-only query field: an approved read-only import contract is required before activation.,Query-Feld nur aus dem Schema: Vor der Aktivierung ist ein freigegebener schreibgeschützter Importvertrag erforderlich.
+"Standard target field: it requires a reviewed app mapping, not a site-specific direct mapping.",Standardzielfeld: Es erfordert ein geprüftes App-Mapping statt eines direkten Site-Mappings.
+Schema-only query return: an approved read-only import contract is required before activation.,Query-Rückgabe nur aus dem Schema: Vor der Aktivierung ist ein freigegebener schreibgeschützter Importvertrag erforderlich.
+Link target: an approved entity resolver is required before it can be mapped.,Link-Ziel: Vor dem Mapping ist ein freigegebener Entity-Resolver erforderlich.
+Schema-only: not selected by an approved read-only import operation.,Nur im Schema: nicht durch eine freigegebene schreibgeschützte Importoperation ausgewählt.
+Schema-only query operation: an approved read-only import contract is required before activation.,Query-Operation nur aus dem Schema: Vor der Aktivierung ist ein freigegebener schreibgeschützter Importvertrag erforderlich.
+Child-DocType relationship: a reviewed resolver is required before it can be mapped.,Child-DocType-Beziehung: Vor dem Mapping ist ein geprüfter Resolver erforderlich.
+"Protected, technical, or unsupported target field.","Geschütztes, technisches oder nicht unterstütztes Zielfeld."
+Canonical HERO migration target.,Kanonisches HERO-Migrationsziel.
