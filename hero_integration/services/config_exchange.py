@@ -29,6 +29,8 @@ import json
 
 import frappe
 
+from hero_integration.services.localized_error import LocalizedError
+
 FORMAT_VERSION = "hero-integration-config-v2"
 FORMAT_V1 = "hero-integration-config-v1"
 # Operational settings that move with the configuration.  Everything else stays
@@ -47,7 +49,7 @@ SERVICE_REFERENCE = "$read_service:"
 SERVICE_KEYS = {"target_operation", "service_name", "operation_name", "mapping_operation_name", "query", "mapping"}
 
 
-class ConfigExchangeError(ValueError):
+class ConfigExchangeError(LocalizedError):
     pass
 
 
@@ -192,12 +194,12 @@ def import_config(snapshot_name: str, payload_json: str, source_instance: str = 
     package = preview_package(snapshot_name, package_json)
     blocked = [item for item in package["items"] if item["state"] in {"Conflict", "Invalid"}]
     if blocked:
-        raise ConfigExchangeError("The mapping package has conflicts or invalid entries: "
-                                  + ", ".join(str(item.get("id")) for item in blocked[:10]))
+        raise ConfigExchangeError("The mapping package has conflicts or invalid entries: {0}",
+                                  ", ".join(str(item.get("id")) for item in blocked[:10]))
     invalid = [f"{item['target_operation']}: {problem}" for item in payload["read_services"]
                if (problem := _query_problem(snapshot_name, item))]
     if invalid:
-        raise ConfigExchangeError("A read query does not fit the target HERO schema: " + "; ".join(invalid))
+        raise ConfigExchangeError("A read query does not fit the target HERO schema: {0}", "; ".join(invalid))
     selected = _selection(package)
     settings = _settings_changes(payload)
     adopted = adoption.start(snapshot_name, package_json, selected, package["preview_revision"]) if selected else None
@@ -226,7 +228,7 @@ def _parse(payload_json: str) -> dict:
     if (not isinstance(payload, dict) or payload.get("format_version") not in keys
             or set(payload) != keys[payload["format_version"]]
             or not isinstance(payload["read_services"], list)):
-        raise ConfigExchangeError("This is not a HERO integration configuration file (" + FORMAT_VERSION + ").")
+        raise ConfigExchangeError("This is not a HERO integration configuration file ({0}).", FORMAT_VERSION)
     if payload["format_version"] == FORMAT_VERSION:
         snapshot, settings = payload["schema_snapshot"], payload["settings"]
         if (not isinstance(snapshot, dict) or set(snapshot) != {"schema_fingerprint", "schema"}
@@ -262,7 +264,7 @@ def _resolved_mapping(item, source_instance, created=None) -> dict:
             current = current if current is not None else api._sync_area_read_services(source_instance)
             rows = current.get(operation) or []
             if not rows:
-                raise ConfigExchangeError(f"{item['target_operation']} needs the {operation} read service first.")
+                raise ConfigExchangeError("{0} needs the {1} read service first.", item['target_operation'], operation)
             config[key] = rows[0]["service"]
     return config
 

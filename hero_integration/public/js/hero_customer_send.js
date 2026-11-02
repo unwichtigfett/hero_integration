@@ -35,7 +35,7 @@
 					customer: frm.doc.name, fingerprint: dialog.preview.fingerprint, confirmed: 1,
 				}}).then((response) => {
 					dialog.hide();
-					frappe.show_alert({message: __("Sent to HERO: {0}", [response.message.changes.join(", ")]), indicator: "green"});
+					frappe.show_alert({message: __("Sent to HERO: {0}", [response.message.changes.map((label) => __(label)).join(", ")]), indicator: "green"});
 					frm.reload_doc();
 				});
 			},

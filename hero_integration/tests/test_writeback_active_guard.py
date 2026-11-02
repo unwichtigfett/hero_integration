@@ -12,7 +12,7 @@ class TestWritebackActiveGuard(unittest.TestCase):
     def invoke(self, rows):
         sql_calls, lock_calls = [], []
         db = SimpleNamespace(sql=lambda query, values, as_dict: (sql_calls.append((query, values, as_dict)) or rows))
-        fake = SimpleNamespace(db=db, throw=lambda msg: (_ for _ in ()).throw(ValueError(msg)))
+        fake = SimpleNamespace(_=lambda message: message, db=db, throw=lambda msg: (_ for _ in ()).throw(ValueError(msg)))
         lock = lambda *args: lock_calls.append(args)
         source = {"doctype": "Customer", "field": "customer_name"}
         with patch.object(controller, "frappe", fake), patch.object(locks, "_lock_active_target", side_effect=lock):

@@ -1,5 +1,7 @@
 # Run checkpoint baseline and consistency
 
+> **Historical scoped test evidence.** The test counts, Frappe/ERPNext versions and DB checks below belong to the documented checkpoint implementation step. They are not proof of a newly executed suite on the latest branch, deployed target schema, live HERO request or full queued-worker recovery acceptance. Preserve the original evidence and verify current runtime separately.
+
 ## Baseline selection
 
 The checkpoint contract builds on mechanisms the app already has: approved saved

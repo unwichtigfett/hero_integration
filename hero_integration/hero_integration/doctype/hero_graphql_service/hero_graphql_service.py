@@ -7,6 +7,7 @@ from frappe.model.document import Document
 
 from hero_integration.services.graphql_graph import analyze_snapshot
 from hero_integration.services.mutation_draft import operation_kind, validate as validate_mutation_draft
+from hero_integration.services.localized_error import translate_error
 
 
 class HEROGraphQLService(Document):
@@ -14,9 +15,9 @@ class HEROGraphQLService(Document):
         frappe.only_for("System Manager")
         snapshot = frappe.get_doc("HERO GraphQL Schema Snapshot", self.schema_snapshot)
         if snapshot.analysis_status != "Validated":
-            frappe.throw("A validated GraphQL schema snapshot is required.")
+            frappe.throw(frappe._("A validated GraphQL schema snapshot is required."))
         if analyze_snapshot(json.loads(snapshot.snapshot_json)).fingerprint != snapshot.schema_fingerprint:
-            frappe.throw("The selected GraphQL schema snapshot is stale.")
+            frappe.throw(frappe._("The selected GraphQL schema snapshot is stale."))
         self.schema_fingerprint = snapshot.schema_fingerprint
         contract_fields = ("query_document", "schema_snapshot", "operation_name", "read_mapping")
         if not self.is_new() and self.has_value_changed("query_document"):
@@ -25,8 +26,12 @@ class HEROGraphQLService(Document):
             self.execution_status = "Pending Approval"
             self.approved_service_revision = 0
             self.approved_mapping_revision = 0
-        if operation_kind(self.query_document) == "mutation":
-            detail = validate_mutation_draft(json.loads(snapshot.snapshot_json), self.query_document)
+        try:
+            kind = operation_kind(self.query_document)
+            detail = validate_mutation_draft(json.loads(snapshot.snapshot_json), self.query_document) if kind == "mutation" else None
+        except ValueError as error:
+            frappe.throw(translate_error(error, frappe._))
+        if kind == "mutation":
             # A mutation is local-only metadata.  Never preserve or derive an
             # executable/validated state from a direct DocType save.
             self.status = "Draft"
@@ -35,7 +40,10 @@ class HEROGraphQLService(Document):
                 "HERO mutation execution is disabled."
             )
             return
-        from hero_integration.client.graphql import assert_read_only
+        from hero_integration.client.graphql import HeroClientError, assert_read_only
 
-        assert_read_only(self.query_document)
+        try:
+            assert_read_only(self.query_document)
+        except HeroClientError as error:
+            frappe.throw(translate_error(error, frappe._))
         self.validation_summary = "Read-only GraphQL document bound to the selected schema fingerprint."

@@ -21,6 +21,7 @@ from datetime import datetime, time
 
 import frappe
 
+from hero_integration.services.localized_error import LocalizedError
 from hero_integration.services import task_lifecycle as life
 from hero_integration.services.project_send import (SEND_ROLES, _decode, _hash, _mutation_client, _read_client,
                                                     _types)
@@ -44,7 +45,7 @@ FIELDS = (
 )
 
 
-class TaskSendError(ValueError):
+class TaskSendError(LocalizedError):
     """The task cannot be sent safely; nothing was sent."""
 
 
@@ -132,7 +133,7 @@ def send(task: str, fingerprint: str = "", confirmed=0, client=None, mutation_cl
         stored = _hero_values(after, emails)
         for change in current["changes"]:
             if stored.get(change["field"]) != change["value"]:
-                raise TaskSendError(f"HERO did not store {change['label']}.")
+                raise TaskSendError("HERO did not store {0}.", change['label'])
     except Exception:
         _finalize_mutation(audit, "Failed", "Task send not confirmed; no retry. Check the task in HERO before sending again.")
         raise TaskSendError("Sending to HERO could not be confirmed; nothing is retried automatically. "
@@ -241,7 +242,7 @@ def _task_link(task: str):
         return None
     link = rows[0]
     if link.sync_status != "Synchronized":
-        raise TaskSendError(f"The HERO link is {link.sync_status}; resolve it before sending.")
+        raise TaskSendError("The HERO link is {0}; resolve it before sending.", link.sync_status)
     from hero_integration.client.settings import get_configuration
 
     if (link.source_instance or "default") != (get_configuration().source_instance or "default"):

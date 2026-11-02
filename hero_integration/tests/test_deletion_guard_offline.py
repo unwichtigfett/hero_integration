@@ -38,6 +38,7 @@ class TestDeletionGuard(unittest.TestCase):
             raise error(message)
 
         self.frappe = SimpleNamespace(
+            _=lambda message: message,
             db=SimpleNamespace(get_single_value=self.get_setting),
             PermissionError=PermissionError,
             throw=Mock(side_effect=throw),

@@ -9,11 +9,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from uuid import uuid4
 
+from hero_integration.services.localized_error import LocalizedError
+
 
 BLOCKED_NO_B7_MATERIALIZED_RUNTIME = "BLOCKED_NO_B7_MATERIALIZED_RUNTIME"
 
 
-class RuntimeBridgeError(ValueError):
+class RuntimeBridgeError(LocalizedError):
     """The scheduler cannot safely enter the B8 runtime."""
 
 
@@ -234,7 +236,7 @@ def _require_area_enabled(frappe, settings, selection) -> None:
         target = None
     item = BY_OPERATION.get(target)
     if item is None or not area_enabled(settings, item):
-        raise RuntimeBridgeError(f"Automatic sync for {item.label if item else 'this area'} is switched off on the Synchronization page.")
+        raise RuntimeBridgeError('Automatic sync for {0} is switched off on the Synchronization page.', item.label if item else 'this area')
 
 
 def run_pending_sync(expected_plan_generation: int, *, frappe_module=None, provider=None) -> RuntimePreflight:

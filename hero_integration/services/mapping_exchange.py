@@ -10,6 +10,7 @@ import frappe
 from hero_integration.services.direct_mapping import MappingSpec, validate_spec
 from hero_integration.services.direct_mapping import PURPOSE_RECORD_NAME
 from hero_integration.services.graphql_graph import analyze_snapshot
+from hero_integration.services.localized_error import LocalizedError
 
 
 FORMAT_VERSION = "hero-frappe-mapping-package-v2"
@@ -21,7 +22,7 @@ EXPORTED_FIELDS = (
 )
 
 
-class MappingExchangeError(ValueError):
+class MappingExchangeError(LocalizedError):
     pass
 
 
@@ -223,7 +224,7 @@ def _parse_payload(payload_json: str, fingerprint: str) -> dict[str, object]:
     try:
         payload = json.loads(payload_json)
     except json.JSONDecodeError as error:
-        raise MappingExchangeError(f"Mapping import is not valid JSON: {error.msg}") from error
+        raise MappingExchangeError('Mapping import is not valid JSON: {0}', error.msg) from error
     if not isinstance(payload, dict) or payload.get("format_version") not in {FORMAT_VERSION, LEGACY_FORMAT_VERSION}:
         raise MappingExchangeError("Mapping import format version is not supported.")
     expected_keys = {"format_version", "schema_fingerprint", "mappings"}
@@ -308,7 +309,7 @@ def _validate_schema(schema: object) -> None:
         raise MappingExchangeError("Mapping schema must contain only custom doctypes, custom fields, and relations.")
     for key in _empty_schema():
         if not isinstance(schema[key], list):
-            raise MappingExchangeError(f"Mapping schema {key} must be a list.")
+            raise MappingExchangeError('Mapping schema {0} must be a list.', key)
 
 
 class _FrappeMetadata:

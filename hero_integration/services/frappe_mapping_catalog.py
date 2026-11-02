@@ -71,13 +71,9 @@ class FrappePickerMetadata:
     def can_write(self, doctype: str) -> bool:
         import frappe
 
-        from hero_integration.services.doctype_permissions import ensure_doctype_write
+        from hero_integration.services.doctype_permissions import can_doctype_write
 
-        try:
-            ensure_doctype_write(doctype, frappe)
-        except frappe.PermissionError:
-            return False
-        return True
+        return can_doctype_write(doctype, frappe)
 
     def fields(self, doctype: str):
         import frappe
@@ -126,6 +122,8 @@ def fields(metadata, app_name: str = "", doctype: str = "", search: str = "", *,
     for target in doctypes(metadata, app_name) if targets is None else targets:
         if doctype and target.doctype != doctype:
             continue
+        if not target.selectable:
+            continue
         for field in metadata.fields(target.doctype):
             fieldname = str(getattr(field, "fieldname", "") or "")
             label = str(getattr(field, "label", "") or fieldname)
@@ -138,8 +136,12 @@ def fields(metadata, app_name: str = "", doctype: str = "", search: str = "", *,
 
 
 def catalog(metadata, app_name: str = "", search: str = "") -> dict[str, object]:
-    entries = doctypes(metadata, app_name, search)
-    apps = sorted({item.app_name for item in doctypes(metadata) if item.app_name})
+    all_entries = doctypes(metadata)
+    needle = search.strip().lower()
+    entries = [item for item in all_entries
+               if (not app_name or item.app_name == app_name)
+               and (not needle or needle in f"{item.app_name} {item.module} {item.doctype}".lower())]
+    apps = sorted({item.app_name for item in all_entries if item.app_name})
     return {"apps": apps, "doctypes": [item.__dict__ for item in entries]}
 
 
@@ -152,6 +154,9 @@ def validate_draft_target(operation: str, source_type: str, target_doctype: str,
         raise ValueError("A target DocType and field are required.")
     target = next((item for item in fields(metadata, doctype=target_doctype) if item.path == target_field), None)
     if target is None:
+        doctype = next((item for item in doctypes(metadata) if item.doctype == target_doctype), None)
+        if doctype is not None and not doctype.selectable:
+            raise ValueError(doctype.reason)
         raise ValueError("The target field is not available in the current site metadata.")
     if not target.selectable:
         raise ValueError(target.reason)

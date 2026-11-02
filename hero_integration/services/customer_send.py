@@ -19,6 +19,7 @@ from types import SimpleNamespace
 
 import frappe
 
+from hero_integration.services.localized_error import LocalizedError
 from hero_integration.services.project_send import (SEND_ROLES, _decode, _hash, _mutation_client, _read_client,
                                                     _types)
 
@@ -52,7 +53,7 @@ ADDRESS_FIELDS = (
 HERO_TITLE = {"Dr": "Dr."}
 
 
-class CustomerSendError(ValueError):
+class CustomerSendError(LocalizedError):
     """The customer cannot be sent safely; nothing was sent."""
 
 
@@ -142,7 +143,7 @@ def send(customer: str, fingerprint: str = "", confirmed=0, client=None, mutatio
         for change in current["changes"]:
             stored = (hero_address if change.get("address") else hero).get(change["field"])
             if not _same(stored, change["new"]):
-                raise CustomerSendError(f"HERO did not store {change['label']}.")
+                raise CustomerSendError("HERO did not store {0}.", change['label'])
     except Exception:
         _finalize_mutation(audit, "Failed", "Customer send not confirmed; no retry. Check the customer in HERO "
                                             "before sending again.")
@@ -234,7 +235,7 @@ def _customer_link(customer: str):
         raise CustomerSendError("This customer is not imported from HERO.")
     link = rows[0]
     if link.sync_status != "Synchronized":
-        raise CustomerSendError(f"The HERO link is {link.sync_status}; resolve it before sending.")
+        raise CustomerSendError("The HERO link is {0}; resolve it before sending.", link.sync_status)
     from hero_integration.client.settings import get_configuration
 
     if (link.source_instance or "default") != (get_configuration().source_instance or "default"):
@@ -254,7 +255,7 @@ def _address_link(record, link):
     if len(rows) != 1 or not frappe.db.exists("Address", rows[0].target_name):
         return None, None
     if rows[0].sync_status != "Synchronized":
-        raise CustomerSendError(f"The HERO address link is {rows[0].sync_status}; resolve it before sending.")
+        raise CustomerSendError("The HERO address link is {0}; resolve it before sending.", rows[0].sync_status)
     return rows[0], frappe.get_doc("Address", rows[0].target_name)
 
 

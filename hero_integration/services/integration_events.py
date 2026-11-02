@@ -71,7 +71,7 @@ def list_outputs(limit_start: int = 0, limit_page_length: int = 20) -> dict[str,
     """Return a paginated, System-Manager-only projection of durable results."""
 
     if "System Manager" not in frappe.get_roles():
-        frappe.throw("System Manager role is required", frappe.PermissionError)
+        frappe.throw(frappe._("System Manager role is required"), frappe.PermissionError)
     start = max(int(limit_start or 0), 0)
     page_length = min(max(int(limit_page_length or 20), 1), 100)
     fields = [

@@ -20,6 +20,7 @@ class _Throw(Exception):
 def _fake(bound):
     flags = SimpleNamespace()
     return SimpleNamespace(
+        _=lambda message: message,
         flags=flags,
         db=SimpleNamespace(exists=lambda doctype, filters: bound if doctype == "HERO Integration Link" else None),
         throw=lambda message, exc=None: (_ for _ in ()).throw(_Throw(message)),
@@ -64,7 +65,7 @@ class TestTargetLookupIndex(unittest.TestCase):
 
 class TestHeroProjectIds(unittest.TestCase):
     def _fake(self):
-        return SimpleNamespace(flags=SimpleNamespace(),
+        return SimpleNamespace(flags=SimpleNamespace(), _=lambda message: message,
                                throw=lambda message, exc=None: (_ for _ in ()).throw(_Throw(message)))
 
     def _project(self, name):

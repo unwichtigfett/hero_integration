@@ -141,7 +141,7 @@ class TestB8RuntimeBridgeContract(unittest.TestCase):
 
     def test_pending_sync_api_requires_system_manager_and_uses_canonical_adapter(self):
         calls = []
-        fake_frappe = SimpleNamespace(
+        fake_frappe = SimpleNamespace(_=lambda message: message,
             only_for=lambda role: calls.append(("only_for", role)),
             throw=lambda message: (_ for _ in ()).throw(ValueError(message)),
         )
@@ -159,7 +159,7 @@ class TestB8RuntimeBridgeContract(unittest.TestCase):
         })
 
     def test_pending_sync_api_rejects_invalid_generation_before_adapter(self):
-        fake_frappe = SimpleNamespace(
+        fake_frappe = SimpleNamespace(_=lambda message: message,
             only_for=lambda _role: None,
             throw=lambda message: (_ for _ in ()).throw(ValueError(message)),
         )
@@ -201,7 +201,7 @@ class TestB8RuntimeBridgeContract(unittest.TestCase):
     def test_sync_hero_rejects_missing_confirmation_without_audit_or_transport(self):
         context = self._sync_hero_context()
         calls = []
-        fake_frappe = SimpleNamespace(
+        fake_frappe = SimpleNamespace(_=lambda message: message,
             only_for=lambda role: calls.append(("only_for", role)),
             throw=lambda message: (_ for _ in ()).throw(ValueError(message)),
         )
@@ -219,7 +219,7 @@ class TestB8RuntimeBridgeContract(unittest.TestCase):
 
     def test_sync_hero_rejects_unchanged_binding_before_audit_or_transport(self):
         context = self._sync_hero_context(synchronized=True)
-        fake_frappe = SimpleNamespace(
+        fake_frappe = SimpleNamespace(_=lambda message: message,
             only_for=lambda _role: None,
             throw=lambda message: (_ for _ in ()).throw(ValueError(message)),
         )

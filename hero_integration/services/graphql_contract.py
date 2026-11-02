@@ -11,9 +11,10 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from hero_integration.services.graphql_graph import GraphSnapshotError, normalize_schema
+from hero_integration.services.localized_error import LocalizedError
 
 
-class GraphQLContractError(ValueError):
+class GraphQLContractError(LocalizedError):
     pass
 
 
@@ -77,12 +78,12 @@ def validate_mutation(schema_snapshot: object, contract: MutationContract, varia
             raise GraphQLContractError('Mutation variable type does not match its schema argument.')
     unknown = sorted(set(variables) - set(contract.variable_types))
     if unknown:
-        raise GraphQLContractError("Mutation contains undeclared variables: " + ", ".join(unknown))
+        raise GraphQLContractError("Mutation contains undeclared variables: {0}", ", ".join(unknown))
     validated: dict[str, object] = {}
     for name, ref in contract.variable_types.items():
         if name not in variables:
             if _non_null(ref):
-                raise GraphQLContractError(f"Required GraphQL variable ${name} is missing.")
+                raise GraphQLContractError('Required GraphQL variable ${0} is missing.', name)
             continue
         validated[name] = _validate_value(variables[name], ref, types, f"${name}")
     for argument in arguments.values():
@@ -90,7 +91,7 @@ def validate_mutation(schema_snapshot: object, contract: MutationContract, varia
         ref = argument.get("type")
         variable = contract.argument_variables.get(argument_name)
         if _non_null(ref) and (not variable or variable not in validated) and argument.get("defaultValue") is None:
-            raise GraphQLContractError(f"Required mutation argument {argument_name!r} is not supplied by a declared variable.")
+            raise GraphQLContractError('Required mutation argument {0!r} is not supplied by a declared variable.', argument_name)
         if variable and variable in validated:
             _validate_value(validated[variable], ref, types, f'argument {argument_name}')
     return validated
@@ -130,7 +131,7 @@ def _variables(stream: "_Stream") -> dict[str, dict[str, object]]:
         stream.expect("$")
         name = stream.take_name()
         if name in result:
-            raise GraphQLContractError(f"Duplicate GraphQL variable ${name}.")
+            raise GraphQLContractError('Duplicate GraphQL variable ${0}.', name)
         stream.expect(":")
         result[name] = _type_ref(stream)
         if stream.accept("="):
@@ -184,43 +185,43 @@ def _types(schema: dict[str, object]) -> dict[str, Mapping[str, object]]:
 
 def _validate_value(value: object, ref: object, types: Mapping[str, Mapping[str, object]], path: str) -> object:
     if not isinstance(ref, Mapping):
-        raise GraphQLContractError(f"Invalid type for {path}.")
+        raise GraphQLContractError('Invalid type for {0}.', path)
     kind = ref.get("kind")
     if kind == "NON_NULL":
         if value is None:
-            raise GraphQLContractError(f"{path} must not be null.")
+            raise GraphQLContractError('{0} must not be null.', path)
         return _validate_value(value, ref.get("ofType"), types, path)
     if value is None:
         return None
     if kind == "LIST":
         if not isinstance(value, list):
-            raise GraphQLContractError(f"{path} must be a JSON array.")
+            raise GraphQLContractError('{0} must be a JSON array.', path)
         return [_validate_value(item, ref.get("ofType"), types, f"{path}[{index}]") for index, item in enumerate(value)]
     name = str(ref.get("name") or "")
     if name == "Int" and (not isinstance(value, int) or isinstance(value, bool)):
-        raise GraphQLContractError(f"{path} must be an Int.")
+        raise GraphQLContractError('{0} must be an Int.', path)
     if name == "Float" and (not isinstance(value, (int, float)) or isinstance(value, bool)):
-        raise GraphQLContractError(f"{path} must be a Float.")
+        raise GraphQLContractError('{0} must be a Float.', path)
     if name == "Boolean" and not isinstance(value, bool):
-        raise GraphQLContractError(f"{path} must be a Boolean.")
+        raise GraphQLContractError('{0} must be a Boolean.', path)
     if name == "String" and not isinstance(value, str):
-        raise GraphQLContractError(f"{path} must be a String.")
+        raise GraphQLContractError('{0} must be a String.', path)
     if name == "ID" and (not isinstance(value, (str, int)) or isinstance(value, bool)):
-        raise GraphQLContractError(f"{path} must be an ID.")
+        raise GraphQLContractError('{0} must be an ID.', path)
     item = types.get(name)
     if not item:
         return value  # custom scalar: JSON-safe transport value is the only local claim.
     if item.get("kind") == "ENUM":
         allowed = {entry.get("name") for entry in item.get("enumValues") or [] if isinstance(entry, Mapping)}
         if not isinstance(value, str) or value not in allowed:
-            raise GraphQLContractError(f"{path} must be a valid {name} enum value.")
+            raise GraphQLContractError('{0} must be a valid {1} enum value.', path, name)
     if item.get("kind") == "INPUT_OBJECT":
         if not isinstance(value, Mapping):
-            raise GraphQLContractError(f"{path} must be a JSON object.")
+            raise GraphQLContractError('{0} must be a JSON object.', path)
         fields = {entry.get("name"): entry for entry in item.get("inputFields") or [] if isinstance(entry, Mapping)}
         unknown = sorted(set(value) - set(fields))
         if unknown:
-            raise GraphQLContractError(f"{path} contains unknown input field(s): " + ", ".join(unknown))
+            raise GraphQLContractError("{0} contains unknown input field(s): {1}", path, ", ".join(unknown))
         return {
             str(field): _validate_value(value[field], fields[field].get("type"), types, f"{path}.{field}")
             for field in fields if field in value
@@ -231,7 +232,7 @@ def _validate_value(value: object, ref: object, types: Mapping[str, Mapping[str,
 def _required_input_fields(value: Mapping[str, object], fields: Mapping[object, Mapping[str, object]], path: str) -> dict[str, object]:
     for field, item in fields.items():
         if field not in value and _non_null(item.get("type")) and item.get("defaultValue") is None:
-            raise GraphQLContractError(f"Required input field {path}.{field} is missing.")
+            raise GraphQLContractError('Required input field {0}.{1} is missing.', path, field)
     return {}
 
 
@@ -274,7 +275,7 @@ def _tokenize(text: object) -> tuple[str, ...]:
             end = index + 1
             while end < len(text) and (text[end].isdigit() or text[end] in ".eE+-"): end += 1
             tokens.append(text[index:end]); index = end; continue
-        raise GraphQLContractError(f"Unsupported GraphQL character {char!r}.")
+        raise GraphQLContractError('Unsupported GraphQL character {0!r}.', char)
     return tuple(tokens)
 
 
@@ -290,7 +291,7 @@ class _Stream:
         if self.peek() == expected: self.index += 1; return True
         return False
     def expect(self, expected: str) -> None:
-        if not self.accept(expected): raise GraphQLContractError(f"Expected {expected!r} in GraphQL document.")
+        if not self.accept(expected): raise GraphQLContractError('Expected {0!r} in GraphQL document.', expected)
     def take_name(self, optional: bool = False) -> str:
         value = self.peek()
         if value and (value[0].isalpha() or value[0] == "_"):
@@ -298,4 +299,4 @@ class _Stream:
         if optional: return ""
         raise GraphQLContractError("Expected GraphQL name.")
     def expect_name(self, expected: str) -> None:
-        if self.take_name() != expected: raise GraphQLContractError(f"Expected GraphQL {expected} operation.")
+        if self.take_name() != expected: raise GraphQLContractError('Expected GraphQL {0} operation.', expected)

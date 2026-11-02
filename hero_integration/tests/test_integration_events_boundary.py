@@ -37,7 +37,7 @@ class TestIntegrationOutputBoundary(unittest.TestCase):
     def test_non_manager_cannot_read_output_records(self):
         query = Mock()
         fake = SimpleNamespace(
-            get_roles=lambda: ["Employee"], PermissionError=PermissionError,
+            get_roles=lambda: ["Employee"], PermissionError=PermissionError, _=lambda message: message,
             throw=lambda message, error: (_ for _ in ()).throw(error(message)), get_all=query,
         )
         with patch.object(integration_events, "frappe", fake), self.assertRaises(PermissionError):

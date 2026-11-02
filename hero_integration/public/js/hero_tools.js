@@ -2,6 +2,24 @@
 (() => {
     if (window.hero_workspace_tools) return;
 
+    const tr = (value) => window.hero_integration_i18n?.text(value) ?? value;
+    const format = (message, ...values) => tr(message).replace(/\{(\d+)\}/g, (_, index) => String(values[index] ?? ""));
+
+    function savedServiceLabel(name, provenance) {
+        return format('{0} saved · Provenance={1}', name, provenance);
+    }
+    function graphLabelsNotice(compact, placed, total) {
+        const overview = compact ? tr('Overview without node text; use selection and Inspector for names and details.') + ' ' : '';
+        return overview + (total > placed
+            ? format('Reduced edge labels: {0} of {1} visible relationships are labeled. All relationships remain available in node focus and Inspector.', placed, total)
+            : tr('All visible relationships are labeled.'));
+    }
+    function snapshotCoverageLabel(coverage) {
+        return Number.isInteger(coverage.types)
+            ? format('{0} types · {1} nodes · {2} relations', coverage.types, coverage.nodes, coverage.edges)
+            : tr('graph analysis unavailable');
+    }
+
     /*
      * Full Graph Viewer cache.
      *
@@ -171,8 +189,8 @@
     const GRAPHQL_NAME = /^[_A-Za-z][_0-9A-Za-z]*$/;
     function checkJsonNumbers(value, where) {
         if (typeof value === 'number') {
-            if (!Number.isFinite(value)) throw new Error(`${where}: the number is out of range.`);
-            if (Number.isInteger(value) && !Number.isSafeInteger(value)) throw new Error(`${where}: the integer is too large to keep exactly; write it as a string in double quotes.`);
+            if (!Number.isFinite(value)) throw new Error(format('{0}: the number is out of range.', where));
+            if (Number.isInteger(value) && !Number.isSafeInteger(value)) throw new Error(format('{0}: the integer is too large to keep exactly; write it as a string in double quotes.', where));
         } else if (Array.isArray(value)) value.forEach((item) => checkJsonNumbers(item, where));
         else if (value && typeof value === 'object') Object.values(value).forEach((item) => checkJsonNumbers(item, where));
     }
@@ -183,30 +201,30 @@
         if (trimmed.startsWith('{')) {
             // Compatibility: an existing JSON variables object is still accepted as input.
             let value;
-            try { value = JSON.parse(trimmed); } catch (error) { throw new Error('Variables: the JSON object is invalid: ' + error.message); }
-            if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Variables: JSON input must be an object.');
-            for (const name of Object.keys(value)) if (!GRAPHQL_NAME.test(name)) throw new Error(`Variables: "${name}" is not a valid GraphQL variable name.`);
-            checkJsonNumbers(value, 'Variables');
+            try { value = JSON.parse(trimmed); } catch (error) { throw new Error(format('Variables: the JSON object is invalid: {0}', error.message)); }
+            if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(tr('Variables: JSON input must be an object.'));
+            for (const name of Object.keys(value)) if (!GRAPHQL_NAME.test(name)) throw new Error(format('Variables: "{0}" is not a valid GraphQL variable name.', name));
+            checkJsonNumbers(value, tr('Variables'));
             return value;
         }
         const entries = [], seen = new Set(), problems = [];
         source.split(/\r?\n/).forEach((line, index) => {
             if (!line.trim()) return;
-            const where = `Line ${index + 1}`, at = line.indexOf(':=');
-            if (at < 0) { problems.push(`${where}: expected "name := value;".`); return; }
+            const where = format('Line {0}', index + 1), at = line.indexOf(':=');
+            if (at < 0) { problems.push(format('{0}: expected "name := value;".', where)); return; }
             const name = line.slice(0, at).trim();
             // One closing ";" ends the assignment. It is optional, so "id := 5" and "id := 5;" are equal.
             // A ";" inside a quoted string is part of the value, because such a line ends with the closing quote.
             let raw = line.slice(at + 2).trim();
             if (raw.endsWith(';')) raw = raw.slice(0, -1).trimEnd();
-            if (name.startsWith('$')) { problems.push(`${where}: write the variable name without "$".`); return; }
-            if (!GRAPHQL_NAME.test(name)) { problems.push(`${where}: "${name}" is not a valid GraphQL variable name.`); return; }
-            if (seen.has(name)) { problems.push(`${where}: variable "${name}" is defined more than once.`); return; }
+            if (name.startsWith('$')) { problems.push(format('{0}: write the variable name without "$".', where)); return; }
+            if (!GRAPHQL_NAME.test(name)) { problems.push(format('{0}: "{1}" is not a valid GraphQL variable name.', where, name)); return; }
+            if (seen.has(name)) { problems.push(format('{0}: variable "{1}" is defined more than once.', where, name)); return; }
             seen.add(name);
-            if (!raw) { problems.push(`${where}: "${name}" has no value.`); return; }
+            if (!raw) { problems.push(format('{0}: "{1}" has no value.', where, name)); return; }
             let value;
             try { value = JSON.parse(raw); } catch (error) {
-                problems.push(`${where}: invalid value for "${name}". Strings need double quotes; numbers, true, false and null are written without quotes; arrays and objects use JSON.`);
+                problems.push(format('{0}: invalid value for "{1}". Strings need double quotes; numbers, true, false and null are written without quotes; arrays and objects use JSON.', where, name));
                 return;
             }
             try { checkJsonNumbers(value, where); } catch (error) { problems.push(error.message); return; }
@@ -323,7 +341,7 @@
     const MAX_COLORED_LINES = 20000;
     function resultSummary(data) {
         if (!data || typeof data !== 'object' || Array.isArray(data)) return [];
-        return Object.entries(data).map(([key, value]) => `${key}: ${Array.isArray(value) ? `${value.length} ${value.length === 1 ? 'item' : 'items'}` : value === null ? 'null' : typeof value === 'object' ? 'object' : 'value'}`);
+        return Object.entries(data).map(([key, value]) => `${key}: ${Array.isArray(value) ? format(value.length === 1 ? '{0} item' : '{0} items', value.length) : value === null ? 'null' : tr(typeof value === 'object' ? 'object' : 'value')}`);
     }
     async function call(method, args = {}, write = false, signal) {
         return window.hero_integration_rpc.call(method, args, {write, signal});
@@ -334,10 +352,10 @@
             // Tool-local HERO header removed: connection/schema actions live outside the tool views.
             // Keep the existing state/action objects available for shared logic without rendering a duplicate toolbar.
             this.status = $('p', 'ht-context'); this.status.hidden = true; this.notice = $('div', 'ht-notice'); this.notice.setAttribute('role','status');
-            this.bindButton = button('Apply Connection',()=>this.run(async()=>{await call('synchronize_connection',{expected_generation:this.context?.binding_generation || 0},true);await this.show(true);}));
-            this.refreshButton = button('Refresh Schema',()=>this.run(async()=>{const r=await call('refresh_schema',this.scope(),true);this.schema=r.schema_fingerprint;this.validation=null;await this.show(true);const inherited=r.inheritance;if(inherited?.status==='COMPLETED'){const c=inherited.counts||{};this.notice.textContent=`New snapshot captured. Inherited ${c['Draft Created']||0} parent mapping(s) as personal drafts (${c.Incompatible||0} incompatible, ${c.Skipped||0} skipped). Nothing was activated.`;}else if(inherited&&inherited.status!=='NO_PARENT')this.notice.textContent='New snapshot captured; mapping inheritance did not complete. Retry it in the Mapping Editor.';}));
+            this.bindButton = button(tr('Apply Connection'),()=>this.run(async()=>{await call('synchronize_connection',{expected_generation:this.context?.binding_generation || 0},true);await this.show(true);}));
+            this.refreshButton = button(tr('Refresh Schema'),()=>this.run(async()=>{const r=await call('refresh_schema',this.scope(),true);this.schema=r.schema_fingerprint;this.validation=null;await this.show(true);const inherited=r.inheritance;if(inherited?.status==='COMPLETED'){const c=inherited.counts||{};this.notice.textContent=format('New snapshot captured. Inherited {0} parent mapping(s) as personal drafts ({1} incompatible, {2} skipped). Nothing was activated.',c['Draft Created']||0,c.Incompatible||0,c.Skipped||0);}else if(inherited&&inherited.status!=='NO_PARENT')this.notice.textContent=tr('New snapshot captured; mapping inheritance did not complete. Retry it in the Mapping Editor.');}));
             this.bindButton.hidden = true; this.refreshButton.hidden = true;
-            this.tabs = $('nav','pc-shell-nav');this.tabs.setAttribute('aria-label','HERO Tools');
+            this.tabs = $('nav','pc-shell-nav');this.tabs.setAttribute('aria-label',tr('HERO Tools'));
             this.panels = Object.fromEntries(['analyzer','graph','services'].map(k=>[k,$('section','ht-panel')]));
             this.root.append(this.tabs,this.notice,...Object.values(this.panels));
             this.buildAnalyzer();this.buildGraph();this.buildServices();
@@ -350,7 +368,7 @@
             this.resize = new ResizeObserver(()=>{this.editor?.resize();this.resizeGraph(this.canvas);if(this.focusOpen)this.resizeGraph(this.focusCanvas);}); this.resize.observe(this.editorHost);this.resize.observe(this.canvas);
             // CSS variables handle themes. Neither a theme observer nor editor recreation is needed.
         }
-        async run(action) {if(this.busy)return;this.busy=true;this.updateActions();this.notice.classList.remove('text-danger');try{this.notice.textContent='Loading …';await action();if(this.notice.textContent==='Loading …')this.notice.textContent='';}catch(e){this.notice.textContent=e.message;this.notice.classList.add('text-danger');if(this.tool==='services'){this.validation=null;this.queryOutput.textContent=e.message;}}finally{this.busy=false;this.updateActions();}}
+        async run(action) {if(this.busy)return;this.busy=true;this.updateActions();this.notice.classList.remove('text-danger');try{this.notice.textContent=tr('Loading …');await action();if(this.notice.textContent===tr('Loading …'))this.notice.textContent='';}catch(e){this.notice.textContent=tr(e.message);this.notice.classList.add('text-danger');if(this.tool==='services'){this.validation=null;this.queryOutput.textContent=tr(e.message);}}finally{this.busy=false;this.updateActions();}}
         scope(schema=false) {return {connection_id:this.context.connection_id,binding_generation:this.context.binding_generation,...(schema?{schema_fingerprint:this.schema}: {})};}
         snapshotLabel(snapshot){const coverage=snapshot.coverage||{},counts=Number.isInteger(coverage.types)?`${coverage.types} types · ${coverage.nodes} nodes`:'no valid graph';return `${snapshot.kind||'Saved snapshot'} · ${snapshot.display_name||snapshot.name} · ${counts}`;}
         updateSnapshotSelector(coverage){
@@ -361,9 +379,9 @@
             this.snapshotPicker.value=this.context?.connection_id||'';
             this.snapshotPicker.disabled=!snapshots.some(snapshot=>snapshot.usable);
             const selected=this.context?.selected_snapshot_metadata,selectedCoverage=coverage||selected?.coverage||{};
-            if(!selected){this.snapshotMeta.textContent='No validated saved GraphQL snapshot is available.';return;}
-            const counts=Number.isInteger(selectedCoverage.types)?`${selectedCoverage.types} types · ${selectedCoverage.nodes} nodes · ${selectedCoverage.edges} relations`:'graph analysis unavailable';
-            this.snapshotMeta.textContent=`${selected.kind} · Snapshot ${selected.display_name||selected.name} · ${selected.modified||'date unavailable'} · ${selected.schema_fingerprint} · ${counts}`;
+            if(!selected){this.snapshotMeta.textContent=tr('No validated saved GraphQL snapshot is available.');return;}
+            const counts=snapshotCoverageLabel(selectedCoverage);
+            this.snapshotMeta.textContent=`${selected.kind} · Snapshot ${selected.display_name||selected.name} · ${selected.modified||tr('date unavailable')} · ${selected.schema_fingerprint} · ${counts}`;
         }
         selectSnapshot(name){
             const snapshot=(this.context?.snapshots||[]).find(item=>item.name===name);
@@ -397,7 +415,7 @@
                 this.validation=null;this.graphCache=null;this.graph=null;this.selectedNode=null;this.viewbox=null;
                 this.canvas.replaceChildren();this.canvas._heroScene=null;this.typeDetail.replaceChildren();this.nodeDetail.replaceChildren();
             }
-            this.status.textContent=`Source HERO · Connection ${this.context.connection_id || 'not bound'} · Binding ${this.context.binding_generation} · Schema ${this.schema || 'not available'}`;
+            this.status.textContent=format('Source HERO · Connection {0} · Binding {1} · Schema {2}',this.context.connection_id || tr('not bound'),this.context.binding_generation,this.schema || tr('not available'));
             this.updateSnapshotSelector();
             this.bindButton.hidden=!this.context.needs_binding_update;this.refreshButton.disabled=!this.context.can_write || !this.context.enabled || this.context.needs_binding_update;
             this.tabs.replaceChildren();for(const [key,label] of [['analyzer','API Analyzer'],['graph','Graph Viewer'],['services','GraphQL Services']]) {
@@ -407,12 +425,12 @@
             }
             for(const [key,panel] of Object.entries(this.panels))panel.hidden=key!==this.tool;
             this.editor?.setReadOnly(!this.context.can_write);this.updateActions();
-            if(this.context.needs_binding_update){this.notice.textContent='Configuration changed or is new. Apply the connection before using the tools.';return;}
-            if(!this.schema && this.tool!=='services'){this.notice.textContent='No schema is available for this connection. Refresh Schema retrieves the defined introspection only.';return;}
+            if(this.context.needs_binding_update){this.notice.textContent=tr('Configuration changed or is new. Apply the connection before using the tools.');return;}
+            if(!this.schema && this.tool!=='services'){this.notice.textContent=tr('No schema is available for this connection. Refresh Schema retrieves the defined introspection only.');return;}
             if(!this.schema && this.tool==='services'){
-                this.notice.textContent='No saved GraphQL schema is available. Query and Mutation drafts remain disabled until a validated schema is selected.';
-                this.queryList.replaceChildren($('p','ht-context','No saved services are available without a validated schema.'));
-                this.queryOutput.textContent='Select or save a validated schema before creating a service draft.';
+                this.notice.textContent=tr('No saved GraphQL schema is available. Query and Mutation drafts remain disabled until a validated schema is selected.');
+                this.queryList.replaceChildren($('p','ht-context',tr('No saved services are available without a validated schema.')));
+                this.queryOutput.textContent=tr('Select or save a validated schema before creating a service draft.');
                 this.updateActions();
                 return;
             }
@@ -424,7 +442,7 @@
             if(this.tool==='services')await this.loadQueries(serial);
         }
         pager(key, reload) {
-            const p=$('div','ht-toolbar'),back=button('Previous',()=>{this.starts[key]=Math.max(0,this.starts[key]-50);this.run(reload);}),next=button('Next',()=>{this.starts[key]+=50;this.run(reload);});
+            const p=$('div','ht-toolbar'),back=button(tr('Previous'),()=>{this.starts[key]=Math.max(0,this.starts[key]-50);this.run(reload);}),next=button(tr('Next'),()=>{this.starts[key]+=50;this.run(reload);});
             p.append(back,next);return {root:p,update:more=>{back.disabled=!this.starts[key];next.disabled=!more;}};
         }
         analyzerKindSpecs(){return [
@@ -452,34 +470,34 @@
             const totals=Object.fromEntries(kinds.map((item,index)=>[item.kind,counts[index].total]));const overview={base,totals};this.analyzerOverviewCache={key,data:overview};return overview;
         }
         buildAnalyzer() {
-            const panel=this.panels.analyzer,bar=$('div','ht-toolbar ht-analyzer-toolbar');panel.classList.add('ht-analyzer-panel');this.typeSearch=input('Search Type');this.typeKind=$('select','form-control');
-            for(const item of this.analyzerKindSpecs()){const o=$('option','',item.label);o.value=item.kind;this.typeKind.append(o);}
-            const search=()=>{clearTimeout(this.analyzerSearchTimer);this.analyzerSearchTimer=null;this.starts.analyzer=0;this.run(()=>this.loadAnalyzer());},quietSearch=()=>{const serial=this.sequence;this.loadAnalyzer(serial).catch(error=>{if(serial===this.sequence&&this.tool==='analyzer'){this.notice.textContent=error.message;this.notice.classList.add('text-danger');}});},liveSearch=()=>{clearTimeout(this.analyzerSearchTimer);this.starts.analyzer=0;this.analyzerSearchTimer=setTimeout(()=>{this.analyzerSearchTimer=null;if(this.tool!=='analyzer')return;if(this.busy){liveSearch();return;}quietSearch();},220);},reset=()=>{clearTimeout(this.analyzerSearchTimer);this.analyzerSearchTimer=null;this.typeSearch.value='';this.typeKind.value='';this.starts.analyzer=0;this.run(()=>this.loadAnalyzer());};
+            const panel=this.panels.analyzer,bar=$('div','ht-toolbar ht-analyzer-toolbar');panel.classList.add('ht-analyzer-panel');this.typeSearch=input(tr('Search Type'));this.typeKind=$('select','form-control');
+            for(const item of this.analyzerKindSpecs()){const o=$('option','',tr(item.label));o.value=item.kind;this.typeKind.append(o);}
+            const search=()=>{clearTimeout(this.analyzerSearchTimer);this.analyzerSearchTimer=null;this.starts.analyzer=0;this.run(()=>this.loadAnalyzer());},quietSearch=()=>{const serial=this.sequence;this.loadAnalyzer(serial).catch(error=>{if(serial===this.sequence&&this.tool==='analyzer'){this.notice.textContent=tr(error.message);this.notice.classList.add('text-danger');}});},liveSearch=()=>{clearTimeout(this.analyzerSearchTimer);this.starts.analyzer=0;this.analyzerSearchTimer=setTimeout(()=>{this.analyzerSearchTimer=null;if(this.tool!=='analyzer')return;if(this.busy){liveSearch();return;}quietSearch();},220);},reset=()=>{clearTimeout(this.analyzerSearchTimer);this.analyzerSearchTimer=null;this.typeSearch.value='';this.typeKind.value='';this.starts.analyzer=0;this.run(()=>this.loadAnalyzer());};
             this.typeSearch.addEventListener('input',liveSearch);this.typeSearch.addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();search();}});this.typeKind.addEventListener('change',search);
-            bar.append(field('Type Name',this.typeSearch),field('Type Class',this.typeKind),button('Search',search),button('Reset',reset));
-            this.analyzerSummary=$('section','ht-analyzer-summary');this.analyzerCategories=$('nav','ht-analyzer-categories');this.analyzerCategories.setAttribute('aria-label','API Type Categories');this.analyzerMeta=$('div','ht-analyzer-meta');
+            bar.append(field(tr('Type Name'),this.typeSearch),field(tr('Type Class'),this.typeKind),button(tr('Search'),search),button(tr('Reset'),reset));
+            this.analyzerSummary=$('section','ht-analyzer-summary');this.analyzerCategories=$('nav','ht-analyzer-categories');this.analyzerCategories.setAttribute('aria-label',tr('API Type Categories'));this.analyzerMeta=$('div','ht-analyzer-meta');
             const top=$('div','ht-analyzer-top');top.append(bar,this.analyzerSummary);
             this.types=$('div','ht-list ht-analyzer-types');this.types.setAttribute('role','listbox');this.typeDetail=$('aside','ht-inspector ht-analyzer-detail');const grid=$('div','ht-split ht-analyzer-split');grid.append(this.types,this.typeDetail);
             this.analyzerPager=this.pager('analyzer',()=>this.loadAnalyzer());panel.append(top,this.analyzerCategories,this.analyzerMeta,grid,this.analyzerPager.root);
         }
         renderAnalyzerOverview(overview,scope,serial){
             const base=overview.base,directives=this.analyzerDirectiveRows(base.directives),rootQuery=this.analyzerRootName(base.roots,'query'),rootMutation=this.analyzerRootName(base.roots,'mutation'),rootSubscription=this.analyzerRootName(base.roots,'subscription');
-            const head=$('div','ht-analyzer-summary-head');head.append($('div','', 'Schema Overview'));const fingerprint=$('span','ht-analyzer-fingerprint',this.schema?`Schema ${this.schema.slice(0,12)}…`:'Schema —');fingerprint.title=this.schema||'';const state=$('span','ht-analyzer-state '+(base.complete_analysis?'is-complete':'is-partial'),base.complete_analysis?'Complete Introspection':'Partial State');head.append(fingerprint,state);
-            const stats=$('div','ht-analyzer-stats'),stat=(label,value)=>{const card=$('div','ht-analyzer-stat');card.append($('span','',label),$('strong','',String(value??'—')));return card;};
+            const head=$('div','ht-analyzer-summary-head');head.append($('div','', tr('Schema Overview')));const fingerprint=$('span','ht-analyzer-fingerprint',this.schema?`Schema ${this.schema.slice(0,12)}…`:tr('Schema —'));fingerprint.title=this.schema||'';const state=$('span','ht-analyzer-state '+(base.complete_analysis?'is-complete':'is-partial'),base.complete_analysis?tr('Complete Introspection'):tr('Partial State'));head.append(fingerprint,state);
+            const stats=$('div','ht-analyzer-stats'),stat=(label,value)=>{const card=$('div','ht-analyzer-stat');card.append($('span','',tr(label)),$('strong','',String(value??'—')));return card;};
             stats.append(stat('Total Types',base.total),stat('Query Root',rootQuery),stat('Mutation Root',rootMutation),stat('Subscription Root',rootSubscription),stat('Directives',directives.length),stat('Captured',base.captured_at||'—'));this.analyzerSummary.replaceChildren(head,stats);
-            this.analyzerCategories.replaceChildren();for(const item of this.analyzerKindSpecs()){const count=item.kind?overview.totals[item.kind]:base.total,b=button('',()=>{this.typeSearch.value='';this.typeKind.value=item.kind;this.starts.analyzer=0;this.run(()=>this.loadAnalyzer());});b.className='ht-analyzer-category'+(this.typeKind.value===item.kind?' is-active':'');b.dataset.kind=item.kind||'ALL';b.setAttribute('aria-pressed',String(this.typeKind.value===item.kind));b.append($('span','ht-analyzer-category-label',item.label),$('strong','ht-analyzer-category-count',String(count)));this.analyzerCategories.append(b);}
-            const roots=$('details','ht-analyzer-meta-card'),rootSummary=$('summary','', 'Roots');roots.append(rootSummary);const rootList=$('div','ht-analyzer-root-list');for(const [label,name] of [['Query',rootQuery],['Mutation',rootMutation],['Subscription',rootSubscription]]){const row=$('div','ht-analyzer-meta-row');row.append($('strong','',label),name&&name!=='—'?button(name,()=>this.analyzerNode('root:'+label.toLowerCase(),scope,serial)):$('span','',name));rootList.append(row);}roots.append(rootList);
-            const directiveBox=$('details','ht-analyzer-meta-card'),directiveSummary=$('summary','',`Directives (${directives.length})`),directiveList=$('div','ht-analyzer-directives');directiveBox.append(directiveSummary);if(directives.length){for(const directive of directives){const name=typeof directive==='string'?directive:directive?.name||directive?.directive||JSON.stringify(directive);directiveList.append($('span','ht-analyzer-directive',name));}}else directiveList.append($('span','ht-context','No directives are present in the saved schema.'));directiveBox.append(directiveList);
+            this.analyzerCategories.replaceChildren();for(const item of this.analyzerKindSpecs()){const count=item.kind?overview.totals[item.kind]:base.total,b=button('',()=>{this.typeSearch.value='';this.typeKind.value=item.kind;this.starts.analyzer=0;this.run(()=>this.loadAnalyzer());});b.className='ht-analyzer-category'+(this.typeKind.value===item.kind?' is-active':'');b.dataset.kind=item.kind||'ALL';b.setAttribute('aria-pressed',String(this.typeKind.value===item.kind));b.append($('span','ht-analyzer-category-label',tr(item.label)),$('strong','ht-analyzer-category-count',String(count)));this.analyzerCategories.append(b);}
+            const roots=$('details','ht-analyzer-meta-card'),rootSummary=$('summary','', tr('Roots'));roots.append(rootSummary);const rootList=$('div','ht-analyzer-root-list');for(const [label,name] of [['Query',rootQuery],['Mutation',rootMutation],['Subscription',rootSubscription]]){const row=$('div','ht-analyzer-meta-row');row.append($('strong','',tr(label)),name&&name!=='—'?button(name,()=>this.analyzerNode('root:'+label.toLowerCase(),scope,serial)):$('span','',name));rootList.append(row);}roots.append(rootList);
+            const directiveBox=$('details','ht-analyzer-meta-card'),directiveSummary=$('summary','',format('Directives ({0})',directives.length)),directiveList=$('div','ht-analyzer-directives');directiveBox.append(directiveSummary);if(directives.length){for(const directive of directives){const name=typeof directive==='string'?directive:directive?.name||directive?.directive||JSON.stringify(directive);directiveList.append($('span','ht-analyzer-directive',name));}}else directiveList.append($('span','ht-context',tr('No directives are present in the saved schema.')));directiveBox.append(directiveList);
             this.analyzerMeta.replaceChildren(roots,directiveBox);
         }
         markAnalyzerTypeSelection(name=this.selectedType){
             for(const item of this.types.querySelectorAll('.ht-analyzer-type')){const selected=!!name&&item.dataset.name===name;item.classList.toggle('is-selected',selected);item.setAttribute('aria-selected',String(selected));if(selected)item.setAttribute('aria-current','true');else item.removeAttribute('aria-current');}
         }
         renderAnalyzerTypes(data,scope,serial){
-            const header=$('div','ht-analyzer-list-head');header.append($('h3','', 'API Types'),$('span','ht-context',`${data.total} Treffer${this.typeSearch.value.trim()?' · Suche: '+this.typeSearch.value.trim():''}`));this.types.replaceChildren(header);
-            if(!data.types.length)this.types.append($('p','ht-context','No types match this filter.'));
+            const header=$('div','ht-analyzer-list-head');header.append($('h3','', tr('API Types')),$('span','ht-context',format('{0} results',data.total)+(this.typeSearch.value.trim()?' · '+format('Search: {0}',this.typeSearch.value.trim()):'')));this.types.replaceChildren(header);
+            if(!data.types.length)this.types.append($('p','ht-context',tr('No types match this filter.')));
             let selectedOnPage=null;for(const type of data.types){const b=button('',()=>this.showAnalyzerType(type,scope,serial));b.className='ht-analyzer-type';b.dataset.kind=type.kind;b.dataset.name=type.name;b.setAttribute('role','option');b.setAttribute('aria-selected','false');b.append($('span','ht-analyzer-type-name',type.name),$('span','ht-analyzer-type-kind',type.kind));this.types.append(b);if(this.selectedType===type.name)selectedOnPage=type;}
-            this.markAnalyzerTypeSelection();if(selectedOnPage&&!this.typeDetail.childNodes.length)this.showAnalyzerType(selectedOnPage,scope,serial);else if(!this.selectedType&&!this.typeDetail.childNodes.length)this.typeDetail.replaceChildren($('h3','', 'Type Details'),$('p','ht-context','Select a type on the left to inspect its definition and relations.'));
+            this.markAnalyzerTypeSelection();if(selectedOnPage&&!this.typeDetail.childNodes.length)this.showAnalyzerType(selectedOnPage,scope,serial);else if(!this.selectedType&&!this.typeDetail.childNodes.length)this.typeDetail.replaceChildren($('h3','', tr('Type Details')),$('p','ht-context',tr('Select a type on the left to inspect its definition and relations.')));
         }
         async loadAnalyzer(serial=this.sequence) {
             const generation=this.analyzerGeneration=(this.analyzerGeneration||0)+1,scope=this.scope(true);
@@ -487,15 +505,15 @@
             const overview=await this.analyzerOverview(scope,data,serial,generation);if(!overview)return;this.renderAnalyzerOverview(overview,scope,serial);this.renderAnalyzerTypes(data,scope,serial);this.analyzerPager.update(data.has_more);
         }
         async showAnalyzerType(type,scope,serial){
-            const generation=this.analyzerDetailGeneration=(this.analyzerDetailGeneration||0)+1;this.selectedType=type.name;this.markAnalyzerTypeSelection(type.name);this.typeDetail.replaceChildren($('p','','Loading details …'));
+            const generation=this.analyzerDetailGeneration=(this.analyzerDetailGeneration||0)+1;this.selectedType=type.name;this.markAnalyzerTypeSelection(type.name);this.typeDetail.replaceChildren($('p','',tr('Loading details …')));
             try {const data=await this.nodeData('type:'+type.name,scope);if(serial!==this.sequence||generation!==this.analyzerDetailGeneration||this.scopeKey(scope)!==this.scopeKey())return;
                 this.detailContents(this.typeDetail,data,scope,id=>this.analyzerNode(id,scope,serial));this.typeDetail.append($('pre','ht-data',JSON.stringify(type,null,2)));
-            } catch(error){if(serial===this.sequence&&generation===this.analyzerDetailGeneration)this.typeDetail.replaceChildren($('p','text-danger',error.message));}
+            } catch(error){if(serial===this.sequence&&generation===this.analyzerDetailGeneration)this.typeDetail.replaceChildren($('p','text-danger',tr(error.message)));}
         }
         async analyzerNode(id,scope,serial){
             const generation=this.analyzerDetailGeneration=(this.analyzerDetailGeneration||0)+1;
             try {const data=await this.nodeData(id,scope);if(serial!==this.sequence||generation!==this.analyzerDetailGeneration||this.scopeKey(scope)!==this.scopeKey())return;this.detailContents(this.typeDetail,data,scope,next=>this.analyzerNode(next,scope,serial));}
-            catch(error){if(serial===this.sequence&&generation===this.analyzerDetailGeneration)this.typeDetail.replaceChildren($('p','text-danger',error.message));}
+            catch(error){if(serial===this.sequence&&generation===this.analyzerDetailGeneration)this.typeDetail.replaceChildren($('p','text-danger',tr(error.message)));}
         }
         scopeKey(scope=this.scope(true)){return JSON.stringify([scope.connection_id,scope.binding_generation,scope.schema_fingerprint]);}
         edgeKey(edge){return JSON.stringify([edge.source_id,edge.target_id,edge.kind,edge.label??null]);}
@@ -514,37 +532,37 @@
         scalarDetailContents(target,detail,scope){
             const groups=this.scalarUsageRows(detail),total=groups.reduce((sum,group)=>sum+group.rows.length,0);
             target.replaceChildren($('h3','',detail.node.name),$('p','',detail.node.node_id),$('p','',detail.node.description||''),$('pre','ht-data',JSON.stringify(detail.node,null,2)));
-            target.append($('h4','',`Usages (${total})`));
+            target.append($('h4','',format('Usages ({0})',total)));
             for(const group of groups)target.append($('p','ht-scalar-count',`${group.kind} · ${group.direction} · ${group.rows.length}`));
         }
         renderScalarFocus(detail){
             const groups=this.scalarUsageRows(detail),total=groups.reduce((sum,group)=>sum+group.rows.length,0),root=$('div','ht-scalar-focus-content');
-            const heading=$('div','ht-scalar-heading');heading.append($('div','ht-scalar-badge','SCALAR'),$('h3','',detail.node.name),$('p','ht-context',`${total} direct usages`));root.append(heading);
-            root.append($('p','ht-scalar-explainer','GraphQL base scalar: usages are shown as a list instead of a relationship graph.'));
-            const search=input('Filter usages');const searchField=field('Filter usages',search),status=$('p','ht-context',`${total} usages`);root.append(searchField,status);
+            const heading=$('div','ht-scalar-heading');heading.append($('div','ht-scalar-badge','SCALAR'),$('h3','',detail.node.name),$('p','ht-context',format('{0} direct usages',total)));root.append(heading);
+            root.append($('p','ht-scalar-explainer',tr('GraphQL base scalar: usages are shown as a list instead of a relationship graph.')));
+            const search=input(tr('Filter usages'));const searchField=field(tr('Filter usages'),search),status=$('p','ht-context',format('{0} usages',total));root.append(searchField,status);
             const groupNodes=[];
-            for(const group of groups){const details=$('details','ht-scalar-group'),summary=$('summary','',`${group.kind} · ${group.direction==='incoming'?'Incoming':'Outgoing'} (${group.rows.length})`),body=$('div','ht-scalar-usage-list');details.append(summary,body);
+            for(const group of groups){const details=$('details','ht-scalar-group'),summary=$('summary','',format('{0} · {1} ({2})',group.kind,tr(group.direction==='incoming'?'Incoming':'Outgoing'),group.rows.length)),body=$('div','ht-scalar-usage-list');details.append(summary,body);
                 const rowNodes=[];for(const row of group.rows){const meta=row.node?`${row.node.kind}${row.edge.label?' · '+row.edge.label:''}`:`${row.edge.label||row.partnerId}`,b=button(`${row.label} · ${meta}`,()=>this.focusNext(row.partnerId));b.classList.add('ht-scalar-usage');b.dataset.search=`${row.label} ${row.partnerId} ${row.node?.kind||''} ${row.edge.kind} ${row.edge.label||''}`.toLocaleLowerCase();body.append(b);rowNodes.push(b);}
                 root.append(details);groupNodes.push({details,rowNodes});
             }
-            search.addEventListener('input',()=>{const q=search.value.trim().toLocaleLowerCase();let visible=0;for(const group of groupNodes){let groupVisible=0;for(const row of group.rowNodes){const show=!q||row.dataset.search.includes(q);row.hidden=!show;if(show){visible++;groupVisible++;}}group.details.hidden=!groupVisible;if(q&&groupVisible)group.details.open=true;}status.textContent=`${visible} of ${total} usages`;});
-            this.focusScalar.replaceChildren(root);this.focusNotice.textContent=`${detail.node.name} · ${total} direct usages · list view for GraphQL base scalar`;
+            search.addEventListener('input',()=>{const q=search.value.trim().toLocaleLowerCase();let visible=0;for(const group of groupNodes){let groupVisible=0;for(const row of group.rowNodes){const show=!q||row.dataset.search.includes(q);row.hidden=!show;if(show){visible++;groupVisible++;}}group.details.hidden=!groupVisible;if(q&&groupVisible)group.details.open=true;}status.textContent=format('{0} of {1} usages',visible,total);});
+            this.focusScalar.replaceChildren(root);this.focusNotice.textContent=format('{0} · {1} direct usages · list view for GraphQL base scalar',detail.node.name,total);
         }
         buildGraph() {
-            const panel=this.panels.graph,bar=$('div','ht-toolbar');this.snapshotPicker=$('select','form-control');this.snapshotPicker.addEventListener('change',()=>this.selectSnapshot(this.snapshotPicker.value));this.snapshotMeta=$('p','ht-snapshot-meta');this.graphSearch=input('Name, ID or type');this.graphKind=$('select','form-control');this.relationKind=$('select','form-control');
+            const panel=this.panels.graph,bar=$('div','ht-toolbar');this.snapshotPicker=$('select','form-control');this.snapshotPicker.addEventListener('change',()=>this.selectSnapshot(this.snapshotPicker.value));this.snapshotMeta=$('p','ht-snapshot-meta');this.graphSearch=input(tr('Name, ID or type'));this.graphKind=$('select','form-control');this.relationKind=$('select','form-control');
             for(const value of ['','QUERY_OPERATION','MUTATION_OPERATION','SUBSCRIPTION_OPERATION','QUERY_ROOT','MUTATION_ROOT','SUBSCRIPTION_ROOT','OBJECT','INPUT_OBJECT','INTERFACE','UNION','ENUM','ENUM_VALUE','SCALAR','FIELD','ARGUMENT','INPUT_FIELD','DIRECTIVE']){const o=$('option','',value||'All nodes');o.value=value;this.graphKind.append(o);}
             for(const value of ['','RETURNS','HAS_FIELD','HAS_ARGUMENT','ARGUMENT_TYPE','INPUT_TYPE','IMPLEMENTS','POSSIBLE_TYPE','ROOT_TYPE','ROOT_HAS_OPERATION','HAS_INPUT_FIELD','HAS_ENUM_VALUE']){const o=$('option','',value||'All relations');o.value=value;this.relationKind.append(o);}
             const filtered=()=>this.loadGraph(),all=()=>{this.graphSearch.value='';this.graphKind.value='';this.relationKind.value='';this.loadGraph();};
-            this.graphSearch.addEventListener('input',()=>{this.cancelGraph();this.graphInfo.textContent='Filter changed. Filtered View loads the current selection.';});
+            this.graphSearch.addEventListener('input',()=>{this.cancelGraph();this.graphInfo.textContent=tr('Filter changed. Filtered View loads the current selection.');});
             for(const control of [this.graphKind,this.relationKind])control.addEventListener('change',filtered);
-            bar.append(field('Snapshot',this.snapshotPicker),button('Schema Overview',all),field('Graph Search',this.graphSearch),field('Node Class',this.graphKind),field('Relation',this.relationKind),button('Filtered View',filtered),button('Fit',()=>{this.viewbox=null;this.drawGraph();}),button('+',()=>this.zoom(.8)),button('−',()=>this.zoom(1.25)));
-            this.graphInfo=$('p');this.graphInfo.setAttribute('role','status');this.canvas=svg('svg',{'class':'ht-graph',height:650,'aria-label':'HERO API Graph'});
+            bar.append(field(tr('Snapshot'),this.snapshotPicker),button(tr('Schema Overview'),all),field(tr('Graph Search'),this.graphSearch),field(tr('Node Class'),this.graphKind),field(tr('Relation'),this.relationKind),button(tr('Filtered View'),filtered),button(tr('Fit'),()=>{this.viewbox=null;this.drawGraph();}),button('+',()=>this.zoom(.8)),button('−',()=>this.zoom(1.25)));
+            this.graphInfo=$('p');this.graphInfo.setAttribute('role','status');this.canvas=svg('svg',{'class':'ht-graph',height:650,'aria-label':tr('HERO API Graph')});
             this.bindGraphNavigation(this.canvas,()=>this.viewbox,box=>{this.viewbox=box;},()=>this.applyViewbox(),factor=>this.zoom(factor));
             this.nodeDetail=$('aside','ht-inspector');const side=$('aside','ht-graph-side');side.append(this.nodeDetail);
             const grid=$('div','ht-split');grid.append(this.canvas,side);
             this.labelNotice=$('p','ht-legend ht-label-note');this.labelNotice.setAttribute('aria-live','polite');
             const legend=$('div','ht-legend ht-category-legend');for(const [kind,label] of [['QUERY_OPERATION','Query'],['MUTATION_OPERATION','Mutation'],['INPUT_OBJECT','Inputs'],['ENUM','Enum'],['OBJECT','Other schema types']]){const item=$('span','',label);item.dataset.kind=kind;legend.append(item);}
-            panel.append(bar,this.snapshotMeta,legend,$('p','ht-legend','Schema Overview condenses large graphs for performance. Select a node to open its focus view; search or class filters open detailed views.'),this.graphInfo,this.labelNotice,grid);
+            panel.append(bar,this.snapshotMeta,legend,$('p','ht-legend',tr('Schema Overview condenses large graphs for performance. Select a node to open its focus view; search or class filters open detailed views.')),this.graphInfo,this.labelNotice,grid);
         }
         bindGraphNavigation(canvas,getBox,setBox,applyBox,zoom){
             canvas.style.touchAction='none';let pan=null;
@@ -561,7 +579,7 @@
             const current=()=>serial===this.sequence&&generation===this.graphGeneration&&key===this.scopeKey()&&!controller.signal.aborted;
             // Never expose a partially loaded projection as the requested graph.
             this.canvas.replaceChildren();this.canvas._heroScene=null;this.graph=null;this.nodeDetail.replaceChildren();this.labelNotice.textContent='';
-            this.graphInfo.textContent='Loading schema · nodes and cross-page relationships are being combined …';
+            this.graphInfo.textContent=tr('Loading schema · nodes and cross-page relationships are being combined …');
             try {
                 let full=this.graphCache?.key===key
                     ? this.graphCache.data
@@ -588,7 +606,7 @@
                         coverage=coverage||page.coverage;
                         if(page.total!==coverage.nodes||page.coverage.nodes!==coverage.nodes||page.coverage.edges!==coverage.edges)throw new Error('The graph size changed while loading.');
                         for(const node of page.nodes){if(nodes.has(node.node_id))throw new Error('Duplicate node identity in the page contract.');nodes.set(node.node_id,node);}addEdges(page.edges);
-                        this.graphInfo.textContent=`Loading · ${nodes.size}/${coverage.nodes} nodes · ${edges.size}/${coverage.edges} relationships`;
+                        this.graphInfo.textContent=format('Loading · {0}/{1} nodes · {2}/{3} relationships',nodes.size,coverage.nodes,edges.size,coverage.edges);
                         if(!page.has_more)break;if(!page.nodes.length)throw new Error('An empty follow-up page violated the graph contract.');start+=page.nodes.length;
                     }
                     if(nodes.size!==coverage.nodes)throw new Error('Not all nodes were delivered.');
@@ -607,7 +625,7 @@
                             const id=next.node_id,data=await call('get_graph',{...scope,node_id:id},false,controller.signal);if(!current())return;
                             if(data.schema_fingerprint!==scope.schema_fingerprint||data.node?.node_id!==id)throw new Error('The node detail does not belong to the requested schema.');
                             addEdges([...data.incoming,...data.outgoing]);
-                            this.graphInfo.textContent=`Loading · ${nodes.size}/${coverage.nodes} nodes · ${edges.size}/${coverage.edges} relationships`;
+                            this.graphInfo.textContent=format('Loading · {0}/{1} nodes · {2}/{3} relationships',nodes.size,coverage.nodes,edges.size,coverage.edges);
                         }
                     }));
                     if(!current())return;
@@ -637,11 +655,11 @@
                 const graph={nodes:full.nodes.filter(n=>ids.has(n.node_id)),edges:allowedEdges.filter(e=>ids.has(e.source_id)&&ids.has(e.target_id)),coverage:full.coverage};
                 this.graphFilterActive=filtered;
                 const signature=JSON.stringify([key,filter]);if(signature!==this.graphSignature)this.viewbox=null;this.graphSignature=signature;this.graph=graph;
-                this.graphInfo.textContent=`${filtered?'Filtered view: '+matches.size+' matches + direct relationship partners':'Full Schema'} · ${graph.nodes.length} nodes · ${graph.edges.length} relationships · fully loaded: ${full.nodes.length}/${full.coverage.nodes} nodes, ${full.edges.length}/${full.coverage.edges} relationships${full.coverage.introspection_complete?'':' · saved introspection is incomplete'}`;
+                this.graphInfo.textContent=format('{0} · {1} nodes · {2} relationships · fully loaded: {3}/{4} nodes, {5}/{6} relationships{7}',filtered?format('Filtered view: {0} matches + direct relationship partners',matches.size):tr('Full Schema'),graph.nodes.length,graph.edges.length,full.nodes.length,full.coverage.nodes,full.edges.length,full.coverage.edges,full.coverage.introspection_complete?'':' · '+tr('saved introspection is incomplete'));
                 if(!ids.has(this.selectedNode))this.selectedNode=null;
                 const id=new URLSearchParams(location.search).get('node')||this.selectedNode||graph.nodes[0]?.node_id;
                 if(id&&ids.has(id))await this.inspectNode(id,serial,false);else this.drawGraph();
-            } catch(error){if(current()){controller.abort();this.graph=null;this.canvas.replaceChildren();this.canvas._heroScene=null;this.graphInfo.textContent='The graph did not load completely: '+error.message+' Choose “Full Schema” or “Filtered View” to try again.';this.labelNotice.textContent='No complete visualization is available.';}}
+            } catch(error){if(current()){controller.abort();this.graph=null;this.canvas.replaceChildren();this.canvas._heroScene=null;this.graphInfo.textContent=format('The graph did not load completely: {0} Choose “Full Schema” or “Filtered View” to try again.',tr(error.message));this.labelNotice.textContent=tr('No complete visualization is available.');}}
         }
         drawGraph(){if(!this.graph)return;this.viewbox=this.renderGraphScene(this.canvas,this.graph,this.selectedNode,this.viewbox,id=>this.inspectNode(id),this.labelNotice,'hero-api-arrow');}
         graphNeedsOverview(graph){return graph.nodes.length>120||graph.edges.length>180;}
@@ -686,14 +704,14 @@
             const overviewWidth=30+5*xStep,overviewHeight=30+6*yStep,fitBox=[0,0,overviewWidth,overviewHeight];box=box||[...fitBox];canvas.setAttribute('viewBox',box.join(' '));canvas.replaceChildren();
             const defs=svg('defs'),marker=svg('marker',{id:markerId,viewBox:'0 0 10 10',refX:9,refY:5,markerWidth:6,markerHeight:6,orient:'auto-start-reverse'});marker.append(svg('path',{d:'M 0 0 L 10 5 L 0 10 z','class':'ht-arrow'}));defs.append(marker);canvas.append(defs);
             const aggregate=new Map();for(const edge of graph.edges){const from=nodeKinds.get(edge.source_id),to=nodeKinds.get(edge.target_id);if(!from||!to||from===to||!cards.has(from)||!cards.has(to))continue;const key=from+'→'+to;aggregate.set(key,{from,to,count:(aggregate.get(key)?.count||0)+1});}
-            for(const item of aggregate.values()){const a=cards.get(item.from),b=cards.get(item.to),forward=b.x>=a.x,x1=forward?a.x+a.width:a.x,x2=forward?b.x:b.x+b.width,y1=a.y+a.height/2,y2=b.y+b.height/2,mid=(x1+x2)/2;const path=svg('path',{d:`M${x1},${y1} C${mid},${y1} ${mid},${y2} ${x2},${y2}`,'class':'ht-edge','marker-end':`url(#${markerId})`,'stroke-width':Math.min(5,1+Math.log10(item.count+1)),'stroke-opacity':'.5'}),title=svg('title');title.textContent=`${labels[item.from]||item.from} → ${labels[item.to]||item.to}: ${item.count} relationships`;path.append(title);canvas.append(path);}
+            for(const item of aggregate.values()){const a=cards.get(item.from),b=cards.get(item.to),forward=b.x>=a.x,x1=forward?a.x+a.width:a.x,x2=forward?b.x:b.x+b.width,y1=a.y+a.height/2,y2=b.y+b.height/2,mid=(x1+x2)/2;const path=svg('path',{d:`M${x1},${y1} C${mid},${y1} ${mid},${y2} ${x2},${y2}`,'class':'ht-edge','marker-end':`url(#${markerId})`,'stroke-width':Math.min(5,1+Math.log10(item.count+1)),'stroke-opacity':'.5'}),title=svg('title');title.textContent=format('{0} → {1}: {2} relationships',labels[item.from]||item.from,labels[item.to]||item.to,item.count);path.append(title);canvas.append(path);}
             const selectedKind=selected?nodeKinds.get(selected):null;
-            for(const card of cards.values()){const label=labels[card.kind]||card.kind,g=svg('g',{'data-overview-kind':card.kind,'data-kind':card.kind,'class':'ht-node'+(card.kind===selectedKind?' is-selected':''),tabindex:0,role:'button','aria-label':`${label}: ${card.count} nodes. Open filtered view.`});
+            for(const card of cards.values()){const label=labels[card.kind]||card.kind,g=svg('g',{'data-overview-kind':card.kind,'data-kind':card.kind,'class':'ht-node'+(card.kind===selectedKind?' is-selected':''),tabindex:0,role:'button','aria-label':format('{0}: {1} nodes. Open filtered view.',label,card.count)});
                 g.append(svg('rect',{x:card.x,y:card.y,width:card.width,height:card.height,rx:8}),svg('rect',{x:card.x+2,y:card.y+2,width:6,height:card.height-4,rx:3,'class':'ht-kind-mark'}));
-                const title=svg('text',{x:card.x+14,y:card.y+28});title.textContent=label;const count=svg('text',{x:card.x+14,y:card.y+55});count.textContent=`${card.count} nodes`;g.append(title,count);
+                const title=svg('text',{x:card.x+14,y:card.y+28});title.textContent=label;const count=svg('text',{x:card.x+14,y:card.y+55});count.textContent=format('{0} nodes',card.count);g.append(title,count);
                 const open=()=>{this.graphSearch.value='';this.graphKind.value=card.kind;this.relationKind.value='';this.loadGraph();};g.addEventListener('click',open);g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();open();}});canvas.append(g);
             }
-            canvas.setAttribute('data-total-nodes',graph.nodes.length);canvas.setAttribute('data-total-edges',graph.edges.length);canvas._heroScene={mode:'overview',box,fitBox,nodes:[...cards.values()].map(card=>({x:card.x,y:card.y,width:card.width,height:card.height})),selected,notice};notice.textContent=`${this.graphFilterActive?'Filtered overview':'Schema Overview'}: ${cards.size} class cards condense ${graph.nodes.length} saved nodes and ${graph.edges.length} relationships. This is not an incomplete graph; select a class card to open its filtered detail view.`;return box;
+            canvas.setAttribute('data-total-nodes',graph.nodes.length);canvas.setAttribute('data-total-edges',graph.edges.length);canvas._heroScene={mode:'overview',box,fitBox,nodes:[...cards.values()].map(card=>({x:card.x,y:card.y,width:card.width,height:card.height})),selected,notice};notice.textContent=format('{0}: {1} class cards condense {2} saved nodes and {3} relationships. This is not an incomplete graph; select a class card to open its filtered detail view.',tr(this.graphFilterActive?'Filtered overview':'Schema Overview'),cards.size,graph.nodes.length,graph.edges.length);return box;
         }
         renderGraphScene(canvas,graph,selected,box,select,notice,markerId){
             if(canvas===this.canvas&&this.graphNeedsOverview(graph))return this.renderGraphOverview(canvas,graph,selected,box,notice,markerId);
@@ -736,7 +754,7 @@
             for(const route of routes){if(scale<.65)break;const width=Math.max(90,(route.edge.kind.length*8+16)/scale),height=20/scale,box={x:route.labelX-width/2,y:route.labelY-height/2,width,height};if(scene.nodes.some(n=>overlaps(box,n,10))||placed.some(n=>overlaps(box,n,10)))continue;
                 const background=svg('rect',{...box,'class':'ht-label-bg'+(scene.selection?.active&&!route.related?' is-dimmed':'')}),label=svg('text',{x:route.labelX,y:route.labelY+4/scale,'text-anchor':'middle','class':'ht-edge-label'+(route.related?' is-related':scene.selection?.active?' is-dimmed':'')});label.style.fontSize=`${12/scale}px`;label.textContent=route.edge.kind;canvas.append(background,label);placed.push(box);
             }
-            scene.notice.textContent=(scene.compact?'Overview without node text; use selection and Inspector for names and details. ':'')+(routes.length>placed.length?`Reduced edge labels: ${placed.length} of ${routes.length} visible relationships are labeled. All relationships remain available in node focus and Inspector.`:'All visible relationships are labeled.');
+            scene.notice.textContent=graphLabelsNotice(scene.compact, placed.length, routes.length);
         }
         applyCanvasViewbox(canvas,box,frameKey,redraw){
             // Move the existing SVG immediately; coalesce expensive culling to one frame.
@@ -772,8 +790,8 @@
             // Only rendered for a real, single node detail; overview class cards never reach detailContents.
             const store=window.hero_integration_bookmarks;if(!store||!node?.node_id||!scope?.schema_fingerprint)return null;
             const identity={snapshot_name:scope.connection_id,snapshot_label:this.context?.selected_snapshot_metadata?.display_name||scope.connection_id,schema_fingerprint:scope.schema_fingerprint,node_id:node.node_id,node_name:node.name,node_kind:node.kind};
-            const b=button('Remember for Mapping',()=>{if(this.scopeKey(scope)!==this.scopeKey()){this.notice.textContent=errors.SCHEMA_CHANGED;return;}store.remember(identity);});
-            b.className='btn btn-sm ht-node-action ht-node-action--remember ht-remember';b.title='Remember this node under your own alias for the Mapping Editor. No mapping is created.';return b;
+            const b=button(tr('Remember for Mapping'),()=>{if(this.scopeKey(scope)!==this.scopeKey()){this.notice.textContent=tr(errors.SCHEMA_CHANGED);return;}store.remember(identity);});
+            b.className='btn btn-sm ht-node-action ht-node-action--remember ht-remember';b.title=tr('Remember this node under your own alias for the Mapping Editor. No mapping is created.');return b;
         }
         serviceOperationId(data){
             // Operation nodes are saved directly; a Query/Mutation root field uses the operation that owns it (OPERATION_FIELD edge).
@@ -786,20 +804,20 @@
             // API Analyzer, Graph Viewer inspector and the Node Focus pop-up share this renderer. Each target keeps its own
             // service state, so the inspector and the pop-up never overwrite each other.
             const generation=target._heroDetailGeneration=(target._heroDetailGeneration||0)+1;
-            const actions=$('section','ht-node-actions');actions.setAttribute('role','group');actions.setAttribute('aria-label','Node actions');
+            const actions=$('section','ht-node-actions');actions.setAttribute('role','group');actions.setAttribute('aria-label',tr('Node actions'));
             const buttons=$('div','ht-node-actions-buttons');
             const remember=this.rememberButton(data.node,scope);if(remember)buttons.append(remember);
             const operationId=this.serviceOperationId(data),box=$('div','ht-node-service');
-            const save=button('Save as GraphQL Service',()=>this.run(()=>this.openNodeService(target,generation,scope)));
+            const save=button(tr('Save as GraphQL Service'),()=>this.run(()=>this.openNodeService(target,generation,scope)));
             save.className='btn btn-sm ht-node-action ht-node-action--service';save.disabled=!operationId;
-            save.title=operationId?'Creates an unsaved service draft from this operation. No HERO operation is executed.':'Available for Query and Mutation operations and their root fields.';
+            save.title=operationId?tr('Creates an unsaved service draft from this operation. No HERO operation is executed.'):tr('Available for Query and Mutation operations and their root fields.');
             buttons.append(save);
-            actions.append($('h4','ht-node-actions-title','Actions'),buttons);
-            if(!operationId)actions.append($('p','ht-context','Save as GraphQL Service is available for Query and Mutation operations and their root fields.'));
+            actions.append($('h4','ht-node-actions-title',tr('Actions')),buttons);
+            if(!operationId)actions.append($('p','ht-context',tr('Save as GraphQL Service is available for Query and Mutation operations and their root fields.')));
             actions.append(box);
             target._heroService={generation,operationId,save,box,form:null,origin:target===this.typeDetail?'API Analyzer':'Graph Viewer'};
             target.replaceChildren($('h3','',data.node.name),$('p','ht-node-id',data.node.node_id),actions,$('p','',data.node.description||''),$('pre','ht-data',JSON.stringify(data.node,null,2)));
-            for(const [title,edges,key] of [['Incoming',data.incoming,'source_id'],['Outgoing',data.outgoing,'target_id']]){target.append($('h4','',`${title} (${edges.length})`));for(const edge of edges){const b=button(`${edge.kind}${edge.label?' · '+edge.label:''} · ${edge[key]}`,()=>navigate(edge[key]));b.classList.add('ht-relation');target.append(b);}}
+            for(const [title,edges,key] of [['Incoming',data.incoming,'source_id'],['Outgoing',data.outgoing,'target_id']]){target.append($('h4','',format('{0} ({1})',tr(title),edges.length)));for(const edge of edges){const b=button(`${edge.kind}${edge.label?' · '+edge.label:''} · ${edge[key]}`,()=>navigate(edge[key]));b.classList.add('ht-relation');target.append(b);}}
             this.updateActions();
         }
         async openNodeService(target,generation,scope){
@@ -808,13 +826,13 @@
             if(target._heroService!==state||target._heroDetailGeneration!==generation||this.scopeKey(scope)!==this.scopeKey())return;
             const name=input(),query=$('textarea','form-control');
             name.value=draft.payload.name;query.value=draft.payload.query;query.rows=12;
-            name.setAttribute('aria-label','Service name');query.setAttribute('aria-label','GraphQL draft');
-            const save=button('Save Service',()=>this.run(()=>this.saveNodeService(target,state)));save.className='btn btn-sm ht-node-action ht-node-action--service';
+            name.setAttribute('aria-label',tr('Service name'));query.setAttribute('aria-label',tr('GraphQL draft'));
+            const save=button(tr('Save Service'),()=>this.run(()=>this.saveNodeService(target,state)));save.className='btn btn-sm ht-node-action ht-node-action--service';
             state.form={scope,nodeId:state.operationId,draft,name,query,save,saved:false};
-            state.box.replaceChildren($('h4','',draft.operation_kind==='mutation'?'Save Mutation':'Save Query'),$('p','','Provenance='+state.origin),
-                $('p','ht-context','Saves a service without executing it. For object results, __typename is preselected; add the required fields.'),
-                $('p','ht-context',draft.required_variables.length?'Required variables: '+draft.required_variables.map(v=>v.name+' ('+v.type+')').join(', ')+'. Enter their values in GraphQL Services → Variables; values are never stored with the service.':'No required variables.'),
-                field('Service name',name),field('GraphQL',query),save);
+            state.box.replaceChildren($('h4','',draft.operation_kind==='mutation'?tr('Save Mutation'):tr('Save Query')),$('p','',tr('Provenance')+'='+state.origin),
+                $('p','ht-context',tr('Saves a service without executing it. For object results, __typename is preselected; add the required fields.')),
+                $('p','ht-context',draft.required_variables.length?format('Required variables: {0}. Enter their values in GraphQL Services → Variables; values are never stored with the service.',draft.required_variables.map(v=>v.name+' ('+v.type+')').join(', ')):tr('No required variables.')),
+                field(tr('Service name'),name),field('GraphQL',query),save);
             this.updateActions();
         }
         async saveNodeService(target,state){
@@ -826,24 +844,24 @@
             const result=await call('save_analyzer_service',{...form.scope,schema_node_id:form.nodeId,payload,origin:state.origin},true);
             form.saved=true;form.save.disabled=true;
             if(target._heroService!==state)return;
-            const link=$('a','btn btn-sm ht-node-action ht-node-action--service','Open in GraphQL Services');link.href=this.serviceUrl(result.query.service_kind,result.query.query_id);
+            const link=$('a','btn btn-sm ht-node-action ht-node-action--service',tr('Open in GraphQL Services'));link.href=this.serviceUrl(result.query.service_kind,result.query.query_id);
             link.addEventListener('click',event=>{if(target===this.focusDetail)this.focusDialog?.hide?.();if(this.openService(result.query.service_kind,result.query.query_id)===false)event.preventDefault();});
-            state.box.replaceChildren($('p','',result.query.name+' saved · Provenance='+result.query.provenance),link);
-            if(this.notice)this.notice.textContent='Service saved. No HERO operation was executed.';
+            state.box.replaceChildren($('p','',savedServiceLabel(result.query.name,result.query.provenance)),link);
+            if(this.notice)this.notice.textContent=tr('Service saved. No HERO operation was executed.');
             this.updateActions();
         }
         async inspectNode(id,serial=this.sequence,open=true){
             const scope=this.scope(true),key=this.scopeKey(scope),generation=this.inspectionGeneration=(this.inspectionGeneration||0)+1;
             try {const data=await this.nodeData(id,scope);if(serial!==this.sequence||generation!==this.inspectionGeneration||key!==this.scopeKey())return;
                 this.selectedNode=id;this.detailContents(this.nodeDetail,data,scope,next=>this.inspectNode(next));this.drawGraph();if(open)this.openFocus(id);
-            } catch(error){if(serial===this.sequence&&generation===this.inspectionGeneration){this.nodeDetail.replaceChildren($('p','text-danger',error.message));}}
+            } catch(error){if(serial===this.sequence&&generation===this.inspectionGeneration){this.nodeDetail.replaceChildren($('p','text-danger',tr(error.message)));}}
         }
         openFocus(id){
-            if(!this.focusDialog){const dialog=new frappe.ui.Dialog({title:'HERO · Node Focus',size:'extra-large',fields:[]});dialog.$wrapper.addClass('ht-focus-dialog');const toolbar=$('div','ht-toolbar');
-                this.focusBack=button('← Focus Back',()=>{if(this.focusHistory.length>1){this.focusHistory.pop();this.loadFocus(this.focusHistory.at(-1));}});
-                this.focusFit=button('Fit',()=>{this.focusViewbox=null;this.drawFocus();});this.focusZoomIn=button('+',()=>this.zoomFocus(.8));this.focusZoomOut=button('−',()=>this.zoomFocus(1.25));toolbar.append(this.focusBack,this.focusFit,this.focusZoomIn,this.focusZoomOut);
-                this.focusCanvas=svg('svg',{'class':'ht-graph',height:420,'aria-label':'Direct relations in node focus'});this.bindGraphNavigation(this.focusCanvas,()=>this.focusViewbox,box=>{this.focusViewbox=box;},()=>this.applyFocusViewbox(),factor=>this.zoomFocus(factor));
-                this.focusScalar=$('section','ht-scalar-focus');this.focusScalar.hidden=true;this.focusScalar.setAttribute('aria-label','GraphQL base scalar usages');
+            if(!this.focusDialog){const dialog=new frappe.ui.Dialog({title:tr('HERO · Node Focus'),size:'extra-large',fields:[]});dialog.$wrapper.addClass('ht-focus-dialog');const toolbar=$('div','ht-toolbar');
+                this.focusBack=button(tr('← Focus Back'),()=>{if(this.focusHistory.length>1){this.focusHistory.pop();this.loadFocus(this.focusHistory.at(-1));}});
+                this.focusFit=button(tr('Fit'),()=>{this.focusViewbox=null;this.drawFocus();});this.focusZoomIn=button('+',()=>this.zoomFocus(.8));this.focusZoomOut=button('−',()=>this.zoomFocus(1.25));toolbar.append(this.focusBack,this.focusFit,this.focusZoomIn,this.focusZoomOut);
+                this.focusCanvas=svg('svg',{'class':'ht-graph',height:420,'aria-label':tr('Direct relations in node focus')});this.bindGraphNavigation(this.focusCanvas,()=>this.focusViewbox,box=>{this.focusViewbox=box;},()=>this.applyFocusViewbox(),factor=>this.zoomFocus(factor));
+                this.focusScalar=$('section','ht-scalar-focus');this.focusScalar.hidden=true;this.focusScalar.setAttribute('aria-label',tr('GraphQL base scalar usages'));
                 this.focusDetail=$('aside','ht-inspector');this.focusNotice=$('p','ht-legend');const grid=$('div','ht-split');grid.append(this.focusCanvas,this.focusScalar,this.focusDetail);dialog.body.append(toolbar,this.focusNotice,grid);dialog.set_secondary_action(()=>dialog.hide());dialog.set_secondary_action_label('Close');
                 dialog.onhide=()=>{this.focusGeneration=(this.focusGeneration||0)+1;this.focusOpen=false;};dialog.$wrapper.on('hidden.bs.modal.heroFocus',()=>{const node=Array.from(this.canvas.querySelectorAll('[data-node]')).find(n=>n.dataset.node===this.selectedNode);(node||this.focusReturn)?.focus({preventScroll:true});});this.focusDialog=dialog;this.resize.observe(this.focusCanvas);
             }
@@ -852,13 +870,13 @@
         async loadFocus(id){
             const serial=this.sequence,scope=this.scope(true),key=this.scopeKey(scope),generation=this.focusGeneration=(this.focusGeneration||0)+1;
             const current=()=>this.focusOpen&&serial===this.sequence&&generation===this.focusGeneration&&key===this.scopeKey();
-            this.focusCanvas.replaceChildren();this.focusCanvas._heroScene=null;this.focusScalar.replaceChildren();this.focusDetail.replaceChildren();this.focusNotice.textContent='Loading direct relations …';this.focusBack.disabled=this.focusHistory.length<2;
+            this.focusCanvas.replaceChildren();this.focusCanvas._heroScene=null;this.focusScalar.replaceChildren();this.focusDetail.replaceChildren();this.focusNotice.textContent=tr('Loading direct relations …');this.focusBack.disabled=this.focusHistory.length<2;
             try {const detail=await this.nodeData(id,scope);if(!current())return;this.focusNode=id;this.focusViewbox=null;
                 if(this.isBuiltinScalar(detail.node)){this.focusGraph=null;this.setFocusGraphMode(false);this.scalarDetailContents(this.focusDetail,detail,scope);this.renderScalarFocus(detail);return;}
                 this.setFocusGraphMode(true);const edges=new Map([...detail.incoming,...detail.outgoing].map(e=>[this.edgeKey(e),e])),ids=new Set([id]);for(const e of edges.values()){ids.add(e.source_id);ids.add(e.target_id);}const nodes=[];
                 for(const other of ids){const n=other===id?detail.node:(await this.nodeData(other,scope)).node;if(!current())return;nodes.push(n);}
                 this.focusGraph={nodes,edges:[...edges.values()]};this.detailContents(this.focusDetail,detail,scope,next=>this.focusNext(next));this.drawFocus();
-            } catch(error){if(current())this.focusNotice.textContent='The focus view could not be loaded: '+error.message;}
+            } catch(error){if(current())this.focusNotice.textContent=format('The focus view could not be loaded: {0}',tr(error.message));}
         }
         focusNext(id){if(id!==this.focusHistory.at(-1))this.focusHistory.push(id);this.loadFocus(id);}
         drawFocus(){if(this.focusGraph)this.focusViewbox=this.renderGraphScene(this.focusCanvas,this.focusGraph,this.focusNode,this.focusViewbox,id=>this.focusNext(id),this.focusNotice,'hero-focus-arrow');}
@@ -882,19 +900,19 @@
         }
         buildServices() {
             const p=this.panels.services,grid=$('div','ht-split');this.queryList=$('div','ht-list');const editor=$('section','ht-query-editor');this.name=input();this.category=input();this.category.value=this.serviceKind==='mutation'?'Custom Mutations':'Custom Queries';this.operation=input();this.description=$('textarea','form-control');
-            const views=$('nav','ht-toolbar');views.setAttribute('aria-label','GraphQL Services');
+            const views=$('nav','ht-toolbar');views.setAttribute('aria-label',tr('GraphQL Services'));
             for(const [kind,label] of [['query','Query'],['mutation','Mutation']]) {
                 const link=$('a','btn btn-default',label);link.href=this.serviceUrl(kind);
                 if(kind===this.serviceKind)link.setAttribute('aria-current','page');
                 link.addEventListener('click',e=>{if(this.openService(kind)===false)e.preventDefault();});views.append(link);
             }
-            this.editorHost=$('div','ht-editor');this.variables=$('textarea','form-control ht-variables');this.variables.value='';this.variables.rows=6;this.variables.spellcheck=false;this.variables.setAttribute('wrap','off');this.variablesHighlight=$('pre','ht-variables-highlight');this.variablesHighlight.setAttribute('aria-hidden','true');const variablesBox=$('div','ht-variables-box');variablesBox.append(this.variablesHighlight,this.variables);this.variables.setAttribute('aria-label','Variables');this.variables.placeholder='id := 5;\noffset := 5;\norderBy := "id";';this.queryOutput=$('pre','ht-data');this.queryOutput.setAttribute('aria-live','polite');this.queryStatus=$('p','ht-query-status');this.queryStatus.setAttribute('role','status');
-            const bar=$('div','ht-toolbar');this.newButton=button('New '+this.serviceLabel(),()=>this.newQuery());this.copyButton=button('Duplicate',()=>this.run(async()=>this.newQuery(true)));this.saveButton=button('Save',()=>this.run(()=>this.saveQuery()));this.validateButton=button('Validate',()=>this.run(()=>this.validateQuery()));this.executeButton=button(this.serviceKind==='mutation'?'Execute Mutation':'Execute Query',()=>this.run(()=>this.executeQuery()));this.deleteButton=button('Delete',()=>this.run(()=>this.deleteQuery()));bar.append(this.newButton,this.copyButton,this.saveButton,this.validateButton,this.executeButton,this.deleteButton);
+            this.editorHost=$('div','ht-editor');this.variables=$('textarea','form-control ht-variables');this.variables.value='';this.variables.rows=6;this.variables.spellcheck=false;this.variables.setAttribute('wrap','off');this.variablesHighlight=$('pre','ht-variables-highlight');this.variablesHighlight.setAttribute('aria-hidden','true');const variablesBox=$('div','ht-variables-box');variablesBox.append(this.variablesHighlight,this.variables);this.variables.setAttribute('aria-label',tr('Variables'));this.variables.placeholder='id := 5;\noffset := 5;\norderBy := "id";';this.queryOutput=$('pre','ht-data');this.queryOutput.setAttribute('aria-live','polite');this.queryStatus=$('p','ht-query-status');this.queryStatus.setAttribute('role','status');
+            const bar=$('div','ht-toolbar');this.newButton=button(format('New {0}',this.serviceLabel()),()=>this.newQuery());this.copyButton=button(tr('Duplicate'),()=>this.run(async()=>this.newQuery(true)));this.saveButton=button(tr('Save'),()=>this.run(()=>this.saveQuery()));this.validateButton=button(tr('Validate'),()=>this.run(()=>this.validateQuery()));this.executeButton=button(this.serviceKind==='mutation'?tr('Execute Mutation'):tr('Execute Query'),()=>this.run(()=>this.executeQuery()));this.deleteButton=button(tr('Delete'),()=>this.run(()=>this.deleteQuery()));bar.append(this.newButton,this.copyButton,this.saveButton,this.validateButton,this.executeButton,this.deleteButton);
             this.serviceHint=$('p','ht-service-hint');this.queryProvenance=$('p','ht-query-provenance');
             // Variables are runtime input: one "name := value;" line each, converted to a JSON object before a request.
             // No preview is shown below the field; invalid input marks the field and explains the problem in its tooltip.
-            this.variablesHelp=$('p','ht-context','One variable per line: name := value; (the semicolon is optional). Strings use double quotes; numbers, true, false and null have no quotes; arrays and objects use JSON. Values are not stored with the service.');
-            editor.append(this.queryStatus,this.queryProvenance,field('Name',this.name),field('Category',this.category),field('Description',this.description),field('operationName',this.operation),$('h3','','GraphQL'),this.editorHost,$('label','ht-field','Variables'),variablesBox,this.variablesHelp,bar,this.queryOutput);grid.append(this.queryList,editor);this.queryPager=this.pager('services',()=>this.loadQueries());p.append(views,$('h2','','GraphQL Services · '+this.serviceLabel()),this.serviceHint,grid,this.queryPager.root);
+            this.variablesHelp=$('p','ht-context',tr('One variable per line: name := value; (the semicolon is optional). Strings use double quotes; numbers, true, false and null have no quotes; arrays and objects use JSON. Values are not stored with the service.'));
+            editor.append(this.queryStatus,this.queryProvenance,field(tr('Name'),this.name),field(tr('Category'),this.category),field(tr('Description'),this.description),field('operationName',this.operation),$('h3','','GraphQL'),this.editorHost,$('label','ht-field',tr('Variables')),variablesBox,this.variablesHelp,bar,this.queryOutput);grid.append(this.queryList,editor);this.queryPager=this.pager('services',()=>this.loadQueries());p.append(views,$('h2','','GraphQL Services · '+this.serviceLabel()),this.serviceHint,grid,this.queryPager.root);
             for(const n of [this.name,this.category,this.description,this.operation])n.addEventListener('input',()=>this.queryChanged());
             this.variables.addEventListener('input',()=>{this.markVariables();this.updateActions();});this.variables.addEventListener('scroll',()=>{this.variablesHighlight.scrollTop=this.variables.scrollTop;this.variablesHighlight.scrollLeft=this.variables.scrollLeft;});this.markVariables();
         }
@@ -931,13 +949,13 @@
         }
         draftString(){return this.queryString({name:this.name.value,category:this.category.value,description:this.description.value,operation_name:this.operation.value,query:this.editor?.getValue()||''});}
         variablesValue(){return parseVariablesText(this.variables.value);}
-        markVariables(){if(!this.variables)return;if(this.variablesHighlight){/* A trailing space keeps the last empty line as tall as in the textarea. */renderTokens(this.variablesHighlight,[...variableTokens(this.variables.value),['plain',' ']]);}try{this.variablesValue();this.variables.removeAttribute('aria-invalid');this.variables.title='';}catch(error){this.variables.setAttribute('aria-invalid','true');this.variables.title=error.message;}}
+        markVariables(){if(!this.variables)return;if(this.variablesHighlight){/* A trailing space keeps the last empty line as tall as in the textarea. */renderTokens(this.variablesHighlight,[...variableTokens(this.variables.value),['plain',' ']]);}try{this.variablesValue();this.variables.removeAttribute('aria-invalid');this.variables.title='';}catch(error){this.variables.setAttribute('aria-invalid','true');this.variables.title=tr(error.message);}}
         get dirty(){return this.base!==undefined&&this.base!==this.draftString();}
-        confirmReplace(){return !this.dirty||window.confirm('Discard the unsaved service draft?');}
+        confirmReplace(){return !this.dirty||window.confirm(tr('Discard the unsaved service draft?'));}
         payload(){return {name:this.name.value,category:this.category.value.trim()||(this.serviceKind==='mutation'?'Custom Mutations':'Custom Queries'),description:this.description.value,operation_name:this.operation.value||null,query:this.editor.getValue()};}
-        setQuery(q={}){this.copiedFrom=q.copied_from||'';this.draftProvenance=q.provenance||'GraphQL-Services';this.queryEpoch=(this.queryEpoch||0)+1;this.query=q.query_id?q:null;this.name.value=q.name||'';this.category.value=q.category||(this.serviceKind==='mutation'?'Custom Mutations':'Custom Queries');this.description.value=q.description||'';this.operation.value=q.operation_name||'';this.editor.setValue(q.query||'',-1);if(!q.keep_variables)this.variables.value=formatVariablesText(q.variables);this.markVariables();this.base=this.draftString();this.validation=null;this.queryOutput.textContent=q.query_id?`${this.serviceLabel()} ${q.query_id} · Revision ${q.revision}`:'New unsaved draft';this.updateActions();}
+        setQuery(q={}){this.copiedFrom=q.copied_from||'';this.draftProvenance=q.provenance||'GraphQL-Services';this.queryEpoch=(this.queryEpoch||0)+1;this.query=q.query_id?q:null;this.name.value=q.name||'';this.category.value=q.category||(this.serviceKind==='mutation'?'Custom Mutations':'Custom Queries');this.description.value=q.description||'';this.operation.value=q.operation_name||'';this.editor.setValue(q.query||'',-1);if(!q.keep_variables)this.variables.value=formatVariablesText(q.variables);this.markVariables();this.base=this.draftString();this.validation=null;this.queryOutput.textContent=q.query_id?`${this.serviceLabel()} ${q.query_id} · Revision ${q.revision}`:tr('New unsaved draft');this.updateActions();}
         newQuery(copy=false){if(!copy&&!this.confirmReplace())return;const q=copy?{...this.payload(),name:this.name.value+' (Copy)',copied_from:this.query?.query_id||this.copiedFrom,provenance:this.query?.provenance||this.draftProvenance,keep_variables:true}:{};this.setQuery(q);if(copy)this.base='';}
-        async loadQueries(serial=this.sequence){const data=await call('list_services',{...this.serviceScope(),start:this.starts.services,page_size:50});if(serial!==this.sequence)return;this.mutationExecution=data.mutation_execution||null;this.queryList.replaceChildren($('h3','',this.serviceKind==='mutation'?'Saved Mutations':'Saved Queries'));for(const q of data.rows)this.queryList.append(button(`${q.name} · r${q.revision} · Provenance=${q.provenance||'Legacy (unbekannt)'}`,()=>{if(!this.busy&&this.confirmReplace())this.setQuery(q);}));this.queryPager.update(data.has_more);
+        async loadQueries(serial=this.sequence){const data=await call('list_services',{...this.serviceScope(),start:this.starts.services,page_size:50});if(serial!==this.sequence)return;this.mutationExecution=data.mutation_execution||null;this.queryList.replaceChildren($('h3','',this.serviceKind==='mutation'?tr('Saved Mutations'):tr('Saved Queries')));for(const q of data.rows)this.queryList.append(button(`${q.name} · r${q.revision} · ${tr('Provenance')}=${q.provenance||tr('Legacy (unknown)')}`,()=>{if(!this.busy&&this.confirmReplace())this.setQuery(q);}));this.queryPager.update(data.has_more);
             const queryId=new URLSearchParams(location.search).get('query');
             if(queryId && queryId!==this.loadedQueryId && queryId!==this.query?.query_id && !this.dirty) {const result=await call('get_query',{...this.scope(),query_id:queryId});if(serial===this.sequence){if(result.query.service_kind!==this.serviceKind){this.openService(result.query.service_kind,queryId);return;}this.setQuery(result.query);this.loadedQueryId=queryId;}}
         }
@@ -949,7 +967,7 @@
             // The acknowledgement defines the saved base, even if the local buffer has changed.
             // Never replace the live Ace buffer or form fields with the response.
             this.query=data.query;this.draftProvenance=data.query.provenance;this.base=this.queryString(data.query);this.validation=null;
-            this.queryOutput.textContent=`Saved · Revision ${data.query.revision}${this.dirty?' · Additional local changes are not saved.':''}`;
+            this.queryOutput.textContent=format('Saved · Revision {0}',data.query.revision)+(this.dirty?' · '+tr('Additional local changes are not saved.'):'');
             await this.loadQueries();
         }
         async validateQuery(){
@@ -967,7 +985,7 @@
             const variables=this.variablesValue();
             // Never run an older saved revision silently: unsaved editor content is saved and validated first, on request only.
             if(!this.query||this.dirty){
-                if(!window.confirm('The editor has unsaved changes. Save them as a new revision, validate the query and then execute it once?'))return;
+                if(!window.confirm(tr('The editor has unsaved changes. Save them as a new revision, validate the query and then execute it once?')))return;
                 const before=this.queryEpoch;await this.saveQuery();
                 if(before!==this.queryEpoch||!this.query||this.dirty)throw new Error('The editor changed while saving. Nothing was executed.');
             }
@@ -979,7 +997,7 @@
                 this.query={...this.query,status:checked.query.status};this.validation=checked;
             }
             if(stamp!==this.draftString())throw new Error('The editor changed during validation. Nothing was executed.');
-            this.queryOutput.textContent=`Executing ${this.serviceLabel()} ${queryId} · Revision ${revision} once against HERO …`;
+            this.queryOutput.textContent=format('Executing {0} {1} · Revision {2} once against HERO …',this.serviceLabel(),queryId,revision);
             const result=await call('execute_service',{...this.serviceScope(true),query_id:queryId,expected_revision:revision,variables},true);
             if(epoch!==this.queryEpoch||queryId!==this.query?.query_id)return;
             this.renderExecution(result);
@@ -987,9 +1005,9 @@
         renderExecution(result){
             // Text only: HERO data is never interpreted as HTML. The full result opens in its own dialog.
             const head=`${result.operation||''} · Revision ${result.revision} · Schema ${String(result.schema_fingerprint||'').slice(0,12)}…`;
-            const label={OK:'HERO response',PARTIAL:'Partial HERO response with GraphQL errors',TOO_LARGE:'HERO response too large to display'}[result.status]
-                ||{GRAPHQL:'GraphQL error returned by HERO',TRANSPORT:'HTTP/transport error',RESPONSE:'Invalid HERO response'}[result.error_kind]||'HERO request failed';
-            this.queryOutput.textContent=`${label} (${result.status}${result.error_code?' · '+result.error_code:''}) · ${head}${result.size_bytes!==undefined?' · '+result.size_bytes+' bytes':''}\nThe result is shown in the GraphQL Query Result window and is not stored.`;
+            const label=tr({OK:'HERO response',PARTIAL:'Partial HERO response with GraphQL errors',TOO_LARGE:'HERO response too large to display'}[result.status]
+                ||{GRAPHQL:'GraphQL error returned by HERO',TRANSPORT:'HTTP/transport error',RESPONSE:'Invalid HERO response'}[result.error_kind]||'HERO request failed');
+            this.queryOutput.textContent=`${label} (${tr(result.status)}${result.error_code?' · '+result.error_code:''}) · ${head}${result.size_bytes!==undefined?' · '+result.size_bytes+' bytes':''}\n${tr('The result is shown in the GraphQL Query Result window and is not stored.')}`;
             this.queryOutput.dataset.state=result.status;
             this.showQueryResult(result,label,head);
         }
@@ -1003,40 +1021,40 @@
             const body=$('div','ht-result');
             const status=$('div','ht-result-status');status.dataset.state=result.status;status.setAttribute('role','status');
             status.append($('strong','',label),$('div','',head));
-            if(result.size_bytes!==undefined)status.append($('div','',`Response size: ${result.size_bytes} bytes${result.limit_bytes?' (display limit '+result.limit_bytes+' bytes)':''}`));
+            if(result.size_bytes!==undefined)status.append($('div','',result.limit_bytes?format('Response size: {0} bytes (display limit {1} bytes)',result.size_bytes,result.limit_bytes):format('Response size: {0} bytes',result.size_bytes)));
             const summary=hasData?resultSummary(result.data):[];
-            if(summary.length)status.append($('div','','Delivered: '+summary.join(' · ')));
-            if(hasData&&!colored)status.append($('div','','Colours are turned off for this large result; the text is complete.'));
+            if(summary.length)status.append($('div','',format('Delivered: {0}',summary.join(' · '))));
+            if(hasData&&!colored)status.append($('div','',tr('Colours are turned off for this large result; the text is complete.')));
             body.append(status);
             // HTTP/transport failures and GraphQL errors are labelled separately; partial data stays visible below.
             if(result.status==='ERROR'||result.status==='PARTIAL'||result.status==='TOO_LARGE'){
                 const errorsBox=$('div','ht-result-errors');errorsBox.setAttribute('role','alert');
-                errorsBox.append($('strong','',result.error_kind==='GRAPHQL'?'GraphQL errors':result.error_kind==='TRANSPORT'?'HTTP/transport error':result.error_kind==='RESPONSE'?'Invalid response':'Not displayed'),$('div','',result.message||''));
+                errorsBox.append($('strong','',result.error_kind==='GRAPHQL'?tr('GraphQL errors'):result.error_kind==='TRANSPORT'?tr('HTTP/transport error'):result.error_kind==='RESPONSE'?tr('Invalid response'):tr('Not displayed')),$('div','',tr(result.message||'')));
                 const list=$('ul','');for(const message of result.graphql_errors||[])list.append($('li','',message));if(list.childElementCount)errorsBox.append(list);
                 body.append(errorsBox);
             }
             const toolbar=$('div','ht-toolbar ht-result-views');const output=$('pre','ht-result-output');output.setAttribute('tabindex','0');
             let view='readable';
-            const show=next=>{view=next;if(colored)renderTokens(output,tokens[next]());else output.textContent=hasData?views[next]:(result.status==='TOO_LARGE'?'The response was not displayed because it exceeds the display limit. Nothing was truncated silently.':'No data was delivered.');for(const [key,b] of buttons)b.setAttribute('aria-pressed',String(key===next));};
-            const buttons=[['readable',button('Readable',()=>show('readable'))],['raw',button('Raw JSON',()=>show('raw'))]];
+            const show=next=>{view=next;if(colored)renderTokens(output,tokens[next]());else output.textContent=hasData?views[next]:(result.status==='TOO_LARGE'?tr('The response was not displayed because it exceeds the display limit. Nothing was truncated silently.'):tr('No data was delivered.'));for(const [key,b] of buttons)b.setAttribute('aria-pressed',String(key===next));};
+            const buttons=[['readable',button(tr('Readable'),()=>show('readable'))],['raw',button(tr('Raw JSON'),()=>show('raw'))]];
             for(const [,b] of buttons){b.disabled=!hasData;toolbar.append(b);}
-            const copy=button('Copy Result',()=>{const text=output.textContent;if(window.frappe?.utils?.copy_to_clipboard)frappe.utils.copy_to_clipboard(text);else navigator.clipboard?.writeText(text);});
-            toolbar.append(copy);output.setAttribute('aria-label','GraphQL Query Result');body.append(toolbar,output);show('readable');
-            const dialog=new frappe.ui.Dialog({title:'GraphQL Query Result',size:'extra-large',fields:[{fieldtype:'HTML',fieldname:'result'}],primary_action_label:'Close',primary_action:()=>dialog.hide()});
+            const copy=button(tr('Copy Result'),()=>{const text=output.textContent;if(window.frappe?.utils?.copy_to_clipboard)frappe.utils.copy_to_clipboard(text);else navigator.clipboard?.writeText(text);});
+            toolbar.append(copy);output.setAttribute('aria-label',tr('GraphQL Query Result'));body.append(toolbar,output);show('readable');
+            const dialog=new frappe.ui.Dialog({title:tr('GraphQL Query Result'),size:'extra-large',fields:[{fieldtype:'HTML',fieldname:'result'}],primary_action_label:tr('Close'),primary_action:()=>dialog.hide()});
             dialog.$wrapper.addClass('admin-compat-modal ht-result-dialog');
             dialog.fields_dict.result.$wrapper[0].replaceChildren(body);
             this.resultDialog=dialog;dialog.show();
         }
-        async deleteQuery(){if(!this.query||!window.confirm(this.dirty?'Delete the saved service and discard the unsaved draft?':'Delete the saved service?'))return;await call('delete_query',{...this.serviceScope(),query_id:this.query.query_id,expected_revision:this.query.revision},true);this.setQuery();await this.loadQueries();}
+        async deleteQuery(){if(!this.query||!window.confirm(tr(this.dirty?'Delete the saved service and discard the unsaved draft?':'Delete the saved service?')))return;await call('delete_query',{...this.serviceScope(),query_id:this.query.query_id,expected_revision:this.query.revision},true);this.setQuery();await this.loadQueries();}
         updateActions(){if(!this.saveButton)return;
             const analyzerAllowed=!!this.context?.can_write&&!this.context.needs_binding_update&&!this.busy;
             for(const target of [this.typeDetail,this.nodeDetail,this.focusDetail]){const state=target?._heroService;if(!state)continue;state.save.disabled=!analyzerAllowed||!state.operationId||!!state.form;if(state.form)state.form.save.disabled=!analyzerAllowed||state.form.saved;}
-            if(this.queryProvenance)this.queryProvenance.textContent='Provenance='+(this.query?.provenance||this.draftProvenance||'GraphQL-Services');
+            if(this.queryProvenance)this.queryProvenance.textContent=tr('Provenance')+'='+(this.query?.provenance||this.draftProvenance||'GraphQL-Services');
             const gate=this.mutationExecution;
             if(this.serviceHint)this.serviceHint.textContent=this.serviceKind==='mutation'
-                ? `Mutation drafts are local-only, stored locally, and validated only against the saved schema. Execution from this editor is blocked. Server mutation gate: ${gate?.mutation_execution_status||'unknown'}${gate?.mutation_execution_reason?' · '+gate.mutation_execution_reason:''}`
-                : 'Execute Query reads data from HERO once on an explicit click, using the saved and validated revision. Results open in a separate window and are never stored, synchronized or written to Frappe.';
-this.queryStatus.textContent=this.query?`${this.serviceLabel()} ${this.query.query_id} · Revision ${this.query.revision}${this.dirty?' · Unsaved changes':''}`:'New unsaved draft';const allowed=!!this.context?.can_write&&!this.context.needs_binding_update&&!this.busy&&!!this.schema;for(const b of [this.newButton,this.copyButton])b.disabled=!allowed;this.saveButton.disabled=!allowed;this.saveButton.title=this.serviceKind==='mutation'?'Stores a local-only disabled mutation draft.':' ';this.validateButton.disabled=!allowed;this.executeButton.disabled=!allowed||!this.canExecuteQuery();this.executeButton.title=this.serviceKind==='mutation'?'HERO_MUTATION_EXECUTION_DISABLED':this.dirty||!this.query?'Asks to save and validate the changes, then runs that revision once, read-only.':'Runs the saved revision once, read-only.';this.deleteButton.disabled=!allowed||!this.query;this.bindButton.disabled=!this.context?.can_write||this.busy;}
+                ? format('Mutation drafts are local-only, stored locally, and validated only against the saved schema. Execution from this editor is blocked. Server mutation gate: {0}{1}',tr(gate?.mutation_execution_status||'unknown'),gate?.mutation_execution_reason?' · '+tr(gate.mutation_execution_reason):'')
+                : tr('Execute Query reads data from HERO once on an explicit click, using the saved and validated revision. Results open in a separate window and are never stored, synchronized or written to Frappe.');
+this.queryStatus.textContent=this.query?`${this.serviceLabel()} ${this.query.query_id} · Revision ${this.query.revision}${this.dirty?' · '+tr('Unsaved changes'):''}`:tr('New unsaved draft');const allowed=!!this.context?.can_write&&!this.context.needs_binding_update&&!this.busy&&!!this.schema;for(const b of [this.newButton,this.copyButton])b.disabled=!allowed;this.saveButton.disabled=!allowed;this.saveButton.title=this.serviceKind==='mutation'?tr('Stores a local-only disabled mutation draft.'):' ';this.validateButton.disabled=!allowed;this.executeButton.disabled=!allowed||!this.canExecuteQuery();this.executeButton.title=this.serviceKind==='mutation'?tr('Mutation execution is not available in this editor.'):this.dirty||!this.query?tr('Asks to save and validate the changes, then runs that revision once, read-only.'):tr('Runs the saved revision once, read-only.');this.deleteButton.disabled=!allowed||!this.query;this.bindButton.disabled=!this.context?.can_write||this.busy;}
         destroy(){
             this.cancelGraph?.();
             this.focusDialog?.hide?.();
@@ -1050,5 +1068,5 @@ this.queryStatus.textContent=this.query?`${this.serviceLabel()} ${this.query.que
             this.root?.remove?.();
         }
     }
-    window.hero_workspace_tools={Workspace,graphqlText:Object.freeze({parseVariablesText,formatVariablesText,readableResult,resultSummary,jsonTokens,variableTokens,readableTokens,GRAPHQL_HIGHLIGHT_RULES})};
+    window.hero_workspace_tools={Workspace,graphqlText:Object.freeze({parseVariablesText,formatVariablesText,readableResult,resultSummary,jsonTokens,variableTokens,readableTokens,graphLabelsNotice,snapshotCoverageLabel,savedServiceLabel,GRAPHQL_HIGHLIGHT_RULES})};
 })();

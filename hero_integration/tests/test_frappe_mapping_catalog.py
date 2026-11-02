@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+import sys
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -12,6 +13,69 @@ from hero_integration.services.mapping_suggestions import suggest_from_source
 class TestFrappeMappingCatalog(unittest.TestCase):
     def setUp(self):
         self.metadata = _Metadata()
+
+    def test_both_picker_adapters_check_denied_doctypes_without_throwing(self):
+        from hero_integration import api
+        from hero_integration.services.frappe_mapping_catalog import FrappePickerMetadata
+
+        calls, messages = [], []
+        def permission(doctype, ptype, throw=False):
+            calls.append((doctype, ptype, throw))
+            if doctype == 'Allowed':
+                return True
+            if throw:
+                messages.append(doctype)
+                raise PermissionError(doctype)
+            return False
+        frappe = SimpleNamespace(get_meta=lambda _name: SimpleNamespace(istable=False),
+                                 has_permission=permission, PermissionError=PermissionError)
+        with patch.object(api, 'frappe', frappe), patch.dict(sys.modules, {'frappe': frappe}):
+            for adapter in (api._FrappePickerMetadata(), FrappePickerMetadata()):
+                self.assertTrue(adapter.can_write('Allowed'))
+                self.assertFalse(adapter.can_write('Denied'))
+        self.assertEqual(messages, [])
+        self.assertTrue(all(not throw for _, _, throw in calls))
+
+    def test_catalog_scans_doctypes_once_and_keeps_app_and_search_filters(self):
+        class Counting(_Metadata):
+            def __init__(self):
+                super().__init__()
+                self.scans = 0
+            def doctypes(self):
+                self.scans += 1
+                return super().doctypes()
+        metadata = Counting()
+        result = catalog(metadata, app_name='acme_app', search='case')
+        self.assertEqual(metadata.scans, 1)
+        self.assertEqual(result['apps'], ['acme_app', 'erpnext'])
+        self.assertEqual([entry['doctype'] for entry in result['doctypes']], ['Acme Case'])
+
+    def test_field_catalog_skips_unwritable_and_non_target_doctypes(self):
+        class Strict(_Metadata):
+            def fields(self, name):
+                if name in {'Denied Record', 'Acme Row', 'Acme Settings'}:
+                    raise AssertionError('disabled DocType must not be enumerated')
+                return super().fields(name)
+        result = fields(Strict())
+        self.assertTrue(result)
+        self.assertTrue(all(item.doctype not in {'Denied Record', 'Acme Row', 'Acme Settings'} for item in result))
+        with self.assertRaisesRegex(ValueError, 'No write permission'):
+            validate_draft_target('HeroCustomers', 'string|null', 'Denied Record', 'subject', Strict())
+
+    def test_visible_catalog_reasons_have_german_translations(self):
+        import csv
+        from pathlib import Path
+
+        translation_file = Path(__file__).resolve().parents[1] / 'translations' / 'de.csv'
+        with translation_file.open(encoding='utf-8', newline='') as stream:
+            messages = dict(csv.reader(stream))
+        entries = catalog(self.metadata)['doctypes']
+        reasons = [entry['reason'] for entry in entries if entry['reason']]
+        for entry in entries:
+            if entry['selectable']:
+                reasons.extend(item.reason for item in fields(self.metadata, doctype=entry['doctype']) if item.reason)
+        self.assertTrue(reasons)
+        self.assertEqual([reason for reason in reasons if reason not in messages], [])
 
     def test_reviewed_writeback_source_does_not_unprotect_inbound_target(self):
         self.metadata._fields['Customer'] = [
@@ -53,7 +117,7 @@ class TestFrappeMappingCatalog(unittest.TestCase):
                     raise PermissionError('denied candidate must not be enumerated')
                 return [_field(f'field_{index:03}', f'Field {index}', 'Data') for index in range(60)]
 
-        actor = SimpleNamespace(only_for=lambda role: None, get_all=lambda *args, **kwargs: [])
+        actor = SimpleNamespace(only_for=lambda role: None, get_all=lambda *args, **kwargs: [], _=lambda text: text)
         snapshot = SimpleNamespace(name='synthetic')
         def call(metadata):
             with patch.object(api, 'frappe', actor), patch.object(api, '_FrappePickerMetadata', return_value=metadata), patch.object(api, '_validated_snapshot', return_value=(snapshot, {})):
@@ -81,6 +145,25 @@ class TestFrappeMappingCatalog(unittest.TestCase):
                 raise RuntimeError('unexpected metadata failure')
         with self.assertRaisesRegex(RuntimeError, 'unexpected metadata failure'):
             call(Broken())
+
+    def test_contract_blockers_follow_user_language_without_changing_gate(self):
+        from hero_integration import api
+        from hero_integration.services.frappe_writeback import DEFINITIONS
+
+        operation = next(iter(DEFINITIONS.values())).operation
+        contract = SimpleNamespace(name="CONTRACT-001", operation_name=operation, status="Draft")
+        source = "Technical contract {0} is {1}; it must be approved before this mapping can be activated."
+        translated = "Technischer Vertrag {0}: Status {1}. Mapping benötigt eine Freigabe."
+        messages = {source: translated, "Draft": "Entwurf"}
+        actor = SimpleNamespace(only_for=lambda role: None, get_all=lambda *args, **kwargs: [contract],
+                                _=lambda text: messages.get(text, text))
+        with patch.object(api, 'frappe', actor), patch.object(api, '_FrappePickerMetadata', return_value=self.metadata), \
+             patch.object(api, '_validated_snapshot', return_value=(SimpleNamespace(name='synthetic'), {})):
+            result = api.writeback_mapper_catalog('synthetic')
+        state = next(item for item in result['contracts'] if item['operation'] == operation)
+        self.assertFalse(state['activation_ready'])
+        self.assertEqual(state['blocker'], translated.format('CONTRACT-001', 'Entwurf'))
+        self.assertIs(state['contracts'][0], contract)
 
     def test_installed_apps_and_doctypes_are_runtime_metadata_not_an_erpnext_list(self):
         result = catalog(self.metadata)

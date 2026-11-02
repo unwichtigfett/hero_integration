@@ -6,11 +6,12 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from hashlib import sha256
 
-from hero_integration.client.graphql import assert_read_only
+from hero_integration.client.graphql import HeroClientError, assert_read_only
+from hero_integration.services.localized_error import LocalizedError
 from hero_integration.services.projection_contracts import CONTRACTS as PROJECTIONS, approved_query
 
 
-class ReadContractError(ValueError):
+class ReadContractError(LocalizedError):
     pass
 
 
@@ -85,7 +86,7 @@ def from_documents(service, mapping, snapshot) -> ReadContract:
         from hero_integration.services.projection_contracts import schema_incompatibility
         problem = schema_incompatibility(target, snapshot)
         if problem:
-            raise ReadContractError('Projection does not match this schema snapshot: ' + problem + '.')
+            raise ReadContractError('Projection does not match this schema snapshot: {0}.', problem)
         if service.query_document.strip() != approved_query(target).strip():
             if target != 'HeroTasks' or onboarding is None or not isinstance(config.get('generated_task_seal'), dict):
                 raise ReadContractError('Projection requires the exact reviewed read-only query.')
@@ -224,7 +225,10 @@ def _common_contract(service, mapping, snapshot) -> tuple[ReadContract, Mapping[
         raise ReadContractError('The selected read mapping no longer matches the snapshot source.')
     if int(getattr(service, "approved_mapping_revision", 0) or 0) != int(mapping.mapping_revision or 0):
         raise ReadContractError("The selected read mapping approval is stale.")
-    assert_read_only(service.query_document)
+    try:
+        assert_read_only(service.query_document)
+    except HeroClientError as error:
+        raise ReadContractError.from_error(error) from error
     try:
         from hero_integration.services.personal_mapping_content import unique_json_object
         config = json.loads(mapping.mapping_json, object_pairs_hook=unique_json_object)
@@ -259,6 +263,6 @@ def value_at(value: object, path: str) -> object:
     current = value
     for segment in path.split("."):
         if not isinstance(current, Mapping) or segment not in current:
-            raise ReadContractError(f"The selected response path {path!r} is absent.")
+            raise ReadContractError("The selected response path {0} is absent.", repr(path))
         current = current[segment]
     return current

@@ -40,7 +40,7 @@ def protect_external_task_deadline(doc, method=None) -> None:
     old = previous.get('custom_hero_due_date') if previous else None
     normalize = lambda value: get_datetime(value) if value else None
     if normalize(current) != normalize(old):
-        frappe.throw('The external HERO deadline is managed by HERO Integration.', frappe.PermissionError)
+        frappe.throw(frappe._('The external HERO deadline is managed by HERO Integration.'), frappe.PermissionError)
 
 
 def field_hashes(values: Mapping[str, object]) -> dict[str, str]:

@@ -13,6 +13,7 @@ function workspaceUi({ styleFailure = false, loaded = {}, requests = [], capture
         setTimeout,
         window: {...loaded},
         location: { search: "" },
+        __: value => value,
         frappe: {
             csrf_token: "",
             pages: { "hero-integration": {} },
@@ -31,6 +32,16 @@ function workspaceUi({ styleFailure = false, loaded = {}, requests = [], capture
     return sandbox.window.hero_integration_ui;
 }
 
+test("workspace delegates its text to the current Frappe translation dictionary", () => {
+    const messages = {"Settings": "Einstellungen"};
+    const sandbox = {window: {}, frappe: {}, __: value => messages[value] || value};
+    vm.runInNewContext(source, sandbox, {filename: "hero_workspace.js"});
+    assert.equal(sandbox.window.hero_integration_i18n.text("Settings"), "Einstellungen");
+    assert.equal(sandbox.window.hero_integration_i18n.text("Unknown text"), "Unknown text");
+    delete messages.Settings;
+    assert.equal(sandbox.window.hero_integration_i18n.text("Settings"), "Settings");
+});
+
 test("a stylesheet failure reaches the HERO error boundary", async () => {
     await assert.rejects(
         workspaceUi({ styleFailure: true }).ensureStyles(),
@@ -47,7 +58,7 @@ test("Frappe's resolving script error path is surfaced through missing module co
 
 test("the content-addressed editor is reused rather than loading an unhashed legacy copy", async () => {
     const requests = [];
-    const loaded = Object.fromEntries(["hero_workspace_tools", "hero_integration_overview", "hero_integration_settings_ui", "hero_integration_api_summary", "hero_integration_mapping_editor", "hero_integration_migration"].map((name) => [name, {}]));
+    const loaded = Object.fromEntries(["hero_workspace_tools", "hero_integration_overview", "hero_integration_settings_ui", "hero_integration_api_summary", "hero_integration_mapping_editor", "hero_integration_diagnostics", "hero_integration_migration"].map((name) => [name, {}]));
     await workspaceUi({loaded, requests}).ensureStyles();
     assert.deepEqual(requests, []);
 });

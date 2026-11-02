@@ -98,7 +98,7 @@ class TestParentlessFrappeStorage(unittest.TestCase):
             new_definition_json = json.dumps(context)
             def is_new(self): return True
         def fail(message, *args): raise ValueError(message)
-        fake = SimpleNamespace(session=SimpleNamespace(user='alice@example.invalid'), throw=fail, PermissionError=PermissionError)
+        fake = SimpleNamespace(_=lambda message: message, session=SimpleNamespace(user='alice@example.invalid'), throw=fail, PermissionError=PermissionError)
         with patch.object(controller, 'frappe', fake), patch.object(storage, 'assert_storage_write'):
             doc = Doc()
             controller.HEROMappingDraft.validate(doc)
@@ -127,7 +127,7 @@ class TestParentlessFrappeStorage(unittest.TestCase):
         current.is_new = lambda: False
         current.get_doc_before_save = lambda: previous
         def fail(message, *_): raise ValueError(message)
-        fake = SimpleNamespace(session=SimpleNamespace(user='owner'), throw=fail, PermissionError=PermissionError)
+        fake = SimpleNamespace(_=lambda message: message, session=SimpleNamespace(user='owner'), throw=fail, PermissionError=PermissionError)
         with patch.object(controller, 'frappe', fake), patch.object(storage, 'assert_storage_write'):
             controller.HEROMappingDraft.validate(current)
             current.generation = 1

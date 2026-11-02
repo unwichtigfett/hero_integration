@@ -186,3 +186,33 @@ test('colours: GraphQL editor rules classify keywords, types, variables and valu
     assert.ok(!/\((?!\?)/.test(groups), `Ace rules must not use capture groups: ${regex}`);
   }
 });
+
+test('variable validation uses the active language while keeping names and line numbers', () => {
+  const messages = {'Line {0}':'Zeile {0}', '{0}: variable "{1}" is defined more than once.':'{0}: Variable „{1}“ ist mehrfach definiert.',
+    '{0}: the integer is too large to keep exactly; write it as a string in double quotes.':'{0}: Ganzzahl ist zu groß.'};
+  window.hero_integration_i18n = {text: value => messages[value] || value};
+  assert.throws(() => parseVariablesText('id := 1\nid := 2'), /Zeile 2: Variable „id“ ist mehrfach definiert/);
+  assert.throws(() => parseVariablesText('big := 12345678901234567890'), /Zeile 1: Ganzzahl ist zu groß/);
+  delete window.hero_integration_i18n;
+});
+
+test('graph coverage and label notices follow the active language', () => {
+  const messages = {'{0} types · {1} nodes · {2} relations':'{0} Typen · {1} Knoten · {2} Beziehungen',
+    'Overview without node text; use selection and Inspector for names and details.':'Übersicht ohne Knotentext.',
+    'Reduced edge labels: {0} of {1} visible relationships are labeled. All relationships remain available in node focus and Inspector.':'{0} von {1} Beziehungen beschriftet.',
+    'graph analysis unavailable':'Graphanalyse nicht verfügbar'};
+  window.hero_integration_i18n = {text: value => messages[value] || value};
+  const {graphLabelsNotice, snapshotCoverageLabel} = window.hero_workspace_tools.graphqlText;
+  assert.equal(snapshotCoverageLabel({types:2, nodes:3, edges:4}), '2 Typen · 3 Knoten · 4 Beziehungen');
+  assert.equal(snapshotCoverageLabel({}), 'Graphanalyse nicht verfügbar');
+  assert.equal(graphLabelsNotice(true, 2, 5), 'Übersicht ohne Knotentext. 2 von 5 Beziehungen beschriftet.');
+  delete window.hero_integration_i18n;
+  assert.equal(graphLabelsNotice(false, 2, 2), 'All visible relationships are labeled.');
+});
+
+test('saved service notice translates around unchanged service data', () => {
+  window.hero_integration_i18n = {text: value => value === '{0} saved · Provenance={1}' ? '{0} gespeichert · Herkunft={1}' : value};
+  assert.equal(window.hero_workspace_tools.graphqlText.savedServiceLabel('Query A', 'GraphQL-Services'), 'Query A gespeichert · Herkunft=GraphQL-Services');
+  delete window.hero_integration_i18n;
+  assert.equal(window.hero_workspace_tools.graphqlText.savedServiceLabel('Query A', 'GraphQL-Services'), 'Query A saved · Provenance=GraphQL-Services');
+});

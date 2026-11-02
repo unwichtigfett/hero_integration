@@ -39,7 +39,7 @@ def setup_company_structure(company: str | None = None) -> dict:
     company = company or frappe.db.get_single_value("Global Defaults", "default_company")
     abbr = frappe.db.get_value("Company", company, "abbr")
     if not abbr:
-        frappe.throw("A company with an abbreviation is required.")
+        frappe.throw(frappe._("A company with an abbreviation is required."))
     created = {"Department": [], "Designation": [], "Role Profile": [], "HD Ticket Type": []}
     root = "All Departments" if frappe.db.exists("Department", "All Departments") else None
     for base in DEPARTMENTS:

@@ -39,6 +39,7 @@
         "/assets/hero_integration/js/hero_settings.js",
         "/assets/hero_integration/js/hero_api_summary.js",
         "/assets/hero_integration/js/hero_mapping_editor.js",
+        "/assets/hero_integration/js/hero_diagnostics.js",
         "/assets/hero_integration/js/hero_migration.js",
     ];
     const REQUIRED_ASSET_GLOBALS = Object.freeze([
@@ -47,6 +48,7 @@
         ["hero_settings.js", "hero_integration_settings_ui"],
         ["hero_api_summary.js", "hero_integration_api_summary"],
         ["hero_mapping_editor.js", "hero_integration_mapping_editor"],
+        ["hero_diagnostics.js", "hero_integration_diagnostics"],
         ["hero_migration.js", "hero_integration_migration"],
     ]);
     const unsupported = new Set([
@@ -61,15 +63,15 @@
         "config_export", "config_import_preview", "config_import",
     ]);
     const errorMessage = (error) => {
-        if (typeof error === "string") return error;
-        if (typeof error?.message === "string" && error.message) return error.message;
+        if (typeof error === "string") return __(error);
+        if (typeof error?.message === "string" && error.message) return __(error.message);
         try {
             const messages = JSON.parse(error?._server_messages || "[]");
             const first = messages.map((item) => typeof item === "string" ? JSON.parse(item) : item).find(Boolean);
-            if (first?.message) return first.message;
+            if (first?.message) return __(first.message);
         } catch (_) { /* Frappe may return a non-JSON message. */ }
-        if (typeof error?.exc_type === "string") return `Server rejected the request (${error.exc_type}).`;
-        return "HERO workspace request failed. Retry the action or check the server log.";
+        if (typeof error?.exc_type === "string") return __("Server rejected the request ({0}).").replace("{0}", error.exc_type);
+        return __("HERO workspace request failed. Retry the action or check the server log.");
     };
     const request = (method, args = {}) =>
         frappe.call({method: `${API}.${method}`, args}).then((response) => {
@@ -115,7 +117,7 @@
         if (document.querySelector(`link[data-hero-asset="${path}"]`)) return resolve();
         const link = document.createElement("link");
         link.rel = "stylesheet"; link.href = assetUrl(path); link.dataset.heroAsset = path; link.onload = resolve;
-        link.onerror = () => reject(new Error(`HERO interface stylesheet could not be loaded: ${path}`));
+        link.onerror = () => reject(new Error(__("HERO interface stylesheet could not be loaded: {0}").replace("{0}", path)));
         document.head.append(link);
     });
     // Frappe owns script URL versioning. Its compatibility loader resolves even
@@ -130,7 +132,7 @@
             .filter(([, globalName]) => !window[globalName])
             .map(([asset]) => asset);
         if (missing.length) {
-            throw new Error(`HERO interface assets could not be loaded: ${missing.join(", ")}. Reload the page and contact an administrator if the problem persists.`);
+            throw new Error(__("HERO interface assets could not be loaded: {0}. Reload the page and contact an administrator if the problem persists.").replace("{0}", missing.join(", ")));
         }
     };
     let assets;
@@ -158,9 +160,8 @@
         return `/app/${CANONICAL_PAGE}?${query.toString()}`;
     }
 
-    // HERO Integration owns these strings. Keep them English even when Desk is
-    // running with another Frappe locale.
-    window.hero_integration_i18n = Object.freeze({text: (value) => String(value)});
+    // Use the language and translation dictionary supplied by Frappe Desk.
+    window.hero_integration_i18n = Object.freeze({text: (value) => __(String(value))});
     window.hero_integration_shell = Object.freeze({
         href: (_page, params = {}) => routeUrl("api", {hero_tool: params.tool}),
         mapping: () => routeUrl("mapping"),
@@ -199,31 +200,31 @@
             const identity = Object.freeze({...selection});
             return new Promise((resolve) => {
                 const dialog = new frappe.ui.Dialog({
-                    title: "Remember for Mapping",
+                    title: __("Remember for Mapping"),
                     fields: [
-                        {fieldname: "node_name", fieldtype: "Data", label: "Original node", read_only: 1, default: identity.node_name},
-                        {fieldname: "node_kind", fieldtype: "Data", label: "Node type", read_only: 1, default: identity.node_kind},
-                        {fieldname: "node_id", fieldtype: "Data", label: "GraphQL node ID", read_only: 1, default: identity.node_id},
+                        {fieldname: "node_name", fieldtype: "Data", label: __("Original node"), read_only: 1, default: identity.node_name},
+                        {fieldname: "node_kind", fieldtype: "Data", label: __("Node type"), read_only: 1, default: identity.node_kind},
+                        {fieldname: "node_id", fieldtype: "Data", label: __("GraphQL node ID"), read_only: 1, default: identity.node_id},
                         // The label is display only; the internal snapshot name is what gets saved.
-                        {fieldname: "snapshot_label", fieldtype: "Data", label: "Snapshot", read_only: 1, default: identity.snapshot_label || identity.snapshot_name},
-                        {fieldname: "alias", fieldtype: "Data", label: "Alias", reqd: 1,
-                            description: "A readable name for the Mapping Editor. It never replaces the technical node identity."},
+                        {fieldname: "snapshot_label", fieldtype: "Data", label: __("Snapshot"), read_only: 1, default: identity.snapshot_label || identity.snapshot_name},
+                        {fieldname: "alias", fieldtype: "Data", label: __("Alias"), reqd: 1,
+                            description: __("A readable name for the Mapping Editor. It never replaces the technical node identity.")},
                     ],
-                    primary_action_label: "Save",
+                    primary_action_label: __("Save"),
                     primary_action: async (values) => {
                         dialog.disable_primary_action();
                         try {
                             const result = await bookmarks.save(identity, values.alias);
                             dialog.hide();
-                            frappe.show_alert({message: result.existing ? "This node is already remembered under this alias." : "Node remembered for mapping. No mapping was created.", indicator: "green"});
+                            frappe.show_alert({message: __(result.existing ? "This node is already remembered under this alias." : "Node remembered for mapping. No mapping was created."), indicator: "green"});
                             resolve(result);
                         } catch (error) {
                             dialog.enable_primary_action();
-                            frappe.msgprint({title: "Remember for Mapping", message: frappe.utils.escape_html(error.message), indicator: "red"});
+                            frappe.msgprint({title: __("Remember for Mapping"), message: frappe.utils.escape_html(error.message), indicator: "red"});
                         }
                     },
                 });
-                dialog.set_secondary_action_label("Cancel");
+                dialog.set_secondary_action_label(__("Cancel"));
                 dialog.set_secondary_action(() => { dialog.hide(); resolve(null); });
                 dialog.show();
             });
@@ -238,12 +239,12 @@
     function navigation(active) {
         const root = document.createElement("nav");
         root.className = "hero-unified-navigation";
-        root.setAttribute("aria-label", "HERO Integration sections");
+        root.setAttribute("aria-label", __("HERO Integration sections"));
         Object.entries(SECTION_NAMES).filter(([section]) => isSystemManager || section === "mapping").forEach(([section, label]) => {
             const button = document.createElement("button");
             button.type = "button";
             button.className = "btn btn-default btn-sm";
-            button.textContent = label;
+            button.textContent = __(label);
             button.toggleAttribute("data-active", section === active);
             button.addEventListener("click", () => setRoute(section));
             root.append(button);
@@ -253,12 +254,12 @@
     function apiNavigation(active) {
         const root = document.createElement("nav");
         root.className = "hero-unified-api-navigation";
-        root.setAttribute("aria-label", "API & Schema tools");
+        root.setAttribute("aria-label", __("API & Schema tools"));
         Object.entries(API_TOOLS).forEach(([tool, label]) => {
             const button = document.createElement("button");
             button.type = "button";
             button.className = "btn btn-default btn-sm";
-            button.textContent = label;
+            button.textContent = __(label);
             button.toggleAttribute("data-active", tool === active);
             button.addEventListener("click", () => setRoute("api", {hero_tool: tool}));
             root.append(button);

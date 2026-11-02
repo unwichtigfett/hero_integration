@@ -6,6 +6,7 @@ import frappe
 from frappe.model.document import Document
 
 from hero_integration.services.graphql_contract import GraphQLContractError, parse_mutation
+from hero_integration.services.localized_error import translate_error
 
 
 class HEROMutationContract(Document):
@@ -14,14 +15,14 @@ class HEROMutationContract(Document):
         service = frappe.get_doc("HERO GraphQL Service", self.graphql_service)
         snapshot = frappe.get_doc("HERO GraphQL Schema Snapshot", service.schema_snapshot)
         if snapshot.analysis_status != "Validated" or snapshot.execution_contract_status == "Blocked":
-            frappe.throw("A compatible validated schema snapshot is required for a mutation contract.")
+            frappe.throw(frappe._("A compatible validated schema snapshot is required for a mutation contract."))
         try:
             mapping = json.loads(self.mapping_json)
             if not isinstance(mapping, dict):
                 raise ValueError("mapping must be an object")
             parsed = parse_mutation(service.query_document)
         except (ValueError, GraphQLContractError) as error:
-            frappe.throw(f"Invalid HERO mutation contract: {error}")
+            frappe.throw(frappe._("Invalid HERO mutation contract: {0}").format(translate_error(error, frappe._)))
         self.schema_snapshot = snapshot.name
         self.schema_fingerprint = snapshot.schema_fingerprint
         self.operation_name = parsed.root_field

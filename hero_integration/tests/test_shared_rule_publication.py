@@ -89,7 +89,7 @@ class TestSharedRulePublication(unittest.TestCase):
         snapshot = SimpleNamespace(analysis_status='Validated', snapshot_json='{}', schema_fingerprint='current')
         def get_doc(doctype, *_args, **_kwargs): return snapshot if doctype == 'HERO GraphQL Schema Snapshot' else original
         def fail(message, *_args): raise ValueError(message)
-        fake = SimpleNamespace(only_for=lambda *_: None, get_doc=get_doc, throw=fail, PermissionError=PermissionError,
+        fake = SimpleNamespace(_=lambda message: message, only_for=lambda *_: None, get_doc=get_doc, throw=fail, PermissionError=PermissionError,
             get_all=lambda *_args, **_kwargs: [SimpleNamespace(name='previous')])
         with patch.object(hero_frappe_mapping, 'frappe', fake), \
              patch.object(hero_frappe_mapping, 'analyze_snapshot', return_value=SimpleNamespace(fingerprint='current')), \
@@ -130,7 +130,7 @@ class TestSharedRulePublication(unittest.TestCase):
 
     def test_query_duplicate_binding_is_rejected_by_save_api(self):
         def fail(message): raise ValueError(message)
-        fake = SimpleNamespace(only_for=lambda _role: None, throw=fail)
+        fake = SimpleNamespace(_=lambda message: message, only_for=lambda _role: None, throw=fail)
         payload = '{"mapping_definition_ids":["one"],"mapping_definition_ids":["two"]}'
         with patch.object(api, 'frappe', fake):
             with self.assertRaisesRegex(ValueError, 'must be an object'):
@@ -139,7 +139,7 @@ class TestSharedRulePublication(unittest.TestCase):
     def test_historical_priority_patch_rejects_active_rule_before_any_write(self):
         writes = []
         def fail(message): raise ValueError(message)
-        fake = SimpleNamespace(get_all=lambda *_args, **_kwargs: [SimpleNamespace(name='active', priority=100)],
+        fake = SimpleNamespace(_=lambda message: message, get_all=lambda *_args, **_kwargs: [SimpleNamespace(name='active', priority=100)],
                                db=SimpleNamespace(set_value=lambda *args, **kwargs: writes.append(args)), throw=fail)
         with patch.object(normalize_mapping_priorities, 'frappe', fake):
             with self.assertRaisesRegex(ValueError, 'revision-safe reconciliation'):

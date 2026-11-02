@@ -47,7 +47,7 @@ class TestMappingExchange(unittest.TestCase):
         self.assertEqual('Conflict', result['state'])
 
     def _fake_api_frappe(self, calls, *, checkpoint_schema=True):
-        return SimpleNamespace(
+        return SimpleNamespace(_=lambda message: message,
             only_for=lambda role: calls.append(("only_for", role)),
             enqueue=lambda *args, **kwargs: calls.append(("enqueue", args, kwargs)),
             throw=lambda message: (_ for _ in ()).throw(ValueError(message)),

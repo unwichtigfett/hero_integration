@@ -6,10 +6,10 @@ from hero_integration.services.task_assignment_state import managed_assignment_a
 class HEROTaskAssignmentState(Document):
     def validate(self):
         if not managed_assignment_active():
-            frappe.throw('Task assignment state is managed by the integration.', frappe.PermissionError)
+            frappe.throw(frappe._('Task assignment state is managed by the integration.'), frappe.PermissionError)
 
     def on_trash(self):
-        frappe.throw('Task assignment state must be retained.', frappe.PermissionError)
+        frappe.throw(frappe._('Task assignment state must be retained.'), frappe.PermissionError)
 
     def before_rename(self, *_args, **_kwargs):
-        frappe.throw('Task assignment state identity is immutable.', frappe.PermissionError)
+        frappe.throw(frappe._('Task assignment state identity is immutable.'), frappe.PermissionError)
