@@ -2353,3 +2353,6 @@ A local mutation draft must start with a GraphQL mutation operation.,Ein lokaler
 The saved schema has no mutation root.,Das gespeicherte Schema hat keinen Mutation-Root.
 The mutation operation does not exist in the saved schema.,Die Mutation-Operation ist im gespeicherten Schema nicht vorhanden.
 The GraphQL document contains an unterminated string.,Das GraphQL-Dokument enthält eine nicht abgeschlossene Zeichenkette.
+GraphQL query validation is unavailable.,Die Validierung von GraphQL-Queries ist nicht verfügbar.
+HERO GraphQL document is invalid.,Das HERO-GraphQL-Dokument ist ungültig.
+Only one HERO GraphQL query operation is allowed.,Nur eine HERO-GraphQL-Query-Operation ist erlaubt.

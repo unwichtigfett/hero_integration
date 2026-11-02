@@ -52,3 +52,20 @@ class TestControllerTranslations(unittest.TestCase):
              patch.object(service_controller, 'analyze_snapshot', return_value=SimpleNamespace(fingerprint='fingerprint')):
             with self.assertRaisesRegex(ValueError, '^Genau eine GraphQL-Operation'):
                 service_controller.HEROGraphQLService.validate(document)
+
+    def test_query_service_read_only_error_is_translated(self):
+        from hero_integration.client import graphql
+        from hero_integration.hero_integration.doctype.hero_graphql_service import hero_graphql_service as service_controller
+
+        source = 'HERO GraphQL document is invalid.'
+        def throw(message): raise ValueError(message)
+        snapshot = SimpleNamespace(analysis_status='Validated', snapshot_json='{}', schema_fingerprint='fingerprint')
+        fake = SimpleNamespace(only_for=lambda role: None, get_doc=lambda *_args: snapshot,
+                               _=lambda message: 'HERO-GraphQL-Dokument ist ungültig.' if message == source else message,
+                               throw=throw)
+        document = SimpleNamespace(schema_snapshot='SNAP-1', query_document='query Broken {', is_new=lambda: True)
+        with patch.object(service_controller, 'frappe', fake), \
+             patch.object(service_controller, 'analyze_snapshot', return_value=SimpleNamespace(fingerprint='fingerprint')), \
+             patch.object(graphql, 'assert_read_only', side_effect=graphql.HeroClientError(source)):
+            with self.assertRaisesRegex(ValueError, '^HERO-GraphQL-Dokument ist ungültig'):
+                service_controller.HEROGraphQLService.validate(document)
