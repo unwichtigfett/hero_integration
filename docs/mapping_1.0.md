@@ -1,6 +1,4 @@
-# HERO-MAPPING-ADR-041: Object- and relationship-oriented mapping
-
-Status: ACCEPTED
+# Object- and relationship-oriented mapping
 
 ## Decision
 
@@ -50,7 +48,7 @@ and authority contracts stay open wherever the saved evidence does not
 establish them. Reconsider this decision only if a confirmed source contract
 or the existing implementation makes these boundaries incompatible.
 
-## Amendment 2026-10-29: canonical operation generation
+## Amendment canonical operation generation
 
 For new mapping configurations, the existing GraphQL materializer is the
 canonical operation generator. An explicit schema-validated root operation,
