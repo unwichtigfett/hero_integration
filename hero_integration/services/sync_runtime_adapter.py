@@ -85,9 +85,14 @@ def _require_latest_validated_snapshot(frappe, settings, source_instance, select
 
 def _require_confirmed_source_binding(settings) -> None:
     """Refuse HERO reads after an unconfirmed endpoint, token or source change."""
+    from hero_integration.client.settings import HeroConfigurationError, require_confirmed_source_binding
+
     revision = int(getattr(settings, "source_binding_revision", 0) or 0)
-    if int(getattr(settings, "source_binding_confirmed_revision", 0) or 0) != revision:
-        raise RuntimeBridgeError("The HERO endpoint, token or source instance changed; an administrator must confirm the source binding.")
+    confirmed = int(getattr(settings, "source_binding_confirmed_revision", 0) or 0)
+    try:
+        require_confirmed_source_binding(revision, confirmed)
+    except HeroConfigurationError as error:
+        raise RuntimeBridgeError.from_error(error) from error
 
 
 def run_scheduled_auto_sync(*, frappe_module=None) -> RuntimePreflight:

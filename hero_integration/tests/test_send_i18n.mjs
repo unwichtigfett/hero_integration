@@ -56,6 +56,7 @@ test('writeback confirmation translates the effect while preserving its target a
   class Dialog {
     constructor() { this.fields_dict = {preview:{$wrapper:wrapper}}; }
     set_primary_action() {}
+    get_primary_btn() { return new Element(); }
     show() {}
   }
   const frappe = {ui:{Dialog, form:{on:(_doctype, value) => {controller = value;}}}, call:({method}) => Promise.resolve({message:

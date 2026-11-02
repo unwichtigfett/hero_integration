@@ -2463,3 +2463,9 @@ HERO did not store the expected field value; the binding remains unconfirmed.,HE
 Only a local field change can be sent; reconcile other binding states first.,Nur eine lokale Feldänderung kann gesendet werden; andere Binding-Zustände müssen zuerst abgeglichen werden.
 Sync Hero object binding requires lifecycle reconciliation.,Das Object Binding für Sync Hero muss zuerst hinsichtlich seines Lebenszyklus abgeglichen werden.
 The HERO run reservation changed concurrently; no synchronization run was started.,Die HERO-Laufreservierung wurde gleichzeitig geändert; es wurde kein Synchronisierungslauf gestartet.
+Writeback requires a complete approved source context.,Writeback erfordert einen vollständigen freigegebenen Quellenkontext.
+The configured HERO source does not match the approved writeback source.,Die konfigurierte HERO-Quelle entspricht nicht der freigegebenen Writeback-Quelle.
+The configured HERO endpoint does not match the approved writeback snapshot.,Der konfigurierte HERO-Endpoint entspricht nicht dem freigegebenen Writeback-Snapshot.
+The HERO connection changed after the writeback preview; review it again.,Die HERO-Verbindung wurde seit der Writeback-Vorschau geändert; prüfen Sie die Vorschau erneut.
+Field writeback requires one approved field binding and runtime readback plan.,Feld-Writeback erfordert genau ein freigegebenes Field Binding und einen Runtime-Readback-Plan.
+This field writeback is not eligible under the current binding.,Dieses Feld kann mit dem aktuellen Binding nicht an HERO gesendet werden.

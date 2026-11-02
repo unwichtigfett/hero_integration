@@ -5,6 +5,8 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from hero_integration import api
+from hero_integration.services.sync_engine import Eligibility
+from hero_integration.services.writeback_source import SourceContext
 from hero_integration.tests.test_frappe_writeback_contract import schema
 
 
@@ -40,6 +42,11 @@ class TestWritebackPreviewBoundary(unittest.TestCase):
                                         operation_name='update_contact')
         self.doc = Document({'email_id': None})
         self.calls = []
+        self.source_proof = SourceContext('hero', 7, 'a' * 64)
+        form = patch.object(api, '_form_sync_context', return_value={
+            'fingerprint': 'verified', 'intent': SimpleNamespace(value_present=True, binding=None),
+        })
+        form.start(); self.addCleanup(form.stop)
         def get_doc(doctype, name):
             return self.doc if doctype == 'Customer' else self.service if doctype == 'HERO GraphQL Service' else self.row
         def get_all(doctype, **kwargs):
@@ -171,12 +178,13 @@ class TestWritebackPreviewBoundary(unittest.TestCase):
                 reserve.assert_not_called()
 
     def test_failed_writeback_reservation_never_constructs_transport(self):
-        context = {'fingerprint': 'current', 'mapping': {'target': {'operation': 'update_contact'}},
+        context = {'fingerprint': 'current', 'verified_context': {'intent': SimpleNamespace(binding=None)}, 'mapping': {'target': {'operation': 'update_contact'}},
                    'snapshot': self.snapshot, 'mapping_row': self.row}
         with patch.object(api, 'frappe', self.frappe), \
              patch.object(api, '_assert_mutation_execution_released'), \
              patch.object(api, '_writeback_context', return_value=context), \
              patch.object(api, '_reserve_mutation', side_effect=RuntimeError('synthetic reservation failure')), \
+             patch('hero_integration.services.sync_engine.sync_hero_eligibility', return_value=Eligibility.LOCAL_CHANGED), \
              patch.object(api, '_finalize_mutation') as finalize, \
              patch('hero_integration.client.graphql_mutation.HeroMutationClient') as transport:
             with self.assertRaisesRegex(RuntimeError, 'synthetic reservation failure'):
@@ -200,7 +208,8 @@ class TestWritebackPreviewBoundary(unittest.TestCase):
              patch.object(binding_registry, 'FrappeBindingStorage', return_value=storage), \
              patch.object(binding_registry, 'BindingRegistryService'), \
              patch.object(sync_runtime_adapter, '_runtime_plan_service', return_value=service), \
-             patch('hero_integration.services.writeback_readback.prepare_readback', return_value=object()):
+             patch('hero_integration.services.writeback_readback.prepare_readback', return_value=object()), \
+             patch('hero_integration.services.writeback_source.capture_source', return_value=self.source_proof):
             return api._sync_hero_context('binding', 'mapping', 4)
 
     def test_runtime_plan_path_rejects_missing_and_stale_contract(self):
@@ -223,6 +232,14 @@ class TestWritebackPreviewBoundary(unittest.TestCase):
         self.frappe.get_doc = lambda *a: self.fail('unauthorized document access')
         with self.assertRaises(PermissionError):
             self.preview()
+
+    def test_source_revision_and_endpoint_changes_invalidate_the_preview(self):
+        from dataclasses import replace
+        first = self.sync_context()['fingerprint']
+        self.source_proof = replace(self.source_proof, binding_revision=8)
+        self.assertNotEqual(first, self.sync_context()['fingerprint'])
+        self.source_proof = replace(self.source_proof, binding_revision=7, endpoint_fingerprint='b'*64)
+        self.assertNotEqual(first, self.sync_context()['fingerprint'])
 
 
 class TestTypedMutationPreview(unittest.TestCase):

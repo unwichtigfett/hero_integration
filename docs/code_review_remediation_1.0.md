@@ -48,3 +48,33 @@ The editing environment cannot reach the site database or process manager.
 Live MariaDB races, hosted CI, actual HERO execution and deployment remain
 `EXECUTION_UNVERIFIED` until their respective runs succeed. Offline success
 must not be presented as those runtime results.
+
+
+## Field writeback follow-up
+
+The follow-up review of `ed2238d842dd611e836c61e52a728da7a3fc454f`
+identified two further field-writeback defects, addressed together:
+
+- **R-02:** Preview fingerprints include the confirmed source instance,
+  binding revision and endpoint fingerprint. The endpoint must match the
+  approved snapshot. The transport revalidates this nonsecret proof before
+  pre-read, mutation and post-read. A foreign or unconfirmed configuration
+  cannot construct a client; reconfirming a changed connection invalidates
+  the old preview. Source confirmation reuses the Settings/runtime rule.
+- **R-01:** Form field writeback delegates to the same verified Sync Hero
+  domain and transport. The already-unwrapped mutation result is handled
+  correctly, but ID matching alone never means success. Audit success follows
+  matching field readback and binding acknowledgment. Missing/ambiguous field
+  bindings or an unavailable approved runtime/readback plan block sending.
+  The UI disables ineligible confirmation and displays its reason.
+
+Regression tests use the actual client response shape and cover successful
+readback, wrong source, unconfirmed source, source switches between I/O steps,
+changed preview provenance, timeouts, mismatched post-read and missing plans.
+They make no real HERO requests. The new source guard applies to these two
+field-writeback entrypoints; this is not a new acceptance claim for native
+Send adapters or the separate manual GraphQL mutation endpoint.
+
+Offline verification and independent review do not replace hosted CI or an
+explicit target-site/HERO acceptance run. Branch protection remains an
+external repository configuration requirement.

@@ -215,6 +215,11 @@ def _sync_hero_context(binding_identity_key: str, mapping_name: str, expected_pl
     }
     from hero_integration.services.writeback_readback import prepare_readback
     context["readback_plan"] = prepare_readback(context, frappe)
+    from hero_integration.services.writeback_source import capture_source
+    context["source_context"] = capture_source(snapshot, parent.source_instance)
+    context["fingerprint"] = hashlib.sha256(
+        (context["fingerprint"] + "|" + context["source_context"].fingerprint).encode()
+    ).hexdigest()
     return context
 
 
@@ -226,14 +231,14 @@ class _SyncHeroTransport:
 
     def execute_once(self, document: str, variables: dict[str, object]):
         from hero_integration.client.graphql_mutation import HeroMutationClient
-        from hero_integration.client.settings import get_configuration
         from hero_integration.services.sync_engine import OutboundAck
 
         # Defense in depth: even direct adapter use cannot send without a
         # prepared, approved readback plan.
         if "readback_plan" not in self._context:
             raise RuntimeError("Sync Hero requires an approved field readback contract before mutation.")
-        configuration = get_configuration()
+        from hero_integration.services.writeback_source import validate_source
+        configuration = validate_source(self._context.get("source_context"))
         from hero_integration.client.graphql import HeroGraphQLClient
         from hero_integration.services.binding_registry import state_fingerprint
         from hero_integration.services.writeback_readback import read_bound_value, verify_readback
@@ -243,6 +248,7 @@ class _SyncHeroTransport:
         baseline = self._context["binding"].acknowledged_source_fingerprint
         if baseline is not None and state_fingerprint(before, present=True) != baseline:
             raise RuntimeError("The remote field changed since acknowledgment; reconcile before sending.")
+        configuration = validate_source(self._context["source_context"])
         result = HeroMutationClient(
             configuration.endpoint, lambda: configuration.api_token, configuration.timeout_seconds
         ).execute_once(document, variables)
@@ -251,6 +257,7 @@ class _SyncHeroTransport:
         returned = payload.get(mapping["target"]["operation"]) if isinstance(payload, dict) else None
         if (isinstance(result, dict) and result.get("errors")) or not isinstance(returned, dict) or str(returned.get("id")) != str(parent.external_object_id):
             raise RuntimeError("HERO mutation response could not confirm the bound remote identity.")
+        validate_source(self._context["source_context"])
         source_fingerprint = verify_readback(self._context, reader, variables)
         return OutboundAck(True, self._audit.correlation_id, source_fingerprint, intent.local_fingerprint)
 
@@ -3340,8 +3347,14 @@ def writeback_preview(mapping_name: str, doctype: str, docname: str) -> dict[str
     frappe.has_permission(doctype, "write", document, throw=True)
     context = _writeback_context(mapping_name, document)
     mapping = context["mapping"]
+    enabled = bool(_mutation_execution_state()["mutation_execution_enabled"])
+    eligible = context["verified_context"]["intent"].value_present and _form_writeback_eligible(context)
     return {
-        "can_execute": bool(_mutation_execution_state()["mutation_execution_enabled"]),
+        "can_execute": enabled and eligible,
+        "blocked_reason": "" if enabled and eligible else (
+            "Global HERO mutation execution is currently OFF." if not enabled else
+            "This field writeback is not eligible under the current binding."
+        ),
         "request_fingerprint": context["fingerprint"],
         "target": {"source_instance": context["link"].source_instance, "external_id": context["link"].source_id},
         "source": {"doctype": doctype, "document": document.name, "field": mapping["source"]["field"], "value": document.get(mapping["source"]["field"])},
@@ -3360,6 +3373,8 @@ def writeback_execute(mapping_name: str, doctype: str, docname: str, confirmatio
     context = _writeback_context(mapping_name, document)
     if confirmed not in (True, 1, "1", "true", "True") or confirmation_fingerprint != context["fingerprint"]:
         frappe.throw(frappe._("Explicit confirmation for this exact writeback preview is required."))
+    if not _form_writeback_eligible(context):
+        frappe.throw(frappe._("Only a local field change can be sent; reconcile other binding states first."))
     audit = _reserve_mutation(
         operation_name=context["mapping"]["target"]["operation"],
         schema_fingerprint=context["snapshot"].schema_fingerprint,
@@ -3367,16 +3382,11 @@ def writeback_execute(mapping_name: str, doctype: str, docname: str, confirmatio
         request_fingerprint=context["fingerprint"],
     )
     try:
-        from hero_integration.client.graphql_mutation import HeroMutationClient
-        from hero_integration.client.settings import get_configuration
-
-        configuration = get_configuration()
-        result = HeroMutationClient(configuration.endpoint, lambda: configuration.api_token, configuration.timeout_seconds).execute_once(
-            context["document"], context["variables"]
-        )
-        returned = (result.get("data") or {}).get(context["mapping"]["target"]["operation"]) if isinstance(result, dict) else None
-        if not isinstance(returned, dict) or str(returned.get("id")) != str(context["link"].source_id):
-            raise RuntimeError("HERO mutation response could not confirm the selected remote identity.")
+        from hero_integration.services.sync_engine import OutboundApproval, execute_sync_hero
+        verified = context["verified_context"]
+        binding = verified["binding"]
+        approval = OutboundApproval(True, True, True, True, True, binding.acknowledged_version + 1)
+        execute_sync_hero(verified["intent"], approval, _SyncHeroTransport(verified, audit), verified["bindings"])
     except Exception as error:
         _finalize_mutation(
             audit,
@@ -3471,12 +3481,39 @@ def _writeback_context(mapping_name: str, document, mapping_row=None) -> dict[st
         link.source_id, outbound_document, variables,
     )
     canonical += "|" + contract.name + "|" + str(contract.contract_revision or 1) + "|" + str(contract.contract_fingerprint or "")
+    verified = _form_sync_context(row.name, document, link, source["field"])
+    canonical += "|" + verified["fingerprint"]
     return {
+        "verified_context": verified,
         "mapping_row": row, "mapping": mapping, "snapshot": snapshot, "link": link,
         "contract": contract,
         "value": value, "document": outbound_document, "variables": variables,
         "fingerprint": hashlib.sha256(canonical.encode()).hexdigest(),
     }
+
+
+def _form_writeback_eligible(context):
+    from hero_integration.services.sync_engine import Eligibility, sync_hero_eligibility
+    return sync_hero_eligibility(context["verified_context"]["intent"]) is Eligibility.LOCAL_CHANGED
+
+
+def _form_sync_context(mapping_name, document, link, field):
+    """Use the same approved binding, source and readback contract as Sync Hero."""
+    from hero_integration.services.binding_registry import FrappeBindingStorage
+    from hero_integration.services.runtime_plan import FrappeRuntimePlanStorage
+    site = frappe.local.site
+    storage = FrappeBindingStorage(frappe)
+    matches = []
+    for binding in storage.fields_for_source(site, link.source_instance):
+        if (binding.target_doctype, binding.target_name, binding.target_field) != (document.doctype, document.name, field):
+            continue
+        parent = storage.object(site, binding.object_binding_key)
+        if parent and str(parent.external_object_id) == str(link.source_id):
+            matches.append(binding)
+    plan = FrappeRuntimePlanStorage(frappe).read_scope(site, link.source_instance)
+    if len(matches) != 1 or plan is None:
+        frappe.throw(frappe._("Field writeback requires one approved field binding and runtime readback plan."))
+    return _sync_hero_context(matches[0].identity_key, mapping_name, plan.generation)
 
 
 def _reserve_mutation(*, operation_name: str, schema_fingerprint: str, mapping_revision: int, request_fingerprint: str):

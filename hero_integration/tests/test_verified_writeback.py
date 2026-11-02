@@ -15,12 +15,24 @@ from hero_integration.tests import test_sync_engine as fixtures
 from hero_integration.tests.test_sync_engine import Transport, OutboundAck, FP
 
 
+from hero_integration.client.graphql import HeroEndpoint
+from hero_integration.client.settings import HeroConfiguration
+from hero_integration.services.introspection import endpoint_fingerprint
+from hero_integration.services.writeback_source import SourceContext
+
+
+def configuration(**changes):
+    return replace(HeroConfiguration(HeroEndpoint('https://example.invalid/graphql', 'example.invalid'),
+                                    'synthetic', 1, 'hero', 7, True), **changes)
+
+
 def context():
     request = NS(protocol_field_name='contacts', document='query Read { contacts { id full_name } }', variables={},
                  result_bindings=[NS(selection_path=('id',)), NS(selection_path=('full_name',))])
     plan = NS(request=request, source_instance='hero', sealed=NS(contract=NS(identity_path='id', records_path='contacts', definition_ids=('d',), mapping_revision=1)))
     value = 'Expected'
-    return {'mapping': {'target': {'operation': 'update_contact', 'argument': 'contact', 'field': 'full_name'}},
+    return {'source_context': SourceContext('hero', 7, endpoint_fingerprint('https://example.invalid/graphql', 'hero')),
+            'mapping': {'target': {'operation': 'update_contact', 'argument': 'contact', 'field': 'full_name'}},
             'parent': NS(object_type='Contact', source_instance='hero', external_object_id='42'),
             'binding': NS(target_doctype='Customer', source_field='full_name', acknowledged_source_fingerprint=None, mapping_definition_id='d', mapping_revision=1), 'readback_plan': plan,
             'intent': NS(local_fingerprint=state_fingerprint(value, present=True))}
@@ -70,7 +82,7 @@ class TestVerifiedWriteback(TestCase):
 
     def test_transport_preserves_binding_when_readback_fails_and_never_retries_mutation(self):
         c = context()
-        config = NS(endpoint='https://example.invalid/graphql', api_token='synthetic', timeout_seconds=1)
+        config = configuration()
         with patch('hero_integration.client.settings.get_configuration', return_value=config), \
                 patch('hero_integration.client.graphql_mutation.HeroMutationClient') as mutation, \
                 patch('hero_integration.client.graphql.HeroGraphQLClient') as read:
@@ -87,7 +99,7 @@ class TestVerifiedWriteback(TestCase):
             ('Old', state_fingerprint('Old', present=True), True),
         ):
             c = context(); c['binding'].acknowledged_source_fingerprint = baseline
-            config = NS(endpoint='https://example.invalid/graphql', api_token='synthetic', timeout_seconds=1)
+            config = configuration()
             with patch('hero_integration.client.settings.get_configuration', return_value=config), \
                     patch('hero_integration.client.graphql_mutation.HeroMutationClient') as mutation, \
                     patch('hero_integration.client.graphql.HeroGraphQLClient') as read:
@@ -111,7 +123,7 @@ class TestVerifiedWriteback(TestCase):
 
     def test_missing_bound_record_in_approved_page_blocks_before_mutation(self):
         c = context()
-        config = NS(endpoint='https://example.invalid/graphql', api_token='synthetic', timeout_seconds=1)
+        config = configuration()
         with patch('hero_integration.client.settings.get_configuration', return_value=config), \
                 patch('hero_integration.client.graphql_mutation.HeroMutationClient') as mutation, \
                 patch('hero_integration.client.graphql.HeroGraphQLClient') as read:
@@ -119,6 +131,19 @@ class TestVerifiedWriteback(TestCase):
             with self.assertRaises(WritebackContractError):
                 api._SyncHeroTransport(c, NS(correlation_id='audit')).execute_once('mutation', {})
             mutation.assert_not_called()
+
+
+    def test_transport_rejects_wrong_or_unconfirmed_current_source_before_clients(self):
+        for config in (configuration(source_instance='other'), configuration(source_binding_confirmed=False),
+                       configuration(source_binding_revision=8),
+                       configuration(endpoint=HeroEndpoint('https://other.invalid/graphql', 'other.invalid'))):
+            with self.subTest(config=config), \
+                    patch('hero_integration.client.settings.get_configuration', return_value=config), \
+                    patch('hero_integration.client.graphql_mutation.HeroMutationClient') as mutation, \
+                    patch('hero_integration.client.graphql.HeroGraphQLClient') as reader:
+                with self.assertRaises(WritebackContractError):
+                    api._SyncHeroTransport(context(), NS(correlation_id='audit')).execute_once('mutation', {})
+                reader.assert_not_called(); mutation.assert_not_called()
 
 
 class TestOutboundConflictGate(TestCase):
