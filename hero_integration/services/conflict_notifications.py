@@ -20,6 +20,16 @@ _DIAGNOSTIC_PATTERNS = (
      "Project trade {0} has no confirmed HERO-to-ERPNext title mapping."),
     (re.compile(r"(ProjectMatch\.[\w.]+) is required for the ERPNext project title\."),
      "{0} is required for the ERPNext project title."),
+    (re.compile(r"(ProjectMatch\.[\w.]+) is required and must be an object\."),
+     "{0} is required and must be an object."),
+    (re.compile(r"(ProjectMatch\.[\w.]+) is not a complete formatted project address\."),
+     "{0} is not a complete formatted project address."),
+)
+
+_CUSTOMER_REVIEW_REASONS = (
+    "The HERO customer has no unambiguous ERPNext link; the Project has no customer.",
+    "The HERO customer is deleted in HERO; the Project has no customer.",
+    "The HERO customer is a contact person, not a customer; the Project has no customer.",
 )
 
 
@@ -35,6 +45,14 @@ def recipient_diagnostic(user: str, message: str) -> str:
     translated = recipient_text(user, message)
     if translated != message:
         return translated
+    for reason in _CUSTOMER_REVIEW_REASONS:
+        if message.startswith(reason + " The project address is missing or incomplete ("):
+            return recipient_text(user, reason) + " " + recipient_diagnostic(user, message[len(reason) + 1:])
+    address = re.fullmatch(r"The project address is missing or incomplete \((.*)\); the title omits it\.", message)
+    if address:
+        nested = recipient_diagnostic(user, address.group(1))
+        return LocalizedError("The project address is missing or incomplete ({0}); the title omits it.", nested).translated(
+            lambda value: recipient_text(user, value))
     for prefix, template in (
         ("Recheck requested: ", "Recheck requested: {0}"),
         ("Awaits administrator approval: ", "Awaits administrator approval: {0}"),

@@ -13,6 +13,17 @@
         const text = recheck ? String(value).slice(prefix.length) : String(value);
         const exact = tr(text);
         if (exact !== text) return recheck ? format("Recheck requested: {0}", exact) : exact;
+        const customerReviewReasons = [
+            "The HERO customer has no unambiguous ERPNext link; the Project has no customer.",
+            "The HERO customer is deleted in HERO; the Project has no customer.",
+            "The HERO customer is a contact person, not a customer; the Project has no customer.",
+        ];
+        for (const reason of customerReviewReasons) {
+            if (text.startsWith(`${reason} The project address is missing or incomplete (`)) {
+                const translated = `${tr(reason)} ${diagnostic(text.slice(reason.length + 1))}`;
+                return recheck ? format("Recheck requested: {0}", translated) : translated;
+            }
+        }
         // Import results append zero or more notes to a canonical result. Peel
         // only recognized suffixes so names and external text remain intact.
         const appendedNotes = [
