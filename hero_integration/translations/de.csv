@@ -2462,3 +2462,4 @@ HERO readback did not prove the unique bound record and field.,Das Rücklesen au
 HERO did not store the expected field value; the binding remains unconfirmed.,HERO hat den erwarteten Feldwert nicht gespeichert; das Binding bleibt unbestätigt.
 Only a local field change can be sent; reconcile other binding states first.,Nur eine lokale Feldänderung kann gesendet werden; andere Binding-Zustände müssen zuerst abgeglichen werden.
 Sync Hero object binding requires lifecycle reconciliation.,Das Object Binding für Sync Hero muss zuerst hinsichtlich seines Lebenszyklus abgeglichen werden.
+The HERO run reservation changed concurrently; no synchronization run was started.,Die HERO-Laufreservierung wurde gleichzeitig geändert; es wurde kein Synchronisierungslauf gestartet.

@@ -162,6 +162,10 @@ class FrappeSyncLedger:
             if run_reservation.locked_b8_runs(frappe, run.site_scope):
                 raise SyncConflict("A synchronization run is already active.")
             frappe.get_doc({"doctype":self.RUN,"sync_run_id":run.run_id,"site_scope":run.site_scope,"actor":run.actor,"automatic":int(run.automatic),"state":"RUNNING"}).insert()
+        except frappe.QueryDeadlockError as error:
+            # The caller owns rollback; this attempt must neither retry nor
+            # start provider work after a deadlock or stale snapshot conflict.
+            raise SyncConflict("The HERO run reservation changed concurrently; no synchronization run was started.") from error
         finally:
             run_reservation.release(frappe)
     def release(self,run):

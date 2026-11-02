@@ -60,3 +60,7 @@ Offline ordering checks cover the reservation boundary. The separate
 `test_sync_run_reservation_frappe` suite requires an explicitly selected
 **disposable** site and verifies two real MariaDB connections; merely adding
 or passing offline tests is not a concurrency or deployment acceptance.
+
+A database deadlock or stale snapshot during a B8 claim is reported as a
+synchronization conflict before provider work starts. The caller remains
+responsible for rollback; the B8 adapter neither retries nor commits.
