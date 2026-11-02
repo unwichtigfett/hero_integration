@@ -585,7 +585,7 @@ GraphQL errors,GraphQL-Fehler
 GraphQL mapping JSON must be an object.,Das GraphQL-Mapping-JSON muss ein Objekt sein.
 GraphQL mapping definition identity is immutable.,Die Identität der GraphQL-Mapping-Definition ist unveränderlich.
 GraphQL mapping direction and operation kind must agree.,GraphQL-Mapping-Richtung und Operationsart müssen übereinstimmen.
-GraphQL mapping revision is stale; reload the current Draft.,Die GraphQL-Mapping-Revision ist veraltet; laden Sie den aktuellen Draft erneut.
+GraphQL mapping revision is stale; reload the current Draft.,Die GraphQL-Mapping-Revision ist veraltet; laden Sie den aktuellen Entwurf erneut.
 GraphQL mutation document must be non-empty text.,Das GraphQL-Mutation-Dokument muss nicht leerer Text sein.
 GraphQL mutations,GraphQL-Mutations
 GraphQL node ID,GraphQL-Knoten-ID
@@ -1051,7 +1051,7 @@ Only System Managers and HERO Writeback users may send customers to HERO.,Nur Sy
 Only System Managers and HERO Writeback users may send projects to HERO.,Nur System Manager und HERO-Writeback-Benutzer dürfen Projekte an HERO senden.
 Only System Managers and HERO Writeback users may send tasks to HERO.,Nur System Manager und HERO-Writeback-Benutzer dürfen Aufgaben an HERO senden.
 Only System Managers can change this global gate. It is OFF by default.,Nur System Manager können diese globale Sperre ändern. Sie ist standardmäßig auf OFF gesetzt.
-Only a current Draft may be activated.,Nur ein aktueller Draft darf aktiviert werden.
+Only a current Draft may be activated.,Nur ein aktueller Entwurf darf aktiviert werden.
 Only a current shared draft can be edited.,Nur ein aktueller geteilter Entwurf kann bearbeitet werden.
 Only a draft runtime plan may be approved.,Nur ein Laufzeitplan im Entwurf darf freigegeben werden.
 Only a draft runtime plan may be edited.,Nur ein Laufzeitplan im Entwurf darf bearbeitet werden.
@@ -1060,10 +1060,10 @@ Only an open conflict or a record that awaits review can be approved or rejected
 "Only failed, cancelled, or blocked runs can resume.","Nur fehlgeschlagene, abgebrochene oder blockierte Läufe können fortgesetzt werden."
 Only one GraphQL query operation is supported; fragments are not.,Nur eine GraphQL-Query-Operation wird unterstützt; Fragmente werden nicht unterstützt.
 Only tasks of a HERO project can be created in HERO.,Nur Aufgaben eines HERO-Projekts können in HERO erstellt werden.
-Only the administrator who last changed this Draft may activate it.,"Nur der Administrator, der diesen Draft zuletzt geändert hat, darf ihn aktivieren."
+Only the administrator who last changed this Draft may activate it.,"Nur der Administrator, der diesen Entwurf zuletzt geändert hat, darf ihn aktivieren."
 Only the adoption owner may resume it.,Nur der Eigentümer der Übernahme darf sie fortsetzen.
 Only the last editor can change this shared draft.,Nur der letzte Bearbeiter kann diesen geteilten Entwurf ändern.
-Only the owner may change a shared field-rule Draft.,Nur der Eigentümer darf einen geteilten Feldregel-Draft ändern.
+Only the owner may change a shared field-rule Draft.,Nur der Eigentümer darf einen gemeinsamen Feldregel-Entwurf ändern.
 Open Analyzer,Analyzer öffnen
 Open Graph Viewer,Graph Viewer öffnen
 Open in Graph Viewer,Im Graph Viewer öffnen
@@ -1147,7 +1147,7 @@ Please check the saved HERO settings and try again.,Prüfen Sie die gespeicherte
 Policy Fingerprint,Policy-Fingerprint
 Policy Revision,Policy-Revision
 Polling,Polling
-Polling / Update,Polling / Update
+Polling / Update,Polling / Aktualisierung
 Polling Concurrency,Polling-Parallelität
 Polling Execution Window,Polling-Ausführungszeitraum
 Polling Interval Minutes,Polling-Intervall in Minuten
@@ -1362,7 +1362,7 @@ Retry options,Optionen erneut laden
 Retry saved schema,Gespeichertes Schema erneut laden
 Return to mappings and reopen the draft to refresh the active definition.,"Kehren Sie zu den Mappings zurück und öffnen Sie den Entwurf erneut, um die aktive Definition zu aktualisieren."
 Review decision must be approve or reject.,Die Prüfentscheidung muss approve oder reject sein.
-Review metadata can only be edited on a Draft.,Prüfmetadaten können nur in einem Draft bearbeitet werden.
+Review metadata can only be edited on a Draft.,Prüfmetadaten können nur in einem Entwurf bearbeitet werden.
 Review reason,Prüfgrund
 Review saved query and mutation contracts without changing their state.,"Gespeicherte Query- und Mutation-Verträge prüfen, ohne deren Status zu ändern."
 Review the existing relationship contract.,Prüfen Sie den vorhandenen Beziehungsvertrag.
@@ -1416,7 +1416,7 @@ SYSTEM,System
 Safety and conflict notifications,Sicherheit und Konfliktbenachrichtigungen
 Salutation Table,Anredetabelle
 Save,Speichern
-Save GraphQL mapping changes as a Draft before activation.,Speichern Sie GraphQL-Mapping-Änderungen vor der Aktivierung als Draft.
+Save GraphQL mapping changes as a Draft before activation.,Speichern Sie GraphQL-Mapping-Änderungen vor der Aktivierung als Entwurf.
 Save Mutation,Mutation speichern
 Save Query,Query speichern
 Save Service,Service speichern
@@ -1486,7 +1486,7 @@ Schema operation,Schema-Operation
 Schema package contains conflicts or invalid definitions.,Das Schema-Paket enthält Konflikte oder ungültige Definitionen.
 Schema packages require checked bulk adoption.,Schema-Pakete erfordern eine geprüfte Massenübernahme.
 Schema preview contains conflicts or invalid definitions.,Die Schema-Vorschau enthält Konflikte oder ungültige Definitionen.
-"Schema provisioning failed before Draft import. Completed creation calls: {0}. Schema changes may persist, including a partially completed call; inspect schema and preview again.","Die Schema-Bereitstellung ist vor dem Draft-Import fehlgeschlagen. Abgeschlossene Erstellungsaufrufe: {0}. Schema-Änderungen können bestehen bleiben, auch bei einem teilweise abgeschlossenen Aufruf; prüfen Sie das Schema und erstellen Sie erneut eine Vorschau."
+"Schema provisioning failed before Draft import. Completed creation calls: {0}. Schema changes may persist, including a partially completed call; inspect schema and preview again.","Die Schema-Bereitstellung ist vor dem Entwurfsimport fehlgeschlagen. Abgeschlossene Erstellungsaufrufe: {0}. Schema-Änderungen können bestehen bleiben, auch bei einem teilweise abgeschlossenen Aufruf; prüfen Sie das Schema und erstellen Sie erneut eine Vorschau."
 Schema provisioning requires a clean transaction; previous writes were not committed.,Die Schema-Bereitstellung erfordert eine saubere Transaktion; frühere Schreibvorgänge wurden nicht committed.
 Schema refresh (minutes),Schema-Aktualisierung (Minuten)
 Schema refresh succeeded: {0}{1}.,Schema-Aktualisierung erfolgreich: {0}{1}.
@@ -1610,7 +1610,7 @@ Sources,Quellen
 Stable identity for this external source.,Stabile Identität für diese externe Quelle.
 Stable source-instance identity used together with ProjectMatch.id. Change only for a separate HERO source.,Stabile Quellinstanzidentität zur Verwendung mit ProjectMatch.id. Nur für eine separate HERO-Quelle ändern.
 Start,Starten
-"Start / Update migrates the object fields included in the active mapping. Existing records are matched by source identity, bindings remain stable, and newly mapped fields are backfilled subject to validation and conflict rules.","Start / Update migriert die im aktiven Mapping enthaltenen Objektfelder. Vorhandene Datensätze werden anhand der Quellidentität zugeordnet, Bindungen bleiben stabil und neu zugeordnete Felder werden unter Beachtung der Validierungs- und Konfliktregeln nachgefüllt."
+"Start / Update migrates the object fields included in the active mapping. Existing records are matched by source identity, bindings remain stable, and newly mapped fields are backfilled subject to validation and conflict rules.","Start / Aktualisieren migriert die im aktiven Mapping enthaltenen Objektfelder. Vorhandene Datensätze werden anhand der Quellidentität zugeordnet, Bindungen bleiben stabil und neu zugeordnete Felder werden unter Beachtung der Validierungs- und Konfliktregeln nachgefüllt."
 Start or update migrations for individual data areas,Migrationen für einzelne Datenbereiche starten oder aktualisieren
 "Start runs the first import for the HERO source instance ""{0}"". You do not choose GraphQL services; the server resolves them from the active mapping.",Start führt den ersten Import für die HERO-Quellinstanz „{0}“ aus. Sie wählen keine GraphQL-Services; der Server ermittelt sie anhand des aktiven Mappings.
 Started,Gestartet
@@ -1932,7 +1932,7 @@ Unterminated GraphQL block string.,Nicht abgeschlossener GraphQL-Block-String.
 Unterminated GraphQL string.,Nicht abgeschlossener GraphQL-String.
 Unused GraphQL variable(s): {0},Nicht verwendete GraphQL-Variablen: {0}
 Update,Aktualisieren
-"Update processes new records, changed records and newly mapped fields for the HERO source instance ""{0}"". You do not choose GraphQL services; the server resolves them from the active mapping.","Update verarbeitet neue Datensätze, geänderte Datensätze und neu zugeordnete Felder für die HERO-Quellinstanz „{0}“. Sie wählen keine GraphQL-Services; der Server ermittelt sie anhand des aktiven Mappings."
+"Update processes new records, changed records and newly mapped fields for the HERO source instance ""{0}"". You do not choose GraphQL services; the server resolves them from the active mapping.","Die Aktualisierung verarbeitet neue Datensätze, geänderte Datensätze und neu zugeordnete Felder für die HERO-Quellinstanz „{0}“. Sie wählen keine GraphQL-Services; der Server ermittelt sie anhand des aktiven Mappings."
 Update required,Aktualisierung erforderlich
 Updated by Registry,Durch Registry aktualisiert
 Updated or unchanged,Aktualisiert oder unverändert
