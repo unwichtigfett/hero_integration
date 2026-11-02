@@ -260,7 +260,7 @@ class TestGermanCatalog(unittest.TestCase):
         from hero_integration import hooks
         with patch.object(frappe, "get_installed_apps", return_value=["hero_integration"]), \
              patch.object(frappe, "get_hooks", return_value=hooks.doctype_js):
-            for doctype in ("HERO Integration Link", "HERO Polling Event"):
+            for doctype in ("HERO Integration Link", "HERO Polling Event", "HERO Integration Record"):
                 with self.subTest(doctype=doctype):
                     paths = get_code_files_via_hooks("doctype_js", doctype)
                     self.assertEqual([Path(path).resolve() for path in paths], [(APP / "public" / "js" / "hero_diagnostics.js").resolve()])

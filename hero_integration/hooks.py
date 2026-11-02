@@ -28,6 +28,7 @@ doctype_js = {
     "Project": ["public/js/hero_writeback.js", "public/js/hero_project_send.js"],
     "Task": ["public/js/hero_task_send.js"],
     "HERO Integration Link": ["public/js/hero_diagnostics.js"],
+    "HERO Integration Record": ["public/js/hero_diagnostics.js"],
     "HERO Polling Event": ["public/js/hero_diagnostics.js"],
     "HERO GraphQL Mapping": ["public/js/hero_diagnostics.js", "public/js/hero_native_diagnostics.js"],
     "HERO GraphQL Schema Snapshot": ["public/js/hero_diagnostics.js", "public/js/hero_native_diagnostics.js"],
