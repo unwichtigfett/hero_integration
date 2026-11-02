@@ -130,6 +130,11 @@ def capture_from_file(path: str, actor: str = "Administrator") -> dict[str, obje
     return _capture(actor, response=response)
 
 
+def capture_from_schema(schema: dict, actor: str = "Administrator") -> dict[str, object]:
+    """Store a stored snapshot's ``{"__schema": …}`` (e.g. from a configuration package) on this site."""
+    return _capture(actor, response={"data": schema})
+
+
 def _capture(actor: str, response: object = None) -> dict[str, object]:
     from hero_integration.client.graphql import HeroClientError, HeroGraphQLClient
     from hero_integration.client.settings import HeroConfigurationError, get_configuration

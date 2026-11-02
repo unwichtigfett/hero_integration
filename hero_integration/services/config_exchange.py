@@ -1,6 +1,15 @@
-"""Complete HERO integration configuration export and import (2026-11-02).
+"""Complete HERO integration configuration export and import.
 
-One JSON file carries everything a new site needs besides credentials and data:
+One JSON file (format v2) carries everything a new site needs besides
+credentials and data:
+
+- ``schema_snapshot``: the HERO schema the configuration was built on.  On a
+  site without that schema it becomes the site's snapshot, so no HERO request
+  is needed before the import;
+- ``settings``: the operational settings (sync areas, automatic sync, polling,
+  schema refresh).  Never included: HERO URL and token, allowed hosts,
+  notification recipients, the mutation and deletion switches, testing mode
+  and runtime status;
 
 - ``mapping_package``: the field rules with their Custom Field / Custom DocType
   schema (the existing checked package, adopted through the existing adoption
@@ -10,8 +19,8 @@ One JSON file carries everything a new site needs besides credentials and data:
   service is exported by its area, never by the site-specific document name.
 
 Import is idempotent: an identical configuration reports "Unchanged" and writes
-nothing.  The target site's own validated schema snapshot is used; snapshot,
-approvals and revisions are created there.  No HERO request is made.
+nothing.  Approvals and revisions are created on the target site.  No HERO
+request is made.  Format v1 files (without snapshot and settings) still import.
 """
 
 from __future__ import annotations
@@ -20,7 +29,19 @@ import json
 
 import frappe
 
-FORMAT_VERSION = "hero-integration-config-v1"
+FORMAT_VERSION = "hero-integration-config-v2"
+FORMAT_V1 = "hero-integration-config-v1"
+# Operational settings that move with the configuration.  Everything else stays
+# site-specific: credentials, hosts, recipients (personal data), safety switches.
+SETTINGS_KEYS = (
+    "hero_source_instance", "schema_refresh_interval_minutes", "timeout_seconds",
+    "scheduled_sync_enabled", "sync_service_paused",
+    "sync_area_contacts", "sync_area_projects", "sync_area_events", "sync_area_tasks",
+    "polling_mode", "polling_interval_minutes", "polling_timezone", "polling_execution_window",
+    "polling_bootstrap", "polling_page_size", "polling_pagination_strategy", "polling_allow_backfill",
+    "polling_full_inventory", "polling_reconciliation", "polling_retry_limit", "polling_retry_backoff_seconds",
+    "polling_timeout_seconds", "polling_rate_limit", "polling_concurrency", "polling_notifications",
+)
 AREA_ORDER = ("HeroCustomers", "HeroProjectMatches", "HeroCalendarEvents", "HeroTasks")
 SERVICE_REFERENCE = "$read_service:"
 SERVICE_KEYS = {"target_operation", "service_name", "operation_name", "mapping_operation_name", "query", "mapping"}
@@ -50,20 +71,83 @@ def export_config(snapshot_name: str, source_instance: str = "default") -> str:
         exported.append({"target_operation": operation, "service_name": service.service_name,
                          "operation_name": service.operation_name, "mapping_operation_name": mapping.operation_name,
                          "query": service.query_document, "mapping": config})
-    return json.dumps({"format_version": FORMAT_VERSION, "mapping_package": json.loads(export_json(snapshot_name)),
-                       "read_services": exported}, ensure_ascii=False, sort_keys=True, indent=1)
+    snapshot = frappe.get_doc("HERO GraphQL Schema Snapshot", snapshot_name)
+    settings = frappe.get_single("HERO Integration Settings")
+    return json.dumps({
+        "format_version": FORMAT_VERSION,
+        "schema_snapshot": {"schema_fingerprint": snapshot.schema_fingerprint, "schema": json.loads(snapshot.snapshot_json)},
+        "settings": {key: settings.get(key) for key in SETTINGS_KEYS},
+        "mapping_package": json.loads(export_json(snapshot_name)),
+        "read_services": exported,
+    }, ensure_ascii=False, sort_keys=True, indent=1)
+
+
+def _package_snapshot(payload: dict, *, create: bool) -> tuple[str | None, str]:
+    """The site's snapshot for the package's schema: existing, created (import) or pending (preview)."""
+    item = payload.get("schema_snapshot")
+    if not item:
+        return None, "not in file"
+    rows = frappe.get_all("HERO GraphQL Schema Snapshot", filters={
+        "schema_fingerprint": item["schema_fingerprint"], "analysis_status": "Validated"},
+        pluck="name", order_by="creation desc", limit_page_length=1)
+    if rows:
+        return rows[0], "Unchanged"
+    if not create:
+        return None, "New"
+    from hero_integration.services.schema_refresh import capture_from_schema
+
+    result = capture_from_schema(item["schema"], frappe.session.user)
+    return result["snapshot_name"], "Created"
+
+
+def _resolve_snapshot(snapshot_name: str, payload: dict, *, create: bool) -> tuple[str | None, str]:
+    if snapshot_name:
+        return snapshot_name, "selected"
+    name, state = _package_snapshot(payload, create=create)
+    if name or state == "New":
+        return name, state
+    names = frappe.get_all("HERO GraphQL Schema Snapshot", filters={"analysis_status": "Validated"},
+                           order_by="creation desc", pluck="name", limit_page_length=1)
+    if not names:
+        raise ConfigExchangeError("No validated HERO schema snapshot exists and the file contains none.")
+    return names[0], "newest on this site"
+
+
+def _settings_changes(payload: dict) -> dict:
+    wanted = payload.get("settings") or {}
+    settings = frappe.get_single("HERO Integration Settings")
+    return {key: value for key, value in wanted.items()
+            if key in SETTINGS_KEYS and settings.get(key) != value
+            and not (settings.get(key) in (None, "", 0) and value in (None, "", 0))}
+
+
+def _apply_settings(changes: dict) -> None:
+    for key, value in changes.items():
+        frappe.db.set_single_value("HERO Integration Settings", key, value)
 
 
 def preview_config(snapshot_name: str, payload_json: str, source_instance: str = "default") -> dict:
-    """What an import would do; never writes."""
+    """What an import would do; never writes.
+
+    Without a snapshot for the file's schema the detailed package check runs
+    during the import, after the snapshot was created (nothing is activated if
+    that check fails).
+    """
     from hero_integration.services.schema_provisioning import preview_package
 
     payload = _parse(payload_json)
+    snapshot_name, snapshot_state = _resolve_snapshot(snapshot_name, payload, create=False)
+    result = {"format_version": payload["format_version"], "snapshot": snapshot_state,
+              "settings": sorted(_settings_changes(payload))}
+    if not snapshot_name:
+        return {**result, "mapping_package": None, "rebased_from": None, "adopt": None,
+                "read_services": [{"target_operation": item["target_operation"], "state": "checked during import"}
+                                  for item in payload["read_services"]]}
     package_json, rebased_from = _rebased_package(snapshot_name, payload)
     package = preview_package(snapshot_name, package_json)
     services = [{"target_operation": item["target_operation"], "state": _query_problem(snapshot_name, item)
                  or _service_state(item, source_instance)} for item in payload["read_services"]]
-    return {"format_version": FORMAT_VERSION, "mapping_package": package["counts"], "rebased_from": rebased_from,
+    return {**result, "mapping_package": package["counts"], "rebased_from": rebased_from,
             "adopt": len(_selection(package)), "read_services": services}
 
 
@@ -103,6 +187,7 @@ def import_config(snapshot_name: str, payload_json: str, source_instance: str = 
 
     frappe.only_for("System Manager")
     payload = _parse(payload_json)
+    snapshot_name, snapshot_state = _resolve_snapshot(snapshot_name, payload, create=True)
     package_json, _ = _rebased_package(snapshot_name, payload)
     package = preview_package(snapshot_name, package_json)
     blocked = [item for item in package["items"] if item["state"] in {"Conflict", "Invalid"}]
@@ -114,6 +199,8 @@ def import_config(snapshot_name: str, payload_json: str, source_instance: str = 
     if invalid:
         raise ConfigExchangeError("A read query does not fit the target HERO schema: " + "; ".join(invalid))
     selected = _selection(package)
+    settings = _settings_changes(payload)
+    _apply_settings(settings)
     adopted = adoption.start(snapshot_name, package_json, selected, package["preview_revision"]) if selected else None
     results = []
     created: dict[str, str] = {}
@@ -125,7 +212,8 @@ def import_config(snapshot_name: str, payload_json: str, source_instance: str = 
         service = _import_service(snapshot_name, item, source_instance, created)
         created[item["target_operation"]] = service
         results.append({"target_operation": item["target_operation"], "state": "Approved", "service": service})
-    return {"adopted": len(selected), "adoption": (adopted or {}).get("adoption_name"), "read_services": results}
+    return {"snapshot": snapshot_state, "snapshot_name": snapshot_name, "settings": sorted(settings),
+            "adopted": len(selected), "adoption": (adopted or {}).get("adoption_name"), "read_services": results}
 
 
 def _parse(payload_json: str) -> dict:
@@ -133,10 +221,19 @@ def _parse(payload_json: str) -> dict:
         payload = json.loads(payload_json)
     except (TypeError, ValueError) as error:
         raise ConfigExchangeError("The configuration file is not valid JSON.") from error
-    if (not isinstance(payload, dict) or payload.get("format_version") != FORMAT_VERSION
-            or set(payload) != {"format_version", "mapping_package", "read_services"}
+    keys = {FORMAT_V1: {"format_version", "mapping_package", "read_services"},
+            FORMAT_VERSION: {"format_version", "schema_snapshot", "settings", "mapping_package", "read_services"}}
+    if (not isinstance(payload, dict) or payload.get("format_version") not in keys
+            or set(payload) != keys[payload["format_version"]]
             or not isinstance(payload["read_services"], list)):
-        raise ConfigExchangeError("This is not a HERO integration configuration file of format " + FORMAT_VERSION + ".")
+        raise ConfigExchangeError("This is not a HERO integration configuration file (" + FORMAT_VERSION + ").")
+    if payload["format_version"] == FORMAT_VERSION:
+        snapshot, settings = payload["schema_snapshot"], payload["settings"]
+        if (not isinstance(snapshot, dict) or set(snapshot) != {"schema_fingerprint", "schema"}
+                or not isinstance(snapshot["schema"], dict) or "__schema" not in snapshot["schema"]):
+            raise ConfigExchangeError("The schema snapshot in the file is incomplete.")
+        if not isinstance(settings, dict) or set(settings) - set(SETTINGS_KEYS):
+            raise ConfigExchangeError("The file contains settings that are never transferred (e.g. credentials).")
     seen = set()
     for item in payload["read_services"]:
         if (not isinstance(item, dict) or set(item) != SERVICE_KEYS or item["target_operation"] not in AREA_ORDER

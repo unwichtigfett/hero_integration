@@ -3714,7 +3714,10 @@ def customer_send(customer: str, fingerprint: str, confirmed: int | str = 0) -> 
 
 @frappe.whitelist()
 def config_export(snapshot_name: str) -> dict[str, str]:
-    """Complete configuration (field mappings, HERO fields/DocTypes, read services); no credentials or data."""
+    """Complete package: HERO schema snapshot, settings, field mappings, HERO fields/DocTypes, read services.
+
+    Never included: HERO URL/token, allowed hosts, notification recipients, mutation/deletion switches, data.
+    """
     frappe.only_for("System Manager")
     from hero_integration.services.config_exchange import export_config
 
@@ -3722,7 +3725,7 @@ def config_export(snapshot_name: str) -> dict[str, str]:
 
 
 @frappe.whitelist(methods=["POST"])
-def config_import_preview(snapshot_name: str, payload_json: str) -> dict[str, object]:
+def config_import_preview(payload_json: str, snapshot_name: str = "") -> dict[str, object]:
     frappe.only_for("System Manager")
     from hero_integration.services.config_exchange import ConfigExchangeError, preview_config
     from hero_integration.services.mapping_exchange import MappingExchangeError
@@ -3735,7 +3738,7 @@ def config_import_preview(snapshot_name: str, payload_json: str) -> dict[str, ob
 
 
 @frappe.whitelist(methods=["POST"])
-def config_import(snapshot_name: str, payload_json: str, confirmed: int | str = 0) -> dict[str, object]:
+def config_import(payload_json: str, confirmed: int | str = 0, snapshot_name: str = "") -> dict[str, object]:
     """Adopt the mapping package and approve the read services of a configuration file (no HERO request)."""
     frappe.only_for("System Manager")
     if not _as_bool(confirmed):
@@ -3767,7 +3770,6 @@ def config_import_file(path: str, snapshot_name: str = "", dry_run: int = 1) -> 
     from hero_integration.services.config_exchange import import_config, preview_config
 
     frappe.set_user("Administrator")
-    snapshot_name = snapshot_name or _config_snapshot()
     with open(path, encoding="utf-8") as handle:
         content = handle.read()
     if int(dry_run):

@@ -10,7 +10,7 @@
 # Required:  DB_HOST, DB_ROOT_PASSWORD
 # Optional:  WORKDIR (default ./.ci-bench), APP_PATH (default: repository root),
 #            FRAPPE_BRANCH / ERPNEXT_BRANCH (default version-16), PYTHON (default python3.14),
-#            HERO_SCHEMA_FILE (introspection JSON), HERO_CONFIG_FILE (configuration export);
+#            HERO_CONFIG_FILE (complete package export), HERO_SCHEMA_FILE (optional introspection JSON);
 #            if a variable is set, its file must exist, otherwise the test fails,
 #            MIN_TESTS (default 1000: fewer offline or site tests counts as a broken run),
 #            REDIS_CACHE / REDIS_QUEUE (default redis://127.0.0.1:6379)
@@ -86,22 +86,21 @@ for var in HERO_SCHEMA_FILE HERO_CONFIG_FILE; do
   file="${!var:-}"
   if [ -n "$file" ] && [ ! -s "$file" ]; then echo "$var is set but $file is missing or empty"; exit 1; fi
 done
-if [ -z "${HERO_SCHEMA_FILE:-}" ] || [ -z "${HERO_CONFIG_FILE:-}" ]; then
-  echo "NOTE: HERO_SCHEMA_FILE/HERO_CONFIG_FILE not set - configuration import skipped."
-fi
 if [ -n "${HERO_SCHEMA_FILE:-}" ]; then
-  step "offline HERO schema snapshot"
+  step "offline HERO schema snapshot (optional; a v2 configuration package brings its own)"
   run_py hero_integration.api.snapshot_import_file "{\"path\": \"$HERO_SCHEMA_FILE\"}"
-  if [ -n "${HERO_CONFIG_FILE:-}" ]; then
-    step "configuration import (preview, import, idempotency)"
-    run_py hero_integration.api.config_import_file "{\"path\": \"$HERO_CONFIG_FILE\"}"
-    run_py hero_integration.api.config_import_file "{\"path\": \"$HERO_CONFIG_FILE\", \"dry_run\": 0}"
-    second=$(run_py hero_integration.api.config_import_file "{\"path\": \"$HERO_CONFIG_FILE\"}")
-    echo "$second"
-    echo "$second" | grep -q '"New": 0' && ! echo "$second" | grep -q '"state": "New"' \
-      || { echo "Configuration import is not idempotent"; exit 1; }
-    run_py hero_integration.app_setup.verify_install
-  fi
+fi
+if [ -n "${HERO_CONFIG_FILE:-}" ]; then
+  step "complete package import (preview, import, idempotency)"
+  run_py hero_integration.api.config_import_file "{\"path\": \"$HERO_CONFIG_FILE\"}"
+  run_py hero_integration.api.config_import_file "{\"path\": \"$HERO_CONFIG_FILE\", \"dry_run\": 0}"
+  second=$(run_py hero_integration.api.config_import_file "{\"path\": \"$HERO_CONFIG_FILE\"}")
+  echo "$second"
+  echo "$second" | grep -q '"New": 0' && ! echo "$second" | grep -q '"state": "New"' \
+    || { echo "Configuration import is not idempotent"; exit 1; }
+  run_py hero_integration.app_setup.verify_install
+else
+  echo "NOTE: HERO_CONFIG_FILE not set - package import skipped."
 fi
 
 step "uninstall"
