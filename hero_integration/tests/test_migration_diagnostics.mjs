@@ -54,3 +54,16 @@ test('dates follow the active Frappe language and handle invalid input', () => {
   assert.equal(formatDateTime('2026-05-04 12:34:00'), new Intl.DateTimeFormat('en', options).format(date));
   assert.equal(formatDateTime('not a date'), '—');
 });
+
+test('phase and testing summaries translate status and retain counts', () => {
+  const messages = {'Running':'Läuft', 'PENDING':'Ausstehend',
+    '{0} · {1} processed':'{0} · {1} verarbeitet',
+    '{0} · {1}/{2} HERO requests · {3} records':'{0} · {1}/{2} HERO-Anfragen · {3} Datensätze'};
+  window.hero_integration_i18n.text = value => messages[value] || value;
+  frappe.boot.lang = 'de';
+  const {phaseSummary, testingSummary} = window.hero_integration_migration;
+  assert.equal(phaseSummary('Running', 12), 'Läuft · 12 verarbeitet');
+  const run = {testing_executed_actions:2, testing_max_actions:5, testing_records_received:7};
+  assert.equal(testingSummary(run), 'Ausstehend · 2/5 HERO-Anfragen · 7 Datensätze');
+  assert.equal(run.testing_executed_actions, 2);
+});
