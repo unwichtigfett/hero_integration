@@ -202,3 +202,16 @@ test('package confirmation shows translated preview without importing before con
     assert.ok(confirmation.includes('<br><br>'));
     assert.deepEqual(calls, ['workspace_settings_get', 'config_import_preview', 'config_import_preview']);
 });
+
+test('settings load errors translate known details and the fallback', async () => {
+    const messages = {'Could not load HERO settings. {0}':'Einstellungen konnten nicht geladen werden. {0}',
+        'Known error':'Bekannter Fehler', 'The server did not provide additional details.':'Keine weiteren Details.'};
+    for (const [error, expected] of [[new Error('Known error'), 'Bekannter Fehler'], [{}, 'Keine weiteren Details.']]) {
+        const window = {hero_integration_platform:{api:async () => { throw error; }},
+            hero_integration_i18n:{text:value => messages[value] || value}};
+        vm.runInNewContext(source, {window, document:{createElement:tag => new Element(tag)}});
+        const workspace = new Element('main');
+        await window.hero_integration_settings_ui.mount(workspace);
+        assert.ok(workspace.find(element => element.textContent === `Einstellungen konnten nicht geladen werden. ${expected}`));
+    }
+});

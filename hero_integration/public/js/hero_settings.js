@@ -87,9 +87,9 @@
     }
 
     function errorMessage(error) {
-        return typeof error?.message === "string" && error.message
+        return uiText(typeof error?.message === "string" && error.message
             ? error.message
-            : "The server did not provide additional details.";
+            : "The server did not provide additional details.");
     }
 
     // One settings group: a panel with a title, an optional description and a field grid.
