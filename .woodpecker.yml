@@ -2,7 +2,7 @@
 # Draft: adapt the image to one with Python 3.14, Node 20+, yarn, git, mariadb client and bench.
 when:
   - event: [manual, push]
-    branch: [hero_int_dev]
+    branch: [hero_int_1.0]
 
 services:
   - name: mariadb

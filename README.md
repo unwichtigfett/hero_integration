@@ -6,6 +6,9 @@ Before it adds the HERO schema, the pre-install guard verifies the ERPNext
 Customer, Contact, Contact Email, Contact Phone and Project DocTypes.
 Helpdesk is optional.
 
+Install from the branch `hero_int_1.0`:
+<https://github.com/unwichtigfett/hero_integration/tree/hero_int_1.0>. See `installation_guide_1.0.md`.
+
 ## Supported scope
 
 - HERO Customer, Project Match, Calendar Events and Task operations with fixed,
