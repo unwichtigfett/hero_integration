@@ -13,6 +13,8 @@
         const prefix = "Recheck requested: ";
         const recheck = String(value).startsWith(prefix);
         const text = recheck ? String(value).slice(prefix.length) : String(value);
+        const exact = tr(text);
+        if (exact !== text) return recheck ? format("Recheck requested: {0}", exact) : exact;
         const areaBlocker = text.match(/^(.*?) needs an approved read service with an active mapping for (.*?) on a snapshot of the HERO source instance "(.*)"\. Approve one under API & Schema and Mapping\.$/);
         if (areaBlocker) {
             const translated = format('{0} needs an approved read service with an active mapping for {1} on a snapshot of the HERO source instance "{2}". Approve one under API & Schema and Mapping.',
@@ -23,11 +25,17 @@
             [/^Field conflict requires review: (.+)\.$/, "Field conflict requires review: {0}."],
             [/^Task fields require review: (.+)$/, "Task fields require review: {0}"],
             [/^Another HERO run is active: (.+)\.$/, "Another HERO run is active: {0}."],
+            [/^Polling configuration is not supported \((.*)\); no HERO request was made\.$/, "Polling configuration is not supported ({0}); no HERO request was made."],
+            [/^Automatic sync is blocked: (.+)$/, "Automatic sync is blocked: {0}", [0]],
+            [/^Materialized monitoring is blocked: (.+)$/, "Materialized monitoring is blocked: {0}", [0]],
+            [/^(.+): the automatic run could not be started; see the error log\.$/, "{0}: the automatic run could not be started; see the error log.", [0]],
+            [/^(.+): run (.+) queued\.$/, "{0}: run {1} queued.", [0]],
         ];
-        for (const [pattern, template] of templates) {
+        for (const [pattern, template, translatedValues = []] of templates) {
             const match = text.match(pattern);
             if (match) {
-                const translated = format(template, match[1]);
+                const values = match.slice(1).map((value, index) => translatedValues.includes(index) ? tr(value) : value);
+                const translated = format(template, ...values);
                 return recheck ? format("Recheck requested: {0}", translated) : translated;
             }
         }
