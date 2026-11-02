@@ -14,15 +14,19 @@ created here:
 
 from __future__ import annotations
 
-import frappe
-
 SALUTATIONS = ("Herr", "Frau", "Familie", "Eheleute", "Dr")
 
 
 def _site_connected() -> bool:
-    """False in offline test doubles; install, migrate and adoption always run on a connected site."""
+    """False in offline test doubles; install, migrate and adoption always run on a connected site.
+
+    ``frappe`` is imported at call time so a test that replaces the module is seen here too.
+    """
+    import frappe
+
     try:
-        return bool(frappe.local.site) and frappe.db is not None
+        return (bool(frappe.local.site) and frappe.db is not None
+                and callable(getattr(frappe, "get_meta", None)) and hasattr(frappe, "_"))
     except Exception:
         return False
 
@@ -30,6 +34,7 @@ def _site_connected() -> bool:
 def ensure_app_records() -> None:
     if not _site_connected():
         return
+    import frappe
     from hero_integration.integrations.project_form import ensure_phase_field
     from hero_integration.integrations.task_form import setup_task_form
     from hero_integration.services.project_naming import TRADE_CATALOG
@@ -56,6 +61,7 @@ def apply_form_layout() -> dict:
 
 def verify_install() -> dict:
     """bench execute: check a fresh install (CI). Raises when something the app needs is missing."""
+    import frappe
     from hero_integration.install import HERO_CUSTOM_FIELDS
     from hero_integration.integrations.project_form import PHASE_FIELD, VOLUME_FIELD
     from hero_integration.services.project_naming import TRADE_CATALOG

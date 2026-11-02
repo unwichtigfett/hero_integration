@@ -1619,7 +1619,14 @@ def _hash(value: object) -> str:
 
 
 def _preview_binding(package, preview):
+    from frappe.utils.password import get_encryption_key
+
     key = frappe.local.conf.get('encryption_key')
+    if not key:
+        try:
+            key = get_encryption_key()  # a fresh site gets its key on first use
+        except Exception:
+            key = None
     if not isinstance(key, str) or not key:
         raise MappingDraftExchangeError('Site encryption key is required for import preview.')
     body = _json({'site': frappe.local.site, 'owner': frappe.session.user,

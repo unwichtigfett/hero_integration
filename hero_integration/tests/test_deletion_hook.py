@@ -39,7 +39,9 @@ class TestDeletionHook(IntegrationTestCase):
         )
         self.assertEqual(
             set(hero_integration.hooks.doc_events),
-            {*hero_integration.hooks._HERO_OWNED_DOCTYPES, "*", "Task", "ToDo"},
+            # Project: bound-target deletion guard; Helpdesk/CRM: ERPNext reference fields (2026-11-01).
+            {*hero_integration.hooks._HERO_OWNED_DOCTYPES, "*", "Task", "ToDo", "Project",
+             "HD Ticket", "ERPNext HD Settings", "CRM Lead", "CRM Deal", "ERPNext CRM Settings"},
         )
         self.assertEqual(
             hero_integration.hooks.doc_events["*"]["on_update"],

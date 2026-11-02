@@ -7,6 +7,10 @@ requires-python = ">=3.14,<3.15"
 license = {file = "LICENSE"}
 dependencies = ["graphql-core>=3.2,<3.3"]
 
+[project.optional-dependencies]
+# Some test modules use pytest; Frappe's test discovery imports every test module.
+test = ["pytest>=8"]
+
 [build-system]
 requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"

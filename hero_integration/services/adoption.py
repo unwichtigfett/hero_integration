@@ -79,7 +79,15 @@ def execute(adoption_name: str) -> dict[str, object]:
 
 
 def _binding(snapshot_name, payload_json, selection, adoption_name):
+    # A fresh site has no key until Frappe first needs one; get_encryption_key creates it.
+    from frappe.utils.password import get_encryption_key
+
     key = frappe.local.conf.get("encryption_key")
+    if not key:
+        try:
+            key = get_encryption_key()  # a fresh site gets its key on first use
+        except Exception:
+            key = None
     if not isinstance(key, str) or not key:
         raise SchemaProvisioningError("Site encryption key is required for adoption confirmation.")
     payload = {"site": frappe.local.site, "actor": frappe.session.user, "adoption": adoption_name, "snapshot": snapshot_name,
