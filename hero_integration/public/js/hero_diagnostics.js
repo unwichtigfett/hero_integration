@@ -61,6 +61,9 @@
             return recheck ? format("Recheck requested: {0}", translated) : translated;
         }
         const templates = [
+            [/^A new target record would be created named (.+)\.$/, "A new target record would be created named {0}."],
+            [/^ERPNext rejected the record \(([A-Za-z_][A-Za-z0-9_]*)\); see Error Log\.$/, "ERPNext rejected the record ({0}); see Error Log."],
+            [/^([A-Za-z][A-Za-z ]+) is not installed on this site\.$/, "{0} is not installed on this site.", [0]],
             [/^HERO has no (customer number|project display_id)\.$/, "HERO has no {0}.", [0]],
             [/^HERO number (.+) is not text\.$/, "HERO number {0} is not text."],
             [/^HERO number (.+) cannot be an ERPNext document name \(only letters, digits and single inner hyphens, at most 140 characters\)\.$/, "HERO number {0} cannot be an ERPNext document name (only letters, digits and single inner hyphens, at most 140 characters)."],

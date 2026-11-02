@@ -2400,3 +2400,7 @@ ERPNext's naming series names the new document; the HERO value stays in its fiel
 HERO has no {0}.,HERO enthält keine {0}.
 HERO number {0} is not text.,Die HERO-Nummer {0} ist kein Text.
 "HERO number {0} cannot be an ERPNext document name (only letters, digits and single inner hyphens, at most 140 characters).","Die HERO-Nummer {0} kann kein ERPNext-Dokumentname sein (nur Buchstaben, Ziffern und einzelne Bindestriche innerhalb des Namens, höchstens 140 Zeichen)."
+A new target record would be created.,Ein neuer Zieldatensatz würde erstellt.
+A new target record would be created named {0}.,Ein neuer Zieldatensatz mit dem Namen {0} würde erstellt.
+ERPNext rejected the record ({0}); see Error Log.,ERPNext hat den Datensatz abgelehnt ({0}); siehe Fehlerprotokoll.
+{0} is not installed on this site.,{0} ist auf dieser Site nicht installiert.
