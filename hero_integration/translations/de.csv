@@ -2442,3 +2442,6 @@ Translation: {0},Übersetzung: {0}
 Source customer is deleted; no ERPNext target deletion was performed.,Der Quellkunde ist gelöscht; das ERPNext-Ziel wurde nicht gelöscht.
 The worker stopped before finishing (lease expired). Resume starts the run again.,Der Worker wurde vor Abschluss angehalten (Lease abgelaufen). Fortsetzen startet den Lauf erneut.
 Rejected by an administrator; the existing record is retained and HERO changes are not imported.,Von einem Administrator abgelehnt; der bestehende Datensatz bleibt erhalten und HERO-Änderungen werden nicht importiert.
+Schema unchanged; the current snapshot stays in use.,Schema unverändert; der aktuelle Snapshot bleibt in Verwendung.
+New schema snapshot captured.,Neuer Schema-Snapshot erfasst.
+{0} graph nodes and {1} graph edges.,{0} Graphknoten und {1} Graphkanten.
