@@ -2119,3 +2119,35 @@ Polling configuration is not supported by the approved runtime contract; no HERO
 Materialized monitoring failed; see the redacted server error log.,Materialisiertes Monitoring ist fehlgeschlagen; siehe das bereinigte Serverfehlerprotokoll.
 Testing preview blocked because newest-first ordering is not verified for the selected HERO source.,"Testvorschau blockiert, weil die Sortierung nach neuesten Einträgen für die gewählte HERO-Quelle nicht geprüft ist."
 Testing preview reached its shared HERO request budget; no resume is permitted.,Die Testvorschau hat ihr gemeinsames HERO-Anfragelimit erreicht; eine Fortsetzung ist nicht zulässig.
+Target created through native Frappe validation.,Ziel durch die reguläre Frappe-Validierung erstellt.
+Source customer is deleted. No target deletion occurs.,Der Quellkunde ist gelöscht. Das Ziel wird nicht gelöscht.
+Source contact person is not created as an ERPNext Customer.,Die Kontaktperson aus der Quelle wird nicht als ERPNext-Kunde angelegt.
+Configured customer record name is empty.,Der konfigurierte Name des Kundendatensatzes ist leer.
+Source deletion does not delete or close a Task.,Eine Löschung in der Quelle löscht oder schließt keine Task.
+Task binding or approved mapping version requires review.,Task-Binding oder freigegebene Mapping-Version erfordert eine Prüfung.
+Bound Task no longer exists.,Die verknüpfte Task existiert nicht mehr.
+Task binding lacks a confirmed field baseline.,Dem Task-Binding fehlt eine bestätigte Feldbasis.
+Native Task field comparison completed.,Der Feldvergleich der regulären Task ist abgeschlossen.
+Project is not installed on this site.,Project ist auf dieser Site nicht installiert.
+Configured project record name is empty.,Der konfigurierte Name des Projektdatensatzes ist leer.
+Linked record has no field-level baseline; MONITOR made no write.,Der verknüpfte Datensatz hat keine Feldbasis; MONITOR hat keine Daten geschrieben.
+HERO field change observed by MONITOR; no ERPNext write was prepared.,MONITOR hat eine Feldänderung in HERO erkannt; es wurde kein Schreibvorgang in ERPNext vorbereitet.
+Frappe field change observed by MONITOR; no HERO action was prepared.,MONITOR hat eine Feldänderung in Frappe erkannt; es wurde keine HERO-Aktion vorbereitet.
+HERO and Frappe changed to the same values; MONITOR left the baseline unchanged.,HERO und Frappe wurden auf dieselben Werte geändert; MONITOR hat die Basis unverändert gelassen.
+Record is already synchronized.,Der Datensatz ist bereits synchronisiert.
+An administrator rejected this HERO record; it is not imported.,Ein Administrator hat diesen HERO-Datensatz abgelehnt; er wird nicht importiert.
+A nonempty Task title is required for intake.,Für die Übernahme ist ein nicht leerer Task-Titel erforderlich.
+A native Task would be created.,Eine reguläre Task würde erstellt.
+Source deletion is observed; no target deletion occurs.,Eine Löschung in der Quelle wurde erkannt; das Ziel wird nicht gelöscht.
+Stored binding has an incompatible target DocType.,Das gespeicherte Binding hat einen inkompatiblen Ziel-DocType.
+Event binding or approved mapping version requires review.,Event-Binding oder freigegebene Mapping-Version erfordert eine Prüfung.
+Stored target reference no longer exists.,Die gespeicherte Zielreferenz existiert nicht mehr.
+Existing target would remain unchanged; local changes are observed only.,Das bestehende Ziel würde unverändert bleiben; lokale Änderungen werden nur beobachtet.
+HERO source identity was claimed concurrently; no new target or relations were kept. Retry the same source identity to reuse its established link.,"Die HERO-Quellidentität wurde gleichzeitig beansprucht; kein neues Ziel und keine neuen Verknüpfungen wurden beibehalten. Wiederholen Sie die Quellidentität, um ihren bestehenden Link zu verwenden."
+No approved HERO attachment query exists in the V1 source contract.,Im V1-Quellvertrag gibt es keine freigegebene HERO-Abfrage für Anhänge.
+Stored calendar binding is not a native Event.,Das gespeicherte Kalender-Binding ist kein reguläres Event.
+Event sharing or outbound settings changed; native calendar update requires review.,Freigabe- oder Ausgangseinstellungen des Events wurden geändert; die reguläre Kalenderaktualisierung erfordert eine Prüfung.
+Existing legacy link requires a reviewed field-level baseline.,Der vorhandene ältere Link benötigt eine geprüfte Feldbasis.
+Target changed outside HERO Integration; legacy link has no field baseline.,Das Ziel wurde außerhalb der HERO Integration geändert; dem älteren Link fehlt eine Feldbasis.
+HERO source changed; legacy link has no field baseline.,Die HERO-Quelle wurde geändert; dem älteren Link fehlt eine Feldbasis.
+Existing target would receive non-conflicting HERO field changes.,Das bestehende Ziel würde konfliktfreie HERO-Feldänderungen erhalten.
