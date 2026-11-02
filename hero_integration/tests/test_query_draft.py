@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import unittest
 
 from hero_integration.services.query_draft import QueryDraftError, validate, validate_variables
@@ -107,6 +108,18 @@ class TestQueryDraft(unittest.TestCase):
         many = "{ contacts { " + " ".join(f"a{i}: id" for i in range(501)) + " } }"
         with self.assertRaisesRegex(QueryDraftError, "more than"):
             validate(SCHEMA, many)
+
+    def test_recursive_selection_depth_is_bounded_at_twelve_levels(self):
+        schema = copy.deepcopy(SCHEMA)
+        contact = next(item for item in schema["__schema"]["types"] if item["name"] == "Contact")
+        contact["fields"].append({"name": "friend", "args": [], "type": _named("OBJECT", "Contact")})
+
+        def document(depth):
+            return "{ contacts { " + "friend { " * depth + "id" + " }" * depth + " } }"
+
+        validate(schema, document(10))
+        with self.assertRaisesRegex(QueryDraftError, "nested deeper than 12"):
+            validate(schema, document(11))
 
     def test_runtime_variables_are_validated_and_coerced(self):
         document = "query Q($id: ID!, $first: Int, $filter: ContactFilter) { contact(id: $id) { id } contacts(first: $first, filter: $filter) { id } }"

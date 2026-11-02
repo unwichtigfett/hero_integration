@@ -81,6 +81,20 @@ class TestAdoptionRecordSecurity(unittest.TestCase):
             adoption.execute("copy")
         self.assertEqual(self.f.mutations, [])
 
+    def test_confirmation_binding_changes_with_its_security_context(self):
+        selection = {"ids": ["field:one"], "preview": {"revision": "r1"}}
+        original = adoption._binding("SYNTHETIC", self.payload, selection, "adoption-1")
+        self.assertNotEqual(original, adoption._binding("OTHER", self.payload, selection, "adoption-1"))
+        self.assertNotEqual(original, adoption._binding("SYNTHETIC", self.payload + " ", selection, "adoption-1"))
+        self.assertNotEqual(original, adoption._binding("SYNTHETIC", self.payload, {**selection, "ids": []}, "adoption-1"))
+        self.assertNotEqual(original, adoption._binding("SYNTHETIC", self.payload, selection, "adoption-2"))
+        with patch.object(self.f.session, "user", "other@example.invalid"):
+            self.assertNotEqual(original, adoption._binding("SYNTHETIC", self.payload, selection, "adoption-1"))
+        with patch.object(self.f.local, "site", "other.invalid"):
+            self.assertNotEqual(original, adoption._binding("SYNTHETIC", self.payload, selection, "adoption-1"))
+        with patch.dict(self.f.local.conf, {"encryption_key": "other-synthetic-key"}):
+            self.assertNotEqual(original, adoption._binding("SYNTHETIC", self.payload, selection, "adoption-1"))
+
     def test_resume_rejects_changed_source_context_before_ddl(self):
         preview = schema_provisioning.preview_package("SYNTHETIC", self.payload)
         selection = {"ids": ["field:customer-schema-value"], "preview": preview}

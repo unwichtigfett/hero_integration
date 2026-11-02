@@ -15,6 +15,15 @@ class TestAdoptionPreviewCAS(TestCase):
             p = patch.object(module, "frappe", self.f)
             p.start()
             self.addCleanup(p.stop)
+        # This in-memory fixture has no site or database lock service. CAS
+        # behavior is exercised here; real lock semantics need a site test.
+        for target in (
+            "hero_integration.hero_integration.doctype.hero_graphql_mapping.hero_graphql_mapping.lock_exchange_context",
+            "hero_integration.hero_integration.doctype.hero_frappe_mapping.hero_frappe_mapping._lock_active_target",
+        ):
+            p = patch(target)
+            p.start()
+            self.addCleanup(p.stop)
         self.payload = json.dumps(package())
 
     def preview(self):

@@ -9,6 +9,8 @@ from hero_integration.client.graphql import HeroClientError, HeroEndpoint, HeroG
 from hero_integration.graphql_protocol import graphql_result_decoder
 from hero_integration.graphql_protocol.graphql_argument_values import GraphQLArgumentValueError, _parse, _validate
 from hero_integration.graphql_protocol.graphql_response import GraphQLResponseEnvelopeError, parse_graphql_response, strict_json_loads
+from hero_integration.graphql_protocol.graphql_operation_materializer import GraphQLOperationBinding, GraphQLOperationMaterializationError
+from hero_integration.graphql_protocol.operation_kind import GraphQLOperationKind
 from hero_integration.graphql_protocol.schema import GraphQLTypeRef
 
 
@@ -38,6 +40,23 @@ class TestStrictGraphQLJson(unittest.TestCase):
             with self.subTest(text=text[:30]), self.assertRaises(GraphQLResponseEnvelopeError):
                 parse_graphql_response(text)
 
+    def test_error_metadata_must_have_valid_message_and_path_tokens(self):
+        invalid = (
+            '{"errors": null}',
+            '{"errors": ["not-an-object"]}',
+            '{"errors": [{"message": ""}]}',
+            '{"errors": [{"message": "bad", "path": []}]}',
+            '{"errors": [{"message": "bad", "path": [true]}]}',
+            '{"errors": [{"message": "bad", "path": ["result", false]}]}',
+        )
+        for text in invalid:
+            with self.subTest(text=text), self.assertRaises(GraphQLResponseEnvelopeError):
+                parse_graphql_response(text)
+        envelope = parse_graphql_response('{"data": null, "errors": [{"message": "bad", "path": ["result", 0]}]}')
+        self.assertTrue(envelope.data_present)
+        self.assertIsNone(envelope.data)
+        self.assertEqual(envelope.errors[0].path, ("result", 0))
+
     def test_read_client_treats_invalid_graphql_json_as_an_invalid_response(self):
         client = HeroGraphQLClient(HeroEndpoint("https://hero.example/graphql", "hero.example"), lambda: "token", max_retries=3)
         for text in ('{"data": {"v": NaN}}', '{"data": {"a": 1, "a": 2}}', "[" * 100000 + "]" * 100000):
@@ -47,6 +66,17 @@ class TestStrictGraphQLJson(unittest.TestCase):
                 client._request_with_retry(opener, object())
             self.assertEqual(caught.exception.code, "INVALID_RESPONSE")
             self.assertEqual(opener.open.call_count, 1, "an invalid body is not retried")
+
+
+class TestMaterializedNames(unittest.TestCase):
+    def test_operation_and_alias_reject_graphql_syntax(self):
+        binding = dict(binding_id="binding", schema_fingerprint="a" * 64, operation_node_id="node",
+                       operation_kind=GraphQLOperationKind.QUERY, operation_name="Read", root_alias="result")
+        GraphQLOperationBinding(**binding)
+        for field in ("operation_name", "root_alias"):
+            for value in ("9leading", "name { id }", "name: other", "name\nmutation"):
+                with self.subTest(field=field, value=value), self.assertRaises(GraphQLOperationMaterializationError):
+                    GraphQLOperationBinding(**{**binding, field: value})
 
 
 class TestDecoderValues(unittest.TestCase):

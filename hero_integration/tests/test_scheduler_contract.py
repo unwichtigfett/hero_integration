@@ -17,6 +17,25 @@ except ModuleNotFoundError:
 
 
 class TestSchedulerContract(unittest.TestCase):
+    def setUp(self):
+        package = importlib.import_module("hero_integration")
+        missing = object()
+        previous_module = sys.modules.get("hero_integration.tasks")
+        previous_alias = getattr(package, "tasks", missing)
+
+        def restore():
+            if previous_module is None:
+                sys.modules.pop("hero_integration.tasks", None)
+            else:
+                sys.modules["hero_integration.tasks"] = previous_module
+            if previous_alias is missing:
+                if hasattr(package, "tasks"):
+                    delattr(package, "tasks")
+            else:
+                package.tasks = previous_alias
+
+        self.addCleanup(restore)
+
     def test_disabled_scheduler_does_not_start_a_sync(self):
         frappe_module = types.ModuleType("frappe")
         frappe_module.whitelist = lambda *args, **kwargs: lambda function: function

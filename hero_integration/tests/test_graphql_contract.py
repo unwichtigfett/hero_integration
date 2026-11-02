@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import unittest
 
+from graphql import build_schema, parse
+from graphql.execution.values import get_variable_values
+
 from hero_integration.services.graphql_contract import GraphQLContractError, parse_mutation, validate_mutation
 
 
@@ -43,6 +46,25 @@ class TestGraphQLContract(unittest.TestCase):
             validate_mutation(SCHEMA, contract, {"input": {"state": "ACTIVE"}})
         with self.assertRaisesRegex(GraphQLContractError, "unknown input"):
             validate_mutation(SCHEMA, contract, {"input": {"name": "Ada", "unknown": 1}})
+
+    def test_optional_variable_default_is_bound_in_document_but_not_returned_as_input(self):
+        schema = {"__schema": {"mutationType": {"name": "Mutation"}, "types": [
+            {"kind": "OBJECT", "name": "Mutation", "fields": [{"name": "changeCustomer",
+             "args": [{"name": "value", "type": {"kind": "SCALAR", "name": "Int"}}]}]},
+            {"kind": "SCALAR", "name": "Int"},
+        ]}}
+        document = "mutation Change($value: Int = 7) { changeCustomer(value: $value) }"
+        contract = parse_mutation(document)
+        self.assertEqual(validate_mutation(schema, contract, {}), {})
+        self.assertNotEqual(contract.fingerprint, parse_mutation(document.replace("= 7", "= 8")).fingerprint)
+        graphql_schema = build_schema("type Query { ping: String } type Mutation { changeCustomer(value: Int): String }")
+        definitions = parse(document).definitions[0].variable_definitions
+        self.assertEqual(get_variable_values(graphql_schema, definitions, {}), {"value": 7})
+
+    def test_root_literal_arguments_are_not_write_contract_bindings(self):
+        for literal in ("123456", "true", "ACTIVE"):
+            with self.subTest(literal=literal), self.assertRaises(GraphQLContractError):
+                parse_mutation(f"mutation {{ changeCustomer(value: {literal}) {{ id }} }}")
 
     def test_literals_and_extra_operations_cannot_hide_a_second_mutation(self):
         with self.assertRaisesRegex(GraphQLContractError, "exactly one operation"):

@@ -101,6 +101,34 @@ class TestProvisioningLifecycle(unittest.TestCase):
             ProvisioningExecutor(audit, adapter, InMemoryProvisioningApprovalAuthority(), clock=lambda: 1).apply_authorized(value, approval(value))
         self.assertEqual(adapter.writes, [])
 
+    def test_changed_operation_id_is_rejected_before_approval_consumption(self):
+        original = plan()
+        changed = replace(original, operations=(replace(original.operations[0], operation_id="synthetic-other"),))
+        adapter, audit, authority = FakeAdapter("meta-1"), InMemoryProvisioningAudit(), InMemoryProvisioningApprovalAuthority()
+        executor = ProvisioningExecutor(audit, adapter, authority, clock=lambda: 1)
+
+        with self.assertRaisesRegex(ProvisioningLifecycleError, "does not bind"):
+            executor.apply_authorized(changed, approval(original))
+        self.assertEqual(adapter.writes, [])
+        self.assertEqual(audit.events, [])
+        self.assertEqual(executor.apply_authorized(original, approval(original)).state.value, "APPLIED")
+
+    def test_metadata_change_after_reservation_prevents_first_schema_write(self):
+        class ChangingAdapter(FakeAdapter):
+            def metadata_fingerprint(self, site):
+                self.sites.append(site)
+                return 'meta-1' if len(self.sites) == 1 else 'changed'
+
+        value = plan()
+        audit, adapter = InMemoryProvisioningAudit(), ChangingAdapter('meta-1')
+        executor = ProvisioningExecutor(audit, adapter, InMemoryProvisioningApprovalAuthority(), clock=lambda: 1)
+        with self.assertRaisesRegex(ProvisioningLifecycleError, 'reconciliation is required'):
+            executor.apply_authorized(value, approval(value))
+        self.assertEqual(adapter.writes, [])
+        self.assertEqual([event[1] for event in audit.events], ['RESERVED', 'RECONCILIATION_REQUIRED'])
+        with self.assertRaisesRegex(ProvisioningLifecycleError, 'already consumed'):
+            executor.apply_authorized(value, approval(value))
+
     def test_record_failure_preserves_reconciliation_requirement_and_prevents_replay(self):
         value = plan()
         audit, adapter = InMemoryProvisioningAudit(), FakeAdapter("meta-1")
@@ -113,6 +141,23 @@ class TestProvisioningLifecycle(unittest.TestCase):
         with self.assertRaises(ProvisioningLifecycleError):
             executor.apply_authorized(value, approval(value))
         self.assertTrue(executor.reconciliation_status("audit-1").reconciliation_required)
+
+    def test_apply_exception_after_fake_effect_requires_reconciliation_and_blocks_replay(self):
+        class EffectThenFailure(FakeAdapter):
+            def apply(self, site, operation):
+                super().apply(site, operation)
+                raise RuntimeError("synthetic failure after effect")
+
+        value = plan()
+        audit, adapter = InMemoryProvisioningAudit(), EffectThenFailure("meta-1")
+        executor = ProvisioningExecutor(audit, adapter, InMemoryProvisioningApprovalAuthority(), clock=lambda: 1)
+        with self.assertRaisesRegex(ProvisioningLifecycleError, "reconciliation is required"):
+            executor.apply_authorized(value, approval(value))
+        self.assertEqual(len(adapter.writes), 1)
+        self.assertEqual([event[1] for event in audit.events], ["RESERVED", "RECONCILIATION_REQUIRED"])
+        with self.assertRaisesRegex(ProvisioningLifecycleError, "already consumed"):
+            executor.apply_authorized(value, approval(value))
+        self.assertEqual(len(adapter.writes), 1)
 
 
     def test_waiting_application_never_reaches_audit_or_adapter(self):

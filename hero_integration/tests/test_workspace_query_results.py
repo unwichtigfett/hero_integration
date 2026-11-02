@@ -62,13 +62,19 @@ class TestQueryResults(_Base):
         self.client.query.side_effect = HeroClientError("HERO GraphQL response contains no data.", code="MISSING_DATA")
         self.assertEqual(self.execute()["error_kind"], "RESPONSE")
 
-    def test_error_details_never_echo_submitted_variable_values(self):
+    def test_error_details_redact_an_exact_long_variable_value(self):
         self.client.query.side_effect = HeroClientError(
             "HERO GraphQL rejected the request.", code="GRAPHQL_ERRORS",
             details=('Contact "secret-4711" not found',))
         result = self.execute('{"id": "secret-4711"}')
         self.assertEqual(result["graphql_errors"], ['Contact "[redacted]" not found'])
         self.assertNotIn("secret-4711", json.dumps(result))
+
+    def test_nested_overlapping_values_are_redacted_longest_first(self):
+        variables = {"filters": [{"name": "Alice"}, {"name": "Alice Cooper"}], "number": 12345}
+        details = ["Alice Cooper and Alice: 12345", "unrelated"]
+        self.assertEqual(api._redacted_messages(details, variables),
+                         ["[redacted] and [redacted]: [redacted]", "unrelated"])
 
     def test_transport_keeps_partial_data_on_graphql_errors(self):
         client = HeroGraphQLClient(HeroEndpoint("https://hero.example/graphql", "hero.example"), lambda: "token")
@@ -150,6 +156,14 @@ class TestMutationExecutionContract(_Base):
                 self.contract.status = "Active"
         self.mutation_class.assert_not_called()
 
+    def test_failed_reservation_never_constructs_transport(self):
+        self.gate.return_value = {"mutation_execution_enabled": True}
+        api._reserve_mutation.side_effect = ValueError("reservation unavailable")
+        with self.assertRaisesRegex(ValueError, "reservation unavailable"):
+            self.run_mutation()
+        self.mutation_class.assert_not_called()
+        self.finalize.assert_not_called()
+
     def test_released_gate_with_contract_and_confirmation_sends_exactly_once_to_the_mock(self):
         self.gate.return_value = {"mutation_execution_enabled": True}
         result = self.run_mutation()
@@ -167,10 +181,6 @@ class TestMutationExecutionContract(_Base):
         self.assertEqual(self.finalize.call_args.args[1], "Failed")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TestServiceDraftOrigin(_Base):
     def test_graph_viewer_origin_is_recorded_and_unknown_origins_are_rejected(self):
         draft = api.workspace_analyzer_service_draft("SNAPSHOT", "operation:query:contact")
@@ -182,3 +192,7 @@ class TestServiceDraftOrigin(_Base):
         with self.assertRaisesRegex(ValueError, "Unknown service draft origin"):
             api.workspace_analyzer_service_save("SNAPSHOT", "operation:query:contact", payload, "GraphQL Services")
         self.client.query.assert_not_called()
+
+
+if __name__ == "__main__":
+    unittest.main()

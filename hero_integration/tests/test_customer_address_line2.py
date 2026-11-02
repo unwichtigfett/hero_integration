@@ -16,6 +16,7 @@ from hero_integration.services.mapping_runtime import MappingPlanError, plan_fro
 from hero_integration.services.migration import (
     CustomerAddressError,
     _customer_primary_address,
+    _require_exclusive_customer_address,
     _synchronize_customer_address,
 )
 from hero_integration.services.read_contract import ReadContractError, from_documents
@@ -138,6 +139,15 @@ class TestCustomerAddressLine2Contract(unittest.TestCase):
         patcher = patch.dict(sys.modules, {'frappe':fake})
         patcher.start()
         self.addCleanup(patcher.stop)
+    def test_address_update_requires_exactly_one_matching_customer_link(self):
+        owner = {"link_doctype": "Customer", "link_name": "CUST-001"}
+        _require_exclusive_customer_address({"links": [owner]}, "CUST-001")
+        for links in ([], [owner, dict(owner)],
+                      [owner, {"link_doctype": "Supplier", "link_name": "SUP-001"}],
+                      [{"link_doctype": "Customer", "link_name": "CUST-OTHER"}]):
+            with self.subTest(links=links), self.assertRaises(CustomerAddressError):
+                _require_exclusive_customer_address({"links": links}, "CUST-001")
+
     def test_native_binding_is_closed_to_customer_primary_address_line2(self):
         valid = _line2_spec()
         validate_spec(valid, _Metadata())

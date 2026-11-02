@@ -193,6 +193,13 @@ class TestFrontendApiBoundary(unittest.TestCase):
                 api.frontend_mapping_list()
         self.assertEqual(frappe.get_all_calls, [])
 
+    def test_non_employee_cannot_probe_mapping_detail(self):
+        frappe = _Frappe(roles=("Guest",), user="guest@example.invalid")
+        with patch.object(api, "frappe", frappe):
+            with self.assertRaises(PermissionError):
+                api.frontend_mapping_detail("graphql", "known-or-unknown")
+        self.assertEqual(frappe.get_all_calls, [])
+
     def test_active_projection_keeps_mutation_argument_and_input_path_but_not_values(self):
         projection = api._sanitized_mapping_definition({
             "source": {"app": "frappe", "doctype": "Customer", "field": "customer_name"},
@@ -202,6 +209,18 @@ class TestFrontendApiBoundary(unittest.TestCase):
         self.assertEqual(projection["source"], {"app": "frappe", "doctype": "Customer", "field": "customer_name"})
         self.assertEqual(projection["target"], {"operation": "updateCustomer", "argument": "input", "field_path": "name", "input_type": "CustomerInput"})
         self.assertNotIn("must-not-leak", repr(projection))
+
+    def test_nested_mapping_projection_removes_secret_and_unknown_keys(self):
+        projection = api._sanitized_mapping_definition({
+            "selected_paths": [
+                {"path": "customer.name", "variables": {"value": "hidden"}},
+                {"path": "customer.id", "unknown": "hidden", "source": {"token": "hidden", "field": "id"}},
+            ],
+        })
+        self.assertEqual(projection, {"selected_paths": [
+            {"path": "customer.name"},
+            {"path": "customer.id", "source": {"field": "id"}},
+        ]})
 
     def test_binding_projection_is_system_manager_only_and_uses_existing_binding_identities(self):
         frappe = _Frappe()

@@ -97,7 +97,7 @@ def validate_mutation(schema_snapshot: object, contract: MutationContract, varia
 
 
 def _root_arguments(stream: "_Stream") -> dict[str, str]:
-    """Retain exact root argument bindings; literal values are not write authority."""
+    """Retain root variable bindings; variable defaults are not evaluated here."""
     result = {}
     if stream.accept('('):
         while not stream.accept(')'):

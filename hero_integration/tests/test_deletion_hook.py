@@ -29,22 +29,30 @@ class TestDeletionHook(IntegrationTestCase):
             self._original_allow_deletion,
         )
 
-    def test_every_hero_owned_doctype_uses_on_trash(self) -> None:
+    def test_listed_hero_doctypes_use_deletion_guard_without_replacing_native_hooks(self) -> None:
         self.assertTrue(hero_integration.hooks._HERO_OWNED_DOCTYPES)
         self.assertTrue(
             all(
-                events == {"on_trash": _HANDLER}
-                for doctype, events in hero_integration.hooks.doc_events.items()
-                if doctype != "*"
+                hero_integration.hooks.doc_events[doctype] == {"on_trash": _HANDLER}
+                for doctype in hero_integration.hooks._HERO_OWNED_DOCTYPES
             )
         )
         self.assertEqual(
             set(hero_integration.hooks.doc_events),
-            {*hero_integration.hooks._HERO_OWNED_DOCTYPES, "*"},
+            {*hero_integration.hooks._HERO_OWNED_DOCTYPES, "*", "Task", "ToDo"},
         )
         self.assertEqual(
             hero_integration.hooks.doc_events["*"]["on_update"],
             "hero_integration.services.change_detection.observe_frappe_target_change",
+        )
+        self.assertEqual(
+            hero_integration.hooks.doc_events["Task"]["validate"],
+            "hero_integration.services.change_detection.protect_external_task_deadline",
+        )
+        self.assertEqual(
+            hero_integration.hooks.doc_events["ToDo"],
+            {"on_update": "hero_integration.services.task_assignment_state.observe_local_todo",
+             "on_trash": "hero_integration.services.task_assignment_state.observe_local_todo"},
         )
 
     def test_delete_doc_dispatches_to_the_disabled_deletion_guard(self) -> None:

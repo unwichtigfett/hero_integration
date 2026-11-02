@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest import mock
 
@@ -34,6 +36,12 @@ class TestBusinessNumber(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(BusinessNumberError):
                 business_number(value)
 
+    def test_maximum_length_preserves_leading_zeros(self):
+        number = "0" * 139 + "2"
+        self.assertEqual(business_number(number), number)
+        with self.assertRaises(BusinessNumberError):
+            business_number("0" + number)
+
     def test_the_customer_name_is_the_hero_nr(self):
         self.assertEqual(customer_document_name({"id": 7, "nr": "0022"}), "0022")
         self.assertIsNone(customer_document_name({"id": 7}))
@@ -44,6 +52,13 @@ class TestProjectReference(unittest.TestCase):
         self.assertEqual(project_reference({"display_id": "3333", "measure": {"short": "PV"}}), "PV-3333-H")
         self.assertEqual(project_reference({"display_id": "1769", "measure": {"name": "Elektrohandwerk"}}), "ELEK-1769-H")
         self.assertEqual(project_reference({"display_id": "0042", "project_type": {"code": "KLIM"}}), "KLIM-0042-H")
+
+    def test_project_reference_length_includes_the_trade_prefix(self):
+        display_id = "0" * 136 + "2"
+        self.assertEqual(project_reference({"display_id": display_id, "measure": {"short": "PV"}}),
+                         "PV-" + display_id)
+        with self.assertRaises(BusinessNumberError):
+            project_reference({"display_id": "0" + display_id, "measure": {"short": "PV"}})
 
     def test_project_nr_is_not_the_reference(self):
         self.assertEqual(
@@ -120,11 +135,27 @@ class TestBusinessNumberMigration(FakeFrappeMigrationHarness, unittest.TestCase)
         self.assertEqual(result.code, "CONFLICT")
         self.assertEqual(self.frappe.customers[0]["custom_hero_customer_number"], "2222")
 
+    def test_explicit_null_customer_number_is_a_drift_conflict(self):
+        self.migrate_customer(self.customer(nr="0022"))
+        result = self.migrate_customer(self.customer(nr=None))
+        self.assertEqual((result.code, result.target_name), ("CONFLICT", "0022"))
+        self.assertEqual(self.frappe.customers[0]["custom_hero_customer_number"], "0022")
+
     def test_a_repeated_import_is_idempotent(self):
         self.migrate_customer(self.customer())
         result = self.migrate_customer(self.customer())
         self.assertEqual((result.code, result.target_name), ("SKIPPED", "2222"))
         self.assertEqual(len(self.frappe.customers), 1)
+
+    def test_an_omitted_customer_number_preserves_the_linked_number(self):
+        self.migrate_customer(self.customer(nr="0022"))
+        record = self.customer()
+        del record["nr"]
+        result = self.migrate_customer(record)
+        self.assertEqual(result.target_name, "0022")
+        self.assertEqual(len(self.frappe.customers), 1)
+        self.assertEqual(self.frappe.customers[0]["custom_hero_customer_number"], "0022")
+        self.assertEqual(self.frappe.links[("customer", "301")].target_name, "0022")
 
     def test_an_existing_kd_customer_is_reused_and_keeps_its_name(self):
         self.migrate_customer(self.customer())
@@ -175,11 +206,55 @@ class TestBusinessNumberMigration(FakeFrappeMigrationHarness, unittest.TestCase)
         self.assertNotIn(("customer", "302", "account-b"), self.frappe.links)
         self.assertEqual(self.frappe.links[("customer", "301")].target_name, "2222")
 
+    def test_same_technical_id_on_two_sources_keeps_separate_customers(self):
+        first = self.migrate_customer(self.customer())
+        second = self.migrate_customer(self.customer(
+            nr="3333", full_name="Synthetic other customer", _hero_source_instance="account-b",
+        ))
+        self.assertEqual((first.code, first.target_name), ("CREATED", "2222"))
+        self.assertEqual((second.code, second.target_name), ("CREATED", "3333"))
+        self.assertEqual(self.frappe.links[("customer", "301")].target_name, "2222")
+        self.assertEqual(self.frappe.links[("customer", "301", "account-b")].target_name, "3333")
+        self.assertEqual({row["name"]: row["customer_name"] for row in self.frappe.customers},
+                         {"2222": "Synthetic Ada", "3333": "Synthetic other customer"})
+
+    def test_same_technical_and_business_numbers_on_two_sources_conflict_without_merge(self):
+        self.migrate_customer(self.customer())
+        result = self.migrate_customer(self.customer(full_name="Synthetic other customer",
+                                                     _hero_source_instance="account-b"))
+        self.assertEqual(result.code, "CONFLICT")
+        self.assertEqual(len(self.frappe.customers), 1)
+        self.assertEqual(self.frappe.customers[0]["customer_name"], "Synthetic Ada")
+        self.assertEqual(self.frappe.links[("customer", "301")].target_name, "2222")
+        self.assertNotIn(("customer", "301", "account-b"), self.frappe.links)
+
     def test_two_source_identities_with_the_same_customer_number_conflict(self):
         self.migrate_customer(self.customer())
         result = self.migrate_customer(self.customer(id=302, full_name="Synthetic other customer"))
         self.assertEqual(result.code, "CONFLICT")
         self.assertEqual(len(self.frappe.customers), 1)
+        self.assertNotIn(("customer", "302"), self.frappe.links)
+
+    def test_concurrent_source_identity_claim_rolls_back_only_new_target(self):
+        self.migrate_customer(self.customer())
+        original_get_doc = self.migration.frappe.get_doc
+
+        class UniqueClaimError(Exception):
+            pass
+
+        def get_doc(*args, **kwargs):
+            if args and isinstance(args[0], dict) and args[0].get("doctype") == "HERO Integration Link":
+                return SimpleNamespace(insert=mock.Mock(side_effect=UniqueClaimError("HERO Integration Link")))
+            return original_get_doc(*args, **kwargs)
+
+        with mock.patch.object(self.migration.frappe, "UniqueValidationError", UniqueClaimError, create=True), \
+             mock.patch.object(self.migration.frappe, "get_doc", side_effect=get_doc):
+            result = self.migrate_customer(self.customer(id=302, nr="3333", full_name="Synthetic other customer"))
+
+        self.assertEqual(result.code, "CONFLICT")
+        self.assertIn("claimed concurrently", result.detail)
+        self.assertEqual([row["name"] for row in self.frappe.customers], ["2222"])
+        self.assertEqual(self.frappe.links[("customer", "301")].target_name, "2222")
         self.assertNotIn(("customer", "302"), self.frappe.links)
 
     def test_preview_names_the_new_document_and_writes_nothing(self):
@@ -203,6 +278,17 @@ class TestBusinessNumberMigration(FakeFrappeMigrationHarness, unittest.TestCase)
         self.assertEqual(project["custom_hero_display_id"], "3333")
         self.assertEqual(project["custom_hero_source_id"], "default:201")
         self.assertEqual(self.frappe.links[("project", "201")].target_name, "PV-3333-H")
+
+    def test_project_reference_and_title_keep_separate_source_numbers(self):
+        record = self.project(id=202, display_id="0033", project_nr="9876")
+        created = self.migrate_project(record)
+        self.assertEqual((created.code, created.target_name), ("CREATED", "PV-0033"))
+        project, = self.frappe.projects
+        self.assertEqual(project["custom_hero_display_id"], "0033")
+        self.assertTrue(project["project_name"].startswith("PV-9876 | Photovoltaik,"))
+        self.assertEqual(self.frappe.links[("project", "202")].target_name, "PV-0033")
+        self.assertEqual(self.migrate_project(record).code, "SKIPPED")
+        self.assertEqual(len(self.frappe.projects), 1)
 
     def test_legacy_project_id_and_historical_title_are_preserved_on_reimport(self):
         record = self.project()
@@ -261,10 +347,49 @@ class TestBusinessNumberMigration(FakeFrappeMigrationHarness, unittest.TestCase)
         self.assertEqual((result.code, result.target_name), ("CONFLICT", "PV-3333-H"))
         self.assertEqual(self.frappe.projects[0]["custom_hero_display_id"], "3333")
 
+    def test_explicit_null_display_id_is_a_drift_conflict(self):
+        self.migrate_project(self.project(display_id="0033"))
+        result = self.migrate_project(self.project(display_id=None))
+        self.assertEqual((result.code, result.target_name), ("CONFLICT", "PV-0033"))
+        self.assertEqual(self.frappe.projects[0]["custom_hero_display_id"], "0033")
+
+    def test_an_omitted_display_id_preserves_the_linked_reference(self):
+        self.migrate_project(self.project(display_id="0033"))
+        record = self.project()
+        del record["display_id"]
+        result = self.migrate_project(record)
+        self.assertEqual(result.target_name, "PV-0033")
+        self.assertEqual(len(self.frappe.projects), 1)
+        self.assertEqual(self.frappe.projects[0]["custom_hero_display_id"], "0033")
+        self.assertEqual(self.frappe.links[("project", "201")].target_name, "PV-0033")
+
     def test_a_project_links_to_its_customer_by_the_customer_number(self):
         self.migrate_customer(self.customer(id=401, nr="2222"))
         self.migrate_project(self.project(customer_id=401))
         self.assertEqual(self.frappe.projects[0]["customer"], "2222")
+
+    def test_project_never_uses_another_sources_customer_with_the_same_id(self):
+        self.migrate_customer(self.customer(id=401, nr="2222"))
+        result = self.migrate_project(self.project(customer_id=401, _hero_source_instance="account-b"))
+        self.assertEqual(result.code, "PENDING_REVIEW")
+        self.assertIsNone(self.frappe.projects[0].get("customer"))
+        project_link = self.frappe.links[("project", "201", "account-b")]
+        self.assertIn("customer", project_link.conflict_detail)
+        self.assertEqual(self.frappe.links[("customer", "401")].target_name, "2222")
+        self.assertNotIn(("customer", "401", "account-b"), self.frappe.links)
+
+    def test_equal_source_ids_keep_project_customer_relations_source_scoped(self):
+        self.migrate_customer(self.customer(id=401, nr="2222"))
+        self.migrate_customer(self.customer(id=401, nr="4444", full_name="Synthetic other customer",
+                                            _hero_source_instance="account-b"))
+        first = self.migrate_project(self.project(customer_id=401))
+        second = self.migrate_project(self.project(customer_id=401, display_id="5555", project_nr="5555",
+                                                   _hero_source_instance="account-b"))
+        self.assertEqual((first.code, second.code), ("CREATED", "CREATED"))
+        self.assertEqual({row["name"]: row["customer"] for row in self.frappe.projects},
+                         {"PV-3333": "2222", "PV-5555": "4444"})
+        self.assertEqual(self.frappe.links[("project", "201")].target_name, "PV-3333")
+        self.assertEqual(self.frappe.links[("project", "201", "account-b")].target_name, "PV-5555")
 
 
 class TestRenamePreview(unittest.TestCase):
@@ -275,6 +400,16 @@ class TestRenamePreview(unittest.TestCase):
     def row(self, current, proposed, status="Synchronized", links=1, doctype="Customer"):
         return {"doctype": doctype, "current_name": current, "proposed_name": proposed, "link_status": status,
                 "links_to_target": links, "collision": "", "safe_rename": False, "reason": ""}
+
+    def test_preview_export_does_not_replace_an_existing_file(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "preview.csv"
+            original = b"synthetic preexisting content\n"
+            path.write_bytes(original)
+            with mock.patch.object(self.preview, "preview_rows", return_value=[]):
+                with self.assertRaises(FileExistsError):
+                    self.preview.write_csv(str(path))
+            self.assertEqual(path.read_bytes(), original)
 
     def test_project_preview_never_guesses_trade_from_a_title(self):
         propose = self.preview._project_proposal

@@ -2691,7 +2691,10 @@ def workspace_service_execute(snapshot_name: str, query_id: str, expected_revisi
 
 
 def _redacted_messages(messages, variables) -> list[str]:
-    """HERO error texts can echo submitted values; never return variable values in error details."""
+    """Redact exact scalar values of at least three characters from HERO error text.
+
+    Short values, booleans and transformed representations are not covered.
+    """
     secrets: set[str] = set()
 
     def collect(value):
@@ -3172,7 +3175,7 @@ def resume_mapping_adoption(adoption_name: str) -> dict[str, object]:
 
 @frappe.whitelist()
 def workspace_mutation_preview(contract_name: str, variables_json: str) -> dict[str, object]:
-    """Return a redacted, exact-effect preview.  It never contacts HERO or writes state."""
+    """Return a redacted operation summary and confirmation fingerprint without contacting HERO."""
     frappe.only_for("System Manager")
     contract, service, snapshot, variables, request_fingerprint = _validated_mutation_request(contract_name, variables_json)
     return {

@@ -59,6 +59,30 @@ def test_compiles_mutation_input_and_output_without_execution_authority():
     assert not hasattr(plan.request, "execute")
 
 
+def test_query_argument_is_bound_as_data_even_when_it_resembles_graphql():
+    snapshot, registry, router = _router_context()
+    payload = 'case-1") { id } mutation injected { deleteCase(id: "1") } #'
+
+    def compile_with(value):
+        return router.compile_query(
+            snapshot,
+            registry,
+            QueryRoutingRequest(
+                operation="case",
+                output_references=("hero.query.case.id",),
+                arguments={"id": value},
+            ),
+        )
+
+    normal = compile_with("case-1")
+    hostile = compile_with(payload)
+
+    assert hostile.request.document == normal.request.document
+    assert payload not in hostile.request.document
+    assert payload in hostile.request.variables.values()
+    assert hostile.execution_authority == "NONE"
+
+
 @pytest.mark.parametrize(
     ("route", "message"),
     (

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from hero_integration.services.project_naming import ProjectTitleValidationError, build_project_title
+from hero_integration.services.project_naming import ProjectTitleValidationError, build_project_title, project_trade
 
 
 def project_match(**overrides):
@@ -37,6 +37,12 @@ class TestProjectNaming(unittest.TestCase):
         self.assertTrue(title.endswith("Musterstraße 10, 77777 Musterstadt"))
         with self.assertRaisesRegex(ProjectTitleValidationError, "complete formatted"):
             build_project_title(project_match(address={"formatted_address": "Musterstraße 10"}))
+
+    def test_explicit_measure_is_authoritative_over_project_type_fallback(self):
+        self.assertEqual(project_trade({"measure": {"short": "PV"}, "project_type": {"code": "ELEK"}})[0], "PV")
+        with self.assertRaisesRegex(ProjectTitleValidationError, "no confirmed"):
+            project_trade({"measure": {"short": "UNKNOWN"}, "project_type": {"code": "PV"}})
+        self.assertEqual(project_trade({"measure": None, "project_type": {"code": "ELEK"}})[0], "ELEK")
 
     def test_missing_personal_or_trade_data_blocks_instead_of_guessing(self):
         for key, value in (

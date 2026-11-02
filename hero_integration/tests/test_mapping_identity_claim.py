@@ -77,6 +77,22 @@ class Fake:
 class TestMappingIdentityClaim(unittest.TestCase):
     def setUp(self): self.fake = Fake()
 
+    def test_claim_schema_requires_full_single_column_unique_index(self):
+        full = {'Key_name':'claim_key', 'Column_name':'claim_key', 'Seq_in_index':1,
+                'Non_unique':0, 'Sub_part':None}
+        cases = {
+            'nonunique': [{**full, 'Non_unique':1}],
+            'prefix': [{**full, 'Sub_part':16}],
+            'composite': [full, {**full, 'Column_name':'site_scope', 'Seq_in_index':2}],
+            'wrong_column': [{**full, 'Column_name':'site_scope'}],
+        }
+        for label, rows in cases.items():
+            with self.subTest(index=label), patch.object(self.fake.db, 'sql', return_value=rows):
+                with self.assertRaisesRegex(MappingDraftError, 'unique index'):
+                    claims.assert_claim_schema(self.fake)
+        with patch.object(self.fake.db, 'sql', return_value=[full]):
+            claims.assert_claim_schema(self.fake)
+
     def batch(self):
         root = {**claim(), 'identity_kind':'LOGICAL_ROOT', 'portable_id':ROOT, 'logical_id':ROOT, 'predecessor_id':None, 'mapping_id':None}
         return [root, {**root, 'identity_kind':'RULE_REVISION'}, claim()]
@@ -142,6 +158,38 @@ class TestMappingIdentityClaim(unittest.TestCase):
             fake.fail_insert = False
             fake.session.user = 'Guest'
             with self.assertRaises(PermissionError): claims.reserve_claims(fake, self.batch())
+
+    def test_unauthorized_claim_stops_before_schema_check_or_identity_lock(self):
+        fake = self.fake
+        for user, roles in (('Guest', ['System Manager']), ('employee', ['Employee'])):
+            with self.subTest(user=user), patch.object(fake, 'get_roles', return_value=roles), \
+                 patch.object(claims, 'assert_claim_schema') as schema_check, \
+                 patch.object(claims, 'assert_reconciliation_ready') as reconciliation, \
+                 patch.object(hero_frappe_mapping, '_lock_active_target') as lock, \
+                 patch.object(fake.db, 'savepoint') as savepoint:
+                fake.session.user = user
+                before = deepcopy(fake.rows)
+                with self.assertRaises(PermissionError):
+                    claims.reserve_claims(fake, self.batch())
+                self.assertEqual(fake.rows, before)
+                schema_check.assert_not_called()
+                reconciliation.assert_not_called()
+                lock.assert_not_called()
+                savepoint.assert_not_called()
+
+    def test_rollback_failure_requires_transaction_abort_and_clears_scopes(self):
+        fake = self.fake
+        fake.fail_insert = True
+        def fail_rollback(**kwargs):
+            raise RuntimeError('rollback unavailable')
+        fake.db.rollback = fail_rollback
+        with patch.dict(sys.modules, {'frappe':fake}), patch.object(hero_mapping_identity_claim, 'frappe', fake), \
+             patch.object(hero_frappe_mapping, '_lock_active_target'):
+            with self.assertRaisesRegex(RuntimeError, 'Claim rollback failed; abort the transaction') as caught:
+                claims.reserve_claims(fake, self.batch())
+        self.assertEqual(str(caught.exception.__cause__), 'rollback unavailable')
+        self.assertFalse(claims._batch_scope.get())
+        self.assertIsNone(claims._insert_scope.get())
 
     def test_late_conflict_rolls_back_inserted_claims(self):
         fake = self.fake

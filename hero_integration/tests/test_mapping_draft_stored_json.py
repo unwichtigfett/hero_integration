@@ -1,23 +1,13 @@
 """Draft controller: unchanged JSON context stays unchanged even if an older row stored NULL."""
 from __future__ import annotations
 
+import importlib
 import sys
 import types
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-try:
-    import frappe  # noqa: F401
-except ModuleNotFoundError:
-    stub = types.ModuleType("frappe")
-    stub.whitelist = lambda *args, **kwargs: (lambda function: function)
-    model = types.ModuleType("frappe.model")
-    document = types.ModuleType("frappe.model.document")
-    document.Document = type("Document", (), {})
-    sys.modules.update({"frappe": stub, "frappe.model": model, "frappe.model.document": document})
-
-from hero_integration.hero_integration.doctype.hero_mapping_draft import hero_mapping_draft as controller
 from hero_integration.services import frappe_mapping_draft_storage as storage
 
 
@@ -41,13 +31,47 @@ def _rows(previous_values, current_values):
 
 
 class TestStoredJsonComparison(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.package = importlib.import_module("hero_integration.hero_integration.doctype.hero_mapping_draft")
+        cls.module_name = cls.package.__name__ + ".hero_mapping_draft"
+        cls.missing = object()
+        cls.saved_alias = getattr(cls.package, "hero_mapping_draft", cls.missing)
+        names = ("frappe", "frappe.model", "frappe.model.document", cls.module_name)
+        cls.saved_modules = {name: sys.modules.get(name, cls.missing) for name in names}
+        cls.addClassCleanup(cls.restore_imports)
+        stub = types.ModuleType("frappe")
+        stub.__path__ = []
+        model = types.ModuleType("frappe.model")
+        model.__path__ = []
+        document = types.ModuleType("frappe.model.document")
+        document.Document = type("Document", (), {})
+        stub.model = model
+        model.document = document
+        sys.modules.pop(cls.module_name, None)
+        sys.modules.update({"frappe": stub, "frappe.model": model, "frappe.model.document": document})
+        cls.controller = importlib.import_module(cls.module_name)
+
+    @classmethod
+    def restore_imports(cls):
+        for name, module in cls.saved_modules.items():
+            if module is cls.missing:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = module
+        if cls.saved_alias is cls.missing:
+            if hasattr(cls.package, "hero_mapping_draft"):
+                delattr(cls.package, "hero_mapping_draft")
+        else:
+            cls.package.hero_mapping_draft = cls.saved_alias
+
     def validate(self, current):
         def fail(message, *_):
             raise ValueError(message)
 
         fake = SimpleNamespace(session=SimpleNamespace(user="owner"), throw=fail, PermissionError=PermissionError)
-        with patch.object(controller, "frappe", fake), patch.object(storage, "assert_storage_write"):
-            controller.HEROMappingDraft.validate(current)
+        with patch.object(self.controller, "frappe", fake), patch.object(storage, "assert_storage_write"):
+            self.controller.HEROMappingDraft.validate(current)
 
     def test_discarding_an_older_draft_with_null_context_is_allowed(self):
         # Older rows store NULL; the storage writes "" for "no new-definition context" and "no base content".
@@ -65,9 +89,9 @@ class TestStoredJsonComparison(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "base_content_json is immutable"):
             self.validate(_rows({"new_definition_json": None, "base_content_json": None},
                                 {"new_definition_json": "", "base_content_json": '{"a": 1}'}))
-        self.assertTrue(controller._same_json(None, ""))
-        self.assertFalse(controller._same_json('{"a":1}', ""))
-        self.assertFalse(controller._same_json("{broken", "{broken "))
+        self.assertTrue(self.controller._same_json(None, ""))
+        self.assertFalse(self.controller._same_json('{"a":1}', ""))
+        self.assertFalse(self.controller._same_json("{broken", "{broken "))
 
 
 if __name__ == "__main__":

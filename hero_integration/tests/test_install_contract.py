@@ -33,6 +33,13 @@ class TestInstallContract(unittest.TestCase):
             schema_environment.call(install.before_install)
         self.assertEqual(schema_environment.create_calls, [])
 
+    def test_empty_erpnext_schema_is_rejected_before_schema_writes(self):
+        environment = _InstallEnvironment(apps=["frappe", "erpnext"], version="16.35.0", doctypes=set())
+        install = environment.load()
+        with self.assertRaisesRegex(RuntimeError, "schema is incomplete: Customer"):
+            environment.call(install.after_migrate)
+        self.assertEqual(environment.create_calls, [])
+
     def test_schema_creation_is_create_only_idempotent_and_conflict_safe(self):
         environment = _InstallEnvironment(apps=["frappe", "erpnext"], version="16.35.0")
         install = environment.load()
@@ -70,12 +77,36 @@ class TestInstallContract(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Project.notes must remain editable"):
             locked.call(install.before_install)
 
+    def test_install_and_migrate_refuse_missing_project_notes_before_creating_fields(self):
+        for hook in ("after_install", "after_migrate"):
+            with self.subTest(hook=hook):
+                environment = _InstallEnvironment(apps=["frappe", "erpnext"], version="16.35.0", project_notes=False)
+                install = environment.load()
+                with self.assertRaisesRegex(RuntimeError, "Project.notes is required"):
+                    environment.call(getattr(install, hook))
+                self.assertEqual(environment.create_calls, [])
+                self.assertEqual(environment.custom_fields, {})
+
+    def test_conflicting_existing_field_blocks_creation_of_other_missing_fields(self):
+        environment = _InstallEnvironment(apps=["frappe", "erpnext"], version="16.35.0")
+        install = environment.load()
+        definition = next(row for row in install.HERO_CUSTOM_FIELDS["Project"]
+                          if row["fieldname"] == "custom_hero_display_id")
+        environment.custom_fields[("Project", "custom_hero_display_id")] = {**definition, "fieldtype": "Int"}
+
+        with self.assertRaisesRegex(RuntimeError, "conflicts with the HERO schema"):
+            environment.call(install.after_migrate)
+
+        self.assertEqual(environment.create_calls, [])
+        self.assertEqual(len(environment.custom_fields), 1)
+
 
 class _InstallEnvironment:
     def __init__(self, apps, version, doctypes=None, project_notes=True, project_notes_read_only=False):
         self.apps = apps
         self.version = version
-        self.doctypes = doctypes or {"Customer", "Contact", "Contact Email", "Contact Phone", "Address", "Project"}
+        self.doctypes = ({"Customer", "Contact", "Contact Email", "Contact Phone", "Address", "Project"}
+                         if doctypes is None else doctypes)
         self.custom_fields: dict[tuple[str, str], dict[str, object]] = {}
         self.create_calls: list[tuple[dict[str, list[dict[str, object]]], bool]] = []
         self.project_notes = project_notes
@@ -97,11 +128,23 @@ class _InstallEnvironment:
             "erpnext": erpnext_module,
             "frappe.custom.doctype.custom_field.custom_field": custom_field_module,
         }
+        package = importlib.import_module("hero_integration")
+        missing = object()
+        previous_alias = getattr(package, "install", missing)
         previous = sys.modules.pop("hero_integration.install", None)
-        with mock.patch.dict(sys.modules, self.modules):
-            module = importlib.import_module("hero_integration.install")
-        if previous is not None:
-            sys.modules["hero_integration.install"] = previous
+        try:
+            with mock.patch.dict(sys.modules, self.modules):
+                module = importlib.import_module("hero_integration.install")
+        finally:
+            if previous is None:
+                sys.modules.pop("hero_integration.install", None)
+            else:
+                sys.modules["hero_integration.install"] = previous
+            if previous_alias is missing:
+                if hasattr(package, "install"):
+                    delattr(package, "install")
+            else:
+                package.install = previous_alias
         return module
 
     def call(self, function):

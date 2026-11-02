@@ -112,6 +112,18 @@ test('an unvalidatable saved query is not executed', async () => {
   assert.deepEqual(rpc.map((entry) => entry.method), ['validate_saved_query']);
 });
 
+test('editing during validation prevents execution of the saved revision', async () => {
+  const {window, rpc, Workspace} = load();
+  const ws = editorState(Workspace, {query: {query_id: 'Q1', revision: 3, status: 'Draft'}});
+  let finishValidation;
+  window.rpcResult = () => new Promise((resolve) => { finishValidation = resolve; });
+  const execution = ws.executeQuery();
+  ws.editor.text += '\n# local change during validation';
+  finishValidation({query: {status: 'Validated'}});
+  await assert.rejects(execution, /changed during validation. Nothing was executed/);
+  assert.deepEqual(rpc.map((entry) => entry.method), ['validate_saved_query']);
+});
+
 test('invalid variables and mutations are rejected before any request', async () => {
   const {rpc, Workspace} = load();
   const ws = editorState(Workspace);
@@ -140,6 +152,29 @@ test('result dialog: readable default, raw JSON toggle and copy of the visible v
   assert.match(root.textContent, /Delivered: contact: object/);
   assert.ok(dialogs[0].$wrapper.classes.join(' ').includes('admin-compat-modal'));
   assert.equal(dialogs[0].options.primary_action_label, 'Close');
+});
+
+test('GraphQL response markup remains text in readable and raw views', () => {
+  const {dialogs, Workspace} = load();
+  const payload = '<img src=x onerror=alert(1)>';
+  editorState(Workspace).renderExecution({...OK, data: {value: payload}});
+  const root = dialogs[0].fields_dict.result.$wrapper[0];
+  const output = root.find((node) => node.attributes['aria-label'] === 'GraphQL Query Result');
+  assert.match(output.textContent, /<img src=x onerror=alert\(1\)>/);
+  assert.equal(output.find((node) => node.tag === 'img'), null);
+  root.find((node) => node.tag === 'button' && node._text === 'Raw JSON').click();
+  assert.equal(output.textContent, JSON.stringify({value: payload}, null, 2));
+  assert.equal(output.find((node) => node.tag === 'img'), null);
+});
+
+test('upstream GraphQL error markup is rendered as text', () => {
+  const {dialogs, Workspace} = load();
+  const markup = '<img src=x onerror=alert(1)>';
+  editorState(Workspace).renderExecution({status: 'ERROR', error_kind: 'GRAPHQL', error_code: 'GRAPHQL_ERRORS',
+    message: markup, graphql_errors: [markup], revision: 3});
+  const root = dialogs[0].fields_dict.result.$wrapper[0];
+  assert.equal(root.textContent.split(markup).length - 1, 2);
+  assert.equal(root.find((node) => node.tag === 'img'), null);
 });
 
 test('result dialog: coloured readable view copies exactly the plain text', () => {
@@ -186,4 +221,28 @@ test('result dialog: transport errors are never shown as an empty success', () =
   ws.renderExecution({status: 'TOO_LARGE', size_bytes: 2000001, limit_bytes: 1000000, message: 'too large', revision: 3});
   assert.equal(dialogs[0].shown, false, 'a new result replaces the previous dialog');
   assert.match(dialogs[1].fields_dict.result.$wrapper[0].textContent, /Nothing was truncated silently/);
+});
+
+test('graph overview card exposes a label and supports Enter and Space', () => {
+  const {Workspace} = load();
+  const ws = Object.create(Workspace.prototype);
+  Object.assign(ws, {
+    graphSearch: {value: 'old search'}, graphKind: {value: ''}, relationKind: {value: 'old relation'},
+    graphFilterActive: false, loads: 0, loadGraph() { this.loads += 1; },
+  });
+  const canvas = new Node('svg'), notice = new Node('p');
+  ws.renderGraphOverview(canvas, {nodes: [{node_id: 'type:Customer', kind: 'OBJECT'}], edges: []}, null, null, notice, 'marker');
+  const card = canvas.find(node => node.attributes['data-overview-kind'] === 'OBJECT');
+  assert.equal(card.attributes.role, 'button');
+  assert.equal(card.attributes.tabindex, '0');
+  assert.match(card.attributes['aria-label'], /Object Types: 1 nodes/);
+  for (const key of ['Enter', ' ']) {
+    let prevented = false;
+    for (const listener of card.listeners.keydown) listener({key, preventDefault() { prevented = true; }});
+    assert.equal(prevented, true);
+  }
+  assert.equal(ws.graphKind.value, 'OBJECT');
+  assert.equal(ws.graphSearch.value, '');
+  assert.equal(ws.relationKind.value, '');
+  assert.equal(ws.loads, 2);
 });

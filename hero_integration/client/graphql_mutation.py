@@ -1,8 +1,8 @@
 """Dedicated mutation transport boundary.
 
-Only the mutation execution service imports this module.  The shared HTTPS
-implementation is deliberately reused for TLS, proxy denial and redirect
-denial, while read-only query callers cannot reach this API.
+Mutation execution paths reuse the shared HTTPS implementation for TLS,
+proxy denial and redirect denial. The wrapper does not itself validate the
+operation or authorize a caller; those checks belong to the execution paths.
 """
 from __future__ import annotations
 

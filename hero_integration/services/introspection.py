@@ -118,7 +118,7 @@ def endpoint_fingerprint(endpoint_url: str, source_instance: str) -> str:
 
 
 def structural_diff(previous: object | None, current: dict[str, object]) -> dict[str, object]:
-    """Return a deterministic schema diff suitable for execution gates."""
+    """Compare type names, output-field names and roots, not full GraphQL compatibility."""
     if previous is None:
         return {"status": "INITIAL", "breaking": False, "added_types": [], "removed_types": [], "changed_roots": []}
     try:

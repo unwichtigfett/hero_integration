@@ -76,6 +76,12 @@ class TestMappingRuleWrite(unittest.TestCase):
         self.parent['source_instance'] = 'wrong'
         with self.assertRaises(DraftConflict): self.activate()
 
+    def test_denied_manager_authority_stops_before_loading_or_locking_records(self):
+        self.session.user = 'non-manager'
+        with self.assertRaisesRegex(PermissionError, 'System Manager required'):
+            self.activate()
+        self.assertEqual(self.events, [])
+
     def test_active_rule_and_missing_portable_identity_are_not_overwritten(self):
         self.rule['status'] = 'Active'
         with self.assertRaises(PermissionError): self.activate()
