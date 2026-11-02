@@ -209,3 +209,10 @@ test('graph coverage and label notices follow the active language', () => {
   delete window.hero_integration_i18n;
   assert.equal(graphLabelsNotice(false, 2, 2), 'All visible relationships are labeled.');
 });
+
+test('saved service notice translates around unchanged service data', () => {
+  window.hero_integration_i18n = {text: value => value === '{0} saved · Provenance={1}' ? '{0} gespeichert · Herkunft={1}' : value};
+  assert.equal(window.hero_workspace_tools.graphqlText.savedServiceLabel('Query A', 'GraphQL-Services'), 'Query A gespeichert · Herkunft=GraphQL-Services');
+  delete window.hero_integration_i18n;
+  assert.equal(window.hero_workspace_tools.graphqlText.savedServiceLabel('Query A', 'GraphQL-Services'), 'Query A saved · Provenance=GraphQL-Services');
+});

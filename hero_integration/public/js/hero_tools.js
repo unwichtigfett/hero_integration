@@ -5,6 +5,9 @@
     const tr = (value) => window.hero_integration_i18n?.text(value) ?? value;
     const format = (message, ...values) => tr(message).replace(/\{(\d+)\}/g, (_, index) => String(values[index] ?? ""));
 
+    function savedServiceLabel(name, provenance) {
+        return format('{0} saved · Provenance={1}', name, provenance);
+    }
     function graphLabelsNotice(compact, placed, total) {
         const overview = compact ? tr('Overview without node text; use selection and Inspector for names and details.') + ' ' : '';
         return overview + (total > placed
@@ -843,7 +846,7 @@
             if(target._heroService!==state)return;
             const link=$('a','btn btn-sm ht-node-action ht-node-action--service',tr('Open in GraphQL Services'));link.href=this.serviceUrl(result.query.service_kind,result.query.query_id);
             link.addEventListener('click',event=>{if(target===this.focusDetail)this.focusDialog?.hide?.();if(this.openService(result.query.service_kind,result.query.query_id)===false)event.preventDefault();});
-            state.box.replaceChildren($('p','',result.query.name+' saved · Provenance='+result.query.provenance),link);
+            state.box.replaceChildren($('p','',savedServiceLabel(result.query.name,result.query.provenance)),link);
             if(this.notice)this.notice.textContent=tr('Service saved. No HERO operation was executed.');
             this.updateActions();
         }
@@ -1051,7 +1054,7 @@
             if(this.serviceHint)this.serviceHint.textContent=this.serviceKind==='mutation'
                 ? format('Mutation drafts are local-only, stored locally, and validated only against the saved schema. Execution from this editor is blocked. Server mutation gate: {0}{1}',tr(gate?.mutation_execution_status||'unknown'),gate?.mutation_execution_reason?' · '+tr(gate.mutation_execution_reason):'')
                 : tr('Execute Query reads data from HERO once on an explicit click, using the saved and validated revision. Results open in a separate window and are never stored, synchronized or written to Frappe.');
-this.queryStatus.textContent=this.query?`${this.serviceLabel()} ${this.query.query_id} · Revision ${this.query.revision}${this.dirty?' · '+tr('Unsaved changes'):''}`:tr('New unsaved draft');const allowed=!!this.context?.can_write&&!this.context.needs_binding_update&&!this.busy&&!!this.schema;for(const b of [this.newButton,this.copyButton])b.disabled=!allowed;this.saveButton.disabled=!allowed;this.saveButton.title=this.serviceKind==='mutation'?tr('Stores a local-only disabled mutation draft.'):' ';this.validateButton.disabled=!allowed;this.executeButton.disabled=!allowed||!this.canExecuteQuery();this.executeButton.title=this.serviceKind==='mutation'?'HERO_MUTATION_EXECUTION_DISABLED':this.dirty||!this.query?tr('Asks to save and validate the changes, then runs that revision once, read-only.'):tr('Runs the saved revision once, read-only.');this.deleteButton.disabled=!allowed||!this.query;this.bindButton.disabled=!this.context?.can_write||this.busy;}
+this.queryStatus.textContent=this.query?`${this.serviceLabel()} ${this.query.query_id} · Revision ${this.query.revision}${this.dirty?' · '+tr('Unsaved changes'):''}`:tr('New unsaved draft');const allowed=!!this.context?.can_write&&!this.context.needs_binding_update&&!this.busy&&!!this.schema;for(const b of [this.newButton,this.copyButton])b.disabled=!allowed;this.saveButton.disabled=!allowed;this.saveButton.title=this.serviceKind==='mutation'?tr('Stores a local-only disabled mutation draft.'):' ';this.validateButton.disabled=!allowed;this.executeButton.disabled=!allowed||!this.canExecuteQuery();this.executeButton.title=this.serviceKind==='mutation'?tr('Mutation execution is not available in this editor.'):this.dirty||!this.query?tr('Asks to save and validate the changes, then runs that revision once, read-only.'):tr('Runs the saved revision once, read-only.');this.deleteButton.disabled=!allowed||!this.query;this.bindButton.disabled=!this.context?.can_write||this.busy;}
         destroy(){
             this.cancelGraph?.();
             this.focusDialog?.hide?.();
@@ -1065,5 +1068,5 @@ this.queryStatus.textContent=this.query?`${this.serviceLabel()} ${this.query.que
             this.root?.remove?.();
         }
     }
-    window.hero_workspace_tools={Workspace,graphqlText:Object.freeze({parseVariablesText,formatVariablesText,readableResult,resultSummary,jsonTokens,variableTokens,readableTokens,graphLabelsNotice,snapshotCoverageLabel,GRAPHQL_HIGHLIGHT_RULES})};
+    window.hero_workspace_tools={Workspace,graphqlText:Object.freeze({parseVariablesText,formatVariablesText,readableResult,resultSummary,jsonTokens,variableTokens,readableTokens,graphLabelsNotice,snapshotCoverageLabel,savedServiceLabel,GRAPHQL_HIGHLIGHT_RULES})};
 })();
