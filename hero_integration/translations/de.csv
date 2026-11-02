@@ -2187,3 +2187,8 @@ HeroCalendarEvents,HeroCalendarEvents
 HeroTasks,HeroTasks
 Customer Type,Kundentyp
 Customer Primary Contact,Hauptkontakt des Kunden
+Legacy mapping identity cannot be backfilled while ambiguous personal draft references exist.,"Die ältere Mapping-Identität kann nicht nachgetragen werden, solange mehrdeutige persönliche Entwurfsreferenzen bestehen."
+Legacy mapping identity cannot be backfilled while ambiguous personal revision references exist.,"Die ältere Mapping-Identität kann nicht nachgetragen werden, solange mehrdeutige persönliche Revisionsreferenzen bestehen."
+Legacy mapping identity cannot be backfilled while ambiguous binding references exist.,"Die ältere Mapping-Identität kann nicht nachgetragen werden, solange mehrdeutige Binding-Referenzen bestehen."
+A generated mapping identity collided; retry the migration.,Eine erzeugte Mapping-Identität ist bereits vorhanden; wiederholen Sie die Migration.
+Active field-rule priorities require explicit revision-safe reconciliation before migration.,Prioritäten aktiver Feldregeln müssen vor der Migration ausdrücklich und revisionssicher abgeglichen werden.
