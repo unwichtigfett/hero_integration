@@ -6,6 +6,28 @@
 
     const tr = (value) => value == null ? value : (window.hero_integration_i18n?.text(value) ?? value);
     const format = (message, ...values) => tr(message).replace(/\{(\d+)\}/g, (_, index) => String(values[index] ?? ""));
+    // Stored diagnostics stay canonical in the database. Translate known messages
+    // when displaying them so changing a user's language also changes old runs.
+    function diagnostic(value) {
+        if (!value) return value;
+        const prefix = "Recheck requested: ";
+        const recheck = String(value).startsWith(prefix);
+        const text = recheck ? String(value).slice(prefix.length) : String(value);
+        const templates = [
+            [/^Field conflict requires review: (.+)\.$/, "Field conflict requires review: {0}."],
+            [/^Task fields require review: (.+)$/, "Task fields require review: {0}"],
+            [/^Another HERO run is active: (.+)\.$/, "Another HERO run is active: {0}."],
+        ];
+        for (const [pattern, template] of templates) {
+            const match = text.match(pattern);
+            if (match) {
+                const translated = format(template, match[1]);
+                return recheck ? format("Recheck requested: {0}", translated) : translated;
+            }
+        }
+        const translated = tr(text);
+        return recheck ? format("Recheck requested: {0}", translated) : translated;
+    }
     const API = "hero_integration.api.";
     const PAGE_SIZE = 8;
     const REFRESH_MS = 5000;
@@ -37,13 +59,13 @@
     const add = (node, ...children) => node.append(...clean(children));
 
     function errorMessage(error) {
-        if (typeof error?.message === "string" && error.message) return error.message;
+        if (typeof error?.message === "string" && error.message) return diagnostic(error.message);
         try {
             const messages = JSON.parse(error?._server_messages || error?.responseJSON?._server_messages || "[]");
             const first = messages.map((item) => typeof item === "string" ? JSON.parse(item) : item).find(Boolean);
-            if (first?.message) return first.message;
+            if (first?.message) return diagnostic(first.message);
         } catch (_) { /* not JSON */ }
-        return "The server rejected the request. Check the server log for details.";
+        return tr("The server rejected the request. Check the server log for details.");
     }
 
     function call(method, args = {}, type = "GET") {
@@ -202,7 +224,7 @@
                         readonly("Retry backoff", String(svc.retry_backoff_seconds), "sec"),
                         readonly("Requests per minute", String(svc.rate_limit)),
                         el("p", {class: "hero-sync-hint", text: tr("Edit these values under Settings.")}))),
-                svc.sync_error ? el("p", {class: "hero-sync-error", text: svc.sync_error}) : null);
+                svc.sync_error ? el("p", {class: "hero-sync-error", text: diagnostic(svc.sync_error)}) : null);
         }
 
         async function setService(args) {
@@ -318,10 +340,10 @@
             add(side, 
                 el("h4", {class: "hero-sync-mono", text: run.name}),
                 el("dl", {class: "hero-sync-facts"}, facts.map(([label, value]) => [el("dt", {text: tr(label)}), el("dd", {text: value})])),
-                run.error_message ? el("p", {class: "hero-sync-error", text: tr(run.error_message)}) : null,
+                run.error_message ? el("p", {class: "hero-sync-error", text: diagnostic(run.error_message)}) : null,
                 outcomes.length ? el("div", {class: "hero-sync-chips"}, outcomes.map(([code, count]) => el("span", {class: "hero-sync-chip", text: `${code}: ${number(count)}`}))) : null,
                 run.conflicts?.length ? el("div", {class: "hero-sync-detail-list"}, el("h5", {text: tr("Conflicts in this run")}),
-                    el("ul", {}, run.conflicts.map((item) => el("li", {text: `${item.source_type} ${item.source_id}: ${item.detail || item.result}`})))) : null,
+                    el("ul", {}, run.conflicts.map((item) => el("li", {text: `${item.source_type} ${item.source_id}: ${diagnostic(item.detail || item.result)}`})))) : null,
                 actions);
         }
 
@@ -394,7 +416,7 @@
                         el("td", {}, decidable(row) ? el("input", {type: "checkbox", "aria-label": format("Select {0}", row.name), checked: state.selectedConflicts.has(row.name) || undefined,
                             onchange: (event) => event.target.checked ? state.selectedConflicts.add(row.name) : state.selectedConflicts.delete(row.name)}) : null),
                         el("td", {class: "hero-sync-mono", text: decidable(row) ? row.name : `HERO ${row.source_id}`}),
-                        el("td", {text: row.conflict_detail ? tr(row.conflict_detail) : tr("Conflict requires review.")}),
+                        el("td", {text: row.conflict_detail ? diagnostic(row.conflict_detail) : tr("Conflict requires review.")}),
                         el("td", {text: tr(row.area)}),
                         el("td", {text: !decidable(row) ? format("Not imported ({0})", row.run) : tr(row.sync_status === "Pending Review" ? "Confirmation pending" : (row.conflict_detail || "").startsWith("Recheck requested: ") ? "Recheck requested" : "Conflict")}),
                         el("td", {}, decidable(row) ? [el("button", {type: "button", class: "hero-sync-small", text: tr("Approve"), disabled: state.busy || undefined, onclick: () => decideConflicts([row], "approve")}),
@@ -459,5 +481,5 @@
         return {destroy() { state.destroyed = true; clearTimeout(state.timer); }};
     }
 
-    window.hero_integration_migration = Object.freeze({mount});
+    window.hero_integration_migration = Object.freeze({mount, diagnostic});
 })();
