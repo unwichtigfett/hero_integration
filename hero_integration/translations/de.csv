@@ -2255,3 +2255,11 @@ Child-DocType relationship: a reviewed resolver is required before it can be map
 "Protected, technical, or unsupported target field.","Geschütztes, technisches oder nicht unterstütztes Zielfeld."
 Canonical HERO migration target.,Kanonisches HERO-Migrationsziel.
 "{0} needs an approved read service with an active mapping for {1} on a snapshot of the HERO source instance ""{2}"". Approve one under API & Schema and Mapping.",{0} benötigt einen freigegebenen Leseservice mit aktivem Mapping für {1} auf einem Snapshot der HERO-Quellinstanz „{2}“. Geben Sie diesen unter API & Schema und Mapping frei.
+Retry,Erneut versuchen
+Search active mappings,Aktive Mappings suchen
+Filter field mappings,Feld-Mappings filtern
+Priority,Priorität
+Create personal draft,Persönlichen Entwurf erstellen
+Activate personal draft,Persönlichen Entwurf aktivieren
+Discard saved personal draft,Gespeicherten persönlichen Entwurf verwerfen
+Search existing active field rules,Vorhandene aktive Feldregeln suchen
