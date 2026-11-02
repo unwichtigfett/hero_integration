@@ -326,7 +326,7 @@
     const MAX_COLORED_LINES = 20000;
     function resultSummary(data) {
         if (!data || typeof data !== 'object' || Array.isArray(data)) return [];
-        return Object.entries(data).map(([key, value]) => `${key}: ${Array.isArray(value) ? `${value.length} ${value.length === 1 ? 'item' : 'items'}` : value === null ? 'null' : typeof value === 'object' ? 'object' : 'value'}`);
+        return Object.entries(data).map(([key, value]) => `${key}: ${Array.isArray(value) ? format(value.length === 1 ? '{0} item' : '{0} items', value.length) : value === null ? 'null' : tr(typeof value === 'object' ? 'object' : 'value')}`);
     }
     async function call(method, args = {}, write = false, signal) {
         return window.hero_integration_rpc.call(method, args, {write, signal});
@@ -456,7 +456,7 @@
         }
         buildAnalyzer() {
             const panel=this.panels.analyzer,bar=$('div','ht-toolbar ht-analyzer-toolbar');panel.classList.add('ht-analyzer-panel');this.typeSearch=input(tr('Search Type'));this.typeKind=$('select','form-control');
-            for(const item of this.analyzerKindSpecs()){const o=$('option','',item.label);o.value=item.kind;this.typeKind.append(o);}
+            for(const item of this.analyzerKindSpecs()){const o=$('option','',tr(item.label));o.value=item.kind;this.typeKind.append(o);}
             const search=()=>{clearTimeout(this.analyzerSearchTimer);this.analyzerSearchTimer=null;this.starts.analyzer=0;this.run(()=>this.loadAnalyzer());},quietSearch=()=>{const serial=this.sequence;this.loadAnalyzer(serial).catch(error=>{if(serial===this.sequence&&this.tool==='analyzer'){this.notice.textContent=tr(error.message);this.notice.classList.add('text-danger');}});},liveSearch=()=>{clearTimeout(this.analyzerSearchTimer);this.starts.analyzer=0;this.analyzerSearchTimer=setTimeout(()=>{this.analyzerSearchTimer=null;if(this.tool!=='analyzer')return;if(this.busy){liveSearch();return;}quietSearch();},220);},reset=()=>{clearTimeout(this.analyzerSearchTimer);this.analyzerSearchTimer=null;this.typeSearch.value='';this.typeKind.value='';this.starts.analyzer=0;this.run(()=>this.loadAnalyzer());};
             this.typeSearch.addEventListener('input',liveSearch);this.typeSearch.addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();search();}});this.typeKind.addEventListener('change',search);
             bar.append(field(tr('Type Name'),this.typeSearch),field(tr('Type Class'),this.typeKind),button(tr('Search'),search),button(tr('Reset'),reset));
@@ -468,11 +468,11 @@
         renderAnalyzerOverview(overview,scope,serial){
             const base=overview.base,directives=this.analyzerDirectiveRows(base.directives),rootQuery=this.analyzerRootName(base.roots,'query'),rootMutation=this.analyzerRootName(base.roots,'mutation'),rootSubscription=this.analyzerRootName(base.roots,'subscription');
             const head=$('div','ht-analyzer-summary-head');head.append($('div','', tr('Schema Overview')));const fingerprint=$('span','ht-analyzer-fingerprint',this.schema?`Schema ${this.schema.slice(0,12)}…`:tr('Schema —'));fingerprint.title=this.schema||'';const state=$('span','ht-analyzer-state '+(base.complete_analysis?'is-complete':'is-partial'),base.complete_analysis?tr('Complete Introspection'):tr('Partial State'));head.append(fingerprint,state);
-            const stats=$('div','ht-analyzer-stats'),stat=(label,value)=>{const card=$('div','ht-analyzer-stat');card.append($('span','',label),$('strong','',String(value??'—')));return card;};
+            const stats=$('div','ht-analyzer-stats'),stat=(label,value)=>{const card=$('div','ht-analyzer-stat');card.append($('span','',tr(label)),$('strong','',String(value??'—')));return card;};
             stats.append(stat('Total Types',base.total),stat('Query Root',rootQuery),stat('Mutation Root',rootMutation),stat('Subscription Root',rootSubscription),stat('Directives',directives.length),stat('Captured',base.captured_at||'—'));this.analyzerSummary.replaceChildren(head,stats);
-            this.analyzerCategories.replaceChildren();for(const item of this.analyzerKindSpecs()){const count=item.kind?overview.totals[item.kind]:base.total,b=button('',()=>{this.typeSearch.value='';this.typeKind.value=item.kind;this.starts.analyzer=0;this.run(()=>this.loadAnalyzer());});b.className='ht-analyzer-category'+(this.typeKind.value===item.kind?' is-active':'');b.dataset.kind=item.kind||'ALL';b.setAttribute('aria-pressed',String(this.typeKind.value===item.kind));b.append($('span','ht-analyzer-category-label',item.label),$('strong','ht-analyzer-category-count',String(count)));this.analyzerCategories.append(b);}
-            const roots=$('details','ht-analyzer-meta-card'),rootSummary=$('summary','', tr('Roots'));roots.append(rootSummary);const rootList=$('div','ht-analyzer-root-list');for(const [label,name] of [['Query',rootQuery],['Mutation',rootMutation],['Subscription',rootSubscription]]){const row=$('div','ht-analyzer-meta-row');row.append($('strong','',label),name&&name!=='—'?button(name,()=>this.analyzerNode('root:'+label.toLowerCase(),scope,serial)):$('span','',name));rootList.append(row);}roots.append(rootList);
-            const directiveBox=$('details','ht-analyzer-meta-card'),directiveSummary=$('summary','',`Directives (${directives.length})`),directiveList=$('div','ht-analyzer-directives');directiveBox.append(directiveSummary);if(directives.length){for(const directive of directives){const name=typeof directive==='string'?directive:directive?.name||directive?.directive||JSON.stringify(directive);directiveList.append($('span','ht-analyzer-directive',name));}}else directiveList.append($('span','ht-context',tr('No directives are present in the saved schema.')));directiveBox.append(directiveList);
+            this.analyzerCategories.replaceChildren();for(const item of this.analyzerKindSpecs()){const count=item.kind?overview.totals[item.kind]:base.total,b=button('',()=>{this.typeSearch.value='';this.typeKind.value=item.kind;this.starts.analyzer=0;this.run(()=>this.loadAnalyzer());});b.className='ht-analyzer-category'+(this.typeKind.value===item.kind?' is-active':'');b.dataset.kind=item.kind||'ALL';b.setAttribute('aria-pressed',String(this.typeKind.value===item.kind));b.append($('span','ht-analyzer-category-label',tr(item.label)),$('strong','ht-analyzer-category-count',String(count)));this.analyzerCategories.append(b);}
+            const roots=$('details','ht-analyzer-meta-card'),rootSummary=$('summary','', tr('Roots'));roots.append(rootSummary);const rootList=$('div','ht-analyzer-root-list');for(const [label,name] of [['Query',rootQuery],['Mutation',rootMutation],['Subscription',rootSubscription]]){const row=$('div','ht-analyzer-meta-row');row.append($('strong','',tr(label)),name&&name!=='—'?button(name,()=>this.analyzerNode('root:'+label.toLowerCase(),scope,serial)):$('span','',name));rootList.append(row);}roots.append(rootList);
+            const directiveBox=$('details','ht-analyzer-meta-card'),directiveSummary=$('summary','',format('Directives ({0})',directives.length)),directiveList=$('div','ht-analyzer-directives');directiveBox.append(directiveSummary);if(directives.length){for(const directive of directives){const name=typeof directive==='string'?directive:directive?.name||directive?.directive||JSON.stringify(directive);directiveList.append($('span','ht-analyzer-directive',name));}}else directiveList.append($('span','ht-context',tr('No directives are present in the saved schema.')));directiveBox.append(directiveList);
             this.analyzerMeta.replaceChildren(roots,directiveBox);
         }
         markAnalyzerTypeSelection(name=this.selectedType){
@@ -517,16 +517,16 @@
         scalarDetailContents(target,detail,scope){
             const groups=this.scalarUsageRows(detail),total=groups.reduce((sum,group)=>sum+group.rows.length,0);
             target.replaceChildren($('h3','',detail.node.name),$('p','',detail.node.node_id),$('p','',detail.node.description||''),$('pre','ht-data',JSON.stringify(detail.node,null,2)));
-            target.append($('h4','',`Usages (${total})`));
+            target.append($('h4','',format('Usages ({0})',total)));
             for(const group of groups)target.append($('p','ht-scalar-count',`${group.kind} · ${group.direction} · ${group.rows.length}`));
         }
         renderScalarFocus(detail){
             const groups=this.scalarUsageRows(detail),total=groups.reduce((sum,group)=>sum+group.rows.length,0),root=$('div','ht-scalar-focus-content');
-            const heading=$('div','ht-scalar-heading');heading.append($('div','ht-scalar-badge','SCALAR'),$('h3','',detail.node.name),$('p','ht-context',`${total} direct usages`));root.append(heading);
+            const heading=$('div','ht-scalar-heading');heading.append($('div','ht-scalar-badge','SCALAR'),$('h3','',detail.node.name),$('p','ht-context',format('{0} direct usages',total)));root.append(heading);
             root.append($('p','ht-scalar-explainer',tr('GraphQL base scalar: usages are shown as a list instead of a relationship graph.')));
-            const search=input(tr('Filter usages'));const searchField=field(tr('Filter usages'),search),status=$('p','ht-context',`${total} usages`);root.append(searchField,status);
+            const search=input(tr('Filter usages'));const searchField=field(tr('Filter usages'),search),status=$('p','ht-context',format('{0} usages',total));root.append(searchField,status);
             const groupNodes=[];
-            for(const group of groups){const details=$('details','ht-scalar-group'),summary=$('summary','',`${group.kind} · ${group.direction==='incoming'?'Incoming':'Outgoing'} (${group.rows.length})`),body=$('div','ht-scalar-usage-list');details.append(summary,body);
+            for(const group of groups){const details=$('details','ht-scalar-group'),summary=$('summary','',format('{0} · {1} ({2})',group.kind,tr(group.direction==='incoming'?'Incoming':'Outgoing'),group.rows.length)),body=$('div','ht-scalar-usage-list');details.append(summary,body);
                 const rowNodes=[];for(const row of group.rows){const meta=row.node?`${row.node.kind}${row.edge.label?' · '+row.edge.label:''}`:`${row.edge.label||row.partnerId}`,b=button(`${row.label} · ${meta}`,()=>this.focusNext(row.partnerId));b.classList.add('ht-scalar-usage');b.dataset.search=`${row.label} ${row.partnerId} ${row.node?.kind||''} ${row.edge.kind} ${row.edge.label||''}`.toLocaleLowerCase();body.append(b);rowNodes.push(b);}
                 root.append(details);groupNodes.push({details,rowNodes});
             }
@@ -802,7 +802,7 @@
             actions.append(box);
             target._heroService={generation,operationId,save,box,form:null,origin:target===this.typeDetail?'API Analyzer':'Graph Viewer'};
             target.replaceChildren($('h3','',data.node.name),$('p','ht-node-id',data.node.node_id),actions,$('p','',data.node.description||''),$('pre','ht-data',JSON.stringify(data.node,null,2)));
-            for(const [title,edges,key] of [['Incoming',data.incoming,'source_id'],['Outgoing',data.outgoing,'target_id']]){target.append($('h4','',`${title} (${edges.length})`));for(const edge of edges){const b=button(`${edge.kind}${edge.label?' · '+edge.label:''} · ${edge[key]}`,()=>navigate(edge[key]));b.classList.add('ht-relation');target.append(b);}}
+            for(const [title,edges,key] of [['Incoming',data.incoming,'source_id'],['Outgoing',data.outgoing,'target_id']]){target.append($('h4','',format('{0} ({1})',tr(title),edges.length)));for(const edge of edges){const b=button(`${edge.kind}${edge.label?' · '+edge.label:''} · ${edge[key]}`,()=>navigate(edge[key]));b.classList.add('ht-relation');target.append(b);}}
             this.updateActions();
         }
         async openNodeService(target,generation,scope){
@@ -814,9 +814,9 @@
             name.setAttribute('aria-label',tr('Service name'));query.setAttribute('aria-label',tr('GraphQL draft'));
             const save=button(tr('Save Service'),()=>this.run(()=>this.saveNodeService(target,state)));save.className='btn btn-sm ht-node-action ht-node-action--service';
             state.form={scope,nodeId:state.operationId,draft,name,query,save,saved:false};
-            state.box.replaceChildren($('h4','',draft.operation_kind==='mutation'?tr('Save Mutation'):tr('Save Query')),$('p','','Provenance='+state.origin),
+            state.box.replaceChildren($('h4','',draft.operation_kind==='mutation'?tr('Save Mutation'):tr('Save Query')),$('p','',tr('Provenance')+'='+state.origin),
                 $('p','ht-context',tr('Saves a service without executing it. For object results, __typename is preselected; add the required fields.')),
-                $('p','ht-context',draft.required_variables.length?'Required variables: '+draft.required_variables.map(v=>v.name+' ('+v.type+')').join(', ')+'. Enter their values in GraphQL Services → Variables; values are never stored with the service.':tr('No required variables.')),
+                $('p','ht-context',draft.required_variables.length?format('Required variables: {0}. Enter their values in GraphQL Services → Variables; values are never stored with the service.',draft.required_variables.map(v=>v.name+' ('+v.type+')').join(', ')):tr('No required variables.')),
                 field(tr('Service name'),name),field('GraphQL',query),save);
             this.updateActions();
         }
@@ -892,7 +892,7 @@
                 link.addEventListener('click',e=>{if(this.openService(kind)===false)e.preventDefault();});views.append(link);
             }
             this.editorHost=$('div','ht-editor');this.variables=$('textarea','form-control ht-variables');this.variables.value='';this.variables.rows=6;this.variables.spellcheck=false;this.variables.setAttribute('wrap','off');this.variablesHighlight=$('pre','ht-variables-highlight');this.variablesHighlight.setAttribute('aria-hidden','true');const variablesBox=$('div','ht-variables-box');variablesBox.append(this.variablesHighlight,this.variables);this.variables.setAttribute('aria-label',tr('Variables'));this.variables.placeholder='id := 5;\noffset := 5;\norderBy := "id";';this.queryOutput=$('pre','ht-data');this.queryOutput.setAttribute('aria-live','polite');this.queryStatus=$('p','ht-query-status');this.queryStatus.setAttribute('role','status');
-            const bar=$('div','ht-toolbar');this.newButton=button('New '+this.serviceLabel(),()=>this.newQuery());this.copyButton=button(tr('Duplicate'),()=>this.run(async()=>this.newQuery(true)));this.saveButton=button(tr('Save'),()=>this.run(()=>this.saveQuery()));this.validateButton=button(tr('Validate'),()=>this.run(()=>this.validateQuery()));this.executeButton=button(this.serviceKind==='mutation'?tr('Execute Mutation'):tr('Execute Query'),()=>this.run(()=>this.executeQuery()));this.deleteButton=button(tr('Delete'),()=>this.run(()=>this.deleteQuery()));bar.append(this.newButton,this.copyButton,this.saveButton,this.validateButton,this.executeButton,this.deleteButton);
+            const bar=$('div','ht-toolbar');this.newButton=button(format('New {0}',this.serviceLabel()),()=>this.newQuery());this.copyButton=button(tr('Duplicate'),()=>this.run(async()=>this.newQuery(true)));this.saveButton=button(tr('Save'),()=>this.run(()=>this.saveQuery()));this.validateButton=button(tr('Validate'),()=>this.run(()=>this.validateQuery()));this.executeButton=button(this.serviceKind==='mutation'?tr('Execute Mutation'):tr('Execute Query'),()=>this.run(()=>this.executeQuery()));this.deleteButton=button(tr('Delete'),()=>this.run(()=>this.deleteQuery()));bar.append(this.newButton,this.copyButton,this.saveButton,this.validateButton,this.executeButton,this.deleteButton);
             this.serviceHint=$('p','ht-service-hint');this.queryProvenance=$('p','ht-query-provenance');
             // Variables are runtime input: one "name := value;" line each, converted to a JSON object before a request.
             // No preview is shown below the field; invalid input marks the field and explains the problem in its tooltip.
@@ -1006,9 +1006,9 @@
             const body=$('div','ht-result');
             const status=$('div','ht-result-status');status.dataset.state=result.status;status.setAttribute('role','status');
             status.append($('strong','',label),$('div','',head));
-            if(result.size_bytes!==undefined)status.append($('div','',`Response size: ${result.size_bytes} bytes${result.limit_bytes?' (display limit '+result.limit_bytes+' bytes)':''}`));
+            if(result.size_bytes!==undefined)status.append($('div','',result.limit_bytes?format('Response size: {0} bytes (display limit {1} bytes)',result.size_bytes,result.limit_bytes):format('Response size: {0} bytes',result.size_bytes)));
             const summary=hasData?resultSummary(result.data):[];
-            if(summary.length)status.append($('div','','Delivered: '+summary.join(' · ')));
+            if(summary.length)status.append($('div','',format('Delivered: {0}',summary.join(' · '))));
             if(hasData&&!colored)status.append($('div','',tr('Colours are turned off for this large result; the text is complete.')));
             body.append(status);
             // HTTP/transport failures and GraphQL errors are labelled separately; partial data stays visible below.
@@ -1037,9 +1037,9 @@
             if(this.queryProvenance)this.queryProvenance.textContent=tr('Provenance')+'='+(this.query?.provenance||this.draftProvenance||'GraphQL-Services');
             const gate=this.mutationExecution;
             if(this.serviceHint)this.serviceHint.textContent=this.serviceKind==='mutation'
-                ? `Mutation drafts are local-only, stored locally, and validated only against the saved schema. Execution from this editor is blocked. Server mutation gate: ${gate?.mutation_execution_status||'unknown'}${gate?.mutation_execution_reason?' · '+gate.mutation_execution_reason:''}`
+                ? format('Mutation drafts are local-only, stored locally, and validated only against the saved schema. Execution from this editor is blocked. Server mutation gate: {0}{1}',tr(gate?.mutation_execution_status||'unknown'),gate?.mutation_execution_reason?' · '+tr(gate.mutation_execution_reason):'')
                 : tr('Execute Query reads data from HERO once on an explicit click, using the saved and validated revision. Results open in a separate window and are never stored, synchronized or written to Frappe.');
-this.queryStatus.textContent=this.query?`${this.serviceLabel()} ${this.query.query_id} · Revision ${this.query.revision}${this.dirty?' · Unsaved changes':''}`:tr('New unsaved draft');const allowed=!!this.context?.can_write&&!this.context.needs_binding_update&&!this.busy&&!!this.schema;for(const b of [this.newButton,this.copyButton])b.disabled=!allowed;this.saveButton.disabled=!allowed;this.saveButton.title=this.serviceKind==='mutation'?tr('Stores a local-only disabled mutation draft.'):' ';this.validateButton.disabled=!allowed;this.executeButton.disabled=!allowed||!this.canExecuteQuery();this.executeButton.title=this.serviceKind==='mutation'?'HERO_MUTATION_EXECUTION_DISABLED':this.dirty||!this.query?tr('Asks to save and validate the changes, then runs that revision once, read-only.'):tr('Runs the saved revision once, read-only.');this.deleteButton.disabled=!allowed||!this.query;this.bindButton.disabled=!this.context?.can_write||this.busy;}
+this.queryStatus.textContent=this.query?`${this.serviceLabel()} ${this.query.query_id} · Revision ${this.query.revision}${this.dirty?' · '+tr('Unsaved changes'):''}`:tr('New unsaved draft');const allowed=!!this.context?.can_write&&!this.context.needs_binding_update&&!this.busy&&!!this.schema;for(const b of [this.newButton,this.copyButton])b.disabled=!allowed;this.saveButton.disabled=!allowed;this.saveButton.title=this.serviceKind==='mutation'?tr('Stores a local-only disabled mutation draft.'):' ';this.validateButton.disabled=!allowed;this.executeButton.disabled=!allowed||!this.canExecuteQuery();this.executeButton.title=this.serviceKind==='mutation'?'HERO_MUTATION_EXECUTION_DISABLED':this.dirty||!this.query?tr('Asks to save and validate the changes, then runs that revision once, read-only.'):tr('Runs the saved revision once, read-only.');this.deleteButton.disabled=!allowed||!this.query;this.bindButton.disabled=!this.context?.can_write||this.busy;}
         destroy(){
             this.cancelGraph?.();
             this.focusDialog?.hide?.();

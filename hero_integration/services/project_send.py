@@ -15,6 +15,7 @@ import json
 
 import frappe
 
+from hero_integration.services.localized_error import LocalizedError
 SEND_ROLES = ("System Manager", "HERO Writeback")
 NOTES_FIELD = "custom_hero_partner_notes"
 PHASE_ID_FIELD = "custom_hero_observed_status_id"
@@ -35,7 +36,7 @@ MUTATION_DOCUMENT = (
 )
 
 
-class ProjectSendError(ValueError):
+class ProjectSendError(LocalizedError):
     """The project cannot be sent safely; nothing was sent."""
 
 
@@ -125,7 +126,7 @@ def send(project: str, phase_id=None, fingerprint: str = "", confirmed=0, client
             else:
                 stored, expected = after.get(change["field"]), change.get("value", change["new"])
             if (_text(stored) if change["field"] == "partner_notes" else stored) != expected:
-                raise ProjectSendError(f"HERO did not store {change['label']}.")
+                raise ProjectSendError("HERO did not store {0}.", change['label'])
     except Exception:
         _finalize_mutation(audit, "Failed", "Project send not confirmed; no retry. Check the project in HERO "
                                             "before sending again.")
@@ -179,7 +180,7 @@ def _bound_link(project: str):
         raise ProjectSendError("This project is not imported from HERO.")
     link = rows[0]
     if link.sync_status != "Synchronized":
-        raise ProjectSendError(f"The HERO link is {link.sync_status}; resolve it before sending.")
+        raise ProjectSendError("The HERO link is {0}; resolve it before sending.", link.sync_status)
     from hero_integration.client.settings import get_configuration
 
     if (link.source_instance or "default") != (get_configuration().source_instance or "default"):

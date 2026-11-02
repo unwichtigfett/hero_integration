@@ -5,6 +5,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 from typing import Callable
+from hero_integration.services.localized_error import LocalizedError
 from hero_integration.services.projection_contracts import CONTRACTS as PROJECTIONS, validate_projection_record
 from hero_integration.services.project_naming import project_title_missing
 
@@ -30,7 +31,7 @@ from hero_integration.services.direct_mapping import (
 )
 
 
-class MappingPlanError(ValueError):
+class MappingPlanError(LocalizedError):
     pass
 
 
@@ -92,7 +93,7 @@ class MappingPlan:
         present = {definition.purpose for definition in self.definitions}
         missing = sorted(required - present)
         if missing:
-            raise MappingPlanError(f"Active mapping is incomplete: {', '.join(missing)}.")
+            raise MappingPlanError("Active mapping is incomplete: {0}.", ", ".join(missing))
 
     def source_identity(self, record: dict[str, object]) -> str:
         definition = self._one(PURPOSE_SOURCE_IDENTITY)
@@ -117,12 +118,12 @@ class MappingPlan:
             try:
                 validate_projection_record(self.target_operation or self.operation, record, allow_partial=allow_partial)
             except ValueError as error:
-                raise MappingPlanError(str(error)) from error
+                raise MappingPlanError.from_error(error) from error
         if (self.target_operation or self.operation) == "HeroProjectMatches":
             for field in ("customer", "address", "current_project_match_status"):
                 nested = record.get(field)
                 if nested is not None and not isinstance(nested, dict):
-                    raise MappingPlanError("Project response has an incompatible object: " + field)
+                    raise MappingPlanError("Project response has an incompatible object: {0}", field)
         for definition in self.definitions:
             raw = lookup(record, definition.source_path)
             operation = self.target_operation or self.operation
@@ -145,7 +146,7 @@ class MappingPlan:
                 if definition.transformation == TRANSFORM_POSITIVE_INT_TO_TEXT and raw is not None:
                     valid = type(raw) is int and raw > 0
                 if not valid:
-                    raise MappingPlanError("Project response has an incompatible field: " + definition.source_path)
+                    raise MappingPlanError("Project response has an incompatible field: {0}", definition.source_path)
             value = None if raw is MISSING else raw
             if definition.source_type.split("|")[0] == "float" and type(value) is int:
                 # HERO sends whole numbers as integers; Frappe reads Float/Currency
@@ -282,7 +283,7 @@ class MappingPlan:
     def _one(self, purpose: str) -> MappingSpec:
         matches = self._with_purpose(purpose)
         if len(matches) != 1:
-            raise MappingPlanError(f"Active mapping requires exactly one {purpose} binding.")
+            raise MappingPlanError("Active mapping requires exactly one {0} binding.", purpose)
         return matches[0]
 
     def _with_purpose(self, purpose: str) -> tuple[MappingSpec, ...]:

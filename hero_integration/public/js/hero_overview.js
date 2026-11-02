@@ -10,6 +10,7 @@
             : (
                 value
             ) => value;
+    const format = (message, ...values) => uiText(message).replace(/\{(\d+)\}/g, (_, index) => String(values[index] ?? ""));
 
     if (window.hero_integration_overview) return;
 
@@ -127,16 +128,16 @@
     // Mappings of the parent snapshot are inherited as personal drafts; nothing is activated.
     function inheritanceMessage(inheritance) {
         if (!inheritance || inheritance.status === "NO_PARENT") return "";
-        if (inheritance.status !== "COMPLETED") return " Mapping inheritance did not complete; retry it in the Mapping Editor.";
+        if (inheritance.status !== "COMPLETED") return " " + uiText("Mapping inheritance did not complete; retry it in the Mapping Editor.");
         const counts = inheritance.counts || {};
-        return ` Inherited ${counts["Draft Created"] || 0} mapping(s) from the parent as personal drafts (${counts.Incompatible || 0} incompatible, ${counts.Skipped || 0} skipped). Nothing was activated.`;
+        return " " + format("Inherited {0} mapping(s) from the parent as personal drafts ({1} incompatible, {2} skipped). Nothing was activated.", counts["Draft Created"] || 0, counts.Incompatible || 0, counts.Skipped || 0);
     }
 
     function refreshResultMessage(result) {
-        const snapshot = result?.snapshot_name || "saved snapshot";
-        const types = Number.isInteger(result?.type_count) ? " (" + result.type_count + " types)" : "";
-        if (result?.status === "UNCHANGED") return "Schema is unchanged: " + snapshot + types + ".";
-        return "Schema refresh succeeded: " + snapshot + types + "." + inheritanceMessage(result?.inheritance);
+        const snapshot = result?.snapshot_name || uiText("saved snapshot");
+        const types = Number.isInteger(result?.type_count) ? " " + format("({0} types)", result.type_count) : "";
+        if (result?.status === "UNCHANGED") return format("Schema is unchanged: {0}{1}.", snapshot, types);
+        return format("Schema refresh succeeded: {0}{1}.", snapshot, types) + inheritanceMessage(result?.inheritance);
     }
 
     async function mount(workspace) {

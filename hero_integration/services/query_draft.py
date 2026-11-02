@@ -22,6 +22,7 @@ from hero_integration.services.graphql_contract import (
     _validate_value,
 )
 from hero_integration.services.graphql_graph import GraphSnapshotError, normalize_schema
+from hero_integration.services.localized_error import LocalizedError
 
 MAX_DEPTH = 12
 MAX_FIELDS = 500
@@ -31,7 +32,7 @@ _INPUT_KINDS = {"SCALAR", "ENUM", "INPUT_OBJECT"}
 _BUILTIN_INPUT = {"Int", "Float", "String", "Boolean", "ID"}
 
 
-class QueryDraftError(ValueError):
+class QueryDraftError(LocalizedError):
     pass
 
 
@@ -87,7 +88,7 @@ def _tokens(text: object) -> tuple[str, ...]:
             tokens.append(text[index:end])
             index = end
             continue
-        raise QueryDraftError(f"Unsupported GraphQL character {char!r}.")
+        raise QueryDraftError('Unsupported GraphQL character {0!r}.', char)
     return tuple(tokens)
 
 
@@ -124,7 +125,7 @@ class _Validator:
         try:
             self.stream = _Stream(_tokens(document))
         except GraphQLContractError as error:
-            raise QueryDraftError(str(error)) from error
+            raise QueryDraftError.from_error(error) from error
         self.variables: dict[str, dict[str, object]] = {}
         self.defaults: set[str] = set()
         self.used: set[str] = set()
@@ -146,10 +147,10 @@ class _Validator:
             if not stream.finished:
                 raise QueryDraftError("A query service must contain exactly one GraphQL operation.")
         except GraphQLContractError as error:
-            raise QueryDraftError(str(error)) from error
+            raise QueryDraftError.from_error(error) from error
         unused = sorted(set(self.variables) - self.used)
         if unused:
-            raise QueryDraftError("Unused GraphQL variable(s): " + ", ".join("$" + item for item in unused))
+            raise QueryDraftError("Unused GraphQL variable(s): {0}", ", ".join("$" + item for item in unused))
         return {
             "operation_name": name,
             "root_fields": self.root_fields,
@@ -167,13 +168,13 @@ class _Validator:
             stream.expect("$")
             name = stream.take_name()
             if name in self.variables:
-                raise QueryDraftError(f"Duplicate GraphQL variable ${name}.")
+                raise QueryDraftError('Duplicate GraphQL variable ${0}.', name)
             stream.expect(":")
             ref = _type_ref(stream)
             base = _named(ref)
             kind = self.types.get(base, {}).get("kind") or ("SCALAR" if base in _BUILTIN_INPUT else "")
             if kind not in _INPUT_KINDS:
-                raise QueryDraftError(f"Variable ${name} must use an input type, not {base or 'an unknown type'}.")
+                raise QueryDraftError('Variable ${0} must use an input type, not {1}.', name, base or 'an unknown type')
             self.variables[name] = self._schema_ref(ref)
             if stream.accept("="):
                 self.defaults.add(name)
@@ -188,7 +189,7 @@ class _Validator:
 
     def _selection_set(self, type_name: str, depth: int, *, root: bool = False) -> None:
         if depth > MAX_DEPTH:
-            raise QueryDraftError(f"The query is nested deeper than {MAX_DEPTH} levels.")
+            raise QueryDraftError('The query is nested deeper than {0} levels.', MAX_DEPTH)
         stream = self.stream
         stream.expect("{")
         selected = False
@@ -200,7 +201,7 @@ class _Validator:
                     stream.take()
                     condition = stream.take_name()
                     if self.types.get(condition, {}).get("kind") not in _COMPOSITE_KINDS:
-                        raise QueryDraftError(f"Inline fragment type {condition} is not an object, interface or union.")
+                        raise QueryDraftError('Inline fragment type {0} is not an object, interface or union.', condition)
                 elif stream.peek() not in {"{", "@"}:
                     raise QueryDraftError("Named fragment spreads are not supported in GraphQL Services.")
                 self._directives()
@@ -217,7 +218,7 @@ class _Validator:
             name = stream.take_name()
         self.fields += 1
         if self.fields > MAX_FIELDS:
-            raise QueryDraftError(f"The query selects more than {MAX_FIELDS} fields.")
+            raise QueryDraftError('The query selects more than {0} fields.', MAX_FIELDS)
         if name == "__typename":
             if stream.peek() == "(":
                 raise QueryDraftError("__typename takes no arguments.")
@@ -229,11 +230,11 @@ class _Validator:
             raise QueryDraftError("Introspection fields are not allowed in GraphQL Services.")
         owner = self.types.get(type_name, {})
         if owner.get("kind") == "UNION":
-            raise QueryDraftError(f"Select fields of union {type_name} through inline fragments.")
+            raise QueryDraftError('Select fields of union {0} through inline fragments.', type_name)
         fields = {item.get("name"): item for item in owner.get("fields") or [] if isinstance(item, Mapping)}
         definition = fields.get(name)
         if not definition:
-            raise QueryDraftError(f"Field {type_name}.{name} does not exist in the saved schema.")
+            raise QueryDraftError('Field {0}.{1} does not exist in the saved schema.', type_name, name)
         if root:
             self.root_fields.append(name)
         self._arguments(definition, f"{type_name}.{name}")
@@ -242,10 +243,10 @@ class _Validator:
         kind = self.types.get(target, {}).get("kind") or ("SCALAR" if target in _BUILTIN_INPUT else "")
         if kind in _COMPOSITE_KINDS:
             if stream.peek() != "{":
-                raise QueryDraftError(f"Field {type_name}.{name} returns {target} and needs a selection set.")
+                raise QueryDraftError('Field {0}.{1} returns {2} and needs a selection set.', type_name, name, target)
             self._selection_set(target, depth + 1)
         elif stream.peek() == "{":
-            raise QueryDraftError(f"Field {type_name}.{name} returns the leaf type {target} and cannot have a selection set.")
+            raise QueryDraftError('Field {0}.{1} returns the leaf type {2} and cannot have a selection set.', type_name, name, target)
 
     def _arguments(self, definition: Mapping[str, object], path: str) -> None:
         stream = self.stream
@@ -255,25 +256,25 @@ class _Validator:
             while not stream.accept(")"):
                 name = stream.take_name()
                 if name in given:
-                    raise QueryDraftError(f"Duplicate argument {path}({name}).")
+                    raise QueryDraftError('Duplicate argument {0}({1}).', path, name)
                 if name not in arguments:
-                    raise QueryDraftError(f"Argument {name} does not exist on {path}.")
+                    raise QueryDraftError('Argument {0} does not exist on {1}.', name, path)
                 given.add(name)
                 stream.expect(":")
                 self._value(arguments[name].get("type"), f"{path}({name})", variables_allowed=True)
         for name, item in arguments.items():
             if name not in given and _non_null(item.get("type")) and item.get("defaultValue") is None:
-                raise QueryDraftError(f"Required argument {path}({name}) is missing.")
+                raise QueryDraftError('Required argument {0}({1}) is missing.', path, name)
 
     def _directives(self) -> None:
         stream = self.stream
         while stream.accept("@"):
             name = stream.take_name()
             if name not in {"include", "skip"}:
-                raise QueryDraftError(f"Directive @{name} is not supported in GraphQL Services.")
+                raise QueryDraftError('Directive @{0} is not supported in GraphQL Services.', name)
             stream.expect("(")
             if stream.take_name() != "if":
-                raise QueryDraftError(f"@{name} requires exactly the argument if.")
+                raise QueryDraftError('@{0} requires exactly the argument if.', name)
             stream.expect(":")
             self._value({"kind": "NON_NULL", "ofType": {"kind": "SCALAR", "name": "Boolean"}}, f"@{name}(if)", variables_allowed=True)
             stream.expect(")")
@@ -282,17 +283,17 @@ class _Validator:
         stream = self.stream
         if stream.accept("$"):
             if not variables_allowed:
-                raise QueryDraftError(f"{path} cannot reference a variable.")
+                raise QueryDraftError('{0} cannot reference a variable.', path)
             name = stream.take_name()
             variable = self.variables.get(name)
             if variable is None:
-                raise QueryDraftError(f"Variable ${name} is used but not defined.")
+                raise QueryDraftError('Variable ${0} is used but not defined.', name)
             self.used.add(name)
             compatible = _compatible_variable_type(self._parsed(variable), ref)
             if not compatible and name in self.defaults and isinstance(ref, Mapping) and ref.get("kind") == "NON_NULL":
                 compatible = _compatible_variable_type(self._parsed(variable), ref.get("ofType"))
             if not compatible:
-                raise QueryDraftError(f"Variable ${name} of type {_label(variable)} cannot be used for {path} ({_label(ref)}).")
+                raise QueryDraftError('Variable ${0} of type {1} cannot be used for {2} ({3}).', name, _label(variable), path, _label(ref))
             return
         token = stream.take()
         literal = self._literal(token, ref, path, variables_allowed)
@@ -300,7 +301,7 @@ class _Validator:
             try:
                 _validate_value(literal, ref, self.types, path)
             except GraphQLContractError as error:
-                raise QueryDraftError(str(error)) from error
+                raise QueryDraftError.from_error(error) from error
 
     def _parsed(self, ref: Mapping[str, object]) -> dict[str, object]:
         if ref.get("kind") in {"NON_NULL", "LIST"}:
@@ -313,7 +314,7 @@ class _Validator:
         if token == "[":
             item = inner.get("ofType") if isinstance(inner, Mapping) and inner.get("kind") == "LIST" else inner
             if not isinstance(inner, Mapping) or inner.get("kind") != "LIST":
-                raise QueryDraftError(f"{path} is not a list.")
+                raise QueryDraftError('{0} is not a list.', path)
             while not stream.accept("]"):
                 self._value(item, f"{path}[]", variables_allowed=variables_allowed)
             return _UNCHECKED
@@ -321,19 +322,19 @@ class _Validator:
             name = _named(inner)
             definition = self.types.get(name, {})
             if definition.get("kind") != "INPUT_OBJECT":
-                raise QueryDraftError(f"{path} is not an input object.")
+                raise QueryDraftError('{0} is not an input object.', path)
             fields = {item.get("name"): item for item in definition.get("inputFields") or [] if isinstance(item, Mapping)}
             given: set[str] = set()
             while not stream.accept("}"):
                 field = stream.take_name()
                 if field not in fields or field in given:
-                    raise QueryDraftError(f"{path}.{field} is unknown or duplicated.")
+                    raise QueryDraftError('{0}.{1} is unknown or duplicated.', path, field)
                 given.add(field)
                 stream.expect(":")
                 self._value(fields[field].get("type"), f"{path}.{field}", variables_allowed=variables_allowed)
             for field, item in fields.items():
                 if field not in given and _non_null(item.get("type")) and item.get("defaultValue") is None:
-                    raise QueryDraftError(f"Required input field {path}.{field} is missing.")
+                    raise QueryDraftError('Required input field {0}.{1} is missing.', path, field)
             return _UNCHECKED
         if token == "null":
             return None
@@ -343,7 +344,7 @@ class _Validator:
             try:
                 return json.loads(token)
             except json.JSONDecodeError as error:
-                raise QueryDraftError(f"{path} contains an invalid string literal.") from error
+                raise QueryDraftError('{0} contains an invalid string literal.', path) from error
         if token[0].isdigit() or token[0] == "-":
             try:
                 return int(token)
@@ -351,12 +352,12 @@ class _Validator:
                 try:
                     return float(token)
                 except ValueError as error:
-                    raise QueryDraftError(f"{path} contains an invalid number.") from error
+                    raise QueryDraftError('{0} contains an invalid number.', path) from error
         if token[0].isalpha() or token[0] == "_":
             if self.types.get(_named(inner), {}).get("kind") != "ENUM":
-                raise QueryDraftError(f"{path} expects {_label(ref)}, not the enum value {token}.")
+                raise QueryDraftError('{0} expects {1}, not the enum value {2}.', path, _label(ref), token)
             return token
-        raise QueryDraftError(f"{path} contains an unsupported value.")
+        raise QueryDraftError('{0} contains an unsupported value.', path)
 
 
 _UNCHECKED = object()
@@ -377,15 +378,15 @@ def validate_variables(schema: dict[str, object], document: str, values: object)
     validator.run()
     unknown = sorted(set(values) - set(validator.variables))
     if unknown:
-        raise QueryDraftError("Unknown query variable(s): " + ", ".join(unknown))
+        raise QueryDraftError("Unknown query variable(s): {0}", ", ".join(unknown))
     result: dict[str, object] = {}
     for name, ref in validator.variables.items():
         if name not in values:
             if _non_null(ref) and name not in validator.defaults:
-                raise QueryDraftError(f"Required query variable ${name} is missing.")
+                raise QueryDraftError('Required query variable ${0} is missing.', name)
             continue
         try:
             result[name] = _validate_value(values[name], ref, validator.types, f"${name}")
         except GraphQLContractError as error:
-            raise QueryDraftError(str(error)) from error
+            raise QueryDraftError.from_error(error) from error
     return result

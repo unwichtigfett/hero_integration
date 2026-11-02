@@ -61,15 +61,15 @@
         "config_export", "config_import_preview", "config_import",
     ]);
     const errorMessage = (error) => {
-        if (typeof error === "string") return error;
-        if (typeof error?.message === "string" && error.message) return error.message;
+        if (typeof error === "string") return __(error);
+        if (typeof error?.message === "string" && error.message) return __(error.message);
         try {
             const messages = JSON.parse(error?._server_messages || "[]");
             const first = messages.map((item) => typeof item === "string" ? JSON.parse(item) : item).find(Boolean);
-            if (first?.message) return first.message;
+            if (first?.message) return __(first.message);
         } catch (_) { /* Frappe may return a non-JSON message. */ }
-        if (typeof error?.exc_type === "string") return `Server rejected the request (${error.exc_type}).`;
-        return "HERO workspace request failed. Retry the action or check the server log.";
+        if (typeof error?.exc_type === "string") return __("Server rejected the request ({0}).").replace("{0}", error.exc_type);
+        return __("HERO workspace request failed. Retry the action or check the server log.");
     };
     const request = (method, args = {}) =>
         frappe.call({method: `${API}.${method}`, args}).then((response) => {
@@ -115,7 +115,7 @@
         if (document.querySelector(`link[data-hero-asset="${path}"]`)) return resolve();
         const link = document.createElement("link");
         link.rel = "stylesheet"; link.href = assetUrl(path); link.dataset.heroAsset = path; link.onload = resolve;
-        link.onerror = () => reject(new Error(`HERO interface stylesheet could not be loaded: ${path}`));
+        link.onerror = () => reject(new Error(__("HERO interface stylesheet could not be loaded: {0}").replace("{0}", path)));
         document.head.append(link);
     });
     // Frappe owns script URL versioning. Its compatibility loader resolves even
@@ -130,7 +130,7 @@
             .filter(([, globalName]) => !window[globalName])
             .map(([asset]) => asset);
         if (missing.length) {
-            throw new Error(`HERO interface assets could not be loaded: ${missing.join(", ")}. Reload the page and contact an administrator if the problem persists.`);
+            throw new Error(__("HERO interface assets could not be loaded: {0}. Reload the page and contact an administrator if the problem persists.").replace("{0}", missing.join(", ")));
         }
     };
     let assets;

@@ -28,6 +28,15 @@ def payload(*services, settings=None, version=None):
 
 
 class TestConfigParse(unittest.TestCase):
+    def test_parameterized_error_keeps_english_exception_and_translates_at_boundary(self):
+        message = "{0} needs the {1} read service first."
+        error = cx.ConfigExchangeError(message, "HeroProjectMatches", "HeroCustomers")
+        self.assertEqual(str(error), "HeroProjectMatches needs the HeroCustomers read service first.")
+        translated = error.translated(lambda key: "{0} benötigt zuerst den Lese-Service {1}." if key == message else key)
+        self.assertEqual(translated, "HeroProjectMatches benötigt zuerst den Lese-Service HeroCustomers.")
+        # Literal braces in a complete message must not be treated as placeholders.
+        self.assertEqual(cx.ConfigExchangeError("Invalid {example}").translated(lambda key: key), "Invalid {example}")
+
     def test_preview_translates_service_error_at_the_api_boundary(self):
         source = "The configuration file is not valid JSON."
         translated = "Die Konfigurationsdatei enthält kein gültiges JSON."
