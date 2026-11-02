@@ -70,6 +70,10 @@ for (const language of input.languages) {
     assert.equal(migration.diagnostic(deletedProject), language === 'en' ? deletedProject : 'Das referenzierte HERO-Projekt ist gelöscht; der Datensatz wird nicht importiert.');
     const deletedCustomer = 'Source customer is deleted; no ERPNext target deletion was performed.';
     assert.equal(migration.diagnostic(deletedCustomer), language === 'en' ? deletedCustomer : 'Der Quellkunde ist gelöscht; das ERPNext-Ziel wurde nicht gelöscht.');
+    const graphSummary = '12 graph nodes and 34 graph edges.';
+    assert.equal(migration.diagnostic(graphSummary), language === 'en' ? graphSummary : '12 Graphknoten und 34 Graphkanten.');
+    const refreshStatus = 'Schema unchanged; the current snapshot stays in use.';
+    assert.equal(migration.diagnostic(refreshStatus), language === 'en' ? refreshStatus : 'Schema unverändert; der aktuelle Snapshot bleibt in Verwendung.');
     const base = 'Target created through native Frappe validation.';
     const optionalNotes = [
         'The HERO email address is not valid in ERPNext; it was not imported.',

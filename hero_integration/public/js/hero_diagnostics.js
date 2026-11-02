@@ -72,6 +72,8 @@
             return recheck ? format("Recheck requested: {0}", translated) : translated;
         }
         const templates = [
+            [/^(\d+) graph nodes and (\d+) graph edges\.$/, "{0} graph nodes and {1} graph edges."],
+            [/^HERO schema refresh failed safely: (.+)$/, "HERO schema refresh failed safely: {0}", [0]],
             [/^A new target record would be created named (.+)\.$/, "A new target record would be created named {0}."],
             [/^ERPNext rejected the record \(([A-Za-z_][A-Za-z0-9_]*)\); see Error Log\.$/, "ERPNext rejected the record ({0}); see Error Log."],
             [/^([A-Za-z][A-Za-z ]+) is not installed on this site\.$/, "{0} is not installed on this site.", [0]],
