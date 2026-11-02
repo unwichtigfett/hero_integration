@@ -2254,3 +2254,4 @@ Schema-only query operation: an approved read-only import contract is required b
 Child-DocType relationship: a reviewed resolver is required before it can be mapped.,Child-DocType-Beziehung: Vor dem Mapping ist ein geprüfter Resolver erforderlich.
 "Protected, technical, or unsupported target field.","Geschütztes, technisches oder nicht unterstütztes Zielfeld."
 Canonical HERO migration target.,Kanonisches HERO-Migrationsziel.
+"{0} needs an approved read service with an active mapping for {1} on a snapshot of the HERO source instance ""{2}"". Approve one under API & Schema and Mapping.",{0} benötigt einen freigegebenen Leseservice mit aktivem Mapping für {1} auf einem Snapshot der HERO-Quellinstanz „{2}“. Geben Sie diesen unter API & Schema und Mapping frei.
