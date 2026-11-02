@@ -17,7 +17,7 @@ def execute() -> None:
     # rewrite or disable an active rule referenced by saved mapping JSON.
     active = frappe.get_all("HERO Frappe Mapping", filters={"status": "Active"}, fields=["name", "priority"])
     if any(type(row.priority) is not int or row.priority not in range(0, 11) for row in active):
-        frappe.throw("Active field-rule priorities require explicit revision-safe reconciliation before migration.")
+        frappe.throw(frappe._("Active field-rule priorities require explicit revision-safe reconciliation before migration."))
     frappe.db.set_value("HERO Frappe Mapping", {"priority": 100, "status": ["!=", "Active"]},
                         "priority", 5, update_modified=False)
     rows = frappe.get_all(

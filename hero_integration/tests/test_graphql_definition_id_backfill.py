@@ -37,7 +37,7 @@ class FakeDB:
 
 class TestIdentityBackfill(unittest.TestCase):
     def run_patch(self, db):
-        fake = SimpleNamespace(db=db, throw=lambda msg: (_ for _ in ()).throw(ValueError(msg)))
+        fake = SimpleNamespace(db=db, _=lambda text: text, throw=lambda msg: (_ for _ in ()).throw(ValueError(msg)))
         with patch.object(migration, "frappe", fake):
             migration.execute()
     def test_backfills_only_missing_and_is_idempotent(self):
@@ -60,6 +60,14 @@ class TestIdentityBackfill(unittest.TestCase):
                 self.run_patch(db)
             self.assertEqual(db.updates, [])
             self.assertIsNone(db.rows[0].definition_id)
+    def test_ambiguous_draft_error_uses_frappe_translation(self):
+        db = FakeDB([dict(name="legacy", definition_id=None)], draft=True)
+        fake = SimpleNamespace(db=db, _=lambda text: "Übersetzt: " + text,
+                               throw=lambda msg: (_ for _ in ()).throw(ValueError(msg)))
+        with patch.object(migration, "frappe", fake), self.assertRaisesRegex(ValueError, "^Übersetzt:"):
+            migration.execute()
+        self.assertEqual(db.updates, [])
+
     def test_independent_resolved_draft_and_binding_do_not_block(self):
         db = FakeDB([dict(name="legacy", definition_id=None), dict(name="stable", definition_id="stable-id")], draft=True, binding=True, resolved=True)
         self.run_patch(db)
