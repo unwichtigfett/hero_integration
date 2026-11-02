@@ -2218,3 +2218,5 @@ graph analysis unavailable,Graphanalyse nicht verfügbar
 date unavailable,Datum nicht verfügbar
 Overview without node text; use selection and Inspector for names and details.,Übersicht ohne Knotentext; Namen und Details sind über die Auswahl und den Inspector verfügbar.
 Reduced edge labels: {0} of {1} visible relationships are labeled. All relationships remain available in node focus and Inspector.,Reduzierte Kantenbeschriftung: {0} von {1} sichtbaren Beziehungen sind beschriftet. Alle Beziehungen bleiben im Knotenfokus und im Inspector verfügbar.
+{0} saved · Provenance={1},{0} gespeichert · Herkunft={1}
+Mutation execution is not available in this editor.,Die Ausführung von Mutations ist in diesem Editor nicht verfügbar.
