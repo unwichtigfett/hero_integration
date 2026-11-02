@@ -41,6 +41,13 @@ _CUSTOMER_REVIEW_REASONS = (
     "The HERO customer is a contact person, not a customer; the Project has no customer.",
 )
 
+_IMPORT_NOTES = (
+    "The HERO email address is not valid in ERPNext; it was not imported.",
+    "A HERO phone text is not a valid ERPNext number; the first number was imported and the full text kept as a comment.",
+    "Customer primary address is incomplete. It was not imported.",
+    "The HERO address has no country; Germany was assumed.",
+)
+
 
 def recipient_text(user: str, message: str) -> str:
     """Use Frappe's user language, falling back to its system language."""
@@ -59,6 +66,15 @@ def recipient_diagnostic(user: str, message: str) -> str:
     translated = recipient_text(user, message)
     if translated != message:
         return translated
+    remaining, notes = message, []
+    while True:
+        note = next((item for item in _IMPORT_NOTES if remaining.endswith(" " + item)), None)
+        if note is None:
+            break
+        remaining = remaining[: -len(note) - 1]
+        notes.append(recipient_text(user, note))
+    if notes:
+        return " ".join((recipient_diagnostic(user, remaining), *reversed(notes)))
     name_conflict = re.fullmatch(
         r"(.+?) (.+?) already exists without this HERO record's link\. The HERO number is not reassigned, "
         r"suffixed or merged; check whether \2 is the same (.+?) and link or rename it\.", message)
