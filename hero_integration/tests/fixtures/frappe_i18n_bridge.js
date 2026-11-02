@@ -57,6 +57,10 @@ for (const language of input.languages) {
     assert.equal(migration.diagnostic(unavailable), language === 'en' ? unavailable : 'Kunde ist auf dieser Site nicht installiert.');
     const addressConflict = 'HERO customer address changed outside the selected line_2 binding.';
     assert.equal(migration.diagnostic(addressConflict), language === 'en' ? addressConflict : 'Die HERO-Kundenadresse wurde außerhalb der ausgewählten line_2-Zuordnung geändert.');
+    const phoneConflict = 'The Customer primary Contact is shared or not linked to this Customer.';
+    assert.equal(migration.diagnostic(phoneConflict), language === 'en' ? phoneConflict : 'Der Hauptkontakt des Kunden wird gemeinsam verwendet oder ist nicht mit diesem Kunden verknüpft.');
+    const deletedProject = 'The referenced HERO project is deleted; the record is not imported.';
+    assert.equal(migration.diagnostic(deletedProject), language === 'en' ? deletedProject : 'Das referenzierte HERO-Projekt ist gelöscht; der Datensatz wird nicht importiert.');
     const base = 'Target created through native Frappe validation.';
     const optionalNotes = [
         'The HERO email address is not valid in ERPNext; it was not imported.',

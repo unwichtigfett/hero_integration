@@ -2415,3 +2415,10 @@ HERO customer address changed outside the selected line_2 binding.,Die HERO-Kund
 Customer address changed outside HERO Integration.,Die Kundenadresse wurde außerhalb der HERO-Integration geändert.
 Customer address line_2 has an untracked local value.,Das Feld line_2 der Kundenadresse enthält einen nicht erfassten lokalen Wert.
 HERO customer address changed. Review is required before an update.,Die HERO-Kundenadresse wurde geändert. Vor einer Aktualisierung ist eine Prüfung erforderlich.
+The Customer primary Contact is shared or not linked to this Customer.,Der Hauptkontakt des Kunden wird gemeinsam verwendet oder ist nicht mit diesem Kunden verknüpft.
+The referenced HERO project is deleted; the record is not imported.,Das referenzierte HERO-Projekt ist gelöscht; der Datensatz wird nicht importiert.
+The configured HERO customer relation has no unambiguous ERPNext link.,Die konfigurierte HERO-Kundenbeziehung hat keine eindeutige ERPNext-Verknüpfung.
+Task assignment admission changed before execution.,Die Zulassung der Task-Zuweisung hat sich vor der Ausführung geändert.
+Native assignment did not produce one verified recipient.,Die native Zuweisung hat keinen eindeutig bestätigten Empfänger ergeben.
+"Native assignment does not match the approved Task, actor, recipient and date.","Die native Zuweisung stimmt nicht mit der freigegebenen Task, dem Akteur, Empfänger und Datum überein."
+HERO Integration run failed; see the original exception.,Der Lauf der HERO-Integration ist fehlgeschlagen; siehe ursprüngliche Ausnahme.
