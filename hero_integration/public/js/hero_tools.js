@@ -5,6 +5,18 @@
     const tr = (value) => window.hero_integration_i18n?.text(value) ?? value;
     const format = (message, ...values) => tr(message).replace(/\{(\d+)\}/g, (_, index) => String(values[index] ?? ""));
 
+    function graphLabelsNotice(compact, placed, total) {
+        const overview = compact ? tr('Overview without node text; use selection and Inspector for names and details.') + ' ' : '';
+        return overview + (total > placed
+            ? format('Reduced edge labels: {0} of {1} visible relationships are labeled. All relationships remain available in node focus and Inspector.', placed, total)
+            : tr('All visible relationships are labeled.'));
+    }
+    function snapshotCoverageLabel(coverage) {
+        return Number.isInteger(coverage.types)
+            ? format('{0} types · {1} nodes · {2} relations', coverage.types, coverage.nodes, coverage.edges)
+            : tr('graph analysis unavailable');
+    }
+
     /*
      * Full Graph Viewer cache.
      *
@@ -365,8 +377,8 @@
             this.snapshotPicker.disabled=!snapshots.some(snapshot=>snapshot.usable);
             const selected=this.context?.selected_snapshot_metadata,selectedCoverage=coverage||selected?.coverage||{};
             if(!selected){this.snapshotMeta.textContent=tr('No validated saved GraphQL snapshot is available.');return;}
-            const counts=Number.isInteger(selectedCoverage.types)?`${selectedCoverage.types} types · ${selectedCoverage.nodes} nodes · ${selectedCoverage.edges} relations`:'graph analysis unavailable';
-            this.snapshotMeta.textContent=`${selected.kind} · Snapshot ${selected.display_name||selected.name} · ${selected.modified||'date unavailable'} · ${selected.schema_fingerprint} · ${counts}`;
+            const counts=snapshotCoverageLabel(selectedCoverage);
+            this.snapshotMeta.textContent=`${selected.kind} · Snapshot ${selected.display_name||selected.name} · ${selected.modified||tr('date unavailable')} · ${selected.schema_fingerprint} · ${counts}`;
         }
         selectSnapshot(name){
             const snapshot=(this.context?.snapshots||[]).find(item=>item.name===name);
@@ -739,7 +751,7 @@
             for(const route of routes){if(scale<.65)break;const width=Math.max(90,(route.edge.kind.length*8+16)/scale),height=20/scale,box={x:route.labelX-width/2,y:route.labelY-height/2,width,height};if(scene.nodes.some(n=>overlaps(box,n,10))||placed.some(n=>overlaps(box,n,10)))continue;
                 const background=svg('rect',{...box,'class':'ht-label-bg'+(scene.selection?.active&&!route.related?' is-dimmed':'')}),label=svg('text',{x:route.labelX,y:route.labelY+4/scale,'text-anchor':'middle','class':'ht-edge-label'+(route.related?' is-related':scene.selection?.active?' is-dimmed':'')});label.style.fontSize=`${12/scale}px`;label.textContent=route.edge.kind;canvas.append(background,label);placed.push(box);
             }
-            scene.notice.textContent=(scene.compact?'Overview without node text; use selection and Inspector for names and details. ':'')+(routes.length>placed.length?`Reduced edge labels: ${placed.length} of ${routes.length} visible relationships are labeled. All relationships remain available in node focus and Inspector.`:'All visible relationships are labeled.');
+            scene.notice.textContent=graphLabelsNotice(scene.compact, placed.length, routes.length);
         }
         applyCanvasViewbox(canvas,box,frameKey,redraw){
             // Move the existing SVG immediately; coalesce expensive culling to one frame.
@@ -1053,5 +1065,5 @@ this.queryStatus.textContent=this.query?`${this.serviceLabel()} ${this.query.que
             this.root?.remove?.();
         }
     }
-    window.hero_workspace_tools={Workspace,graphqlText:Object.freeze({parseVariablesText,formatVariablesText,readableResult,resultSummary,jsonTokens,variableTokens,readableTokens,GRAPHQL_HIGHLIGHT_RULES})};
+    window.hero_workspace_tools={Workspace,graphqlText:Object.freeze({parseVariablesText,formatVariablesText,readableResult,resultSummary,jsonTokens,variableTokens,readableTokens,graphLabelsNotice,snapshotCoverageLabel,GRAPHQL_HIGHLIGHT_RULES})};
 })();
