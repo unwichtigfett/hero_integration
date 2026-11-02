@@ -37,7 +37,12 @@ bench set-config -g redis_cache "$REDIS"; bench set-config -g redis_queue "${RED
 step "get apps"
 [ -d apps/erpnext ] || bench get-app erpnext --branch "$ERPNEXT_BRANCH"
 rm -rf apps/hero_integration
-bench get-app "$APP_PATH"
+# Git's local clone runs under the bench user, while CI may own the checkout as root.
+# Scope the ownership exception to this checkout and this command, not the user's Git config.
+git_config=$(mktemp "$WORKDIR/git-safe.XXXXXXXX")
+git config --file "$git_config" --add safe.directory "$APP_PATH/.git"
+GIT_CONFIG_GLOBAL="$git_config" bench get-app "$APP_PATH"
+rm -f "$git_config"
 
 step "new site + ERPNext"
 bench drop-site "$SITE" --db-root-password "$DB_ROOT_PASSWORD" --force --no-backup >/dev/null 2>&1 || true
