@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+import sys
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -12,6 +13,54 @@ from hero_integration.services.mapping_suggestions import suggest_from_source
 class TestFrappeMappingCatalog(unittest.TestCase):
     def setUp(self):
         self.metadata = _Metadata()
+
+    def test_both_picker_adapters_check_denied_doctypes_without_throwing(self):
+        from hero_integration import api
+        from hero_integration.services.frappe_mapping_catalog import FrappePickerMetadata
+
+        calls, messages = [], []
+        def permission(doctype, ptype, throw=False):
+            calls.append((doctype, ptype, throw))
+            if doctype == 'Allowed':
+                return True
+            if throw:
+                messages.append(doctype)
+                raise PermissionError(doctype)
+            return False
+        frappe = SimpleNamespace(get_meta=lambda _name: SimpleNamespace(istable=False),
+                                 has_permission=permission, PermissionError=PermissionError)
+        with patch.object(api, 'frappe', frappe), patch.dict(sys.modules, {'frappe': frappe}):
+            for adapter in (api._FrappePickerMetadata(), FrappePickerMetadata()):
+                self.assertTrue(adapter.can_write('Allowed'))
+                self.assertFalse(adapter.can_write('Denied'))
+        self.assertEqual(messages, [])
+        self.assertTrue(all(not throw for _, _, throw in calls))
+
+    def test_catalog_scans_doctypes_once_and_keeps_app_and_search_filters(self):
+        class Counting(_Metadata):
+            def __init__(self):
+                super().__init__()
+                self.scans = 0
+            def doctypes(self):
+                self.scans += 1
+                return super().doctypes()
+        metadata = Counting()
+        result = catalog(metadata, app_name='acme_app', search='case')
+        self.assertEqual(metadata.scans, 1)
+        self.assertEqual(result['apps'], ['acme_app', 'erpnext'])
+        self.assertEqual([entry['doctype'] for entry in result['doctypes']], ['Acme Case'])
+
+    def test_field_catalog_skips_unwritable_and_non_target_doctypes(self):
+        class Strict(_Metadata):
+            def fields(self, name):
+                if name in {'Denied Record', 'Acme Row', 'Acme Settings'}:
+                    raise AssertionError('disabled DocType must not be enumerated')
+                return super().fields(name)
+        result = fields(Strict())
+        self.assertTrue(result)
+        self.assertTrue(all(item.doctype not in {'Denied Record', 'Acme Row', 'Acme Settings'} for item in result))
+        with self.assertRaisesRegex(ValueError, 'No write permission'):
+            validate_draft_target('HeroCustomers', 'string|null', 'Denied Record', 'subject', Strict())
 
     def test_visible_catalog_reasons_have_german_translations(self):
         import csv
