@@ -36,6 +36,10 @@ class TestFrappeTranslationBridge(unittest.TestCase):
             self.assertEqual(recipient_diagnostic('de@example.invalid', nested),
                              'Erneute Prüfung angefordert: Wartet auf Freigabe durch einen Administrator: Feldkonflikt erfordert Prüfung: customer_name, custom_id.')
             self.assertEqual(recipient_diagnostic('de@example.invalid', 'Unknown external detail'), 'Unknown external detail')
+            missing = 'HERO response omits the source of: customer_type, phone.'
+            self.assertEqual(recipient_diagnostic('en@example.invalid', missing), missing)
+            self.assertEqual(recipient_diagnostic('de@example.invalid', missing),
+                             'Die HERO-Antwort enthält keine Quelle für: customer_type, phone.')
             address = ('The project address is missing or incomplete '
                        '(ProjectMatch.address.city is required for the ERPNext project title.); the title omits it.')
             review = 'The HERO customer is deleted in HERO; the Project has no customer. ' + address
