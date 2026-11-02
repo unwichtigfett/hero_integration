@@ -731,7 +731,10 @@
                         dialog.append($('<label></label>').text(text('Reviewed source and target')).append(choices));
                     } else dialog.append($('<p></p>').text(`${text('Shared draft')}: ${doc.name} · ${text('Status')}: ${text(doc.status || '—')} · ${text('Revision')}: ${doc.mapping_revision} · ${text('Last editor')}: ${doc.modified_by}`));
                     const initial = doc ? JSON.parse(doc.mapping_json) : null;
-                    const transform = $("<select class='form-control'><option value='Identity'>Identity</option><option value='Trim'>Trim</option></select>").attr("aria-label", text("Shared draft transformation")).val(initial?.transformation || 'Identity');
+                    const transform = $("<select class='form-control'></select>").attr("aria-label", text("Shared draft transformation"))
+                        .append($('<option></option>').val('Identity').text(text('Identity')),
+                            $('<option></option>').val('Trim').text(text('Trim')))
+                        .val(initial?.transformation || 'Identity');
                     const reason = $("<textarea class='form-control' maxlength='1000'></textarea>").attr("aria-label", text("Shared draft review reason")).val(doc?.suggestion_reason || '');
                     const confidence = $("<input class='form-control' type='number' min='0' max='1' step='any'>").attr("aria-label", text("Shared draft confidence")).val(doc?.confidence ?? 0);
                     const initialReason = String(reason.val()), initialConfidence = String(confidence.val()), initialTransform = transform.val();
