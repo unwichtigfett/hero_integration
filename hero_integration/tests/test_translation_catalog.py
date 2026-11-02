@@ -235,6 +235,19 @@ class TestGermanCatalog(unittest.TestCase):
                         missing.append(f"{path.name}:{value.lineno}: {value.value}")
         self.assertEqual(missing, [])
 
+    def test_native_link_diagnostics_hook_resolves_through_frappe(self):
+        try:
+            import frappe
+            from frappe.desk.form.meta import get_code_files_via_hooks
+        except ModuleNotFoundError:
+            self.skipTest("Frappe is not installed")
+        from hero_integration import hooks
+        with patch.object(frappe, "get_installed_apps", return_value=["hero_integration"]), \
+             patch.object(frappe, "get_hooks", return_value=hooks.doctype_js):
+            paths = get_code_files_via_hooks("doctype_js", "HERO Integration Link")
+        self.assertEqual([Path(path).resolve() for path in paths], [(APP / "public" / "js" / "hero_diagnostics.js").resolve()])
+        self.assertIn("hero_integration_diagnostics", Path(paths[0]).read_text(encoding="utf-8"))
+
     def test_send_preview_labels_and_effect_summaries_have_german_entries(self):
         with (APP / "translations" / "de.csv").open(encoding="utf-8", newline="") as stream:
             messages = dict(csv.reader(stream))

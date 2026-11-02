@@ -58,7 +58,7 @@ test("Frappe's resolving script error path is surfaced through missing module co
 
 test("the content-addressed editor is reused rather than loading an unhashed legacy copy", async () => {
     const requests = [];
-    const loaded = Object.fromEntries(["hero_workspace_tools", "hero_integration_overview", "hero_integration_settings_ui", "hero_integration_api_summary", "hero_integration_mapping_editor", "hero_integration_migration"].map((name) => [name, {}]));
+    const loaded = Object.fromEntries(["hero_workspace_tools", "hero_integration_overview", "hero_integration_settings_ui", "hero_integration_api_summary", "hero_integration_mapping_editor", "hero_integration_diagnostics", "hero_integration_migration"].map((name) => [name, {}]));
     await workspaceUi({loaded, requests}).ensureStyles();
     assert.deepEqual(requests, []);
 });
