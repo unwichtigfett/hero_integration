@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import frappe
+from html import escape
 
 
 def configured_recipients(settings=None) -> list[str]:
@@ -69,15 +70,15 @@ def notify_run_summary(run_name: str) -> bool:
     rows = frappe.get_all(
         "HERO Integration Record",
         filters={"run": run_name, "result": ["in", list(NOT_IMPORTED_RESULTS)]},
-        fields=["source_type", "result", "detail"], limit_page_length=0,
+        fields=["name", "source_type", "source_id", "result", "detail"], order_by="name asc", limit_page_length=0,
     )
     if not rows:
         return False
-    groups: dict[tuple[str, str, str], int] = {}
-    for row in rows:
-        key = (row.source_type or "", row.result or "", (row.detail or "")[:200])
-        groups[key] = groups.get(key, 0) + 1
-    lines = [f"{count} × {source} {result}: {detail}" for (source, result, detail), count
-             in sorted(groups.items(), key=lambda item: (-item[1], item[0]))]
+    lines = [
+        " | ".join(escape(str(value or "")) for value in (
+            row.name, row.source_type, row.source_id, row.result, row.detail,
+        ))
+        for row in rows
+    ]
     subject = f"HERO run {run_name}: {len(rows)} records were not imported"
-    return _notify(subject, "\n".join(lines), "HERO Integration Run", run_name)
+    return _notify(subject, "<br>".join(lines), "HERO Integration Run", run_name)

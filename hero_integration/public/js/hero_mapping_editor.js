@@ -1984,6 +1984,32 @@
             const header = $("<div class='hero-mapping-workspace-context'></div>").appendTo(body);
             renderDefinitionChooser(header, "Binding definition", true);
             body.append($("<h3></h3>").text(text("Bindings — read only")), $("<p class='text-muted'></p>").text(text("Existing binding identities, mappings and status. No write actions are available.")));
+            const linksHost = $("<section></section>").appendTo(body);
+            let linkRequest = 0;
+            async function loadLinks(start) {
+                const linkSerial = ++linkRequest;
+                linksHost.empty().append($("<h4></h4>").text(text("Existing integration links")),
+                    $("<p class='text-muted'></p>").text(text("Object links are separate from field bindings and are not filtered by the selected definition.")));
+                const status = $("<p></p>").text(text("Loading integration links…")).appendTo(linksHost);
+                try {
+                    const data = await rpc("frontend_integration_links", {start, page_size: 20});
+                    if (disposed || request !== epoch || linkSerial !== linkRequest) return;
+                    status.remove();
+                    const table = $("<table class='table table-sm hero-mapping-table'><thead><tr><th>Status</th><th>Source instance</th><th>Source type</th><th>Source ID</th><th>Target</th><th>Last synchronized</th></tr></thead><tbody></tbody></table>").appendTo(linksHost);
+                    if (!data.items.length) table.find("tbody").append($("<tr><td colspan='6'></td></tr>").find("td").text(text("No existing integration links.")).end());
+                    data.items.forEach((item) => {
+                        const row = $("<tr></tr>");
+                        for (const value of [item.sync_status, item.source_instance || "default", item.source_type, item.source_id, `${item.target_doctype} · ${item.target_name}`, item.last_synced_on]) row.append($("<td></td>").text(String(value ?? text("Not provided"))));
+                        table.find("tbody").append(row);
+                    });
+                    const p = data.pagination;
+                    linksHost.append(button("Previous links", () => loadLinks(Math.max(0, p.start - p.page_size))).prop("disabled", !p.start),
+                        $("<span></span>").text(`${text("Links")} ${p.total ? p.start + 1 : 0}–${Math.min(p.start + p.page_size, p.total)} / ${p.total}`),
+                        button("Next links", () => loadLinks(p.start + p.page_size)).prop("disabled", p.start + p.page_size >= p.total));
+                } catch (error) { if (!disposed && request === epoch && linkSerial === linkRequest) status.text(errorText(error)); }
+            }
+            loadLinks(0);
+            body.append($("<h4></h4>").text(text("Field bindings for selected definition")));
             const wrap = $("<div class='hero-mapping-table-wrap'></div>").appendTo(body);
             const table = $("<table class='table table-sm hero-mapping-table'><thead><tr><th>Status</th><th>Direction</th><th>Source HERO</th><th>App</th><th>Target</th><th>Mapping revision</th><th>Binding revision</th><th>Identity</th></tr></thead><tbody></tbody></table>").appendTo(wrap);
             const message = (value) => table.find("tbody").empty().append($("<tr><td colspan='8'></td></tr>").find("td").text(text(value)).end());

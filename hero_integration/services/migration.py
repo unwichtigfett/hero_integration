@@ -1935,28 +1935,29 @@ def _references_besides_hero(doctype: str, name: str, ignore=()) -> str | None:
 
 
 def decide_review(link, decision: str) -> None:
-    """Administrator decision for a held record: approve releases it, reject deletes the target.
+    """Administrator decision for a held record: approve releases it, reject retains it.
 
     There is deliberately no edit path (user decision 2026-10-31).
     """
+    if getattr(link, "sync_status", "") == "Conflict":
+        if decision == "approve":
+            prefix = "Recheck requested: "
+            if not (link.conflict_detail or "").startswith(prefix):
+                link.conflict_detail = prefix + (link.conflict_detail or "Conflict requires review.")
+        elif decision == "reject":
+            link.sync_status = REVIEW_REJECTED
+            link.conflict_detail = "Rejected by an administrator; the existing record is retained and HERO changes are not imported."
+        else:
+            raise MappingPlanError("Review decision must be approve or reject.")
+        _save_link(link)
+        return
     if getattr(link, "sync_status", "") != REVIEW_PENDING:
-        raise MappingPlanError("Only a record that awaits review can be approved or rejected.")
+        raise MappingPlanError("Only an open conflict or a record that awaits review can be approved or rejected.")
     if decision == "approve":
         link.sync_status, link.conflict_detail = "Synchronized", ""
     elif decision == "reject":
-        if link.target_name and frappe.db.exists(link.target_doctype, link.target_name):
-            other = _references_besides_hero(link.target_doctype, link.target_name)
-            if other:
-                raise MappingPlanError(
-                    f"{link.target_doctype} {link.target_name} is referenced by {other}; it was not deleted.")
-            # Only this binding still points to the held target; Frappe's own
-            # link check would always refuse because of it.
-            from hero_integration.services.guards import bound_target_deletion
-
-            with bound_target_deletion():
-                frappe.delete_doc(link.target_doctype, link.target_name, force=True)
         link.sync_status = REVIEW_REJECTED
-        link.conflict_detail = "Rejected by an administrator; HERO changes are not imported."
+        link.conflict_detail = "Rejected by an administrator; the existing record is retained and HERO changes are not imported."
     else:
         raise MappingPlanError("Review decision must be approve or reject.")
     _save_link(link)

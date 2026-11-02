@@ -749,27 +749,52 @@ class TestProjectCompanyMigration(FakeFrappeMigrationHarness, unittest.TestCase)
         with self.assertRaises(self.migration.MappingPlanError):
             self.migration.decide_review(link, "approve")  # only pending links are decided
 
-    def test_admin_rejection_deletes_the_project_and_is_never_recreated(self):
+    def test_conflict_approval_marks_recheck_without_accepting_values(self):
+        record = _project_title_inputs(id=798, customer_id=101)
+        self._project(record)
+        link = self.migration._link("project", "798", "default")
+        link.sync_status = "Conflict"
+        link.conflict_detail = "Field conflict requires review: project_name."
+        original_project = dict(self.frappe.projects[0])
+        self.migration.decide_review(link, "approve")
+        self.assertEqual(link.sync_status, "Conflict")
+        self.assertTrue(link.conflict_detail.startswith("Recheck requested: "))
+        self.assertEqual(dict(self.frappe.projects[0]), original_project)
+        detail = link.conflict_detail
+        self.migration.decide_review(link, "approve")
+        self.assertEqual(link.conflict_detail, detail)
+
+    def test_declining_a_conflict_retains_the_target(self):
+        record = _project_title_inputs(id=799, customer_id=101)
+        self._project(record)
+        link = self.migration._link("project", "799", "default")
+        link.sync_status = "Conflict"
+        link.conflict_detail = "Field conflict requires review: project_name."
+        self.migration.decide_review(link, "reject")
+        self.assertEqual(link.sync_status, "Rejected")
+        self.assertEqual(len(self.frappe.projects), 1)
+        self.assertEqual(self._project(record).code, "SKIPPED_REJECTED")
+
+    def test_admin_rejection_retains_the_project_and_stops_updates(self):
         record = _project_title_inputs(id=795, customer_id=999)
         self._project(record)
         link = self.migration._link("project", "795", "default")
         self.migration.decide_review(link, "reject")
         self.assertEqual(link.sync_status, "Rejected")
-        self.assertFalse(self.frappe.projects)
+        self.assertEqual(len(self.frappe.projects), 1)
         for _ in range(2):
             self.assertEqual(self._project(record).code, "SKIPPED_REJECTED")
-        self.assertFalse(self.frappe.projects)
+        self.assertEqual(len(self.frappe.projects), 1)
         with self.assertRaises(self.migration.MappingPlanError):
             self.migration._project_name_for_source(795, "default")
 
-    def test_rejection_keeps_a_target_that_other_records_reference(self):
+    def test_rejection_retains_a_referenced_target(self):
         record = _project_title_inputs(id=796, customer_id=999)
         self._project(record)
         link = self.migration._link("project", "796", "default")
         self.migration._references_besides_hero = lambda doctype, name: "Timesheet TS-1"
-        with self.assertRaises(self.migration.MappingPlanError):
-            self.migration.decide_review(link, "reject")
-        self.assertEqual(link.sync_status, "Pending Review")
+        self.migration.decide_review(link, "reject")
+        self.assertEqual(link.sync_status, "Rejected")
         self.assertEqual(len(self.frappe.projects), 1)
 
     def test_new_project_gets_the_department_of_its_trade_existing_one_is_untouched(self):

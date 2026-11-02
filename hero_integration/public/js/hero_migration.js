@@ -86,7 +86,7 @@
     function mount(page) {
         page.main.empty().addClass("hero-integration-ui");
         const host = page.main.get(0);
-        const state = {data: null, view: "migration", tab: "history", runsStart: 0, conflictsStart: 0, selectedRun: "", selectedArea: "contacts", selectedConflict: null, busy: false, timer: null, destroyed: false, runs: null, conflicts: null, detail: null};
+        const state = {data: null, view: "migration", tab: "history", runsStart: 0, conflictsStart: 0, selectedRun: "", selectedArea: "contacts", selectedConflict: null, selectedConflicts: new Set(), busy: false, timer: null, destroyed: false, runs: null, conflicts: null, detail: null};
 
         const notice = el("div", {class: "hero-sync-notice", role: "status", "aria-live": "polite"});
         const head = el("header", {class: "hero-sync-panel hero-sync-head", "data-views": "migration"},
@@ -361,30 +361,41 @@
                 area.blocker ? el("p", {class: "hero-sync-error", text: area.blocker}) : null);
         }
 
+        async function decideConflicts(rows, decision) {
+            if (!rows.length || state.busy) return;
+            state.busy = true; renderWork();
+            let completed = 0;
+            for (const row of rows) {
+                try { await call("decide_hero_review", {link: row.name, decision}, "POST"); completed++; state.selectedConflicts.delete(row.name); }
+                catch (error) { say(`${completed} processed. ${row.name}: ${error.message}`, "error"); break; }
+            }
+            state.busy = false;
+            if (completed === rows.length) say(`${completed} decisions saved. Conflicts marked for recheck are checked on the next synchronization.`, "ok");
+            await loadConflicts();
+        }
+
         function renderConflicts(main, side) {
             const data = state.conflicts;
-            if (!data) add(main, el("p", {class: "hero-sync-hint", text: "Loading conflicts …"}));
-            else if (!data.rows.length) add(main, el("p", {class: "hero-sync-hint", text: "No open conflicts."}));
-            else {
-                add(main, el("div", {class: "hero-sync-table-wrap"}, el("table", {class: "hero-sync-table"},
-                    el("thead", {}, el("tr", {}, ["Area", "HERO record", "Frappe record", "Reason", "Changed", ""].map((label) => el("th", {scope: "col", text: label})))),
-                    el("tbody", {}, data.rows.map((row) => el("tr", {class: state.selectedConflict?.name === row.name ? "is-selected" : ""},
-                        el("td", {text: row.area}), el("td", {class: "hero-sync-mono", text: row.source_id}),
-                        el("td", {text: row.target_name ? `${row.target_doctype} ${row.target_name}` : "—"}),
-                        el("td", {class: "hero-sync-clip", text: row.conflict_detail || "Changed on both sides."}),
-                        el("td", {text: formatDateTime(row.modified)}),
-                        el("td", {}, el("button", {type: "button", class: "hero-sync-small", text: "View", onclick: () => { state.selectedConflict = row; renderWork(); }}))))))),
-                    pager(data.start, data.total, data.rows.length, (start) => { state.conflictsStart = Math.max(0, start); loadConflicts(); }));
-            }
-            const row = state.selectedConflict;
-            if (!row) { add(side, el("p", {class: "hero-sync-empty", text: "Select a conflict to view details."})); return; }
-            add(side, el("h4", {text: `${row.area} conflict`}),
-                el("dl", {class: "hero-sync-facts"},
-                    el("dt", {text: "HERO record"}), el("dd", {text: row.source_id}),
-                    el("dt", {text: "Frappe record"}), el("dd", {text: row.target_name ? `${row.target_doctype} ${row.target_name}` : "—"}),
-                    el("dt", {text: "Changed"}), el("dd", {text: formatDateTime(row.modified)})),
-                el("p", {text: row.conflict_detail || "The record changed in HERO and in Frappe since the last sync. Neither side was overwritten."}),
-                row.target_name ? el("button", {type: "button", class: "hero-sync-small", text: "Open Frappe record", onclick: () => frappe.set_route("Form", row.target_doctype, row.target_name)}) : null);
+            add(main, el("h3", {text: "Importing Conflicts"}));
+            if (!data) { add(main, el("p", {class: "hero-sync-hint", text: "Loading conflicts …"})); return; }
+            if (!data.rows.length) { add(main, el("p", {class: "hero-sync-hint", text: "No open conflicts."})); return; }
+            const chosen = () => data.rows.filter((row) => state.selectedConflicts.has(row.name));
+            add(main, el("div", {class: "hero-sync-actions"},
+                el("button", {type: "button", text: "Approve selected", disabled: state.busy || undefined, onclick: () => decideConflicts(chosen(), "approve")}),
+                el("button", {type: "button", text: "Decline selected", disabled: state.busy || undefined, onclick: () => decideConflicts(chosen(), "reject")})),
+                el("div", {class: "hero-sync-table-wrap"}, el("table", {class: "hero-sync-table"},
+                    el("thead", {}, el("tr", {}, ["Select", "ID", "Conflict", "Entity Type", "Sync State", "Approve / Decline"].map((label) => el("th", {scope: "col", text: label})))),
+                    el("tbody", {}, data.rows.map((row) => el("tr", {},
+                        el("td", {}, el("input", {type: "checkbox", "aria-label": `Select ${row.name}`, checked: state.selectedConflicts.has(row.name) || undefined,
+                            onchange: (event) => event.target.checked ? state.selectedConflicts.add(row.name) : state.selectedConflicts.delete(row.name)})),
+                        el("td", {class: "hero-sync-mono", text: row.name}),
+                        el("td", {text: row.conflict_detail || "Conflict requires review."}),
+                        el("td", {text: row.area}),
+                        el("td", {text: row.sync_status === "Pending Review" ? "Confirmation pending" : (row.conflict_detail || "").startsWith("Recheck requested: ") ? "Recheck requested" : "Conflict"}),
+                        el("td", {}, el("button", {type: "button", class: "hero-sync-small", text: "Approve", disabled: state.busy || undefined, onclick: () => decideConflicts([row], "approve")}),
+                            el("button", {type: "button", class: "hero-sync-small", text: "Decline", disabled: state.busy || undefined, onclick: () => decideConflicts([row], "reject")}))))))),
+                pager(data.start, data.total, data.rows.length, (start) => { state.conflictsStart = Math.max(0, start); state.selectedConflicts.clear(); loadConflicts(); }));
+            add(side, el("p", {class: "hero-sync-hint", text: "Approving a field conflict requests a recheck on the next synchronization. Declining keeps the existing record and stops further updates."}));
         }
 
         // --- Loading -------------------------------------------------------------------------
