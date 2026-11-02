@@ -79,8 +79,14 @@
     function formatDateTime(value) {
         const date = toDate(value);
         if (!date || Number.isNaN(date.getTime())) return "—";
-        const pad = (number) => String(number).padStart(2, "0");
-        return `${pad(date.getDate())}.${pad(date.getMonth() + 1)}.${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+        const language = (frappe.boot?.lang || "en").replaceAll("_", "-");
+        const options = {year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit"};
+        try {
+            return new Intl.DateTimeFormat(language, options).format(date);
+        } catch (error) {
+            if (!(error instanceof RangeError)) throw error;
+            return new Intl.DateTimeFormat("en", options).format(date);
+        }
     }
     function formatDuration(start, end) {
         const from = toDate(start), to = end ? toDate(end) : new Date();
@@ -481,5 +487,5 @@
         return {destroy() { state.destroyed = true; clearTimeout(state.timer); }};
     }
 
-    window.hero_integration_migration = Object.freeze({mount, diagnostic});
+    window.hero_integration_migration = Object.freeze({mount, diagnostic, formatDateTime});
 })();

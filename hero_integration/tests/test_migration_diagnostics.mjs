@@ -10,8 +10,9 @@ const translations = {
   'Recheck requested: {0}': 'Erneute Prüfung angefordert: {0}',
   'A known static error.': 'Ein bekannter Fehler.',
 };
+const frappe = {boot: {lang: 'de'}};
 const window = {hero_integration_i18n: {text: value => translations[value] || value}};
-vm.runInNewContext(readFileSync(new URL('../public/js/hero_migration.js', import.meta.url), 'utf8'), {window});
+vm.runInNewContext(readFileSync(new URL('../public/js/hero_migration.js', import.meta.url), 'utf8'), {window, frappe});
 const {diagnostic} = window.hero_integration_migration;
 
 test('stored diagnostics translate at display time while preserving identifiers', () => {
@@ -25,4 +26,18 @@ test('stored diagnostics translate at display time while preserving identifiers'
 test('the same stored English message follows the active language', () => {
   window.hero_integration_i18n.text = value => value;
   assert.equal(diagnostic('Field conflict requires review: name.'), 'Field conflict requires review: name.');
+});
+
+
+test('dates follow the active Frappe language and handle invalid input', () => {
+  const {formatDateTime} = window.hero_integration_migration;
+  const date = new Date('2026-05-04T12:34:00');
+  const options = {year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'};
+  frappe.boot.lang = 'de';
+  assert.equal(formatDateTime('2026-05-04 12:34:00'), new Intl.DateTimeFormat('de', options).format(date));
+  frappe.boot.lang = 'en';
+  assert.equal(formatDateTime('2026-05-04 12:34:00'), new Intl.DateTimeFormat('en', options).format(date));
+  frappe.boot.lang = 'bad_locale_!';
+  assert.equal(formatDateTime('2026-05-04 12:34:00'), new Intl.DateTimeFormat('en', options).format(date));
+  assert.equal(formatDateTime('not a date'), '—');
 });
