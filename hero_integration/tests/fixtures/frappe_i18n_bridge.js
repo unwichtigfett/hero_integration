@@ -49,6 +49,12 @@ for (const language of input.languages) {
     assert.ok(notes.includes(input.numberError));
     const expectedNotes = language === 'en' ? notes : "Ziel durch die reguläre Frappe-Validierung erstellt. Die HERO-E-Mail-Adresse ist in ERPNext ungültig; sie wurde nicht importiert. Die HERO-Nummer 'bad/123' kann kein ERPNext-Dokumentname sein (nur Buchstaben, Ziffern und einzelne Bindestriche innerhalb des Namens, höchstens 140 Zeichen). Das Dokument erhält eine kollisionssichere interne ID; es wurde keine Ersatzgeschäftsnummer erzeugt. Der ursprüngliche HERO-Wert bleibt in seinem Feld.";
     assert.equal(migration.diagnostic(notes), expectedNotes);
+    const preview = "A new target record would be created named 'PV-123-H'.";
+    assert.equal(migration.diagnostic(preview), language === 'en' ? preview : "Ein neuer Zieldatensatz mit dem Namen 'PV-123-H' würde erstellt.");
+    const rejection = 'ERPNext rejected the record (ValidationError); see Error Log.';
+    assert.equal(migration.diagnostic(rejection), language === 'en' ? rejection : 'ERPNext hat den Datensatz abgelehnt (ValidationError); siehe Fehlerprotokoll.');
+    const unavailable = 'Customer is not installed on this site.';
+    assert.equal(migration.diagnostic(unavailable), language === 'en' ? unavailable : 'Kunde ist auf dieser Site nicht installiert.');
     const base = 'Target created through native Frappe validation.';
     const optionalNotes = [
         'The HERO email address is not valid in ERPNext; it was not imported.',
