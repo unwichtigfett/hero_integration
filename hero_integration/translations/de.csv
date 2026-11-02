@@ -2374,3 +2374,7 @@ Event time or recurrence requires review; unrelated field changes were considere
 Non-conflicting HERO field changes were applied through native Frappe validation.,Konfliktfreie HERO-Feldänderungen wurden mit der regulären Frappe-Validierung übernommen.
 HERO and Frappe changed to the same values; the baseline was advanced without a write.,HERO und Frappe wurden auf dieselben Werte geändert; die Basis wurde ohne Schreibvorgang aktualisiert.
 Local field change observed; no outbound HERO mutation was prepared.,Lokale Feldänderung erkannt; es wurde keine ausgehende HERO-Mutation vorbereitet.
+"{0} {1} already exists without this HERO record's link. The HERO number is not reassigned, suffixed or merged; check whether {1} is the same {2} and link or rename it.","{0} {1} existiert bereits ohne Link zu diesem HERO-Datensatz. Die HERO-Nummer wird weder neu vergeben noch mit einem Zusatz versehen oder zusammengeführt; prüfen Sie, ob {1} dasselbe Objekt ({2}) ist, und verknüpfen oder benennen Sie es um."
+HERO {0} changed from {1} to {2}. {3} {4} keeps its name and number until reviewed; set {5} to {2} to accept the new number.,"HERO-{0} wurde von {1} auf {2} geändert. {3} {4} behält seinen Namen und seine Nummer bis zur Prüfung; setzen Sie {5} auf {2}, um die neue Nummer zu übernehmen."
+customer number,Kundennummer
+project display_id,Projekt-display_id
