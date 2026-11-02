@@ -12,7 +12,7 @@ class CandidatePreviewValidationTest(unittest.TestCase):
             pass
         def throw(message, *args):
             raise ValidationError(message)
-        frappe = SimpleNamespace(only_for=lambda role: None, throw=throw)
+        frappe = SimpleNamespace(only_for=lambda role: None, throw=throw, _=lambda message: message)
         with patch.object(api, 'frappe', frappe), patch.object(api, '_validated_snapshot', return_value=(None, {})), \
              patch.object(api, '_FrappePickerMetadata', return_value=object()), \
              patch.object(frappe_mapping_catalog, 'validate_draft_target', side_effect=ValueError('Target unavailable')):

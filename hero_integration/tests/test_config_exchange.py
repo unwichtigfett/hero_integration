@@ -28,6 +28,18 @@ def payload(*services, settings=None, version=None):
 
 
 class TestConfigParse(unittest.TestCase):
+    def test_preview_translates_service_error_at_the_api_boundary(self):
+        source = "The configuration file is not valid JSON."
+        translated = "Die Konfigurationsdatei enthält kein gültiges JSON."
+        def fail(message):
+            raise ValueError(message)
+        fake = SimpleNamespace(only_for=lambda _role: None, _=lambda message: translated if message == source else message,
+                               throw=fail)
+        with patch.object(api, "frappe", fake), patch.object(api, "_configured_source_instance", return_value="default"), \
+             patch.object(cx, "preview_config", side_effect=cx.ConfigExchangeError(source)):
+            with self.assertRaisesRegex(ValueError, "kein gültiges JSON"):
+                api.config_import_preview("{")
+
     def test_only_the_complete_format_is_accepted(self):
         cx._parse(payload(entry("HeroCustomers")))
         for bad in ("{", json.dumps({"format_version": "other", "mapping_package": {}, "read_services": []}),
