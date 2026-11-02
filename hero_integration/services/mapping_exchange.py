@@ -313,7 +313,8 @@ def _validate_schema(schema: object) -> None:
 
 class _FrappeMetadata:
     def ensure_write(self, doctype: str):
-        frappe.has_permission(doctype, "write", throw=True)
+        from hero_integration.services.doctype_permissions import ensure_doctype_write
+        ensure_doctype_write(doctype, frappe)
 
     def field(self, doctype: str, fieldname: str):
         return frappe.get_meta(doctype).get_field(fieldname)
