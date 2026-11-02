@@ -24,6 +24,7 @@ class TestReleaseCiGate(unittest.TestCase):
             script = function + '''
 bench() {
   printf '%s\\n' "$*" >> "$TRACE"
+  printf 'SYNTHETIC_SITE_DIAGNOSTIC\\n'
   for (( i=0; i<SITE_COUNT; i++ )); do printf ' ✔ synthetic_test\\n'; done
   return "$SITE_STATUS"
 }
@@ -57,6 +58,12 @@ printf 'GATE_PASSED\\n'
                 result, _ = self.run_gate(**changes)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertNotIn('GATE_PASSED', result.stdout)
+
+    def test_site_failure_keeps_diagnostics_before_the_last_hundred_lines(self):
+        result, _ = self.run_gate(site_status=9, site_count=110)
+        self.assertEqual(result.returncode, 9)
+        self.assertIn('SYNTHETIC_SITE_DIAGNOSTIC', result.stdout)
+        self.assertNotIn('GATE_PASSED', result.stdout)
 
     def test_both_full_suites_must_succeed(self):
         result, trace = self.run_gate()

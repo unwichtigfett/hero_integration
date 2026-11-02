@@ -17,7 +17,10 @@ run_hero_test_gates() {
   if HERO_RUN_RESERVATION_TEST_SITE=hero-ci.localhost bench --site hero-ci.localhost run-tests --app hero_integration > "$log_dir/hero-github-site.log" 2>&1; then
     :
   else
-    rc=$?; tail -100 "$log_dir/hero-github-site.log"; return "$rc"
+    rc=$?
+    printf 'HERO site test command failed (exit %s):\n' "$rc"
+    cat "$log_dir/hero-github-site.log"
+    return "$rc"
   fi
   count=$(sed 's/\x1b\[[0-9;]*m//g' "$log_dir/hero-github-site.log" | grep -cE '^\s*✔ ' || true)
   (( count >= minimum )) || {
