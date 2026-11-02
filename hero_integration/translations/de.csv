@@ -2263,3 +2263,12 @@ Create personal draft,Persönlichen Entwurf erstellen
 Activate personal draft,Persönlichen Entwurf aktivieren
 Discard saved personal draft,Gespeicherten persönlichen Entwurf verwerfen
 Search existing active field rules,Vorhandene aktive Feldregeln suchen
+Polling configuration is not supported ({0}); no HERO request was made.,Die Polling-Konfiguration wird nicht unterstützt ({0}); es wurde keine HERO-Anfrage gesendet.
+Automatic sync is blocked: {0},Automatischer Sync ist blockiert: {0}
+Materialized monitoring is blocked: {0},Materialisiertes Monitoring ist blockiert: {0}
+{0}: the automatic run could not be started; see the error log.,{0}: Der automatische Lauf konnte nicht gestartet werden; siehe Fehlerprotokoll.
+{0}: run {1} queued.,{0}: Lauf {1} wurde in die Warteschlange gestellt.
+A HERO run is active; polling waits for the next interval.,Ein HERO-Lauf ist aktiv; Polling wartet auf das nächste Intervall.
+A previous polling run is still active; this run was skipped.,Ein vorheriger Polling-Lauf ist noch aktiv; dieser Lauf wurde übersprungen.
+Automatic sync failed; see the redacted server error log.,Automatischer Sync ist fehlgeschlagen; siehe das bereinigte Serverfehlerprotokoll.
+Automatic sync is blocked: no materialized runtime is available; no HERO request was made.,Automatischer Sync ist blockiert: Es ist keine materialisierte Laufzeit verfügbar; es wurde keine HERO-Anfrage gesendet.
