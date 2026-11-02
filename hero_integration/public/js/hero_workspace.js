@@ -39,6 +39,7 @@
         "/assets/hero_integration/js/hero_settings.js",
         "/assets/hero_integration/js/hero_api_summary.js",
         "/assets/hero_integration/js/hero_mapping_editor.js",
+        "/assets/hero_integration/js/hero_diagnostics.js",
         "/assets/hero_integration/js/hero_migration.js",
     ];
     const REQUIRED_ASSET_GLOBALS = Object.freeze([
@@ -47,6 +48,7 @@
         ["hero_settings.js", "hero_integration_settings_ui"],
         ["hero_api_summary.js", "hero_integration_api_summary"],
         ["hero_mapping_editor.js", "hero_integration_mapping_editor"],
+        ["hero_diagnostics.js", "hero_integration_diagnostics"],
         ["hero_migration.js", "hero_integration_migration"],
     ]);
     const unsupported = new Set([

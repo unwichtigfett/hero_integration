@@ -6,7 +6,7 @@ frappe.ui.form.on("HERO Integration Link", {
 		const detail = frm.doc.conflict_detail;
 		const display = frm.fields_dict?.conflict_detail?.disp_area;
 		if (display && typeof detail === "string" && detail) {
-			const translated = __(detail);
+			const translated = window.hero_integration_diagnostics?.translate(detail) ?? __(detail);
 			if (translated !== detail) display.textContent = translated;
 		}
 		if (frm.doc.sync_status !== "Pending Review" || !frappe.user.has_role("System Manager")) {

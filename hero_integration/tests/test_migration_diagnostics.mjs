@@ -29,6 +29,7 @@ const translations = {
 };
 const frappe = {boot: {lang: 'de'}};
 const window = {hero_integration_i18n: {text: value => translations[value] || value}};
+vm.runInNewContext(readFileSync(new URL('../public/js/hero_diagnostics.js', import.meta.url), 'utf8'), {window, frappe});
 vm.runInNewContext(readFileSync(new URL('../public/js/hero_migration.js', import.meta.url), 'utf8'), {window, frappe});
 const {diagnostic} = window.hero_integration_migration;
 
