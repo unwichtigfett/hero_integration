@@ -128,6 +128,20 @@ class TestGermanCatalog(unittest.TestCase):
                     missing.append(f"{path.relative_to(APP)}:{node.lineno}: {node.exc.args[0].value}")
         self.assertEqual(missing, [])
 
+    def test_static_migration_results_have_german_entries(self):
+        with (APP / "translations" / "de.csv").open(encoding="utf-8", newline="") as stream:
+            messages = dict(csv.reader(stream))
+        path = APP / "services" / "migration.py"
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        missing = []
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                and node.func.id == "Result" and len(node.args) > 1
+                and isinstance(node.args[1], ast.Constant) and isinstance(node.args[1].value, str)
+                and node.args[1].value not in messages):
+                missing.append(f"{node.lineno}: {node.args[1].value}")
+        self.assertEqual(missing, [])
+
     def test_frappe_catalog_loader_and_language_precedence(self):
         try:
             import frappe
