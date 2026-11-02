@@ -5,6 +5,8 @@ description = "Native Frappe v16 integration for HERO"
 readme = "README.md"
 requires-python = ">=3.14,<3.15"
 license = {file = "LICENSE"}
+authors = [{name = "unwichtigfett", email = "95431041+unwichtigfett@users.noreply.github.com"}]
+maintainers = [{name = "unwichtigfett", email = "95431041+unwichtigfett@users.noreply.github.com"}]
 dependencies = ["graphql-core>=3.2,<3.3"]
 
 [project.optional-dependencies]

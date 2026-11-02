@@ -1,8 +1,8 @@
 app_name = "hero_integration"
 app_title = "HERO Integration"
-app_publisher = "HERO Integration Maintainers"
+app_publisher = "unwichtigfett"
 app_description = "Native Frappe v16 integration for HERO"
-app_email = "maintainers@example.invalid"
+app_email = "95431041+unwichtigfett@users.noreply.github.com"
 app_license = "MIT"
 # Do not set ``required_apps`` here. Frappe resolves that hook before
 # ``before_install`` and would install ERPNext as a side effect. HERO
