@@ -751,7 +751,8 @@ def _require_keys(value, expected, kind):
 
 class _FrappeMetadata:
     def ensure_write(self, doctype):
-        frappe.has_permission(doctype, "write", throw=True)
+        from hero_integration.services.doctype_permissions import ensure_doctype_write
+        ensure_doctype_write(doctype, frappe)
 
     def field(self, doctype, fieldname):
         return frappe.get_meta(doctype).get_field(fieldname)
