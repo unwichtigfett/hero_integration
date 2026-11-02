@@ -40,11 +40,10 @@ _OPERATION_NODE = re.compile(r"^operation:(query|mutation):([_A-Za-z][_0-9A-Za-z
 
 
 def operation_service_draft(snapshot: object, node_id: str) -> dict[str, object]:
-    """Build an unsaved GraphQL service draft for one saved-schema operation node.
+    """Build an unsaved service Draft for one saved-schema operation node.
 
-    Only required arguments become variables; their values are never part of
-    the document.  Composite results select ``__typename`` only, which every
-    object, interface and union provides, so no schema field is invented.
+    Only required arguments become variables; their values stay outside the
+    query document. Composite results select the standard __typename field.
     """
     match = _OPERATION_NODE.match(node_id or "")
     if not match:

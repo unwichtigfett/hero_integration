@@ -136,7 +136,7 @@ class TestMissingNullEmpty(unittest.TestCase):
 
 
 class TestNewNumericFieldDefault(unittest.TestCase):
-    """A new Currency/Float field starts at 0 in ERPNext; that is no local change (2026-11-02)."""
+    """A new Currency/Float field starts at 0 in ERPNext; that is no local change."""
 
     def test_zero_default_of_a_new_field_takes_the_hero_value(self):
         from hero_integration.services.migration import _Comparison
@@ -154,7 +154,7 @@ class TestNewNumericFieldDefault(unittest.TestCase):
 
 
 class TestEmptyFloatStoredAsZero(unittest.TestCase):
-    """Frappe stores an empty Currency/Float as 0.0; that equals an empty HERO value (2026-11-02)."""
+    """Frappe stores an empty Currency/Float as 0.0; that equals an empty HERO value."""
 
     def test_stored_zero_for_an_empty_hero_value_is_no_local_change(self):
         from types import SimpleNamespace
@@ -177,7 +177,7 @@ class TestEmptyFloatStoredAsZero(unittest.TestCase):
 
 
 class TestFloatZeroBothSides(unittest.TestCase):
-    """HERO volume 0 with an old integer baseline converged instead of conflicting (2026-11-02)."""
+    """HERO volume 0 with an old integer baseline converged instead of conflicting."""
 
     def test_old_integer_zero_baseline_converges(self):
         from types import SimpleNamespace

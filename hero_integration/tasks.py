@@ -50,9 +50,7 @@ def run_scheduled_sync() -> None:
         record_scheduler_outcome(mode, "Skipped", "Polling configuration is not supported ("
                                  + ", ".join(map(str, plan["unsupported_sources"])) + "); no HERO request was made.")
         return
-    # Older existing sites do not necessarily carry the later status field.
-    # Missing history means no successful poll is known yet, not an exception
-    # that could accidentally bypass the scheduler gate.
+    # Sites without this status field have no known successful poll.
     last_success = getattr(settings, "last_successful_sync", None)
     now = frappe.utils.now_datetime()
     if not scheduler_due(settings, now, last_success, system_timezone=_system_timezone()):
@@ -125,13 +123,8 @@ def _run(mode: str, record_scheduler_outcome) -> None:
 
 
 def _auto_sync_tick(settings, record_scheduler_outcome) -> str | None:
-    """Automatic sync = the Synchronisation page's Start/Update, one area at a time.
-
-    Every enabled area (contacts, projects, events, tasks, in this order) gets an
-    Execute run once per polling interval inside the execution window.  Only
-    one run is ever queued or running; the next tick starts the next due area.
-    Runs only read HERO; nothing is sent to HERO.
-    """
+    """Run enabled areas in order, once per polling interval within the window.
+    Queue one Execute migration at a time; each reads HERO without outbound writes."""
     from hero_integration import api
     from hero_integration.services.polling import runtime_plan, scheduler_due
     from hero_integration.services.sync_page import ACTIVE_STATES, AREAS

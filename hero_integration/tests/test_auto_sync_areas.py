@@ -1,4 +1,4 @@
-"""Automatic sync runs the Synchronisation page areas one by one (2026-11-02)."""
+"""Automatic sync runs the Synchronisation page areas one by one."""
 
 from __future__ import annotations
 

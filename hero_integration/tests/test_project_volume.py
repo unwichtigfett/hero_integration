@@ -1,4 +1,4 @@
-"""HERO volume is the project volume in euros (owner confirmation 2026-11-01)."""
+"""HERO volume is the project volume in euros."""
 
 from __future__ import annotations
 

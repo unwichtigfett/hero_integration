@@ -52,10 +52,8 @@ class MaterializedReadPlan:
         _text(self.source_instance,"source instance")
         request=self.request
         if getattr(request,"operation_kind",None) is not GraphQLOperationKind.QUERY: raise SyncError("B8 accepts only a B2 query request.")
-        # B7 seals the persisted introspection snapshot fingerprint, while B2
-        # correctly carries the canonical graphql_protocol IR fingerprint.
-        # They are validated at their own boundaries by the runtime
-        # reconstructor and must not be conflated here.
+        # B7 snapshot and B2 canonical IR fingerprints have separate validation
+        # boundaries; the runtime reconstructor must not equate them.
         if not isinstance(getattr(request,"schema_fingerprint",None),str) or not getattr(request,"schema_fingerprint",None): raise SyncError("B2 request has no materializer fingerprint.")
         if getattr(request,"document",None)!=self.sealed.query_document: raise SyncError("B2 document must exactly preserve the approved saved query.")
         if not getattr(request,"result_bindings",None): raise SyncError("B2 request has no sealed result bindings.")

@@ -1,4 +1,4 @@
-"""Send to HERO: Notes and Phase of an imported Project (owner decision 2026-11-01)."""
+"""Send to HERO: Notes and Phase of an imported Project."""
 
 from __future__ import annotations
 

@@ -1,11 +1,8 @@
-"""HERO business numbers as ERPNext document names.
+"""Name ERPNext records with HERO business numbers.
 
-People know a customer by HERO ``Customer.nr`` and a project by its trade plus
-``ProjectMatch.display_id`` (``PV-3333``).  New ERPNext records take these as
-their document name.  The technical HERO ``id`` stays the identity key of the
-HERO Integration Link; this module only names documents.
-
-No Frappe dependency: the importer decides whether a name is free.
+Customer names use ``Customer.nr``; Project names use trade and
+``ProjectMatch.display_id``. Integration Links retain technical HERO IDs.
+This module has no Frappe dependency; the importer checks name availability.
 """
 from __future__ import annotations
 
@@ -46,8 +43,7 @@ def customer_document_name(record: Mapping[str, object]) -> str | None:
     return business_number(record.get("nr"))
 
 
-# HERO projects end in "-H" so that projects created in ERPNext can never take
-# a HERO ID (owner decision 2026-11-01).
+# Reserve the "-H" suffix for HERO projects to avoid ERPNext naming collisions.
 HERO_PROJECT_SUFFIX = "-H"
 
 

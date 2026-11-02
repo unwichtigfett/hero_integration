@@ -217,9 +217,8 @@ class TestB8UniversalRuntimeFrappeIntegration(IntegrationTestCase):
         }).insert()
         self.settings.allow_graphql_mutation_execution = 1
         self.settings.save()
-        # This fixture deliberately binds a Customer to a ProjectMatch read.
-        # An ID-only mutation response cannot prove a Customer field under that
-        # contract. Reject it before audit reservation or any external I/O.
+        # A ProjectMatch read cannot verify this Customer field.
+        # Reject before audit reservation or external I/O.
         from hero_integration.services.frappe_writeback import WritebackContractError
         before = FrappeBindingStorage().field(frappe.local.site, self.binding.identity_key)
         with patch("hero_integration.client.graphql_mutation.HeroMutationClient") as transport, patch.object(

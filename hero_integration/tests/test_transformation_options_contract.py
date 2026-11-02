@@ -1,8 +1,4 @@
-"""Every code transformation must be a valid HERO Frappe Mapping Select option.
-
-Frappe validates the Select only on a real site; a missing option failed the
-first salutation rule insert on the dev site (2026-11-02).
-"""
+"""Check code transformations against the HERO Frappe Mapping Select options offline."""
 
 from __future__ import annotations
 

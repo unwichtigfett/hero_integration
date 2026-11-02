@@ -1,4 +1,4 @@
-"""Helpdesk and CRM keep references to ERPNext records, never copies (option A, 2026-11-01)."""
+"""Helpdesk and CRM keep references to ERPNext records, never copies."""
 
 from __future__ import annotations
 

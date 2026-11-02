@@ -1,8 +1,4 @@
-"""Two-connection reservation checks on an explicitly authorized disposable site.
-
-No HERO transport is constructed. Do not run on an operational site: the test
-requires an idle reservation boundary and creates only test-owned run rows.
-"""
+"""Two-connection reservation tests require an idle disposable site; no HERO transport is constructed."""
 import json
 import os
 from queue import Queue

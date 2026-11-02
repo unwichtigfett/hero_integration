@@ -361,9 +361,7 @@ def approve_read_service(
         or mapping.status != "Active"
     ):
         frappe.throw(frappe._("Only a validated service and active mapping on the same snapshot can be approved."))
-    # A changed read binding invalidates approval in the service controller.
-    # Persist that binding first, then explicitly approve its resulting state
-    # in the same request transaction.
+    # Save the changed read binding before approving it in this transaction.
     if service.read_mapping != mapping.name:
         service.read_mapping = mapping.name
         service.save()
@@ -813,12 +811,8 @@ def schema_snapshot_list(start: int | str = 0, page_size: int | str = 100) -> li
 
 @frappe.whitelist(methods=["POST"])
 def workspace_schema_refresh(connection_id: str = "", binding_generation: int | str = 0) -> dict[str, object]:
-    """Capture a new complete, validated live HERO schema snapshot.
-
-    Called by the explicit refresh action and right after the connection
-    settings are saved. Opening a page, loading settings, or generating mapping
-    suggestions never invokes it. An unchanged schema keeps its snapshot.
-    """
+    """Capture a complete, validated HERO snapshot on explicit refresh or Settings save.
+    Page loads and suggestions do not refresh it; unchanged schemas retain their snapshot."""
     frappe.only_for("System Manager")
     # Refresh always uses persisted server configuration, never a selected snapshot.
     del connection_id, binding_generation
@@ -935,10 +929,7 @@ def graph_view(snapshot_name: str) -> dict[str, object]:
     }
 
 
-# The following endpoints are an explicit, finite compatibility boundary for
-# the preserved workspace client.  They never proxy to another app or execute
-# a stored GraphQL document.  Their input and output shapes intentionally keep
-# the workspace usable with a saved Frappe snapshot only.
+# Compatibility endpoints use saved snapshots without proxies or GraphQL execution.
 @frappe.whitelist()
 def workspace_context(snapshot_name: str = "") -> dict[str, object]:
     frappe.only_for("System Manager")
@@ -1521,12 +1512,7 @@ def frontend_mapping_detail(mapping_type: str, name: str):
 def frontend_mapping_bindings(
     definition_id: str, start: int | str = 0, page_size: int | str = 20,
 ) -> dict[str, object]:
-    """Read the existing, site-scoped binding contract without changing it.
-
-    Bindings contain target-record identities and are consequently an
-    administrative read surface.  The Mapping editor uses this narrow
-    projection rather than a new binding model or direct DocType CRUD.
-    """
+    """Read site-scoped binding identities for the administrative Mapping editor."""
     frappe.only_for("System Manager")
     _mapping_request_fields({"definition_id", "start", "page_size"})
     definition_id = _mapping_text(definition_id, "definition_id")
@@ -2182,9 +2168,7 @@ def graphql_mapping_save(
         except (ValueError, WritebackContractError) as error:
             frappe.throw(translate_error(error, frappe._))
         if not mapping_name:
-            # Serialize only API-created drafts sharing this exact source.
-            # The existing controller lock is connection-scoped and released
-            # at the full transaction boundary, including rollback.
+            # Serialize API drafts for this source until transaction commit or rollback.
             from hero_integration.hero_integration.doctype.hero_frappe_mapping.hero_frappe_mapping import _lock_active_target
             _lock_active_target("writeback:" + snapshot_name, source["doctype"], direction + ":" + source["field"])
             matches = []
@@ -3337,9 +3321,7 @@ def writeback_available(doctype: str, docname: str) -> dict[str, object]:
         try:
             context = _writeback_context(row.name, document, mapping_row=row)
         except Exception:
-            # Availability is deliberately quiet: a stale or ambiguous link
-            # must never reveal a send action, but it is explained on preview
-            # once an administrator selects a configured field.
+            # Hide send actions for stale/ambiguous links; explain them on explicit preview.
             continue
         actions.append({
             "mapping_name": row.name,
@@ -3498,13 +3480,8 @@ def _writeback_context(mapping_name: str, document, mapping_row=None) -> dict[st
 
 
 def _reserve_mutation(*, operation_name: str, schema_fingerprint: str, mapping_revision: int, request_fingerprint: str):
-    """Durably reserve the one outbound mutation slot before contacting HERO.
-
-    A unique ``reservation_key`` lets MariaDB serialize competing confirmations
-    without relying on a stale read of a previous audit row.  The commit is
-    intentional: an external request must never occur before its recovery
-    record is visible to another request.
-    """
+    """Commit a unique mutation reservation before external I/O.
+    MariaDB serializes confirmations; the visible audit supports recovery."""
     correlation_id = uuid4().hex
     audit = frappe.get_doc({
         "doctype": "HERO Mutation Audit", "correlation_id": correlation_id, "user": frappe.session.user,

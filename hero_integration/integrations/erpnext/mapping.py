@@ -1,6 +1,3 @@
-"""No HERO field mappings are installed with the application.
-
-The isolated test fixture under ``hero_integration.tests.fixtures`` contains
-the former reviewed definitions. Production migration loads only active
-``HERO Frappe Mapping`` documents.
+"""No HERO field mappings are installed with the app.
+Production uses active HERO Frappe Mapping records; legacy definitions stay in tests.
 """

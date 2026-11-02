@@ -1,9 +1,7 @@
-"""Remembered GraphQL nodes ("Remember for Mapping") - pure helpers.
+"""Pure helpers for saved-schema GraphQL node bookmarks.
 
-A bookmark stores the technical identity of one saved-schema graph node plus a
-user-chosen alias.  The alias is a label only; identity always comes from the
-validated snapshot.  Mapping context is derived exclusively from schema edges,
-never from similar-sounding names, and is only a preselection hint.
+Validated snapshots own technical identity; user aliases are labels only.
+Schema edges provide nonauthoritative Mapping hints, never name similarity.
 """
 from __future__ import annotations
 

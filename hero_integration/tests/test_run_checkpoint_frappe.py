@@ -1,9 +1,4 @@
-"""Opt-in development-site transactions; no schema migration or HERO transport.
-
-The Run fixture is a connection-local temporary table because the new app field
-must not be deployed to the existing site just to execute this source test.
-Customer records and the field-rule fixture have unique test-owned identities.
-"""
+"""Opt-in checkpoint transactions use a connection-local temporary Run table and unique fixtures; no migration or HERO transport."""
 import json
 import os
 from datetime import timedelta

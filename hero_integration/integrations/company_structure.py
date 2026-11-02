@@ -1,11 +1,5 @@
-"""Company structure building blocks.
-
-Create-only: existing departments, designations, role profiles, Helpdesk teams and
-ticket types are never changed, and no personal data is created.  Run once after
-the owner decisions:
-
-    bench --site <site> execute hero_integration.integrations.company_structure.setup_company_structure
-"""
+"""Create missing company structure without changing existing records or personal data.
+Run setup_company_structure explicitly after configuring its entries."""
 
 from __future__ import annotations
 
@@ -28,7 +22,7 @@ ROLE_PROFILES = {
 }
 HD_TEAMS = ("Verwaltung", "Netzbetreiber", "PV", "Elektro")
 HD_TICKET_TYPES = {"Netzanmeldung": "Application or correspondence with the grid operator; always set the ERPNext Project."}
-# HERO trade code -> department base name.  KLIM and SONS await an owner decision.
+# HERO trade code -> department; KLIM and SONS remain unconfigured.
 TRADE_DEPARTMENTS = {"PV": "Photovoltaik", "DS": "Photovoltaik", "ABS": "Photovoltaik", "ELEK": "Elektro"}
 _TRADE_PREFIX = re.compile(r"^([A-Z]{2,5})-")
 

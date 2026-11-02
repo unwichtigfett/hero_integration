@@ -1,4 +1,4 @@
-// One "Send to HERO" button per Task: title, description, end date, done, assignee (owner decision 2026-11-02).
+// Send Task title, description, end date, completion and assignee to HERO.
 (() => {
 	"use strict";
 

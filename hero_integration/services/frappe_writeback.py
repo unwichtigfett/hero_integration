@@ -1,8 +1,6 @@
-"""Narrow, schema-bound Frappe-to-HERO writeback contracts.
+"""Schema-bound Frappe-to-HERO writeback for reviewed Customer/Project fields.
 
-Only the reviewed Customer and Project fields are admitted.  The module is
-deliberately not a generic mutation mapper: HERO identity always comes from
-an app-owned integration link, never from the browser.
+Integration Links supply HERO identity; browser inputs cannot redefine it.
 """
 from __future__ import annotations
 
@@ -45,10 +43,8 @@ DEFINITIONS = {
     "Project": WritebackDefinition(
         doctype="Project", source_type="project", operation="update_project_match",
         argument="project_match", input_type="ProjectMatchInput",
-        # Owner decision 2026-11-01: only Notes are written back per field (the
-        # Phase goes through the Project's "Send to HERO" button).  The ERPNext
-        # title is composed and would overwrite HERO's own title; project number,
-        # display ID and type are HERO identity/naming data.
+        # Per-field writeback covers Notes; Phase uses "Send to HERO".
+        # Composed titles and HERO identity/naming fields must not be overwritten.
         fields={"custom_hero_partner_notes": "partner_notes"},
     ),
 }
@@ -67,11 +63,10 @@ def candidate_fields(doctype: str) -> dict[str, str]:
 
 
 def reviewed_input_target(doctype: str, source_field: str, schema: object) -> dict[str, str]:
-    """Return the one schema-proven HERO input target for an approved source.
+    """Return the schema-proven HERO target for an approved source field.
 
-    This is deliberately a catalogue helper, not a generic field mapper.  The
-    returned choice is the same exact relationship enforced by
-    :func:`normalise_mapping` and is safe to render as a picker option.
+    Picker choices use the exact relationship enforced by ``normalise_mapping``;
+    this catalogue grants no generic mapping authority.
     """
     contract = definition(doctype)
     target_field = contract.fields.get(source_field)

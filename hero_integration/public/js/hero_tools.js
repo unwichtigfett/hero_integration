@@ -20,18 +20,9 @@
             : tr('graph analysis unavailable');
     }
 
-    /*
-     * Full Graph Viewer cache.
-     *
-     * Key authority remains Workspace.scopeKey():
-     * connection_id + binding_generation + schema_fingerprint.
-     *
-     * Therefore:
-     * - browser reload: same key -> persistent cache hit
-     * - new HERO snapshot: new fingerprint -> cache miss
-     *
-     * IndexedDB failure must never prevent HERO tools from loading.
-     */
+    // Persist Graph Viewer data by Workspace.scopeKey(): connection, binding
+    // generation and schema fingerprint. Reloads reuse it; new snapshots miss.
+    // IndexedDB failure must not block HERO tools.
     const persistentGraphCache = (() => {
         const DB_NAME = 'hero-graph-viewer-cache';
         const STORE_NAME = 'graphs';
@@ -181,11 +172,8 @@
         INVALID_SERVICE_KIND:'Select Query or Mutation.', SUBSCRIPTION_NOT_SUPPORTED:'Subscriptions are not supported as services.',
         HERO_MUTATIONS_DISABLED:'HERO mutations are disabled in the connection settings.', MUTATION_APPROVAL_REQUIRED:'The exact mutation must be confirmed before execution.',
         CONNECTOR_DISABLED:'The HERO connection is disabled.', TOOL_INTERNAL_ERROR:'The tool action could not be completed on the server.'};
-    /*
-     * GraphQL text helpers. Pure functions without DOM access, so they can be tested in isolation.
-     * Variables use one `name := value;` line each (the closing semicolon is optional); every value is parsed
-     * with JSON.parse only (never eval).
-     */
+    // DOM-free GraphQL helpers parse one `name := value;` variable per line
+    // with JSON.parse, never eval; semicolons are optional.
     const GRAPHQL_NAME = /^[_A-Za-z][_0-9A-Za-z]*$/;
     function checkJsonNumbers(value, where) {
         if (typeof value === 'number') {

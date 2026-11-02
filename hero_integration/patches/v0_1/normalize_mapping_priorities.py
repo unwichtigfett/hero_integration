@@ -6,12 +6,8 @@ import frappe
 
 
 def execute() -> None:
-    """Only the legacy default 100 has an unambiguous, lossless migration.
-
-    Other historic values outside 0..10 could encode an intentional relative
-    order. Leave those rows disabled for an administrator instead of silently
-    inventing a new order.
-    """
+    """Migrate only legacy priority 100 losslessly.
+    Disable other out-of-range values for review rather than inventing their order."""
 
     # This historical patch bypasses DocType validation. Do not silently
     # rewrite or disable an active rule referenced by saved mapping JSON.

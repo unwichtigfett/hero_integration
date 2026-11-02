@@ -272,12 +272,10 @@ class RuntimePlanService:
     def resolve_executable_plan(
         self, site_scope: str, source_instance: str, expected_generation: int, automatic: bool, actor: str
     ) -> ExecutableRuntimePlan:
-        """Fail before provider construction unless the exact approved plan is current.
+        """Reject stale/unapproved plans before constructing providers.
 
-        The caller still owns scheduler-service authentication and all transport
-        decisions.  Manual callers are additionally checked as System Managers
-        here; automatic callers must arrive through a separately authenticated
-        scheduler path.
+        Manual callers require System Manager. The caller owns transport decisions
+        and scheduler-service authentication for automatic runs.
         """
         _identifier(site_scope, "site scope")
         _identifier(source_instance, "source instance")

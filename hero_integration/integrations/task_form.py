@@ -1,4 +1,4 @@
-"""Task form: show who is responsible for the task in HERO (owner decision 2026-11-02)."""
+"""Task form: show who is responsible for the task in HERO."""
 
 import frappe
 

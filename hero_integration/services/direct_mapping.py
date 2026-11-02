@@ -9,10 +9,9 @@ from hero_integration.services.projection_contracts import CONTRACTS as PROJECTI
 SOURCE_CONTRACTS = {
     "HeroCustomers": {
         "target_doctype": "Customer",
-        # Reviewed bindings are shipped with the server contract, never read
-        # from a mapping, import payload, site configuration, or client.
-        # Tuple: source path, source type, target DocType, target field,
-        # expected field type, transformation. No business approvals yet.
+        # Server-owned bindings; imports, site settings and clients cannot redefine them.
+        # Tuple: source path/type, target DocType/field, expected type, transformation.
+        # These bindings grant no business approval.
         "native_field_bindings": frozenset(),
         "paths": {
             "title": "string|null",
@@ -74,15 +73,14 @@ TRANSFORMATIONS.update({'JSON Value', 'Scalar Text', 'HERO Project Link'})
 TRANSFORMATIONS.update({'Native Adapter', 'Nonempty String ID'})
 TRANSFORM_SALUTATION = "Salutation Table"
 TRANSFORMATIONS.add(TRANSFORM_SALUTATION)
-# HERO customer title -> Frappe Salutation (owner decision 2026-11-02). Unknown
-# values are not written; the stored Contact salutation then stays as it is.
+# Map HERO titles to Frappe Salutations; unknown values preserve the Contact value.
 SALUTATION_TABLE = {"herr": "Herr", "frau": "Frau", "familie": "Familie", "eheleute": "Eheleute", "dr.": "Dr", "dr": "Dr"}
 
 ALLOWED_TARGET_TYPES = {"Data", "Small Text", "Int", "Float", "Currency", "Check", "Date", "Datetime", "Link"}
 # Read-only HERO observation fields that are not text: (operation, path, field, transform) -> fieldtype.
 NATIVE_TYPED_OBSERVATIONS = {
-    ("HeroProjectMatches", "volume", "custom_hero_volume", "Identity"): "Currency",  # euros, owner 2026-11-01
-    # Shown read-only on the Project form (HERO values, 2026-11-01); still written by the import.
+    ("HeroProjectMatches", "volume", "custom_hero_volume", "Identity"): "Currency",  # euros
+    # Imported HERO observations are read-only on the Project form.
     ("HeroProjectMatches", "current_project_match_status.name", "custom_hero_observed_status_name", "Identity"): ("Data", "Small Text"),
     ("HeroProjectMatches", "address.full_address", "custom_hero_address_full_address", "Trim"): ("Data", "Small Text"),
 }
@@ -211,11 +209,10 @@ MISSING = _Missing()
 
 
 def lookup(record: dict[str, object], source_path: str) -> object:
-    """Read one response path, keeping an absent key distinct from ``null``.
+    """Read a response path without equating absent keys and explicit nulls.
 
-    An explicit ``null`` parent object makes every nested selection ``None``
-    (GraphQL nulls the whole object); an absent key or a non-object parent is
-    ``MISSING`` and must never be treated as an authoritative empty value.
+    A null parent makes nested values None. Missing or non-object parents remain
+    MISSING and cannot authorize clearing a value.
     """
     current: object = record
     for segment in source_path.split("."):

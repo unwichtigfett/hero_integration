@@ -1,16 +1,10 @@
-"""Remove every ERPNext record the HERO import created (user request 2026-11-01).
+"""Delete imported ERPNext records bound by HERO Integration Links.
 
-Only documents bound by a ``HERO Integration Link`` are touched.  A document
-that another record still references (for example a manually created Sales
-Order for a HERO Customer) is kept and reported, never force-deleted.  The
-default is a dry run; the real run needs an explicit confirmation phrase.
+Referenced documents are kept and reported, never force-deleted. A real run
+requires Allow deletion and the confirmation phrase; dry run is the default.
 
-The real run also requires HERO Integration Settings → "Allow deletion".
-
-Usage (bench):
     bench --site <site> execute hero_integration.services.purge.purge_hero_data
-    bench --site <site> execute hero_integration.services.purge.purge_hero_data \
-        --kwargs "{'dry_run': 0, 'confirm': 'DELETE HERO DATA'}"
+    bench --site <site> execute hero_integration.services.purge.purge_hero_data --kwargs "{'dry_run': 0, 'confirm': 'DELETE HERO DATA'}"
 """
 
 from __future__ import annotations

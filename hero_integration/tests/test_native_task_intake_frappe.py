@@ -68,7 +68,7 @@ class _OptionalPlan(_Plan):
 
 
 class TestNativeTaskEmptyOptionalFieldsOffline(TestCase):
-    """Empty optional HERO values are normal and need no review (point 2, 2026-10-31)."""
+    """Empty optional HERO values are normal and need no review."""
 
     scope = {'confirmed': True, 'source_instance': 'fixture-task32a', 'source_type': 'Task'}
 

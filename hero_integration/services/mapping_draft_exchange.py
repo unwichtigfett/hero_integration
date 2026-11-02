@@ -1321,9 +1321,8 @@ def save_import(payload_json: str, source_instance: str, snapshot_name: str, dir
                 expected_states: object, *, confirmed: bool, preview_fingerprint: str) -> dict[str, object]:
     """Persist a previewed replacement after optional schema provisioning.
 
-    Schema DDL intentionally runs before the Draft-only DML savepoint.  If a
-    later CAS/save fails, the error reports created schema elements; the DML
-    savepoint restores the actor's previous Draft collection.
+    Schema DDL precedes the Draft-only DML savepoint. Later CAS/save failures
+    report created schema and restore the actor's previous Draft collection.
     """
     if _portable_version(payload_json):
         return _save_portable(payload_json, source_instance, snapshot_name, direction, expected_states,
@@ -1453,11 +1452,10 @@ def _lock_context(source_instance, snapshot_name, direction):
 
 
 def _fresh_active_definitions(source_instance: str, snapshot_name: str, direction: str) -> dict[str, object]:
-    """Read the committed context in a fresh transaction under its application lock.
+    """Read committed context in a fresh transaction under the application lock.
 
-    The request connection may already have an older REPEATABLE READ snapshot.
-    A separate read avoids a table-wide locking scan on sites without a context
-    index; the caller subsequently locks each observed unique definition ID.
+    This avoids an old REPEATABLE READ snapshot and a table-wide scan lock when
+    no context index exists. The caller then locks observed definition IDs.
     """
     if direction not in _DIRECTIONS or not all(isinstance(value, str) and value for value in (source_instance, snapshot_name)):
         raise MappingDraftExchangeError('Selected draft context is invalid.')
@@ -1494,11 +1492,10 @@ def _open_drafts(definition_ids: set[str]) -> dict[str, object]:
 
 
 def _lock_active_definitions(active, source_instance, snapshot_name, direction):
-    """Lock observed parent identities in stable order and read their latest state.
+    """Lock observed parent identities in stable order and read current state.
 
-    This deliberately does not table-lock an administrator's ability to add a
-    different definition to the context. Such a definition is never included
-    in the set of Drafts this preview can remove.
+    Unobserved definitions remain addable and cannot enter this preview's
+    Draft-removal set.
     """
     result = {}
     for identity in sorted(active):

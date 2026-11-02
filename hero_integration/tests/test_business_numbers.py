@@ -329,7 +329,7 @@ class TestBusinessNumberMigration(FakeFrappeMigrationHarness, unittest.TestCase)
         self.assertEqual(len(self.frappe.projects), 1)
 
     def test_a_project_created_in_erpnext_never_takes_the_hero_id(self):
-        # Owner decision 2026-11-01: HERO projects end in -H; ERPNext keeps its own numbers.
+        # HERO projects end in -H; ERPNext keeps its own numbers.
         self.frappe.projects.append({"name": "PV-3333", "project_name": "Created in ERPNext"})
         result = self.migrate_project(self.project())
         self.assertEqual((result.code, result.target_name), ("CREATED", "PV-3333-H"))

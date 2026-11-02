@@ -1,12 +1,8 @@
-"""Local validation of read-only HERO query service drafts against a saved schema.
+"""Validate one read-only query Draft against stored introspection, without I/O.
 
-Mirrors ``mutation_draft``: it validates one GraphQL query operation against the
-stored introspection only and never contacts HERO.  Supported syntax is the
-subset the GraphQL Services editor needs: one (optionally named) query with
-variable definitions, fields with aliases and arguments, inline fragments and
-``@include``/``@skip``.  Named fragments and subscriptions are rejected.
-This is a subset validator, not a complete GraphQL specification validator;
-in particular, inline-fragment type overlap is not checked here.
+Supports optional operation names, variables, aliases, arguments, inline
+fragments and @include/@skip. Named fragments/subscriptions are rejected.
+This editor subset does not validate inline-fragment type overlap.
 """
 from __future__ import annotations
 

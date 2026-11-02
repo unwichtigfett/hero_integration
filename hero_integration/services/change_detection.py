@@ -118,14 +118,11 @@ def reconcile(
     target_empty: set[str] | frozenset[str] = frozenset(),
     unwritable: set[str] | frozenset[str] = frozenset(),
 ) -> Reconciliation:
-    """Classify each tracked field; never compare a field HERO did not return.
+    """Classify tracked fields against acknowledged baselines.
 
-    ``missing`` fields were absent from the GraphQL response.  They are neither
-    a change nor a deletion, so their baselines are carried forward unchanged.
-    A field without a baseline (for example a newly selected mapping) counts as
-    changed in HERO only when HERO has a value, and as changed locally only
-    when Frappe holds a non-empty value.  A HERO change of an ``unwritable``
-    field (an empty value under the no-clear policy) is acknowledged only.
+    Absent fields preserve baselines. Without a baseline, only nonempty values
+    count as changes. HERO changes blocked by the no-clear policy are acknowledged
+    without writing.
     """
 
     groups: dict[str, set[str]] = {name: set() for name in ("apply", "local", "conflicts", "converged", "acknowledged", "unchanged")}
@@ -166,23 +163,17 @@ def next_baseline(
 
 
 def observe_frappe_target_change(doc, method=None) -> None:
-    """Record a mapped Frappe-side field change without scheduling an outbound action.
+    """Record a mapped local edit without scheduling outbound work.
 
-    The wildcard Frappe hook reaches every DocType, therefore the first query
-    is the scope boundary: only targets already named by an app-owned Link are
-    considered.  The synchronized baseline remains untouched so that a later
-    HERO-side change to the same field still becomes a conflict rather than an
-    automatic overwrite.
+    The wildcard hook considers only targets of app-owned Links. It preserves
+    baselines so later HERO changes to the same field remain conflicts.
     """
     del method
     import frappe
     from frappe.utils import now_datetime
 
-    # During install/migrate, DocType metadata can be written before the
-    # corresponding database columns exist.  This global on_update hook runs
-    # for those technical writes as well, so it must return before querying
-    # the Link fields introduced by the same synchronization.  During uninstall
-    # the app tables are already dropped while this hook is still registered.
+    # Metadata writes can precede columns during migration or follow table
+    # removal during uninstall. Skip these hooks before querying Link fields.
     if frappe.flags.in_migrate or frappe.flags.in_uninstall:
         return
     from hero_integration.services.frappe_mapping_draft_storage import personal_publication_active

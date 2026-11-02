@@ -1,8 +1,4 @@
-"""Records of deleted HERO projects are skipped; contact requests (KONT-) have no project.
-
-User decision 2026-11-01: HERO's project list omits deleted projects and
-contact requests, yet Tasks and Events still reference them.
-"""
+"""Skip deleted HERO projects and KONT- requests omitted from project lists but referenced by Tasks and Events."""
 
 from __future__ import annotations
 

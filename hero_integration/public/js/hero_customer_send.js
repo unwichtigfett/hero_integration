@@ -1,4 +1,4 @@
-// One "Send to HERO" button per imported Customer: all customer data except the number (owner decision 2026-11-02).
+// Send imported Customer data to HERO, excluding the customer number.
 (() => {
 	"use strict";
 

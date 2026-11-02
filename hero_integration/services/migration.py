@@ -69,13 +69,11 @@ def _is_empty(value: object) -> bool:
 
 
 class _Comparison:
-    """One record's normalized HERO state and the target fields it tracks.
+    """Normalize writable values and relation snapshots for field comparison.
 
-    ``values`` are the writable target values from the mapping plan.  Fields
-    the plan reported as explicitly empty are compared as ``None`` but never
-    written (no-clear policy); fields reported missing carry no evidence at
-    all.  ``extra`` adds relation snapshots (for example the Customer home
-    phone) that have no field on the target document itself.
+    Explicitly empty fields compare as None but are not written; missing fields
+    carry no evidence. Relation snapshots cover values absent from the target,
+    such as the Customer home phone.
     """
 
     def __init__(self, values, extra=None):
@@ -265,7 +263,7 @@ def execute_run(run_name: str) -> None:
 
 
 def _notify_not_imported(run) -> None:
-    """Every record a run could not import reaches the administrators (user decision 2026-10-31)."""
+    """Notify administrators of every record the run could not import."""
     if getattr(run, "mode", "") == "Preview":
         return
     try:
@@ -388,11 +386,10 @@ def _customer_read_documents(run):
 
 
 def _claim_run(run) -> bool:
-    """Claim the Single-state slot under the database row lock.
+    """Claim the shared Singles slot before either worker observes or replaces it.
 
-    Queue job IDs are unique only per run, so they cannot serialize two
-    independently requested runs.  The ``tabSingles`` row is the one durable
-    shared slot and is locked before either worker observes or replaces it.
+    Queue IDs are unique per run and cannot serialize different requested runs;
+    the database row lock provides that boundary.
     """
     if not _acquire_active_run_lock():
         _block_run(run, "Could not acquire the HERO run reservation lock.")
@@ -434,10 +431,8 @@ def _claim_run(run) -> bool:
         frappe.db.commit()
         return True
     except frappe.QueryDeadlockError:
-        # MariaDB can still surface a stale-row conflict to a connection that
-        # lost the first-use race.  It has not obtained a reservation; roll
-        # back that transaction and persist a normal blocked outcome rather
-        # than letting a worker fail or retry against an unknown state.
+        # A first-use stale-row conflict grants no reservation. Roll back and
+        # record Blocked instead of retrying an uncertain claim.
         frappe.db.rollback()
         run.reload()
         _block_run(run, "Another connection is establishing the HERO run reservation; run was not started.")
@@ -448,11 +443,10 @@ def _claim_run(run) -> bool:
 
 
 def run_lease_alive(run_name: str, now=None, *, lock=False) -> bool:
-    """Whether a non-terminal run may still be executing in a live worker.
+    """Check whether a nonterminal run may still have a live worker.
 
-    Runs claimed before leases existed have no expiry; their ``started_on``
-    plus the lease window is used instead. A non-terminal, non-Running row
-    is conservatively reported alive.
+    Older runs use started_on plus the lease window. Nonterminal rows outside
+    Running conservatively count as alive.
     """
     row = frappe.db.get_value("HERO Integration Run", run_name, ["state", "lease_expires_on", "started_on"],
                               as_dict=True, **({"for_update": True} if lock else {}))
@@ -564,11 +558,10 @@ def _process_requested_phases(run, source: HeroSource, *, checkpoint=None) -> No
 
 
 def _refresh_project_phases(run, source) -> None:
-    """Show each HERO project's status step as Phase, as HERO does (one read-only query).
+    """Refresh the displayed HERO Phase outside the run checkpoint.
 
-    Phase is a display value derived from the imported step ID, not sync state,
-    so it is refreshed outside the run checkpoint: a project phase that ends
-    Blocked (e.g. a rejected title) has already left the Running state.
+    Phase comes from the imported step ID, not sync state. A blocked project
+    phase has already left Running and still needs its display refreshed.
     """
     reader = getattr(source, "project_status_steps", None)
     if getattr(run, "mode", "Preview") != "Execute" or reader is None:
@@ -721,10 +714,8 @@ def _process_phase(run, phase: str, reader, *, checkpoint=None) -> bool:
             run.resume_record_index = 0
             run.save()
             if page.next_offset is None:
-                # Every record was processed.  Single records that could not be
-                # imported are reported (run "Completed With Conflicts", one admin
-                # summary, conflict list) like Tasks and Events; they no longer
-                # mark the whole Project run as Blocked.
+                # Per-record failures produce Completed With Conflicts and an admin summary;
+                # they do not block the entire Project run.
                 _set_phase_state(run, phase, "Completed")
                 return True
         offset = page.next_offset
@@ -1236,8 +1227,7 @@ def _migrate_native_task(record, run, plan, scope) -> Result:
             target_fields = {**field_hashes({field: task.get(field) for field in values}),
                              **field_hashes({field: value for field, value in task_lifecycle.target_values(task).items()
                                              if field in lifecycle})}
-            # Review only a HERO value that exists but could not be written;
-            # an empty optional value is normal (point 2, 2026-10-31).
+            # Review unwritable HERO values; empty optional values need no review.
             pending_comment = ('comment' in selected_paths and _task_value_present(record.get('comment'))
                                and 'description' not in values)
             pending_project = ('target_project_match_id' in selected_paths
@@ -1428,10 +1418,8 @@ def _migrate_projection(record, run, plan) -> Result:
             if run.mode != 'Preview':
                 _mark_source_deleted(_link(contract['source_type'], source_id, instance))
             return Result('SKIPPED_SOURCE_DELETED', 'Source deletion is observed; no target deletion occurs.')
-        # An existing Event whose privacy or outbound settings changed must be
-        # held before resolving the saved native options.  This makes Preview
-        # fail closed even when it is invoked with a minimal test/run context,
-        # and guarantees the protected target is never updated.
+        # Hold Events with changed privacy/outbound settings before resolving native
+        # options, including Preview calls without a complete run context.
         held = _review_hold(existing)
         if held:
             return held
@@ -1556,8 +1544,7 @@ def _project_name_for_source(value, source_instance):
     if getattr(link, 'sync_status', '') in {REVIEW_PENDING, REVIEW_REJECTED}:
         raise MappingPlanError('ProjectMatch reference awaits or failed administrator review; linked records wait.')
     if not link:
-        # User decision 2026-11-01: a deleted HERO project skips its records;
-        # a contact request (KONT-) is no project, so the record has none.
+        # Skip records of deleted HERO projects; KONT- contact requests have no project.
         state = _PROJECT_REFERENCE_STATES.get((source_instance or 'default', value))
         if state == 'DELETED':
             raise DeletedSourceProjectError('The referenced HERO project is deleted; the record is not imported.')
@@ -1705,14 +1692,11 @@ def _project_creation_values(record, company) -> dict | None:
 
 
 def _hold_customer_only_title_change(record, values, link) -> dict | None:
-    """Keep an existing Project title when only the HERO customer part changed.
+    """Keep Project titles when only the HERO customer name or salutation changed.
 
-    User decision 2026-10-31: a changed customer name or salutation never
-    renames an existing Project; trade, number and address changes still
-    regenerate the title under the field-wise conflict rules.  The title
-    without its customer part is tracked as a comparison-only basis.  A
-    baseline without that basis cannot tell the cases apart, so the existing
-    title is preserved and the basis recorded.
+    Trade, number and address changes still use field-wise conflict rules.
+    Track the customer-free title as comparison evidence; older baselines without
+    it preserve the title while recording that basis.
     """
     if not values.get("project_name"):
         return None
@@ -1754,12 +1738,11 @@ def _project_title_edited_locally(link) -> bool:
 
 
 def observe_monitor_record(operation: str, record: dict[str, object]) -> Result | None:
-    """Compare one configured source record without mutating an ERPNext target.
+    """Compare a source record through the active mapping without target writes.
 
-    MONITOR reuses the active mapping plan and the same field-wise three-way
-    comparison as the materializer.  It never advances a baseline: a source or
-    local change is technical output only, and a same-field change on both
-    sides uses the durable conflict and administrator-notification path.
+    MONITOR uses the materializer's three-way comparison but never advances
+    baselines. Same-field changes on both sides use durable conflicts and
+    administrator notifications; other changes remain technical output.
     """
     extra = None
     try:
@@ -2043,9 +2026,7 @@ def _references_besides_hero(doctype: str, name: str, ignore=()) -> str | None:
 
 
 def decide_review(link, decision: str) -> None:
-    """Administrator decision for a held record: approve releases it, reject retains it.
-
-    There is deliberately no edit path (user decision 2026-10-31).
+    """Approve releases a held record; reject retains it. Editing is not supported.
     """
     if getattr(link, "sync_status", "") == "Conflict":
         if decision == "approve":
@@ -2122,10 +2103,8 @@ def _customer_target_values(
     target, values: dict[str, object], contact_fields, home_phone: str | None, *, track_home_phone: bool = False,
 ) -> dict[str, object]:
     snapshot = _target_values(target, values)
-    # Existing rows created before Contact persistence (or a relationship that
-    # cannot safely be read) retain the Customer-field snapshot for conflict
-    # detection.  A missing native value is not evidence that a user changed
-    # the visible Customer projection to ``None``.
+    # Keep Customer-field baselines for older rows or unreadable Contact links;
+    # a missing native value does not prove a local edit to None.
     snapshot.update({
         field: value
         for field, value in primary_contact_values(target, set(contact_fields)).items()

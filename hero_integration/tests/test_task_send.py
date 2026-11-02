@@ -1,4 +1,4 @@
-"""Task Send to HERO: values compared and sent (owner decision 2026-11-02)."""
+"""Task Send to HERO: values compared and sent."""
 
 from __future__ import annotations
 

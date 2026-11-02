@@ -124,9 +124,8 @@ def values(contract, record, identity, instance, options, *, lookup, item_link=N
         if type(record.get('is_recurring')) is not bool:
             raise ValueError('Calendar recurrence flag must be explicit; null is not false.')
         if record['is_recurring']:
-            # HERO exposes no recurrence rule.  A new event imports only the
-            # delivered occurrence and waits for administrator review (user
-            # decision 2026-10-31); an existing event keeps its times.
+            # HERO exposes no recurrence rule: review new single occurrences and keep
+            # existing Event times.
             if allow_partial or review is None:
                 raise ValueError('Recurring HERO event has no reviewed recurrence rule; native recurrence is blocked.')
             review.append(RECURRING_REVIEW)

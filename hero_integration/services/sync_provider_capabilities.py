@@ -1,10 +1,7 @@
-"""Explicit capability boundary for B8 change-provider adapters.
+"""Derive B8 change-provider capabilities from explicit discovery evidence.
 
-The generic B8 engine intentionally understands only the three boolean
-properties in :class:`ChangeCapabilities`.  This module keeps the evidence
-needed to derive those booleans at the runtime boundary: an offset scan or a
-bounded object reconciliation must never be promoted to complete delta
-discovery merely because it can return records.
+Offset scans and bounded comparisons cannot establish complete delta discovery
+merely by returning records.
 """
 from __future__ import annotations
 
@@ -30,12 +27,10 @@ class ProviderCapabilityError(SyncError):
 
 @dataclass(frozen=True, slots=True)
 class ProviderContract:
-    """A closed-world conversion from discovery evidence to B8 capabilities.
+    """Convert discovery evidence to closed-world B8 capabilities.
 
-    ``BOUND_OBJECT_RECONCILIATION`` is useful for a later explicit comparison
-    workflow, but it cannot prove that no unobserved remote change exists.
-    It therefore deliberately maps to ``bounded_comparison`` rather than a
-    cursor-capable provider.  ``UNSUPPORTED`` maps to no capability at all.
+    BOUND_OBJECT_RECONCILIATION grants only bounded comparison, not a delta cursor;
+    UNSUPPORTED grants no capability.
     """
 
     capability: ProviderCapability
@@ -62,12 +57,10 @@ class ProviderContract:
 
 
 class GuardedChangeProvider:
-    """Narrow adapter that exposes only proven provider reads to ``SyncEngine``.
+    """Expose only proven provider reads to SyncEngine.
 
-    The runtime is responsible for eligibility checks before constructing this
-    adapter.  Once constructed, this object still refuses unsafe reads, so an
-    accidental direct caller cannot convert offset pagination or a bounded
-    reconciliation into automatic synchronization.
+    Runtime eligibility checks precede construction. Direct calls still cannot
+    promote offset scans or bounded comparisons to automatic synchronization.
     """
 
     def __init__(

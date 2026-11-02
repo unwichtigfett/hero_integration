@@ -135,10 +135,8 @@ class MappingPlan:
                     (kind == "boolean" and type(raw) is bool) or
                     (kind == "float" and type(raw) in (int, float))
                 )
-                # Project naming also accepts the established structured trade
-                # representation used by existing contracts and test fixtures.
-                # A missing salutation is no block (user decision 2026-10-31);
-                # the stored rule keeps its approved "string" type.
+                # Accept structured trades and missing salutations for Project naming;
+                # retain the approved rule's "string" type.
                 if definition.source_path == "customer.title" and raw is None:
                     valid = True
                 if definition.source_path == "project_type" and isinstance(raw, dict):
@@ -188,12 +186,8 @@ class MappingPlan:
                 values.missing.discard(definition.target_field)
                 values.empty.discard(definition.target_field)
             elif definition.purpose == 'Native Binding':
-                # Customer primary-address values are intentionally not fields
-                # of the Customer document.  The Customer adapter resolves the
-                # selected binding below and persists it once through its
-                # native Address relation.  Keep this exception closed to the
-                # reviewed M-099 contract; all other native bindings still
-                # require their caller-provided resolver.
+                # Only M-099 persists Customer primary-address values through
+                # the native Address relation. Other bindings need a resolver.
                 if self._is_customer_primary_address_binding(definition):
                     continue
                 if native_value is None:

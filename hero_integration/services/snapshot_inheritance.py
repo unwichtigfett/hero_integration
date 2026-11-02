@@ -1,11 +1,9 @@
-"""A new schema snapshot inherits the active mappings of its parent as personal drafts.
+"""Inherit active parent mappings as personal Drafts on a new schema snapshot.
 
-Parent: the previous snapshot of the same HERO source instance and endpoint.
-Every active parent definition becomes a new, parentless personal draft of the
-acting administrator, bound to the child snapshot and validated against the
-child schema by the existing draft service.  Nothing is activated, no service
-or runtime approval is copied, and the parent stays unchanged.  Definitions
-that no longer fit the child schema are recorded as Incompatible with a reason.
+The parent must share the source instance and endpoint. The acting admin owns
+new parentless Drafts, validated against the child schema. Incompatible
+mappings retain a reason. No activation or service/runtime approval is copied;
+the parent stays unchanged.
 """
 from __future__ import annotations
 

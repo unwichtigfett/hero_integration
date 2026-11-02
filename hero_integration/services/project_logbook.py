@@ -1,11 +1,9 @@
-"""HERO project logbook in the ERPNext Project activity (read-only, 2026-11-02).
+"""Import HERO project histories into the ERPNext Project timeline.
 
-HERO rejects a global ``project_histories`` read, so the logbook is read nested
-in the project list: one request per 25 projects (about 70 requests for all
-projects; HERO rejects 100 projects with their logbooks in one request).  Each new entry becomes an
-"Info" line in the Project timeline ("Aktivität") with the HERO date; a
-``project_history`` Integration Link prevents duplicates.  Nothing is sent to
-HERO, and an entry deleted in HERO stays in ERPNext.
+HERO requires histories nested in project-list queries; batches of 25 avoid
+its large-response rejection. Entries become dated Info lines, deduplicated
+by project_history Integration Links. No HERO writes occur; remote deletions
+retain the ERPNext entry.
 """
 
 from __future__ import annotations

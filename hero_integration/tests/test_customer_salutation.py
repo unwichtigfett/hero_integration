@@ -1,4 +1,4 @@
-"""HERO customer title -> Contact salutation through a fixed table (owner decision 2026-11-02)."""
+"""HERO customer title -> Contact salutation through a fixed table."""
 
 from __future__ import annotations
 

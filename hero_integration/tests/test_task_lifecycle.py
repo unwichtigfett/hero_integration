@@ -1,4 +1,4 @@
-"""Task dates, completion and assignee from HERO (owner decisions 2026-11-02)."""
+"""Task dates, completion and assignee from HERO."""
 
 from __future__ import annotations
 

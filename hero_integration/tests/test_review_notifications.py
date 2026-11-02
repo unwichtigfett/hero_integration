@@ -1,4 +1,4 @@
-"""Administrator notices for held and not imported HERO records (user decision 2026-10-31)."""
+"""Administrator notices for held and not imported HERO records."""
 
 from __future__ import annotations
 

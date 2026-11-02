@@ -4,9 +4,8 @@ app_publisher = "unwichtigfett"
 app_description = "Native Frappe v16 integration for HERO"
 app_email = "95431041+unwichtigfett@users.noreply.github.com"
 app_license = "MIT"
-# Do not set ``required_apps`` here. Frappe resolves that hook before
-# ``before_install`` and would install ERPNext as a side effect. HERO
-# Integration instead requires the administrator to install ERPNext v16 first.
+# Omit required_apps: Frappe would install ERPNext before before_install.
+# Require an administrator to install ERPNext v16 first.
 
 before_install = "hero_integration.install.before_install"
 after_install = "hero_integration.install.after_install"
@@ -40,9 +39,7 @@ doctype_js = {
     "HERO Migration Progress Ledger": ["public/js/hero_diagnostics.js", "public/js/hero_native_diagnostics.js"],
 }
 
-# The deletion gate applies to the explicitly listed HERO-owned DocTypes.
-# Other app DocTypes may have their own deletion rules; arbitrary ERPNext
-# records and unlisted DocTypes are not covered by this hook registration.
+# Apply the deletion gate only to the listed HERO-owned DocTypes.
 _HERO_OWNED_DOCTYPES = (
     "HERO Frappe Mapping",
     "HERO GraphQL Mapping",
@@ -65,9 +62,7 @@ doc_events = {
     doctype: {"on_trash": "hero_integration.services.guards.assert_app_document_deletion_allowed"}
     for doctype in _HERO_OWNED_DOCTYPES
 }
-# Target DocTypes are intentionally not hard-coded.  The observer only acts
-# when an app-owned Integration Link identifies this document as a mapped
-# target; it never starts polling, queues work, or sends a HERO request.
+# Observe only targets identified by Integration Links; no queueing or HERO I/O.
 doc_events["*"] = {
     "on_update": "hero_integration.services.change_detection.observe_frappe_target_change",
     # A HERO-bound record is deleted only by the purge or a review rejection.
@@ -82,7 +77,7 @@ for _doctype in ("HD Ticket", "CRM Lead", "CRM Deal"):
     doc_events[_doctype] = {"validate": "hero_integration.integrations.app_references.fill_references"}
 for _doctype in ("ERPNext HD Settings", "ERPNext CRM Settings"):
     doc_events[_doctype] = {"validate": "hero_integration.integrations.app_references.refuse_record_mirrors"}
-# Project IDs ending in -H are reserved for HERO (owner decision 2026-11-01).
+# Project IDs ending in -H are reserved for HERO.
 doc_events["Project"] = {
     "validate": "hero_integration.services.guards.protect_hero_project_ids",
     "before_rename": "hero_integration.services.guards.protect_hero_project_rename",

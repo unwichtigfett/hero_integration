@@ -60,7 +60,7 @@ class TestProjectNaming(unittest.TestCase):
                 build_project_title(project_match(**{key: value}))
 
     def test_missing_salutation_is_optional(self):
-        # User decision 2026-10-31: a missing salutation never blocks a Project.
+        # a missing salutation never blocks a Project.
         for customer in ({"full_name": "Max Mustermann"}, {"title": None, "full_name": "Max Mustermann"}):
             with self.subTest(customer=customer):
                 self.assertTrue(build_project_title(project_match(customer=customer)).startswith(

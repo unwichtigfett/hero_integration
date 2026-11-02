@@ -1,13 +1,5 @@
-"""Generic decoding of sealed HERO GraphQL operation results.
-
-The operation materializer is authoritative for response paths.  This module
-does not infer schema paths, does not persist Process-Core data and does not
-apply domain-specific identity/cardinality rules.
-
-A GraphQL response may contain collection nodes between the response root and
-a selected scalar leaf.  In that case the decoder projects the remaining path
-over every collection item while preserving order.
-"""
+"""Decode sealed result paths without schema inference, persistence or domain rules.
+Project collection paths over each item in order."""
 
 from __future__ import annotations
 
@@ -109,14 +101,8 @@ def _project_path(
     path: tuple[str, ...],
     index: int = 0,
 ) -> tuple[object, int]:
-    """Resolve a response path and project it through collections.
-
-    The returned integer is the number of collection projection dimensions
-    introduced while traversing *before* reaching the bound GraphQL leaf.
-
-    Lists that are themselves the bound leaf therefore do not count as
-    projection dimensions.
-    """
+    """Resolve a path and count collection dimensions before the bound leaf.
+    A list that is itself the bound leaf adds no projection dimension."""
 
     if index == len(path):
         return value, 0
