@@ -43,8 +43,24 @@ for (const language of input.languages) {
     const expectedAddress = language === 'en' ? address : 'Die Projektadresse fehlt oder ist unvollständig (ProjectMatch.address.city ist für den ERPNext-Projekttitel erforderlich.); sie wird im Titel ausgelassen.';
     assert.equal(migration.diagnostic(address), expectedAddress);
     const trade = "Project trade 'NEW' has no confirmed HERO-to-ERPNext title mapping.";
+    assert.equal(input.tradeError, trade);
     assert.equal(migration.diagnostic(trade), language === 'en' ? trade : "Für das Projektgewerk 'NEW' gibt es kein bestätigtes HERO-zu-ERPNext-Titel-Mapping.");
     const notes = "Target created through native Frappe validation. The HERO email address is not valid in ERPNext; it was not imported. HERO number 'bad/123' cannot be an ERPNext document name (only letters, digits and single inner hyphens, at most 140 characters). A collision-safe internal ID names the document; no replacement business number was generated. The original HERO value stays in its field.";
+    assert.ok(notes.includes(input.numberError));
     const expectedNotes = language === 'en' ? notes : "Ziel durch die reguläre Frappe-Validierung erstellt. Die HERO-E-Mail-Adresse ist in ERPNext ungültig; sie wurde nicht importiert. Die HERO-Nummer 'bad/123' kann kein ERPNext-Dokumentname sein (nur Buchstaben, Ziffern und einzelne Bindestriche innerhalb des Namens, höchstens 140 Zeichen). Das Dokument erhält eine kollisionssichere interne ID; es wurde keine Ersatzgeschäftsnummer erzeugt. Der ursprüngliche HERO-Wert bleibt in seinem Feld.";
     assert.equal(migration.diagnostic(notes), expectedNotes);
+    const base = 'Target created through native Frappe validation.';
+    const optionalNotes = [
+        'The HERO email address is not valid in ERPNext; it was not imported.',
+        'A HERO phone text is not a valid ERPNext number; the first number was imported and the full text kept as a comment.',
+    ];
+    const addresses = ['', 'Customer primary address is incomplete. It was not imported.',
+        'The HERO address has no country; Germany was assumed.'];
+    for (let mask = 0; mask < 4; mask++) {
+        for (const addressNote of addresses) {
+            const parts = [base, ...optionalNotes.filter((_, index) => mask & (1 << index)), ...(addressNote ? [addressNote] : [])];
+            const expected = parts.map(part => messages[part] || part).join(' ');
+            assert.equal(migration.diagnostic(parts.join(' ')), expected);
+        }
+    }
 }
