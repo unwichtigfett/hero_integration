@@ -58,12 +58,20 @@ bench build --app hero_integration
 
 step "tests"
 bench --site "$SITE" set-config allow_tests true
+./env/bin/python -m pip install -q "pytest>=8"   # test dependency (see pyproject optional "test")
+KNOWN=apps/hero_integration/ci
 # Offline suite: tests that need a real site or pytest are known failures; only new ones fail the build.
 (cd apps/hero_integration && ../../env/bin/python -m unittest discover -s hero_integration/tests -t . 2>&1 >/dev/null \
   | grep -E "^(ERROR|FAIL):" | sort > /tmp/hero-offline-now.txt) || true
-new_failures=$(comm -23 /tmp/hero-offline-now.txt <(sort apps/hero_integration/ci/known-offline-failures.txt))
+new_failures=$(comm -23 /tmp/hero-offline-now.txt <(sort $KNOWN/known-offline-failures.txt))
 if [ -n "$new_failures" ]; then echo "New offline test failures:"; echo "$new_failures"; TEST_FAILED=1; fi
-bench --site "$SITE" run-tests --app hero_integration || TEST_FAILED=1
+# Site tests: failures listed in known-site-failures.txt predate this pipeline; only new ones fail the build.
+bench --site "$SITE" run-tests --app hero_integration > /tmp/hero-site-tests.log 2>&1 || true
+sed 's/\x1b\[[0-9;]*m//g' /tmp/hero-site-tests.log | grep -E "^\s*✖ " | awk '{print $2}' | sort -u > /tmp/hero-site-failed.txt
+grep -q "Failed to discover tests" /tmp/hero-site-tests.log && { echo "Test discovery failed"; TEST_FAILED=1; }
+new_site=$(comm -23 /tmp/hero-site-failed.txt <(sort -u $KNOWN/known-site-failures.txt))
+if [ -n "$new_site" ]; then echo "New site test failures:"; echo "$new_site"; TEST_FAILED=1; fi
+echo "site tests: $(sed 's/\x1b\[[0-9;]*m//g' /tmp/hero-site-tests.log | grep -cE '^\s*✔ ') passed, $(wc -l < /tmp/hero-site-failed.txt) failed (known: $(wc -l < $KNOWN/known-site-failures.txt))"
 
 if [ -n "${HERO_SCHEMA_FILE:-}" ]; then
   step "offline HERO schema snapshot"

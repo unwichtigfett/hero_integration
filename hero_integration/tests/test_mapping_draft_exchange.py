@@ -35,7 +35,9 @@ class TestPreviewBinding(unittest.TestCase):
             fake.session.user = 'owner-b'
             self.assertNotEqual(original, exchange._preview_binding(package, preview))
             fake.local.conf['encryption_key'] = ''
-            with self.assertRaisesRegex(exchange.MappingDraftExchangeError, 'encryption key'):
+            # A real site creates its key on first use; only an unavailable key must fail.
+            with patch('frappe.utils.password.get_encryption_key', side_effect=RuntimeError('no key')), \
+                    self.assertRaisesRegex(exchange.MappingDraftExchangeError, 'encryption key'):
                 exchange._preview_binding(package, preview)
 
 

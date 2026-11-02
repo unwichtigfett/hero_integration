@@ -44,7 +44,9 @@ class TestAdoptionRecordSecurity(unittest.TestCase):
     def test_missing_site_key_fails_before_record_creation(self):
         preview = schema_provisioning.preview_package("SYNTHETIC", self.payload)
         self.f.local.conf.clear()
-        with self.assertRaisesRegex(schema_provisioning.SchemaProvisioningError, "encryption key"):
+        # A real site creates its key on first use; only an unavailable key must fail.
+        with patch("frappe.utils.password.get_encryption_key", side_effect=RuntimeError("no key")), \
+                self.assertRaisesRegex(schema_provisioning.SchemaProvisioningError, "encryption key"):
             adoption.start("SYNTHETIC", self.payload, ["field:customer-schema-value"], preview["preview_revision"])
         self.assertEqual(self.f.mutations, [])
 
