@@ -238,6 +238,22 @@ class GraphQLServiceSource:
                     steps[step["id"]] = step["name"]
         return steps
 
+    def user_emails(self) -> dict[int, str]:
+        """{HERO user id: e-mail} of all company users incl. deleted ones (read-only, one query).
+
+        HERO has no user list; every user belongs to a partner of the company.
+        """
+        data = self.client.query(
+            "query HeroUsers { company { partners(show_deleted: true) { user { id email } } } }", {})
+        data = data.get("data", data) if isinstance(data, dict) else {}
+        company = data.get("company") if isinstance(data, dict) else None
+        users = {}
+        for partner in (company or {}).get("partners") or []:
+            user = (partner or {}).get("user") or {}
+            if type(user.get("id")) is int and isinstance(user.get("email"), str) and user["email"].strip():
+                users[user["id"]] = user["email"].strip()
+        return users
+
     def projection(self, offset: int = 0) -> SourcePage:
         from hero_integration.services.projection_contracts import CONTRACTS
         if self.contract.target_operation not in CONTRACTS:

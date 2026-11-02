@@ -27,6 +27,7 @@ from hero_integration.services.change_detection import (
 )
 from hero_integration.services.conflict_notifications import notify_conflict_once, notify_review, notify_run_summary
 from hero_integration.services.integration_events import record_output
+from hero_integration.services import task_lifecycle
 from hero_integration.services.mapping_runtime import MappingPlanError, active_mapping_plan
 from hero_integration.services.business_numbers import BusinessNumberError, customer_document_name, project_reference
 from hero_integration.services.project_naming import ProjectAddressError, ProjectTitleValidationError, build_project_title
@@ -945,6 +946,7 @@ def _process_projection(run, source, *, checkpoint=None) -> None:
         return
     seen_ids: set[str] = set()
     _PROJECT_REFERENCE_STATES.clear()
+    _load_task_user_directory(source, operation)
     while True:
         _cancel_if_requested(run)
         page = source.projection(offset)
@@ -1199,6 +1201,7 @@ def _migrate_native_task(record, run, plan, scope) -> Result:
                 values['custom_hero_due_date'] = deadline
     except ValueError as error:
         return Result('BLOCKED_RECORD', str(error))
+    lifecycle = _task_lifecycle_source(record)
     selected = getattr(plan, 'definitions', ())
     assignment_selected = any(item.source_path == 'target_user_id' for item in selected)
     if assignment_selected:
@@ -1225,9 +1228,11 @@ def _migrate_native_task(record, run, plan, scope) -> Result:
         frappe.db.savepoint('hero_native_task_insert')
         try:
             with managed_target_update('Task', None, None):
-                task = frappe.get_doc({'doctype': 'Task', **values}).insert()
-            source_fields = field_hashes(values)
-            target_fields = field_hashes({field: task.get(field) for field in values})
+                task = frappe.get_doc({'doctype': 'Task', **values, **task_lifecycle.insert_values(lifecycle)}).insert()
+            source_fields = {**field_hashes(values), **field_hashes(lifecycle)}
+            target_fields = {**field_hashes({field: task.get(field) for field in values}),
+                             **field_hashes({field: value for field, value in task_lifecycle.target_values(task).items()
+                                             if field in lifecycle})}
             # Review only a HERO value that exists but could not be written;
             # an empty optional value is normal (point 2, 2026-10-31).
             pending_comment = ('comment' in selected_paths and _task_value_present(record.get('comment'))
@@ -1245,10 +1250,11 @@ def _migrate_native_task(record, run, plan, scope) -> Result:
                 'source_field_hashes': encode_hashes(source_fields), 'target_field_hashes': encode_hashes(target_fields),
                 'mapping_version': version, 'last_synced_on': now_datetime(),
             }).insert()
+            note = task_lifecycle.sync_assignment(task, None) if lifecycle.get(task_lifecycle.ASSIGNEE) else ''
         except Exception:
             frappe.db.rollback(save_point='hero_native_task_insert')
             raise
-        return Result('CREATED', 'Native Task and source binding created.', 'Task', task.name)
+        return Result('CREATED', ' '.join(filter(None, ('Native Task and source binding created.', note))), 'Task', task.name)
     link = frappe.get_doc('HERO Integration Link', rows[0].name, for_update=True)
     prior_version = str(link.mapping_version or '').split(':')
     same_core = (assignment_selected and len(prior_version) == 3 and prior_version[0] == 'native-task-v1'
@@ -1288,14 +1294,35 @@ def _migrate_native_task(record, run, plan, scope) -> Result:
                 omitted.append(field)
                 pending.append(field)
             # An optional field that HERO never filled is neither a change nor a review case.
+    current = task_lifecycle.target_values(task)
+    lifecycle_updates = {}
+    for field, value in lifecycle.items():
+        source_hash = field_hashes({field: value})[field]
+        target_hash = field_hashes({field: current[field]})[field]
+        decision = task_lifecycle.decide(field, source_hash, target_hash, source_base.get(field),
+                                         target_base.get(field), current[field])
+        if decision == 'APPLY':
+            lifecycle_updates[field] = value
+        elif decision == 'CONFIRM':
+            source_base[field], target_base[field] = source_hash, target_hash
+        elif decision == 'CONFLICT':
+            conflicts.append(field)
     if run.mode == 'Preview':
         return Result('CONFLICT' if conflicts or pending else 'PREVIEW_OK', 'Native Task field comparison completed.', 'Task', task.name)
-    if updates:
+    note = ''
+    if updates or lifecycle_updates:
         for field, value in updates.items(): task.set(field, value)
+        task_lifecycle.apply(task, lifecycle_updates)
         with managed_target_update('Task', task.name, link.name): task.save()
         for field, value in updates.items():
             source_base[field] = field_hashes({field: value})[field]
             target_base[field] = field_hashes({field: task.get(field)})[field]
+        applied = task_lifecycle.target_values(task)
+        for field, value in lifecycle_updates.items():
+            source_base[field] = field_hashes({field: value})[field]
+            target_base[field] = field_hashes({field: applied[field]})[field]
+        if task_lifecycle.ASSIGNEE in lifecycle_updates:
+            note = task_lifecycle.sync_assignment(task, current[task_lifecycle.ASSIGNEE])
     link.source_field_hashes = encode_hashes(source_base)
     link.target_field_hashes = encode_hashes(target_base)
     link.mapping_version = version
@@ -1306,8 +1333,55 @@ def _migrate_native_task(record, run, plan, scope) -> Result:
         link.sync_status = 'Synchronized'
         link.conflict_detail = ''
     link.save()
-    return Result('CONFLICT' if conflicts or pending or link.sync_status == 'Conflict' else ('UPDATED' if updates else 'SKIPPED'),
-                  link.conflict_detail or 'Native Task field comparison completed.', 'Task', task.name)
+    return Result('CONFLICT' if conflicts or pending or link.sync_status == 'Conflict'
+                  else ('UPDATED' if updates or lifecycle_updates else 'SKIPPED'),
+                  link.conflict_detail or note or 'Native Task field comparison completed.', 'Task', task.name)
+
+
+_TASK_USER_DIRECTORY: dict = {}
+
+
+def _load_task_user_directory(source, operation) -> None:
+    """Remember the run's source; the HERO user list is read once, on first need."""
+    _TASK_USER_DIRECTORY.clear()
+    if operation == 'HeroTasks':
+        _TASK_USER_DIRECTORY['source'] = source
+
+
+def _task_user_emails() -> dict | None:
+    """HERO user id → e-mail for this run; None when HERO cannot provide it."""
+    if 'emails' not in _TASK_USER_DIRECTORY:
+        reader = getattr(_TASK_USER_DIRECTORY.get('source'), 'user_emails', None)
+        emails = None
+        if callable(reader):
+            try:
+                emails = reader()
+            except Exception:
+                frappe.log_error(title='HERO user directory unavailable', message=frappe.get_traceback())
+        _TASK_USER_DIRECTORY['emails'] = emails
+    return _TASK_USER_DIRECTORY['emails']
+
+
+def _task_lifecycle_source(record) -> dict:
+    from datetime import date
+    try:
+        from frappe.utils import getdate
+        today = getdate()
+    except Exception:  # offline runner without System Settings
+        today = date.today()
+    # Never guess an assignee without the Task field or without the HERO user list.
+    emails = _task_user_emails() if 'target_user_id' in record and _task_has_assignee_field() else None
+    values = task_lifecycle.source_values(record, _external_task_deadline, emails or {}, today)
+    if emails is None:
+        values.pop(task_lifecycle.ASSIGNEE, None)
+    return values
+
+
+def _task_has_assignee_field() -> bool:
+    try:
+        return bool(frappe.get_meta('Task').has_field(task_lifecycle.ASSIGNEE))
+    except Exception:
+        return False
 
 
 def _task_value_present(value) -> bool:

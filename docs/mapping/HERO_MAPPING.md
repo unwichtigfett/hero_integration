@@ -125,9 +125,19 @@ aber es gibt keine aktive Regel, und der globale Schalter ist aus.
 | `comment` | `description`. Leer → keine Prüfung. | aktiv / entschieden |
 | `target_project_match_id` | `project`. 0 = kein Projekt, gelöschtes HERO-Projekt → übersprungen, `KONT-` → ohne Projekt. | aktiv / entschieden |
 | `due_date` | `custom_hero_due_date` (geschützt) | aktiv |
-| `target_user_id`, `author_user_id` | — | **offen**: Zuordnung HERO-Benutzer → ERPNext-Benutzer/Mitarbeiter |
-| `done_date`, `start`, `end` | — | **offen**: Bedeutung und Abschlussregel |
-| Ausgehend `update_task` | — | später |
+| `created` | `exp_start_date` (Startdatum). Liegt es nach dem Fälligkeitsdatum, gilt das Fälligkeitsdatum. | aktiv (2026-11-02) |
+| `due_date` | zusätzlich `exp_end_date` (Enddatum = „erledigen bis“) | aktiv (2026-11-02) |
+| `done_date` | erledigt → `status` Completed + `completed_on` (nie in der Zukunft); leer → wieder Open. ERPNext-„Overdue“ zählt nicht als Änderung. | aktiv (2026-11-02) |
+| `target_user_id` | `custom_hero_assignee` (E-Mail des HERO-Benutzers, nur lesbar). Gibt es einen aktiven ERPNext-Benutzer mit dieser E-Mail, bekommt er die Zuweisung (ToDo); ändert HERO den Zuständigen, wird die alte HERO-Zuweisung storniert. Ohne passenden Benutzer bleibt die Aufgabe unzugewiesen (kein Fehler). | aktiv (2026-11-02) |
+| `author_user_id` | — | nicht nötig: jeder darf jedem zuweisen |
+| `start`, `end` | — | ungenutzt (Start = Erstellung, Ende = Fälligkeit) |
+| Ausgehend (`update_task`) | Aufgaben, Zuweisung und Erledigt in beide Richtungen | **nächster Schritt** |
+
+HERO-Benutzer kommen aus `company.partners.user { id email }` (HERO hat keine
+Benutzerliste); die Liste wird pro Aufgabenlauf einmal gelesen. Ist sie nicht
+lesbar, bleibt der Zuständige unverändert. Für vorhandene Aufgaben ohne
+Vergleichsbasis übernimmt der erste Lauf die HERO-Werte, solange ERPNext noch
+leer bzw. offen ist; sonst Prüfung.
 
 ## 5. Termin (`HeroCalendarEvents` → Event)
 
