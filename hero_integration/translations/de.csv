@@ -2201,3 +2201,15 @@ The focus view could not be loaded: {0},Die Fokusansicht konnte nicht geladen we
 Technical contract {0} is {1}; it must be approved before this mapping can be activated.,"Der technische Vertrag {0} hat den Status {1}; er muss freigegeben werden, bevor dieses Mapping aktiviert werden kann."
 No schema-bound technical mutation contract has been prepared for this operation.,Für diese Operation wurde kein an das Schema gebundener technischer Mutation-Vertrag vorbereitet.
 Multiple technical mutation contracts exist for this operation; activation remains fail-closed.,Für diese Operation bestehen mehrere technische Mutation-Verträge; die Aktivierung bleibt gesperrt.
+Line {0},Zeile {0}
+{0}: the number is out of range.,{0}: Die Zahl liegt außerhalb des gültigen Bereichs.
+{0}: the integer is too large to keep exactly; write it as a string in double quotes.,"{0}: Die Ganzzahl ist zu groß, um exakt gespeichert zu werden; schreiben Sie sie als Zeichenkette in doppelten Anführungszeichen."
+Variables: the JSON object is invalid: {0},Variablen: Das JSON-Objekt ist ungültig: {0}
+Variables: JSON input must be an object.,Variablen: Die JSON-Eingabe muss ein Objekt sein.
+"Variables: ""{0}"" is not a valid GraphQL variable name.",Variablen: „{0}“ ist kein gültiger GraphQL-Variablenname.
+"{0}: expected ""name := value;"".",{0}: „name := value;“ wurde erwartet.
+"{0}: write the variable name without ""$"".",{0}: Schreiben Sie den Variablennamen ohne „$“.
+"{0}: ""{1}"" is not a valid GraphQL variable name.",{0}: „{1}“ ist kein gültiger GraphQL-Variablenname.
+"{0}: variable ""{1}"" is defined more than once.",{0}: Die Variable „{1}“ ist mehrfach definiert.
+"{0}: ""{1}"" has no value.",{0}: „{1}“ hat keinen Wert.
+"{0}: invalid value for ""{1}"". Strings need double quotes; numbers, true, false and null are written without quotes; arrays and objects use JSON.","{0}: Ungültiger Wert für „{1}“. Zeichenketten benötigen doppelte Anführungszeichen; Zahlen, true, false und null werden ohne Anführungszeichen geschrieben; Arrays und Objekte verwenden JSON."

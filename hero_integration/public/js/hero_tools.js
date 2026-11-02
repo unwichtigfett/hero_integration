@@ -174,8 +174,8 @@
     const GRAPHQL_NAME = /^[_A-Za-z][_0-9A-Za-z]*$/;
     function checkJsonNumbers(value, where) {
         if (typeof value === 'number') {
-            if (!Number.isFinite(value)) throw new Error(`${where}: the number is out of range.`);
-            if (Number.isInteger(value) && !Number.isSafeInteger(value)) throw new Error(`${where}: the integer is too large to keep exactly; write it as a string in double quotes.`);
+            if (!Number.isFinite(value)) throw new Error(format('{0}: the number is out of range.', where));
+            if (Number.isInteger(value) && !Number.isSafeInteger(value)) throw new Error(format('{0}: the integer is too large to keep exactly; write it as a string in double quotes.', where));
         } else if (Array.isArray(value)) value.forEach((item) => checkJsonNumbers(item, where));
         else if (value && typeof value === 'object') Object.values(value).forEach((item) => checkJsonNumbers(item, where));
     }
@@ -186,30 +186,30 @@
         if (trimmed.startsWith('{')) {
             // Compatibility: an existing JSON variables object is still accepted as input.
             let value;
-            try { value = JSON.parse(trimmed); } catch (error) { throw new Error('Variables: the JSON object is invalid: ' + error.message); }
-            if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Variables: JSON input must be an object.');
-            for (const name of Object.keys(value)) if (!GRAPHQL_NAME.test(name)) throw new Error(`Variables: "${name}" is not a valid GraphQL variable name.`);
-            checkJsonNumbers(value, 'Variables');
+            try { value = JSON.parse(trimmed); } catch (error) { throw new Error(format('Variables: the JSON object is invalid: {0}', error.message)); }
+            if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(tr('Variables: JSON input must be an object.'));
+            for (const name of Object.keys(value)) if (!GRAPHQL_NAME.test(name)) throw new Error(format('Variables: "{0}" is not a valid GraphQL variable name.', name));
+            checkJsonNumbers(value, tr('Variables'));
             return value;
         }
         const entries = [], seen = new Set(), problems = [];
         source.split(/\r?\n/).forEach((line, index) => {
             if (!line.trim()) return;
-            const where = `Line ${index + 1}`, at = line.indexOf(':=');
-            if (at < 0) { problems.push(`${where}: expected "name := value;".`); return; }
+            const where = format('Line {0}', index + 1), at = line.indexOf(':=');
+            if (at < 0) { problems.push(format('{0}: expected "name := value;".', where)); return; }
             const name = line.slice(0, at).trim();
             // One closing ";" ends the assignment. It is optional, so "id := 5" and "id := 5;" are equal.
             // A ";" inside a quoted string is part of the value, because such a line ends with the closing quote.
             let raw = line.slice(at + 2).trim();
             if (raw.endsWith(';')) raw = raw.slice(0, -1).trimEnd();
-            if (name.startsWith('$')) { problems.push(`${where}: write the variable name without "$".`); return; }
-            if (!GRAPHQL_NAME.test(name)) { problems.push(`${where}: "${name}" is not a valid GraphQL variable name.`); return; }
-            if (seen.has(name)) { problems.push(`${where}: variable "${name}" is defined more than once.`); return; }
+            if (name.startsWith('$')) { problems.push(format('{0}: write the variable name without "$".', where)); return; }
+            if (!GRAPHQL_NAME.test(name)) { problems.push(format('{0}: "{1}" is not a valid GraphQL variable name.', where, name)); return; }
+            if (seen.has(name)) { problems.push(format('{0}: variable "{1}" is defined more than once.', where, name)); return; }
             seen.add(name);
-            if (!raw) { problems.push(`${where}: "${name}" has no value.`); return; }
+            if (!raw) { problems.push(format('{0}: "{1}" has no value.', where, name)); return; }
             let value;
             try { value = JSON.parse(raw); } catch (error) {
-                problems.push(`${where}: invalid value for "${name}". Strings need double quotes; numbers, true, false and null are written without quotes; arrays and objects use JSON.`);
+                problems.push(format('{0}: invalid value for "{1}". Strings need double quotes; numbers, true, false and null are written without quotes; arrays and objects use JSON.', where, name));
                 return;
             }
             try { checkJsonNumbers(value, where); } catch (error) { problems.push(error.message); return; }

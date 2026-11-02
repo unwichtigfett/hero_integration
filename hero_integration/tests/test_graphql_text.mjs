@@ -186,3 +186,12 @@ test('colours: GraphQL editor rules classify keywords, types, variables and valu
     assert.ok(!/\((?!\?)/.test(groups), `Ace rules must not use capture groups: ${regex}`);
   }
 });
+
+test('variable validation uses the active language while keeping names and line numbers', () => {
+  const messages = {'Line {0}':'Zeile {0}', '{0}: variable "{1}" is defined more than once.':'{0}: Variable „{1}“ ist mehrfach definiert.',
+    '{0}: the integer is too large to keep exactly; write it as a string in double quotes.':'{0}: Ganzzahl ist zu groß.'};
+  window.hero_integration_i18n = {text: value => messages[value] || value};
+  assert.throws(() => parseVariablesText('id := 1\nid := 2'), /Zeile 2: Variable „id“ ist mehrfach definiert/);
+  assert.throws(() => parseVariablesText('big := 12345678901234567890'), /Zeile 1: Ganzzahl ist zu groß/);
+  delete window.hero_integration_i18n;
+});
