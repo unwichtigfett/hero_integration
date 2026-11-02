@@ -103,6 +103,10 @@ def before_install() -> None:
 
 def after_install() -> None:
     ensure_hero_source_fields()
+    from hero_integration.app_setup import apply_form_layout, ensure_app_records
+
+    ensure_app_records()
+    apply_form_layout()
     if _reference_apps_installed():
         from hero_integration.integrations.app_references import setup_reference_access
 
@@ -111,6 +115,9 @@ def after_install() -> None:
 
 def after_migrate() -> None:
     ensure_hero_source_fields()
+    from hero_integration.app_setup import ensure_app_records
+
+    ensure_app_records()
     if _reference_apps_installed():
         # Create-only; also covers Helpdesk/CRM installed after this app.
         from hero_integration.integrations.app_references import ensure_reference_fields

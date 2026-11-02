@@ -890,6 +890,38 @@
                 $('<p></p>').text(text('Export includes saved global field mappings for this snapshot fingerprint, including Active, Draft and Disabled mappings. Personal drafts are not included.')),
                 $('<p></p>').text(text('Select changes explicitly. Adoption may create schema and activates selected field mappings; it does not migrate HERO data.')),
                 fileInput, exportPackage, packageState, packagePreview);
+            // Complete configuration: field mappings, HERO fields/DocTypes and the read services of every area.
+            const configState = $('<p></p>'), configInput = $("<input type='file' accept='application/json,.json' aria-label='Configuration file'>");
+            const configExport = button('Export complete configuration', async () => {
+                const name = snapshot.val(); if (!name || snapshot.prop('disabled')) return configState.text(text('Choose a validated snapshot.'));
+                configState.text(text('Exporting complete configuration…'));
+                try {
+                    const result = await rpc('config_export', {snapshot_name: name});
+                    downloadExport(result.filename, result.content);
+                    configState.text(text('Configuration exported: field mappings, HERO fields and DocTypes, and the read services. No credentials or data.'));
+                } catch (error) { configState.text(errorText(error)); }
+            });
+            configInput.on('change', async () => {
+                const file = configInput[0].files?.[0], name = snapshot.val(); configInput.val('');
+                if (!file || !name || snapshot.prop('disabled')) return configState.text(text('Choose a validated snapshot and a configuration file.'));
+                try {
+                    const payload = await file.text();
+                    const preview = await rpc('config_import_preview', {snapshot_name: name, payload_json: payload}, true);
+                    const services = preview.read_services.map((row) => `${row.target_operation}: ${row.state}`).join(', ');
+                    const counts = Object.entries(preview.mapping_package).map(([state, count]) => `${state} ${count}`).join(', ');
+                    configState.text(`${text('Mapping package')}: ${counts}. ${text('Read services')}: ${services}.`);
+                    frappe.confirm(text('Import this configuration? Selected fields and mappings are adopted and changed read services are approved. No HERO data is read.'), async () => {
+                        try {
+                            const result = await rpc('config_import', {snapshot_name: name, payload_json: payload, confirmed: 1}, true);
+                            configState.text(`${text('Imported')}: ${result.adopted} ${text('mapping package entries')}; ` +
+                                result.read_services.map((row) => `${row.target_operation}: ${row.state}`).join(', '));
+                        } catch (error) { configState.text(errorText(error)); }
+                    });
+                } catch (error) { configState.text(errorText(error)); }
+            });
+            section.append($('<h4></h4>').text(text('Complete configuration')),
+                $('<p></p>').text(text('Moves the whole HERO setup to another site: field mappings with their HERO fields and DocTypes, and the approved read service of every area. Credentials and data are never included.')),
+                configExport, configInput, configState);
             explorer.append(button('Retry saved schema', () => { packageRequest++; packagePreview.empty(); loadSnapshots(snapshot.val(), operations.val()); }));
             section.append(button('Open Graph Viewer', () => {
                 const name = snapshot.val(); if (!name || snapshot.prop('disabled')) return info.text(text('Choose a validated snapshot.'));
