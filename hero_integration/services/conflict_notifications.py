@@ -2,8 +2,25 @@
 
 from __future__ import annotations
 
-import frappe
+import re
 from html import escape
+
+import frappe
+
+from hero_integration.services.localized_error import LocalizedError
+
+
+_DIAGNOSTIC_PATTERNS = (
+    (re.compile(r"Field conflict requires review: (.+)\."), "Field conflict requires review: {0}."),
+    (re.compile(r"Task fields require review: (.+)"), "Task fields require review: {0}"),
+    (re.compile(r"Another HERO run is active: (.+)\."), "Another HERO run is active: {0}."),
+    (re.compile(r"Generated Project\.project_name exceeds its (\d+)-character field limit\."),
+     "Generated Project.project_name exceeds its {0}-character field limit."),
+    (re.compile(r"Project trade (.+) has no confirmed HERO-to-ERPNext title mapping\."),
+     "Project trade {0} has no confirmed HERO-to-ERPNext title mapping."),
+    (re.compile(r"(ProjectMatch\.[\w.]+) is required for the ERPNext project title\."),
+     "{0} is required for the ERPNext project title."),
+)
 
 
 def recipient_text(user: str, message: str) -> str:
@@ -11,6 +28,24 @@ def recipient_text(user: str, message: str) -> str:
     from frappe.translate import get_user_lang
 
     return frappe._(message, lang=get_user_lang(user))
+
+
+def recipient_diagnostic(user: str, message: str) -> str:
+    """Translate known diagnostic templates while preserving field names and IDs."""
+    translated = recipient_text(user, message)
+    if translated != message:
+        return translated
+    for prefix, template in (
+        ("Recheck requested: ", "Recheck requested: {0}"),
+        ("Awaits administrator approval: ", "Awaits administrator approval: {0}"),
+    ):
+        if message.startswith(prefix):
+            nested = recipient_diagnostic(user, message[len(prefix):])
+            return LocalizedError(template, nested).translated(lambda value: recipient_text(user, value))
+    for pattern, template in _DIAGNOSTIC_PATTERNS:
+        if match := pattern.fullmatch(message):
+            return LocalizedError(template, *match.groups()).translated(lambda value: recipient_text(user, value))
+    return message
 
 
 def configured_recipients(settings=None) -> list[str]:
@@ -45,7 +80,7 @@ def notify_conflict_once(link, fields: set[str], detail: str) -> bool:
             "doctype": "Notification Log", "for_user": user, "type": "Alert",
             "document_type": "HERO Integration Link", "document_name": link.name,
             "subject": recipient_text(user, "Field conflict: {0}").format(field_list),
-            "email_content": recipient_text(user, detail),
+            "email_content": recipient_diagnostic(user, detail),
         }).insert(ignore_permissions=True)
     return True
 
@@ -61,7 +96,7 @@ def _notify(subject: str, detail, document_type: str, document_name: str, *, sub
             "doctype": "Notification Log", "for_user": user, "type": "Alert",
             "document_type": document_type, "document_name": document_name,
             "subject": recipient_text(user, subject).format(*subject_args),
-            "email_content": detail(user) if callable(detail) else recipient_text(user, detail),
+            "email_content": detail(user) if callable(detail) else recipient_diagnostic(user, detail),
         }).insert(ignore_permissions=True)
     return bool(recipients)
 
@@ -86,7 +121,7 @@ def notify_run_summary(run_name: str) -> bool:
     def detail(user):
         return "<br>".join(
             " | ".join(escape(str(value or "")) for value in (
-                row.name, row.source_type, row.source_id, row.result, recipient_text(user, row.detail or ""),
+                row.name, row.source_type, row.source_id, row.result, recipient_diagnostic(user, row.detail or ""),
             ))
             for row in rows
         )

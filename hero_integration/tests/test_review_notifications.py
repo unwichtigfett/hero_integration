@@ -117,6 +117,19 @@ class TestReviewNotifications(unittest.TestCase):
         self.assertEqual(notice["email_content"], "new evidence")
         self.assertEqual((notice["document_type"], notice["document_name"]), ("HERO Integration Link", "LINK-1"))
 
+    def test_conflict_notice_translates_dynamic_detail_for_each_recipient(self):
+        link = SimpleNamespace(name="LINK-1", conflict_detail="")
+        translations = {"Field conflict: {0}": "Feldkonflikt: {0}",
+                        "Field conflict requires review: {0}.": "Feldkonflikt erfordert Prüfung: {0}."}
+        with patch.object(notices, "configured_recipients", return_value=["de@example.invalid", "en@example.invalid"]), \
+             patch.object(notices, "recipient_text", side_effect=lambda user, text: translations.get(text, text) if user.startswith("de@") else text):
+            notices.notify_conflict_once(link, {"customer_name"}, "Field conflict requires review: customer_name.")
+        de, en = self.sent
+        self.assertEqual((de["subject"], de["email_content"]),
+                         ("Feldkonflikt: customer_name", "Feldkonflikt erfordert Prüfung: customer_name."))
+        self.assertEqual((en["subject"], en["email_content"]),
+                         ("Field conflict: customer_name", "Field conflict requires review: customer_name."))
+
 
 if __name__ == "__main__":
     unittest.main()
