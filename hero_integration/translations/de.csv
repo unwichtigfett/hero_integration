@@ -1743,6 +1743,7 @@ The complete relationship set could not be verified.,Die vollständige Menge der
 The configuration file is not valid JSON.,Die Konfigurationsdatei enthält kein gültiges JSON.
 The configured Frappe writeback field no longer exists.,Das konfigurierte Frappe-Writeback-Feld existiert nicht mehr.
 The configured HERO customer relation requires a positive integer identity.,Die konfigurierte HERO-Kundenbeziehung erfordert eine positive ganzzahlige Identität.
+The current HERO connection could not be verified.,Die aktuelle HERO-Verbindung konnte nicht verifiziert werden.
 The current token is never returned to the browser. An empty field keeps it unchanged.,Das aktuelle Token wird niemals an den Browser zurückgegeben. Ein leeres Feld behält es unverändert bei.
 The current user cannot read the ERPNext Default Company.,Der aktuelle Benutzer kann das ERPNext-Standardunternehmen nicht lesen.
 The current warnings are unavailable. Reload the saved draft before activation.,Die aktuellen Warnungen sind nicht verfügbar. Laden Sie den gespeicherten Entwurf vor der Aktivierung erneut.

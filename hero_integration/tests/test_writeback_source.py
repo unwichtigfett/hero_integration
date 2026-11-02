@@ -2,7 +2,7 @@
 from dataclasses import FrozenInstanceError, replace
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 from hero_integration.client.graphql import HeroEndpoint
 from hero_integration.client.settings import HeroConfiguration, HeroConfigurationError, require_confirmed_source_binding
@@ -78,7 +78,7 @@ class TestWritebackSource(unittest.TestCase):
         with patch('hero_integration.client.settings.get_configuration', return_value=self.config) as load:
             context = capture_source(self.snapshot, 'source-a')
             self.assertIs(validate_source(context), self.config)
-        self.assertEqual(load.call_count, 2)
+        self.assertEqual(load.call_args_list, [call(fresh=True), call(fresh=True)])
 
     def test_shared_confirmation_rule_preserves_legacy_zero_and_rejects_unconfirmed_revision(self):
         require_confirmed_source_binding(0, 0)
