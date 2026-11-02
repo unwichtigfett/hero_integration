@@ -2438,3 +2438,4 @@ HERO response exceeds the configured page size.,Die HERO-Antwort überschreitet 
 HERO pagination did not advance; monitoring stopped safely.,Die HERO-Seitennavigation ist nicht fortgeschritten; das Monitoring wurde sicher angehalten.
 HERO source identity is missing or invalid; monitoring stopped safely.,Die HERO-Quellidentität fehlt oder ist ungültig; das Monitoring wurde sicher angehalten.
 HERO source identity repeated across pages; monitoring stopped safely.,Eine HERO-Quellidentität wurde auf mehreren Seiten wiederholt; das Monitoring wurde sicher angehalten.
+Translation: {0},Übersetzung: {0}
