@@ -57,6 +57,24 @@ def recipient_diagnostic(user: str, message: str) -> str:
     translated = recipient_text(user, message)
     if translated != message:
         return translated
+    name_conflict = re.fullmatch(
+        r"(.+?) (.+?) already exists without this HERO record's link\. The HERO number is not reassigned, "
+        r"suffixed or merged; check whether \2 is the same (.+?) and link or rename it\.", message)
+    if name_conflict:
+        doctype, name, kind = name_conflict.groups()
+        return recipient_format(
+            user, "{0} {1} already exists without this HERO record's link. The HERO number is not reassigned, "
+            "suffixed or merged; check whether {1} is the same {2} and link or rename it.",
+            recipient_text(user, doctype), name, recipient_text(user, kind))
+    number_drift = re.fullmatch(
+        r"HERO (customer number|project display_id) changed from (.*?) to (.*?)\. (Customer|Project) (.*?) "
+        r"keeps its name and number until reviewed; set (.*?) to \3 to accept the new number\.", message)
+    if number_drift:
+        label, old, new, doctype, name, field = number_drift.groups()
+        return recipient_format(
+            user, "HERO {0} changed from {1} to {2}. {3} {4} keeps its name and number until reviewed; "
+            "set {5} to {2} to accept the new number.",
+            recipient_text(user, label), old, new, recipient_text(user, doctype), name, field)
     for reason in _CUSTOMER_REVIEW_REASONS:
         if message.startswith(reason + " The project address is missing or incomplete ("):
             return recipient_text(user, reason) + " " + recipient_diagnostic(user, message[len(reason) + 1:])
