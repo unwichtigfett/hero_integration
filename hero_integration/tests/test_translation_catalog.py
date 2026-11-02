@@ -128,6 +128,23 @@ class TestGermanCatalog(unittest.TestCase):
                     missing.append(f"{path.relative_to(APP)}:{node.lineno}: {node.exc.args[0].value}")
         self.assertEqual(missing, [])
 
+    def test_doctype_labels_descriptions_and_select_options_have_german_entries(self):
+        import json
+
+        with (APP / "translations" / "de.csv").open(encoding="utf-8", newline="") as stream:
+            messages = dict(csv.reader(stream))
+        missing = []
+        for path in (APP / "hero_integration" / "doctype").glob("*/*.json"):
+            doctype = json.loads(path.read_text(encoding="utf-8"))
+            for field in doctype.get("fields", []):
+                texts = [field.get("label", ""), field.get("description", "")]
+                if field.get("fieldtype") == "Select":
+                    texts.extend((field.get("options") or "").split("\n"))
+                for text in texts:
+                    if text and text.strip() and text not in messages:
+                        missing.append(f"{doctype['name']}.{field.get('fieldname')}: {text}")
+        self.assertEqual(missing, [])
+
     def test_static_migration_results_have_german_entries(self):
         with (APP / "translations" / "de.csv").open(encoding="utf-8", newline="") as stream:
             messages = dict(csv.reader(stream))

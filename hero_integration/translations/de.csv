@@ -2151,3 +2151,39 @@ Existing legacy link requires a reviewed field-level baseline.,Der vorhandene ä
 Target changed outside HERO Integration; legacy link has no field baseline.,Das Ziel wurde außerhalb der HERO Integration geändert; dem älteren Link fehlt eine Feldbasis.
 HERO source changed; legacy link has no field baseline.,Die HERO-Quelle wurde geändert; dem älteren Link fehlt eine Feldbasis.
 Existing target would receive non-conflicting HERO field changes.,Das bestehende Ziel würde konfliktfreie HERO-Feldänderungen erhalten.
+QUERY,Query
+MUTATION,Mutation
+QUERY_TO_FRAPPE,Query zu Frappe
+FRAPPE_TO_MUTATION,Frappe zu Mutation
+Draft,Entwurf
+Rejected,Abgelehnt
+Content Hash,Inhalts-Hash
+Result,Ergebnis
+Event Type,Ereignistyp
+MONITOR,MONITOR
+AUTO_SYNC,AUTO_SYNC
+Succeeded,Erfolgreich
+DRAFT,ENTWURF
+Kind,Art
+Pending Approval,Freigabe ausstehend
+User,Benutzer
+Site,Site
+Policy,Richtlinie
+Task,Task
+Ownership,Zuständigkeit
+Pending Review,Prüfung ausstehend
+Preview,Vorschau
+Execute,Ausführen
+Run State,Laufstatus
+Error Message,Fehlermeldung
+Customer Service,Kundenservice
+OK,OK
+OFF,AUS
+OFFSET,OFFSET
+Sync Contacts,Kontakte synchronisieren
+HeroCustomers,HeroCustomers
+HeroProjectMatches,HeroProjectMatches
+HeroCalendarEvents,HeroCalendarEvents
+HeroTasks,HeroTasks
+Customer Type,Kundentyp
+Customer Primary Contact,Hauptkontakt des Kunden
