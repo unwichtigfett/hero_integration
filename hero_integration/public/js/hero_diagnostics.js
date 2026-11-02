@@ -13,6 +13,14 @@
         const text = recheck ? String(value).slice(prefix.length) : String(value);
         const exact = tr(text);
         if (exact !== text) return recheck ? format("Recheck requested: {0}", exact) : exact;
+        const suggestion = text.match(/^Type-compatible name and label match\.(?: Relation: (.+?)\.)?(?: (Select values require validation before activation\.))?(?: (Required target field; target creation needs an app-owned contract\.))?(?: (Draft only for this non-canonical app target\.))?$/);
+        if (suggestion) {
+            const parts = [tr("Type-compatible name and label match.")];
+            if (suggestion[1]) parts.push(format("Relation: {0}.", suggestion[1]));
+            parts.push(...suggestion.slice(2).filter(Boolean).map(tr));
+            const translated = parts.join(" ");
+            return recheck ? format("Recheck requested: {0}", translated) : translated;
+        }
         const customerReviewReasons = [
             "The HERO customer has no unambiguous ERPNext link; the Project has no customer.",
             "The HERO customer is deleted in HERO; the Project has no customer.",

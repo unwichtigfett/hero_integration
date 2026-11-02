@@ -86,6 +86,7 @@ class TestFrappeTranslationBridge(unittest.TestCase):
         self.assertEqual((global_language, user_language), ('de', 'en'))
         languages = [global_language, user_language, 'de-DE']
         from hero_integration.services.business_numbers import BusinessNumberError, business_number
+        from hero_integration.services.mapping_suggestions import PickerField, _suggestion_reason
         from hero_integration.services.project_naming import ProjectTitleValidationError, project_trade
 
         try:
@@ -100,6 +101,9 @@ class TestFrappeTranslationBridge(unittest.TestCase):
             trade_error = str(error)
         else:
             self.fail('Unknown project trade was unexpectedly accepted')
+        source = PickerField('source', 'Source', 'Data', True, '', True, '')
+        target = PickerField('target', 'Target', 'Data', True, 'Customer', True, '',
+                             required=True, select_options=('A',), activation_allowed=False)
         boot_catalogs = {}
         for language in languages:
             catalog = get_translations_from_apps(language, apps=['hero_integration'])
@@ -117,6 +121,7 @@ class TestFrappeTranslationBridge(unittest.TestCase):
             'catalogs': boot_catalogs,
             'numberError': number_error,
             'tradeError': trade_error,
+            'suggestionReason': _suggestion_reason(source, target),
             'frappeTranslate': str(Path(frappe.__file__).parent / 'public' / 'js' / 'frappe' / 'translate.js'),
             'frappeFormScripts': str(Path(frappe.__file__).parent / 'public' / 'js' / 'frappe' / 'form' / 'script_manager.js'),
             'frappeFormat': str(Path(frappe.__file__).parent / 'public' / 'js' / 'frappe' / 'format.js'),
