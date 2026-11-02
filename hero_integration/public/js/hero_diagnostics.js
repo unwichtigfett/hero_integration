@@ -13,6 +13,11 @@
         const text = recheck ? String(value).slice(prefix.length) : String(value);
         const exact = tr(text);
         if (exact !== text) return recheck ? format("Recheck requested: {0}", exact) : exact;
+        const addressReview = text.match(/^The project address is missing or incomplete \((.*)\); the title omits it\.$/);
+        if (addressReview) {
+            const translated = format("The project address is missing or incomplete ({0}); the title omits it.", diagnostic(addressReview[1]));
+            return recheck ? format("Recheck requested: {0}", translated) : translated;
+        }
         const preserved = text.match(/^(.*) Local changes were preserved: (.+)\.$/);
         if (preserved) {
             const translated = format('{0} Local changes were preserved: {1}.', tr(preserved[1]), preserved[2]);
@@ -37,6 +42,11 @@
             return recheck ? format("Recheck requested: {0}", translated) : translated;
         }
         const templates = [
+            [/^Generated Project\.project_name exceeds its (\d+)-character field limit\.$/, "Generated Project.project_name exceeds its {0}-character field limit."],
+            [/^Project trade (.+) has no confirmed HERO-to-ERPNext title mapping\.$/, "Project trade {0} has no confirmed HERO-to-ERPNext title mapping."],
+            [/^(ProjectMatch\.[\w.]+) is not a complete formatted project address\.$/, "{0} is not a complete formatted project address."],
+            [/^(ProjectMatch\.[\w.]+) is required and must be an object\.$/, "{0} is required and must be an object."],
+            [/^(ProjectMatch\.[\w.]+) is required for the ERPNext project title\.$/, "{0} is required for the ERPNext project title."],
             [/^HERO response omits the source of: (.+)\.$/, "HERO response omits the source of: {0}."],
             [/^HERO cleared values that the no-clear policy does not write: (.+)\.$/, "HERO cleared values that the no-clear policy does not write: {0}."],
             [/^Existing (.+) has no stable HERO link\.$/, "Existing {0} has no stable HERO link.", [0]],

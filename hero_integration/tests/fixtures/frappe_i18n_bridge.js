@@ -37,4 +37,11 @@ for (const language of input.languages) {
     assert.equal(migration.diagnostic(collision), expectedCollision);
     const unlinked = 'Existing Customer has no stable HERO link.';
     assert.equal(migration.diagnostic(unlinked), language === 'en' ? unlinked : 'Für das vorhandene Objekt Kunde gibt es keinen stabilen HERO-Link.');
+    const longTitle = 'Generated Project.project_name exceeds its 140-character field limit.';
+    assert.equal(migration.diagnostic(longTitle), language === 'en' ? longTitle : 'Der erzeugte Project.project_name überschreitet die Feldgrenze von 140 Zeichen.');
+    const address = 'The project address is missing or incomplete (ProjectMatch.address.city is required for the ERPNext project title.); the title omits it.';
+    const expectedAddress = language === 'en' ? address : 'Die Projektadresse fehlt oder ist unvollständig (ProjectMatch.address.city ist für den ERPNext-Projekttitel erforderlich.); sie wird im Titel ausgelassen.';
+    assert.equal(migration.diagnostic(address), expectedAddress);
+    const trade = "Project trade 'NEW' has no confirmed HERO-to-ERPNext title mapping.";
+    assert.equal(migration.diagnostic(trade), language === 'en' ? trade : "Für das Projektgewerk 'NEW' gibt es kein bestätigtes HERO-zu-ERPNext-Titel-Mapping.");
 }
