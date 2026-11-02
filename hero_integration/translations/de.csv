@@ -2198,3 +2198,6 @@ Arguments: {0},Argumente: {0}
 not permitted,nicht erlaubt
 The graph did not load completely: {0} Choose “Full Schema” or “Filtered View” to try again.,"Der Graph wurde nicht vollständig geladen: {0} Wählen Sie „Vollständiges Schema“ oder „Gefilterte Ansicht“, um es erneut zu versuchen."
 The focus view could not be loaded: {0},Die Fokusansicht konnte nicht geladen werden: {0}
+Technical contract {0} is {1}; it must be approved before this mapping can be activated.,"Der technische Vertrag {0} hat den Status {1}; er muss freigegeben werden, bevor dieses Mapping aktiviert werden kann."
+No schema-bound technical mutation contract has been prepared for this operation.,Für diese Operation wurde kein an das Schema gebundener technischer Mutation-Vertrag vorbereitet.
+Multiple technical mutation contracts exist for this operation; activation remains fail-closed.,Für diese Operation bestehen mehrere technische Mutation-Verträge; die Aktivierung bleibt gesperrt.

@@ -53,7 +53,7 @@ class TestFrappeMappingCatalog(unittest.TestCase):
                     raise PermissionError('denied candidate must not be enumerated')
                 return [_field(f'field_{index:03}', f'Field {index}', 'Data') for index in range(60)]
 
-        actor = SimpleNamespace(only_for=lambda role: None, get_all=lambda *args, **kwargs: [])
+        actor = SimpleNamespace(only_for=lambda role: None, get_all=lambda *args, **kwargs: [], _=lambda text: text)
         snapshot = SimpleNamespace(name='synthetic')
         def call(metadata):
             with patch.object(api, 'frappe', actor), patch.object(api, '_FrappePickerMetadata', return_value=metadata), patch.object(api, '_validated_snapshot', return_value=(snapshot, {})):
@@ -81,6 +81,25 @@ class TestFrappeMappingCatalog(unittest.TestCase):
                 raise RuntimeError('unexpected metadata failure')
         with self.assertRaisesRegex(RuntimeError, 'unexpected metadata failure'):
             call(Broken())
+
+    def test_contract_blockers_follow_user_language_without_changing_gate(self):
+        from hero_integration import api
+        from hero_integration.services.frappe_writeback import DEFINITIONS
+
+        operation = next(iter(DEFINITIONS.values())).operation
+        contract = SimpleNamespace(name="CONTRACT-001", operation_name=operation, status="Draft")
+        source = "Technical contract {0} is {1}; it must be approved before this mapping can be activated."
+        translated = "Technischer Vertrag {0}: Status {1}. Mapping benötigt eine Freigabe."
+        messages = {source: translated, "Draft": "Entwurf"}
+        actor = SimpleNamespace(only_for=lambda role: None, get_all=lambda *args, **kwargs: [contract],
+                                _=lambda text: messages.get(text, text))
+        with patch.object(api, 'frappe', actor), patch.object(api, '_FrappePickerMetadata', return_value=self.metadata), \
+             patch.object(api, '_validated_snapshot', return_value=(SimpleNamespace(name='synthetic'), {})):
+            result = api.writeback_mapper_catalog('synthetic')
+        state = next(item for item in result['contracts'] if item['operation'] == operation)
+        self.assertFalse(state['activation_ready'])
+        self.assertEqual(state['blocker'], translated.format('CONTRACT-001', 'Entwurf'))
+        self.assertIs(state['contracts'][0], contract)
 
     def test_installed_apps_and_doctypes_are_runtime_metadata_not_an_erpnext_list(self):
         result = catalog(self.metadata)

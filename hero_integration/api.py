@@ -3019,11 +3019,13 @@ def writeback_mapper_catalog(
         if len(rows) == 1 and len(active) == 1:
             state = {"activation_ready": True, "blocker": ""}
         elif len(rows) == 1:
-            state = {"activation_ready": False, "blocker": f"Technical contract {rows[0].name} is {rows[0].status}; it must be approved before this mapping can be activated."}
+            state = {"activation_ready": False, "blocker": frappe._(
+                "Technical contract {0} is {1}; it must be approved before this mapping can be activated."
+            ).format(rows[0].name, frappe._(rows[0].status))}
         elif not rows:
-            state = {"activation_ready": False, "blocker": "No schema-bound technical mutation contract has been prepared for this operation."}
+            state = {"activation_ready": False, "blocker": frappe._("No schema-bound technical mutation contract has been prepared for this operation.")}
         else:
-            state = {"activation_ready": False, "blocker": "Multiple technical mutation contracts exist for this operation; activation remains fail-closed."}
+            state = {"activation_ready": False, "blocker": frappe._("Multiple technical mutation contracts exist for this operation; activation remains fail-closed.")}
         contracts.append({"operation": operation, "contracts": rows, **state})
     return {"apps": apps, "doctypes": doctypes, "fields": source_fields, "contracts": contracts}
 
