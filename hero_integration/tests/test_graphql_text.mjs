@@ -195,3 +195,17 @@ test('variable validation uses the active language while keeping names and line 
   assert.throws(() => parseVariablesText('big := 12345678901234567890'), /Zeile 1: Ganzzahl ist zu groß/);
   delete window.hero_integration_i18n;
 });
+
+test('graph coverage and label notices follow the active language', () => {
+  const messages = {'{0} types · {1} nodes · {2} relations':'{0} Typen · {1} Knoten · {2} Beziehungen',
+    'Overview without node text; use selection and Inspector for names and details.':'Übersicht ohne Knotentext.',
+    'Reduced edge labels: {0} of {1} visible relationships are labeled. All relationships remain available in node focus and Inspector.':'{0} von {1} Beziehungen beschriftet.',
+    'graph analysis unavailable':'Graphanalyse nicht verfügbar'};
+  window.hero_integration_i18n = {text: value => messages[value] || value};
+  const {graphLabelsNotice, snapshotCoverageLabel} = window.hero_workspace_tools.graphqlText;
+  assert.equal(snapshotCoverageLabel({types:2, nodes:3, edges:4}), '2 Typen · 3 Knoten · 4 Beziehungen');
+  assert.equal(snapshotCoverageLabel({}), 'Graphanalyse nicht verfügbar');
+  assert.equal(graphLabelsNotice(true, 2, 5), 'Übersicht ohne Knotentext. 2 von 5 Beziehungen beschriftet.');
+  delete window.hero_integration_i18n;
+  assert.equal(graphLabelsNotice(false, 2, 2), 'All visible relationships are labeled.');
+});

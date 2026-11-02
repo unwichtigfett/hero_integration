@@ -2213,3 +2213,8 @@ Variables: JSON input must be an object.,Variablen: Die JSON-Eingabe muss ein Ob
 "{0}: variable ""{1}"" is defined more than once.",{0}: Die Variable „{1}“ ist mehrfach definiert.
 "{0}: ""{1}"" has no value.",{0}: „{1}“ hat keinen Wert.
 "{0}: invalid value for ""{1}"". Strings need double quotes; numbers, true, false and null are written without quotes; arrays and objects use JSON.","{0}: Ungültiger Wert für „{1}“. Zeichenketten benötigen doppelte Anführungszeichen; Zahlen, true, false und null werden ohne Anführungszeichen geschrieben; Arrays und Objekte verwenden JSON."
+{0} types · {1} nodes · {2} relations,{0} Typen · {1} Knoten · {2} Beziehungen
+graph analysis unavailable,Graphanalyse nicht verfügbar
+date unavailable,Datum nicht verfügbar
+Overview without node text; use selection and Inspector for names and details.,Übersicht ohne Knotentext; Namen und Details sind über die Auswahl und den Inspector verfügbar.
+Reduced edge labels: {0} of {1} visible relationships are labeled. All relationships remain available in node focus and Inspector.,Reduzierte Kantenbeschriftung: {0} von {1} sichtbaren Beziehungen sind beschriftet. Alle Beziehungen bleiben im Knotenfokus und im Inspector verfügbar.
