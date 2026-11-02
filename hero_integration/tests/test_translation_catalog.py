@@ -215,6 +215,32 @@ class TestGermanCatalog(unittest.TestCase):
                 missing.append(f"{node.lineno}: {node.args[1].value}")
         self.assertEqual(missing, [])
 
+    def test_stored_static_diagnostics_have_german_entries(self):
+        # These values are displayed in native diagnostic fields as well as
+        # the workspace; identifiers and arbitrary external values are excluded.
+        with (APP / "translations" / "de.csv").open(encoding="utf-8", newline="") as stream:
+            messages = dict(csv.reader(stream))
+        fields = {"sync_error", "schema_check_message", "error_message", "analysis_detail",
+                  "suggestion_reason", "conflict_detail"}
+        missing = []
+        for path in APP.rglob("*.py"):
+            if "tests" in path.relative_to(APP).parts:
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                values = []
+                if isinstance(node, ast.Assign) and any(isinstance(target, ast.Attribute) and target.attr in fields
+                                                        for target in node.targets):
+                    values.append(node.value)
+                elif isinstance(node, ast.Dict):
+                    values.extend(value for key, value in zip(node.keys, node.values)
+                                  if isinstance(key, ast.Constant) and key.value in fields)
+                for value in values:
+                    if (isinstance(value, ast.Constant) and isinstance(value.value, str) and value.value
+                        and value.value not in messages):
+                        missing.append(f"{path.relative_to(APP)}:{node.lineno}: {value.value}")
+        self.assertEqual(missing, [])
+
     def test_doctype_labels_descriptions_and_select_options_have_german_entries(self):
         import json
 
