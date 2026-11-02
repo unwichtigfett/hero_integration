@@ -31,6 +31,25 @@ class TestReviewNotifications(unittest.TestCase):
         recipients = patch.object(notices, "configured_recipients", return_value=["admin@example.invalid"])
         recipients.start()
         self.addCleanup(recipients.stop)
+        translation = patch.object(notices, "recipient_text", side_effect=lambda _user, text: text)
+        translation.start()
+        self.addCleanup(translation.stop)
+
+    def test_each_recipient_gets_their_own_language_and_details_remain_escaped(self):
+        self.records = [SimpleNamespace(name="REC-1", source_type="project", source_id="41",
+                                        result="CONFLICT", detail="Known <problem>")]
+        german = {
+            "HERO run {0}: {1} records were not imported": "HERO-Lauf {0}: {1} Datensätze wurden nicht importiert",
+            "Known <problem>": "Bekannt <Problem>",
+        }
+        with patch.object(notices, "configured_recipients", return_value=["de@example.invalid", "en@example.invalid"]), \
+             patch.object(notices, "recipient_text", side_effect=lambda user, text: german.get(text, text) if user.startswith("de@") else text):
+            self.assertTrue(notices.notify_run_summary("RUN-1"))
+        de, en = self.sent
+        self.assertEqual(de["subject"], "HERO-Lauf RUN-1: 1 Datensätze wurden nicht importiert")
+        self.assertTrue(de["email_content"].endswith("Bekannt &lt;Problem&gt;"))
+        self.assertEqual(en["subject"], "HERO run RUN-1: 1 records were not imported")
+        self.assertTrue(en["email_content"].endswith("Known &lt;problem&gt;"))
 
     def test_held_record_asks_for_approval_or_rejection(self):
         link = SimpleNamespace(name="LINK-1", target_doctype="Project", target_name="PV-1")
