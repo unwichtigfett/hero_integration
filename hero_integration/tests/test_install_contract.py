@@ -149,7 +149,9 @@ class _InstallEnvironment:
         return module
 
     def call(self, function):
-        with mock.patch.dict(sys.modules, self.modules):
+        # Theme lifecycle has its own metadata tests; this fixture owns ERPNext fields.
+        with mock.patch.dict(sys.modules, self.modules), \
+                mock.patch("hero_integration.services.desk_theme.ensure_navy_theme"):
             return function()
 
     def exists(self, doctype, filters):

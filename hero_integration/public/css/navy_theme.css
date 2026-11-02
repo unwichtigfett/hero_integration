@@ -1,0 +1,116 @@
+/* Navy keeps Frappe's dark component behavior and changes only its palette. */
+:root[data-hero-theme="navy"],
+:root[data-theme="navy"],
+.theme-preview-container[data-theme="navy"] {
+	color-scheme: dark;
+	--surface-base: #0d1117;
+	--surface-sidebar: #010409;
+	--surface-elevation-1: #161b22;
+	--surface-elevation-2: #161b22;
+	--surface-elevation-3: #21262d;
+	--surface-gray-1: #161b22;
+	--surface-gray-2: #21262d;
+	--surface-gray-3: #30363d;
+	--surface-gray-4: #3d444d;
+	--surface-gray-5: #6e7681;
+	--surface-gray-6: #8b949e;
+	--surface-gray-7: #9da7b3;
+	--surface-gray-8: #b1bac4;
+	--surface-gray-9: #c9d1d9;
+	--surface-gray-10: #e6edf3;
+	--ink-base: #0d1117;
+	--ink-gray-1: #30363d;
+	--ink-gray-2: #6e7681;
+	--ink-gray-3: #8b949e;
+	--ink-gray-4: #9da7b3;
+	--ink-gray-5: #9da7b3;
+	--ink-gray-6: #9da7b3;
+	--ink-gray-7: #c9d1d9;
+	--ink-gray-8: #e6edf3;
+	--ink-gray-9: #f0f6fc;
+	--outline-gray-1: #30363d;
+	--outline-gray-2: #3d444d;
+	--outline-gray-3: #6e7681;
+	--outline-gray-4: #8b949e;
+	--outline-gray-5: #9da7b3;
+	--outline-gray-6: #b1bac4;
+	--outline-gray-7: #c9d1d9;
+	--outline-gray-8: #e6edf3;
+	--outline-gray-9: #f0f6fc;
+	--surface-blue-1: #0c1e35;
+	--surface-blue-2: #102c4e;
+	--surface-blue-3: #163d67;
+	--ink-blue-7: #58a6ff;
+	--ink-blue-8: #79c0ff;
+	--ink-blue-9: #a5d6ff;
+	--outline-blue-5: #388bfd;
+	--outline-blue-6: #58a6ff;
+	--bg-color: var(--surface-base);
+	--fg-color: var(--surface-elevation-1);
+	--card-bg: var(--surface-elevation-1);
+	--modal-bg: var(--surface-elevation-1);
+	--popover-bg: var(--surface-elevation-1);
+	--navbar-bg: var(--surface-sidebar);
+	--control-bg: var(--surface-base);
+	--control-bg-on-gray: var(--surface-gray-2);
+	--disabled-control-bg: var(--surface-gray-1);
+	--input-disabled-bg: var(--surface-gray-1);
+	--fg-hover-color: var(--surface-gray-2);
+	--btn-default-bg: var(--surface-gray-2);
+	--btn-default-hover-bg: var(--surface-gray-3);
+	--btn-ghost-hover-bg: var(--surface-gray-2);
+	--sidebar-select-color: #1c2d41;
+	--text-color: var(--ink-gray-8);
+	--heading-color: var(--ink-gray-9);
+	--text-muted: var(--ink-gray-6);
+	--text-light: var(--ink-gray-5);
+	--placeholder-color: var(--ink-gray-3);
+	--disabled-text-color: #6e7681;
+	--border-color: var(--outline-gray-1);
+	--dark-border-color: var(--outline-gray-2);
+	--table-border-color: var(--outline-gray-1);
+	--btn-group-border-color: var(--outline-gray-2);
+	--primary: #58a6ff;
+	--primary-color: #58a6ff;
+	--brand-color: #58a6ff;
+	--link-color: #58a6ff;
+	--btn-primary: #238636;
+	--navy-primary-hover: #267c36;
+	--focus-default: 0 0 0 3px #58a6ff;
+	--code-block-bg: #010409;
+	--code-block-text: #c9d1d9;
+	--awesomplete-hover-bg: var(--surface-gray-2);
+	--date-active-bg: #1c2d41;
+}
+
+/* Dark Desk sets these tokens locally, so keep its nested controls navy too. */
+:root[data-hero-theme="navy"] .modal,
+:root[data-hero-theme="navy"] .form-in-grid,
+:root[data-hero-theme="navy"] .grid-body .editable-row {
+	--control-bg: #0d1117;
+	--input-disabled-bg: #161b22;
+	--border-color: #30363d;
+}
+
+:root[data-hero-theme="navy"] .btn.btn-primary {
+	color: #ffffff;
+	--icon-stroke: currentColor;
+	--icon-fill-bg: var(--btn-primary);
+}
+
+@media (hover: hover) {
+	:root[data-hero-theme="navy"] .btn.btn-primary:hover {
+		color: #ffffff;
+		background-color: var(--navy-primary-hover);
+	}
+}
+
+/* Match the specificity of Frappe's important dark active-button colors. */
+:root[data-hero-theme="navy"] .btn.btn-primary:active {
+	color: #ffffff !important;
+	background-color: var(--navy-primary-hover) !important;
+}
+
+.theme-preview-container[data-theme="navy"] .theme-preview-header-action {
+	background-color: var(--btn-primary);
+}
