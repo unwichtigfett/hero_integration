@@ -2320,3 +2320,23 @@ Invalid: {0},Ungültig: {0}
 selected,ausgewählt
 newest on this site,neuester auf dieser Site
 {0} types,{0} Typen
+Salutation,Anrede
+First name,Vorname
+Last name,Nachname
+Company name,Firmenname
+E-mail,E-Mail
+Mobile,Mobiltelefon
+Phone,Telefon
+Street,Straße
+Address line 2,Adresszeile 2
+Postcode,Postleitzahl
+City,Stadt
+Title,Titel
+End date,Enddatum
+Done,Erledigt
+Assignee,Zuständige Person
+Notes,Notizen
+Project,Projekt
+One explicitly confirmed bound-field HERO mutation will be sent once; no automatic retry is performed.,Eine ausdrücklich bestätigte HERO-Mutation für ein gebundenes Feld wird einmal gesendet; es erfolgt kein automatischer Wiederholungsversuch.
+One explicitly approved HERO mutation will be sent once; no automatic retry is performed.,Eine ausdrücklich freigegebene HERO-Mutation wird einmal gesendet; es erfolgt kein automatischer Wiederholungsversuch.
+One approved HERO field mutation will be sent once after explicit confirmation. No automatic retry is performed.,Eine freigegebene HERO-Feldmutation wird nach ausdrücklicher Bestätigung einmal gesendet. Es erfolgt kein automatischer Wiederholungsversuch.
