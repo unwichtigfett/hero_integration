@@ -24,7 +24,7 @@ class TestDraftReadbackIntegrity(unittest.TestCase):
                             new_definition_json='', reconciliation_revision=0, reconciliation_json='',
                             warning_fingerprint='', diagnostics_json='')
         self.doc.check_permission = Mock()
-        self.frappe = SimpleNamespace(local=SimpleNamespace(site='site'), session=SimpleNamespace(user='alice'),
+        self.frappe = SimpleNamespace(_=lambda message: message, local=SimpleNamespace(site='site'), session=SimpleNamespace(user='alice'),
                                       form_dict={}, db=SimpleNamespace(exists=Mock(return_value=True)),
                                       only_for=Mock(), get_doc=Mock(return_value=self.doc),
                                       PermissionError=PermissionError, TimestampMismatchError=RuntimeError,

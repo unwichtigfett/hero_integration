@@ -238,7 +238,7 @@ class TestPollingSettingsSave(unittest.TestCase):
                         "page_size": None, "pagination_strategy": None, "allow_backfill": None, "full_inventory": None,
                         "reconciliation": None, "retry_limit": None, "retry_backoff_seconds": None, "timeout_seconds": None,
                         "rate_limit": None, "concurrency": None, "notifications": None}
-            fake = SimpleNamespace(throw=lambda message: (_ for _ in ()).throw(ValueError(message)))
+            fake = SimpleNamespace(_=lambda message: message, throw=lambda message: (_ for _ in ()).throw(ValueError(message)))
             with patch.object(api, "frappe", fake):
                 api._save_polling_configuration(settings, **{**defaults, **values})
             return settings

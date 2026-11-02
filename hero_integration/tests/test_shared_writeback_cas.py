@@ -125,7 +125,7 @@ class TestSharedWritebackCAS(unittest.TestCase):
         self.assertEqual(mapping.save_calls, 0)
 
     def test_controller_rejects_direction_operation_mismatch(self):
-        fake = SimpleNamespace(only_for=lambda role: None, throw=lambda message: (_ for _ in ()).throw(ValueError(message)))
+        fake = SimpleNamespace(_=lambda message: message, only_for=lambda role: None, throw=lambda message: (_ for _ in ()).throw(ValueError(message)))
         with patch.object(controller, "frappe", fake):
             for direction, kind in (("QUERY_TO_FRAPPE", "MUTATION"), ("FRAPPE_TO_MUTATION", "QUERY")):
                 doc = SimpleNamespace(direction=direction, operation_kind=kind, is_new=lambda: True)
@@ -300,7 +300,7 @@ class TestMappingSaveContext(unittest.TestCase):
     def test_context_change_is_rejected_after_lock(self):
         first = SimpleNamespace(source_instance='source', schema_fingerprint='fingerprint')
         changed = SimpleNamespace(source_instance='other', schema_fingerprint='fingerprint')
-        fake = SimpleNamespace(throw=lambda message: (_ for _ in ()).throw(ValueError(message)))
+        fake = SimpleNamespace(_=lambda message: message, throw=lambda message: (_ for _ in ()).throw(ValueError(message)))
         with patch.object(api, 'frappe', fake), patch.object(api, '_validated_snapshot', side_effect=[(first, {}), (changed, {})]), \
              patch.object(controller, 'lock_exchange_context'):
             with self.assertRaisesRegex(ValueError, 'source context changed'):

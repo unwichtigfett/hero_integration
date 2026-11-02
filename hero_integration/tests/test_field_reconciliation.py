@@ -216,6 +216,7 @@ class TestManagedTargetOwnership(unittest.TestCase):
 
     def test_external_deadline_change_requires_managed_task_context(self):
         frappe = types.ModuleType("frappe")
+        frappe._ = lambda message: message
         frappe.flags = types.SimpleNamespace(in_migrate=False)
         frappe.PermissionError = PermissionError
         def fail(message, error):

@@ -56,6 +56,8 @@ class _Service:
 
 
 class _Frappe:
+    _ = staticmethod(lambda message: message)
+
     def __init__(self, service=None):
         self.service, self.denied, self.created = service, False, []
 

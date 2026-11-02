@@ -7,4 +7,4 @@ class HEROMappingRegistryVersion(Document):
 
     def before_save(self):
         if not self.is_new():
-            frappe.throw("Mapping Registry versions are immutable.")
+            frappe.throw(frappe._("Mapping Registry versions are immutable."))

@@ -10,6 +10,7 @@ from hero_integration.services import mapping_draft_access as access
 class TestPersonalMappingAccess(unittest.TestCase):
     def setUp(self):
         self.frappe = SimpleNamespace(
+            _=lambda message: message,
             session=SimpleNamespace(user="owner@example.invalid"),
             get_roles=Mock(return_value=["System Manager"]),
             db=SimpleNamespace(get_value=Mock(return_value="owner@example.invalid"),

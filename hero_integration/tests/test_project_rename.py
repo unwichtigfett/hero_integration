@@ -21,6 +21,8 @@ class _Client:
 
 
 class _Frappe:
+    _ = staticmethod(lambda message: message)
+
     def __init__(self, active=()):
         self.renamed, self.active = [], list(active)
         self.flags = SimpleNamespace()

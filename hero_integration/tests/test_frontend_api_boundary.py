@@ -33,6 +33,7 @@ class _Mapping:
 
 
 class _Frappe:
+    _ = staticmethod(lambda message: message)
     PermissionError = PermissionError
     def __init__(self, *, roles=("System Manager",), user="Administrator", mapping=None):
         self._roles = roles

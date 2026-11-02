@@ -43,6 +43,8 @@ class _Service:
 
 
 class _FrappeMock:
+    _ = staticmethod(lambda message: message)
+
     def __init__(self, service=None, permission_error=None):
         self.service = service
         self.permission_error = permission_error

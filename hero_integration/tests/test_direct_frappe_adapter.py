@@ -239,7 +239,7 @@ class TestDirectFrappeAdapter(unittest.TestCase):
     def test_stale_snapshot_is_rejected_before_picker_or_preview(self):
         raw = {"__schema": {"types": [{"kind": "OBJECT", "name": "Query", "fields": []}]}}
         snapshot = SimpleNamespace(analysis_status="Validated", snapshot_json=__import__("json").dumps(raw), schema_fingerprint="stale")
-        fake_frappe = SimpleNamespace(get_doc=lambda *args: snapshot, throw=lambda message: (_ for _ in ()).throw(ValueError(message)))
+        fake_frappe = SimpleNamespace(_=lambda message: message, get_doc=lambda *args: snapshot, throw=lambda message: (_ for _ in ()).throw(ValueError(message)))
 
         with patch.object(api, "frappe", fake_frappe), self.assertRaisesRegex(ValueError, "stale"):
             api._validated_snapshot("SYNTHETIC-SNAPSHOT")

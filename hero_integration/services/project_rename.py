@@ -56,9 +56,9 @@ def rename_hero_projects(dry_run: int | bool = 1, confirm: str = "", client=None
     frappe.only_for("System Manager")
     dry_run = bool(int(dry_run))
     if not dry_run and confirm != CONFIRMATION:
-        frappe.throw(f'Renaming requires confirm="{CONFIRMATION}".')
+        frappe.throw(frappe._('Renaming requires confirm="{0}".').format(CONFIRMATION))
     if frappe.get_all("HERO Integration Run", filters={"state": ["in", ["Queued", "Running"]]}, pluck="name"):
-        frappe.throw("A HERO run is active; wait for it to finish.")
+        frappe.throw(frappe._("A HERO run is active; wait for it to finish."))
     from hero_integration.services.business_number_preview import preview_rows
     from hero_integration.services.guards import hero_project_naming
 

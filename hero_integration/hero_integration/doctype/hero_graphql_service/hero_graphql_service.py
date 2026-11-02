@@ -14,9 +14,9 @@ class HEROGraphQLService(Document):
         frappe.only_for("System Manager")
         snapshot = frappe.get_doc("HERO GraphQL Schema Snapshot", self.schema_snapshot)
         if snapshot.analysis_status != "Validated":
-            frappe.throw("A validated GraphQL schema snapshot is required.")
+            frappe.throw(frappe._("A validated GraphQL schema snapshot is required."))
         if analyze_snapshot(json.loads(snapshot.snapshot_json)).fingerprint != snapshot.schema_fingerprint:
-            frappe.throw("The selected GraphQL schema snapshot is stale.")
+            frappe.throw(frappe._("The selected GraphQL schema snapshot is stale."))
         self.schema_fingerprint = snapshot.schema_fingerprint
         contract_fields = ("query_document", "schema_snapshot", "operation_name", "read_mapping")
         if not self.is_new() and self.has_value_changed("query_document"):

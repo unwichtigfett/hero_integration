@@ -37,14 +37,14 @@ def purge_hero_data(dry_run: int | bool = 1, confirm: str = "", include_history:
     frappe.only_for("System Manager")
     dry_run = bool(int(dry_run))
     if not dry_run and confirm != CONFIRMATION:
-        frappe.throw(f'Deleting requires confirm="{CONFIRMATION}".')
+        frappe.throw(frappe._('Deleting requires confirm="{0}".').format(CONFIRMATION))
     if not dry_run:
         # Second lock: HERO Integration Settings → "Allow deletion".
         from hero_integration.services.guards import assert_deletion_allowed
         assert_deletion_allowed(action="the HERO data purge")
     active = frappe.get_all("HERO Integration Run", filters={"state": ["in", ["Queued", "Running"]]}, pluck="name")
     if active:
-        frappe.throw("A HERO run is active (" + ", ".join(active) + "); wait for it to finish.")
+        frappe.throw(frappe._("A HERO run is active ({0}); wait for it to finish.").format(", ".join(active)))
 
     links = frappe.get_all(
         "HERO Integration Link", filters={"source_system": "HERO"},

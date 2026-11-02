@@ -157,10 +157,8 @@ def _missing_custom_field_definitions() -> dict[str, list[dict[str, object]]]:
                 if _field_value(existing, key) != _normalised_field_value(expected)
             ]
             if conflicts:
-                frappe.throw(
-                    f"Custom Field {doctype}.{definition['fieldname']} conflicts with the HERO schema "
-                    f"({', '.join(conflicts)})."
-                )
+                frappe.throw(frappe._("Custom Field {0}.{1} conflicts with the HERO schema ({2}).")
+                             .format(doctype, definition['fieldname'], ', '.join(conflicts)))
     return missing
 
 
@@ -179,16 +177,16 @@ def _normalised_field_value(value: object) -> object:
 
 def _require_erpnext_schema() -> None:
     if "erpnext" not in frappe.get_installed_apps():
-        frappe.throw("ERPNext v16 must be installed before HERO Integration.")
+        frappe.throw(frappe._("ERPNext v16 must be installed before HERO Integration."))
     try:
         from erpnext import __version__ as erpnext_version
     except ImportError:
-        frappe.throw("ERPNext v16 must be importable before HERO Integration.")
+        frappe.throw(frappe._("ERPNext v16 must be importable before HERO Integration."))
     if not str(erpnext_version).startswith("16."):
-        frappe.throw(f"HERO Integration requires ERPNext {ERPNext_VERSION_CONSTRAINT}.")
+        frappe.throw(frappe._("HERO Integration requires ERPNext {0}.").format(ERPNext_VERSION_CONSTRAINT))
     missing = [doctype for doctype in _REQUIRED_ERPNext_DOCTYPES if not frappe.db.exists("DocType", doctype)]
     if missing:
-        frappe.throw(f"ERPNext schema is incomplete: {', '.join(missing)}.")
+        frappe.throw(frappe._("ERPNext schema is incomplete: {0}.").format(', '.join(missing)))
     from hero_integration.integrations.erpnext.project_notes import NativeProjectNotesError, require_native_project_notes
 
     try:

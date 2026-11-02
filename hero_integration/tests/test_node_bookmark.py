@@ -115,6 +115,8 @@ class _Doc(SimpleNamespace):
 
 
 class _Frappe:
+    _ = staticmethod(lambda message: message)
+
     PermissionError = PermissionError
 
     def __init__(self):

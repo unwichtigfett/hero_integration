@@ -4,11 +4,12 @@
     if (window.hero_integration_api_summary) return;
 
     const platform = window.hero_integration_platform;
+    const text = (value) => window.hero_integration_i18n?.text(value) ?? String(value);
 
     function node(tag, className = "", text) {
         const element = document.createElement(tag);
         if (className) element.className = className;
-        if (text !== undefined) element.textContent = String(text);
+        if (text !== undefined) element.textContent = window.hero_integration_i18n?.text(text) ?? String(text);
         return element;
     }
 
@@ -53,7 +54,7 @@
         const explorer = panel("hero-api-summary-explorer", "Schema explorer", "Select a validated saved schema before opening the existing read-only explorer tools.");
         const snapshot = document.createElement("select");
         snapshot.className = "form-control hero-api-summary-snapshot";
-        snapshot.setAttribute("aria-label", "Saved GraphQL schema snapshot");
+        snapshot.setAttribute("aria-label", text("Saved GraphQL schema snapshot"));
         const openAnalyzer = node("a", "hero-page-button", "Open Analyzer");
         const openGraph = node("a", "hero-page-button is-quiet", "Open Graph Viewer");
         const controls = node("div", "hero-api-summary-controls");
@@ -87,7 +88,7 @@
             const available = (context?.snapshots || []).filter((item) => item.usable);
             const schemaReady = Boolean(selected?.usable || context?.selected_snapshot);
 
-            badge.textContent = schemaReady ? "Validated schema available" : "No validated schema snapshot";
+            badge.textContent = text(schemaReady ? "Validated schema available" : "No validated schema snapshot");
             badge.dataset.state = schemaReady ? "ok" : "";
             statusStrip.replaceChildren(
                 metric("Connector", settings?.enabled ? "Enabled" : "Disabled", settings?.enabled ? "ok" : "off"),
@@ -111,7 +112,7 @@
                 toolCard("Graph Viewer", "Explore the saved schema graph, relations and focus views.", "View graph", "graph", context),
                 toolCard("GraphQL Services", "Review saved query and mutation contracts without changing their state.", "View services", "services", context),
             );
-            state.textContent = schemaReady ? "Stored schema metadata is current." : "No validated schema is selected. Existing tools remain available once a snapshot is selected.";
+            state.textContent = text(schemaReady ? "Stored schema metadata is current." : "No validated schema is selected. Existing tools remain available once a snapshot is selected.");
             state.dataset.state = schemaReady ? "ok" : "warning";
         }
 
@@ -127,9 +128,9 @@
             ]);
             render(context, settings);
         } catch (error) {
-            badge.textContent = "Stored metadata unavailable";
+            badge.textContent = text("Stored metadata unavailable");
             badge.dataset.state = "";
-            state.textContent = error?.message || "Could not load stored HERO API metadata.";
+            state.textContent = error?.message || text("Could not load stored HERO API metadata.");
             state.dataset.state = "error";
         }
 

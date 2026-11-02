@@ -83,7 +83,7 @@ class TestAdoptionPreviewCAS(TestCase):
     def test_direct_adoption_record_writes_are_blocked(self):
         from hero_integration.hero_integration.doctype.hero_mapping_adoption import hero_mapping_adoption as controller
         document = SimpleNamespace(package_json="{}")
-        facade = SimpleNamespace(only_for=lambda role: None, throw=lambda msg: (_ for _ in ()).throw(PermissionError(msg)))
+        facade = SimpleNamespace(_=lambda message: message, only_for=lambda role: None, throw=lambda msg: (_ for _ in ()).throw(PermissionError(msg)))
         with patch.object(controller, "frappe", facade):
             with self.assertRaisesRegex(PermissionError, "managed by the adoption service"):
                 controller.HEROMappingAdoption.validate(document)
