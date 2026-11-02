@@ -30,6 +30,6 @@ for (const language of input.languages) {
     assert.equal(migration.diagnostic(fieldConflict), language === 'en' ? fieldConflict : 'Feldkonflikt erfordert Prüfung: subject.');
     assert.equal(migration.phaseSummary('Running', 12), language === 'en' ? 'Running · 12 processed' : 'Läuft · 12 verarbeitet');
     const drift = "HERO customer number changed from 'old' to 'new'. Customer CUST-42 keeps its name and number until reviewed; set custom_hero_customer_number to 'new' to accept the new number.";
-    const expectedDrift = language === 'en' ? drift : "HERO-Kundennummer wurde von 'old' auf 'new' geändert. Customer CUST-42 behält seinen Namen und seine Nummer bis zur Prüfung; setzen Sie custom_hero_customer_number auf 'new', um die neue Nummer zu übernehmen.";
+    const expectedDrift = language === 'en' ? drift : "HERO-Kundennummer wurde von 'old' auf 'new' geändert. Kunde CUST-42 behält seinen Namen und seine Nummer bis zur Prüfung; setzen Sie custom_hero_customer_number auf 'new', um die neue Nummer zu übernehmen.";
     assert.equal(migration.diagnostic(drift), expectedDrift);
 }

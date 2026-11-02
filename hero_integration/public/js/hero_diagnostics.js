@@ -27,19 +27,19 @@
         const nameConflict = text.match(/^(.+?) (.+?) already exists without this HERO record's link\. The HERO number is not reassigned, suffixed or merged; check whether \2 is the same (.+?) and link or rename it\.$/);
         if (nameConflict) {
             const translated = format("{0} {1} already exists without this HERO record's link. The HERO number is not reassigned, suffixed or merged; check whether {1} is the same {2} and link or rename it.",
-                nameConflict[1], nameConflict[2], nameConflict[3]);
+                tr(nameConflict[1]), nameConflict[2], tr(nameConflict[3]));
             return recheck ? format("Recheck requested: {0}", translated) : translated;
         }
         const numberDrift = text.match(/^HERO (customer number|project display_id) changed from (.*?) to (.*?)\. (Customer|Project) (.*?) keeps its name and number until reviewed; set (.*?) to \3 to accept the new number\.$/);
         if (numberDrift) {
             const translated = format('HERO {0} changed from {1} to {2}. {3} {4} keeps its name and number until reviewed; set {5} to {2} to accept the new number.',
-                tr(numberDrift[1]), ...numberDrift.slice(2));
+                tr(numberDrift[1]), numberDrift[2], numberDrift[3], tr(numberDrift[4]), numberDrift[5], numberDrift[6]);
             return recheck ? format("Recheck requested: {0}", translated) : translated;
         }
         const templates = [
             [/^HERO response omits the source of: (.+)\.$/, "HERO response omits the source of: {0}."],
             [/^HERO cleared values that the no-clear policy does not write: (.+)\.$/, "HERO cleared values that the no-clear policy does not write: {0}."],
-            [/^Existing (.+) has no stable HERO link\.$/, "Existing {0} has no stable HERO link."],
+            [/^Existing (.+) has no stable HERO link\.$/, "Existing {0} has no stable HERO link.", [0]],
             [/^Awaits administrator approval: (.*)$/, "Awaits administrator approval: {0}", [0]],
             [/^Event time or recurrence requires review; unrelated field changes were considered\. (.*)$/, "Event time or recurrence requires review; unrelated field changes were considered. {0}", [0]],
             [/^Field conflict requires review: (.+)\.$/, "Field conflict requires review: {0}."],
