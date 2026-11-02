@@ -55,6 +55,8 @@ for (const language of input.languages) {
     assert.equal(migration.diagnostic(rejection), language === 'en' ? rejection : 'ERPNext hat den Datensatz abgelehnt (ValidationError); siehe Fehlerprotokoll.');
     const unavailable = 'Customer is not installed on this site.';
     assert.equal(migration.diagnostic(unavailable), language === 'en' ? unavailable : 'Kunde ist auf dieser Site nicht installiert.');
+    const addressConflict = 'HERO customer address changed outside the selected line_2 binding.';
+    assert.equal(migration.diagnostic(addressConflict), language === 'en' ? addressConflict : 'Die HERO-Kundenadresse wurde außerhalb der ausgewählten line_2-Zuordnung geändert.');
     const base = 'Target created through native Frappe validation.';
     const optionalNotes = [
         'The HERO email address is not valid in ERPNext; it was not imported.',
