@@ -1,46 +1,27 @@
-# Manual acceptance
+# Manual acceptance — HERO Integration
 
-Run this procedure only on a new, owned, non-production Frappe v16 site with
-synthetic data. Do not configure a production HERO endpoint or token.
+Use an **owned, disposable Frappe/ERPNext v16 site** and synthetic records. This checklist is not permission to contact production HERO or run external mutations. Record the exact app commit, Frappe/ERPNext versions, site metadata and test results.
 
-1. Install ERPNext v16, then this app, as described in
-   [installation_guide_1.0.md](../installation_guide_1.0.md). Confirm that the site opens **HERO
-   Integration Settings** and **HERO Migration Center**.
-2. Confirm that all HERO app DocTypes exist.
-   Repeat `bench --site <site-name> migrate` and confirm that they stay unchanged.
-3. Create one synthetic Company. Select and confirm it in the settings.
-4. Use the deterministic mock responses from the test suite. With no external
-   network access, verify the fixed GraphQL variables, envelope, pagination,
-   optional values, invalid records, conflict records and timeout retry.
-5. Preview a migration without active mappings. Confirm that it blocks before
-   any Customer, Project or **HERO Integration Link** write.
-6. Upload a reviewed mapping package. Select its required Custom DocTypes,
-   Custom Fields, relations and mappings.
-   Confirm with the **Apply selection** action. Verify that the selected schema
-   exists before you arm or activate a mapping, and that no migration starts.
-   Verify native Customer values, primary Contact first/last name, Contact
-   Email, and mobile and home Contact Phone rows. Verify the Project customer
-   and company links and its Custom Field values.
-7. Repeat the same data. Confirm that the app skips it without duplicate
-   targets. Change a source payload, then a target payload, separately. Confirm
-   that both become conflicts and that neither target is overwritten.
-8. Enable scheduled sync. Trigger its scheduler entry once, then again while a
-   run is active. Confirm that only one run is queued. Confirm that the token
-   never appears in job arguments, run fields or logs.
+## Installation and mapping
 
-Record the exact app Git revision, Frappe and ERPNext revisions, test-site name
-and test results.
+1. Install ERPNext first and then HERO Integration. Verify app-owned DocTypes, installer-owned fields and the expected permissions. Repeat the migration; it must preserve existing configuration.
+2. Confirm the local Company independently. A HERO Customer or Project ID must never select an ERPNext Company.
+3. Confirm the source instance, binding revision and validated snapshot. Never assume the newest schema is approved.
+4. Start with no active mappings. Test personal Draft save/no-op/discard/revision, role isolation, stale revision handling and explicit activation.
+5. Preview Query, Mutation and personal Draft imports independently, against the **complete active context**. Confirm field-rule identities, owner/provenance, missing target references and no unintended replacement. A new schema requires separate provisioning review.
+6. Validate and execute a synthetic Query through the read-only service path. Mutations must fail before transport. A generated Task Query requires specific mapping/service approval.
 
-## Mapping import and export
+## Native records and conflicts
 
-1. On a fresh site, confirm that the HERO Frappe Mapping list is empty.
-2. Run `bench --site <site-name> migrate` again and confirm that it stays empty.
-3. Create a synthetic reviewed GraphQL schema snapshot.
-4. Open HERO Mapping Editor and confirm that the source and target pickers work.
-5. Export the empty mapping set. Confirm that it contains no token, endpoint,
-   customer data or migration log.
-6. Upload a reviewed mapping package and inspect the shared checklist.
-7. Select one Custom Field and its dependent mapping. Confirm that selecting
-   the mapping selects its required schema entry.
-8. Upload a package with a foreign field collision or a missing relation.
-   Confirm that the app blocks it and leaves the mappings inactive.
+7. Exercise Customer and Project imports: stable Integration Link, native Contact/Address, shared-record conflict, approved Customer relation, independently confirmed Company, `-H` Project name and protected title.
+8. Exercise native Task creation with a subject and optional selected description. Repeat imports, change source and target separately and together, then test omitted values, blank/NULL text, deleted source and mapping drift.
+9. Test Task deadlines, completion and ToDo/assignment **as separate gates**. Require explicit timezone/NULL rules, valid User/Employee/Company binding, role permission and the installed assignment-intent patch where applicable. Include local ToDo edits and transfer conflicts.
+10. Exercise native Event creation with confirmed source timezone/all-day rules. Test Project identity/read permission, omitted/NULL relations, unknown and true recurrence, local edits and incomplete existing time groups. Raw participants/resources must not create native user links.
+
+## Runs and recovery
+
+11. Check source instance, fingerprint, mapping/rule content and service revision at execution. Inject stale approval, concurrent publication, source change and missing permissions; no unapproved checkpoint may commit.
+12. Simulate failure between records. Verify acknowledged records survive, unacknowledged changes roll back, replay stays idempotent and stale claims cannot commit. Polling must not begin simply because mappings exist.
+13. Treat live HERO requests, production-like worker runs, data recovery and target permission acceptance as **separately authorized** tests, with their own results and rollback evidence.
+
+For every case record `PASS`, `FAIL`, `BLOCKED` or `EXECUTION_UNVERIFIED` and distinguish product defects from a missing deployment, permission gate or test harness problem. See [Run checkpoints](run_checkpoints_1.0.md) for the earlier scoped evidence.

@@ -1,5 +1,7 @@
 # Installation
 
+> This guide targets the installation branch `hero_int_1.0`. Installation is not synchronization approval. Verify the installed app and site schema against the actual Git revision before using a package.
+
 The installation branch is `hero_int_1.0`:
 <https://github.com/unwichtigfett/hero_integration/tree/hero_int_1.0>
 
@@ -49,8 +51,7 @@ The app installs:
 this. `bench migrate` creates missing records again (create-only). It does not
 reset later form changes.
 
-The install creates no field mappings and no read services. You move them from
-an existing site (e.g. development) with **one package file**.
+The install creates no active field mappings or saved read services. The legacy **complete configuration package** can transfer a reviewed schema, mappings, settings and read services. This is separate from the directional Query/Mutation and personal Draft exchange files; none of those files grants runtime authority.
 
 **What the package contains:** the HERO schema snapshot, the operational
 settings (sync areas, automatic sync, polling, schema refresh), the field
@@ -86,14 +87,16 @@ User).
 
    (without `"dry_run": 0` it only previews).
 
-The import creates the snapshot from the file if the site has none for that
-schema. It then applies the settings, adopts the fields and mappings, and
-creates, validates and approves the read services. No HERO request is made.
+The importer can create a missing snapshot, provision selected schema entries, activate mappings and approve read services. These are privileged local changes, not a HERO synchronization run. A System Manager must compare the **complete active target context** and confirm no unintended removal or replacement.
+
+**Incomplete preview warning:** When the target lacks a validated snapshot for the package, the preview can show only a summary; detailed mapping checks are deferred until import. Do not approve that partial preview. Establish or select a validated target snapshot, preview the complete package again and inspect schema provisioning separately before importing. No HERO request is made by the import.
 To bind the package to a different HERO schema snapshot of the target site, pass
 `"snapshot_name": "<snapshot>"` to `config_import_file`. The package is then
 checked by content: every field rule and read query must fit that schema, or
 nothing is activated. A second import of the
 same file changes nothing. The mutation switch stays off until you switch it on.
+
+Source-binding, read-service, mapping, permission and recovery gates still apply after import. Generated Task reads, Calendar time handling, Task assignments and any external mutations need their own review.
 
 Check an install with
 `bench --site <site> execute hero_integration.app_setup.verify_install`.
