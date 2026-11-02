@@ -2340,3 +2340,8 @@ Project,Projekt
 One explicitly confirmed bound-field HERO mutation will be sent once; no automatic retry is performed.,Eine ausdrücklich bestätigte HERO-Mutation für ein gebundenes Feld wird einmal gesendet; es erfolgt kein automatischer Wiederholungsversuch.
 One explicitly approved HERO mutation will be sent once; no automatic retry is performed.,Eine ausdrücklich freigegebene HERO-Mutation wird einmal gesendet; es erfolgt kein automatischer Wiederholungsversuch.
 One approved HERO field mutation will be sent once after explicit confirmation. No automatic retry is performed.,Eine freigegebene HERO-Feldmutation wird nach ausdrücklicher Bestätigung einmal gesendet. Es erfolgt kein automatischer Wiederholungsversuch.
+HERO endpoint must use HTTPS and include a hostname.,Der HERO-Endpunkt muss HTTPS verwenden und einen Hostnamen enthalten.
+"HERO endpoint must not contain credentials, query, or fragment.","Der HERO-Endpunkt darf keine Zugangsdaten, Query oder Fragment enthalten."
+HERO endpoint host is not allowed.,Der Host des HERO-Endpunkts ist nicht erlaubt.
+Schema refresh interval must be between {0} and {1} minutes.,Das Schema-Aktualisierungsintervall muss zwischen {0} und {1} Minuten liegen.
+mapping must be an object,Mapping muss ein Objekt sein
