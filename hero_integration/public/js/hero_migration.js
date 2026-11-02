@@ -13,6 +13,12 @@
         const prefix = "Recheck requested: ";
         const recheck = String(value).startsWith(prefix);
         const text = recheck ? String(value).slice(prefix.length) : String(value);
+        const areaBlocker = text.match(/^(.*?) needs an approved read service with an active mapping for (.*?) on a snapshot of the HERO source instance "(.*)"\. Approve one under API & Schema and Mapping\.$/);
+        if (areaBlocker) {
+            const translated = format('{0} needs an approved read service with an active mapping for {1} on a snapshot of the HERO source instance "{2}". Approve one under API & Schema and Mapping.',
+                tr(areaBlocker[1]), tr(areaBlocker[2]), areaBlocker[3]);
+            return recheck ? format("Recheck requested: {0}", translated) : translated;
+        }
         const templates = [
             [/^Field conflict requires review: (.+)\.$/, "Field conflict requires review: {0}."],
             [/^Task fields require review: (.+)$/, "Task fields require review: {0}"],

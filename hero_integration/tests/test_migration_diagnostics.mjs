@@ -9,6 +9,8 @@ const translations = {
   'Another HERO run is active: {0}.': 'Ein anderer HERO-Lauf ist aktiv: {0}.',
   'Recheck requested: {0}': 'Erneute Prüfung angefordert: {0}',
   'A known static error.': 'Ein bekannter Fehler.',
+  'Event Migration': 'Event-Migration', 'Events': 'Termine',
+  '{0} needs an approved read service with an active mapping for {1} on a snapshot of the HERO source instance "{2}". Approve one under API & Schema and Mapping.': '{0} benötigt Mapping für {1} in Quelle "{2}".',
 };
 const frappe = {boot: {lang: 'de'}};
 const window = {hero_integration_i18n: {text: value => translations[value] || value}};
@@ -20,6 +22,7 @@ test('stored diagnostics translate at display time while preserving identifiers'
   assert.equal(diagnostic('Recheck requested: Task fields require review: owner'), 'Erneute Prüfung angefordert: Task-Felder erfordern Prüfung: owner');
   assert.equal(diagnostic('Another HERO run is active: RUN-007.'), 'Ein anderer HERO-Lauf ist aktiv: RUN-007.');
   assert.equal(diagnostic('A known static error.'), 'Ein bekannter Fehler.');
+  assert.equal(diagnostic('Event Migration needs an approved read service with an active mapping for Events on a snapshot of the HERO source instance "source-42". Approve one under API & Schema and Mapping.'), 'Event-Migration benötigt Mapping für Termine in Quelle "source-42".');
   assert.equal(diagnostic('External system: arbitrary text'), 'External system: arbitrary text');
 });
 
