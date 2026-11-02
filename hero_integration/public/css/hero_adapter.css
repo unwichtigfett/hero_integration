@@ -6,8 +6,8 @@
     --pc-surface: var(--card-bg, #ffffff);
     --pc-surfaceRaised: var(--control-bg, #f0f1f2);
     --pc-surfaceHover: var(--fg-hover-color, #e6e8ea);
-    --pc-border: var(--border-color, #c7cdd3);
-    --pc-controlBorder: var(--border-color, #65717d);
+    --pc-border: #3d4650;
+    --pc-controlBorder: #3d4650;
     /* Light theme: Frappe's own text colours, with muted secondary text. */
     --hero-text: var(--text-color, #1f272e);
     --pc-text: var(--hero-text);
@@ -20,7 +20,7 @@
     --pc-diagramBorder: #697680;
     /* Light theme: Frappe's control look (1px border, no extra ring). */
     --hero-field-bg: var(--control-bg, #f4f5f6);
-    --hero-field-border: var(--border-color, #d1d8dd);
+    --hero-field-border: #3d4650;
     --hero-field-border-width: 1px;
     --hero-field-ring: 0 0 0 0 transparent;
     --hero-field-readonly-bg: var(--disabled-control-bg, #e7e9eb);
@@ -52,6 +52,8 @@
 :is(html[data-theme="dark"], body[data-theme="dark"], .theme-dark) :is(.admin-hero-tool-host, .admin-compat-modal, .ht-focus-dialog, .hero-integration-ui) {
     /* Dark theme keeps its high-contrast, monochrome look. */
     --hero-text: #ffffff;
+    --pc-border: var(--border-color, #4c5561);
+    --pc-controlBorder: var(--border-color, #65717d);
     --pc-textSecondary: var(--hero-text);
     --hero-field-bg: #30363d;
     --hero-field-border: #aab3bb;
@@ -82,6 +84,10 @@
 /* Frappe applies data-theme during automatic-mode changes; no OS-only override. */
 :is(html[data-theme="light"], body[data-theme="light"], .theme-light) :is(.admin-hero-tool-host, .admin-compat-modal, .ht-focus-dialog, .hero-integration-ui) {
     --hero-text: var(--text-color, #1f272e);
+    /* On white, outlines of areas, fields and buttons must be clearly dark, not light grey. */
+    --pc-border: #3d4650;
+    --pc-controlBorder: #3d4650;
+    --hero-field-border: #3d4650;
 }
 
 .admin-workspace.admin-workspace--tool {

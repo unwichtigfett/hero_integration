@@ -661,7 +661,7 @@
         }
         function renderSchemaExplorer() {
             if (!admin) return;
-            let viewEpoch = epoch, request = 0, packageRequest = 0;
+            let viewEpoch = epoch, request = 0;
             const viewTab = tab, section = $("<section data-field-picker></section>"), explorer = $("<details class='hero-mapping-schema-explorer'></details>").append($('<summary></summary>').text(text('Inspect saved schema')));
             section.append(explorer);
             const snapshot = $("<select class='form-control' aria-label='Saved schema snapshot'></select>");
@@ -704,7 +704,7 @@
                     }
                 } catch (error) { if (currentView(serial)) { limitNotice.text(text('The snapshot list could not be loaded completely. Retry before choosing a snapshot.')); info.text(errorText(error)); } }
             }
-            snapshot.on('change', () => { packageRequest++; packagePreview.empty(); loadOperations(snapshot.val()); });
+            snapshot.on('change', () => { loadOperations(snapshot.val()); });
             explorer.append(snapshot, operations, info, limitNotice, details);
             if (viewTab === 'Mutation') {
                 let legacyRequest = 0, detailSerial = 0;
@@ -821,80 +821,14 @@
                         } catch (error) { if (currentLegacy(serial, name)) legacyState.text(errorText(error)); }
                     }));
             }
-            const packagePreview = $("<div class='hero-mapping-package-preview'></div>");
-            const packageState = $("<p role='status'></p>");
-            const fileInput = $("<input type='file' accept='application/json,.json' aria-label='Mapping package'>");
-            const packageCurrent = (serial, name) => !disposed && !busy && epoch === viewEpoch && tab === viewTab &&
-                section[0].isConnected && serial === packageRequest && name === snapshot.val() && !snapshot.prop('disabled');
-            fileInput.on('change', async () => {
-                const file = fileInput[0].files?.[0], name = snapshot.val(); fileInput.val('');
-                if (!file || !name || locked() || snapshot.prop('disabled')) { packageState.text(text('Choose a validated snapshot and a package.')); return; }
-                const serial = ++packageRequest; packagePreview.empty(); packageState.text(text('Loading package preview…'));
-                try {
-                    const payload = await file.text();
-                    if (!packageCurrent(serial, name)) return;
-                    const preview = await rpc('preview_mapping_package', {snapshot_name: name, payload_json: payload}, true);
-                    if (!packageCurrent(serial, name)) return;
-                    if (!Array.isArray(preview?.items) || !/^[a-f0-9]{64}$/.test(preview.preview_revision || '')) throw new Error('Invalid package preview.');
-                    const selected = new Set();
-                    let submitted = false;
-                    const update = () => packageState.text(`${text('Preview only; selected changes')}: ${selected.size}.`);
-                    const choices = $('<div></div>');
-                    preview.items.forEach((item) => {
-                        const check = $("<input type='checkbox'>").prop('disabled', item.selectable !== true);
-                        check.on('change', () => { if (check.prop('checked')) selected.add(item.id); else selected.delete(item.id); update(); });
-                        choices.append($('<label class="d-block"></label>').append(check, document.createTextNode(
-                            ` ${item.id} · ${item.group}: ${item.state} · ${item.label} · ${item.detail || ''} · ${text('Dependencies')}: ${(item.dependencies || []).join(', ') || '—'}`)));
-                    });
-                    const apply = button('Review selected adoption', () => {
-                        if (submitted || !packageCurrent(serial, name)) return;
-                        let chosen;
-                        try { chosen = legacyPackageSelection(preview, [...selected]); }
-                        catch (error) { packageState.text(text(error.message)); return; }
-                        const ids = chosen.map((item) => item.id), mappings = chosen.filter((item) => item.kind === 'mapping').length;
-                        modal('Confirm package adoption', `${text('Apply')} ${ids.length} ${text('selected changes')}. ${text('Selected schema changes may create Frappe schema and selected field mappings will be activated')}: ${mappings}. ${text('Schema changes may not be reversible. No HERO data migration is started.')}`, [
-                            ['Confirm selected adoption', async () => {
-                                if (submitted || !packageCurrent(serial, name)) return;
-                                submitted = true;
-                                const disabled = root.find('button,input,select,textarea').map((_, el) => ({el, value: el.disabled})).get();
-                                setBusy(true); packagePreview.empty(); packageState.text(text('Applying selected adoption…'));
-                                try {
-                                    const outcome = await rpc('adopt_mapping_package', legacyPackageAdoptionArgs(name, payload, preview, ids), true);
-                                    if (outcome?.status !== 'COMPLETED') throw new Error('Adoption outcome is incomplete.');
-                                    if (!disposed && epoch === viewEpoch && tab === viewTab && serial === packageRequest && section[0].isConnected) {
-                                        packageState.text(text('Adoption completed. Review the result.'));
-                                        packagePreview.append(safeJson(outcome));
-                                    }
-                                } catch (error) {
-                                    if (!disposed && epoch === viewEpoch && tab === viewTab && serial === packageRequest && section[0].isConnected)
-                                        packageState.text(`${text('Adoption failed or its outcome is unknown. Schema changes may already exist. Check whether an adoption record exists and inspect the schema before starting a new preview; no retry was made.')} ${text('Submitted selection')}: ${ids.join(', ')}.`);
-                                } finally {
-                                    if (!disposed) { setBusy(false); disabled.forEach(({el, value}) => { if (el.isConnected) el.disabled = value; }); }
-                                }
-                            }, true], ['Cancel', () => {}],
-                        ]);
-                    });
-                    packagePreview.append(choices, apply); update();
-                } catch (error) { if (packageCurrent(serial, name)) packageState.text(errorText(error)); }
-            });
-            const exportPackage = button('Export saved field mapping package', async () => {
-                const name = snapshot.val(); if (!name || locked() || snapshot.prop('disabled')) return packageState.text(text('Choose a validated snapshot.'));
-                const serial = ++packageRequest; packagePreview.empty(); packageState.text(text('Exporting saved field mapping package…'));
-                try {
-                    const result = await rpc('export_mapping_json', {snapshot_name: name});
-                    if (!packageCurrent(serial, name)) return;
-                    downloadExport(result.filename, result.content); packageState.text(text('Saved field mapping package exported for this snapshot fingerprint, including Active, Draft and Disabled mappings. Personal drafts are not included.'));
-                } catch (error) { if (packageCurrent(serial, name)) packageState.text(errorText(error)); }
-            });
             // Import/export lives on the Settings page (Configuration package); the mapping page shows none.
-            explorer.append(button('Retry saved schema', () => { packageRequest++; packagePreview.empty(); loadSnapshots(snapshot.val(), operations.val()); }));
+            explorer.append(button('Retry saved schema', () => { loadSnapshots(snapshot.val(), operations.val()); }));
             section.append(button('Open Graph Viewer', () => {
                 const name = snapshot.val(); if (!name || snapshot.prop('disabled')) return info.text(text('Choose a validated snapshot.'));
                 leaveWorkspace(() => window.hero_integration_ui.setRoute('api', {hero_tool: 'graph', snapshot: name}));
             }));
             section.on('hero-mapping-picker-resume', () => {
                 const name = snapshot.val() || '', operation = operations.val() || '';
-                packageRequest++; packagePreview.empty(); packageState.text(text('Choose a package again to preview it.'));
                 viewEpoch = epoch; loadSnapshots(name, operation);
             });
             renderSavedNodes(section, {viewTab, snapshot, operations, explorer, info, loadSnapshots, current: () => !disposed && epoch === viewEpoch && tab === viewTab && section[0].isConnected});
@@ -975,40 +909,6 @@
             if (admin) renderPersonalDraftList();
             renderSchemaExplorer();
         }
-        function renderListExchange() {
-            const viewEpoch = epoch, viewTab = tab, direction = directionForTab(viewTab);
-            const section = $("<section data-exchange-context></section>"), select = $("<select class='form-control' aria-label='Import target snapshot'></select>");
-            const actions = $("<div class='hero-mapping-actions'></div>"), message = $("<p role='status'></p>");
-            section.append($("<h3></h3>").text(text("Load / Save mappings")), select, message, actions); body.append(section);
-            select.append($("<option></option>").val("").text(text("Choose a validated target snapshot")));
-            const draw = () => {
-                actions.empty(); const ctx = exchangeContext(), entry = ctx && exchanges.get(ctx.key);
-                const label = exchangeLabel(ctx || {direction});
-                actions.append(button(`Import ${label} mappings`, chooseImport).attr("data-import-direction", direction).prop("disabled", !ctx),
-                    button(`Export ${label} mappings`, () => exportDirection()).prop("disabled", !ctx),
-                    button(`Export ${label} active mappings and personal drafts (portable v2)`, () => exportDirection("hero-personal-mapping-portable-v2")).prop("disabled", !ctx));
-                if (!ctx) return;
-                if (entry) actions.append(button("Review import preview", () => exchangePreviewDialog(entry)),
-                    button("Save imported personal drafts", saveImportedDirection, true).prop("disabled", !entry.adopted || !entry.preview.can_save));
-            };
-            draw();
-            readSnapshotPages((args) => rpc("schema_snapshot_list", args), () => !disposed && epoch === viewEpoch && tab === viewTab && section[0].isConnected)
-                .then((rows) => {
-                    if (!rows || disposed || epoch !== viewEpoch || tab !== viewTab || !section[0].isConnected) return;
-                    const valid = rows.filter((row) => row.analysis_status === "Validated" && typeof row.source_instance === "string" && row.source_instance);
-                    valid.forEach((row) => select.append($("<option></option>").val(row.name).text(`${snapshotLabel(row.name)} · ${row.source_instance}`)));
-                    const selected = active?.mapping_type === "graphql" ? {snapshot_name: active.schema_snapshot, source_instance: active.source_instance} : exchangeSelections.get(direction);
-                    if (active?.mapping_type === "graphql") select.prop("disabled", true);
-                    if (selected && valid.some((row) => row.name === selected.snapshot_name && row.source_instance === selected.source_instance)) select.val(selected.snapshot_name);
-                    else if (selected && !active) { exchangeSelections.delete(direction); draw(); }
-                    select.on("change", () => {
-                        const row = valid.find((entry) => entry.name === select.val());
-                        if (row) exchangeSelections.set(direction, {source_instance: row.source_instance, snapshot_name: row.name, direction});
-                        else exchangeSelections.delete(direction);
-                        draw();
-                    });
-                }).catch((error) => { if (!disposed && epoch === viewEpoch) message.text(errorText(error)); });
-        }
         function renderPersonalDraftList() {
             const viewEpoch = epoch, viewTab = tab, section = $("<section data-personal-drafts></section>");
             const list = $("<div></div>"), message = $("<p role='status'></p>"), pager = $("<div></div>");
@@ -1066,118 +966,6 @@
             finally { if (request === epoch) pendingView = null; }
         }
         function content() { return mode === "draft" ? model.content : active.definition || active; }
-        function exchangePreviewDialog(entry, originalOpener = document.activeElement) {
-            if (root.find("dialog").length) return;
-            const opener = originalOpener, preview = entry.preview, counts = exchangeCounts(preview);
-            const canAdopt = () => exchangeCanAdopt(entry, exchanges.get(entry.context.key), exchangeContext()?.key, locked());
-            const dialog = $("<dialog class='hero-mapping-dialog'></dialog>");
-            const heading = $("<h3 id='hero-mapping-exchange-title'></h3>").text(text(`Import ${exchangeLabel(entry.context)} mappings`));
-            let closed = false;
-            const close = () => {
-                if (closed) return;
-                closed = true;
-                if (dialog[0].open) dialog[0].close();
-                dialog.remove();
-                const replacement = exchangeContext()?.key === entry.context.key
-                    ? root.find("[data-import-direction]").filter((_, el) => el.dataset.importDirection === entry.context.direction)[0] : null;
-                const usable = (element) => element?.isConnected && !element.disabled && element.tabIndex >= 0 && element.getClientRects().length;
-                const target = usable(opener) ? opener : usable(replacement) ? replacement : root.find("h2")[0];
-                if (target?.isConnected && !target.disabled) target.focus();
-            };
-            dialog.on("cancel", (event) => { event.preventDefault(); close(); });
-            dialog.attr("aria-labelledby", "hero-mapping-exchange-title").append(heading,
-                $("<p></p>").text(text(preview.format_version === "hero-personal-mapping-portable-v2"
-                    ? `Preview only — no personal drafts or schema were changed. These ${exchangeLabel(entry.context)} drafts will be saved in the selected source and snapshot.`
-                    : `Preview only — no personal drafts or schema were changed. Only ${exchangeLabel(entry.context)} mappings for this source and snapshot can be replaced.`)),
-                $("<p></p>").text(`${text("Definitions")}: ${preview.items.length} · ${text("New")}: ${counts.NEW} · ${text("Changed")}: ${counts.REPLACE} · ${text("Unchanged")}: ${counts.UNCHANGED} · ${text("Removed")}: ${counts.REMOVE}`));
-            const items = $("<table class='table table-sm hero-mapping-table'><thead><tr><th>Definition</th><th>Result</th></tr></thead><tbody></tbody></table>");
-            preview.items.forEach((item) => items.find("tbody").append($("<tr></tr>").append($("<td></td>").text(item.definition_id), $("<td></td>").text(item.state))));
-            dialog.append(items);
-            const conflicts = preview.items.flatMap((item) => (item.conflicts || []).map((conflict) => ({definition_id: item.definition_id, ...conflict})));
-            if (conflicts.length) dialog.append($("<details open></details>").append($("<summary></summary>").text(text("Unresolved references and conflicts")), safeJson(conflicts)));
-            const schema = preview.schema?.items || [];
-            dialog.append($("<details></details>").append($("<summary></summary>").text(`${text("Schema provisioning preview")} (${schema.length})`), safeJson(preview.schema || {})));
-            if (!preview.can_save) dialog.append($("<p role='alert'></p>").text(text("This package cannot be saved until its conflicts and invalid definitions are resolved.")));
-            const adopt = async () => {
-                const adoptEntry = () => { if (!canAdopt()) return; exchanges.set(entry.context.key, {...entry, adopted: true}); say(`Imported ${exchangeLabel(entry.context)} package adopted locally. Save imported ${exchangeLabel(entry.context)} drafts to persist this direction.`); if (active) renderDetail(); else renderList(); };
-                if (!model?.dirty) return adoptEntry();
-                modal("Unsaved changes", "Adopting this directional package replaces the local working draft collection. Save or discard the current local edits first.", [
-                    ["Save and adopt", async () => { if (await save()) adoptEntry(); }, true],
-                    ["Discard local edits and adopt", () => { model.content = clone(model.saved.content); model.undo = []; adoptEntry(); }],
-                    ["Continue editing", () => {}],
-                ]);
-            };
-            dialog.append(button("Adopt locally", async () => { if (!canAdopt()) return; close(); await adopt(); }, true).prop("disabled", !canAdopt()),
-                button("Close", close));
-            root.append(dialog); dialog[0].showModal(); dialog.find("button").first().trigger("focus");
-        }
-        async function previewImport(file, opener) {
-            const context = exchangeContext();
-            if (locked() || !context || !file) return;
-            const request = ++epoch, sequence = ++exchangeSequence;
-            let entry;
-            setBusy(true); say(`Reading ${exchangeLabel(context)} import file…`);
-            try {
-                const payload = await file.text();
-                if (disposed || request !== epoch || context.key !== exchangeContext()?.key) return;
-                const preview = await rpc("mapping_draft_exchange_preview", {payload_json: payload,
-                    source_instance: context.source_instance, snapshot_name: context.snapshot_name, direction: context.direction}, true);
-                if (disposed || request !== epoch || sequence !== exchangeSequence || context.key !== exchangeContext()?.key) return;
-                entry = {context, payload, preview, adopted: false};
-                exchanges.set(context.key, entry); say("Import preview is ready. No personal drafts or schema were changed.");
-            } catch (error) {
-                if (!disposed && request === epoch) say(denied(error) ? errorText(error) : "The import preview failed. Your current work and saved drafts have been kept.");
-            } finally { if (!disposed && request === epoch) { setBusy(false); if (active) renderDetail(); else renderList(); if (entry) exchangePreviewDialog(entry, opener); } }
-        }
-        function chooseImport() {
-            const context = exchangeContext();
-            if (locked() || !context) return;
-            const opener = document.activeElement;
-            const input = $("<input type='file' accept='application/json,.json' class='sr-only'>");
-            input.on("change", () => { const file = input[0].files?.[0]; input.remove(); if (file) previewImport(file, opener); });
-            root.append(input); input.trigger("click");
-        }
-        function downloadExport(filename, content) {
-            if (typeof filename !== "string" || !filename || typeof content !== "string") throw new Error("Invalid directional export response.");
-            const href = URL.createObjectURL(new Blob([content], {type: "application/json"}));
-            const link = document.createElement("a"); link.href = href; link.download = filename; link.hidden = true;
-            root[0].append(link);
-            try { ownedDownload = link; link.click(); }
-            finally { ownedDownload = null; link.remove(); setTimeout(() => URL.revokeObjectURL(href), 1000); }
-        }
-        async function exportDirection(formatVersion) {
-            const context = exchangeContext();
-            if (locked() || !context) return;
-            const request = ++epoch; setBusy(true); say(`Exporting saved ${exchangeLabel(context)} drafts…`);
-            try {
-                const args = {source_instance: context.source_instance, snapshot_name: context.snapshot_name, direction: context.direction};
-                if (formatVersion) args.format_version = formatVersion;
-                const result = await rpc("mapping_draft_exchange_export", args);
-                if (disposed || request !== epoch || context.key !== exchangeContext()?.key) return;
-                downloadExport(result.filename, result.content);
-                say(`Saved ${exchangeLabel(context)} drafts exported. Local unsaved edits were not included.`);
-            } catch (error) { if (!disposed && request === epoch) say(errorText(error)); }
-            finally { if (!disposed && request === epoch) { setBusy(false); if (active) renderDetail(); else renderList(); } }
-        }
-        async function saveImportedDirection() {
-            const context = exchangeContext(), entry = context && exchanges.get(context.key);
-            if (locked() || !entry?.adopted || !entry.preview?.can_save) return;
-            const request = ++epoch, expectedStates = exchangeExpectedStates(entry.preview);
-            setBusy(true); say(`Saving imported ${exchangeLabel(context)} drafts…`);
-            try {
-                const result = await rpc("mapping_draft_exchange_save", {payload_json: entry.payload,
-                    source_instance: context.source_instance, snapshot_name: context.snapshot_name, direction: context.direction,
-                    expected_states_json: JSON.stringify(expectedStates), preview_fingerprint: entry.preview.preview_fingerprint, confirmed: true}, true);
-                if (disposed || request !== epoch || context.key !== exchangeContext()?.key) return;
-                exchanges.delete(context.key); model = null; mode = "active";
-                const created = result.schema?.created || {};
-                const createdCount = Object.values(created).flat().length;
-                say(`Imported ${exchangeLabel(context)} drafts saved. ${createdCount ? `${createdCount} schema element(s) created.` : "Existing schema was reused; no schema elements were created."} Active mappings were not changed.`);
-                ruleCache.clear();
-            } catch (error) {
-                if (!disposed && request === epoch) say(`Import save failed or conflicted. ${exchangeFailureText(error)} Check Drafts and schema before previewing again.`);
-            } finally { if (!disposed && request === epoch) { setBusy(false); if (active) renderDetail(); else renderList(); } }
-        }
         function rows(value) {
             let result = [];
             if (Array.isArray(value.mapping_definition_ids)) result = value.mapping_definition_ids.map((id, index) => ({id, index, reference: true}));

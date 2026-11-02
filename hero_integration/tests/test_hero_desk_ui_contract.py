@@ -238,7 +238,11 @@ class TestHeroDeskUiContract(unittest.TestCase):
     def test_mapping_page_offers_no_import_or_export(self):
         # Import/export lives on the Settings page (Configuration package) only.
         source = MAPPING_EDITOR_JS.read_text()
-        listing = source.split("function renderList()", 1)[1].split("function renderListExchange()", 1)[0]
+        listing = source.split("function renderList()", 1)[1].split("function renderPersonalDraftList()", 1)[0]
+        self.assertNotIn("function renderListExchange()", source)
+        for removed in ("Load / Save mappings", "Saved field mapping package", "portable v2", "adopt_mapping_package",
+                        "mapping_draft_exchange", "export_mapping_json"):
+            self.assertNotIn(removed, source)
         detail = source.split("function renderDetail()", 1)[1].split("function renderContext(", 1)[0]
         for view in (listing, detail):
             self.assertIn("renderMappingsTable(body)", view)
