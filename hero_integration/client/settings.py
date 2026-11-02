@@ -33,6 +33,13 @@ def next_source_binding(revision: int, confirmed_revision: int, *, binding_chang
     return revision, confirmed_revision
 
 
+def require_confirmed_source_binding(revision: int, confirmed_revision: int) -> None:
+    """Require an explicit confirmation of the current binding revision."""
+    if (type(revision) is not int or revision < 0
+            or type(confirmed_revision) is not int or confirmed_revision != revision):
+        raise HeroConfigurationError("The HERO endpoint, token or source instance changed; an administrator must confirm the source binding.")
+
+
 def get_configuration() -> HeroConfiguration:
     settings = frappe.get_single("HERO Integration Settings")
     hosts = {line.strip().lower() for line in (settings.allowed_hero_hosts or "").splitlines() if line.strip()}

@@ -22,7 +22,7 @@
                     [__("HERO field"), `${preview.hero.operation}.${preview.hero.field}`],
                     [__("Expected value"), preview.hero.value],
                 ]),
-                !preview.can_execute ? $("<p class='text-warning'></p>").text(__("Global HERO mutation execution is currently OFF.")) : "",
+                !preview.can_execute ? $("<p class='text-warning'></p>").text(__(preview.blocked_reason || "Global HERO mutation execution is currently OFF.")) : "",
             );
             dialog.set_primary_action(__("Confirm and send once"), () => {
                 frappe.call({method: method + "writeback_execute", args: {
@@ -35,6 +35,7 @@
                     return result;
                 });
             });
+            dialog.get_primary_btn().prop("disabled", !preview.can_execute);
             dialog.show();
         });
     };
