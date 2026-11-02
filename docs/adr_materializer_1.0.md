@@ -1,6 +1,4 @@
-# ADR-36: Internal pure GraphQL materializer
-
-Status: APPROVED
+# Internal pure GraphQL materializer
 
 Decision: hero_integration ships a versioned, internal, pure-Python materializer package. The package is extracted from hero_connector revision 6908a5acf7fe00726cc379c9b1d72824bc7a601d. It has no runtime dependency on hero_connector, auto_domain, Frappe, site configuration, database, or HTTP transport.
 
