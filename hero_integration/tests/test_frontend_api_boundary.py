@@ -223,6 +223,31 @@ class TestFrontendApiBoundary(unittest.TestCase):
                 api.frontend_mapping_bindings("definition-1")
         self.assertEqual(employee.get_all_calls, [])
 
+    def test_integration_link_listing_is_admin_only_and_paged_without_field_claims(self):
+        class Links(_Frappe):
+            def __init__(self, **kwargs):
+                super().__init__(**kwargs)
+                self.db = SimpleNamespace(count=lambda doctype, filters: 42)
+
+            def get_all(self, doctype, **kwargs):
+                self.get_all_calls.append((doctype, kwargs))
+                return [{"source_instance": "default", "source_type": "project", "source_id": "17",
+                         "target_doctype": "Project", "target_name": "PROJ-1", "sync_status": "Synchronized",
+                         "last_synced_on": None, "source_payload_hash": "secret"}]
+
+        frappe = Links()
+        with patch.object(api, "frappe", frappe):
+            result = api.frontend_integration_links(start=20, page_size=10)
+        self.assertEqual(result["pagination"], {"start": 20, "page_size": 10, "total": 42})
+        self.assertEqual(result["items"][0]["source_id"], "17")
+        self.assertNotIn("source_payload_hash", result["items"][0])
+        self.assertNotIn("mapping_definition_id", result["items"][0])
+        self.assertEqual(frappe.get_all_calls[0][1]["filters"], {"source_system": "HERO"})
+        self.assertEqual(frappe.get_all_calls[0][1]["limit_start"], 20)
+        with patch.object(api, "frappe", Links(roles=("Employee",))):
+            with self.assertRaises(PermissionError):
+                api.frontend_integration_links()
+
     def test_noop_save_preserves_revision_and_stale_edit_is_rejected(self):
         mapping = _Mapping(revision=3)
         frappe = _Frappe(mapping=mapping)

@@ -40,18 +40,17 @@ class TestReviewNotifications(unittest.TestCase):
         self.assertIn("approval or rejection", notice["subject"])
         self.assertEqual(notice["email_content"], "The project address is missing.")
 
-    def test_run_summary_lists_every_not_imported_record_by_reason(self):
-        row = lambda source, result, detail: SimpleNamespace(source_type=source, result=result, detail=detail)
-        self.records = [row("Task", "BLOCKED_RECORD", "No project binding.")] * 3 + [
-            row("project", "PENDING_REVIEW", "Address missing.")]
+    def test_run_summary_identifies_each_record_and_escapes_error_text(self):
+        self.records = [
+            SimpleNamespace(name="REC-1", source_type="project", source_id="41", result="PENDING_REVIEW", detail="Address <missing>"),
+            SimpleNamespace(name="REC-2", source_type="project", source_id="42", result="PENDING_REVIEW", detail="Address <missing>"),
+        ]
         self.assertTrue(notices.notify_run_summary("HERO-RUN-1"))
         (notice,) = self.sent
-        self.assertEqual(notice["document_name"], "HERO-RUN-1")
-        self.assertIn("4 records were not imported", notice["subject"])
-        self.assertEqual(notice["email_content"].splitlines(), [
-            "3 × Task BLOCKED_RECORD: No project binding.",
-            "1 × project PENDING_REVIEW: Address missing.",
-        ])
+        self.assertIn("2 records were not imported", notice["subject"])
+        self.assertEqual(notice["email_content"],
+                         "REC-1 | project | 41 | PENDING_REVIEW | Address &lt;missing&gt;<br>"
+                         "REC-2 | project | 42 | PENDING_REVIEW | Address &lt;missing&gt;")
 
     def test_run_without_failures_sends_nothing(self):
         self.assertFalse(notices.notify_run_summary("HERO-RUN-2"))

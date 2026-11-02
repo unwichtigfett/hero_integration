@@ -631,10 +631,10 @@ def sync_page_conflicts(start: int | str = 0, page_size: int | str = 8) -> dict[
 
     start = _mapping_int(start, "start", 0, 2147483647)
     page_size = _mapping_int(page_size, "page_size", 1, 50)
-    filters = {"sync_status": "Conflict", "source_instance": _configured_source_instance()}
+    filters = {"sync_status": ["in", ["Conflict", "Pending Review"]], "source_instance": _configured_source_instance()}
     labels = {item.source_type: item.label for item in AREAS}
     rows = frappe.get_all("HERO Integration Link", filters=filters,
-                          fields=["name", "source_type", "source_id", "target_doctype", "target_name", "conflict_detail", "modified"],
+                          fields=["name", "source_type", "source_id", "target_doctype", "target_name", "conflict_detail", "sync_status", "modified"],
                           order_by="modified desc", limit_start=start, limit_page_length=page_size)
     for row in rows:
         row["area"] = labels.get(row["source_type"], row["source_type"])
@@ -1522,6 +1522,25 @@ def frontend_mapping_bindings(
             "start": start, "page_size": page_size,
             "total": int(frappe.db.count("HERO Field Binding", filters=filters)),
         },
+    }
+
+
+
+@frappe.whitelist(methods=["GET"])
+def frontend_integration_links(start: int | str = 0, page_size: int | str = 20) -> dict[str, object]:
+    """List existing object links without claiming field-level bindings."""
+    frappe.only_for("System Manager")
+    _mapping_request_fields({"start", "page_size"})
+    start = _mapping_int(start, "start", 0, 10000)
+    page_size = _mapping_int(page_size, "page_size", 1, 100)
+    filters = {"source_system": "HERO"}
+    fields = ("source_instance", "source_type", "source_id", "target_doctype", "target_name", "sync_status", "last_synced_on")
+    rows = frappe.get_all("HERO Integration Link", filters=filters, fields=list(fields),
+                          order_by="name asc", limit_start=start, limit_page_length=page_size)
+    return {
+        "items": [{field: _row_value(row, field) for field in fields} for row in rows],
+        "pagination": {"start": start, "page_size": page_size,
+                       "total": int(frappe.db.count("HERO Integration Link", filters=filters))},
     }
 
 
@@ -3583,6 +3602,8 @@ def decide_hero_review(link: str, decision: str) -> dict[str, str]:
     from hero_integration.services.migration import MappingPlanError, decide_review
 
     document = frappe.get_doc("HERO Integration Link", link, for_update=True)
+    if (getattr(document, "source_instance", "") or "default") != _configured_source_instance():
+        frappe.throw("The review belongs to a different HERO source.")
     try:
         decide_review(document, decision)
     except MappingPlanError as error:
