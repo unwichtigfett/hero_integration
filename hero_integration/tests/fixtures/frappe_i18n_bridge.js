@@ -68,6 +68,8 @@ for (const language of input.languages) {
     assert.equal(migration.diagnostic(phoneConflict), language === 'en' ? phoneConflict : 'Der Hauptkontakt des Kunden wird gemeinsam verwendet oder ist nicht mit diesem Kunden verknüpft.');
     const deletedProject = 'The referenced HERO project is deleted; the record is not imported.';
     assert.equal(migration.diagnostic(deletedProject), language === 'en' ? deletedProject : 'Das referenzierte HERO-Projekt ist gelöscht; der Datensatz wird nicht importiert.');
+    const deletedCustomer = 'Source customer is deleted; no ERPNext target deletion was performed.';
+    assert.equal(migration.diagnostic(deletedCustomer), language === 'en' ? deletedCustomer : 'Der Quellkunde ist gelöscht; das ERPNext-Ziel wurde nicht gelöscht.');
     const base = 'Target created through native Frappe validation.';
     const optionalNotes = [
         'The HERO email address is not valid in ERPNext; it was not imported.',

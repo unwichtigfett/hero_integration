@@ -2439,3 +2439,6 @@ HERO pagination did not advance; monitoring stopped safely.,Die HERO-Seitennavig
 HERO source identity is missing or invalid; monitoring stopped safely.,Die HERO-Quellidentität fehlt oder ist ungültig; das Monitoring wurde sicher angehalten.
 HERO source identity repeated across pages; monitoring stopped safely.,Eine HERO-Quellidentität wurde auf mehreren Seiten wiederholt; das Monitoring wurde sicher angehalten.
 Translation: {0},Übersetzung: {0}
+Source customer is deleted; no ERPNext target deletion was performed.,Der Quellkunde ist gelöscht; das ERPNext-Ziel wurde nicht gelöscht.
+The worker stopped before finishing (lease expired). Resume starts the run again.,Der Worker wurde vor Abschluss angehalten (Lease abgelaufen). Fortsetzen startet den Lauf erneut.
+Rejected by an administrator; the existing record is retained and HERO changes are not imported.,Von einem Administrator abgelehnt; der bestehende Datensatz bleibt erhalten und HERO-Änderungen werden nicht importiert.
