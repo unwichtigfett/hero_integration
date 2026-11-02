@@ -729,7 +729,7 @@
                         choices.append($('<option></option>').val('').text(text('Choose a reviewed source and target')));
                         candidates.forEach((item, index) => choices.append($('<option></option>').val(String(index)).text(`${item.doctype}.${item.path} → ${reviewedTargetLabel(item)}`)));
                         dialog.append($('<label></label>').text(text('Reviewed source and target')).append(choices));
-                    } else dialog.append($('<p></p>').text(`${text('Shared draft')}: ${doc.name} · ${text('Status')}: ${doc.status} · ${text('Revision')}: ${doc.mapping_revision} · ${text('Last editor')}: ${doc.modified_by}`));
+                    } else dialog.append($('<p></p>').text(`${text('Shared draft')}: ${doc.name} · ${text('Status')}: ${text(doc.status || '—')} · ${text('Revision')}: ${doc.mapping_revision} · ${text('Last editor')}: ${doc.modified_by}`));
                     const initial = doc ? JSON.parse(doc.mapping_json) : null;
                     const transform = $("<select class='form-control'><option value='Identity'>Identity</option><option value='Trim'>Trim</option></select>").attr("aria-label", text("Shared draft transformation")).val(initial?.transformation || 'Identity');
                     const reason = $("<textarea class='form-control' maxlength='1000'></textarea>").attr("aria-label", text("Shared draft review reason")).val(doc?.suggestion_reason || '');
@@ -785,7 +785,7 @@
                         legacyState.text(`${text('Shared writeback mappings')}: ${rows.length}. ${text('This list is read only and is separate from personal drafts.')}`);
                         rows.forEach((row) => {
                             const reason = row.suggestion_reason ? (window.hero_integration_diagnostics?.translate(row.suggestion_reason) ?? row.suggestion_reason) : '—';
-                            const line = $('<p></p>').text(`${row.name} · ${row.operation_name} · ${row.status} · ${text('Revision')}: ${row.mapping_revision} · ${text('Reason')}: ${reason} · ${text('Confidence')}: ${row.confidence ?? '—'} `);
+                            const line = $('<p></p>').text(`${row.name} · ${row.operation_name} · ${text(row.status || '—')} · ${text('Revision')}: ${row.mapping_revision} · ${text('Reason')}: ${reason} · ${text('Confidence')}: ${row.confidence ?? '—'} `);
                             line.append(button('Inspect shared mapping', async () => {
                                 const detailRequest = ++detailSerial; legacyDetail.empty().text(text('Loading shared mapping…'));
                                 try {
@@ -895,7 +895,7 @@
             }
             function row(item) {
                 const entry = $("<div class='hero-mapping-saved-node' role='listitem'></div>");
-                entry.append($('<strong></strong>').text(item.alias), $('<span></span>').text(` · ${item.node_name} · ${item.node_kind} · ${snapshotLabel(item.schema_snapshot)} · ${item.status}`));
+                entry.append($('<strong></strong>').text(item.alias), $('<span></span>').text(` · ${item.node_name} · ${item.node_kind} · ${snapshotLabel(item.schema_snapshot)} · ${text(item.status || '—')}`));
                 entry.attr('title', text(item.reason || ''));
                 entry.append(button(text('Use in Mapping'), () => use(item)).prop('disabled', item.status === 'UNRESOLVABLE'));
                 entry.append(button(text('Rename'), () => frappe.prompt({fieldname: 'alias', fieldtype: 'Data', label: text('Alias'), reqd: 1, default: item.alias},

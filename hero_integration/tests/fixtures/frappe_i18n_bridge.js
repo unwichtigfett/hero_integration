@@ -16,6 +16,8 @@ for (const language of input.languages) {
     }
     const expectedTitle = language === 'en' ? 'HERO Settings' : 'HERO-Einstellungen';
     assert.equal(window.hero_integration_i18n.text('HERO Settings'), expectedTitle);
+    assert.equal(window.hero_integration_i18n.text('OUTDATED'), language === 'en' ? 'OUTDATED' : 'Veraltet');
+    assert.equal(window.hero_integration_i18n.text('Draft'), language === 'en' ? 'Draft' : 'Entwurf');
     const expectedError = language === 'en'
         ? 'Line 2: variable "id" is defined more than once.'
         : 'Zeile 2: Die Variable „id“ ist mehrfach definiert.';

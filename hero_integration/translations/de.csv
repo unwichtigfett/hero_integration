@@ -2446,3 +2446,6 @@ Schema unchanged; the current snapshot stays in use.,Schema unverändert; der ak
 New schema snapshot captured.,Neuer Schema-Snapshot erfasst.
 {0} graph nodes and {1} graph edges.,{0} Graphknoten und {1} Graphkanten.
 Relation: {0}.,Relation: {0}.
+CURRENT,Aktuell
+OUTDATED,Veraltet
+UNRESOLVABLE,Nicht auflösbar
