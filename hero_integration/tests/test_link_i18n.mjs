@@ -48,3 +48,21 @@ test('native link falls back to Frappe translation if the shared module is unava
   assert.equal(display.textContent, 'Bekannt');
   assert.equal(frm.doc.conflict_detail, 'Known');
 });
+
+test('field-only refresh retains translation without stacking wrappers or changing the document', () => {
+  let handler;
+  const frappe = {ui:{form:{on:(_doctype, callbacks) => {handler = callbacks.refresh;}}}, user:{has_role:() => false}};
+  const window = {__:value => value === 'Known' ? 'Bekannt' : value};
+  vm.runInNewContext(diagnostics, {window});
+  vm.runInNewContext(source, {window, frappe, __:window.__});
+  const display = {textContent:'Known'};
+  let originalCalls = 0;
+  const field = {disp_area:display, value:'Known', set_disp_area(value) { originalCalls++; this.disp_area.textContent = value; return 'done'; }};
+  const frm = {doc:{sync_status:'Conflict', conflict_detail:'Known'}, fields_dict:{conflict_detail:field}};
+  handler(frm);
+  handler(frm);
+  assert.equal(field.set_disp_area('Known'), 'done');
+  assert.equal(originalCalls, 1);
+  assert.equal(display.textContent, 'Bekannt');
+  assert.equal(frm.doc.conflict_detail, 'Known');
+});
