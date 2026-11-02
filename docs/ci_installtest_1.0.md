@@ -51,3 +51,12 @@ configuration files. Woodpecker and GitHub receive push events independently.
 
 The `MIN_TESTS` threshold and known-failure lists apply to the Woodpecker
 suite; GitHub Actions runs the focused app-reference tests instead.
+
+## Test-site update on Forgejo push
+
+A push to Forgejo `hero_int_dev` starts the test-site updater through a dedicated,
+restricted Woodpecker SSH secret. The step waits up to two minutes for GitHub
+`hero_int_dev` to reach the exact same commit before requesting an update. If the
+branches do not match, it fails safely; the twice-daily VPS check remains a
+fallback. The updater creates a backup and runs its own checks and migration.
+This step runs before the isolated install test and does not depend on it.
