@@ -83,6 +83,25 @@ class TestMaterializedMonitor(unittest.TestCase):
         with self.assertRaises(sync_runtime_adapter.RuntimeBridgeError):
             self.run_monitor()
 
+    def test_changed_persisted_generation_after_http_fails_before_settings_lock(self):
+        original_sql = self.frappe.db.sql
+        post_read_queries = []
+
+        def reply(*args):
+            def changed_generation(query, *params, **kwargs):
+                post_read_queries.append(query)
+                if 'tabHERO Runtime Plan' in query:
+                    return [(8,)]
+                return original_sql(query, *params, **kwargs)
+            self.frappe.db.sql = changed_generation
+            return {"things": [{"id": "1", "name": "test"}]}
+
+        self.client.query.side_effect = reply
+        with self.assertRaisesRegex(sync_runtime_adapter.RuntimeBridgeError, "generation changed during transport"):
+            self.run_monitor()
+        self.assertEqual(len(post_read_queries), 1)
+        self.assertIn('tabHERO Runtime Plan', post_read_queries[0])
+
     def test_field_rule_change_during_http_is_rejected_without_root_revision_change(self):
         def reply(*args):
             self.rule['source_path'] = 'other'
@@ -97,6 +116,15 @@ class TestMaterializedMonitor(unittest.TestCase):
         self.client.query.side_effect = reply
         with self.assertRaises(sync_runtime_adapter.RuntimeBridgeError): self.run_monitor()
 
+    def test_area_disabled_during_http_cannot_be_acknowledged(self):
+        def reply(*args):
+            self.settings.sync_area_projects = 0
+            return {"things": [{"id": "1", "name": "test"}]}
+        self.client.query.side_effect = reply
+        with self.assertRaisesRegex(sync_runtime_adapter.RuntimeBridgeError, "source/configuration changed"):
+            self.run_monitor()
+        self.client.query.assert_called_once()
+
     def test_transport_boundary_has_released_prior_transactions(self):
         def reply(*args):
             self.assertGreaterEqual(self.frappe.db.rollback.call_count, 2)
@@ -107,6 +135,13 @@ class TestMaterializedMonitor(unittest.TestCase):
     def test_invalid_result_identity_is_not_reported_as_success(self):
         self.client.query.return_value = {"things": [{"id": None, "name": "test"}]}
         with self.assertRaises(ValueError): self.run_monitor()
+
+    def test_oversized_materialized_page_is_not_reported_as_success(self):
+        self.client.query.return_value = {"things": [{"id": "1", "name": "one"},
+                                                       {"id": "2", "name": "two"}]}
+        with self.assertRaisesRegex(sync_runtime_adapter.RuntimeBridgeError, "bounded read contract"):
+            self.run_monitor()
+        self.client.query.assert_called_once()
 
 
 class TestScheduledMonitor(unittest.TestCase):
@@ -127,6 +162,7 @@ class TestScheduledMonitor(unittest.TestCase):
         event.assert_called_once()
         self.assertEqual(event.call_args.args[:2], ("MONITOR", "Incomplete"))
         self.assertEqual(settings.sync_status, "MONITOR incomplete")
+        self.assertEqual(settings.last_successful_sync, datetime(2026, 1, 1))
         self.assertEqual(fake.get_single.call_count, 2)
 
     def test_unapproved_plan_is_a_visible_skip_not_a_legacy_query(self):
@@ -156,3 +192,25 @@ class TestScheduledMonitor(unittest.TestCase):
         old.save.assert_not_called()
         current.save.assert_called_once()
         fake.db.rollback.assert_called_once()
+
+    def test_unexpected_failure_rolls_back_and_does_not_publish_exception_text(self):
+        from hero_integration.services import polling
+        sensitive = 'synthetic-secret-from-exception'
+        settings = SimpleNamespace(polling_mode='MONITOR', save=Mock())
+        fake = types.ModuleType('frappe')
+        fake.db = SimpleNamespace(rollback=Mock())
+        fake.get_single = Mock(return_value=settings)
+        fake.log_error = Mock()
+
+        def record_event(*args):
+            fake.db.rollback.assert_called_once()
+
+        with patch.dict(sys.modules, {'frappe': fake}), \
+             patch.object(sync_runtime_adapter, 'run_materialized_monitor', side_effect=ValueError(sensitive)), \
+             patch.object(polling, '_record_event', side_effect=record_event) as event:
+            polling.run_monitor()
+
+        event.assert_called_once()
+        self.assertNotIn(sensitive, str(event.call_args))
+        self.assertNotIn(sensitive, settings.sync_error)
+        self.assertNotIn(sensitive, str(fake.log_error.call_args))

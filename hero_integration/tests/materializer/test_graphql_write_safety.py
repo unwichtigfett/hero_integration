@@ -143,6 +143,21 @@ def test_approval_is_invalid_after_variable_change() -> None:
     assert "does not match" in result.reason
 
 
+def test_mutation_approval_is_invalid_in_another_request_scope() -> None:
+    original = GraphQLWriteRequest.create(
+        "mutation UpdateProject { updateProject }", operation_name="UpdateProject", request_scope="source-a",
+    )
+    other = GraphQLWriteRequest.create(
+        original.document, operation_name="UpdateProject", request_scope="source-b",
+    )
+    approval = GraphQLMutationApproval.create(original)
+
+    result = GraphQLWriteSafetyPolicy(mutations_enabled=True).assess(other, approval=approval)
+
+    assert result.state is GraphQLWriteSafetyState.BLOCKED
+    assert result.can_execute is False
+
+
 def test_approval_is_invalid_after_document_change() -> None:
     original = GraphQLWriteRequest.create(
         "mutation UpdateProject { updateProject }",
@@ -299,6 +314,9 @@ def test_request_retains_detached_variables_and_fingerprints_scope() -> None:
     assert first.fingerprint != other_scope.fingerprint
     with pytest.raises(TypeError):
         first.variables["input"] = {}  # type: ignore[index]
+    returned = first.variables
+    returned["input"]["name"] = "local change"  # type: ignore[index]
+    assert first.variables == {"input": {"name": "Ada"}}
 
 
 def test_variable_key_order_does_not_change_fingerprint() -> None:

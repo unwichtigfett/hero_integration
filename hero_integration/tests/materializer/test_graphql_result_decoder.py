@@ -76,6 +76,11 @@ class GraphQLResultDecoderTests(unittest.TestCase):
 
         return caught.exception
 
+    def test_float_result_rejects_json_exponent_overflow(self):
+        request = make_request(make_binding(("value",), ("data", "result", "value"), "Float"))
+        response = Response(True, '{"data":{"result":{"value":1e999}}}', True)
+        self.assert_code("RESULT_TYPE_INVALID", lambda: decode_graphql_result(request, response))
+
     def test_nested_scalar_path(self):
         decoded = decode_graphql_result(
             make_request(
@@ -238,6 +243,18 @@ class GraphQLResultDecoderTests(unittest.TestCase):
                 ),
             ),
         )
+
+    def test_nested_collections_preserve_nullable_ancestors_and_reject_bad_leaf(self):
+        request = make_request(make_binding(("children", "name"), ("data", "result", "children", "name")))
+        rows = [{"children": [{"name": "first"}, None, {"name": "second"}]},
+                {"children": None}, {"children": []}]
+        decoded = decode_graphql_result(request, make_response({"data": {"result": rows}}))
+        self.assertEqual(decoded.value_for(("children", "name")), (("first", None, "second"), None, ()))
+
+        rows[0]["children"][2]["name"] = 42
+        self.assert_code("RESULT_TYPE_INVALID", lambda: decode_graphql_result(
+            request, make_response({"data": {"result": rows}})
+        ))
 
     def test_scalar_list_leaf_is_not_projection(self):
         decoded = decode_graphql_result(
@@ -421,6 +438,15 @@ class GraphQLResultDecoderTests(unittest.TestCase):
             ),
         )
 
+    def test_successful_transport_with_partial_graphql_errors_still_fails_closed(self):
+        request = make_request(make_binding(("name",), ("data", "result", "name")))
+        response = make_response({
+            "data": {"result": {"name": "visible"}},
+            "errors": [{"message": "synthetic upstream detail", "path": ["result", "other"]}],
+        }, success=True)
+        error = self.assert_code("RESULT_GRAPHQL_ERROR", lambda: decode_graphql_result(request, response))
+        self.assertNotIn("synthetic upstream detail", str(error))
+
     def test_malformed_json_is_rejected(self):
         self.assert_code(
             "RESULT_RESPONSE_INVALID",
@@ -476,6 +502,18 @@ class GraphQLResultDecoderTests(unittest.TestCase):
 
         with self.assertRaises(TypeError):
             values[("name",)] = "Changed"
+
+    def test_projected_lists_are_immutable_and_detached_from_source_payload(self):
+        payload = {"data": {"result": [{"tags": ["one", "two"]}, {"tags": ["three"]}]}}
+        request = make_request(make_binding(("tags",), ("data", "result", "tags"), "[String]"))
+        response = make_response(payload)
+        payload["data"]["result"][0]["tags"][0] = "changed"
+
+        decoded = decode_graphql_result(request, response)
+        tags = decoded.value_for(("tags",))
+        self.assertEqual(tags, (("one", "two"), ("three",)))
+        with self.assertRaises(TypeError):
+            tags[0][0] = "changed"
 
 
 if __name__ == "__main__":

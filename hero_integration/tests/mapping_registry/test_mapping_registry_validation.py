@@ -69,8 +69,13 @@ class TestMappingRegistryValidation(unittest.TestCase):
         self.assertEqual(result.availability, MappingAvailability.PROVISIONING_REQUIRED)
 
     def test_direction_and_reference_cannot_be_ambiguous(self):
-        with self.assertRaises(MappingValidationError):
-            validate_mapping_definition(definition(reference="hero.mutation.update.input.value"), schema(), fields())
+        cases = (
+            definition(reference="hero.mutation.update.input.value"),
+            definition(MappingDirection.FRAPPE_TO_HERO, reference="hero.query.lookup.value"),
+        )
+        for item in cases:
+            with self.subTest(direction=item.direction), self.assertRaises(MappingValidationError):
+                validate_mapping_definition(item, schema(), fields())
 
     def test_snapshot_mismatch_fails_closed(self):
         with self.assertRaises(MappingValidationError):

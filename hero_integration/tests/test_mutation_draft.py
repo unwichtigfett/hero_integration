@@ -27,6 +27,10 @@ class TestMutationDraft(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "literal values"):
             validate(SCHEMA, 'mutation { changeCase(api_token: "not-a-real-secret") { id } }')
 
+    def test_local_literal_check_does_not_reject_numeric_boolean_or_enum_values(self):
+        document = "mutation { changeCase(id: 123456, enabled: true, state: ACTIVE) { id } }"
+        self.assertEqual(validate(SCHEMA, document)["operation"], "changeCase")
+
     def test_query_kind_allows_anonymous_queries_but_not_mixed_documents(self):
         self.assertEqual(operation_kind("{ changeCase { id } }"), "query")
         with self.assertRaisesRegex(ValueError, "exactly one"):

@@ -28,9 +28,9 @@ doctype_js = {
     "Project": ["public/js/hero_writeback.js", "public/js/hero_project_send.js"],
 }
 
-# The gate intentionally covers only HERO-owned documents. It cannot block a
-# user from deleting arbitrary ERPNext records, but it does cover every native
-# app RPC, background path and direct DocType deletion route.
+# The deletion gate applies to the explicitly listed HERO-owned DocTypes.
+# Other app DocTypes may have their own deletion rules; arbitrary ERPNext
+# records and unlisted DocTypes are not covered by this hook registration.
 _HERO_OWNED_DOCTYPES = (
     "HERO Frappe Mapping",
     "HERO GraphQL Mapping",

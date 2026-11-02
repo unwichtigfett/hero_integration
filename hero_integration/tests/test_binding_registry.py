@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import threading
 import unittest
+from dataclasses import replace
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 from hero_integration.services.binding_registry import (
     BindingConflict, BindingRegistryError, BindingRegistryService, BindingState,
@@ -26,9 +29,13 @@ class TestBindingRegistry(unittest.TestCase):
 
     def test_identity_separates_source_type_target_and_mapping_revision(self):
         first = self.obj()
+        self.assertNotEqual(first.identity_key, self.obj(site_scope="two.test").identity_key)
         self.assertNotEqual(first.identity_key, self.obj(source_instance="hero-b").identity_key)
         self.assertNotEqual(first.identity_key, self.obj(object_type="Company").identity_key)
+        self.assertNotEqual(first.identity_key, self.obj(external_object_id="43").identity_key)
+        self.assertNotEqual(first.identity_key, self.obj(target_app="other-app").identity_key)
         self.assertNotEqual(first.identity_key, self.obj(target_name="CUST-2").identity_key)
+        self.assertNotEqual(first.identity_key, self.obj(mapping_definition_id="other-rule").identity_key)
         self.assertNotEqual(first.identity_key, self.obj(mapping_revision=2).identity_key)
 
     def test_user_binding_accepts_canonical_email_identifier(self):
@@ -38,6 +45,21 @@ class TestBindingRegistry(unittest.TestCase):
         with self.assertRaises(BindingRegistryError):
             self.obj(object_type='User', target_app='frappe', target_doctype='User', target_name='not a user')
 
+    def test_creation_rejects_incompatible_existing_object_under_same_key(self):
+        canonical = self.obj()
+        inconsistent = replace(canonical, external_object_id="99")
+        storage = SimpleNamespace(object=Mock(return_value=inconsistent), put_object=Mock())
+        service = BindingRegistryService(storage)
+        with self.assertRaisesRegex(BindingConflict, "incompatible"):
+            service.create_or_resolve_object_binding(
+                site_scope=canonical.site_scope, source_instance=canonical.source_instance,
+                object_type=canonical.object_type, external_object_id=canonical.external_object_id,
+                target_app=canonical.target_app, target_doctype=canonical.target_doctype,
+                target_name=canonical.target_name, mapping_definition_id=canonical.mapping_definition_id,
+                mapping_revision=canonical.mapping_revision,
+            )
+        storage.put_object.assert_not_called()
+
     def test_object_and_field_creation_are_idempotent_and_site_scoped(self):
         parent = self.obj()
         self.assertIs(parent, self.obj())
@@ -45,6 +67,20 @@ class TestBindingRegistry(unittest.TestCase):
         self.assertIs(field, self.field(parent))
         self.assertEqual(self.service.get_field_bindings("one.test", parent.identity_key), (field,))
         self.assertIsNone(self.service.get_object_binding("two.test", parent.identity_key))
+
+    def test_frappe_storage_rejects_cross_site_reads_and_unprivileged_writes_before_access(self):
+        frappe = SimpleNamespace(
+            local=SimpleNamespace(site="one.test"), session=SimpleNamespace(user="employee@example.invalid"),
+            get_roles=lambda: ("Employee",), get_all=Mock(), get_doc=Mock(), has_permission=Mock(),
+        )
+        storage = FrappeBindingStorage(frappe)
+        with self.assertRaises(BindingRegistryError):
+            storage.object("two.test", "some-key")
+        with self.assertRaises(PermissionError):
+            storage.put_object(self.obj())
+        frappe.get_all.assert_not_called()
+        frappe.get_doc.assert_not_called()
+        frappe.has_permission.assert_not_called()
 
     def test_field_requires_persisted_matching_parent_and_multiple_fields_are_allowed(self):
         parent = self.obj()
@@ -74,6 +110,22 @@ class TestBindingRegistry(unittest.TestCase):
         self.assertEqual(ack.state, BindingState.SYNCHRONIZED)
         self.assertIs(ack, self.service.record_verified_acknowledgment(ack, expected_revision=2, mapping_definition_id="contact-name", mapping_revision=1, source_fingerprint=source, target_fingerprint=target, evidence_id="migration-1", version=1))
         with self.assertRaises(BindingConflict): self.service.record_verified_acknowledgment(ack, expected_revision=1, mapping_definition_id="contact-name", mapping_revision=1, source_fingerprint=source, target_fingerprint=target, evidence_id="migration-2", version=0)
+
+    def test_same_acknowledgment_version_rejects_different_fingerprints(self):
+        field = self.field(self.obj())
+        source = state_fingerprint("source", present=True)
+        target = state_fingerprint("target", present=True)
+        ack = self.service.record_verified_acknowledgment(
+            field, expected_revision=1, mapping_definition_id="contact-name", mapping_revision=1,
+            source_fingerprint=source, target_fingerprint=target, evidence_id="migration-1", version=1,
+        )
+        with self.assertRaisesRegex(BindingConflict, "conflicts with recorded evidence"):
+            self.service.record_verified_acknowledgment(
+                ack, expected_revision=2, mapping_definition_id="contact-name", mapping_revision=1,
+                source_fingerprint=source, target_fingerprint=state_fingerprint("other", present=True),
+                evidence_id="migration-2", version=1,
+            )
+        self.assertEqual(self.service.get_field_bindings("one.test", ack.object_binding_key), (ack,))
 
     def test_change_state_distinguishes_missing_null_empty_false_zero_and_mapping_change(self):
         field = self.field(self.obj())

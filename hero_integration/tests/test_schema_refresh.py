@@ -63,6 +63,11 @@ class TestSchemaRefreshDue(unittest.TestCase):
 
 
 class TestSchemaRefreshRecording(unittest.TestCase):
+    def setUp(self):
+        clock = patch.object(schema_refresh, "now_datetime", return_value=NOW)
+        clock.start()
+        self.addCleanup(clock.stop)
+
     def test_success_verifies_the_binding_that_was_current_at_start(self):
         settings = _settings(schema_verified_on=None, source_binding_revision=3)
         fake = _frappe(settings)
@@ -73,6 +78,24 @@ class TestSchemaRefreshRecording(unittest.TestCase):
         self.assertEqual(fake.db.values["schema_verified_revision"], 3)
         self.assertEqual(fake.db.values["schema_verified_by"], "admin@example.com")
         self.assertIsNotNone(fake.db.values["schema_verified_on"])
+
+    def test_binding_changed_during_capture_is_not_verified_for_new_revision(self):
+        settings = _settings(schema_verified_on=None, source_binding_revision=3)
+        fake = _frappe(settings)
+
+        def capture(_actor):
+            settings.source_binding_revision = 4
+            return {"status": "CAPTURED", "snapshot_name": "synthetic"}
+
+        with patch.object(schema_refresh, "frappe", fake), patch.object(schema_refresh, "_capture", side_effect=capture):
+            schema_refresh.refresh("admin@example.com")
+        self.assertEqual(fake.db.values["schema_verified_revision"], 3)
+        current = _settings(source_binding_revision=4,
+                            schema_verified_revision=fake.db.values["schema_verified_revision"],
+                            schema_verified_on=fake.db.values["schema_verified_on"])
+        self.assertFalse(schema_refresh.binding_verified(current))
+        self.assertFalse(schema_refresh.periodic_due(current, NOW))
+        self.assertTrue(schema_refresh.check_due_after_save(current))
 
     def test_unchanged_schema_reports_that_the_snapshot_stays(self):
         fake = _frappe(_settings())
@@ -100,6 +123,32 @@ class TestSchemaRefreshRecording(unittest.TestCase):
                 message = schema_refresh._client_error_message(HeroClientError("HERO request failed.", code=code))
                 self.assertIn("rejected the API token", message)
 
+    def test_compatibility_query_is_attempted_only_after_graphql_error(self):
+        from hero_integration.client.graphql import HeroClientError
+        from hero_integration.services.introspection import COMPATIBILITY_INTROSPECTION_QUERY, INTROSPECTION_QUERY
+
+        configuration = SimpleNamespace(endpoint=SimpleNamespace(url='https://synthetic.invalid/graphql'),
+                                        source_instance='synthetic', timeout_seconds=30, api_token='synthetic')
+        class StopBeforePersistence(Exception):
+            pass
+
+        for code in ('GRAPHQL_ERRORS', 'HTTP_401', 'TRANSPORT'):
+            with self.subTest(code=code):
+                client = SimpleNamespace(introspect=MagicMock(side_effect=[HeroClientError('synthetic', code=code), {}]))
+                with patch('hero_integration.client.settings.get_configuration', return_value=configuration), \
+                     patch('hero_integration.client.graphql.HeroGraphQLClient', return_value=client), \
+                     patch('hero_integration.services.introspection.canonical_schema', side_effect=StopBeforePersistence):
+                    if code == 'GRAPHQL_ERRORS':
+                        with self.assertRaises(StopBeforePersistence):
+                            schema_refresh._capture('synthetic-actor')
+                        self.assertEqual(client.introspect.call_args_list,
+                                         [unittest.mock.call(INTROSPECTION_QUERY),
+                                          unittest.mock.call(COMPATIBILITY_INTROSPECTION_QUERY)])
+                    else:
+                        with self.assertRaises(schema_refresh.SchemaRefreshError):
+                            schema_refresh._capture('synthetic-actor')
+                        client.introspect.assert_called_once_with(INTROSPECTION_QUERY)
+
 
 class TestScheduledSchemaRefresh(unittest.TestCase):
     def test_tick_enqueues_one_deduplicated_job_only_when_due(self):
@@ -122,6 +171,16 @@ class TestScheduledSchemaRefresh(unittest.TestCase):
                 patch.object(schema_refresh, "refresh", side_effect=schema_refresh.SchemaRefreshError("x")) as refresh:
             schema_refresh.scheduled_refresh_job()
         refresh.assert_called_once_with("admin@example.com")
+
+    def test_job_rechecks_binding_before_starting_capture(self):
+        for settings in (_settings(schema_verified_revision=1), _settings(hero_api_url=""),
+                         _settings(token=None)):
+            with self.subTest(settings=settings):
+                fake = _frappe(settings)
+                with patch.object(schema_refresh, "frappe", fake), \
+                     patch.object(schema_refresh, "refresh") as refresh:
+                    schema_refresh.scheduled_refresh_job()
+                refresh.assert_not_called()
 
 
 if __name__ == "__main__":

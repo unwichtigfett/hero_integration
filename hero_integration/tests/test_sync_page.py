@@ -1,21 +1,18 @@
 """Synchronization page: areas, mapping scope, sync switches and the one-button start."""
 from __future__ import annotations
 
+from pathlib import Path
+import subprocess
 import sys
-import types
 import unittest
 from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import patch
 
-try:
-    import frappe  # noqa: F401
-except ModuleNotFoundError:
-    stub = types.ModuleType("frappe")
-    stub.whitelist = lambda *args, **kwargs: (lambda function: function)
-    sys.modules["frappe"] = stub
+from hero_integration.tests._frappe_test_import import load_api
 
-from hero_integration import api
+
+api = load_api()
 from hero_integration.services import sync_page
 from hero_integration.services.polling import runtime_plan, scheduler_due
 
@@ -25,6 +22,61 @@ def _settings(**values):
 
 
 class TestAreas(unittest.TestCase):
+    def test_offline_import_restores_frappe_and_api_module_cache(self):
+        script = """\
+import sys
+sys.path.insert(0, sys.argv[1])
+import hero_integration
+assert not hasattr(hero_integration, 'api')
+import hero_integration.tests.test_sync_page
+assert 'frappe' not in sys.modules
+assert 'hero_integration.api' not in sys.modules
+assert not hasattr(hero_integration, 'api')
+import hero_integration.tests.test_workspace_snapshot_binding
+assert 'frappe' not in sys.modules
+assert 'hero_integration.api' not in sys.modules
+assert not hasattr(hero_integration, 'api')
+for name in ('test_workspace_snapshot_selection', 'test_workspace_overview_contract', 'test_node_bookmark',
+             'test_workspace_mutation_draft_contract', 'test_workspace_service_execution'):
+    __import__('hero_integration.tests.' + name)
+    assert 'frappe' not in sys.modules
+    assert 'hero_integration.api' not in sys.modules
+    assert not hasattr(hero_integration, 'api')
+"""
+        subprocess.run(
+            [sys.executable, "-I", "-S", "-B", "-c", script, str(Path(__file__).resolve().parents[2])],
+            check=True,
+        )
+
+    def test_failed_offline_api_import_restores_preexisting_package_alias(self):
+        script = """\
+import importlib
+import sys
+sys.path.insert(0, sys.argv[1])
+import hero_integration
+sentinel = object()
+hero_integration.api = sentinel
+original_import = importlib.import_module
+def failing_import(name, *args, **kwargs):
+    if name == 'hero_integration.api':
+        raise RuntimeError('synthetic import failure')
+    return original_import(name, *args, **kwargs)
+importlib.import_module = failing_import
+try:
+    import hero_integration.tests.test_sync_page
+except RuntimeError as error:
+    assert str(error) == 'synthetic import failure'
+else:
+    raise AssertionError('synthetic import did not fail')
+assert 'frappe' not in sys.modules
+assert 'hero_integration.api' not in sys.modules
+assert hero_integration.api is sentinel
+"""
+        subprocess.run(
+            [sys.executable, "-I", "-S", "-B", "-c", script, str(Path(__file__).resolve().parents[2])],
+            check=True,
+        )
+
     def test_four_areas_use_the_new_names_and_keep_the_stored_run_actions(self):
         self.assertEqual([item.action_label for item in sync_page.AREAS],
                          ["Contact Migration", "Project Migration", "Event Migration", "Task Migration"])

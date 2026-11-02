@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 from unittest import mock
 
 import frappe
@@ -155,11 +156,15 @@ class TestProjectTrades(unittest.TestCase):
 
 class TestRecordIsolation(unittest.TestCase):
     def setUp(self):
-        patches = [mock.patch.object(frappe.db, 'savepoint'), mock.patch.object(frappe.db, 'rollback'),
-                   mock.patch.object(frappe, 'log_error'), mock.patch.object(frappe, 'clear_messages')]
-        self.savepoint, self.rollback, self.log_error, _ = [item.start() for item in patches]
-        for item in patches:
-            self.addCleanup(item.stop)
+        from frappe.database.mariadb.database import MariaDBDatabase
+
+        self.savepoint, self.rollback, self.log_error = mock.Mock(), mock.Mock(), mock.Mock()
+        self.db = SimpleNamespace(savepoint=self.savepoint, rollback=self.rollback, DataError=MariaDBDatabase.DataError)
+        fake = SimpleNamespace(db=self.db, ValidationError=frappe.ValidationError,
+                               log_error=self.log_error, clear_messages=mock.Mock())
+        patcher = mock.patch.object(migration, 'frappe', fake)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def test_a_validation_error_blocks_only_this_record(self):
         def rejected():
@@ -172,7 +177,7 @@ class TestRecordIsolation(unittest.TestCase):
         self.log_error.assert_called_once()
 
     def test_a_database_data_error_blocks_only_this_record(self):
-        result = migration._migrate_isolated(mock.Mock(side_effect=frappe.db.DataError(1406, 'Data too long')))
+        result = migration._migrate_isolated(mock.Mock(side_effect=self.db.DataError(1406, 'Data too long')))
         self.assertEqual(result.code, 'BLOCKED_RECORD')
         self.assertIn('DataError', result.detail)
 

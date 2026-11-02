@@ -1008,7 +1008,10 @@ class _FakeFrappe:
         return [record["name"] for record in records if record.get(field) == value]
 
     def link(self, source_type, source_id, source_instance="default"):
-        return self.links.get((source_type, source_id, source_instance)) or self.links.get((source_type, source_id))
+        link = self.links.get((source_type, source_id, source_instance))
+        if link is None and source_instance == "default":
+            link = self.links.get((source_type, source_id))
+        return link
 
     def delete_doc(self, doctype, name, **kwargs):
         if doctype != "Project":

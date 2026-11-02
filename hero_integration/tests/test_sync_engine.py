@@ -116,4 +116,67 @@ class TestSync(unittest.TestCase):
   with self.assertRaises(PermissionError): execute_sync_hero(intent,OutboundApproval(False,True,True,True,True,1),Transport(OutboundAck(True,"e","a"*64,"b"*64)),self.bindings)
   with self.assertRaises(SyncConflict): execute_sync_hero(intent,OutboundApproval(True,True,True,True,True,1),Transport(OutboundAck(False,"e","a"*64,"b"*64)),self.bindings)
   with self.assertRaises(SyncError): execute_sync_hero(OutboundIntent(self.binding,1,FP,"local",False,"m",{}),OutboundApproval(True,True,True,True,True,1),Transport(OutboundAck(True,"e","a"*64,"b"*64)),self.bindings)
+ def test_each_missing_outbound_approval_blocks_transport(self):
+  from dataclasses import replace
+  intent=OutboundIntent(self.binding,1,FP,"local",True,"mutation X { x { id } }",{})
+  approval=OutboundApproval(True,True,True,True,True,1)
+  for field in ("actor_authorized","mutation_approved","preview_confirmed","audit_reserved","no_retry"):
+   transport=Transport(OutboundAck(True,"e","a"*64,"b"*64))
+   with self.subTest(missing=field), self.assertRaises(PermissionError):
+    execute_sync_hero(intent,replace(approval,**{field:False}),transport,self.bindings)
+   self.assertEqual(transport.calls,0)
+ def test_unproven_change_provider_never_queries_or_reads_bound_index(self):
+  provider=Provider({},ChangeCapabilities(False,False,False))
+  engine=self.engine(provider); state=self.configured(engine)
+  class RejectIndex:
+   def fields(self,*args): raise AssertionError("unproven provider must not enumerate bindings")
+  engine.index=RejectIndex()
+  result=engine.pending_sync(SyncRun("unproven","site","admin",state.generation,False))
+  self.assertEqual((result.status,result.cursor),(SyncStatus.INCOMPLETE,None))
+  self.assertEqual(provider.calls,[])
+  self.assertIsNone(self.ledger.active_run("site"))
+
+ def test_failed_processor_releases_claim_for_next_run_without_advancing_cursor(self):
+  provider=Provider({None:ChangePage(({"id":"1","name":"Ada"},),None,True,"w1")})
+  engine=self.engine(provider,Processor(False)); state=self.configured(engine)
+  result=engine.pending_sync(SyncRun("failed","site","admin",state.generation,False))
+  self.assertEqual((result.status,result.cursor),(SyncStatus.PARTIAL,None))
+  self.assertIsNone(self.ledger.active_run("site"))
+  current=self.ledger.state("site")
+  retry=engine.pending_sync(SyncRun("retry","site","admin",current.generation,False))
+  self.assertEqual((retry.status,retry.cursor),(SyncStatus.PARTIAL,None))
+  self.assertIsNone(self.ledger.active_run("site"))
+
+ def test_provider_conflict_after_first_page_keeps_state_and_releases_claim(self):
+  class ConflictingProvider(Provider):
+   def changes(self,cursor):
+    if cursor == "page-2":
+     self.calls.append(cursor)
+     raise SyncConflict("synthetic provider conflict")
+    return super().changes(cursor)
+  provider=ConflictingProvider({None:ChangePage(({"id":"1","name":"first"},),"page-2",False)})
+  processor=Processor(); engine=self.engine(provider,processor); state=self.configured(engine)
+  with self.assertRaisesRegex(SyncConflict,"synthetic provider conflict"):
+   engine.pending_sync(SyncRun("conflict","site","admin",state.generation,False))
+  self.assertEqual(provider.calls,[None,"page-2"])
+  self.assertEqual(len(processor.rows),1)
+  self.assertEqual(self.ledger.state("site"),state)
+  self.assertIsNone(self.ledger.active_run("site"))
+
+ def test_partial_batch_replays_from_committed_cursor_before_advancing(self):
+  class FailsOnceOnSecond(Processor):
+   def process(self,row,fields):
+    self.rows.append((row,fields))
+    return len(self.rows)!=2
+  provider=Provider({None:ChangePage(({"id":"1","name":"first"},),"page-2",False),
+                     "page-2":ChangePage(({"id":"1","name":"second"},),None,True,"w1")})
+  processor=FailsOnceOnSecond(); engine=self.engine(provider,processor); state=self.configured(engine)
+  partial=engine.pending_sync(SyncRun("first","site","admin",state.generation,False))
+  self.assertEqual((partial.status,partial.cursor),(SyncStatus.PARTIAL,None))
+  retry=engine.pending_sync(SyncRun("retry","site","admin",partial.generation,False))
+  self.assertEqual((retry.status,retry.cursor),(SyncStatus.SUCCEEDED,"w1"))
+  self.assertEqual(provider.calls,[None,"page-2",None,"page-2"])
+  self.assertEqual([row[0]["name"] for row in processor.rows],["first","second","first","second"])
+  self.assertIsNone(self.ledger.active_run("site"))
+
 if __name__=="__main__": unittest.main()

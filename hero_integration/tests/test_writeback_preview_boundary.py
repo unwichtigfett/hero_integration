@@ -85,6 +85,28 @@ class TestWritebackPreviewBoundary(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'contract.*schema'):
             self.preview()
 
+    def test_foreign_instance_conflict_and_changed_source_link_are_rejected(self):
+        cases = ({'source_instance': 'other'}, {'sync_status': 'Conflict'}, {'observed_source_hash': 'changed'})
+        for changes in cases:
+            original = vars(self.link).copy()
+            try:
+                vars(self.link).update(changes)
+                with self.subTest(changes=changes), self.assertRaisesRegex(ValueError, 'link|source'):
+                    self.preview()
+            finally:
+                vars(self.link).clear()
+                vars(self.link).update(original)
+
+    def test_missing_or_multiple_links_are_rejected(self):
+        original_get_all = self.frappe.get_all
+        for links in ([], [self.link, self.link]):
+            with self.subTest(link_count=len(links)):
+                self.frappe.get_all = lambda doctype, **kwargs: (
+                    links if doctype == 'HERO Integration Link' else original_get_all(doctype, **kwargs)
+                )
+                with self.assertRaisesRegex(ValueError, 'Exactly one valid HERO Integration Link'):
+                    self.preview()
+
     def test_changed_contract_service_and_document_are_rejected(self):
         self.service.query_document = 'mutation Other($contact: CustomerInput!) { update_contact(contact: $contact) { id } }'
         with self.assertRaisesRegex(ValueError, 'contract|service'):
@@ -94,6 +116,41 @@ class TestWritebackPreviewBoundary(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'contract|service'):
             self.preview()
 
+    def test_non_manager_cannot_probe_mutation_gate_or_access_execute_targets(self):
+        def deny(role):
+            raise PermissionError(role)
+        self.frappe.only_for = deny
+        endpoints = (
+            lambda: api.writeback_execute('mapping', 'Customer', 'CUST-1', 'fingerprint', 1),
+            lambda: api.execute_graphql_service('service', '{}', 'fingerprint', 1),
+        )
+        with patch.object(api, 'frappe', self.frappe), \
+             patch.object(api, '_mutation_execution_state') as gate, \
+             patch.object(self.frappe, 'get_doc') as get_doc, \
+             patch.object(api, '_reserve_mutation') as reserve:
+            for call in endpoints:
+                with self.subTest(endpoint=call), self.assertRaises(PermissionError):
+                    call()
+            gate.assert_not_called()
+            get_doc.assert_not_called()
+            reserve.assert_not_called()
+
+    def test_disabled_global_gate_blocks_execute_before_document_or_audit_access(self):
+        endpoints = (
+            lambda: api.writeback_execute('mapping', 'Customer', 'CUST-1', 'fingerprint', 1),
+            lambda: api.execute_graphql_service('service', '{}', 'fingerprint', 1),
+        )
+        with patch.object(api, 'frappe', self.frappe), \
+             patch.object(api, '_mutation_execution_state', return_value={'mutation_execution_enabled': False}), \
+             patch.object(self.frappe, 'get_doc') as get_doc, \
+             patch.object(api, '_reserve_mutation') as reserve:
+            for call in endpoints:
+                with self.subTest(endpoint=call), self.assertRaisesRegex(ValueError, api.MUTATION_EXECUTION_DISABLED):
+                    call()
+            get_doc.assert_not_called()
+            reserve.assert_not_called()
+        self.assertEqual(self.calls, [('role', 'System Manager'), ('role', 'System Manager')])
+
     def test_execute_missing_field_fails_before_reservation_or_transport(self):
         self.doc = Document({})
         with patch.object(api, 'frappe', self.frappe), patch.object(api, '_validated_snapshot', return_value=(self.snapshot, schema())), \
@@ -101,6 +158,31 @@ class TestWritebackPreviewBoundary(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'field.*missing'):
                 api.writeback_execute('mapping', 'Customer', 'CUST-1', 'fingerprint', 1)
             reserve.assert_not_called()
+
+    def test_writeback_requires_current_fingerprint_and_confirmation_before_reservation(self):
+        for fingerprint, confirmed in (('current', 0), ('stale', 1), ('', 1)):
+            with self.subTest(fingerprint=fingerprint, confirmed=confirmed), \
+                 patch.object(api, 'frappe', self.frappe), \
+                 patch.object(api, '_assert_mutation_execution_released'), \
+                 patch.object(api, '_writeback_context', return_value={'fingerprint': 'current'}), \
+                 patch.object(api, '_reserve_mutation') as reserve:
+                with self.assertRaisesRegex(ValueError, 'confirmation for this exact writeback preview'):
+                    api.writeback_execute('mapping', 'Customer', 'CUST-1', fingerprint, confirmed)
+                reserve.assert_not_called()
+
+    def test_failed_writeback_reservation_never_constructs_transport(self):
+        context = {'fingerprint': 'current', 'mapping': {'target': {'operation': 'update_contact'}},
+                   'snapshot': self.snapshot, 'mapping_row': self.row}
+        with patch.object(api, 'frappe', self.frappe), \
+             patch.object(api, '_assert_mutation_execution_released'), \
+             patch.object(api, '_writeback_context', return_value=context), \
+             patch.object(api, '_reserve_mutation', side_effect=RuntimeError('synthetic reservation failure')), \
+             patch.object(api, '_finalize_mutation') as finalize, \
+             patch('hero_integration.client.graphql_mutation.HeroMutationClient') as transport:
+            with self.assertRaisesRegex(RuntimeError, 'synthetic reservation failure'):
+                api.writeback_execute('mapping', 'Customer', 'CUST-1', 'current', 1)
+        transport.assert_not_called()
+        finalize.assert_not_called()
 
     def sync_context(self):
         from hero_integration.services import binding_registry, sync_runtime_adapter
@@ -174,7 +256,54 @@ class TestTypedMutationPreview(unittest.TestCase):
         self.assertEqual(result['variables_validated'], ['input'])
         self.assertNotIn('Ada', json.dumps(result))
 
+    def test_optional_document_default_is_fingerprinted_but_not_returned_as_effective_value(self):
+        from hero_integration.services.graphql_contract import parse_mutation
+        schema = {"__schema": {"mutationType": {"name": "Mutation"}, "types": [
+            {"kind": "OBJECT", "name": "Mutation", "fields": [{"name": "changeCustomer",
+             "args": [{"name": "value", "type": {"kind": "SCALAR", "name": "Int"}}]}]},
+            {"kind": "SCALAR", "name": "Int"},
+        ]}}
+        self.snapshot.snapshot_json = json.dumps(schema)
+        document = "mutation Change($value: Int = 7) { changeCustomer(value: $value) }"
+        self.service.query_document = document
+        self.contract.contract_fingerprint = parse_mutation(document).fingerprint
+        first = self.preview({})
+        self.assertEqual(first["variables_validated"], [])
+        self.assertNotIn("value", first)
+        self.assertNotIn(document, json.dumps(first))
+        changed = document.replace("= 7", "= 8")
+        self.service.query_document = changed
+        self.contract.contract_fingerprint = parse_mutation(changed).fingerprint
+        second = self.preview({})
+        self.assertNotEqual(first["request_fingerprint"], second["request_fingerprint"])
+
     def test_unknown_and_missing_required_input_rejected(self):
         for value in ({'input': {'name': 'Ada', 'unknown': 'x'}}, {'input': {'state': 'ACTIVE'}}):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 self.preview(value)
+
+
+class TestMutationReservationBoundary(unittest.TestCase):
+    def test_duplicate_active_reservation_rejects_without_commit(self):
+        from unittest.mock import Mock
+
+        class DuplicateEntryError(Exception):
+            pass
+
+        audit = SimpleNamespace(insert=Mock(side_effect=DuplicateEntryError()))
+        commit = Mock()
+
+        def throw(message):
+            raise ValueError(message)
+
+        fake = SimpleNamespace(
+            DuplicateEntryError=DuplicateEntryError,
+            session=SimpleNamespace(user='synthetic'), local=SimpleNamespace(site='test.local'),
+            db=SimpleNamespace(commit=commit), get_doc=Mock(return_value=audit), throw=throw,
+        )
+        with patch.object(api, 'frappe', fake):
+            with self.assertRaisesRegex(ValueError, 'mutation is currently in progress'):
+                api._reserve_mutation(operation_name='update', schema_fingerprint='synthetic',
+                                      mapping_revision=1, request_fingerprint='synthetic')
+        audit.insert.assert_called_once_with(ignore_permissions=True)
+        commit.assert_not_called()

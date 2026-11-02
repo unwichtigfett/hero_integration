@@ -40,3 +40,11 @@ class TestIntrospectionContract(unittest.TestCase):
         diff = structural_diff(before, after)
         self.assertTrue(diff["breaking"])
         self.assertIn("Query.customers", diff["removed_fields"])
+
+    def test_invalid_previous_schema_is_not_treated_as_compatible(self):
+        current = canonical_schema(_payload())
+        for previous in ({}, {"__schema": {"types": [], "queryType": {"name": "Query"}}}):
+            with self.subTest(previous=previous):
+                result = structural_diff(previous, current)
+                self.assertEqual(result["status"], "PREVIOUS_INVALID")
+                self.assertTrue(result["breaking"])

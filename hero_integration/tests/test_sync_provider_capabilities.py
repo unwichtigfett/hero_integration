@@ -77,6 +77,31 @@ class TestProviderCapabilityContracts(unittest.TestCase):
         unsupported = ProviderContract(ProviderCapability.UNSUPPORTED).change_capabilities()
         self.assertEqual((unsupported.cursor, unsupported.complete_change_discovery, unsupported.bounded_comparison), (False, False, False))
 
+    def test_untyped_capability_and_missing_tuple_verifier_fail_before_read(self):
+        calls = []
+        for capability in ("COMPLETE_DELTA_CURSOR", True, None):
+            with self.subTest(capability=capability), self.assertRaises(ProviderCapabilityError):
+                ProviderContract(capability)
+        with self.assertRaises(ProviderCapabilityError):
+            guarded_provider(ProviderContract(ProviderCapability.VERIFIED_TUPLE_WATERMARK),
+                             lambda cursor: calls.append(cursor))
+        self.assertEqual(calls, [])
+
+    def test_verified_tuple_watermark_is_checked_at_the_terminal_page(self):
+        first = ChangePage(({"id": "1"},), "next", False)
+        last = ChangePage((), None, True, "verified-watermark")
+        pages = {None: first, "next": last}
+        verified = []
+        provider = guarded_provider(
+            ProviderContract(ProviderCapability.VERIFIED_TUPLE_WATERMARK),
+            lambda cursor: pages[cursor],
+            tuple_watermark_verified=lambda page: verified.append(page) or True,
+        )
+        self.assertIs(provider.changes(None), first)
+        self.assertEqual(verified, [])
+        self.assertIs(provider.changes("next"), last)
+        self.assertEqual(verified, [last])
+
     def test_offset_reader_is_never_adapted_as_a_change_provider(self):
         calls = []
         provider = offset_provider(lambda offset: calls.append(offset))
@@ -93,6 +118,43 @@ class TestProviderCapabilityContracts(unittest.TestCase):
         )
         with self.assertRaises(ProviderCapabilityError):
             provider.changes(None)
+
+    def test_invalid_page_and_missing_final_evidence_fail_closed(self):
+        checks = []
+        for page in (None, {}, ChangePage((), None, False, "watermark"),
+                     ChangePage((), None, True, None), ChangePage((), None, True, "")):
+            with self.subTest(page=page):
+                provider = guarded_provider(
+                    ProviderContract(ProviderCapability.VERIFIED_TUPLE_WATERMARK),
+                    lambda _cursor, page=page: page,
+                    tuple_watermark_verified=lambda value: checks.append(value) or True,
+                )
+                with self.assertRaises(ProviderCapabilityError):
+                    provider.changes(None)
+        self.assertEqual(checks, [])
+
+    def test_unverified_final_watermark_preserves_cursor_and_releases_run(self):
+        registry = BindingRegistryService(InMemoryBindingStorage())
+        parent = registry.create_or_resolve_object_binding(
+            site_scope="site", source_instance="hero", object_type="Contact", external_object_id="1",
+            target_app="erpnext", target_doctype="Customer", target_name="C1", mapping_definition_id="definition", mapping_revision=1,
+        )
+        binding = registry.create_or_resolve_field_binding(
+            parent, source_field="name", target_field="customer_name", mapping_definition_id="definition", mapping_revision=1,
+            direction=MappingDirection.HERO_TO_FRAPPE,
+        )
+        pages = {None: ChangePage(({"id": "1", "name": "Ada"},), "next", False),
+                 "next": ChangePage((), None, True, "unverified")}
+        provider = guarded_provider(ProviderContract(ProviderCapability.VERIFIED_TUPLE_WATERMARK),
+                                    lambda cursor: pages[cursor], tuple_watermark_verified=lambda page: False)
+        ledger, processor = InMemorySyncLedger(), _Processor()
+        engine = SyncEngine(ledger, _plan(), provider, _Index((BoundField("1", binding, ("name",)),)), processor)
+        initial = engine.configure(PollingConfiguration("site", False, 60, "hero", 1, FP))
+        with self.assertRaises(ProviderCapabilityError):
+            engine.pending_sync(SyncRun("manual", "site", "manager", initial.generation, False))
+        self.assertEqual(ledger.state("site"), initial)
+        self.assertIsNone(ledger.active_run("site"))
+        self.assertEqual([row[0]["id"] for row in processor.rows], ["1"])
 
     def test_pending_sync_is_bound_only_and_records_completed_coverage(self):
         registry = BindingRegistryService(InMemoryBindingStorage())

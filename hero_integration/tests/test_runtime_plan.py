@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
 
 from hero_integration.services.runtime_plan import (
+    FrappeRuntimePlanAudit,
     FrappeRuntimePlanReferences,
     InMemoryRuntimePlanAudit,
     InMemoryRuntimePlanStorage,
+    RuntimePlanAuditEvent,
     RuntimePlanConflict,
     RuntimePlanError,
     RuntimePlanService,
@@ -81,6 +84,31 @@ def selection(*, source="hero-one", mapping_revision=1, operation_revision=1, op
     )
 
 
+class TestRuntimePlanAuditBoundary(unittest.TestCase):
+    def test_duplicate_with_changed_semantic_evidence_is_rejected(self):
+        class DuplicateEntryError(Exception):
+            pass
+
+        event = RuntimePlanAuditEvent('a' * 64, 'site', 'source', 'APPROVED', 'manager', 2, 2, 'b' * 64)
+        existing = SimpleNamespace(runtime_plan=event.plan_key, action=event.action,
+                                   plan_revision=event.revision, generation=event.generation,
+                                   semantic_hash=event.semantic_hash)
+
+        def get_doc(*args):
+            if len(args) == 1:
+                def insert():
+                    raise DuplicateEntryError()
+                return SimpleNamespace(insert=insert)
+            return existing
+
+        fake = SimpleNamespace(local=SimpleNamespace(site='site'), get_doc=get_doc)
+        audit = FrappeRuntimePlanAudit(fake)
+        audit.record(event)
+        existing.semantic_hash = 'c' * 64
+        with self.assertRaises(RuntimePlanConflict):
+            audit.record(event)
+
+
 class TestRuntimePlan(unittest.TestCase):
     def setUp(self):
         self.storage = InMemoryRuntimePlanStorage()
@@ -124,6 +152,32 @@ class TestRuntimePlan(unittest.TestCase):
         self.assertIsNone(self.service.current_approved("b9-test.localhost", "hero-one"))
         self.assertIs(self.service.current_approved("b9-test.localhost", "hero-two"), second)
         self.assertIsNone(self.service.current_approved("other.localhost", "hero-two"))
+
+    def test_selection_fingerprint_binds_each_changeable_contract_dimension(self):
+        original = selection()
+        changes = {
+            "site_scope": "other.localhost", "source_instance": "hero-two",
+            "graphql_service": "service-two", "service_revision": 2,
+            "operation_revision": 2, "graphql_mapping": "mapping-two", "mapping_revision": 2,
+            "schema_snapshot": "snapshot-b", "schema_fingerprint": "b" * 64, "operation_name": "projects",
+        }
+        for field, value in changes.items():
+            with self.subTest(field=field):
+                changed = replace(original, **{field: value})
+                self.assertNotEqual(changed.semantic_hash, original.semantic_hash)
+                if field in {"site_scope", "source_instance"}:
+                    self.assertNotEqual(changed.plan_key, original.plan_key)
+                else:
+                    self.assertEqual(changed.plan_key, original.plan_key)
+
+    def test_scope_delimiter_and_boolean_revisions_are_rejected(self):
+        original = selection()
+        for field in ("site_scope", "source_instance"):
+            with self.subTest(field=field), self.assertRaises(RuntimePlanError):
+                replace(original, **{field: "part|other"})
+        for field in ("service_revision", "operation_revision", "mapping_revision"):
+            with self.subTest(field=field), self.assertRaises(RuntimePlanError):
+                replace(original, **{field: True})
 
     def test_approval_checks_authority_and_current_references_before_transition(self):
         draft = self.service.create_draft(selection(), actor="manager")

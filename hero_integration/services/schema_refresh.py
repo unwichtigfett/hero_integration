@@ -26,7 +26,7 @@ JOB_TIMEOUT = 600
 
 
 class SchemaRefreshError(RuntimeError):
-    """A fixed, secret-free reason why a refresh did not capture a schema."""
+    """A reason why a refresh did not capture a schema."""
 
 
 def refresh_interval(settings) -> int:
@@ -214,7 +214,7 @@ def _client_error_message(error) -> str:
     if getattr(error, "code", "") in {"HTTP_401", "HTTP_403"}:
         return "HERO rejected the API token. Check the token and save again."
     detail = next((item for item in getattr(error, "details", ()) if item), "")
-    # GraphQL error messages are bounded server texts without request data or credentials.
+    # Server-provided error text is bounded here, but is not redacted here.
     return f"HERO schema refresh failed safely: {error}" + (f" ({detail[:200]})" if detail else "")
 
 

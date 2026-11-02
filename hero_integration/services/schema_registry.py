@@ -136,10 +136,11 @@ class SchemaRegistry:
 
 
 def build_schema_registry(snapshot: StoredSnapshot) -> SchemaRegistry:
-    """Build a complete discovery catalog from one validated stored snapshot.
+    """Build a discovery catalog with bounded paths from a validated snapshot.
 
     This function has no Frappe, transport, persistence or execution dependency.
-    It deliberately preserves discovery as non-authoritative metadata.
+    Discovery is non-authoritative; path depth and count are bounded separately.
+    The truncation flags reflect exhaustion of the count budget, not depth or cycles.
     """
     if not isinstance(snapshot, StoredSnapshot):
         raise SchemaRegistryError("A validated stored snapshot is required.")

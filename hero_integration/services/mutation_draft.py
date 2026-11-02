@@ -25,9 +25,9 @@ def operation_kind(document: str) -> str:
 def validate(schema: dict[str, object], document: str) -> dict[str, object]:
     if operation_kind(document) != "mutation":
         raise ValueError("A local mutation draft must contain exactly one mutation operation.")
-    # Draft values would be persisted in the GraphQL document.  Require
-    # parameter variables instead; their values stay in the browser and are
-    # deliberately absent from the DocType.
+    # Reject quoted literals in persisted documents. Numeric, boolean and
+    # enum literals are not screened here; callers must not assume all values
+    # are excluded by this local draft check.
     if _STRING_LITERAL.search(document):
         raise ValueError("Mutation drafts must not contain literal values.")
     match = _MUTATION.match(document)

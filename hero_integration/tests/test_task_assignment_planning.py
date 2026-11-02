@@ -14,6 +14,9 @@ class TestTaskAssignmentPlanning(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         global migration
+        cls.package = importlib.import_module('hero_integration.services')
+        cls._missing = object()
+        cls._saved_alias = getattr(cls.package, 'migration', cls._missing)
         names = ('frappe', 'frappe.utils', 'hero_integration.services.migration')
         cls.saved_modules = {name: sys.modules.get(name) for name in names}
         if cls.saved_modules['frappe'] is None:
@@ -33,6 +36,11 @@ class TestTaskAssignmentPlanning(unittest.TestCase):
                 sys.modules.pop(name, None)
             else:
                 sys.modules[name] = value
+        if cls._saved_alias is cls._missing:
+            if getattr(cls.package, 'migration', None) is migration:
+                delattr(cls.package, 'migration')
+        else:
+            cls.package.migration = cls._saved_alias
 
     def setUp(self):
         self.run = NS(name='RUN', mode='Preview', mapping_revision=1)

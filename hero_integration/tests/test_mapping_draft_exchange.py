@@ -9,6 +9,36 @@ from unittest.mock import patch
 from hero_integration.services import mapping_draft_exchange as exchange
 
 
+class TestExchangeInputSize(unittest.TestCase):
+    def test_multibyte_payload_is_limited_by_encoded_size_before_parsing(self):
+        payload = 'é' * 500_001
+        self.assertLess(len(payload), 1_000_000)
+        for parse in (lambda: exchange._portable_version(payload),
+                      lambda: exchange._parse(payload, 'source', 'snapshot', 'QUERY_TO_FRAPPE')):
+            with self.subTest(parser=parse), self.assertRaisesRegex(exchange.MappingDraftExchangeError, 'size'):
+                parse()
+
+
+class TestPreviewBinding(unittest.TestCase):
+    def test_preview_binding_covers_site_actor_package_and_preview(self):
+        fake = SimpleNamespace(local=SimpleNamespace(site='site-a', conf={'encryption_key': 'synthetic-key'}),
+                               session=SimpleNamespace(user='owner-a'))
+        package, preview = {'mapping': 'one'}, {'can_save': True}
+        with patch.object(exchange, 'frappe', fake):
+            original = exchange._preview_binding(package, preview)
+            self.assertEqual(original, exchange._preview_binding(package, preview))
+            self.assertNotEqual(original, exchange._preview_binding({'mapping': 'two'}, preview))
+            self.assertNotEqual(original, exchange._preview_binding(package, {'can_save': False}))
+            fake.local.site = 'site-b'
+            self.assertNotEqual(original, exchange._preview_binding(package, preview))
+            fake.local.site = 'site-a'
+            fake.session.user = 'owner-b'
+            self.assertNotEqual(original, exchange._preview_binding(package, preview))
+            fake.local.conf['encryption_key'] = ''
+            with self.assertRaisesRegex(exchange.MappingDraftExchangeError, 'encryption key'):
+                exchange._preview_binding(package, preview)
+
+
 class _Frappe:
     def __init__(self):
         self.local = SimpleNamespace(site="draft-exchange.test", conf={'encryption_key': 'test-only-key'})

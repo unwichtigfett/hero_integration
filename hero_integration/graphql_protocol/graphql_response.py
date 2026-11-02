@@ -23,7 +23,7 @@ def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
 
 
 def strict_json_loads(text: str | bytes) -> object:
-    """Parse JSON as GraphQL data: no NaN/Infinity and no duplicate keys (no silent last-key-wins)."""
+    """Reject NaN/Infinity tokens and duplicate keys; numeric overflow is not checked here."""
     return json.loads(text, parse_constant=_reject_constant, object_pairs_hook=_unique_object)
 
 

@@ -309,3 +309,18 @@ class TestWorkspaceSettingsContract(unittest.TestCase):
                 client_settings.get_configuration()
 
         build_opener.assert_not_called()
+
+    def test_configuration_hides_token_repr_and_validates_endpoint_before_decryption(self):
+        settings = _Settings(token="synthetic-secret")
+        frappe_mock = _FrappeSettingsMock(settings)
+        with patch.object(client_settings, "frappe", frappe_mock):
+            config = client_settings.get_configuration()
+        self.assertEqual(config.api_token, "synthetic-secret")
+        self.assertNotIn("synthetic-secret", repr(config))
+
+        settings.password_calls.clear()
+        settings.hero_api_url = "https://untrusted.synthetic.invalid/graphql"
+        with patch.object(client_settings, "frappe", frappe_mock):
+            with self.assertRaises(client_settings.HeroConfigurationError):
+                client_settings.get_configuration()
+        self.assertEqual(settings.password_calls, [])

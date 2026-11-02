@@ -5,20 +5,13 @@ The HERO transport is always mocked; no test contacts HERO.
 from __future__ import annotations
 
 import json
-import sys
-import types
 import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-try:
-    import frappe  # noqa: F401
-except ModuleNotFoundError:
-    frappe = types.ModuleType("frappe")
-    frappe.whitelist = lambda *args, **kwargs: (lambda function: function)
-    sys.modules["frappe"] = frappe
+from hero_integration.tests._frappe_test_import import load_api
 
-from hero_integration import api
+api = load_api()
 from hero_integration.client.graphql import HeroClientError
 
 

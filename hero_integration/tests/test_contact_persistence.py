@@ -50,6 +50,23 @@ class TestContactPersistence(unittest.TestCase):
         self.assertEqual(contact["phone_nos"], [])
         self.assertEqual(contact.save_calls, 0)
 
+    def test_primary_contact_fields_do_not_expose_or_change_shared_contact_values(self):
+        customer = _Document(name="CUST-001", customer_primary_contact="CONT-001")
+        for extra_link in (_Document(link_doctype="Customer", link_name="CUST-OTHER"),
+                           _Document(link_doctype="Supplier", link_name="SUP-001")):
+            with self.subTest(link=extra_link):
+                contact = _Document(name="CONT-001", first_name="Existing", last_name="Person",
+                    links=[_Document(link_doctype="Customer", link_name="CUST-001"), extra_link],
+                    email_ids=[_Document(email_id="existing@example.invalid", is_primary=1)], phone_nos=[])
+                with _fake_frappe(contact):
+                    with self.assertRaises(HomePhoneConflict):
+                        synchronize_primary_contact(customer, {"first_name": "Changed", "email_id": "new@example.invalid"})
+                    snapshot = primary_contact_values(customer, {"first_name", "email_id"})
+                self.assertEqual(snapshot, {"first_name": None, "email_id": None})
+                self.assertEqual(contact["first_name"], "Existing")
+                self.assertEqual(contact["email_ids"][0]["email_id"], "existing@example.invalid")
+                self.assertEqual(contact.save_calls, 0)
+
     def test_primary_contact_uses_native_email_and_mobile_children_without_duplicates(self):
         customer = _Document(name="CUST-001", customer_primary_contact="CONT-001")
         contact = _Document(

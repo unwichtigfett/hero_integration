@@ -18,7 +18,7 @@ _whitelist = getattr(frappe, "whitelist", lambda: lambda function: function)
 
 
 def redacted_changed_fields(fields: list[str] | None) -> str:
-    """Return field names only; values must stay in the protected source record."""
+    """Format supplied field names; callers must not pass values (no validation or redaction)."""
 
     return ", ".join(sorted({str(field) for field in fields or [] if field}))
 

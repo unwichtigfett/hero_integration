@@ -5,7 +5,7 @@ import vm from "node:vm";
 
 const source = await readFile(new URL("../public/js/hero_workspace.js", import.meta.url), "utf8");
 
-function workspaceUi({ styleFailure = false, loaded = {}, requests = [] } = {}) {
+function workspaceUi({ styleFailure = false, loaded = {}, requests = [], capture = () => {} } = {}) {
     const sandbox = {
         URL,
         URLSearchParams,
@@ -27,6 +27,7 @@ function workspaceUi({ styleFailure = false, loaded = {}, requests = [] } = {}) 
         },
     };
     vm.runInNewContext(source, sandbox, { filename: "hero_workspace.js" });
+    capture(sandbox.window);
     return sandbox.window.hero_integration_ui;
 }
 
@@ -49,4 +50,41 @@ test("the content-addressed editor is reused rather than loading an unhashed leg
     const loaded = Object.fromEntries(["hero_workspace_tools", "hero_integration_overview", "hero_integration_settings_ui", "hero_integration_api_summary", "hero_integration_mapping_editor", "hero_integration_migration"].map((name) => [name, {}]));
     await workspaceUi({loaded, requests}).ensureStyles();
     assert.deepEqual(requests, []);
+});
+
+test("workspace routes remain local and encode untrusted parameter text", () => {
+    let platform;
+    workspaceUi({capture: (window) => { platform = window.hero_integration_platform; }});
+    const value = "snapshot&hero_section=settings#fragment";
+    const route = platform.url("api", {hero_tool: "graph", snapshot: value});
+    const parsed = new URL(route, "https://example.invalid");
+    assert.equal(parsed.origin, "https://example.invalid");
+    assert.equal(parsed.pathname, "/app/hero-integration");
+    assert.equal(parsed.searchParams.get("snapshot"), value);
+    assert.equal(parsed.searchParams.get("hero_section"), "api");
+    assert.equal(parsed.searchParams.get("hero_tool"), "graph");
+    assert.equal(parsed.hash, "");
+});
+
+test("API summary renders an upstream error as text in the status region", async () => {
+    class Element {
+        constructor(tag) { this.tag = tag; this.children = []; this.dataset = {}; this.attributes = {}; this.textContent = ""; }
+        append(...children) { this.children.push(...children); }
+        replaceChildren(...children) { this.children = children; }
+        setAttribute(name, value) { this.attributes[name] = String(value); }
+        addEventListener() {}
+        find(predicate) { if (predicate(this)) return this; for (const child of this.children) { const found = child.find(predicate); if (found) return found; } }
+    }
+    const markup = '<img src=x onerror=alert(1)>';
+    const api = async () => { throw new Error(markup); };
+    const window = {hero_integration_platform: {api, url: () => "/app/hero-integration"}};
+    const document = {createElement: tag => new Element(tag)};
+    const summary = await readFile(new URL("../public/js/hero_api_summary.js", import.meta.url), "utf8");
+    vm.runInNewContext(summary, {window, document});
+    const workspace = new Element("main");
+    await window.hero_integration_api_summary.mount(workspace);
+    const status = workspace.find(element => element.attributes.role === "status");
+    assert.equal(status.textContent, markup);
+    assert.equal(status.dataset.state, "error");
+    assert.equal(workspace.find(element => element.tag === "img"), undefined);
 });

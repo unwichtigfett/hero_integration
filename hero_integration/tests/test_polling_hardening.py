@@ -43,6 +43,13 @@ class TestSchedulerTime(unittest.TestCase):
                         "a success time in the future must not block polling indefinitely")
         self.assertFalse(scheduler_due(settings, now, None, system_timezone="Invalid/Zone"), "unknown system timezone fails closed")
 
+    def test_overnight_window_uses_configured_local_time(self):
+        settings = _settings(polling_timezone="Europe/Berlin", polling_execution_window="22:00-02:00")
+        for hour, minute, expected in ((20, 59, False), (21, 0, True), (0, 59, True), (1, 0, True), (1, 1, False)):
+            with self.subTest(utc=(hour, minute)):
+                now = datetime(2026, 11, 10, hour, minute, tzinfo=timezone.utc)
+                self.assertEqual(scheduler_due(settings, now, None), expected)
+
 
 class TestPollingConfiguration(unittest.TestCase):
     def test_left_over_sources_and_filters_from_older_versions_no_longer_block_polling(self):
@@ -99,6 +106,10 @@ class TestScheduledEntry(unittest.TestCase):
         if adapter is not None:
             modules["hero_integration.services.sync_runtime_adapter"] = adapter
         previous = {name: sys.modules.get(name) for name in modules}
+        package = importlib.import_module("hero_integration")
+        missing = object()
+        previous_alias = getattr(package, "tasks", missing)
+        previous_tasks = sys.modules.get("hero_integration.tasks")
         sys.modules.pop("hero_integration.tasks", None)
         sys.modules.update(modules)
         try:
@@ -108,7 +119,15 @@ class TestScheduledEntry(unittest.TestCase):
                 tasks.run_scheduled_sync()
             return fake, tasks
         finally:
-            sys.modules.pop("hero_integration.tasks", None)
+            if previous_tasks is None:
+                sys.modules.pop("hero_integration.tasks", None)
+            else:
+                sys.modules["hero_integration.tasks"] = previous_tasks
+            if previous_alias is missing:
+                if hasattr(package, "tasks"):
+                    delattr(package, "tasks")
+            else:
+                package.tasks = previous_alias
             for name, module in previous.items():
                 if module is None:
                     sys.modules.pop(name, None)
@@ -135,6 +154,17 @@ class TestScheduledEntry(unittest.TestCase):
         with patch.object(polling, "run_monitor") as run_monitor:
             self.run_tasks(settings)
         run_monitor.assert_called_once()
+
+    def test_off_paused_and_invalid_window_never_start_a_poll(self):
+        for overrides in ({"polling_mode": "OFF"}, {"sync_service_paused": 1},
+                          {"polling_execution_window": "not-a-window"}):
+            with self.subTest(settings=overrides):
+                settings = _settings(sync_status="", sync_error="", **overrides)
+                with patch.object(polling, "run_monitor") as run_monitor:
+                    fake, _ = self.run_tasks(settings)
+                run_monitor.assert_not_called()
+                self.assertNotIn("last_poll_started_on", fake.db.state)
+                self.assertEqual(fake.db.commits, 0)
 
     def test_interval_counts_from_the_last_started_poll_so_failures_are_not_retried_every_tick(self):
         settings = _settings(sync_status="", sync_error="")
@@ -209,29 +239,46 @@ class TestScheduledEntry(unittest.TestCase):
         self.assertIn("no materialized runtime", fake.events[-1]["detail"])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TestPollingSettingsSave(unittest.TestCase):
     def save(self, **values):
+        package = importlib.import_module("hero_integration")
+        missing = object()
+        previous_api = sys.modules.get("hero_integration.api", missing)
+        previous_alias = getattr(package, "api", missing)
+        stubbed = False
         try:
-            import frappe  # noqa: F401
-        except ModuleNotFoundError:
-            stub = types.ModuleType("frappe")
-            stub.whitelist = lambda *args, **kwargs: (lambda function: function)
-            sys.modules["frappe"] = stub
-        from hero_integration import api
+            try:
+                import frappe  # noqa: F401
+            except ModuleNotFoundError as error:
+                if error.name != "frappe":
+                    raise
+                stub = types.ModuleType("frappe")
+                stub.whitelist = lambda *args, **kwargs: (lambda function: function)
+                sys.modules["frappe"] = stub
+                stubbed = True
+            from hero_integration import api
 
-        settings = SimpleNamespace(polling_pagination_strategy="OFFSET")
-        defaults = {"timezone": None, "execution_window": None, "bootstrap": None,
-                    "page_size": None, "pagination_strategy": None, "allow_backfill": None, "full_inventory": None,
-                    "reconciliation": None, "retry_limit": None, "retry_backoff_seconds": None, "timeout_seconds": None,
-                    "rate_limit": None, "concurrency": None, "notifications": None}
-        fake = SimpleNamespace(throw=lambda message: (_ for _ in ()).throw(ValueError(message)))
-        with patch.object(api, "frappe", fake):
-            api._save_polling_configuration(settings, **{**defaults, **values})
-        return settings
+            settings = SimpleNamespace(polling_pagination_strategy="OFFSET")
+            defaults = {"timezone": None, "execution_window": None, "bootstrap": None,
+                        "page_size": None, "pagination_strategy": None, "allow_backfill": None, "full_inventory": None,
+                        "reconciliation": None, "retry_limit": None, "retry_backoff_seconds": None, "timeout_seconds": None,
+                        "rate_limit": None, "concurrency": None, "notifications": None}
+            fake = SimpleNamespace(throw=lambda message: (_ for _ in ()).throw(ValueError(message)))
+            with patch.object(api, "frappe", fake):
+                api._save_polling_configuration(settings, **{**defaults, **values})
+            return settings
+        finally:
+            if stubbed:
+                sys.modules.pop("frappe", None)
+                if previous_api is missing:
+                    sys.modules.pop("hero_integration.api", None)
+                else:
+                    sys.modules["hero_integration.api"] = previous_api
+                if previous_alias is missing:
+                    if hasattr(package, "api"):
+                        delattr(package, "api")
+                else:
+                    package.api = previous_alias
 
     def test_only_reviewed_reader_controls_are_saved(self):
         with self.assertRaisesRegex(ValueError, "must be OFFSET"):
@@ -239,3 +286,7 @@ class TestPollingSettingsSave(unittest.TestCase):
         saved = self.save(page_size=50, timezone=" Europe/Berlin ")
         self.assertEqual((saved.polling_page_size, saved.polling_timezone), (50, "Europe/Berlin"))
         self.assertFalse(hasattr(saved, "polling_data_sources") or hasattr(saved, "polling_filters_json"))
+
+
+if __name__ == "__main__":
+    unittest.main()
