@@ -2283,3 +2283,26 @@ The editor changed while saving. Nothing was executed.,Der Editor wurde während
 The saved query could not be validated. Nothing was executed.,Die gespeicherte Query konnte nicht validiert werden. Es wurde nichts ausgeführt.
 The editor changed during validation. Nothing was executed.,Der Editor wurde während der Validierung geändert. Es wurde nichts ausgeführt.
 HERO_MUTATION_EXECUTION_DISABLED,Die Ausführung von HERO-Mutations ist deaktiviert.
+The saved query matches the schema. Execution is read-only and requires an explicit click.,Die gespeicherte Query entspricht dem Schema. Die Ausführung ist schreibgeschützt und erfordert einen ausdrücklichen Klick.
+Mutation draft is validated only against the saved schema; HERO mutation execution is disabled.,Der Mutation-Entwurf wird nur gegen das gespeicherte Schema validiert; die Ausführung von HERO-Mutations ist deaktiviert.
+The query matches the saved schema. Save and validate the service before executing it.,Die Query entspricht dem gespeicherten Schema. Speichern und validieren Sie den Service vor der Ausführung.
+Mutation drafts are local-only; HERO mutation execution is disabled.,Mutation-Entwürfe sind nur lokal verfügbar; die Ausführung von HERO-Mutations ist deaktiviert.
+The HERO response exceeds the display limit; narrow the query or use paging variables.,Die HERO-Antwort überschreitet das Anzeigelimit; grenzen Sie die Query ein oder verwenden Sie Paging-Variablen.
+Explicit System Manager confirmation recorded; variables are intentionally not retained.,Die ausdrückliche Bestätigung durch einen System Manager wurde erfasst; Variablen werden bewusst nicht gespeichert.
+"The snapshot, its fingerprint or the node is no longer available.","Der Snapshot, sein Fingerprint oder der Knoten ist nicht mehr verfügbar."
+A newer validated snapshot exists; the bookmark is not remapped.,Ein neuerer validierter Snapshot ist vorhanden; das Lesezeichen wird nicht neu zugeordnet.
+The node exists in the newest validated snapshot.,Der Knoten ist im neuesten validierten Snapshot vorhanden.
+Target schema requires reconciliation.,Das Zielschema erfordert einen Abgleich.
+A local Draft or Disabled definition will be revised as Draft.,Eine lokale Definition im Status Entwurf oder Deaktiviert wird als Entwurf überarbeitet.
+Definition ID is missing or duplicated.,Die Definitions-ID fehlt oder ist doppelt vorhanden.
+Validated import definition.,Validierte Importdefinition.
+A scoped published rule cannot be replaced by a shared mapping import.,Eine bereichsgebundene veröffentlichte Regel kann nicht durch einen gemeinsamen Mapping-Import ersetzt werden.
+Definition is already present.,Die Definition ist bereits vorhanden.
+An active local definition cannot be replaced by import.,Eine aktive lokale Definition kann nicht durch einen Import ersetzt werden.
+Already inherited earlier.,Wurde bereits zuvor übernommen.
+List input requires an approved collection resolver before it can be mapped.,Listen-Eingaben erfordern vor dem Mapping einen freigegebenen Collection-Resolver.
+Target provenance differs.,Die Herkunft des Ziels weicht ab.
+Local provenance is stale.,Die lokale Herkunft ist veraltet.
+The remembered node is an operation; the operation is preselected.,Der gespeicherte Knoten ist eine Operation; die Operation ist vorausgewählt.
+The argument does not belong to a root operation; only navigation is offered.,Das Argument gehört nicht zu einer Root-Operation; es wird nur Navigation angeboten.
+The field is a root operation field; the operation is preselected.,Das Feld ist ein Feld einer Root-Operation; die Operation ist vorausgewählt.
