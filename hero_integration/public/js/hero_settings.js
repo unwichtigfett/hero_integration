@@ -49,6 +49,12 @@
         polling_concurrency: "Polling Concurrency",
         polling_notifications: "Polling Notifications",
     });
+    function escapeHtml(value) {
+        return String(value).replace(/[&<>"']/g, (character) => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+        })[character]);
+    }
+
     function packageState(value) {
         const state = String(value ?? '');
         return state.startsWith('Invalid: ')
@@ -551,7 +557,7 @@
                 const preview = await platform.api("config_import_preview", {payload_json: payload});
                 const summary = packagePreviewSummary(preview);
                 showPackageState(summary);
-                frappe.confirm(`${summary}<br><br>${uiText("Import and activate this configuration now?")}`, async () => {
+                frappe.confirm(`${escapeHtml(summary)}<br><br>${escapeHtml(uiText("Import and activate this configuration now?"))}`, async () => {
                     showPackageState(uiText("Importing …"));
                     try {
                         const result = await platform.api("config_import", {payload_json: payload, confirmed: 1});

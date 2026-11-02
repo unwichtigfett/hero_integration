@@ -193,4 +193,12 @@ test('package confirmation shows translated preview without importing before con
     assert.match(confirmation, /HeroCustomers: Neu/);
     assert.match(confirmation, /jetzt importieren und aktivieren/);
     assert.deepEqual(calls, ['workspace_settings_get', 'config_import_preview']);
+
+    preview.read_services[0].state = 'Invalid: <img src=x onerror=alert(1)>';
+    input.files = [{text:async () => '{}'}];
+    await input.handlers.change();
+    assert.ok(confirmation.includes('&lt;img src=x onerror=alert(1)&gt;'));
+    assert.equal(confirmation.includes('<img'), false);
+    assert.ok(confirmation.includes('<br><br>'));
+    assert.deepEqual(calls, ['workspace_settings_get', 'config_import_preview', 'config_import_preview']);
 });
