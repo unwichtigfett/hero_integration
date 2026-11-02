@@ -2192,3 +2192,9 @@ Legacy mapping identity cannot be backfilled while ambiguous personal revision r
 Legacy mapping identity cannot be backfilled while ambiguous binding references exist.,"Die ältere Mapping-Identität kann nicht nachgetragen werden, solange mehrdeutige Binding-Referenzen bestehen."
 A generated mapping identity collided; retry the migration.,Eine erzeugte Mapping-Identität ist bereits vorhanden; wiederholen Sie die Migration.
 Active field-rule priorities require explicit revision-safe reconciliation before migration.,Prioritäten aktiver Feldregeln müssen vor der Migration ausdrücklich und revisionssicher abgeglichen werden.
+Definition {0},Definition {0}
+Revision {0},Revision {0}
+Arguments: {0},Argumente: {0}
+not permitted,nicht erlaubt
+The graph did not load completely: {0} Choose “Full Schema” or “Filtered View” to try again.,"Der Graph wurde nicht vollständig geladen: {0} Wählen Sie „Vollständiges Schema“ oder „Gefilterte Ansicht“, um es erneut zu versuchen."
+The focus view could not be loaded: {0},Die Fokusansicht konnte nicht geladen werden: {0}

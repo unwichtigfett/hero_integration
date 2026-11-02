@@ -644,7 +644,7 @@
                 if(!ids.has(this.selectedNode))this.selectedNode=null;
                 const id=new URLSearchParams(location.search).get('node')||this.selectedNode||graph.nodes[0]?.node_id;
                 if(id&&ids.has(id))await this.inspectNode(id,serial,false);else this.drawGraph();
-            } catch(error){if(current()){controller.abort();this.graph=null;this.canvas.replaceChildren();this.canvas._heroScene=null;this.graphInfo.textContent='The graph did not load completely: '+error.message+' Choose “Full Schema” or “Filtered View” to try again.';this.labelNotice.textContent=tr('No complete visualization is available.');}}
+            } catch(error){if(current()){controller.abort();this.graph=null;this.canvas.replaceChildren();this.canvas._heroScene=null;this.graphInfo.textContent=format('The graph did not load completely: {0} Choose “Full Schema” or “Filtered View” to try again.',tr(error.message));this.labelNotice.textContent=tr('No complete visualization is available.');}}
         }
         drawGraph(){if(!this.graph)return;this.viewbox=this.renderGraphScene(this.canvas,this.graph,this.selectedNode,this.viewbox,id=>this.inspectNode(id),this.labelNotice,'hero-api-arrow');}
         graphNeedsOverview(graph){return graph.nodes.length>120||graph.edges.length>180;}
@@ -861,7 +861,7 @@
                 this.setFocusGraphMode(true);const edges=new Map([...detail.incoming,...detail.outgoing].map(e=>[this.edgeKey(e),e])),ids=new Set([id]);for(const e of edges.values()){ids.add(e.source_id);ids.add(e.target_id);}const nodes=[];
                 for(const other of ids){const n=other===id?detail.node:(await this.nodeData(other,scope)).node;if(!current())return;nodes.push(n);}
                 this.focusGraph={nodes,edges:[...edges.values()]};this.detailContents(this.focusDetail,detail,scope,next=>this.focusNext(next));this.drawFocus();
-            } catch(error){if(current())this.focusNotice.textContent='The focus view could not be loaded: '+error.message;}
+            } catch(error){if(current())this.focusNotice.textContent=format('The focus view could not be loaded: {0}',tr(error.message));}
         }
         focusNext(id){if(id!==this.focusHistory.at(-1))this.focusHistory.push(id);this.loadFocus(id);}
         drawFocus(){if(this.focusGraph)this.focusViewbox=this.renderGraphScene(this.focusCanvas,this.focusGraph,this.focusNode,this.focusViewbox,id=>this.focusNext(id),this.focusNotice,'hero-focus-arrow');}
