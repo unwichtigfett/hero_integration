@@ -2422,3 +2422,10 @@ Task assignment admission changed before execution.,Die Zulassung der Task-Zuwei
 Native assignment did not produce one verified recipient.,Die native Zuweisung hat keinen eindeutig bestätigten Empfänger ergeben.
 "Native assignment does not match the approved Task, actor, recipient and date.","Die native Zuweisung stimmt nicht mit der freigegebenen Task, dem Akteur, Empfänger und Datum überein."
 HERO Integration run failed; see the original exception.,Der Lauf der HERO-Integration ist fehlgeschlagen; siehe ursprüngliche Ausnahme.
+Field conflict: {0},Feldkonflikt: {0}
+HERO {0} {1} awaits approval or rejection,HERO {0} {1} wartet auf Freigabe oder Ablehnung
+HERO run {0}: {1} records were not imported,HERO-Lauf {0}: {1} Datensätze wurden nicht importiert
+HERO run {0}: {1} HERO assignees have no ERPNext user,HERO-Lauf {0}: {1} HERO-Zugewiesene haben keinen ERPNext-Benutzer
+{0} task(s),{0} Task(s)
+Create an ERPNext user with the same e-mail; the next task run assigns the tasks.,Erstellen Sie einen ERPNext-Benutzer mit derselben E-Mail-Adresse; der nächste Task-Lauf weist die Tasks zu.
+HERO polling status,HERO-Polling-Status

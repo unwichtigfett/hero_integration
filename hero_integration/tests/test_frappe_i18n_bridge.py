@@ -14,6 +14,22 @@ APP = Path(__file__).resolve().parents[1]
 
 
 class TestFrappeTranslationBridge(unittest.TestCase):
+    def test_notification_language_uses_recipient_override_or_system_default(self):
+        try:
+            import frappe
+            from frappe.translate import get_translation_dict_from_file
+        except ModuleNotFoundError:
+            self.skipTest('Frappe is not installed')
+        from hero_integration.services.conflict_notifications import recipient_text
+
+        catalog = get_translation_dict_from_file(str(APP / 'translations' / 'de.csv'), 'de', 'hero_integration', throw=True)
+        with patch.object(frappe, 'local', SimpleNamespace(lang='en')), \
+             patch.object(frappe, 'get_system_settings', return_value='de'), \
+             patch.object(frappe, 'get_cached_value', side_effect=lambda _doctype, user, _field: 'en' if user == 'en@example.invalid' else None), \
+             patch('frappe.translate.get_all_translations', side_effect=lambda lang: catalog if lang == 'de' else {}):
+            self.assertEqual(recipient_text('de@example.invalid', 'HERO polling status'), 'HERO-Polling-Status')
+            self.assertEqual(recipient_text('en@example.invalid', 'HERO polling status'), 'HERO polling status')
+
     def test_framework_catalog_reaches_workspace_controls_in_both_languages(self):
         if not shutil.which('node'):
             self.skipTest('Node.js is not installed')
