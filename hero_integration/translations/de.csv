@@ -2449,3 +2449,9 @@ Relation: {0}.,Relation: {0}.
 CURRENT,Aktuell
 OUTDATED,Veraltet
 UNRESOLVABLE,Nicht auflösbar
+UNCHANGED,Unverändert
+ACTIVE_ONLY,Nur aktiv geändert
+DRAFT_ONLY,Nur im Entwurf geändert
+SAME_CHANGE,Gleiche Änderung
+ERROR,Fehler
+TOO_LARGE,Zu groß

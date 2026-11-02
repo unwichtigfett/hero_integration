@@ -1007,7 +1007,7 @@
             const head=`${result.operation||''} · Revision ${result.revision} · Schema ${String(result.schema_fingerprint||'').slice(0,12)}…`;
             const label=tr({OK:'HERO response',PARTIAL:'Partial HERO response with GraphQL errors',TOO_LARGE:'HERO response too large to display'}[result.status]
                 ||{GRAPHQL:'GraphQL error returned by HERO',TRANSPORT:'HTTP/transport error',RESPONSE:'Invalid HERO response'}[result.error_kind]||'HERO request failed');
-            this.queryOutput.textContent=`${label} (${result.status}${result.error_code?' · '+result.error_code:''}) · ${head}${result.size_bytes!==undefined?' · '+result.size_bytes+' bytes':''}\n${tr('The result is shown in the GraphQL Query Result window and is not stored.')}`;
+            this.queryOutput.textContent=`${label} (${tr(result.status)}${result.error_code?' · '+result.error_code:''}) · ${head}${result.size_bytes!==undefined?' · '+result.size_bytes+' bytes':''}\n${tr('The result is shown in the GraphQL Query Result window and is not stored.')}`;
             this.queryOutput.dataset.state=result.status;
             this.showQueryResult(result,label,head);
         }

@@ -1064,7 +1064,7 @@
             const parent = admin && snapshotFilter ? snapshotParents.get(snapshotFilter) : "";
             if (parent) header.append(button(format("Inherit mappings from parent {0}", snapshotLabel(parent)), () => inheritFromParent(snapshotFilter, parent))
                 .attr("data-inherit-parent", "").attr("title", text("Creates your personal drafts on this snapshot from the parent's active mappings. Nothing is activated.")));
-            if (active) header.append($("<span class='text-muted'></span>").text(`${snapshotLabel(active.schema_snapshot) || text("Snapshot not provided")} · ${text("Revision")}: ${active.revision} · ${mode === "draft" ? text("Personal draft") : active.status || text("Active")}`));
+            if (active) header.append($("<span class='text-muted'></span>").text(`${snapshotLabel(active.schema_snapshot) || text("Snapshot not provided")} · ${text("Revision")}: ${active.revision} · ${mode === "draft" ? text("Personal draft") : text(active.status || "Active")}`));
         }
         function inheritFromParent(snapshotName, parent) {
             if (locked()) return;
@@ -1694,7 +1694,7 @@
             if (!differences.length) body.append($("<p></p>").text(text("No differences from the original base were found. Save draft can record this checked active revision.")));
             const choices = {};
             differences.forEach((item) => {
-                const detail = $("<details></details>").append($("<summary></summary>").text(`${item.identifier} · ${item.state}`));
+                const detail = $("<details></details>").append($("<summary></summary>").text(`${item.identifier} · ${text(item.state)}`));
                 detail.append($("<p></p>").text(`${text("Original base")}:`), safeJson(parseContent(item.base_json)),
                     $("<p></p>").text(`${text("Current active")}:`), safeJson(parseContent(item.active_json)),
                     $("<p></p>").text(`${text("Your draft")}:`), safeJson(parseContent(item.draft_json)));
