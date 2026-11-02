@@ -71,12 +71,20 @@ class FrappePickerMetadata:
     def can_write(self, doctype: str) -> bool:
         import frappe
 
-        return bool(frappe.has_permission(doctype, "write"))
+        from hero_integration.services.doctype_permissions import ensure_doctype_write
+
+        try:
+            ensure_doctype_write(doctype, frappe)
+        except frappe.PermissionError:
+            return False
+        return True
 
     def fields(self, doctype: str):
         import frappe
 
-        frappe.has_permission(doctype, "write", throw=True)
+        from hero_integration.services.doctype_permissions import ensure_doctype_write
+
+        ensure_doctype_write(doctype, frappe)
         return frappe.get_meta(doctype).fields
 
 
