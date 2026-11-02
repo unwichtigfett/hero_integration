@@ -68,7 +68,11 @@ runtime status and any HERO or ERPNext data.
 bench --site <site> execute hero_integration.api.config_export_file --kwargs '{"path": "/tmp/hero-integration-config.json"}'
 ```
 
-**Import** on the target site:
+**Import** on the target site. The importing user needs the role System Manager
+and write access to every target: Customer, Contact, Address, Project, Task and
+Event (in ERPNext e.g. the roles Sales Manager or Sales Master Manager and Projects
+User).
+
 
 1. Install the app (steps 1–4 above). If you want the automatic sync to run,
    enter the HERO connection (URL, token) in the HERO settings first.
