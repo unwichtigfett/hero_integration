@@ -98,8 +98,8 @@ assignment_intent_guard = ["hero_integration.services.task_assignment_state.guar
 fixtures = []
 
 permission_query_conditions = {
-    doctype: "hero_integration.services.mapping_draft_access.personal_mapping_query"
-    for doctype in ("HERO Mapping Draft", "HERO Mapping Revision")
+    "HERO Mapping Draft": "hero_integration.services.mapping_draft_access.personal_mapping_draft_query",
+    "HERO Mapping Revision": "hero_integration.services.mapping_draft_access.personal_mapping_revision_query",
 }
 has_permission = {
     doctype: "hero_integration.services.mapping_draft_access.personal_mapping_permission"

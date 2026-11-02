@@ -111,6 +111,27 @@ class TestBindingRegistry(unittest.TestCase):
         self.assertIs(ack, self.service.record_verified_acknowledgment(ack, expected_revision=2, mapping_definition_id="contact-name", mapping_revision=1, source_fingerprint=source, target_fingerprint=target, evidence_id="migration-1", version=1))
         with self.assertRaises(BindingConflict): self.service.record_verified_acknowledgment(ack, expected_revision=1, mapping_definition_id="contact-name", mapping_revision=1, source_fingerprint=source, target_fingerprint=target, evidence_id="migration-2", version=0)
 
+    def test_resolve_after_acknowledgment_preserves_revision_baselines_and_reconciliation(self):
+        parent = self.obj()
+        field = self.field(parent)
+        acknowledged = self.service.record_verified_acknowledgment(
+            field, expected_revision=1, mapping_definition_id="contact-name", mapping_revision=1,
+            source_fingerprint="a" * 64, target_fingerprint="b" * 64, evidence_id="resume", version=1,
+        )
+        self.assertIs(self.field(self.obj()), acknowledged)
+        conflicted = replace(acknowledged, state=BindingState.RECONCILIATION_REQUIRED, reconciliation="review")
+        self.service._storage.update_field(conflicted, acknowledged.revision)
+        self.assertIs(self.field(self.obj()), conflicted)
+
+    def test_object_lifecycle_reconciliation_cannot_be_resolved_as_an_executable_binding(self):
+        parent = self.obj()
+        for lifecycle, detail in (("DELETED", ""), ("VALID", "review")):
+            self.service._storage._objects[(parent.site_scope, parent.identity_key)] = replace(
+                parent, lifecycle=lifecycle, reconciliation=detail,
+            )
+            with self.subTest(lifecycle=lifecycle), self.assertRaises(BindingConflict):
+                self.obj()
+
     def test_same_acknowledgment_version_rejects_different_fingerprints(self):
         field = self.field(self.obj())
         source = state_fingerprint("source", present=True)

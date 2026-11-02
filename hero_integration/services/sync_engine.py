@@ -148,11 +148,25 @@ class FrappeSyncLedger:
         if len(rows)>1: raise SyncConflict("More than one sync run is active.")
         return None if not rows else rows[0].sync_run_id
     def claim(self,run):
+        from hero_integration.services import run_reservation
         frappe=self._scope(run.site_scope)
-        if self.active_run(run.site_scope): raise SyncConflict("A synchronization run is already active.")
-        frappe.has_permission(self.RUN,"create",throw=True); frappe.get_doc({"doctype":self.RUN,"sync_run_id":run.run_id,"site_scope":run.site_scope,"actor":run.actor,"automatic":int(run.automatic),"state":"RUNNING"}).insert()
+        frappe.has_permission(self.RUN,"create",throw=True)
+        if not run_reservation.acquire(frappe):
+            raise SyncConflict("Could not acquire the HERO run reservation lock.")
+        try:
+            active = run_reservation.locked_legacy_slot(frappe)
+            if run_reservation.legacy_slot_is_active(frappe, active):
+                raise SyncConflict("A HERO migration run is already active.")
+            # Current locking reads are essential here: a transaction can
+            # predate a competing reservation which committed while we waited.
+            if run_reservation.locked_b8_runs(frappe, run.site_scope):
+                raise SyncConflict("A synchronization run is already active.")
+            frappe.get_doc({"doctype":self.RUN,"sync_run_id":run.run_id,"site_scope":run.site_scope,"actor":run.actor,"automatic":int(run.automatic),"state":"RUNNING"}).insert()
+        finally:
+            run_reservation.release(frappe)
     def release(self,run):
-        frappe=self._scope(run.site_scope); rows=frappe.get_all(self.RUN,filters={"sync_run_id":run.run_id,"state":"RUNNING"},fields=["name"])
+        frappe=self._scope(run.site_scope)
+        rows=frappe.db.sql("SELECT name FROM `tabHERO Sync Run Ledger` WHERE site_scope=%s AND sync_run_id=%s AND state='RUNNING' FOR UPDATE", (run.site_scope,run.run_id), as_dict=True)
         if rows:
             doc=frappe.get_doc(self.RUN,rows[0].name); doc.state="COMPLETED"; doc.save()
 
@@ -285,18 +299,19 @@ def sync_hero_eligibility(intent:OutboundIntent)->Eligibility:
     if intent.binding is None: return Eligibility.UNBOUND_ELIGIBLE
     binding=intent.binding
     if binding.mapping_revision!=intent.mapping_revision: return Eligibility.MAPPING_CHANGED
-    if binding.state is BindingState.RECONCILIATION_REQUIRED: return Eligibility.RECONCILIATION_REQUIRED
+    if binding.state is BindingState.MAPPING_CHANGED: return Eligibility.MAPPING_CHANGED
+    if binding.state in {BindingState.RECONCILIATION_REQUIRED, BindingState.REMOTE_CHANGED}: return Eligibility.RECONCILIATION_REQUIRED
     if not intent.local_fingerprint or binding.acknowledged_target_fingerprint!=intent.local_fingerprint: return Eligibility.LOCAL_CHANGED
     return Eligibility.NOT_ELIGIBLE
 
 def execute_sync_hero(intent:OutboundIntent, approval:OutboundApproval, transport:OneShotTransport, bindings:BindingRegistryService)->FieldBinding:
     eligible=sync_hero_eligibility(intent)
-    if eligible is Eligibility.NOT_ELIGIBLE: raise SyncConflict("Synchronized binding is not eligible for outbound sync.")
+    if eligible is not Eligibility.LOCAL_CHANGED: raise SyncConflict("Only a local field change is eligible for outbound sync; reconcile other states first.")
     if intent.binding is None: raise SyncError("Unbound outbound eligibility requires an explicit binding workflow, not execution.")
     if not intent.value_present or not intent.document or not isinstance(intent.variables,Mapping): raise SyncError("Missing/null values cannot become an implicit HERO mutation.")
     if not all((approval.actor_authorized,approval.mutation_approved,approval.preview_confirmed,approval.audit_reserved,approval.no_retry)): raise PermissionError("System Manager approval, exact preview confirmation, audit reservation, and no-retry transport are required.")
     ack=transport.execute_once(intent.document,dict(intent.variables))
-    if not isinstance(ack,OutboundAck) or not ack.verified: raise SyncConflict("Remote acknowledgment is absent or unverified; B6 state remains unchanged.")
+    if not isinstance(ack,OutboundAck) or not ack.verified or ack.target_fingerprint != intent.local_fingerprint: raise SyncConflict("Remote acknowledgment is absent or unverified; B6 state remains unchanged.")
     return bindings.record_verified_acknowledgment(intent.binding,expected_revision=intent.binding.revision,mapping_definition_id=intent.binding.mapping_definition_id,mapping_revision=intent.mapping_revision,source_fingerprint=ack.source_fingerprint,target_fingerprint=ack.target_fingerprint,evidence_id=ack.evidence_id,version=approval.acknowledgment_version)
 
 def _identity(record):

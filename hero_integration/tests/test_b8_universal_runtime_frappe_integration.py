@@ -199,7 +199,7 @@ class TestB8UniversalRuntimeFrappeIntegration(IntegrationTestCase):
                 api.pending_sync(self.plan.generation - 1)
         self.assertEqual(calls, before)
 
-    def test_sync_hero_uses_one_shot_synthetic_transport_and_restores_the_release_gate(self):
+    def test_sync_hero_rejects_a_read_contract_for_a_different_object_type(self):
         mutation_service = frappe.get_doc({
             "doctype": "HERO GraphQL Service", "service_name": "B9 Universal Mutation", "operation_name": "update_contact",
             "query_document": "mutation UpdateContact($contact: CustomerInput!) { update_contact(contact: $contact) { id } }",
@@ -217,56 +217,22 @@ class TestB8UniversalRuntimeFrappeIntegration(IntegrationTestCase):
         }).insert()
         self.settings.allow_graphql_mutation_execution = 1
         self.settings.save()
-        calls: list[tuple[str, dict[str, object]]] = []
-
-        class SyntheticMutationClient:
-            def __init__(self, *_args):
-                pass
-
-            def execute_once(self, document, variables):
-                calls.append((document, variables))
-                if len(calls) == 2:
-                    raise TimeoutError("synthetic uncertain acknowledgement")
-                return {"data": {"update_contact": {"id": "1"}}}
-
-        configuration = SimpleNamespace(endpoint="https://synthetic.invalid/graphql", api_token="synthetic", timeout_seconds=1)
-        with patch("hero_integration.client.graphql_mutation.HeroMutationClient", SyntheticMutationClient), patch(
-            "hero_integration.client.settings.get_configuration", return_value=configuration
-        ):
-            preview = api.sync_hero_preview(self.binding.identity_key, outbound.name, self.plan.generation)
-            self.assertTrue(preview["eligible"])
-            result = api.sync_hero_execute(
-                self.binding.identity_key, outbound.name, self.plan.generation, preview["binding_revision"],
-                preview["request_fingerprint"], 1,
-            )
-            self.assertEqual(result["status"], "SUCCEEDED")
-            acknowledged = FrappeBindingStorage().field(frappe.local.site, self.binding.identity_key)
-            self.assertEqual(acknowledged.acknowledged_version, 1)
-            self.assertEqual(len(calls), 1)
-            replay = api.sync_hero_preview(self.binding.identity_key, outbound.name, self.plan.generation)
-            self.assertFalse(replay["eligible"])
-            with self.assertRaises(frappe.ValidationError):
-                api.sync_hero_execute(
-                    self.binding.identity_key, outbound.name, self.plan.generation, preview["binding_revision"],
-                    preview["request_fingerprint"], 1,
-                )
-            self.assertEqual(len(calls), 1)
-
-            customer = frappe.get_doc("Customer", self.bound.name)
-            customer.customer_name = self.bound_changed
-            customer.save()
-            changed = api.sync_hero_preview(self.binding.identity_key, outbound.name, self.plan.generation)
-            self.assertTrue(changed["eligible"])
-            with self.assertRaises(frappe.ValidationError):
-                api.sync_hero_execute(
-                    self.binding.identity_key, outbound.name, self.plan.generation, changed["binding_revision"],
-                    changed["request_fingerprint"], 1,
-                )
-            self.assertEqual(len(calls), 2)
-            uncertain = FrappeBindingStorage().field(frappe.local.site, self.binding.identity_key)
-            self.assertEqual(uncertain.acknowledged_version, 1)
-            audit = frappe.get_all("HERO Mutation Audit", filters={"site": frappe.local.site}, fields=["status"], order_by="creation asc")
-            self.assertEqual([row.status for row in audit], ["Succeeded", "Timeout"])
+        # This fixture deliberately binds a Customer to a ProjectMatch read.
+        # An ID-only mutation response cannot prove a Customer field under that
+        # contract. Reject it before audit reservation or any external I/O.
+        from hero_integration.services.frappe_writeback import WritebackContractError
+        before = FrappeBindingStorage().field(frappe.local.site, self.binding.identity_key)
+        with patch("hero_integration.client.graphql_mutation.HeroMutationClient") as transport, patch.object(
+            api, "_reserve_mutation"
+        ) as reserve:
+            with self.assertRaises(WritebackContractError):
+                api.sync_hero_preview(self.binding.identity_key, outbound.name, self.plan.generation)
+            with self.assertRaises(WritebackContractError):
+                api.sync_hero_execute(self.binding.identity_key, outbound.name, self.plan.generation,
+                                      self.binding.revision, "unapproved", 1)
+        transport.assert_not_called()
+        reserve.assert_not_called()
+        self.assertEqual(FrappeBindingStorage().field(frappe.local.site, self.binding.identity_key), before)
         self.settings.allow_graphql_mutation_execution = 0
         self.settings.save()
         self.assertEqual(frappe.get_single("HERO Integration Settings").allow_graphql_mutation_execution, 0)

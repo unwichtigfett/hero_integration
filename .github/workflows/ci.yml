@@ -2,7 +2,7 @@ name: CI
 
 on:
   pull_request:
-    branches: [hero_int_dev]
+    branches: [hero_int_dev, hero_int_1.0]
   workflow_dispatch:
     inputs:
       install_apps:
@@ -19,6 +19,7 @@ on:
   push:
     branches:
       - hero_int_dev
+      - hero_int_1.0
 
 permissions:
   contents: read
@@ -59,6 +60,6 @@ jobs:
           persist-credentials: false
       - name: Prepare isolated workspace
         run: chown -R frappe:frappe "$GITHUB_WORKSPACE"
-      - name: Install selected apps and run focused tests
+      - name: Install selected apps and run complete HERO tests
         shell: bash
         run: su -s /bin/bash frappe -c 'bash "$GITHUB_WORKSPACE/ci/github-install-test.sh"'

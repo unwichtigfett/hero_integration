@@ -100,7 +100,7 @@ class TestSync(unittest.TestCase):
  def test_b7_b2_mismatch_is_rejected_without_second_compiler(self):
   with self.assertRaises(SyncError): MaterializedReadPlan(plan().sealed,object(),"hero")
  def test_sync_hero_eligibility_acknowledgment_and_reenable_after_change(self):
-  intent=OutboundIntent(self.binding,1,FP,"local",True,"mutation X { x { id } }",{})
+  intent=OutboundIntent(self.binding,1,FP,"b"*64,True,"mutation X { x { id } }",{})
   self.assertEqual(sync_hero_eligibility(intent),Eligibility.LOCAL_CHANGED)
   approval=OutboundApproval(True,True,True,True,True,1); ack=OutboundAck(True,"evidence","a"*64,"b"*64)
   updated=execute_sync_hero(intent,approval,Transport(ack),self.bindings); done=OutboundIntent(updated,1,FP,"b"*64,True,"m",{})

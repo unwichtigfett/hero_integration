@@ -189,7 +189,7 @@ class TestWritebackPreviewBoundary(unittest.TestCase):
         binding = SimpleNamespace(object_binding_key='object', source_instance='hero', mapping_revision=3,
                                   target_doctype='Customer', target_field='email_id', target_name='CUST-1',
                                   identity_key='binding', revision=2)
-        parent = SimpleNamespace(source_instance='hero', external_object_id='42')
+        parent = SimpleNamespace(source_instance='hero', external_object_id='42', lifecycle='VALID', reconciliation='')
         storage = SimpleNamespace(field=lambda *a: binding, object=lambda *a: parent)
         selection = SimpleNamespace(mapping_revision=3, schema_snapshot='S1', schema_fingerprint='fp')
         plan = SimpleNamespace(selection=selection, plan_key='plan', generation=4)
@@ -199,7 +199,8 @@ class TestWritebackPreviewBoundary(unittest.TestCase):
         with patch.object(api, 'frappe', self.frappe), patch.object(api, '_validated_snapshot', return_value=(self.snapshot, schema())), \
              patch.object(binding_registry, 'FrappeBindingStorage', return_value=storage), \
              patch.object(binding_registry, 'BindingRegistryService'), \
-             patch.object(sync_runtime_adapter, '_runtime_plan_service', return_value=service):
+             patch.object(sync_runtime_adapter, '_runtime_plan_service', return_value=service), \
+             patch('hero_integration.services.writeback_readback.prepare_readback', return_value=object()):
             return api._sync_hero_context('binding', 'mapping', 4)
 
     def test_runtime_plan_path_rejects_missing_and_stale_contract(self):

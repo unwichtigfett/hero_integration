@@ -2,7 +2,17 @@
 import frappe
 
 
+def personal_mapping_draft_query(user=None):
+    return personal_mapping_query(user, "HERO Mapping Draft")
+
+
+def personal_mapping_revision_query(user=None):
+    return personal_mapping_query(user, "HERO Mapping Revision")
+
+
 def personal_mapping_query(user=None, doctype=None):
+    if doctype not in {"HERO Mapping Draft", "HERO Mapping Revision"}:
+        return "1=0"
     user = user or frappe.session.user
     if "System Manager" not in frappe.get_roles(user):
         return "1=0"
