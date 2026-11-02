@@ -24,7 +24,7 @@ scheduler_events = {
 # Native Desk extension only.  It asks the server for eligible, linked fields
 # on every form refresh and never observes or sends values by itself.
 doctype_js = {
-    "Customer": "public/js/hero_writeback.js",
+    "Customer": ["public/js/hero_writeback.js", "public/js/hero_customer_send.js"],
     "Project": ["public/js/hero_writeback.js", "public/js/hero_project_send.js"],
     "Task": ["public/js/hero_task_send.js"],
 }

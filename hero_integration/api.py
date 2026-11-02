@@ -3656,3 +3656,25 @@ def task_send(task: str, fingerprint: str, confirmed: int | str = 0) -> dict:
         return send(task, fingerprint, confirmed)
     except TaskSendError as error:
         frappe.throw(str(error))
+
+
+@frappe.whitelist(methods=["POST"])
+def customer_send_preview(customer: str) -> dict:
+    """Preview of the Customer changes the Send to HERO button would send (reads HERO)."""
+    from hero_integration.services.customer_send import CustomerSendError, preview
+
+    try:
+        return preview(customer)
+    except CustomerSendError as error:
+        frappe.throw(str(error))
+
+
+@frappe.whitelist(methods=["POST"])
+def customer_send(customer: str, fingerprint: str, confirmed: int | str = 0) -> dict:
+    """Send the previewed Customer data to HERO once and verify it (never the customer number)."""
+    from hero_integration.services.customer_send import CustomerSendError, send
+
+    try:
+        return send(customer, fingerprint, confirmed)
+    except CustomerSendError as error:
+        frappe.throw(str(error))

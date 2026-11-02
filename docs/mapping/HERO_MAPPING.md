@@ -112,9 +112,25 @@ Regeln:
 
 ### Ausgehend
 
-Nicht freigegeben. Der alte Feld-Rückschreibweg kennt Kundenfelder technisch,
-aber es gibt keine aktive Regel, und der globale Schalter ist aus.
-**Offen**, ob und welche Kundenfelder zurückgeschrieben werden sollen.
+Entscheidung 2026-11-02: alle Kundendaten außer der Kundennummer. Button
+„Send to HERO“ auf jedem importierten Kunden (`update_contact`), gleiches
+Muster wie bei Projekt und Aufgabe (Vorschau liest HERO live, in HERO
+geänderte Werte werden nicht überschrieben, globaler Schalter, Audit,
+Nachlesen, Vergleichsbasis fortschreiben). Gesendet werden:
+
+| ERPNext | HERO |
+| --- | --- |
+| Anrede (Kontakt) | `title` (Dr → „Dr.“) |
+| Vorname, Nachname (Kontakt) | `first_name`, `last_name` |
+| Kundenname, nur bei Firmen | `company_name` |
+| E-Mail, Mobil (Kontakt) | `email`, `phone_mobile` |
+| weitere Telefonnummer (Kontakt) | `phone_home` |
+| Hauptadresse: Straße, Zeile 2, PLZ, Ort | `address { street line_2 zipcode city }` |
+
+Nicht gesendet: Kundennummer, HERO-Kategorie/-Typ (HERO-eigene
+Klassifizierung), Land. Live getestet am Testkunden KD-01440 (HERO 7966175):
+Nachname und Adresszeile 2 hin und zurück. Ein HERO-Festnetz gleich der
+Mobilnummer speichert ERPNext nur einmal; das gilt nicht als Änderung.
 
 ## 4. Aufgabe (`HeroTasks` → Task)
 
