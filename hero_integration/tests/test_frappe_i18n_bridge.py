@@ -19,6 +19,7 @@ class TestFrappeTranslationBridge(unittest.TestCase):
             self.skipTest('Node.js is not installed')
         try:
             import frappe
+            from frappe.boot import load_translations
             from frappe.translate import get_translations_from_apps, get_user_lang
         except ModuleNotFoundError:
             self.skipTest('Frappe is not installed')
@@ -31,9 +32,22 @@ class TestFrappeTranslationBridge(unittest.TestCase):
             with patch.object(frappe, 'get_cached_value', return_value='en'):
                 user_language = get_user_lang('synthetic@example.invalid')
         self.assertEqual((global_language, user_language), ('de', 'en'))
+        languages = [global_language, user_language, 'de-DE']
+        boot_catalogs = {}
+        for language in languages:
+            catalog = get_translations_from_apps(language, apps=['hero_integration'])
+            boot = {}
+            # Use the real Frappe boot assembly and the real app catalog; the
+            # cache boundary is supplied in memory, so no site is contacted.
+            with patch.object(frappe, 'local', SimpleNamespace(lang=language)), \
+                 patch.object(frappe, 'lang', language), \
+                 patch('frappe.translate.get_all_translations', return_value=catalog):
+                load_translations(boot)
+            self.assertEqual(boot['lang'], language)
+            boot_catalogs[language] = boot['__messages']
         payload = {
-            'languages': [global_language, user_language, 'de-DE'],
-            'catalogs': {lang: get_translations_from_apps(lang, apps=['hero_integration']) for lang in ('en', 'de', 'de-DE')},
+            'languages': languages,
+            'catalogs': boot_catalogs,
             'frappeTranslate': str(Path(frappe.__file__).parent / 'public' / 'js' / 'frappe' / 'translate.js'),
             'jsDir': str(APP / 'public' / 'js'),
         }
