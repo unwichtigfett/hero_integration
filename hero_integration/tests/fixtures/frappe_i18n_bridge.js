@@ -42,6 +42,10 @@ for (const language of input.languages) {
     const address = 'The project address is missing or incomplete (ProjectMatch.address.city is required for the ERPNext project title.); the title omits it.';
     const expectedAddress = language === 'en' ? address : 'Die Projektadresse fehlt oder ist unvollständig (ProjectMatch.address.city ist für den ERPNext-Projekttitel erforderlich.); sie wird im Titel ausgelassen.';
     assert.equal(migration.diagnostic(address), expectedAddress);
+    const customerReason = 'The HERO customer is deleted in HERO; the Project has no customer.';
+    const combinedReview = `${customerReason} ${address}`;
+    const expectedReview = language === 'en' ? combinedReview : `Der HERO-Kunde ist in HERO gelöscht; dem Projekt ist kein Kunde zugeordnet. ${expectedAddress}`;
+    assert.equal(migration.diagnostic(combinedReview), expectedReview);
     const pending = `Recheck requested: Awaits administrator approval: ${address}`;
     const expectedPending = language === 'en' ? pending : `Erneute Prüfung angefordert: Wartet auf Freigabe durch einen Administrator: ${expectedAddress}`;
     assert.equal(migration.diagnostic(pending), expectedPending);

@@ -2429,3 +2429,6 @@ HERO run {0}: {1} HERO assignees have no ERPNext user,HERO-Lauf {0}: {1} HERO-Zu
 {0} task(s),{0} Task(s)
 Create an ERPNext user with the same e-mail; the next task run assigns the tasks.,Erstellen Sie einen ERPNext-Benutzer mit derselben E-Mail-Adresse; der nächste Task-Lauf weist die Tasks zu.
 HERO polling status,HERO-Polling-Status
+The HERO customer has no unambiguous ERPNext link; the Project has no customer.,Der HERO-Kunde hat keine eindeutige ERPNext-Verknüpfung; dem Projekt ist kein Kunde zugeordnet.
+The HERO customer is deleted in HERO; the Project has no customer.,Der HERO-Kunde ist in HERO gelöscht; dem Projekt ist kein Kunde zugeordnet.
+"The HERO customer is a contact person, not a customer; the Project has no customer.","Der HERO-Kunde ist eine Kontaktperson, kein Kunde; dem Projekt ist kein Kunde zugeordnet."

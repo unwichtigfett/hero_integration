@@ -36,6 +36,14 @@ class TestFrappeTranslationBridge(unittest.TestCase):
             self.assertEqual(recipient_diagnostic('de@example.invalid', nested),
                              'Erneute Prüfung angefordert: Wartet auf Freigabe durch einen Administrator: Feldkonflikt erfordert Prüfung: customer_name, custom_id.')
             self.assertEqual(recipient_diagnostic('de@example.invalid', 'Unknown external detail'), 'Unknown external detail')
+            address = ('The project address is missing or incomplete '
+                       '(ProjectMatch.address.city is required for the ERPNext project title.); the title omits it.')
+            review = 'The HERO customer is deleted in HERO; the Project has no customer. ' + address
+            expected = ('Der HERO-Kunde ist in HERO gelöscht; dem Projekt ist kein Kunde zugeordnet. '
+                        'Die Projektadresse fehlt oder ist unvollständig '
+                        '(ProjectMatch.address.city ist für den ERPNext-Projekttitel erforderlich.); sie wird im Titel ausgelassen.')
+            self.assertEqual(recipient_diagnostic('de@example.invalid', review), expected)
+            self.assertEqual(recipient_diagnostic('en@example.invalid', review), review)
 
     def test_framework_catalog_reaches_workspace_controls_in_both_languages(self):
         if not shutil.which('node'):
