@@ -886,12 +886,7 @@
                     downloadExport(result.filename, result.content); packageState.text(text('Saved field mapping package exported for this snapshot fingerprint, including Active, Draft and Disabled mappings. Personal drafts are not included.'));
                 } catch (error) { if (packageCurrent(serial, name)) packageState.text(errorText(error)); }
             });
-            section.append($('<h4></h4>').text(text('Saved field mapping package')),
-                $('<p></p>').text(text('Export includes saved global field mappings for this snapshot fingerprint, including Active, Draft and Disabled mappings. Personal drafts are not included.')),
-                $('<p></p>').text(text('Select changes explicitly. Adoption may create schema and activates selected field mappings; it does not migrate HERO data.')),
-                fileInput, exportPackage, packageState, packagePreview);
-            section.append($('<h4></h4>').text(text('Complete configuration')),
-                $('<p></p>').text(text('Export and import the whole HERO setup (schema snapshot, settings, mappings, HERO fields and read services) under Settings → Configuration package.')));
+            // Import/export lives on the Settings page (Configuration package); the mapping page shows none.
             explorer.append(button('Retry saved schema', () => { packageRequest++; packagePreview.empty(); loadSnapshots(snapshot.val(), operations.val()); }));
             section.append(button('Open Graph Viewer', () => {
                 const name = snapshot.val(); if (!name || snapshot.prop('disabled')) return info.text(text('Choose a validated snapshot.'));
@@ -977,7 +972,7 @@
         function renderList() {
             toolbar.detach().empty(); body.empty(); renderWorkspaceContext(); renderContext({}); renderMappingsTable(body);
             body.append($("<p class='text-muted'></p>").text(text("Choose an active mapping row or definition to inspect it. Reading and selection do not create a draft.")));
-            if (admin) { renderListExchange(); renderPersonalDraftList(); }
+            if (admin) renderPersonalDraftList();
             renderSchemaExplorer();
         }
         function renderListExchange() {
@@ -1450,7 +1445,6 @@
             if (list[selected]) renderRow(list[selected], detail);
             else detail.append($("<p></p>").text(text(list.length ? "Choose a field mapping row." : "No field mappings in this definition.")));
             renderMappingsTable(body);
-            if (admin) renderListExchange();
             body.append(toolbar, draftStatus);
             toolbar.addClass("hero-mapping-workbench-actions");
             const tableEpoch = epoch;

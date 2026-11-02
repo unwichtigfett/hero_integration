@@ -235,16 +235,14 @@ class TestHeroDeskUiContract(unittest.TestCase):
             self.assertNotIn(forbidden, explorer)
         self.assertIn("explorer.append(snapshot, operations, info, limitNotice, details)", explorer)
 
-    def test_mapping_exchange_is_below_table_in_list_and_detail(self):
+    def test_mapping_page_offers_no_import_or_export(self):
+        # Import/export lives on the Settings page (Configuration package) only.
         source = MAPPING_EDITOR_JS.read_text()
         listing = source.split("function renderList()", 1)[1].split("function renderListExchange()", 1)[0]
         detail = source.split("function renderDetail()", 1)[1].split("function renderContext(", 1)[0]
-        exchange = source.split("function renderListExchange()", 1)[1].split("function renderPersonalDraftList()", 1)[0]
         for view in (listing, detail):
-            self.assertLess(view.index("renderMappingsTable(body)"), view.index("renderListExchange()"))
-        for action in ("chooseImport", "exportDirection()", "hero-personal-mapping-portable-v2"):
-            self.assertIn(action, exchange)
-        self.assertIn('active?.mapping_type === "graphql"', exchange)
+            self.assertIn("renderMappingsTable(body)", view)
+            self.assertNotIn("renderListExchange()", view)
         context = source.split("function renderWorkspaceContext()", 1)[1].split("function inheritFromParent(", 1)[0]
         self.assertNotIn("renderDefinitionChooser(header)", context)
 
@@ -262,20 +260,16 @@ class TestHeroDeskUiContract(unittest.TestCase):
             self.assertIn(contract, source)
         self.assertNotIn('activate:1', explorer)
 
-    def test_legacy_package_adoption_requires_admin_checked_preview_and_explicit_confirmation(self):
+    def test_schema_explorer_shows_no_package_import_or_export(self):
         source = MAPPING_EDITOR_JS.read_text()
         explorer = source.split("function renderSchemaExplorer()", 1)[1].split("function renderList()", 1)[0]
-        for contract in ("if (!admin) return", "export_mapping_json",
-                         "downloadExport(result.filename, result.content)", "packageCurrent(serial, name)",
-                         "saved global field mappings for this snapshot fingerprint, including Active, Draft and Disabled mappings",
-                         "Personal drafts are not included",
-                         "Review selected adoption", "Confirm selected adoption", "if (submitted || !packageCurrent(serial, name)) return",
-                         "legacyPackageAdoptionArgs(name, payload, preview, ids)", "no retry was made",
-                         "rpc('preview_mapping_package', {snapshot_name: name, payload_json: payload}, true)"):
-            self.assertIn(contract, explorer)
-        self.assertIn("rpc('adopt_mapping_package'", explorer)
-        self.assertIn("confirmed: true, preview_revision: preview.preview_revision", source)
-        self.assertNotIn("Export active mapping package", explorer)
+        for removed in ("text('Saved field mapping package')", "fileInput, exportPackage", "text('Complete configuration')"):
+            self.assertNotIn(removed, explorer)
+        self.assertIn("Import/export lives on the Settings page (Configuration package)", explorer)
+        settings = (PACKAGE_ROOT / "public" / "js" / "hero_settings.js").read_text()
+        for contract in ('section("Configuration package"', 'platform.api("config_export"', 'platform.api("config_import_preview"',
+                         'platform.api("config_import", {payload_json: payload, confirmed: 1})', "frappe.confirm("):
+            self.assertIn(contract, settings)
         self.assertIn('type: write ? "POST" : "GET"', source)
 
     def test_mapping_editor_has_explicit_save_and_lossless_local_undo(self):
