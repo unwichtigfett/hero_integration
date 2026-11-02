@@ -2391,3 +2391,12 @@ Project trade {0} has no confirmed HERO-to-ERPNext title mapping.,Für das Proje
 {0} is required and must be an object.,{0} ist erforderlich und muss ein Objekt sein.
 {0} is required for the ERPNext project title.,{0} ist für den ERPNext-Projekttitel erforderlich.
 The project address is missing or incomplete ({0}); the title omits it.,Die Projektadresse fehlt oder ist unvollständig ({0}); sie wird im Titel ausgelassen.
+The HERO email address is not valid in ERPNext; it was not imported.,Die HERO-E-Mail-Adresse ist in ERPNext ungültig; sie wurde nicht importiert.
+A HERO phone text is not a valid ERPNext number; the first number was imported and the full text kept as a comment.,Ein HERO-Telefontext ist keine gültige ERPNext-Nummer; die erste Nummer wurde importiert und der vollständige Text als Kommentar gespeichert.
+Customer primary address is incomplete. It was not imported.,Die Hauptadresse des Kunden ist unvollständig. Sie wurde nicht importiert.
+The HERO address has no country; Germany was assumed.,Für die HERO-Adresse fehlt das Land; Deutschland wurde angenommen.
+A collision-safe internal ID names the document; no replacement business number was generated. The original HERO value stays in its field.,Das Dokument erhält eine kollisionssichere interne ID; es wurde keine Ersatzgeschäftsnummer erzeugt. Der ursprüngliche HERO-Wert bleibt in seinem Feld.
+ERPNext's naming series names the new document; the HERO value stays in its field.,Die ERPNext-Namensserie benennt das neue Dokument; der HERO-Wert bleibt in seinem Feld.
+HERO has no {0}.,HERO enthält keine {0}.
+HERO number {0} is not text.,Die HERO-Nummer {0} ist kein Text.
+"HERO number {0} cannot be an ERPNext document name (only letters, digits and single inner hyphens, at most 140 characters).","Die HERO-Nummer {0} kann kein ERPNext-Dokumentname sein (nur Buchstaben, Ziffern und einzelne Bindestriche innerhalb des Namens, höchstens 140 Zeichen)."
