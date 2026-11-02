@@ -685,8 +685,10 @@ def _sync_area(key: str):
 
 
 def _sync_area_blocker(item, instance: str) -> str:
-    return (f"{item.action_label} needs an approved read service with an active mapping for {item.label} "
-            f"on a snapshot of the HERO source instance \"{instance}\". Approve one under API & Schema and Mapping.")
+    return frappe._(
+        '{0} needs an approved read service with an active mapping for {1} '
+        'on a snapshot of the HERO source instance "{2}". Approve one under API & Schema and Mapping.'
+    ).format(frappe._(item.action_label), frappe._(item.label), instance)
 
 
 def _sync_area_read_services(instance: str) -> dict[str, list[dict[str, str]]]:
