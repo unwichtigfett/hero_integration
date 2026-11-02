@@ -587,3 +587,14 @@ test('resuming automatic directional entry preserves keyboard focus on its tab',
  resumePendingView({kind:'detail',item:{name:'query'},mappingType:'graphql',focus:false},{detail:(item,kind,focus)=>reads.push([item.name,kind,focus])});
  assert.deepEqual(reads,[['query','graphql',false]]);
 });
+
+test('mapping choice context translates descriptions and preserves technical values', () => {
+ const messages = {'Definition {0}':'Definition {0}', 'Revision {0}':'Revision {0}',
+  'Arguments: {0}':'Argumente: {0}', 'Not permitted':'Nicht erlaubt'};
+ window.hero_integration_i18n = {text: value => messages[value] || String(value)};
+ const {definitionChoice, objectFieldContext} = window.hero_integration_mapping_editor;
+ assert.match(definitionChoice({operation:'customer', revision:2},0).context, /Definition 1.*Revision 2/);
+ assert.equal(objectFieldContext({fieldtype:'String', arguments:[{name:'id',type:'ID!'}],reason:'Not permitted'}),
+  'String · Argumente: id: ID! · Nicht erlaubt');
+ delete window.hero_integration_i18n;
+});

@@ -252,12 +252,12 @@
     }
     const directionForTab = (tab) => tab === "Query" ? "QUERY_TO_FRAPPE" : tab === "Mutation" ? "FRAPPE_TO_MUTATION" : null;
     const definitionChoice = (item, index) => ({...item, label: item.operation_name || item.operation || "",
-        context: [index == null ? "" : `Definition ${index + 1}`, item.kind, item.target_doctype, snapshotLabel(item.schema_snapshot),
-            item.revision == null ? "" : `Revision ${item.revision}`].filter(Boolean).join(" · ")});
+        context: [index == null ? "" : format("Definition {0}", index + 1), item.kind, item.target_doctype, snapshotLabel(item.schema_snapshot),
+            item.revision == null ? "" : format("Revision {0}", item.revision)].filter(Boolean).join(" · ")});
     const objectFieldContext = (field) => {
         const args = (items) => (items || []).map((arg) => `${arg.name}: ${arg.type}`).join(", ");
         const relations = (field.relations || []).map((rel) => `${rel.owner_type}.${rel.name} → ${rel.target_type}${rel.is_list ? " [list]" : ""}${rel.arguments?.length ? ` (${args(rel.arguments)})` : ""}`);
-        return [field.fieldtype || field.type || "", ...relations, field.arguments?.length ? `Arguments: ${args(field.arguments)}` : "", field.reason || ""].filter(Boolean).join(" · ");
+        return [field.fieldtype || field.type || "", ...relations, field.arguments?.length ? format("Arguments: {0}", args(field.arguments)) : "", text(field.reason || "")].filter(Boolean).join(" · ");
     };
     const mappingAreas = Object.freeze(["All areas", "Customers", "Projects", "Tasks", "Calendar"]);
     const objectsInArea = (objects, area) => (objects || []).filter((item) =>
@@ -892,7 +892,7 @@
             function row(item) {
                 const entry = $("<div class='hero-mapping-saved-node' role='listitem'></div>");
                 entry.append($('<strong></strong>').text(item.alias), $('<span></span>').text(` · ${item.node_name} · ${item.node_kind} · ${snapshotLabel(item.schema_snapshot)} · ${item.status}`));
-                entry.attr('title', item.reason || '');
+                entry.attr('title', text(item.reason || ''));
                 entry.append(button(text('Use in Mapping'), () => use(item)).prop('disabled', item.status === 'UNRESOLVABLE'));
                 entry.append(button(text('Rename'), () => frappe.prompt({fieldname: 'alias', fieldtype: 'Data', label: text('Alias'), reqd: 1, default: item.alias},
                     async (values) => { try { await store.rename(item.name, values.alias); await refresh(); } catch (error) { state.text(errorText(error)); } }, text('Rename saved HERO node'), text('Save'))));
@@ -1074,7 +1074,7 @@
                         const counts = result?.counts || {};
                         const problems = (result?.results || []).filter((item) => item.status === "Incompatible");
                         say(format("{0} draft(s) on {1}, {2} incompatible, {3} skipped. Nothing was activated.", counts["Draft Created"] || 0, snapshotLabel(snapshotName), problems.length, counts.Skipped || 0));
-                        if (problems.length) modal("Not inherited", problems.map((item) => `${item.operation}: ${item.reason}`).join(" · "), [["Close", () => {}, true]]);
+                        if (problems.length) modal("Not inherited", problems.map((item) => `${item.operation}: ${text(item.reason)}`).join(" · "), [["Close", () => {}, true]]);
                     } catch (error) { if (!disposed && request === epoch) say(errorText(error)); }
                     finally { if (!disposed && request === epoch) { setBusy(false); await loadList(false); } }
                 }, true], ["Cancel", () => {}]]);
@@ -1413,15 +1413,15 @@
             }, (item) => { if (browseApp !== item.label) { browseApp = item.label; browseDoctype = ""; browseChanged = true; } refresh(); });
             const doctype = choice("DocType", "", frappeControls, async (search, offset) => {
                 const catalog = await getFieldCatalog();
-                return page(catalog.doctypes.filter((item) => item.app_name === browseApp).map((item) => ({...item, label: item.doctype, context: item.selectable ? "" : item.reason || "Unavailable", disabled: !item.selectable})), search, offset);
+                return page(catalog.doctypes.filter((item) => item.app_name === browseApp).map((item) => ({...item, label: item.doctype, context: item.selectable ? "" : text(item.reason || "Unavailable"), disabled: !item.selectable})), search, offset);
             }, (item) => { if (browseDoctype !== item.doctype) { browseDoctype = item.doctype; browseChanged = true; } refresh(); });
             const frappeField = choice("Frappe Field", "", frappeControls, async (search, offset) => {
                 const catalog = await getFieldCatalog();
                 const selectedDoc = catalog.doctypes.find((item) => item.app_name === browseApp && item.doctype === browseDoctype && item.selectable);
                 if (!selectedDoc) return {items: [], total: 0, emptyMessage: "Choose an available App and DocType before choosing a Frappe field."};
-                if (mutation && !row.reference) return page((catalog.fields || []).filter((f) => f.app_name === browseApp && f.doctype === browseDoctype).map((f) => ({...f, label: f.path, searchText: f.description || "", context: `${f.label || ""} · ${f.fieldtype || ""}${reviewedTargetLabel(f) ? ` · ${text("Reviewed HERO target")}: ${reviewedTargetLabel(f)}` : ""}${f.selectable === false ? ` · ${f.reason || "not permitted"}` : ""}`, disabled: f.selectable === false})), search, offset);
+                if (mutation && !row.reference) return page((catalog.fields || []).filter((f) => f.app_name === browseApp && f.doctype === browseDoctype).map((f) => ({...f, label: f.path, searchText: f.description || "", context: `${f.label || ""} · ${f.fieldtype || ""}${reviewedTargetLabel(f) ? ` · ${text("Reviewed HERO target")}: ${reviewedTargetLabel(f)}` : ""}${f.selectable === false ? ` · ${text(f.reason || "not permitted")}` : ""}`, disabled: f.selectable === false})), search, offset);
                 const result = await rpc("mapping_target_catalog_page", {app_name: browseApp, doctype: browseDoctype, search, start: offset, page_size: 20});
-                return {items: result.items.map((f) => ({...f, label: f.path, context: `${f.fieldtype || f.type || ""}${f.selectable === false ? ` · ${f.reason || "not permitted"}` : ""}`, disabled: f.selectable === false})), total: result.total};
+                return {items: result.items.map((f) => ({...f, label: f.path, context: `${f.fieldtype || f.type || ""}${f.selectable === false ? ` · ${text(f.reason || "not permitted")}` : ""}`, disabled: f.selectable === false})), total: result.total};
             }, (item) => setField(item, true));
             if (!admin) [areaChoice, objectOrAction, path, heroField, app, doctype, frappeField].forEach((control) => control?.prop("hidden", true));
             const metadata = (pane) => {
