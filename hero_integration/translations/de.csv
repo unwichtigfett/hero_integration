@@ -2381,3 +2381,13 @@ Local field change observed; no outbound HERO mutation was prepared.,Lokale Feld
 HERO {0} changed from {1} to {2}. {3} {4} keeps its name and number until reviewed; set {5} to {2} to accept the new number.,"HERO-{0} wurde von {1} auf {2} geändert. {3} {4} behält seinen Namen und seine Nummer bis zur Prüfung; setzen Sie {5} auf {2}, um die neue Nummer zu übernehmen."
 customer number,Kundennummer
 project display_id,Projekt-display_id
+ERPNext Project.project_name has no valid maximum length.,Für ERPNext Project.project_name ist keine gültige Maximallänge festgelegt.
+"ProjectMatch.measure, project_type or a confirmed ProjectType is required.","ProjectMatch.measure, project_type oder ein bestätigter ProjectType ist erforderlich."
+Conflicting project trade values require review.,Widersprüchliche Projektgewerke müssen geprüft werden.
+ProjectMatch.project_nr is empty after its trade prefix.,ProjectMatch.project_nr ist nach dem Gewerkpräfix leer.
+Generated Project.project_name exceeds its {0}-character field limit.,Der erzeugte Project.project_name überschreitet die Feldgrenze von {0} Zeichen.
+Project trade {0} has no confirmed HERO-to-ERPNext title mapping.,Für das Projektgewerk {0} gibt es kein bestätigtes HERO-zu-ERPNext-Titel-Mapping.
+{0} is not a complete formatted project address.,{0} ist keine vollständig formatierte Projektadresse.
+{0} is required and must be an object.,{0} ist erforderlich und muss ein Objekt sein.
+{0} is required for the ERPNext project title.,{0} ist für den ERPNext-Projekttitel erforderlich.
+The project address is missing or incomplete ({0}); the title omits it.,Die Projektadresse fehlt oder ist unvollständig ({0}); sie wird im Titel ausgelassen.
