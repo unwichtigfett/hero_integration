@@ -32,4 +32,9 @@ for (const language of input.languages) {
     const drift = "HERO customer number changed from 'old' to 'new'. Customer CUST-42 keeps its name and number until reviewed; set custom_hero_customer_number to 'new' to accept the new number.";
     const expectedDrift = language === 'en' ? drift : "HERO-Kundennummer wurde von 'old' auf 'new' geändert. Kunde CUST-42 behält seinen Namen und seine Nummer bis zur Prüfung; setzen Sie custom_hero_customer_number auf 'new', um die neue Nummer zu übernehmen.";
     assert.equal(migration.diagnostic(drift), expectedDrift);
+    const collision = "Project 'P-42' already exists without this HERO record's link. The HERO number is not reassigned, suffixed or merged; check whether 'P-42' is the same project and link or rename it.";
+    const expectedCollision = language === 'en' ? collision : "Projekt 'P-42' existiert bereits ohne Link zu diesem HERO-Datensatz. Die HERO-Nummer wird weder neu vergeben noch mit einem Zusatz versehen oder zusammengeführt; prüfen Sie, ob 'P-42' dasselbe Objekt (Projekt) ist, und verknüpfen oder benennen Sie es um.";
+    assert.equal(migration.diagnostic(collision), expectedCollision);
+    const unlinked = 'Existing Customer has no stable HERO link.';
+    assert.equal(migration.diagnostic(unlinked), language === 'en' ? unlinked : 'Für das vorhandene Objekt Kunde gibt es keinen stabilen HERO-Link.');
 }
