@@ -399,17 +399,21 @@ def _claim_run(run) -> bool:
         return False
     try:
         active_run = _locked_active_run()
+        from hero_integration.services.run_reservation import locked_b8_runs
+        if locked_b8_runs(frappe, frappe.local.site):
+            _block_run(run, "A bound synchronization run is active; migration was not started.")
+            return False
         now = now_datetime()
-        if active_run == run.name and frappe.db.get_value("HERO Integration Run", run.name, "state") == "Running":
-            if run_lease_alive(run.name, now):
+        if active_run == run.name and frappe.db.get_value("HERO Integration Run", run.name, "state", for_update=True) == "Running":
+            if run_lease_alive(run.name, now, lock=True):
                 return False
             # A duplicate or retried job of the same run after its worker died.
             _interrupt_run(run.name, now)
             run.reload()
         if active_run and active_run != run.name:
-            active_state = frappe.db.get_value("HERO Integration Run", active_run, "state")
+            active_state = frappe.db.get_value("HERO Integration Run", active_run, "state", for_update=True)
             if active_state not in TERMINAL_STATES:
-                if run_lease_alive(active_run, now):
+                if run_lease_alive(active_run, now, lock=True):
                     _block_run(run, f"Another HERO run is active: {active_run}.")
                     return False
                 _interrupt_run(active_run, now)
@@ -443,14 +447,15 @@ def _claim_run(run) -> bool:
         _release_active_run_lock()
 
 
-def run_lease_alive(run_name: str, now=None) -> bool:
+def run_lease_alive(run_name: str, now=None, *, lock=False) -> bool:
     """Whether a non-terminal run may still be executing in a live worker.
 
     Runs claimed before leases existed have no expiry; their ``started_on``
     plus the lease window is used instead. A non-terminal, non-Running row
     is conservatively reported alive.
     """
-    row = frappe.db.get_value("HERO Integration Run", run_name, ["state", "lease_expires_on", "started_on"], as_dict=True)
+    row = frappe.db.get_value("HERO Integration Run", run_name, ["state", "lease_expires_on", "started_on"],
+                              as_dict=True, **({"for_update": True} if lock else {}))
     if not row or row.state in TERMINAL_STATES:
         return False
     if row.state != "Running":
@@ -512,40 +517,18 @@ def _release_run(run_name: str) -> None:
 
 
 def _locked_active_run() -> str:
-    """Return the slot value while holding its transaction-local row lock."""
-    doctype, field = "HERO Integration Sync State", "active_run"
-    rows = frappe.db.sql(
-        "SELECT `value` FROM `tabSingles` WHERE `doctype` = %s AND `field` = %s FOR UPDATE",
-        (doctype, field),
-        as_dict=True,
-    )
-    if not rows:
-        # The connection-scoped lock in ``_claim_run`` serializes this
-        # first-use insert.  Avoid INSERT IGNORE here: MariaDB can otherwise
-        # report a stale-record error to the losing transaction even after the
-        # winner committed its reservation.
-        frappe.db.sql(
-            "INSERT INTO `tabSingles` (`doctype`, `field`, `value`) VALUES (%s, %s, '')",
-            (doctype, field),
-        )
-        return ""
-    return str(rows[0].value or "") if rows else ""
+    from hero_integration.services.run_reservation import locked_legacy_slot
+    return locked_legacy_slot(frappe)
 
 
 def _acquire_active_run_lock() -> bool:
-    """Serialize first-use upserts before taking the durable row lock.
-
-    MariaDB can deadlock concurrent first-use creation of a missing
-    ``tabSingles`` row.  The named lock is connection-scoped and only guards
-    row creation/claim setup; the row lock remains the durable transaction
-    boundary for the executing run.
-    """
-    rows = frappe.db.sql("SELECT GET_LOCK(%s, %s) AS acquired", ("hero_integration:active_run", 10), as_dict=True)
-    return bool(rows and int(rows[0].acquired or 0) == 1)
+    from hero_integration.services.run_reservation import acquire
+    return acquire(frappe)
 
 
 def _release_active_run_lock() -> None:
-    frappe.db.sql("SELECT RELEASE_LOCK(%s)", ("hero_integration:active_run",))
+    from hero_integration.services.run_reservation import release
+    release(frappe)
 
 
 def _process_requested_phases(run, source: HeroSource, *, checkpoint=None) -> None:

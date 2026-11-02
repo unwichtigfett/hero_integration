@@ -2455,3 +2455,10 @@ DRAFT_ONLY,Nur im Entwurf geändert
 SAME_CHANGE,Gleiche Änderung
 ERROR,Fehler
 TOO_LARGE,Zu groß
+The approved read contract cannot verify this bound writeback field.,Der freigegebene Read-Contract kann dieses gebundene Writeback-Feld nicht prüfen.
+HERO readback did not return a complete response.,Das Rücklesen aus HERO lieferte keine vollständige Antwort.
+HERO readback did not return the approved record list.,Das Rücklesen aus HERO lieferte nicht die freigegebene Datensatzliste.
+HERO readback did not prove the unique bound record and field.,Das Rücklesen aus HERO konnte den gebundenen Datensatz und sein Feld nicht eindeutig bestätigen.
+HERO did not store the expected field value; the binding remains unconfirmed.,HERO hat den erwarteten Feldwert nicht gespeichert; das Binding bleibt unbestätigt.
+Only a local field change can be sent; reconcile other binding states first.,Nur eine lokale Feldänderung kann gesendet werden; andere Binding-Zustände müssen zuerst abgeglichen werden.
+Sync Hero object binding requires lifecycle reconciliation.,Das Object Binding für Sync Hero muss zuerst hinsichtlich seines Lebenszyklus abgeglichen werden.

@@ -33,3 +33,30 @@ A mapping Draft, approved Query document and execution permission are separate. 
 - Articles, versions, prices, inventory and accounting are **outside the current mapping scope**.
 
 **Acceptance:** `PARTIAL / EXECUTION_UNVERIFIED`. Full acceptance requires evidence for every agreed mandatory area, the target runtime and recovery.
+
+## Orchestration and reservation contract
+
+The production `AUTO_SYNC` scheduler reuses the existing reviewed migration
+runner for each enabled area. These are repeated migration passes; they must
+not be described as a complete incremental delta feed. They retain the same
+source binding, read approval, mapping checks, checkpoints and recovery path
+as manual migration requests.
+
+B8 Pending Sync remains a separate, explicitly requested bound-only preflight.
+An unproven provider and the missing atomic baseline writer remain blocked;
+this contract does not activate a second writer or grant automatic execution.
+B8 can replace orchestration only after its provider, writer and recovery
+contracts have separate acceptance evidence.
+
+Both run families reserve through `services/run_reservation.py`: the same
+connection-level setup lock and durable `tabSingles` row lock serialize
+current checks of legacy and B8 run records. A RUNNING B8 record prevents a
+legacy migration claim, and an active legacy slot prevents a B8 claim. Two
+B8 run IDs cannot both claim the site. B8 adapters never commit on behalf of
+their caller; reservation visibility follows the enclosing transaction.
+An uncertain/orphan legacy slot is not silently reclaimed by B8.
+
+Offline ordering checks cover the reservation boundary. The separate
+`test_sync_run_reservation_frappe` suite requires an explicitly selected
+**disposable** site and verifies two real MariaDB connections; merely adding
+or passing offline tests is not a concurrency or deployment acceptance.

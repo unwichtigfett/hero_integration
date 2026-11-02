@@ -31,11 +31,37 @@ class TestPersonalMappingAccess(unittest.TestCase):
                 self.assertIn(f"`tab{doctype}`.`{column}` = <escaped-user>", query)
                 self.frappe.db.escape.assert_called_with("owner'example")
 
-    def test_personal_mapping_query_hook_is_registered_only_for_owned_doctypes(self):
-        handler = "hero_integration.services.mapping_draft_access.personal_mapping_query"
-        registered = {doctype for doctype, method in hooks.permission_query_conditions.items() if method == handler}
-        self.assertEqual(registered, {"HERO Mapping Draft", "HERO Mapping Revision"})
-        self.assertNotIn("*", registered)
+    def test_registered_hooks_work_with_only_the_user_argument(self):
+        for doctype, field, function in (
+            ("HERO Mapping Draft", "owner_user", access.personal_mapping_draft_query),
+            ("HERO Mapping Revision", "actor", access.personal_mapping_revision_query),
+        ):
+            with self.subTest(doctype=doctype):
+                self.assertEqual(hooks.permission_query_conditions[doctype],
+                                 f"{access.__name__}.{function.__name__}")
+                self.assertEqual(function("owner'example"),
+                                 f"`tab{doctype}`.`{field}` = <escaped-user>")
+                self.frappe.db.escape.assert_called_with("owner'example")
+                self.frappe.get_roles.return_value = ["Employee"]
+                self.assertEqual(function("employee@example.invalid"), "1=0")
+                self.frappe.get_roles.return_value = ["System Manager"]
+        self.assertNotIn("*", hooks.permission_query_conditions)
+
+    def test_unknown_doctype_cannot_be_interpolated_in_a_query(self):
+        self.assertEqual(access.personal_mapping_query("owner@example.invalid"), "1=0")
+        self.assertEqual(access.personal_mapping_query(doctype="Invalid`Table"), "1=0")
+        self.frappe.db.escape.assert_not_called()
+
+    def test_personal_documents_require_owner_and_manager_role(self):
+        for doctype in ("HERO Mapping Draft", "HERO Mapping Revision"):
+            with self.subTest(doctype=doctype):
+                doc = SimpleNamespace(doctype=doctype, owner_user="owner@example.invalid",
+                                      actor="owner@example.invalid")
+                self.assertTrue(access.personal_mapping_permission(doc))
+                self.assertFalse(access.personal_mapping_permission(doc, "other@example.invalid"))
+                self.frappe.get_roles.return_value = ["Employee"]
+                self.assertFalse(access.personal_mapping_permission(doc))
+                self.frappe.get_roles.return_value = ["System Manager"]
 
     def test_personal_version_list_filter_escapes_owner_and_preserves_other_versions(self):
         query = access.personal_version_query(user="owner'example")

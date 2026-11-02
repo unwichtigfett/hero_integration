@@ -1,11 +1,46 @@
 #!/usr/bin/env bash
 # Runs only in an isolated CI container with disposable MariaDB and Redis services.
 set -Eeuo pipefail
+# BEGIN HERO TEST GATES
+run_hero_test_gates() {
+  local minimum=${MIN_TESTS:-1000} log_dir=${HERO_TEST_LOG_DIR:-/tmp} count rc
+  [[ "$minimum" =~ ^[1-9][0-9]*$ ]] || { echo 'MIN_TESTS must be positive.' >&2; return 2; }
+  if (cd apps/hero_integration && ../../env/bin/python ci/run-offline-tests.py > "$log_dir/hero-github-offline.log" 2>&1); then
+    :
+  else
+    rc=$?; tail -80 "$log_dir/hero-github-offline.log"; return "$rc"
+  fi
+  count=$(sed -nE 's/^Ran ([0-9]+) tests.*/\1/p' "$log_dir/hero-github-offline.log")
+  [[ "$count" =~ ^[0-9]+$ ]] && (( count >= minimum )) || {
+    echo 'Offline test discovery did not reach the required coverage.' >&2; return 1;
+  }
+  if HERO_RUN_RESERVATION_TEST_SITE=hero-ci.localhost bench --site hero-ci.localhost run-tests --app hero_integration > "$log_dir/hero-github-site.log" 2>&1; then
+    :
+  else
+    rc=$?; tail -100 "$log_dir/hero-github-site.log"; return "$rc"
+  fi
+  count=$(sed 's/\x1b\[[0-9;]*m//g' "$log_dir/hero-github-site.log" | grep -cE '^\s*✔ ' || true)
+  (( count >= minimum )) || {
+    echo 'Site test discovery did not reach the required coverage.' >&2; return 1;
+  }
+  printf 'HERO offline and complete site test suites passed.\n'
+}
+# END HERO TEST GATES
+
 : "${GITHUB_WORKSPACE:?}" "${DB_ROOT_PASSWORD:?}"
 selection=${INSTALL_APPS:-erpnext,helpdesk,hero_integration}
 case "$selection" in
   none|erpnext|helpdesk|erpnext,helpdesk|erpnext,hero_integration|erpnext,helpdesk,hero_integration) ;;
   *) echo 'Unsupported INSTALL_APPS; HERO requires ERPNext and selections must use the documented order.' >&2; exit 2 ;;
+esac
+# A manual diagnostic selection must not turn the maintained branch's required
+# install-test check green without running HERO's complete test gate.
+case "${GITHUB_BASE_REF:-${GITHUB_REF_NAME:-}}" in
+  hero_int_dev|hero_int_1.0)
+    [[ ",$selection," == *,hero_integration,* ]] || {
+      echo 'Maintained branches require a selection containing HERO Integration.' >&2; exit 2;
+    }
+    ;;
 esac
 cd /tmp
 bench init ci-bench --frappe-branch version-16 --skip-redis-config-generation --skip-assets --python "$(command -v python3.14)"
@@ -44,6 +79,15 @@ if [[ ",$selection," == *,hero_integration,* ]]; then
   result=$(bench --site hero-ci.localhost execute hero_integration.app_setup.verify_install)
   printf "%s\n" "$result" | python3 -c 'import json,sys; r=json.load(sys.stdin); assert not r["missing"] and not r["unsafe_defaults"], "HERO installation verification failed"'
   bench --site hero-ci.localhost set-config allow_tests true
-  bench --site hero-ci.localhost run-tests --app hero_integration --module hero_integration.tests.test_app_references
+  ./env/bin/python -m pip install -q 'pytest>=8'
+  bench build --app hero_integration
+  # The setup wizard is deliberately absent on this disposable site.
+  if [ -z "$(bench --site hero-ci.localhost execute frappe.db.exists --kwargs '{"dt":"Warehouse Type","dn":"Transit"}')" ]; then
+    bench --site hero-ci.localhost execute frappe.client.insert --kwargs '{"doc":{"doctype":"Warehouse Type","name":"Transit"}}' >/dev/null
+  fi
+  if [ "$(bench --site hero-ci.localhost execute frappe.db.count --args '["Company"]')" = 0 ]; then
+    bench --site hero-ci.localhost execute frappe.client.insert --kwargs '{"doc":{"doctype":"Company","company_name":"HERO CI Company","abbr":"HCI","country":"Germany","default_currency":"EUR"}}' >/dev/null
+  fi
+  run_hero_test_gates
 fi
 bench --site hero-ci.localhost list-apps

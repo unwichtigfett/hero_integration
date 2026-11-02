@@ -8,6 +8,21 @@ source. Give a separate HERO source its own confirmed value.
 
 After installation, open **HERO Integration Settings** as a System Manager.
 
+## Mapping administration permission
+
+The mapping administrator is a user with the Frappe **System Manager** role;
+this is not restricted to the built-in user named `Administrator`. Such users
+may create, edit, import and explicitly activate mappings after all schema,
+revision and target-write checks pass. They need write permission on each
+selected target DocType; child tables are checked through their parent DocTypes.
+The role does not bypass these checks or authorize a HERO mutation by itself.
+
+Personal Mapping Drafts, revisions and their Version records remain private to
+the owning user, including when another user also has System Manager. A
+publication must use the personal draft API and its current revision checks.
+
+## Connection and source binding
+
 1. Enter the HTTPS GraphQL endpoint.
    {{ https://login.hero-software.de/api/external/v7/graphql }}
 2. Add exactly that hostname to **Allowed HERO Hosts**, without a scheme or

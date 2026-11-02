@@ -4,7 +4,7 @@
 
 `ci/bench-install-test.sh` checks that the app installs on a fresh Frappe/ERPNext
 v16 bench without manual steps. `.woodpecker.yml` runs it on a Woodpecker CI
-server for pushes to `hero_int_dev` and on manual runs.
+server for pushes to `hero_int_dev` and `hero_int_1.0`, and on manual runs.
 
 The test never contacts HERO. It runs these steps:
 
@@ -42,10 +42,14 @@ run. A crash during test discovery therefore never counts as a pass.
 
 ## GitHub Actions
 
-Pushes to `hero_int_dev` run the package checks and an isolated install test on a
+Pushes and pull requests targeting `hero_int_dev` or `hero_int_1.0` run package checks and an isolated install test on a
 GitHub-hosted runner. It uses fresh MariaDB and Redis services, not the VPS test
 site or production secrets. The push test installs ERPNext, Telephony, Helpdesk
-and HERO and runs the app-reference tests.
+and HERO, builds HERO assets, and runs both the offline suite and the complete
+HERO Frappe-site test suite. Both must exit successfully and discover at least
+`MIN_TESTS` tests (default 1000). Minimal selections without HERO remain available
+through manual dispatch on other branches; maintained branches reject them so
+a required install-test check cannot pass without exercising HERO.
 
 To run a different selection, open **Actions → CI → Run workflow**, choose
 `hero_int_dev`, and select `install_apps`. The workflow must also be present on
@@ -54,7 +58,12 @@ the default branch for GitHub to offer manual dispatch. HERO requires ERPNext.
 also installs Telephony. The automatic GitHub run does not import schema or
 configuration files. Woodpecker and GitHub receive push events independently.
 
-On `hero_int_dev`, Woodpecker uses strict exit-code checks: offline tests run through `ci/run-offline-tests.py`, while site-dependent tests run in Frappe. The former known-failure allowlists no longer authorize a passing result. `MIN_TESTS` is a coverage floor, not an alternative to a successful test command. GitHub Actions runs its own scoped package and installation checks.
+On both maintained branches, Woodpecker uses strict exit-code checks: offline tests run through `ci/run-offline-tests.py`, while site-dependent tests run in Frappe. The former known-failure allowlists no longer authorize a passing result. `MIN_TESTS` is a coverage floor, not an alternative to a successful test command. GitHub Actions also propagates the actual failure exit codes from the complete
+offline and site suites. No test-failure allowlist can make either gate pass.
+Repository administrators must require the successful package and install-test
+checks in branch protection for both branches. Workflow files request the
+checks but cannot enforce GitHub or Forgejo branch protection; that setting is
+outside this repository and must be verified separately.
 
 ## Test-site update on Forgejo push
 
@@ -63,4 +72,4 @@ restricted Woodpecker SSH secret. The step waits up to two minutes for GitHub
 `hero_int_dev` to reach the exact same commit before requesting an update. If the
 branches do not match, it fails safely; the twice-daily VPS check remains a
 fallback. The updater creates a backup and runs its own checks and migration.
-This step runs before the isolated install test and does not depend on it.
+This step depends on the successful isolated install test; a failed release test gate prevents the update.

@@ -77,7 +77,7 @@ def sync_hero_preview(
 
     eligibility = sync_hero_eligibility(context["intent"])
     return {
-        "eligible": eligibility is not Eligibility.NOT_ELIGIBLE,
+        "eligible": eligibility is Eligibility.LOCAL_CHANGED,
         "eligibility": eligibility.value,
         "binding_revision": context["binding"].revision,
         "plan_generation": context["executable"].generation,
@@ -112,8 +112,8 @@ def sync_hero_execute(
         sync_hero_eligibility,
     )
 
-    if sync_hero_eligibility(context["intent"]) is Eligibility.NOT_ELIGIBLE:
-        frappe.throw(frappe._("The synchronized binding has no local change to send."))
+    if sync_hero_eligibility(context["intent"]) is not Eligibility.LOCAL_CHANGED:
+        frappe.throw(frappe._("Only a local field change can be sent; reconcile other binding states first."))
     if confirmed not in (True, 1, "1", "true", "True") or confirmation_fingerprint != context["fingerprint"]:
         frappe.throw(frappe._("Explicit confirmation for this exact Sync Hero preview is required."))
     _assert_mutation_execution_released()
@@ -162,6 +162,8 @@ def _sync_hero_context(binding_identity_key: str, mapping_name: str, expected_pl
     parent = storage.object(site_scope, binding.object_binding_key)
     if parent is None or parent.source_instance != binding.source_instance:
         frappe.throw(frappe._("Sync Hero binding has no current source object."))
+    if parent.lifecycle != "VALID" or parent.reconciliation:
+        frappe.throw(frappe._("Sync Hero object binding requires lifecycle reconciliation."))
     executable = _runtime_plan_service(frappe).resolve_executable_plan(
         site_scope, binding.source_instance, generation, False, actor
     )
@@ -193,7 +195,8 @@ def _sync_hero_context(binding_identity_key: str, mapping_name: str, expected_pl
     frappe.has_permission(binding.target_doctype, "write", document, throw=True)
     value = _writeback_source_value(document, binding.target_field)
     outbound_document, variables = build_request_checked(mapping, schema, parent.external_object_id, value)
-    local_fingerprint = hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True, default=str).encode()).hexdigest()
+    from hero_integration.services.binding_registry import state_fingerprint
+    local_fingerprint = state_fingerprint(value, present=True)
     canonical = fingerprint_payload(
         row.name, int(row.mapping_revision or 1), document.modified, binding.source_instance,
         parent.external_object_id, outbound_document, variables,
@@ -205,11 +208,14 @@ def _sync_hero_context(binding_identity_key: str, mapping_name: str, expected_pl
         binding, binding.mapping_revision, executable.selection.schema_fingerprint,
         local_fingerprint, value is not None, outbound_document, variables,
     )
-    return {
+    context = {
         "bindings": bindings, "binding": binding, "parent": parent, "executable": executable,
         "snapshot": snapshot, "mapping": mapping, "intent": intent,
         "fingerprint": hashlib.sha256(canonical.encode()).hexdigest(),
     }
+    from hero_integration.services.writeback_readback import prepare_readback
+    context["readback_plan"] = prepare_readback(context, frappe)
+    return context
 
 
 class _SyncHeroTransport:
@@ -223,16 +229,29 @@ class _SyncHeroTransport:
         from hero_integration.client.settings import get_configuration
         from hero_integration.services.sync_engine import OutboundAck
 
+        # Defense in depth: even direct adapter use cannot send without a
+        # prepared, approved readback plan.
+        if "readback_plan" not in self._context:
+            raise RuntimeError("Sync Hero requires an approved field readback contract before mutation.")
         configuration = get_configuration()
+        from hero_integration.client.graphql import HeroGraphQLClient
+        from hero_integration.services.binding_registry import state_fingerprint
+        from hero_integration.services.writeback_readback import read_bound_value, verify_readback
+        reader = HeroGraphQLClient(configuration.endpoint, lambda: configuration.api_token,
+                                   configuration.timeout_seconds, max_retries=0)
+        before = read_bound_value(self._context, reader)
+        baseline = self._context["binding"].acknowledged_source_fingerprint
+        if baseline is not None and state_fingerprint(before, present=True) != baseline:
+            raise RuntimeError("The remote field changed since acknowledgment; reconcile before sending.")
         result = HeroMutationClient(
             configuration.endpoint, lambda: configuration.api_token, configuration.timeout_seconds
         ).execute_once(document, variables)
         mapping, parent, intent = self._context["mapping"], self._context["parent"], self._context["intent"]
         payload = result.get("data") if isinstance(result, dict) and isinstance(result.get("data"), dict) else result
         returned = payload.get(mapping["target"]["operation"]) if isinstance(payload, dict) else None
-        if not isinstance(returned, dict) or str(returned.get("id")) != str(parent.external_object_id):
+        if (isinstance(result, dict) and result.get("errors")) or not isinstance(returned, dict) or str(returned.get("id")) != str(parent.external_object_id):
             raise RuntimeError("HERO mutation response could not confirm the bound remote identity.")
-        source_fingerprint = hashlib.sha256(json.dumps(returned, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+        source_fingerprint = verify_readback(self._context, reader, variables)
         return OutboundAck(True, self._audit.correlation_id, source_fingerprint, intent.local_fingerprint)
 
 

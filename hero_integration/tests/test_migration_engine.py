@@ -32,6 +32,20 @@ class TestEngine(unittest.TestCase):
   run=self.authorized(); self.reader.pages={0:SourcePage(({"id":"1","name":"Ada"},{"id":"2","name":"Bob"}),2),2:SourcePage(({"id":"3","name":"Cleo"},),None)}
   done=self.engine.process("run-1",self.plan,run.generation)
   self.assertEqual((done.state,done.checkpoint,done.completed),(RunState.COMPLETED,2,3)); self.assertEqual(self.reader.calls,[0,2]); self.assertEqual(len(self.writer.docs),3); self.assertEqual(len(self.ledger.progress),3)
+ def test_new_run_resolves_acknowledged_field_binding_without_reset(self):
+  from dataclasses import replace
+  run=self.authorized(); self.reader.pages={0:SourcePage(({"id":"1","name":"Ada"},),None)}
+  first=self.engine.process("run-1",self.plan,run.generation)
+  self.assertEqual(first.state,RunState.COMPLETED)
+  binding=self.engine.bindings.get_field_bindings_for_source("site.test","hero-a")[0]
+  acknowledged=self.engine.bindings.record_verified_acknowledgment(binding,expected_revision=1,
+    mapping_definition_id="contact-name",mapping_revision=1,source_fingerprint="a"*64,
+    target_fingerprint="b"*64,evidence_id="verified",version=1)
+  request=replace(self.request,run_id="run-2")
+  self.engine.prepare(request); second=self.engine.authorize("run-2",0)
+  done=self.engine.process("run-2",self.plan,second.generation)
+  self.assertEqual(done.state,RunState.COMPLETED)
+  self.assertEqual(self.engine.bindings.get_field_bindings_for_source("site.test","hero-a"),(acknowledged,))
  def test_target_failure_is_recoverable_without_checkpoint_advance(self):
   run=self.authorized(); self.reader.pages={0:SourcePage(({"id":"1","name":"Ada"},),None)}; self.writer.fail=True
   partial=self.engine.process("run-1",self.plan,run.generation)

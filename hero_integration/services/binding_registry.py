@@ -105,15 +105,14 @@ class BindingRegistryService:
     def __init__(self, storage: BindingStorage) -> None: self._storage = storage
     def create_or_resolve_object_binding(self, **kwargs) -> ObjectBinding:
         candidate = ObjectBinding.create(**kwargs); old = self._storage.object(candidate.site_scope, candidate.identity_key)
-        return self._storage.put_object(candidate) if old is None else self._compatible(old, candidate)
+        return self._compatible(self._storage.put_object(candidate) if old is None else old, candidate)
     def create_or_resolve_field_binding(self, parent: ObjectBinding, **kwargs) -> FieldBinding:
         if self._storage.object(parent.site_scope, parent.identity_key) != parent: raise BindingRegistryError("Field binding requires its canonical persisted parent.")
         candidate = FieldBinding.create(parent, **kwargs); old = self._storage.field(candidate.site_scope, candidate.identity_key)
-        return self._storage.put_field(candidate) if old is None else self._compatible(old, candidate)
+        return self._compatible(self._storage.put_field(candidate) if old is None else old, candidate)
     @staticmethod
     def _compatible(old, candidate):
-        if old != candidate: raise BindingConflict("Canonical binding identity collides with incompatible state.")
-        return old
+        return compatible_binding(old, candidate)
     def get_object_binding(self, site_scope: str, identity_key: str): return self._storage.object(site_scope, identity_key)
     def get_field_bindings(self, site_scope: str, object_binding_key: str): return self._storage.fields_for_object(site_scope, object_binding_key)
     def get_field_bindings_for_source(self, site_scope: str, source_instance: str): return self._storage.fields_for_source(site_scope, source_instance)
@@ -236,5 +235,20 @@ class FrappeBindingStorage:
         if error.__class__.__name__ != "DuplicateEntryError": raise error
         existing = reread()
         if existing is None: raise BindingConflict("Duplicate insertion did not expose a canonical binding.") from error
-        if existing != candidate: raise BindingConflict("Duplicate insertion conflicts with canonical binding state.") from error
-        return existing
+        return compatible_binding(existing, candidate)
+
+
+def compatible_binding(existing, candidate):
+    """Resolve immutable identity without resetting acknowledgment or lifecycle state."""
+    if type(existing) is not type(candidate):
+        raise BindingConflict("Canonical binding identity collides with incompatible state.")
+    if isinstance(existing, ObjectBinding) and (existing.lifecycle != "VALID" or existing.reconciliation):
+        raise BindingConflict("Object binding requires explicit lifecycle reconciliation.")
+    mutable = ("revision",) if isinstance(candidate, ObjectBinding) else (
+        "revision", "state", "acknowledged_source_fingerprint", "acknowledged_target_fingerprint",
+        "acknowledged_version", "reconciliation",
+    )
+    identity_only = replace(existing, **{name: getattr(candidate, name) for name in mutable})
+    if identity_only != candidate:
+        raise BindingConflict("Canonical binding identity collides with incompatible state.")
+    return existing
