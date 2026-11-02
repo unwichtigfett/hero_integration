@@ -74,7 +74,16 @@
         const pad = (number) => String(number).padStart(2, "0");
         return `${pad(Math.floor(seconds / 3600))}:${pad(Math.floor(seconds / 60) % 60)}:${pad(seconds % 60)}`;
     }
-    const number = (value) => Number(value || 0).toLocaleString((frappe.boot?.lang || "en").replaceAll("_", "-"));
+    const number = (value) => {
+        const numeric = Number(value || 0);
+        const language = (frappe.boot?.lang || "en").replaceAll("_", "-");
+        try {
+            return numeric.toLocaleString(language);
+        } catch (error) {
+            if (!(error instanceof RangeError)) throw error;
+            return numeric.toLocaleString("en");
+        }
+    };
     const plural = (count, singular, pluralText) => `${number(count)} ${tr(count === 1 ? singular : pluralText)}`;
     const phaseSummary = (state, count) => format('{0} · {1} processed', tr(state), number(count));
     const testingSummary = (run) => format('{0} · {1}/{2} HERO requests · {3} records',
