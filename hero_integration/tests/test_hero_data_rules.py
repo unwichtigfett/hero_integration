@@ -122,7 +122,7 @@ class TestProjectTrades(unittest.TestCase):
             for value in (code, code.lower(), name):
                 with self.subTest(value=value):
                     title = build_project_title(self.record(value))
-                    self.assertTrue(title.startswith(f'{code}-1042 | {name}, Herr Max Muster'))
+                    self.assertTrue(title.startswith(f'{code}-1042 | {name}, Max Muster'))
 
     def test_the_hero_measure_wins_over_project_type(self):
         from hero_integration.services.project_naming import build_project_title
