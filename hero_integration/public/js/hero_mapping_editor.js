@@ -2,6 +2,7 @@
     "use strict";
     if (window.hero_integration_mapping_editor) return;
     const text = (value) => window.hero_integration_i18n?.text(value) ?? String(value);
+    const format = (message, ...values) => text(message).replace(/\{(\d+)\}/g, (_, index) => String(values[index] ?? ""));
     // Scoped to mapping content: revive original integer tokens from the server's
     // canonical JSON text, never from a Number that HTTP JSON already rounded.
     const parseContent = (source) => JSON.parse(source, (_key, value, context) => {
@@ -859,13 +860,15 @@
             }
             function preselect(snapshotName, context) {
                 if (context.operation_kind !== wanted) {
-                    view.info.text(text(`This node belongs to the ${context.operation_kind === 'QUERY' ? 'Query' : 'Mutation'} view. Open that mapping tab to use it.`));
+                    view.info.text(format('This node belongs to the {0} view. Open that mapping tab to use it.', context.operation_kind === 'QUERY' ? 'Query' : 'Mutation'));
                     return;
                 }
                 view.explorer.prop('open', true);
                 view.loadSnapshots(snapshotName, context.operation).then(() => {
                     if (!view.current()) return;
-                    view.info.text(text(`Operation ${context.operation} selected.${context.path ? ' Saved node path: ' + context.path + '.' : ''} Nothing was saved or activated.`));
+                    view.info.text(context.path
+                        ? format('Operation {0} selected. Saved node path: {1}. Nothing was saved or activated.', context.operation, context.path)
+                        : format('Operation {0} selected. Nothing was saved or activated.', context.operation));
                 });
             }
             async function use(item) {
@@ -988,7 +991,7 @@
             const displayValue = value || text("Choose…");
             const summary = $("<summary></summary>").append($("<span></span>").text(text(label)), $("<strong></strong>").text(displayValue).attr("title", displayValue));
             const popup = $("<div class='hero-mapping-select-popup'></div>"), results = $("<div role='list'></div>");
-            const query = $("<input class='form-control' type='search'>").attr("aria-label", `Search ${label}`);
+            const query = $("<input class='form-control' type='search'>").attr("aria-label", format("Search {0}", text(label)));
             let offset = 0, seq = 0, choiceEpoch = epoch, pending = false;
             const current = (n) => !disposed && choiceEpoch === epoch && n === seq && control[0].isConnected;
             const load = async () => {
@@ -1002,9 +1005,9 @@
                     }).attr("title", item.label).prop("disabled", Boolean(item.disabled)), item.context ? $("<small></small>").text(item.context) : null)));
                     if (!result.items.length) results.append($("<p></p>").text(text(result.emptyMessage || "No options match this selection.")));
                     results.append($("<div class='hero-mapping-actions'></div>").append(
-                        button("Previous", () => { offset = Math.max(0, offset - 20); load(); }).attr("aria-label", "Previous options").prop("disabled", !offset),
+                        button("Previous", () => { offset = Math.max(0, offset - 20); load(); }).attr("aria-label", text("Previous options")).prop("disabled", !offset),
                         $("<span></span>").text(`${offset + (result.items.length ? 1 : 0)}–${offset + result.items.length} / ${result.total}`),
-                        button("Next", () => { offset += 20; load(); }).attr("aria-label", "Next options").prop("disabled", offset + 20 >= result.total)));
+                        button("Next", () => { offset += 20; load(); }).attr("aria-label", text("Next options")).prop("disabled", offset + 20 >= result.total)));
                 } catch (error) { if (current(n)) results.empty().append($("<p></p>").text(errorText(error)), button("Retry options", load)); }
                 finally { if (current(n)) pending = false; }
             };
@@ -1046,23 +1049,23 @@
         }
         function renderWorkspaceContext() {
             const header = $("<div class='hero-mapping-workspace-context'></div>").appendTo(body);
-            choice("GraphQL schema snapshot", snapshotFilter ? snapshotLabel(snapshotFilter) : "All readable snapshots", header, async (search, offset) => {
+            choice("GraphQL schema snapshot", snapshotFilter ? snapshotLabel(snapshotFilter) : text("All readable snapshots"), header, async (search, offset) => {
                 const currentEpoch = epoch;
                 const snapshots = admin ? await readSnapshotPages((args) => rpc("schema_snapshot_list", args), () => !disposed && epoch === currentEpoch) : [];
                 const validated = (snapshots || []).filter((item) => item.analysis_status === "Validated").sort((a, b) => snapshotTime(b).localeCompare(snapshotTime(a)));
-                const options = [{name: "", label: "All readable snapshots"}, ...validated.map((item) => ({name: item.name, label: snapshotLabel(item.name)}))]
+                const options = [{name: "", label: text("All readable snapshots")}, ...validated.map((item) => ({name: item.name, label: snapshotLabel(item.name)}))]
                     .filter((item) => `${item.label} ${item.name}`.toLowerCase().includes(search.toLowerCase()));
                 return {items: options.slice(offset, offset + 20), total: options.length};
             }, (item) => leave(() => { snapshotFilter = item.name; active = null; model = null; renderList(); })).prop("hidden", !admin);
             const parent = admin && snapshotFilter ? snapshotParents.get(snapshotFilter) : "";
-            if (parent) header.append(button(`Inherit mappings from parent ${snapshotLabel(parent)}`, () => inheritFromParent(snapshotFilter, parent))
-                .attr("data-inherit-parent", "").attr("title", "Creates your personal drafts on this snapshot from the parent's active mappings. Nothing is activated."));
+            if (parent) header.append(button(format("Inherit mappings from parent {0}", snapshotLabel(parent)), () => inheritFromParent(snapshotFilter, parent))
+                .attr("data-inherit-parent", "").attr("title", text("Creates your personal drafts on this snapshot from the parent's active mappings. Nothing is activated.")));
             if (active) header.append($("<span class='text-muted'></span>").text(`${snapshotLabel(active.schema_snapshot) || text("Snapshot not provided")} · ${text("Revision")}: ${active.revision} · ${mode === "draft" ? text("Personal draft") : active.status || text("Active")}`));
         }
         function inheritFromParent(snapshotName, parent) {
             if (locked()) return;
             modal("Inherit mappings from parent",
-                `Create your personal drafts on ${snapshotLabel(snapshotName)} from the active mappings of ${snapshotLabel(parent)}? Each draft is checked against the new schema. Nothing is activated and the parent stays unchanged.`,
+                format("Create your personal drafts on {0} from the active mappings of {1}? Each draft is checked against the new schema. Nothing is activated and the parent stays unchanged.", snapshotLabel(snapshotName), snapshotLabel(parent)),
                 [["Inherit as drafts", async () => {
                     const request = ++epoch; setBusy(true); say("Inheriting parent mappings as personal drafts…");
                     try {
@@ -1070,7 +1073,7 @@
                         if (disposed || request !== epoch) return;
                         const counts = result?.counts || {};
                         const problems = (result?.results || []).filter((item) => item.status === "Incompatible");
-                        say(`${counts["Draft Created"] || 0} draft(s) on ${snapshotLabel(snapshotName)}, ${problems.length} incompatible, ${counts.Skipped || 0} skipped. Nothing was activated.`);
+                        say(format("{0} draft(s) on {1}, {2} incompatible, {3} skipped. Nothing was activated.", counts["Draft Created"] || 0, snapshotLabel(snapshotName), problems.length, counts.Skipped || 0));
                         if (problems.length) modal("Not inherited", problems.map((item) => `${item.operation}: ${item.reason}`).join(" · "), [["Close", () => {}, true]]);
                     } catch (error) { if (!disposed && request === epoch) say(errorText(error)); }
                     finally { if (!disposed && request === epoch) { setBusy(false); await loadList(false); } }
@@ -1120,7 +1123,7 @@
                             if (active?.name === item.name && active?.mapping_type === kind) { selected = row.index; renderDetail(); }
                             else leave(async () => { await open(item, kind, false); if (active?.name === item.name) { selected = row.index; renderDetail(); } });
                         };
-                        const tr = $("<tr tabindex='0'></tr>").toggleClass("is-selected", isSelected).toggleClass("is-draft", isDraft).attr({"aria-selected": String(isSelected), "aria-label": `${item.operation_name || item.operation}: ${row.source} to ${row.target}`, "data-mapping-name": item.name});
+                        const tr = $("<tr tabindex='0'></tr>").toggleClass("is-selected", isSelected).toggleClass("is-draft", isDraft).attr({"aria-selected": String(isSelected), "aria-label": format("{0}: {1} to {2}", item.operation_name || item.operation, row.source, row.target), "data-mapping-name": item.name});
                         tr.on("click", select).on("keydown", (event) => { if (["Enter", " "].includes(event.key)) { event.preventDefault(); select(); } });
                         for (const value of [isDraft ? text("Personal draft") : item.status || "Active", item.operation_name || item.operation, row.source, row.app, row.target, item.revision]) tr.append($("<td></td>").text(String(value ?? "Not provided")));
                         table.find("tbody").append(tr);
@@ -1215,7 +1218,7 @@
                         button("Cancel new mapping", () => { model.creation = null; renderDetail(); }));
                 }
                 actions.append(button("Delete Mapping", () => removeRow(list[selected])).attr("data-delete-mapping", "").prop("disabled", !list[selected] || Boolean(model.creation)));
-                if (model.undo.length) actions.append(button(`Undo removal (${model.undo.length})`, () => { model.restore(); renderDetail(); }));
+                if (model.undo.length) actions.append(button(format("Undo removal ({0})", model.undo.length), () => { model.restore(); renderDetail(); }));
                 if (Array.isArray(value.mapping_definition_ids)) actions.append(button("Add existing field rule", addReference));
                 else if (!value.source && !value.target && active.direction === "FRAPPE_TO_MUTATION") actions.append(button("Add field mapping", () => { model.set(["source"], {}); model.set(["target"], {}); renderDetail(); }).prop("disabled", model.undo.length > 0));
                 actions.append(button("Activate Mapping", activateDraft).attr("data-activate-draft", ""));

@@ -55,7 +55,7 @@ def pending_sync(expected_plan_generation: int | str) -> dict[str, object]:
     try:
         result = run_pending_sync(generation)
     except (RuntimeBridgeError, SyncError, PermissionError, ValueError) as error:
-        frappe.throw(str(error))
+        frappe.throw(frappe._(str(error)))
     return {
         "status": result.status,
         "plan_key": result.plan_key,
@@ -309,7 +309,7 @@ def _approved_read_service(service_name: str):
     try:
         from_documents(service, mapping, snapshot)
     except (ReadContractError, ValueError) as error:
-        frappe.throw(str(error))
+        frappe.throw(frappe._(str(error)))
     return service, mapping
 
 
@@ -679,7 +679,7 @@ def _sync_area(key: str):
     try:
         return area(key)
     except ValueError as error:
-        frappe.throw(str(error))
+        frappe.throw(frappe._(str(error)))
 
 
 def _sync_area_blocker(item, instance: str) -> str:
@@ -805,7 +805,7 @@ def workspace_schema_refresh(connection_id: str = "", binding_generation: int | 
     except SchemaRefreshError as error:
         # Keep the recorded failure; the request itself is rolled back by the error.
         frappe.db.commit()
-        frappe.throw(str(error))
+        frappe.throw(frappe._(str(error)))
 
 
 @frappe.whitelist(methods=["POST"])
@@ -1297,7 +1297,7 @@ def schema_operation_catalog(snapshot_name: str, operation_kind: str = "QUERY") 
     try:
         return catalog(schema, operation_kind)
     except SchemaOperationError as error:
-        frappe.throw(str(error))
+        frappe.throw(frappe._(str(error)))
 
 
 @frappe.whitelist()
@@ -1721,7 +1721,7 @@ def mapping_draft_enroll_portable_rule(definition_id: str, rule_id: str, portabl
         try:
             return enroll_portable_rule_identity(definition_id, rule_id, portable_id, active, revision)
         except MappingDraftExchangeError as error:
-            frappe.throw(str(error))
+            frappe.throw(frappe._(str(error)))
 
 
 @frappe.whitelist(methods=["POST"])
@@ -1737,7 +1737,7 @@ def mapping_draft_enroll_portable_identity(definition_id: str, portable_id: str,
             expected_revision = int(expected_revision)
         return enroll_portable_identity(definition_id, portable_id, expected_revision)
     except (MappingDraftError, MappingDraftExchangeError) as error:
-        frappe.throw(str(error))
+        frappe.throw(frappe._(str(error)))
 
 
 @frappe.whitelist(methods=["GET"])
@@ -1753,7 +1753,7 @@ def mapping_draft_exchange_export(source_instance: str, snapshot_name: str, dire
     try:
         content = export_package(source_instance, snapshot_name, direction, format_version=format_version)
     except MappingDraftExchangeError as error:
-        frappe.throw(str(error))
+        frappe.throw(frappe._(str(error)))
     suffix = "query" if direction == "QUERY_TO_FRAPPE" else "mutation"
     return {"filename": f"hero-personal-{suffix}-drafts.json", "content": content}
 
@@ -1770,7 +1770,7 @@ def mapping_draft_exchange_preview(payload_json: str, source_instance: str, snap
     try:
         return preview_import(payload_json, source_instance, snapshot_name, direction)
     except MappingDraftExchangeError as error:
-        frappe.throw(str(error))
+        frappe.throw(frappe._(str(error)))
 
 
 @frappe.whitelist(methods=["POST"])
@@ -1792,7 +1792,7 @@ def mapping_draft_exchange_save(payload_json: str, source_instance: str, snapsho
         return save_import(payload_json, source_instance, snapshot_name, direction, expected_states,
                            confirmed=confirmed in (True, 1, "1", "true", "True"), preview_fingerprint=preview_fingerprint)
     except (MappingDraftExchangeError, SchemaProvisioningError) as error:
-        frappe.throw(str(error))
+        frappe.throw(frappe._(str(error)))
 
 
 def _personal_draft_content(raw):
@@ -2125,7 +2125,7 @@ def graphql_mapping_save(
             raise ValueError
     except (ValueError, TypeError, json.JSONDecodeError) as error:
         if direction == "FRAPPE_TO_MUTATION" and str(error) == "Writeback mapping contains duplicate JSON object keys.":
-            frappe.throw(str(error))
+            frappe.throw(frappe._(str(error)))
         frappe.throw(frappe._("GraphQL mapping JSON must be an object."))
     if direction not in {"QUERY_TO_FRAPPE", "FRAPPE_TO_MUTATION"}:
         frappe.throw(frappe._("Unsupported GraphQL mapping direction."))
@@ -2156,7 +2156,7 @@ def graphql_mapping_save(
                 frappe.throw(frappe._("Writeback mapping contains parameters that would not be preserved."))
             source = parsed["source"]
         except (ValueError, WritebackContractError) as error:
-            frappe.throw(str(error))
+            frappe.throw(frappe._(str(error)))
         if not mapping_name:
             # Serialize only API-created drafts sharing this exact source.
             # The existing controller lock is connection-scoped and released
@@ -2300,7 +2300,7 @@ def runtime_plan_status(source_instance: str) -> dict[str, object]:
     try:
         plan = _runtime_plan_service(frappe).current(frappe.local.site, source_instance)
     except (RuntimePlanConflict, RuntimePlanError, PermissionError, ValueError) as error:
-        frappe.throw(str(error))
+        frappe.throw(frappe._(str(error)))
     if plan is None:
         return {"state": "NOT_FOUND", "source_instance": source_instance}
     return _runtime_plan_result(plan)
@@ -2320,7 +2320,7 @@ def runtime_plan_approve(plan_key: str, expected_revision: int | str) -> dict[st
             actor=frappe.session.user,
         )
     except (RuntimePlanConflict, RuntimePlanError, PermissionError, ValueError) as error:
-        frappe.throw(str(error))
+        frappe.throw(frappe._(str(error)))
     return _runtime_plan_result(plan)
 
 
@@ -2450,7 +2450,7 @@ def _validated_variable_names(schema: dict[str, object], document: str, variable
         try:
             return sorted(validate_mutation(schema, parse_mutation(document), values))
         except GraphQLContractError as error:
-            frappe.throw(str(error))
+            frappe.throw(frappe._(str(error)))
     return sorted(_validated_query_draft(schema, document, values, with_values=True))
 
 
@@ -2535,7 +2535,7 @@ def _bookmark_error(callable_, *args):
     try:
         return callable_(*args)
     except NodeBookmarkError as error:
-        frappe.throw(str(error))
+        frappe.throw(frappe._(str(error)))
 
 
 def _own_bookmark(name: str):
@@ -2671,7 +2671,7 @@ def _validated_query_draft(schema: dict[str, object], document: str, variables: 
     try:
         return validate_variables(schema, document, variables) if with_values else validate(schema, document)
     except QueryDraftError as error:
-        frappe.throw(str(error))
+        frappe.throw(frappe._(str(error)))
 
 
 @frappe.whitelist(methods=["POST"])
@@ -2761,7 +2761,7 @@ def workspace_analyzer_service_draft(snapshot_name: str, schema_node_id: str) ->
     try:
         draft = operation_service_draft(schema, schema_node_id)
     except SchemaOperationError as error:
-        frappe.throw(str(error))
+        frappe.throw(frappe._(str(error)))
     return {**draft, "schema_snapshot": snapshot.name, "schema_fingerprint": snapshot.schema_fingerprint}
 
 
@@ -2782,7 +2782,7 @@ def workspace_analyzer_service_save(
     try:
         draft = operation_service_draft(schema, schema_node_id)
     except SchemaOperationError as error:
-        frappe.throw(str(error))
+        frappe.throw(frappe._(str(error)))
     payload = _workspace_payload(payload_json)
     payload["operation_kind"] = draft["operation_kind"]
     for generated in ("mapping_generation", "personal_mapping_generation"):
@@ -2795,7 +2795,7 @@ def workspace_analyzer_service_save(
         try:
             selected = [validate_mutation_draft(schema, payload["query"])["operation"]]
         except ValueError as error:
-            frappe.throw(str(error))
+            frappe.throw(frappe._(str(error)))
     if selected != [draft["operation_name"]]:
         frappe.throw(frappe._("The analyzer draft must keep exactly the selected operation as its root field."))
     return _save_workspace_service(snapshot.name, payload, "", 0, origin)
@@ -2898,7 +2898,7 @@ def preview_direct_mapping(operation: str, source_record_json: str) -> dict[str,
         plan = active_mapping_plan(operation)
         values = plan.values(record)
     except MappingPlanError as error:
-        frappe.throw(str(error))
+        frappe.throw(frappe._(str(error)))
     return {"operation": operation, "values": values, "writes": False}
 
 
@@ -2917,7 +2917,7 @@ def mapping_object_catalog(snapshot_name: str, object_type: str = '', search: st
     try:
         data = catalog(schema, object_type, search)
     except ValueError as error:
-        frappe.throw(str(error))
+        frappe.throw(frappe._(str(error)))
     entries = data['items']
     return {'objects': data['objects'], 'areas': data['areas'], 'items': entries[start:start + page_size], 'start': start,
             'page_size': page_size, 'total': len(entries), 'has_more': start + page_size < len(entries),
@@ -3102,7 +3102,7 @@ def preview_mapping_candidate(
         target = validate_draft_target(operation, spec.source_type, target_doctype, target_field, _FrappePickerMetadata())
         value = transformed_value(spec, source_value(record, source_path))
     except ValueError as error:
-        frappe.throw(str(error))
+        frappe.throw(frappe._(str(error)))
     return {
         "operation": operation,
         "source_path": source_path,
@@ -3134,7 +3134,7 @@ def preview_mapping_import(snapshot_name: str, payload_json: str) -> dict[str, o
     try:
         return preview_package(snapshot_name, payload_json)
     except (MappingExchangeError, SchemaProvisioningError) as error:
-        frappe.throw(str(error))
+        frappe.throw(frappe._(str(error)))
 
 
 @frappe.whitelist()
@@ -3151,7 +3151,7 @@ def import_mapping_json(snapshot_name: str, payload_json: str) -> dict[str, obje
     try:
         return {"status": "PREVIEW_ONLY", "checklist": preview_package(snapshot_name, payload_json)}
     except (MappingExchangeError, SchemaProvisioningError) as error:
-        frappe.throw(str(error))
+        frappe.throw(frappe._(str(error)))
 
 
 @frappe.whitelist()
@@ -3164,7 +3164,7 @@ def preview_mapping_package(snapshot_name: str, payload_json: str) -> dict[str, 
     try:
         return preview_package(snapshot_name, payload_json)
     except (MappingExchangeError, SchemaProvisioningError) as error:
-        frappe.throw(str(error))
+        frappe.throw(frappe._(str(error)))
 
 
 @frappe.whitelist(methods=["POST"])
@@ -3188,7 +3188,7 @@ def adopt_mapping_package(
         from hero_integration.services.adoption import start
         return start(snapshot_name, payload_json, selected_ids, preview_revision)
     except (MappingExchangeError, SchemaProvisioningError) as error:
-        frappe.throw(str(error))
+        frappe.throw(frappe._(str(error)))
 
 
 @frappe.whitelist(methods=["POST"])
@@ -3202,7 +3202,7 @@ def resume_mapping_adoption(adoption_name: str) -> dict[str, object]:
     try:
         return execute(adoption_name)
     except (MappingExchangeError, SchemaProvisioningError) as error:
-        frappe.throw(str(error))
+        frappe.throw(frappe._(str(error)))
 
 
 @frappe.whitelist()
@@ -3636,7 +3636,7 @@ def _require_selected_mappings(action: str, service, mapping, dependencies=None)
             )
         )
     except MappingPlanError as error:
-        frappe.throw(str(error))
+        frappe.throw(frappe._(str(error)))
 
 
 @frappe.whitelist(methods=["POST"])
@@ -3651,7 +3651,7 @@ def decide_hero_review(link: str, decision: str) -> dict[str, str]:
     try:
         decide_review(document, decision)
     except MappingPlanError as error:
-        frappe.throw(str(error))
+        frappe.throw(frappe._(str(error)))
     return {"status": document.sync_status}
 
 
@@ -3663,7 +3663,7 @@ def project_send_preview(project: str, phase_id: str | int | None = None) -> dic
     try:
         return preview(project, phase_id)
     except ProjectSendError as error:
-        frappe.throw(str(error))
+        frappe.throw(frappe._(str(error)))
 
 
 @frappe.whitelist(methods=["POST"])
@@ -3674,7 +3674,7 @@ def project_send(project: str, fingerprint: str, confirmed: int | str = 0, phase
     try:
         return send(project, phase_id, fingerprint, confirmed)
     except ProjectSendError as error:
-        frappe.throw(str(error))
+        frappe.throw(frappe._(str(error)))
 
 
 @frappe.whitelist(methods=["POST"])
@@ -3685,7 +3685,7 @@ def task_send_preview(task: str) -> dict:
     try:
         return preview(task)
     except TaskSendError as error:
-        frappe.throw(str(error))
+        frappe.throw(frappe._(str(error)))
 
 
 @frappe.whitelist(methods=["POST"])
@@ -3696,7 +3696,7 @@ def task_send(task: str, fingerprint: str, confirmed: int | str = 0) -> dict:
     try:
         return send(task, fingerprint, confirmed)
     except TaskSendError as error:
-        frappe.throw(str(error))
+        frappe.throw(frappe._(str(error)))
 
 
 @frappe.whitelist(methods=["POST"])
@@ -3707,7 +3707,7 @@ def customer_send_preview(customer: str) -> dict:
     try:
         return preview(customer)
     except CustomerSendError as error:
-        frappe.throw(str(error))
+        frappe.throw(frappe._(str(error)))
 
 
 @frappe.whitelist(methods=["POST"])
@@ -3718,7 +3718,7 @@ def customer_send(customer: str, fingerprint: str, confirmed: int | str = 0) -> 
     try:
         return send(customer, fingerprint, confirmed)
     except CustomerSendError as error:
-        frappe.throw(str(error))
+        frappe.throw(frappe._(str(error)))
 
 
 @frappe.whitelist()

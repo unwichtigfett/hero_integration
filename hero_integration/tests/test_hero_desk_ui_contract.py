@@ -289,7 +289,7 @@ class TestHeroDeskUiContract(unittest.TestCase):
         source = MAPPING_EDITOR_JS.read_text()
         for contract in ("mapping_target_catalog", "mapping_target_catalog_page", "schema_operation_catalog",
                          "hero-mapping-rule-details", "hero-mapping-row-detail", "hero-mapping-table",
-                         "Search ${label}", "My saved revisions — read only"):
+                         'format("Search {0}", text(label))', "My saved revisions — read only"):
             self.assertIn(contract, source)
         catalog_loader = source.split('const getFieldCatalog =', 1)[1].split('const page =', 1)[0]
         self.assertNotIn('"Customer"', catalog_loader)
