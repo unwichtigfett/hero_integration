@@ -34,7 +34,7 @@ class SourceContext:
 def _current(configuration=None):
     if configuration is None:
         from hero_integration.client.settings import get_configuration
-        configuration = get_configuration()
+        configuration = get_configuration(fresh=True)
     revision = getattr(configuration, 'source_binding_revision', None)
     confirmed = getattr(configuration, 'source_binding_confirmed', None)
     try:

@@ -83,7 +83,7 @@ if [ -z "$company_count" ] || [ "$company_count" = 0 ]; then
   fi
   bench --site "$SITE" execute frappe.client.insert --kwargs '{"doc":{"doctype":"Company","company_name":"HERO CI Company","abbr":"HCI","country":"Germany","default_currency":"EUR"}}' >/dev/null
 fi
-if ! HERO_RUN_RESERVATION_TEST_SITE="$SITE" bench --site "$SITE" run-tests --app hero_integration > /tmp/hero-site-tests.log 2>&1; then
+if ! HERO_RUN_RESERVATION_TEST_SITE="$SITE" HERO_WRITEBACK_SOURCE_TEST_SITE="$SITE" bench --site "$SITE" run-tests --app hero_integration > /tmp/hero-site-tests.log 2>&1; then
   echo "Site tests failed:"; tail -100 /tmp/hero-site-tests.log; TEST_FAILED=1
 fi
 site_passed=$(sed 's/\x1b\[[0-9;]*m//g' /tmp/hero-site-tests.log | grep -cE '^\s*✔ ' || true)

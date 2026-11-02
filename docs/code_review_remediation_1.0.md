@@ -78,3 +78,24 @@ Send adapters or the separate manual GraphQL mutation endpoint.
 Offline verification and independent review do not replace hosted CI or an
 explicit target-site/HERO acceptance run. Branch protection remains an
 external repository configuration requirement.
+
+
+## Source changes during writeback
+
+Source capture and each transport revalidation now use a separate read-only
+connection to the site's primary database. One statement reads Settings and
+the encrypted token from the same fresh snapshot. The connection closes before
+any HERO request; the caller's database transaction is neither replaced nor
+committed. Read or decryption failures block transport.
+
+This detects source changes committed before each validation read, including
+when the request retains an older MariaDB REPEATABLE READ snapshot. It does not
+serialize a later configuration change with an external HTTP operation.
+
+`test_writeback_source_frappe.py` reproduces a concurrent committed source or
+confirmation change during the pre-read and requires rejection before mutation.
+A positive control changes only the timeout and verifies that transport uses it
+while the request still sees its original snapshot. The tests use separate
+MariaDB connections and mocked HERO clients; both CI runners enable them only
+on the disposable site selected by `HERO_WRITEBACK_SOURCE_TEST_SITE`.
+Local offline tests do not establish execution of this database race test.

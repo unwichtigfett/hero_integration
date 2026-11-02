@@ -14,7 +14,7 @@ run_hero_test_gates() {
   [[ "$count" =~ ^[0-9]+$ ]] && (( count >= minimum )) || {
     echo 'Offline test discovery did not reach the required coverage.' >&2; return 1;
   }
-  if HERO_RUN_RESERVATION_TEST_SITE=hero-ci.localhost bench --site hero-ci.localhost run-tests --app hero_integration > "$log_dir/hero-github-site.log" 2>&1; then
+  if HERO_RUN_RESERVATION_TEST_SITE=hero-ci.localhost HERO_WRITEBACK_SOURCE_TEST_SITE=hero-ci.localhost bench --site hero-ci.localhost run-tests --app hero_integration > "$log_dir/hero-github-site.log" 2>&1; then
     :
   else
     rc=$?
