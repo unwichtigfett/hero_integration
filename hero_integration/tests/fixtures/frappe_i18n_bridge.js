@@ -84,6 +84,30 @@ for (const language of input.languages) {
     }
 }
 
+// The editable record uses the real Frappe translator, formatter and registry.
+for (const language of ['en', 'de']) {
+    const window = {};
+    const frappe = {_messages: input.catalogs[language], ui: {form: {}}, provide: () => { frappe.ui.form.handlers ||= {}; }};
+    const $ = {isPlainObject: value => value !== null && typeof value === 'object'};
+    const document = {createElement: () => ({textContent: '', hidden: false})};
+    const context = vm.createContext({window, frappe, $, jQuery: $, document, cur_frm: null});
+    vm.runInContext(fs.readFileSync(input.frappeFormat, 'utf8'), context);
+    vm.runInContext(fs.readFileSync(input.frappeTranslate, 'utf8'), context);
+    context.__ = window.__;
+    vm.runInContext(fs.readFileSync(input.frappeFormScripts, 'utf8'), context);
+    vm.runInContext(fs.readFileSync(input.jsDir + '/hero_diagnostics.js', 'utf8'), context);
+    vm.runInContext(fs.readFileSync(input.recordForm, 'utf8'), context);
+    const detail = 'Field conflict requires review: customer_name.';
+    const children = [];
+    const field = {$wrapper: [{appendChild: child => children.push(child)}]};
+    const frm = {doc: {detail}, fields_dict: {detail: field}};
+    frappe.ui.form.get_event_handler_list('HERO Integration Record', 'refresh')[0](frm);
+    assert.equal(children.length, 1);
+    assert.equal(children[0].hidden, language === 'en');
+    if (language === 'de') assert.equal(children[0].textContent, 'Übersetzung: Feldkonflikt erfordert Prüfung: customer_name.');
+    assert.equal(frm.doc.detail, detail);
+}
+
 // Exercise the actual Frappe event registry across two native DocTypes.
 {
     const window = {__: value => value === 'Record is already synchronized.' ? 'Der Datensatz ist bereits synchronisiert.' : value};
