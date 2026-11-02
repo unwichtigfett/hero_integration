@@ -131,13 +131,24 @@ aber es gibt keine aktive Regel, und der globale Schalter ist aus.
 | `target_user_id` | `custom_hero_assignee` (E-Mail des HERO-Benutzers, nur lesbar). Gibt es einen aktiven ERPNext-Benutzer mit dieser E-Mail, bekommt er die Zuweisung (ToDo); ändert HERO den Zuständigen, wird die alte HERO-Zuweisung storniert. Ohne passenden Benutzer bleibt die Aufgabe unzugewiesen (kein Fehler). | aktiv (2026-11-02) |
 | `author_user_id` | — | nicht nötig: jeder darf jedem zuweisen |
 | `start`, `end` | — | ungenutzt (Start = Erstellung, Ende = Fälligkeit) |
-| Ausgehend (`update_task`) | Aufgaben, Zuweisung und Erledigt in beide Richtungen | **nächster Schritt** |
+| Ausgehend (`update_task`) | Button „Send to HERO“ auf jeder Aufgabe: Titel, Beschreibung, Enddatum, Erledigt, Zuständiger. In ERPNext angelegte Aufgaben eines HERO-Projekts werden in HERO angelegt und verknüpft. | aktiv, Schalter AUS (2026-11-02) |
 
 HERO-Benutzer kommen aus `company.partners.user { id email }` (HERO hat keine
 Benutzerliste); die Liste wird pro Aufgabenlauf einmal gelesen. Ist sie nicht
 lesbar, bleibt der Zuständige unverändert. Für vorhandene Aufgaben ohne
 Vergleichsbasis übernimmt der erste Lauf die HERO-Werte, solange ERPNext noch
 leer bzw. offen ist; sonst Prüfung.
+
+**Senden an HERO (Aufgaben).** Wie beim Projekt: Vorschau liest HERO live,
+ein seit dem letzten Import in HERO geänderter Wert wird nicht überschrieben,
+ein Mutation-Aufruf hinter dem globalen Schalter und dem Mutation-Audit, danach
+Nachlesen in HERO und Fortschreiben der Vergleichsbasis. Nur „System Manager“
+und „HERO Writeback“. Zuständiger: genau eine offene ERPNext-Zuweisung, deren
+Benutzer-E-Mail einem HERO-Benutzer entspricht (HERO kennt nur einen
+Zuständigen). Erkenntnisse aus dem Live-Test an Testprojekt KLIM-2676-H
+(HERO-Aufgabe 2305745): HERO ignoriert Zeitstempel mit Mikrosekunden und
+`null`; ein leerer String leert einen Wert (öffnet eine erledigte Aufgabe
+wieder). Datumswerte werden als 12:00 Ortszeit gesendet (Erledigt heute: jetzt).
 
 ## 5. Termin (`HeroCalendarEvents` → Event)
 
