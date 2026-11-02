@@ -106,6 +106,18 @@ class TestGermanCatalog(unittest.TestCase):
                     missing.append(f"{path.name}: {source}")
         self.assertEqual(missing, [])
 
+    def test_static_browser_errors_have_german_entries(self):
+        with (APP / "translations" / "de.csv").open(encoding="utf-8", newline="") as stream:
+            messages = dict(csv.reader(stream))
+        pattern = re.compile(r"""\bnew\s+Error\(\s*(?P<literal>"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')""")
+        missing = []
+        for path in (APP / "public" / "js").glob("*.js"):
+            for match in pattern.finditer(path.read_text(encoding="utf-8")):
+                source = ast.literal_eval(match.group('literal'))
+                if source and source not in messages:
+                    missing.append(f"{path.name}: {source}")
+        self.assertEqual(missing, [])
+
     def test_mapping_editor_direct_labels_have_german_entries(self):
         with (APP / "translations" / "de.csv").open(encoding="utf-8", newline="") as stream:
             messages = dict(csv.reader(stream))

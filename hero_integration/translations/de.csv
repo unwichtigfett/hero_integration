@@ -2272,3 +2272,14 @@ A HERO run is active; polling waits for the next interval.,Ein HERO-Lauf ist akt
 A previous polling run is still active; this run was skipped.,Ein vorheriger Polling-Lauf ist noch aktiv; dieser Lauf wurde übersprungen.
 Automatic sync failed; see the redacted server error log.,Automatischer Sync ist fehlgeschlagen; siehe das bereinigte Serverfehlerprotokoll.
 Automatic sync is blocked: no materialized runtime is available; no HERO request was made.,Automatischer Sync ist blockiert: Es ist keine materialisierte Laufzeit verfügbar; es wurde keine HERO-Anfrage gesendet.
+"Shared draft status, owner or revision changed.","Status, Eigentümer oder Revision des gemeinsamen Entwurfs haben sich geändert."
+"Choose a validated snapshot, query, source path, target DocType and target field.","Wählen Sie einen validierten Snapshot, eine Query, einen Quellpfad, einen Ziel-DocType und ein Zielfeld."
+Personal draft context changed. Reload the draft list.,Der Kontext des persönlichen Entwurfs hat sich geändert. Laden Sie die Entwurfsliste neu.
+Readable definition range exceeded,Der lesbare Definitionsbereich wurde überschritten
+Readable path range exceeded,Der lesbare Pfadbereich wurde überschritten
+Readable field range exceeded,Der lesbare Feldbereich wurde überschritten
+An empty follow-up page violated the graph contract.,Eine leere Folgeseite hat den Graph-Vertrag verletzt.
+The editor changed while saving. Nothing was executed.,Der Editor wurde während des Speicherns geändert. Es wurde nichts ausgeführt.
+The saved query could not be validated. Nothing was executed.,Die gespeicherte Query konnte nicht validiert werden. Es wurde nichts ausgeführt.
+The editor changed during validation. Nothing was executed.,Der Editor wurde während der Validierung geändert. Es wurde nichts ausgeführt.
+HERO_MUTATION_EXECUTION_DISABLED,Die Ausführung von HERO-Mutations ist deaktiviert.
