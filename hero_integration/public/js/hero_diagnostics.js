@@ -108,5 +108,23 @@
         const translated = tr(text);
         return recheck ? format("Recheck requested: {0}", translated) : translated;
     }
-    window.hero_integration_diagnostics = Object.freeze({translate: diagnostic});
+    function bindField(frm, fieldname) {
+        const field = frm.fields_dict?.[fieldname];
+        const render = (control, value) => {
+            if (!control?.disp_area || typeof value !== "string" || !value) return;
+            const translated = diagnostic(value);
+            if (translated !== value) control.disp_area.textContent = translated;
+        };
+        if (field && typeof field.set_disp_area === "function" && !field._heroDiagnosticWrapped) {
+            const original = field.set_disp_area;
+            field.set_disp_area = function (...args) {
+                const result = original.apply(this, args);
+                render(this, this.value || args[0]);
+                return result;
+            };
+            field._heroDiagnosticWrapped = true;
+        }
+        render(field, frm.doc[fieldname]);
+    }
+    window.hero_integration_diagnostics = Object.freeze({translate: diagnostic, bindField});
 })();
