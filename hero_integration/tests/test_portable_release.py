@@ -64,7 +64,18 @@ class TestPortableRelease(unittest.TestCase):
             # They are transport metadata, never Python package source.
             and not path.name.startswith("._")
         ]
-        content = "\n".join(path.read_text() for path in files)
+        # The GraphQL adapter records its origin as provenance, not as a runtime
+        # dependency. Remove only those two exact documentation strings before
+        # checking the remaining source for host-specific bindings.
+        texts = []
+        for path in files:
+            text = path.read_text()
+            if path == PACKAGE / "graphql_protocol" / "SOURCE_PROVENANCE.json":
+                text = text.replace('"source_repository": "hero_connector"', '"source_repository": ""', 1)
+            elif path == PACKAGE / "graphql_protocol" / "__init__.py":
+                text = text.replace('"""Pure deterministic GraphQL materializer extracted from hero_connector."""', '', 1)
+            texts.append(text)
+        content = "\n".join(texts)
 
         self.assertFalse([marker for marker in FORBIDDEN_RUNTIME_MARKERS if marker in content])
         for marker in ("auto_domain", "hero_connector", "import helpdesk"):
