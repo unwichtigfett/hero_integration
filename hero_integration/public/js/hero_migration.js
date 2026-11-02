@@ -111,6 +111,10 @@
     }
     const number = (value) => Number(value || 0).toLocaleString((frappe.boot?.lang || "en").replaceAll("_", "-"));
     const plural = (count, singular, pluralText) => `${number(count)} ${tr(count === 1 ? singular : pluralText)}`;
+    const phaseSummary = (state, count) => format('{0} · {1} processed', tr(state), number(count));
+    const testingSummary = (run) => format('{0} · {1}/{2} HERO requests · {3} records',
+        tr(run.testing_status || 'PENDING'), number(run.testing_executed_actions),
+        number(run.testing_max_actions), number(run.testing_records_received));
 
     function icon(name) {
         const ns = "http://www.w3.org/2000/svg";
@@ -341,17 +345,17 @@
             if (!state.selectedRun) { add(side, el("p", {class: "hero-sync-empty", text: tr("Select a run to view details.")})); return; }
             if (!run || run.name !== state.selectedRun) { add(side, el("p", {class: "hero-sync-hint", text: tr("Loading run details …")})); return; }
             const facts = [
-                ["Action", tr(run.area)], ["Status", tr(run.state)], ["Mode", run.mode], ["Source instance", run.source_instance || "—"],
+                ["Action", tr(run.area)], ["Status", tr(run.state)], ["Mode", tr(run.mode)], ["Source instance", run.source_instance || "—"],
                 ["Started", formatDateTime(run.started_on)], ["Finished", formatDateTime(run.finished_on)],
                 ["Duration", run.started_on ? formatDuration(run.started_on, run.finished_on) : "—"],
                 ["Processed", number(run.processed)], ["Created", number(run.created_records)], ["Updated or unchanged", number(run.skipped_records)], ["Conflicts", number(run.conflict_records)],
                 ["Read service", run.graphql_service || "—"], ["Mapping version", run.graphql_mapping ? `${run.graphql_mapping} · rev. ${run.mapping_revision || 0}` : "—"],
             ];
-            if (run.customer_phase_state) facts.push(["Contacts phase", `${run.customer_phase_state} · ${number(run.customer_phase_processed)} processed`]);
-            if (run.project_phase_state && run.action === "Project Migration") facts.push(["Projects phase", `${run.project_phase_state} · ${number(run.project_phase_processed)} processed`]);
+            if (run.customer_phase_state) facts.push(["Contacts phase", phaseSummary(run.customer_phase_state, run.customer_phase_processed)]);
+            if (run.project_phase_state && run.action === "Project Migration") facts.push(["Projects phase", phaseSummary(run.project_phase_state, run.project_phase_processed)]);
             if (Number(run.testing_enabled)) {
-                facts.push(["Testing", `${run.testing_status || "PENDING"} · ${run.testing_executed_actions || 0}/${run.testing_max_actions || 0} HERO requests · ${number(run.testing_records_received)} records`]);
-                try { Object.entries(JSON.parse(run.testing_results_json || "{}")).forEach(([name, result]) => facts.push([name, result.status])); } catch (_) { facts.push(["Testing results", "Results unavailable"]); }
+                facts.push(["Testing", testingSummary(run)]);
+                try { Object.entries(JSON.parse(run.testing_results_json || "{}")).forEach(([name, result]) => facts.push([name, tr(result.status)])); } catch (_) { facts.push(["Testing results", tr("Results unavailable")]); }
             }
             const actions = el("div", {class: "hero-sync-detail-actions"},
                 run.can_cancel ? el("button", {type: "button", class: "hero-sync-small", text: tr("Cancel"), onclick: () => runAction("cancel_run", run, tr("Cancel this run at the next safe point? Records already written stay in place."))}) : null,
@@ -361,7 +365,7 @@
                 el("h4", {class: "hero-sync-mono", text: run.name}),
                 el("dl", {class: "hero-sync-facts"}, facts.map(([label, value]) => [el("dt", {text: tr(label)}), el("dd", {text: value})])),
                 run.error_message ? el("p", {class: "hero-sync-error", text: diagnostic(run.error_message)}) : null,
-                outcomes.length ? el("div", {class: "hero-sync-chips"}, outcomes.map(([code, count]) => el("span", {class: "hero-sync-chip", text: `${code}: ${number(count)}`}))) : null,
+                outcomes.length ? el("div", {class: "hero-sync-chips"}, outcomes.map(([code, count]) => el("span", {class: "hero-sync-chip", text: `${tr(code)}: ${number(count)}`}))) : null,
                 run.conflicts?.length ? el("div", {class: "hero-sync-detail-list"}, el("h5", {text: tr("Conflicts in this run")}),
                     el("ul", {}, run.conflicts.map((item) => el("li", {text: `${item.source_type} ${item.source_id}: ${diagnostic(item.detail || item.result)}`})))) : null,
                 actions);
@@ -501,5 +505,5 @@
         return {destroy() { state.destroyed = true; clearTimeout(state.timer); }};
     }
 
-    window.hero_integration_migration = Object.freeze({mount, diagnostic, formatDateTime});
+    window.hero_integration_migration = Object.freeze({mount, diagnostic, formatDateTime, phaseSummary, testingSummary});
 })();

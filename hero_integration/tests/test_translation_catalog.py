@@ -277,6 +277,12 @@ class TestGermanCatalog(unittest.TestCase):
                 and isinstance(node.args[1], ast.Constant) and isinstance(node.args[1].value, str)
                 and node.args[1].value not in messages):
                 missing.append(f"{node.lineno}: {node.args[1].value}")
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                and node.func.id == "Result" and node.args):
+                for part in ast.walk(node.args[0]):
+                    if (isinstance(part, ast.Constant) and isinstance(part.value, str)
+                        and part.value.isupper() and part.value not in messages):
+                        missing.append(f"{node.lineno}: {part.value}")
         self.assertEqual(missing, [])
 
     def test_frappe_catalog_loader_and_language_precedence(self):
