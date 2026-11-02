@@ -451,9 +451,9 @@ class TestHeroDeskUiContract(unittest.TestCase):
 
     def test_ui_documentation_and_source_keep_native_boundary_and_evidence(self):
         documentation = UI_DOCUMENTATION.read_text()
-        self.assertIn("Original RPC", documentation)
-        self.assertIn("LEGACY_PROCESS_ONLY", documentation)
-        self.assertIn("manual step", documentation)
+        self.assertIn("Explicit read-only Query execution", documentation)
+        self.assertIn("Mutations are rejected before transport", documentation)
+        self.assertIn("do not establish the behavior", documentation)
         api_source = (PACKAGE_ROOT / "api.py").read_text()
         for endpoint in ("workspace_context", "workspace_schema", "workspace_graph"):
             with self.subTest(endpoint=endpoint):

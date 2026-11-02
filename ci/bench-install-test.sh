@@ -37,7 +37,12 @@ bench set-config -g redis_cache "$REDIS"; bench set-config -g redis_queue "${RED
 step "get apps"
 [ -d apps/erpnext ] || bench get-app erpnext --branch "$ERPNEXT_BRANCH"
 rm -rf apps/hero_integration
-bench get-app "$APP_PATH"
+# Git's local clone runs under the bench user, while CI may own the checkout as root.
+# Scope the ownership exception to this checkout and this command, not the user's Git config.
+git_config=$(mktemp "$WORKDIR/git-safe.XXXXXXXX")
+git config --file "$git_config" --add safe.directory "$APP_PATH/.git"
+GIT_CONFIG_GLOBAL="$git_config" bench get-app "$APP_PATH"
+rm -f "$git_config"
 
 step "new site + ERPNext"
 bench drop-site "$SITE" --db-root-password "$DB_ROOT_PASSWORD" --force --no-backup >/dev/null 2>&1 || true
@@ -61,31 +66,49 @@ bench build --app hero_integration
 step "tests"
 bench --site "$SITE" set-config allow_tests true
 ./env/bin/python -m pip install -q "pytest>=8"   # test dependency (see pyproject optional "test")
-KNOWN=apps/hero_integration/ci
-# Offline suite: tests that need a real site or pytest are known failures; only new ones fail the build.
 MIN_TESTS="${MIN_TESTS:-1000}"
-(cd apps/hero_integration && ../../env/bin/python -m unittest discover -s hero_integration/tests -t . \
-  > /tmp/hero-offline.log 2>&1) || true   # the result is judged below, not by the exit code
-{ grep -E "^(ERROR|FAIL):" /tmp/hero-offline.log || true; } | sort > /tmp/hero-offline-now.txt
+if ! (cd apps/hero_integration && ../../env/bin/python ci/run-offline-tests.py > /tmp/hero-offline.log 2>&1); then
+  echo "Offline tests failed:"; tail -80 /tmp/hero-offline.log; TEST_FAILED=1
+fi
 offline_ran=$(grep -oE "^Ran [0-9]+ tests" /tmp/hero-offline.log | grep -oE "[0-9]+" || echo 0)
-echo "offline tests: $offline_ran run, $(wc -l < /tmp/hero-offline-now.txt) failed (known: $(wc -l < $KNOWN/known-offline-failures.txt))"
+grep -F "Site-dependent tests reserved for the full site suite:" /tmp/hero-offline.log || true
+echo "offline tests: $offline_ran run"
 if [ "$offline_ran" -lt "$MIN_TESTS" ]; then echo "Offline suite did not run (only $offline_ran tests)"; tail -20 /tmp/hero-offline.log; TEST_FAILED=1; fi
-new_failures=$(comm -23 /tmp/hero-offline-now.txt <(sort $KNOWN/known-offline-failures.txt))
-if [ -n "$new_failures" ]; then echo "New offline test failures:"; echo "$new_failures"; TEST_FAILED=1; fi
-# Site tests: failures listed in known-site-failures.txt predate this pipeline; only new ones fail the build.
-bench --site "$SITE" run-tests --app hero_integration > /tmp/hero-site-tests.log 2>&1 || true   # judged below
-{ sed 's/\x1b\[[0-9;]*m//g' /tmp/hero-site-tests.log | grep -E "^\s*✖ " || true; } | awk '{print $2}' | sort -u > /tmp/hero-site-failed.txt
-grep -q "Failed to discover tests" /tmp/hero-site-tests.log && { echo "Test discovery failed"; TEST_FAILED=1; }
-new_site=$(comm -23 /tmp/hero-site-failed.txt <(sort -u $KNOWN/known-site-failures.txt))
-if [ -n "$new_site" ]; then echo "New site test failures:"; echo "$new_site"; TEST_FAILED=1; fi
+# The disposable site does not run the ERPNext setup wizard. Provide its
+# minimal Company dependency without creating the unrelated ERPNext fixtures.
+company_count=$(bench --site "$SITE" execute frappe.db.count --args '["Company"]')
+if [ -z "$company_count" ] || [ "$company_count" = 0 ]; then
+  if [ -z "$(bench --site "$SITE" execute frappe.db.exists --kwargs '{"dt":"Warehouse Type","dn":"Transit"}')" ]; then
+    bench --site "$SITE" execute frappe.client.insert --kwargs '{"doc":{"doctype":"Warehouse Type","name":"Transit"}}' >/dev/null
+  fi
+  bench --site "$SITE" execute frappe.client.insert --kwargs '{"doc":{"doctype":"Company","company_name":"HERO CI Company","abbr":"HCI","country":"Germany","default_currency":"EUR"}}' >/dev/null
+fi
+if ! bench --site "$SITE" run-tests --app hero_integration > /tmp/hero-site-tests.log 2>&1; then
+  echo "Site tests failed:"; tail -100 /tmp/hero-site-tests.log; TEST_FAILED=1
+fi
 site_passed=$(sed 's/\x1b\[[0-9;]*m//g' /tmp/hero-site-tests.log | grep -cE '^\s*✔ ' || true)
-echo "site tests: $site_passed passed, $(wc -l < /tmp/hero-site-failed.txt) failed (known: $(wc -l < $KNOWN/known-site-failures.txt))"
+echo "site tests: $site_passed passed"
 if [ "$site_passed" -lt "$MIN_TESTS" ]; then echo "Site tests did not run (only $site_passed passed)"; tail -30 /tmp/hero-site-tests.log; TEST_FAILED=1; fi
 
 for var in HERO_SCHEMA_FILE HERO_CONFIG_FILE; do
   file="${!var:-}"
   if [ -n "$file" ] && [ ! -s "$file" ]; then echo "$var is set but $file is missing or empty"; exit 1; fi
 done
+# The application test suite can leave a different source instance or schema
+# snapshot behind. Import the user's package on a fresh, separate CI site so
+# its safety checks see the same clean installation as a new deployment.
+if [ -n "${HERO_SCHEMA_FILE:-}" ] || [ -n "${HERO_CONFIG_FILE:-}" ]; then
+  MAIN_TEST_SITE="$SITE"
+  SITE=hero-config-ci.localhost
+  if [ "$SITE" = "$MAIN_TEST_SITE" ] || [ -e "sites/$SITE" ]; then
+    echo "Configuration test site is already present; refusing to reuse it" >&2
+    exit 1
+  fi
+  step "fresh site for offline configuration import"
+  bench new-site "$SITE" --db-host "$DB_HOST" --db-root-password "$DB_ROOT_PASSWORD" --admin-password admin --no-mariadb-socket
+  bench --site "$SITE" install-app erpnext
+  bench --site "$SITE" install-app hero_integration
+fi
 if [ -n "${HERO_SCHEMA_FILE:-}" ]; then
   step "offline HERO schema snapshot (optional; a v2 configuration package brings its own)"
   run_py hero_integration.api.snapshot_import_file "{\"path\": \"$HERO_SCHEMA_FILE\"}"
@@ -103,6 +126,9 @@ else
   echo "NOTE: HERO_CONFIG_FILE not set - package import skipped."
 fi
 
+if [ -n "${MAIN_TEST_SITE:-}" ]; then
+  SITE="$MAIN_TEST_SITE"
+fi
 step "uninstall"
 bench --site "$SITE" uninstall-app hero_integration --yes --no-backup
 
