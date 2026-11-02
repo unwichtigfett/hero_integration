@@ -1,0 +1,27 @@
+# Bench-native install test (ci-server).  Logic lives in ci/bench-install-test.sh.
+# Draft: adapt the image to one with Python 3.14, Node 20+, yarn, git, mariadb client and bench.
+when:
+  - event: [manual, push]
+    branch: [hero_int_dev]
+
+services:
+  - name: mariadb
+    image: mariadb:11.4
+    environment:
+      MARIADB_ROOT_PASSWORD: ci-root
+  - name: redis
+    image: redis:7-alpine
+
+steps:
+  - name: install-test
+    image: frappe-ci:py314   # local prebuilt image on ci-server (see docs/CI.md)
+    environment:
+      DB_HOST: mariadb
+      DB_ROOT_PASSWORD: ci-root
+      REDIS_CACHE: redis://redis:6379
+      WORKDIR: /tmp/ci-bench
+      HERO_CONFIG_FILE: ${CI_WORKSPACE}/ci/fixtures/hero-integration-config.json
+      HERO_SCHEMA_FILE:
+        from_secret: hero_schema_file_path
+    commands:
+      - ci/bench-install-test.sh

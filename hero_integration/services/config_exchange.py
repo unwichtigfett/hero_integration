@@ -59,11 +59,41 @@ def preview_config(snapshot_name: str, payload_json: str, source_instance: str =
     from hero_integration.services.schema_provisioning import preview_package
 
     payload = _parse(payload_json)
-    package = preview_package(snapshot_name, json.dumps(payload["mapping_package"]))
-    services = [{"target_operation": item["target_operation"],
-                 "state": _service_state(item, source_instance)} for item in payload["read_services"]]
-    return {"format_version": FORMAT_VERSION, "mapping_package": package["counts"],
+    package_json, rebased_from = _rebased_package(snapshot_name, payload)
+    package = preview_package(snapshot_name, package_json)
+    services = [{"target_operation": item["target_operation"], "state": _query_problem(snapshot_name, item)
+                 or _service_state(item, source_instance)} for item in payload["read_services"]]
+    return {"format_version": FORMAT_VERSION, "mapping_package": package["counts"], "rebased_from": rebased_from,
             "adopt": len(_selection(package)), "read_services": services}
+
+
+def _rebased_package(snapshot_name: str, payload: dict) -> tuple[str, str | None]:
+    """Bind the package to the target site's snapshot.
+
+    HERO changes its schema often, so a new site almost never has the source
+    site's fingerprint.  Compatibility is checked by content instead: every
+    field rule is validated by the package preview and every read query
+    against the target schema before anything is written.
+    """
+    package = dict(payload["mapping_package"])
+    target = frappe.db.get_value("HERO GraphQL Schema Snapshot", snapshot_name, "schema_fingerprint")
+    if not target:
+        raise ConfigExchangeError("The selected schema snapshot does not exist.")
+    source = package.get("schema_fingerprint")
+    package["schema_fingerprint"] = target
+    return json.dumps(package), (source if source != target else None)
+
+
+def _query_problem(snapshot_name: str, item: dict) -> str | None:
+    """'Invalid: …' when the read query does not fit the target schema (local check, no HERO request)."""
+    from hero_integration import api
+
+    body = json.dumps({"name": item["service_name"], "operation_name": item["operation_name"], "query": item["query"]})
+    try:
+        api._workspace_service_validate(snapshot_name, body, "", 0)
+    except Exception as error:  # frappe.throw raises ValidationError
+        return "Invalid: " + str(error)[:200]
+    return None
 
 
 def import_config(snapshot_name: str, payload_json: str, source_instance: str = "default") -> dict:
@@ -73,12 +103,16 @@ def import_config(snapshot_name: str, payload_json: str, source_instance: str = 
 
     frappe.only_for("System Manager")
     payload = _parse(payload_json)
-    package_json = json.dumps(payload["mapping_package"])
+    package_json, _ = _rebased_package(snapshot_name, payload)
     package = preview_package(snapshot_name, package_json)
     blocked = [item for item in package["items"] if item["state"] in {"Conflict", "Invalid"}]
     if blocked:
         raise ConfigExchangeError("The mapping package has conflicts or invalid entries: "
                                   + ", ".join(str(item.get("id")) for item in blocked[:10]))
+    invalid = [f"{item['target_operation']}: {problem}" for item in payload["read_services"]
+               if (problem := _query_problem(snapshot_name, item))]
+    if invalid:
+        raise ConfigExchangeError("A read query does not fit the target HERO schema: " + "; ".join(invalid))
     selected = _selection(package)
     adopted = adoption.start(snapshot_name, package_json, selected, package["preview_revision"]) if selected else None
     results = []

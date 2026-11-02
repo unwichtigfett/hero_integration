@@ -30,16 +30,32 @@ No development-machine path is required.
    bench --site <site-name> install-app hero_integration
    ```
 
-The app installs its DocTypes and HERO Custom Fields, but it installs exactly
-zero `HERO-Frappe Mapping` documents. Repeated `bench --site <site-name>
-migrate` calls keep the mapping count at zero until a System Manager imports
-or creates mapping definitions.
+The app installs its DocTypes, the HERO source Custom Fields on Customer and
+Project, the Project Phase and Volume fields, the Task HERO Assignee field,
+the role "HERO Writeback", the trade Project Types, the German salutations and
+the Project form layout. `bench install-app` does not run patches, so all of
+this is created by `after_install`; `bench migrate` creates missing records
+again (create-only) without resetting later form changes.
 
-The Mapping Editor can later preview a reviewed schema-and-mapping package.
-Uploading a package creates nothing. A System Manager must select and confirm
-each HERO-owned Custom DocType, Custom Field, relation, and mapping in one
-checklist. This app never creates a mapping from an install hook or package
-upload.
+The install creates no field mappings and no read services. They come from a
+**configuration file** exported on an existing site:
+
+- Mapping Editor → "Complete configuration" → *Export* (or
+  `bench --site <site> execute hero_integration.api.config_export_file --kwargs '{"path": "/tmp/hero-config.json"}'`).
+  The file holds the field mappings with their HERO Custom Fields/DocTypes and
+  the read service of every sync area. It never contains credentials or data.
+- On the new site: save the HERO connection, refresh the HERO schema once
+  (or, without HERO access, `hero_integration.api.snapshot_import_file` with an
+  introspection JSON file), then import the file in the Mapping Editor or with
+  `hero_integration.api.config_import_file` (`"dry_run": 0` to import; the
+  default is a preview). The import adopts the mapping package, then creates,
+  validates and approves the read services. HERO's schema changes often, so the
+  package is bound to the new site's own snapshot and checked by content: every
+  field rule and every read query must fit that schema, otherwise nothing is
+  imported. A second import of the same file changes nothing.
+
+Check an install with
+`bench --site <site> execute hero_integration.app_setup.verify_install`.
 
 5. Run migrations and build assets through normal Bench operations when the
    target bench requires them.
@@ -49,7 +65,6 @@ upload.
    bench build --app hero_integration
    ```
 
-`bench install-app` creates the app's DocTypes and idempotently creates nine
-HERO Custom Fields on Customer and Project. A later `bench migrate` uses the
-same create-only, conflict-safe path. No Customize Form step is required.
+The automated fresh-install test is `ci/bench-install-test.sh` (Woodpecker,
+see `.woodpecker.yml`). No Customize Form step is required.
 Do not copy this app from another bench as a release substitute.

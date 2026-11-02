@@ -52,3 +52,40 @@ def apply_form_layout() -> dict:
     from hero_integration.integrations.project_form import setup_project_form
 
     return setup_project_form()
+
+
+def verify_install() -> dict:
+    """bench execute: check a fresh install (CI). Raises when something the app needs is missing."""
+    from hero_integration.install import HERO_CUSTOM_FIELDS
+    from hero_integration.integrations.project_form import PHASE_FIELD, VOLUME_FIELD
+    from hero_integration.services.project_naming import TRADE_CATALOG
+    from hero_integration.services.task_lifecycle import ASSIGNEE_FIELD
+
+    missing = []
+    fields = [(doctype, item["fieldname"]) for doctype, items in HERO_CUSTOM_FIELDS.items() for item in items]
+    fields += [("Project", PHASE_FIELD), ("Project", VOLUME_FIELD), ("Task", ASSIGNEE_FIELD)]
+    for doctype, fieldname in fields:
+        if not frappe.get_meta(doctype).has_field(fieldname):
+            missing.append(f"field {doctype}.{fieldname}")
+    if not frappe.db.exists("Role", "HERO Writeback"):
+        missing.append("role HERO Writeback")
+    missing += [f"project type {name}" for name in TRADE_CATALOG.values() if not frappe.db.exists("Project Type", name)]
+    missing += [f"salutation {name}" for name in SALUTATIONS if not frappe.db.exists("Salutation", name)]
+    for doctype in ("HERO Integration Settings", "HERO Integration Link", "HERO Integration Run", "HERO Frappe Mapping",
+                    "HERO GraphQL Service", "HERO GraphQL Mapping", "HERO GraphQL Schema Snapshot"):
+        if not frappe.db.exists("DocType", doctype):
+            missing.append(f"doctype {doctype}")
+    settings = frappe.get_single("HERO Integration Settings")
+    unsafe = []
+    if int(getattr(settings, "allow_graphql_mutation_execution", 0) or 0):
+        unsafe.append("mutation execution is enabled by default")
+    result = {
+        "missing": missing, "unsafe_defaults": unsafe,
+        "mappings": frappe.db.count("HERO Frappe Mapping"),
+        "active_mappings": frappe.db.count("HERO Frappe Mapping", {"status": "Active"}),
+        "approved_read_services": frappe.db.count("HERO GraphQL Service", {"execution_status": "Approved"}),
+        "snapshots": frappe.db.count("HERO GraphQL Schema Snapshot", {"analysis_status": "Validated"}),
+    }
+    if missing or unsafe:
+        raise frappe.ValidationError("HERO Integration install check failed: " + "; ".join(missing + unsafe))
+    return result

@@ -3783,3 +3783,13 @@ def _config_snapshot() -> str:
     if not names:
         frappe.throw("No validated HERO schema snapshot exists; refresh the HERO schema first.")
     return names[0]
+
+
+def snapshot_import_file(path: str) -> dict[str, object]:
+    """bench execute: store a HERO introspection result from a file as a schema snapshot (no HERO request)."""
+    from hero_integration.services.schema_refresh import capture_from_file
+
+    frappe.set_user("Administrator")
+    result = capture_from_file(path, "Administrator")
+    frappe.db.commit()
+    return {key: result.get(key) for key in ("status", "snapshot_name", "schema_fingerprint", "type_count")}
