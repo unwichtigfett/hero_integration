@@ -625,7 +625,11 @@ def sync_page_run_detail(run_name: str) -> dict[str, object]:
 
 @frappe.whitelist(methods=["GET"])
 def sync_page_conflicts(start: int | str = 0, page_size: int | str = 8) -> dict[str, object]:
-    """Open record conflicts of the configured source, newest first."""
+    """Open conflicts and held records, then records the latest run of each area could not import.
+
+    A record that failed before an Integration Link existed has nothing to approve
+    or decline; it is listed (read-only) until a later run imports it.
+    """
     frappe.only_for("System Manager")
     from hero_integration.services.sync_page import AREAS
 
@@ -633,12 +637,40 @@ def sync_page_conflicts(start: int | str = 0, page_size: int | str = 8) -> dict[
     page_size = _mapping_int(page_size, "page_size", 1, 50)
     filters = {"sync_status": ["in", ["Conflict", "Pending Review"]], "source_instance": _configured_source_instance()}
     labels = {item.source_type: item.label for item in AREAS}
-    rows = frappe.get_all("HERO Integration Link", filters=filters,
-                          fields=["name", "source_type", "source_id", "target_doctype", "target_name", "conflict_detail", "sync_status", "modified"],
-                          order_by="modified desc", limit_start=start, limit_page_length=page_size)
-    for row in rows:
+    links = frappe.get_all("HERO Integration Link", filters=filters,
+                           fields=["name", "source_type", "source_id", "target_doctype", "target_name", "conflict_detail", "sync_status", "modified"],
+                           order_by="modified desc", limit_page_length=0)
+    for row in links:
         row["area"] = labels.get(row["source_type"], row["source_type"])
-    return {"start": start, "page_size": page_size, "total": frappe.db.count("HERO Integration Link", filters), "rows": rows}
+        row["kind"] = "link"
+    rows = links + _unlinked_import_failures(AREAS)
+    return {"start": start, "page_size": page_size, "total": len(rows), "rows": rows[start:start + page_size]}
+
+
+def _unlinked_import_failures(areas) -> list[dict[str, object]]:
+    """Records of the latest finished Execute run per area that have no Integration Link at all."""
+    from hero_integration.services.conflict_notifications import NOT_IMPORTED_RESULTS
+
+    result = []
+    for item in areas:
+        runs = frappe.db.sql("""SELECT r.name FROM `tabHERO Integration Run` r
+            WHERE r.action=%s AND r.mode='Execute' AND r.state NOT IN ('Queued', 'Running')
+              AND EXISTS (SELECT 1 FROM `tabHERO Integration Record` x WHERE x.run=r.name AND x.source_type=%s)
+            ORDER BY r.creation DESC LIMIT 1""", (item.run_action, item.source_type))
+        if not runs:
+            continue
+        records = frappe.db.sql("""SELECT x.name, x.source_type, x.source_id, x.result, x.detail, x.creation, x.run
+            FROM `tabHERO Integration Record` x
+            WHERE x.run=%s AND x.source_type=%s AND x.result IN %s
+              AND NOT EXISTS (SELECT 1 FROM `tabHERO Integration Link` l
+                              WHERE l.source_type=x.source_type AND l.source_id=x.source_id)
+            ORDER BY x.creation DESC""", (runs[0][0], item.source_type, tuple(NOT_IMPORTED_RESULTS)), as_dict=True)
+        for record in records:
+            result.append({"name": record.name, "source_type": record.source_type, "source_id": record.source_id,
+                           "target_doctype": "", "target_name": "", "conflict_detail": record.detail or record.result,
+                           "sync_status": "Not imported", "modified": record.creation, "area": item.label,
+                           "kind": "record", "run": record.run})
+    return result
 
 
 def _sync_area(key: str):

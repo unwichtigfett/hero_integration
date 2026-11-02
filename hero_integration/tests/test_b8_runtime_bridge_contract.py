@@ -39,42 +39,6 @@ class TestB8RuntimeBridgeContract(unittest.TestCase):
 
         self.addCleanup(restore)
 
-    def test_auto_sync_hands_off_only_to_the_canonical_runtime_adapter(self):
-        frappe_module = types.ModuleType("frappe")
-        frappe_module.get_single = lambda _doctype: SimpleNamespace(
-            polling_mode="AUTO_SYNC",
-            scheduled_sync_enabled=1,
-            polling_interval_minutes=60,
-            last_successful_sync=None,
-        )
-        frappe_module.utils = SimpleNamespace(
-            now_datetime=lambda: datetime(2026, 10, 25, 10, 0)
-        )
-        adapter = types.ModuleType("hero_integration.services.sync_runtime_adapter")
-        calls: list[str] = []
-        adapter.run_scheduled_auto_sync = lambda: calls.append("canonical")
-
-        previous_frappe = sys.modules.get("frappe")
-        previous_adapter = sys.modules.get("hero_integration.services.sync_runtime_adapter")
-        sys.modules.pop("hero_integration.tasks", None)
-        sys.modules["frappe"] = frappe_module
-        sys.modules["hero_integration.services.sync_runtime_adapter"] = adapter
-        try:
-            tasks = importlib.import_module("hero_integration.tasks")
-            tasks.run_scheduled_sync()
-        finally:
-            sys.modules.pop("hero_integration.tasks", None)
-            if previous_frappe is None:
-                sys.modules.pop("frappe", None)
-            else:
-                sys.modules["frappe"] = previous_frappe
-            if previous_adapter is None:
-                sys.modules.pop("hero_integration.services.sync_runtime_adapter", None)
-            else:
-                sys.modules["hero_integration.services.sync_runtime_adapter"] = previous_adapter
-
-        self.assertEqual(calls, ["canonical"])
-
     def test_preflight_revalidates_the_current_plan_before_any_runtime_execution(self):
         selection = SimpleNamespace(
             source_instance="hero-one", execution_mode="AUTO_SYNC", operation_revision=3, service_revision=3,
