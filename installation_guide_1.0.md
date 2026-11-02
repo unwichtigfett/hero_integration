@@ -1,6 +1,9 @@
 # Installation
 
-Install this app only from a reviewed Git repository. Use a fresh Frappe v16
+The installation branch is `hero_int_1.0`:
+<https://github.com/unwichtigfett/hero_integration/tree/hero_int_1.0>
+
+Install this app only from that branch. Use a fresh Frappe v16
 bench with ERPNext v16 already installed on the target site. The app declares
 Frappe v16 compatibility in `pyproject.toml`. It does not use Frappe's
 `required_apps` hook. Bench resolves that hook before an app can reject an
@@ -16,10 +19,10 @@ development-machine path.
    bench --site <site-name> install-app erpnext
    ```
 
-3. Add the reviewed HERO Integration release branch from its Git URL.
+3. Add HERO Integration from its installation branch `hero_int_1.0`.
 
    ```bash
-   bench get-app <repository-url> --branch <release-branch>
+   bench get-app https://github.com/unwichtigfett/hero_integration --branch hero_int_1.0
    ```
 
 4. Install HERO Integration on that ERPNext site. Its pre-install check aborts

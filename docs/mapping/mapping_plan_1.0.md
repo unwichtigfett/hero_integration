@@ -2,7 +2,7 @@
 
 Schema: HERO-Schemadatei `Schema.txt`, SHA-256 `7b6d360ba876aad51369c1fd7e6f82a6f3b1c4a683f2a7a4f347793101d33f7c`. Plattform: Frappe/ERPNext v16.
 
-Status: Planung. Der Plan aktiviert nichts, importiert keine Daten und führt keine Mutation aus. Das Schema belegt Feldnamen und Typen. Es belegt keine Berechtigungen, kein Verhalten, keine Vollständigkeit und keine aktive Site-Konfiguration. Die Vorschläge ergänzen bestehende Verträge und ändern keine Freigaben.
+Der Plan aktiviert nichts, importiert keine Daten und führt keine Mutation aus. Das Schema belegt Feldnamen und Typen. Es belegt keine Berechtigungen, kein Verhalten, keine Vollständigkeit und keine aktive Site-Konfiguration. Die Vorschläge ergänzen bestehende Verträge und ändern keine Freigaben.
 
 ## Gemeinsame Regeln
 

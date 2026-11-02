@@ -1,6 +1,6 @@
 # Synchronization handoff: Customer, Project and Task
 
-Status: partial. Mapping drafts, approved read contracts and execution authority
+Mapping drafts, approved read contracts and execution authority
 are separate. This delivery does not authorize synchronization or external
 mutations. Before execution, verify the active mapping revision, the saved read
 service revision, the source instance and the schema fingerprint.

@@ -1,6 +1,6 @@
 # ERPNext, Helpdesk and CRM: how they work together
 
-Status: concept. **(decided)** marks decisions the owner has already taken.
+**(decided)** marks decisions the owner has already taken.
 
 ## 1. Principles
 

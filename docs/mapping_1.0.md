@@ -40,7 +40,7 @@ Query/Mutation exchange and execution bindings remain authoritative. New
 object and relationship context is a backward-compatible Draft extension. It
 does not rewrite existing data. You may save schema-only paths for review. The
 app never silently promotes them to a supported resolver or approved fetch.
-Existing supported resolvers stay usable. This ADR adds no mirror fields,
+Existing supported resolvers stay usable. This decision adds no mirror fields,
 implicit deletions, completions, unassignments or external calls.
 
 Private acceptance and target deployment are separate. Source time, identity
