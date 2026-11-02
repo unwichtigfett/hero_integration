@@ -83,6 +83,13 @@ class FrappePickerMetadata:
         ensure_doctype_write(doctype, frappe)
         return frappe.get_meta(doctype).fields
 
+    def project_activity_fields(self):
+        import frappe
+        from hero_integration.services.doctype_permissions import ensure_doctype_write
+
+        ensure_doctype_write('Project', frappe)
+        return frappe.get_meta('Comment').fields
+
 
 def validate_draft_spec(spec, metadata) -> CatalogField:
     """Validate a non-executable proposal without widening the active mapper."""
@@ -205,6 +212,102 @@ def writeback_fields(metadata, doctype: str = '', *, targets=None) -> list[Catal
             result.append(item)
     return sorted(result, key=lambda item: (item.app_name.lower(), item.doctype.lower(), item.path.lower()))
 
+
+
+def query_standard_target(doctype, fieldname, enabled=False):
+    """Describe the one registered activity timestamp slot, never a custom DocField."""
+    if not enabled or (doctype, fieldname) != ('Comment', 'creation'):
+        return None
+    import frappe
+    from frappe.model import default_fields
+    if 'creation' not in default_fields or not frappe.db.has_column('Comment', 'creation'):
+        raise ValueError('The registered Comment timestamp column is unavailable.')
+    return frappe._dict(name='standard:Comment:creation', fieldname='creation', fieldtype='Datetime',
+                        options='', reqd=0, read_only=1, hidden=0, permlevel=0, is_virtual=0)
+
+
+def query_target_catalog(metadata, app_name='', search=''):
+    """Discover v2 adapter targets; activation still validates each native binding."""
+    result = catalog(metadata, app_name, search)
+    allowed = {'Customer', 'Project', 'Task', 'Event', 'Contact', 'Address', 'Comment', 'ToDo'}
+    targets = []
+    for item in doctypes(metadata, app_name, search):
+        if item.doctype == 'Comment' and metadata.can_write('Project'):
+            item = replace(item, selectable=True, reason='Project activity adapter; Project write permission is required.')
+            result['doctypes'] = [item.__dict__ if row['doctype'] == 'Comment' else row for row in result['doctypes']]
+        if item.selectable and item.doctype in allowed:
+            targets.append(item)
+    selected = []
+    for target in targets:
+        activity_fields = getattr(metadata, 'project_activity_fields', None)
+        fields = activity_fields() if target.doctype == 'Comment' and activity_fields else metadata.fields(target.doctype)
+        for field in fields:
+            item = _field(target, field, metadata)
+            contact_proxy = target.doctype in {'Customer', 'Contact'} and item.path in {'first_name', 'last_name', 'email_id', 'mobile_no', 'salutation'}
+            if ((item.path in SYSTEM_FIELDS and (target.doctype, item.path) != ('Comment', 'creation'))
+                    or getattr(field, 'hidden', 0) or getattr(field, 'is_virtual', 0)
+                    or (getattr(field, 'fetch_from', None) and not contact_proxy)
+                    or int(getattr(field, 'permlevel', 0) or 0)
+                    or item.fieldtype not in ALLOWED_TARGET_TYPES | {'Long Text', 'Text', 'Text Editor', 'Select', 'Table'}
+                    or (getattr(field, 'read_only', 0) and not contact_proxy and not item.path.startswith('custom_hero_')
+                        and (target.doctype, item.path) != ('Comment', 'creation'))):
+                continue
+            selected.append(replace(item, selectable=True, activation_allowed=False,
+                reason='Query adapter target; activation requires schema, relation and mapping validation.'))
+        if target.doctype == 'Comment' and not any(item.doctype == 'Comment' and item.path == 'creation' for item in selected):
+            selected.append(CatalogField(target.app_name, 'Comment', 'creation', 'Creation', 'Datetime', True, '', True,
+                'Logbook date adapter; an explicit timezone transformation is required.', False, False, (), False))
+    result['fields'] = [item.__dict__ for item in selected]
+    return result
+
+
+def send_source_fields(metadata, doctype: str = '', *, targets=None) -> list[CatalogField]:
+    """Readable native Send sources; this does not widen per-field writeback."""
+    allowed = {'Customer', 'Project', 'Task', 'Contact', 'Address', 'ToDo'}
+    candidates = doctypes(metadata) if targets is None else targets
+    result = []
+    for target in candidates:
+        if target.doctype not in allowed or (doctype and target.doctype != doctype) or not target.selectable:
+            continue
+        for field in metadata.fields(target.doctype):
+            item = _field(target, field, metadata)
+            if (item.path in SYSTEM_FIELDS or getattr(field, 'hidden', 0) or getattr(field, 'is_virtual', 0)
+                    or int(getattr(field, 'permlevel', 0) or 0)
+                    or item.fieldtype not in ALLOWED_TARGET_TYPES | {'Long Text', 'Text', 'Text Editor', 'Select'}):
+                continue
+            result.append(replace(item, selectable=True,
+                reason='Send source; an active Mutation mapping and separate execution approval are required.'))
+    return sorted(result, key=lambda item: (item.app_name.lower(), item.doctype.lower(), item.path.lower()))
+
+
+def validate_send_source(doctype: str, fieldname: str, metadata) -> CatalogField:
+    source = next((item for item in send_source_fields(metadata, doctype=doctype) if item.path == fieldname), None)
+    if source is None:
+        raise ValueError('The configured Send source field is unavailable or protected.')
+    return source
+
+
+def validate_send_mapping_sources(content, metadata) -> None:
+    from hero_integration.services.frappe_writeback import draft_source_type_compatible
+    assignments = [('primary', content)] + [(item['id'], item) for item in content.get('additional_mappings', [])]
+    options = content['send_options']['assignments']
+    for identity, assignment in assignments:
+        source = assignment['source']
+        field = validate_send_source(source['doctype'], source['field'], metadata)
+        resolver = options[identity]['resolver']
+        condition = options[identity].get('when')
+        if condition is not None:
+            validate_send_source(source['doctype'], condition['field'], metadata)
+        if resolver == 'FIELD' and not draft_source_type_compatible(field.fieldtype, assignment['target']['graphql_type']):
+            raise ValueError('The configured Send source and mutation input types are incompatible.')
+        if resolver == 'USER_LINK' and not (field.fieldtype == 'Data' or (field.fieldtype == 'Link' and field.relation == 'User')):
+            raise ValueError('A Send user resolver requires a User Link source.')
+        if resolver == 'PROJECT_LINK' and (field.fieldtype != 'Link' or field.relation != 'Project'):
+            raise ValueError('A Send project resolver requires a Project Link source.')
+        if resolver == 'DATE_TIME' and field.fieldtype not in {'Date', 'Datetime'}:
+            raise ValueError('A Send date resolver requires a Date or Datetime source.')
+        if resolver == 'PLAIN_TEXT' and field.fieldtype not in {'Data', 'Small Text', 'Text', 'Long Text', 'Text Editor'}:
+            raise ValueError('A Send text resolver requires a text source.')
 
 def types_compatible(source_type: str, target_type: str) -> bool:
     if source_type.startswith("string"):

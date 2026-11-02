@@ -28,6 +28,7 @@ class ReadContract:
     variables: dict[str, object]
     page_size: int
     materialized_request: object | None = None
+    adapter_options: dict | None = None
 
 
 def task_materialization(snapshot, config, plan):
@@ -60,6 +61,29 @@ def from_documents(service, mapping, snapshot) -> ReadContract:
     """
     contract, config = _common_contract(service, mapping, snapshot)
     target = contract.target_operation
+    if target == 'HeroLookup' and not config.get('query_adapter'):
+        raise ReadContractError('Lookup services require an approved versioned Query adapter.')
+    if config.get('query_adapter'):
+        from hero_integration.services.query_mapping import seal_query, seal_lookup_query
+        try:
+            if target == 'HeroLookup':
+                expected = seal_lookup_query(service, snapshot, config)
+            else:
+                if target == 'HeroCalendarEvents':
+                    from hero_integration.services.native_projections import validate_options
+                    validate_options(PROJECTIONS[target], config.get('native_options'))
+                from hero_integration.services.mapping_runtime import active_mapping_plan
+                plan = active_mapping_plan(service.operation_name, definition_ids=contract.definition_ids,
+                    target_operation=target, mapping_name=mapping.name,
+                    native_task=target == 'HeroTasks', lock_rules=False)
+                expected = seal_query(service, snapshot, config, plan)
+        except ReadContractError:
+            raise
+        except (ValueError, TypeError, KeyError) as error:
+            raise ReadContractError(str(error)) from error
+        if config.get('query_adapter_seal') != expected:
+            raise ReadContractError('Mapped query approval or selected field configuration changed.')
+        return contract
     records_path, identity_path = contract.records_path, contract.identity_path
     variables, definition_ids = contract.variables, contract.definition_ids
     onboarding = config.get('native_task_onboarding')
@@ -236,11 +260,11 @@ def _common_contract(service, mapping, snapshot) -> tuple[ReadContract, Mapping[
     target = config.get("target_operation")
     records_path, identity_path = config.get("records_path"), config.get("identity_path")
     definition_ids, variables, page_size = config.get("mapping_definition_ids"), config.get("variables", {}), config.get("page_size", 100)
-    if target not in {"HeroCustomers", "HeroProjectMatches", *PROJECTIONS}:
+    if target not in {"HeroCustomers", "HeroProjectMatches", "HeroLookup", *PROJECTIONS}:
         raise ReadContractError("The selected target adapter is not supported.")
     if not isinstance(records_path, str) or not records_path or not isinstance(identity_path, str) or not identity_path:
         raise ReadContractError("The selected read mapping requires record and external identity paths.")
-    if (not isinstance(definition_ids, list) or not definition_ids
+    if (not isinstance(definition_ids, list) or (not definition_ids and target != "HeroLookup")
             or not all(isinstance(value, str) and value for value in definition_ids)
             or len(set(definition_ids)) != len(definition_ids)):
         raise ReadContractError("The selected read mapping requires explicit active mapping definitions.")
@@ -250,7 +274,7 @@ def _common_contract(service, mapping, snapshot) -> tuple[ReadContract, Mapping[
         ReadContract(
             service.name, int(service.service_revision), mapping.name,
             int(mapping.mapping_revision), target, records_path, identity_path,
-            tuple(definition_ids), dict(variables), page_size,
+            tuple(definition_ids), dict(variables), page_size, adapter_options=config.get("query_adapter"),
         ),
         config,
     )

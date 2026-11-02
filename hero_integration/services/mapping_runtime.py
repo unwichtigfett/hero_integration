@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable
 from hero_integration.services.localized_error import LocalizedError
 from hero_integration.services.projection_contracts import CONTRACTS as PROJECTIONS, validate_projection_record
@@ -54,9 +54,13 @@ class MappingPlan:
     operation: str
     definitions: tuple[MappingSpec, ...]
     target_operation: str = ""
+    adapter_options: dict = field(default_factory=dict)
 
     @property
     def target_doctype(self) -> str:
+        if self.adapter_options:
+            from hero_integration.services.query_mapping import ROOTS
+            return ROOTS[self.target_operation or self.operation][1]
         if (self.target_operation or self.operation) in PROJECTIONS:
             return PROJECTIONS[self.target_operation or self.operation]['target_doctype']
         return "Customer" if (self.target_operation or self.operation) == "HeroCustomers" else "Project"
@@ -64,11 +68,17 @@ class MappingPlan:
     @property
     def mapping_version(self) -> str:
         payload = [definition.__dict__ for definition in self.definitions]
+        if self.adapter_options:
+            payload = {"rules": payload, "query_adapter": self.adapter_options}
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
         return f"hero-mapping-{hashlib.sha256(encoded).hexdigest()[:16]}"
 
     def require_complete(self) -> None:
         operation = self.target_operation or self.operation
+        if self.adapter_options:
+            from hero_integration.services.query_mapping import validate_plan
+            validate_plan(self)
+            return
         if operation in PROJECTIONS:
             expected = set(PROJECTIONS[operation]['paths'])
             present = {d.source_path for d in self.definitions if d.purpose != 'Project Relation'}
@@ -112,6 +122,10 @@ class MappingPlan:
         native_value: Callable[[str], object] | None = None,
         allow_partial: bool = False,
     ) -> dict[str, object]:
+        if self.adapter_options:
+            from hero_integration.services.query_mapping import mapped_values
+            return mapped_values(self, record, customer_link=customer_link, confirmed_company=confirmed_company,
+                project_title=project_title, project_link=project_link, native_value=native_value, allow_partial=allow_partial)
         values = MappedValues()
         projection = (self.target_operation or self.operation) in PROJECTIONS
         if projection:
@@ -284,15 +298,17 @@ class MappingPlan:
         return tuple(definition for definition in self.definitions if definition.purpose == purpose)
 
 
-def plan_from_definitions(operation: str, definitions: list[MappingSpec] | tuple[MappingSpec, ...], *, target_operation: str = "", native_task: bool = False) -> MappingPlan:
+def plan_from_definitions(operation: str, definitions: list[MappingSpec] | tuple[MappingSpec, ...], *, target_operation: str = "", native_task: bool = False, adapter_options=None) -> MappingPlan:
     target_operation = target_operation or operation
     if target_operation not in {"HeroCustomers", "HeroProjectMatches", *PROJECTIONS}:
         raise MappingPlanError("The selected target adapter is not supported.")
     selected = tuple(sorted((item for item in definitions if item.operation == target_operation), key=lambda item: (item.priority, item.definition_id, item.source_path)))
     if not selected:
         raise MappingPlanError("No active mapping definitions exist for this operation.")
-    plan = MappingPlan(operation, selected, target_operation)
-    if native_task:
+    plan = MappingPlan(operation, selected, target_operation, adapter_options or {})
+    if adapter_options:
+        plan.require_complete()
+    elif native_task:
         from hero_integration.services.direct_mapping import validate_native_task_rule
         if target_operation != 'HeroTasks' or len(selected) not in {2, 3, 4, 5, 6}:
             raise MappingPlanError('Native Task requires identity, title, and optional comment, assignment, project and deadline rules.')
@@ -313,6 +329,7 @@ def active_mapping_plan(operation: str, *, definition_ids: tuple[str, ...] = (),
         raise MappingPlanError('Explicit rule IDs require an explicit active mapping and unique bindings.')
     if native_task and (not definition_ids or not mapping_name or len(set(definition_ids)) != len(definition_ids)):
         raise MappingPlanError('Native Task requires explicitly selected approved rules.')
+    adapter_options = {}
     if lock_rules and not native_task:
         raise MappingPlanError('Locking rule reads are restricted to the native Task contract.')
     rows = frappe.get_all(
@@ -353,6 +370,7 @@ def active_mapping_plan(operation: str, *, definition_ids: tuple[str, ...] = (),
             config = json.loads(mapping.mapping_json, object_pairs_hook=unique_json_object)
         except (ValueError, TypeError, AttributeError):
             raise MappingPlanError('The approved mapping binding is invalid.') from None
+        adapter_options = config.get('query_adapter') or {} if isinstance(config, dict) else {}
         if not isinstance(config, dict) or config.get('target_operation') != (target_operation or operation):
             raise MappingPlanError('The selected mapping target operation does not match the requested plan.')
         selected = config.get('mapping_definition_ids') if isinstance(config, dict) else None
@@ -388,6 +406,10 @@ def active_mapping_plan(operation: str, *, definition_ids: tuple[str, ...] = (),
     from hero_integration.hero_integration.doctype.hero_frappe_mapping.hero_frappe_mapping import _FrappeMetadata
     metadata = _FrappeMetadata()
     for spec in definitions:
+        if adapter_options:
+            from hero_integration.services.query_mapping import validate_v2_spec
+            validate_v2_spec(spec, metadata, adapter_options)
+            continue
         if native_task:
             try:
                 validate_spec(spec, metadata)
@@ -402,7 +424,7 @@ def active_mapping_plan(operation: str, *, definition_ids: tuple[str, ...] = (),
                     validate_spec(spec, metadata)
                 except ValueError as error:
                     raise MappingPlanError('Native field authorization is no longer valid.') from error
-    return plan_from_definitions(operation, definitions, target_operation=target_operation, native_task=native_task)
+    return plan_from_definitions(operation, definitions, target_operation=target_operation, native_task=native_task, adapter_options=adapter_options)
 
 
 def effective_rule_fingerprint(definition_ids, mapping_name, *, lock=False, frappe_module=None):

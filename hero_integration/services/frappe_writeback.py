@@ -119,7 +119,7 @@ def normalise_mapping(value: object, schema: object) -> dict[str, object]:
     }
 
 
-def normalise_draft_mapping(value: object, schema: object) -> dict[str, object]:
+def normalise_draft_mapping(value: object, schema: object, *, temporal: bool = False) -> dict[str, object]:
     """Validate a schema-owned Draft without widening executable writeback.
 
     Generic Drafts are intentionally rejected by :func:`normalise_mapping`,
@@ -138,7 +138,7 @@ def normalise_draft_mapping(value: object, schema: object) -> dict[str, object]:
         raise WritebackContractError("Writeback source and exact schema target are required.")
     if transform not in _TRANSFORMS:
         raise WritebackContractError("Only Identity and Trim transformations are approved for writeback.")
-    input_type, graphql_type = _schema_draft_input_field(schema, operation, argument, path)
+    input_type, graphql_type = _schema_draft_input_field(schema, operation, argument, path, temporal=temporal)
     return {
         "version": 1,
         "source": {"doctype": doctype, "field": field},
@@ -225,7 +225,7 @@ def _schema_input_field(schema: object, contract: WritebackDefinition, field: st
         raise WritebackContractError("The saved schema does not prove this approved HERO write target.") from error
 
 
-def _schema_draft_input_field(schema: object, operation_name: str, argument_name: str, path: str) -> tuple[str, str]:
+def _schema_draft_input_field(schema: object, operation_name: str, argument_name: str, path: str, *, temporal: bool = False) -> tuple[str, str]:
     """Resolve a scalar/enum input path exactly from the selected mutation."""
     try:
         normalised = normalize_schema(schema)
@@ -236,6 +236,8 @@ def _schema_draft_input_field(schema: object, operation_name: str, argument_name
         input_type = _named_type(argument.get("type"))
         current_ref = argument.get("type")
         supported_scalars = {"String", "ID", "Int", "Float", "Boolean"}
+        if temporal is True:
+            supported_scalars.update({"Date", "DateTime"})
         if _has_list(current_ref):
             raise ValueError
         if not path:

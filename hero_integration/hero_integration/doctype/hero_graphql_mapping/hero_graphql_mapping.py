@@ -51,11 +51,22 @@ class HEROGraphQLMapping(Document):
             mapping = json.loads(self.mapping_json, object_pairs_hook=unique_json_object)
             if not isinstance(mapping, dict):
                 raise ValueError
+            if self.direction == 'QUERY_TO_FRAPPE':
+                if mapping.get('usage') or 'send_options' in mapping:
+                    raise ValueError('Send to HERO configuration requires a Mutation mapping.')
+                if 'query_adapter' in mapping:
+                    from hero_integration.services.query_mapping import validate_query_adapter
+                    validate_query_adapter(mapping['query_adapter'])
             if self.direction == "FRAPPE_TO_MUTATION":
                 schema = json.loads(snapshot.snapshot_json)
                 from hero_integration.api import _mapping_values_preserved
                 original = mapping
-                if self.status == "Active":
+                if original.get('usage') == 'SEND_TO_HERO':
+                    from hero_integration.services.mapped_send import normalise_send_mapping
+                    from hero_integration.services.frappe_mapping_catalog import validate_send_mapping_sources
+                    mapping = normalise_send_mapping(original, schema)
+                    validate_send_mapping_sources(mapping, FrappePickerMetadata())
+                elif self.status == "Active":
                     mapping = normalise_mapping(original, schema)
                 else:
                     try:
@@ -94,7 +105,11 @@ class HEROGraphQLMapping(Document):
             if len(contracts) != 1:
                 frappe.throw(frappe._("Exactly one active schema-bound HERO Mutation Contract is required for writeback activation."))
             if context_changed:
-                _check_active_writeback_conflicts(snapshot.name, mapping["source"], self.name or "")
+                if mapping.get('usage') == 'SEND_TO_HERO':
+                    _check_active_send_conflicts(snapshot.source_instance, mapping['source']['doctype'], self.name or '',
+                                                 mapping['send_options']['mode'])
+                else:
+                    _check_active_writeback_conflicts(snapshot.name, mapping["source"], self.name or "")
         if not self.definition_id:
             self.definition_id = self.name or ""
         if not previous and self.definition_id:
@@ -200,6 +215,8 @@ def _check_active_writeback_conflicts(snapshot_name, source, name):
     for other in conflicts:
         try:
             value = json.loads(other.mapping_json, object_pairs_hook=_unique_json_object)
+            if isinstance(value, dict) and value.get('usage') == 'SEND_TO_HERO':
+                continue
             other_source = value.get("source") if isinstance(value, dict) else None
         except (TypeError, ValueError):
             other_source = None
@@ -207,3 +224,20 @@ def _check_active_writeback_conflicts(snapshot_name, source, name):
             frappe.throw(frappe._("An active writeback source cannot be safely inspected."))
         if all(other_source[key] == source[key] for key in ("doctype", "field")):
             frappe.throw(frappe._("An active writeback mapping already owns this Frappe field."))
+
+
+def _check_active_send_conflicts(source_instance, doctype, name, mode='UPDATE'):
+    from hero_integration.hero_integration.doctype.hero_frappe_mapping.hero_frappe_mapping import _lock_active_target
+    _lock_active_target('native-send:' + source_instance, doctype, 'SEND_TO_HERO')
+    rows = frappe.db.sql(
+        'SELECT name, mapping_json FROM `tabHERO GraphQL Mapping` '
+        'WHERE direction=%s AND status=%s AND source_instance=%s AND name!=%s FOR UPDATE',
+        ('FRAPPE_TO_MUTATION', 'Active', source_instance, name), as_dict=True,
+    )
+    for row in rows:
+        value = json.loads(row.mapping_json, object_pairs_hook=_unique_json_object)
+        if not isinstance(value, dict):
+            frappe.throw(frappe._('Existing Send mapping cannot be safely inspected.'))
+        if (value.get('usage') == 'SEND_TO_HERO' and value.get('source', {}).get('doctype') == doctype
+                and value.get('send_options', {}).get('mode') == mode):
+            frappe.throw(frappe._('An active Send to HERO mapping already owns this document type, source and mode.'))

@@ -194,10 +194,21 @@ def _portable_content(content, direction):
     value = bounded(_object(content))
     common = {'source', 'target', 'transformation'}
     query = {'records_path', 'record_path', 'identity_path', 'target_operation',
-             'mapping_definition_ids', 'field_rules'}
-    mutation = {'version', 'additional_mappings'}
+             'mapping_definition_ids', 'field_rules', 'query_adapter'}
+    if value.get('query_adapter'):
+        query |= {'variables', 'page_size', 'native_options'}
+    mutation = {'version', 'additional_mappings', 'usage', 'send_options'}
+    # Approval seals are derived locally from the selected fetch and rules.
+    value.pop('query_adapter_seal', None)
     if set(value) - (common | (query if direction == 'QUERY_TO_FRAPPE' else mutation)):
         raise MappingDraftExchangeError('Portable content contains unsupported or local-only configuration.')
+    if value.get('query_adapter'):
+        from hero_integration.services.query_mapping import validate_query_adapter
+        validate_query_adapter(value['query_adapter'])
+    if value.get('usage') is not None and value['usage'] != 'SEND_TO_HERO':
+        raise MappingDraftExchangeError('Unsupported mutation mapping usage.')
+    if 'send_options' in value and (value.get('usage') != 'SEND_TO_HERO' or not isinstance(value['send_options'], dict)):
+        raise MappingDraftExchangeError('Send options require an explicit Send to HERO mapping.')
     from hero_integration.services.personal_mapping_content import EDITABLE
     for side in ('source', 'target'):
         if side in value and (not isinstance(value[side], dict) or set(value[side]) - EDITABLE[side]
@@ -209,7 +220,7 @@ def _portable_content(content, direction):
         raise MappingDraftExchangeError('Portable transformation is unsupported.')
     if value.get('additional_mappings'):
         from hero_integration.services.personal_mapping_content import validate_additional_mappings
-        validate_additional_mappings(value['additional_mappings'])
+        validate_additional_mappings(value['additional_mappings'], query_adapter=bool(value.get('query_adapter')))
     if direction == 'QUERY_TO_FRAPPE':
         ids = references(value)
         rules = value.get('field_rules', {})
@@ -224,7 +235,7 @@ def _portable_content(content, direction):
             allowed_relations = {('Customer Home Phone', 'Customer Primary Contact'),
                 ('Customer Relation', 'HERO Customer Link'), ('Confirmed Company', 'Confirmed ERPNext Company'),
                 ('Native Binding', 'Customer Primary Address')}
-            if relation and (rule.get('purpose'), relation) not in allowed_relations:
+            if relation and not value.get('query_adapter') and (rule.get('purpose'), relation) not in allowed_relations:
                 raise MappingDraftExchangeError('Portable relationship is not supported by a reviewed resolver.')
     return value
 
@@ -243,6 +254,13 @@ def _portable_snapshot(source_instance, snapshot_name, direction, *, for_update=
 
 
 def _validate_portable_query(content, operation, schema):
+    if content.get('query_adapter'):
+        from hero_integration.services.query_mapping import source_type, validate_query_adapter
+        validate_query_adapter(content['query_adapter'])
+        for rule in content.get('field_rules', {}).values():
+            if source_type(schema, operation, rule['source_path']) != rule['source_type']:
+                raise MappingDraftExchangeError('Portable Query field type differs from the target schema.')
+        return
     from hero_integration.services.graphql_graph import normalize_schema
     normalized = normalize_schema(schema)
     types = {item.get('name'): item for item in normalized.get('types', [])}
@@ -456,6 +474,8 @@ def _export_portable(source_instance, snapshot_name, direction):
                 rules = content.get('field_rules', {})
                 if set(rules) != set(rule_ids):
                     raise MappingDraftExchangeError('Unselected field-rule snapshots require reconciliation before export.')
+                from hero_integration.services.personal_mapping_content import remap_query_options
+                remap_query_options(content, rule_ids)
                 content['mapping_definition_ids'] = [rule_ids[identity] for identity in references(content)]
                 content['field_rules'] = {rule_ids[identity]: rule for identity, rule in rules.items()}
             content.pop('field_rule_bases', None)
@@ -612,6 +632,8 @@ def _portable_existing_candidate(item, local_id, source_instance, snapshot_name,
             remapping[identity] = target_id
             rules[target_id] = incoming['field_rules'][identity]
         if remapping:
+            from hero_integration.services.personal_mapping_content import remap_query_options
+            remap_query_options(incoming, remapping)
             incoming['mapping_definition_ids'] = [remapping[identity] for identity in references(incoming)]
             incoming['field_rules'], incoming['field_rule_bases'] = rules, bases
         row = {'name': active.name, 'mapping_revision': active.revision,
@@ -1137,9 +1159,15 @@ def _prepare_item(item, row, local_content, schema, *, portable=False):
             if storage._definition.direction == 'FRAPPE_TO_MUTATION':
                 assignments.append(prepared['content'])
             if assignments:
-                prepared.setdefault('metadata', {})['assignments'] = _assignment_metadata(storage, assignments)
+                prepared.setdefault('metadata', {})['assignments'] = _assignment_metadata(storage, assignments, content=prepared['content'])
             if storage._definition.direction == 'FRAPPE_TO_MUTATION':
-                if portable:
+                if prepared['content'].get('usage') == 'SEND_TO_HERO':
+                    action = prepared['content']
+                    normalized = storage._validate_configured_send(action, storage._publication_snapshot[1])
+                    if normalized['target']['operation'] != storage._definition.operation_name:
+                        raise MappingDraftError('Imported Send mapping has a different mutation operation.')
+                    prepared.setdefault('metadata', {})['primary_action'] = {'mapping': normalized, 'graphql_type': normalized['target']['graphql_type']}
+                elif portable:
                     from hero_integration.api import _mapping_values_preserved
                     from hero_integration.services.frappe_writeback import normalise_draft_mapping, draft_source_type_compatible
                     action = {key: prepared['content'][key] for key in ('version', 'source', 'target', 'transformation')
@@ -1158,7 +1186,7 @@ def _prepare_item(item, row, local_content, schema, *, portable=False):
                     prepared['metadata']['primary_action'] = validate_exchange_action(
                         prepared['content'], storage._publication_snapshot[1], storage._definition.operation_name)
             if prepared['content'].get('additional_mappings'):
-                storage._validate_additional_mappings(prepared['content']['additional_mappings'])
+                storage._validate_additional_mappings(prepared['content']['additional_mappings'], content=prepared['content'])
             if (prepared['content'].get('field_contexts') or (isinstance(prepared['content'].get('source'), dict) and
                     ({'object_type', 'schema_context'} & set(prepared['content']['source'])))):
                 storage._validate_object_contexts(prepared['content'])
@@ -1213,6 +1241,11 @@ def _rule_target_metadata(content, schema):
                     raise MappingDraftExchangeError('Declared rule target metadata differs from the schema contract.')
         selected = [dict(row) for row in list(fields) + list(custom)
                     if row['fieldname'] in targets[doctype] and (doctype, row['fieldname']) not in planned]
+        if 'creation' in targets[doctype] and not any(row['fieldname'] == 'creation' for row in selected):
+            from hero_integration.services.frappe_mapping_catalog import query_standard_target
+            standard = query_standard_target(doctype, 'creation', bool(content.get('query_adapter')))
+            if standard:
+                selected.append(dict(standard))
         overlays = [dict(row) for row in setters if row['doctype_or_field'] == 'DocType'
                     or (row['field_name'] in targets[doctype] and (doctype, row['field_name']) not in planned)]
         result[doctype] = {'doctype': dict(docs[0]), 'fields': sorted(selected, key=lambda x: x['name']),
@@ -1253,7 +1286,7 @@ def _initial_locked_content(content, storage):
     return bounded(value)
 
 
-def _assignment_metadata(storage, mappings):
+def _assignment_metadata(storage, mappings, content=None):
     from hero_integration.api import _validated_snapshot
     snapshot, schema = _validated_snapshot(storage._definition.schema_snapshot, for_update=True)
     storage._publication_snapshot = (snapshot, schema)
@@ -1279,6 +1312,11 @@ def _assignment_metadata(storage, mappings):
         if len(doc) != 1:
             raise MappingDraftExchangeError('Assigned Frappe DocType no longer exists.')
         selected = [dict(row) for row in list(docfields) + list(custom) if row['fieldname'] in targets[doctype]]
+        if 'creation' in targets[doctype] and not any(row['fieldname'] == 'creation' for row in selected):
+            from hero_integration.services.frappe_mapping_catalog import query_standard_target
+            standard = query_standard_target(doctype, 'creation', bool((content or {}).get('query_adapter')))
+            if standard:
+                selected.append(dict(standard))
         doctype_properties = {'module', 'custom', 'istable', 'issingle', 'is_virtual'}
         field_properties = {'fieldtype', 'options', 'reqd', 'read_only', 'hidden', 'permlevel', 'is_virtual'}
         overlays = [dict(row) for row in setters if
@@ -1299,7 +1337,9 @@ def _assignment_metadata(storage, mappings):
                 or any(int(meta.get(key) or 0) != int(current_doctype.get(key) or 0)
                        for key in ('custom', 'istable', 'issingle', 'is_virtual'))):
             raise MappingDraftExchangeError('Cached Frappe DocType metadata is stale; retry the import.')
-        field = meta.get_field(side['field'])
+        from hero_integration.services.frappe_mapping_catalog import query_standard_target
+        field = meta.get_field(side['field']) or query_standard_target(
+            side['doctype'], side['field'], bool((content or {}).get('query_adapter')))
         if field is None:
             raise MappingDraftExchangeError('Assigned Frappe field no longer exists.')
         current = [row for row in locked[side['doctype']]['fields'] if row['fieldname'] == side['field']]

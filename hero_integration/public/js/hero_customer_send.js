@@ -1,4 +1,4 @@
-// Send imported Customer data to HERO, excluding the customer number.
+// Send through the configured native Mutation mapping.
 (() => {
 	"use strict";
 

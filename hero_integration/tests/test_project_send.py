@@ -1,4 +1,4 @@
-"""Send to HERO: Notes and Phase of an imported Project."""
+"""Historical fixed-adapter compatibility tests; public Send uses grouped Mutation mappings."""
 
 from __future__ import annotations
 
@@ -100,7 +100,7 @@ class TestProjectSend(unittest.TestCase):
     def test_preview_shows_local_notes_and_a_chosen_phase(self):
         fake, hero = _Frappe(local_notes="New note"), _Hero()
         self._env(fake)
-        result = ps.preview("PV-1-H", phase_id=2, client=hero)
+        result = ps.legacy_preview("PV-1-H", phase_id=2, client=hero)
         self.assertEqual([p["name"] for p in result["phases"]], ["Angebot", "Montage"])  # active, HERO order
         self.assertEqual([c["label"] for c in result["changes"]], ["Notes", "Phase"])
         self.assertEqual((result["changes"][1]["hero"], result["changes"][1]["new"]), ("Angebot", "Montage"))
@@ -110,23 +110,23 @@ class TestProjectSend(unittest.TestCase):
     def test_hero_change_since_import_is_a_conflict_not_overwritten(self):
         fake, hero = _Frappe(local_notes="Local", baseline_notes="Old note"), _Hero(notes="Changed in HERO")
         self._env(fake)
-        result = ps.preview("PV-1-H", client=hero)
+        result = ps.legacy_preview("PV-1-H", client=hero)
         self.assertEqual(result["conflicts"][0]["label"], "Notes")
         self.assertFalse(result["can_send"])
 
     def test_only_allowed_roles_and_known_phases(self):
         self._env(_Frappe(roles=("Projects User",)))
         with self.assertRaises(ps.ProjectSendError):
-            ps.preview("PV-1-H", client=_Hero())
+            ps.legacy_preview("PV-1-H", client=_Hero())
         self._env(_Frappe())
         with self.assertRaises(ps.ProjectSendError):
-            ps.preview("PV-1-H", phase_id=3, client=_Hero())  # inactive step
+            ps.legacy_preview("PV-1-H", phase_id=3, client=_Hero())  # inactive step
 
     def test_send_once_verifies_and_advances_the_baseline(self):
         fake, hero = _Frappe(local_notes="New note"), _Hero()
         audits = self._env(fake)
-        fingerprint = ps.preview("PV-1-H", phase_id=2, client=hero)["fingerprint"]
-        result = ps.send("PV-1-H", 2, fingerprint, 1, client=hero, mutation_client=hero)
+        fingerprint = ps.legacy_preview("PV-1-H", phase_id=2, client=hero)["fingerprint"]
+        result = ps.legacy_send("PV-1-H", 2, fingerprint, 1, client=hero, mutation_client=hero)
         self.assertEqual(result["changes"], ["Notes", "Phase"])
         self.assertEqual(hero.mutations, [{"project_match": {"id": 501, "partner_notes": "New note",
                                                              "current_project_match_status": {"step_id": 2}}}])
@@ -141,19 +141,19 @@ class TestProjectSend(unittest.TestCase):
         hero = _Hero()
         self._env(_Frappe(local_notes="New note"), enabled=False)
         with self.assertRaises(RuntimeError):
-            ps.send("PV-1-H", None, "x", 1, client=hero, mutation_client=hero)
+            ps.legacy_send("PV-1-H", None, "x", 1, client=hero, mutation_client=hero)
         self._env(_Frappe(local_notes="New note"))
         with self.assertRaises(ps.ProjectSendError):
-            ps.send("PV-1-H", None, "stale", 1, client=hero, mutation_client=hero)
+            ps.legacy_send("PV-1-H", None, "stale", 1, client=hero, mutation_client=hero)
         self.assertEqual(hero.mutations, [])
 
     def test_unconfirmed_result_is_reported_without_retry(self):
         fake, hero = _Frappe(local_notes="New note"), _Hero()
         audits = self._env(fake)
-        fingerprint = ps.preview("PV-1-H", client=hero)["fingerprint"]
+        fingerprint = ps.legacy_preview("PV-1-H", client=hero)["fingerprint"]
         broken = SimpleNamespace(execute_once=lambda document, variables: {"update_project_match": {"id": 999}})
         with self.assertRaises(ps.ProjectSendError):
-            ps.send("PV-1-H", None, fingerprint, 1, client=hero, mutation_client=broken)
+            ps.legacy_send("PV-1-H", None, fingerprint, 1, client=hero, mutation_client=broken)
         self.assertEqual(audits, [["reserved"], ["Failed"]])
         self.assertFalse(any(doctype == "Project" for doctype, _ in fake.set_values))
 

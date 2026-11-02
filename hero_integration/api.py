@@ -2157,7 +2157,12 @@ def graphql_mapping_save(
         )
 
         try:
-            if activate_requested:
+            if parsed.get('usage') == 'SEND_TO_HERO':
+                from hero_integration.services.mapped_send import normalise_send_mapping
+                from hero_integration.services.frappe_mapping_catalog import validate_send_mapping_sources
+                parsed = normalise_send_mapping(parsed, schema)
+                validate_send_mapping_sources(parsed, _FrappePickerMetadata())
+            elif activate_requested:
                 parsed = normalise_mapping(parsed, schema)
             else:
                 try:
@@ -2187,6 +2192,11 @@ def graphql_mapping_save(
             for row in rows:
                 try:
                     stored = json.loads(row.mapping_json, object_pairs_hook=_unique_mapping_object)
+                    if isinstance(stored, dict) and stored.get('usage') != parsed.get('usage'):
+                        continue
+                    if (isinstance(stored, dict) and parsed.get('usage') == 'SEND_TO_HERO'
+                            and stored.get('send_options', {}).get('mode') != parsed['send_options']['mode']):
+                        continue
                     stored_source = stored.get("source") if isinstance(stored, dict) else None
                 except (TypeError, ValueError):
                     stored_source = None
@@ -2218,10 +2228,14 @@ def graphql_mapping_save(
     if mapping_name and direction == "FRAPPE_TO_MUTATION" and item.direction == direction:
         try:
             stored_mapping = json.loads(item.mapping_json, object_pairs_hook=_unique_mapping_object)
-            try:
-                normalized_stored = normalise_mapping(stored_mapping, schema)
-            except WritebackContractError:
-                normalized_stored = normalise_draft_mapping(stored_mapping, schema)
+            if stored_mapping.get('usage') == 'SEND_TO_HERO':
+                from hero_integration.services.mapped_send import normalise_send_mapping
+                normalized_stored = normalise_send_mapping(stored_mapping, schema)
+            else:
+                try:
+                    normalized_stored = normalise_mapping(stored_mapping, schema)
+                except WritebackContractError:
+                    normalized_stored = normalise_draft_mapping(stored_mapping, schema)
         except (TypeError, ValueError, WritebackContractError):
             frappe.throw(frappe._("Existing writeback mapping cannot be safely replaced; preserve its parameters."))
         if not _mapping_values_preserved(stored_mapping, normalized_stored):
@@ -2966,12 +2980,14 @@ def mapping_source_picker(snapshot_name: str, operation: str, search: str = "") 
 
 
 @frappe.whitelist()
-def mapping_target_catalog(app_name: str = "", search: str = "") -> dict[str, object]:
+def mapping_target_catalog(app_name: str = "", search: str = "", adapter_version: int | str = 0) -> dict[str, object]:
     """Discover installed-app targets without granting an external-app write path."""
     frappe.only_for("System Manager")
-    from hero_integration.services.frappe_mapping_catalog import catalog
-
-    return catalog(_FrappePickerMetadata(), app_name, search)
+    from hero_integration.services.frappe_mapping_catalog import catalog, query_target_catalog
+    if str(adapter_version) not in {'0', '2'}:
+        frappe.throw(frappe._('Unsupported Query adapter version.'))
+    reader = query_target_catalog if str(adapter_version) == '2' else catalog
+    return reader(_FrappePickerMetadata(), app_name, search)
 
 
 @frappe.whitelist(methods=["GET"])
@@ -2997,12 +3013,14 @@ def mapping_target_catalog_page(
 
 @frappe.whitelist()
 def writeback_mapper_catalog(
-    snapshot_name: str, app_name: str = "", source_doctype: str = "",
+    snapshot_name: str, app_name: str = "", source_doctype: str = "", usage: str = "",
 ) -> dict[str, object]:
     """Return independent Frappe source pickers without widening writeback."""
     frappe.only_for("System Manager")
     snapshot, schema = _validated_snapshot(snapshot_name)
-    from hero_integration.services.frappe_mapping_catalog import doctypes as catalog_doctypes, writeback_fields
+    from hero_integration.services.frappe_mapping_catalog import doctypes as catalog_doctypes, writeback_fields, send_source_fields
+    if usage not in {'', 'SEND_TO_HERO'}:
+        frappe.throw(frappe._('Unsupported mutation mapping usage.'))
     from hero_integration.services.frappe_writeback import DEFINITIONS, WritebackContractError, reviewed_input_target
 
     metadata = _FrappePickerMetadata()
@@ -3014,13 +3032,14 @@ def writeback_mapper_catalog(
         frappe.throw(frappe._("The selected source is not available."), frappe.PermissionError)
     doctypes = [item.__dict__ for item in candidates]
     source_fields: list[dict[str, object]] = []
-    source_candidates = (field for field in writeback_fields(metadata, targets=candidates) if field.selectable)
+    source_reader = send_source_fields if usage == 'SEND_TO_HERO' else writeback_fields
+    source_candidates = (field for field in source_reader(metadata, targets=candidates) if field.selectable)
     for field in source_candidates:
         payload = field.__dict__.copy()
         doctype = field.doctype
         fieldname = field.path
         try:
-            if doctype in DEFINITIONS and fieldname in DEFINITIONS[doctype].fields:
+            if usage != 'SEND_TO_HERO' and doctype in DEFINITIONS and fieldname in DEFINITIONS[doctype].fields:
                 payload["target"] = reviewed_input_target(doctype, fieldname, schema)
         except WritebackContractError as error:
             payload["selectable"] = False
