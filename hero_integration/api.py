@@ -3713,7 +3713,7 @@ def customer_send(customer: str, fingerprint: str, confirmed: int | str = 0) -> 
 
 
 @frappe.whitelist()
-def config_export(snapshot_name: str) -> dict[str, str]:
+def config_export(snapshot_name: str = "") -> dict[str, str]:
     """Complete package: HERO schema snapshot, settings, field mappings, HERO fields/DocTypes, read services.
 
     Never included: HERO URL/token, allowed hosts, notification recipients, mutation/deletion switches, data.
@@ -3721,7 +3721,8 @@ def config_export(snapshot_name: str) -> dict[str, str]:
     frappe.only_for("System Manager")
     from hero_integration.services.config_exchange import export_config
 
-    return {"filename": "hero-integration-config.json", "content": export_config(snapshot_name, _configured_source_instance())}
+    return {"filename": "hero-integration-config.json",
+            "content": export_config(snapshot_name or _config_snapshot(), _configured_source_instance())}
 
 
 @frappe.whitelist(methods=["POST"])

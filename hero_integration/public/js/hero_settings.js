@@ -234,7 +234,25 @@
             column("hero-settings-actions", mutationSave)
         );
 
-        root.append(header, status, connection, sources, securitySection, testingCard, saveBar, pollingCard, mutationCard);
+        // Complete configuration package: export here, import and activate on another site in one step.
+        const packageStatus = node("div", "hero-settings-status", "");
+        packageStatus.setAttribute("role", "status");
+        const packageExport = node("button", "hero-page-button hero-settings-button", "Export configuration package");
+        packageExport.type = "button";
+        const packageFile = document.createElement("input");
+        packageFile.type = "file";
+        packageFile.accept = "application/json,.json";
+        packageFile.className = "hero-settings-file";
+        packageFile.setAttribute("aria-label", uiText("Configuration package file"));
+        const packageCard = section("Configuration package", "package",
+            "One file with the whole HERO setup: schema snapshot, settings, field mappings with their HERO fields and DocTypes, and the read services. Importing it on another site activates everything in one step.",
+            column("hero-settings-aside",
+                node("p", "", "Never included: HERO URL and API token, allowed hosts, notification recipients, the mutation and deletion switches, testing mode and data. The mutation switch stays off after an import.")),
+            field("Import package", packageFile, "Choose an exported file. You see a preview and confirm once."),
+            column("hero-settings-actions", packageExport, packageStatus)
+        );
+
+        root.append(header, status, connection, sources, securitySection, testingCard, saveBar, pollingCard, packageCard, mutationCard);
         workspace.replaceChildren(root);
 
         let destroyed = false, loaded = null;
@@ -458,6 +476,57 @@
         refresh.addEventListener("click", load);
         save.addEventListener("click", persist);
         testingSave.addEventListener("click", persistTesting);
+
+        const showPackageState = (text, state = "") => {
+            packageStatus.textContent = text;
+            packageStatus.dataset.state = state;
+        };
+        packageExport.addEventListener("click", async () => {
+            showPackageState(uiText("Exporting configuration package …"));
+            try {
+                const result = await platform.api("config_export", {});
+                const link = document.createElement("a");
+                link.href = URL.createObjectURL(new Blob([result.content], {type: "application/json"}));
+                link.download = result.filename;
+                document.body.append(link); link.click(); link.remove();
+                setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+                showPackageState(uiText("Configuration package exported."), "success");
+            } catch (error) {
+                showPackageState(`${uiText("Export failed.")} ${errorMessage(error)}`, "error");
+            }
+        });
+        packageFile.addEventListener("change", async () => {
+            const file = packageFile.files?.[0];
+            packageFile.value = "";
+            if (!file) return;
+            showPackageState(uiText("Checking package …"));
+            try {
+                const payload = await file.text();
+                const preview = await platform.api("config_import_preview", {payload_json: payload});
+                const counts = preview.mapping_package
+                    ? Object.entries(preview.mapping_package).filter(([, count]) => count).map(([state, count]) => `${state} ${count}`).join(", ")
+                    : uiText("checked during import");
+                const services = preview.read_services.map((row) => `${row.target_operation}: ${row.state}`).join(", ");
+                const settings = preview.settings.length ? preview.settings.join(", ") : uiText("none");
+                const summary = `${uiText("Schema snapshot")}: ${preview.snapshot}. ${uiText("Mappings")}: ${counts}. ` +
+                    `${uiText("Read services")}: ${services}. ${uiText("Changed settings")}: ${settings}.`;
+                showPackageState(summary);
+                frappe.confirm(`${summary}<br><br>${uiText("Import and activate this configuration now?")}`, async () => {
+                    showPackageState(uiText("Importing …"));
+                    try {
+                        const result = await platform.api("config_import", {payload_json: payload, confirmed: 1});
+                        const approved = result.read_services.filter((row) => row.state !== "Unchanged").length;
+                        showPackageState(`${uiText("Imported")}: ${uiText("snapshot")} ${result.snapshot}, ${result.adopted} ${uiText("mapping entries")}, ` +
+                            `${result.settings.length} ${uiText("settings")}, ${approved} ${uiText("read services approved")}.`, "success");
+                        load();
+                    } catch (error) {
+                        showPackageState(`${uiText("Import failed; the configuration was not activated.")} ${errorMessage(error)}`, "error");
+                    }
+                });
+            } catch (error) {
+                showPackageState(`${uiText("The file cannot be imported.")} ${errorMessage(error)}`, "error");
+            }
+        });
         reset.addEventListener("click", resetForm);
         mutationSave.addEventListener("click", persistMutationSetting);
         await load();

@@ -14,7 +14,7 @@
 .hero-integration-card h3 { font-size: 14px; margin: 0 0 10px; }
 .hero-integration-card p { margin: 5px 0; overflow-wrap: anywhere; }
 .hero-integration-metric { font-size: 28px; font-weight: 700; }
-.hero-integration-muted, .hero-integration-fingerprint { color: var(--pc-text, #000000); font-size: 12px; overflow-wrap: anywhere; }
+.hero-integration-muted, .hero-integration-fingerprint { color: var(--pc-textSecondary, #525a63); font-size: 12px; overflow-wrap: anywhere; }
 .hero-integration-section-heading { font-size: 16px; margin: 22px 0 10px; }
 .hero-integration-navigation { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
 .hero-integration-nav-card { align-items: flex-start; background: var(--card-bg, #fff); border: 1px solid var(--border-color, #dfe3e8); border-radius: 8px; color: inherit; cursor: pointer; display: grid; gap: 6px; padding: 16px; text-align: left; }
@@ -63,7 +63,7 @@
 .hero-integration-ui .hero-mapping-pane h3, .hero-integration-ui .hero-mapping-section h3 { margin-top: 0; }
 .hero-mapping-field-list { display: grid; gap: 6px; margin-top: 10px; max-height: 340px; overflow: auto; }
 .hero-mapping-field { display: flex; justify-content: space-between; text-align: left; white-space: normal; width: 100%; }
-.hero-mapping-field-meta { color: var(--pc-text, #000000); font-size: 12px; margin-left: 8px; white-space: nowrap; }
+.hero-mapping-field-meta { color: var(--pc-textSecondary, #525a63); font-size: 12px; margin-left: 8px; white-space: nowrap; }
 .hero-integration-ui .hero-mapping-picker-host { margin-top: 10px; }
 .hero-integration-ui .hero-mapping-picker { min-height: 180px; }
 .hero-integration-ui .hero-mapping-field-details { margin-top: 10px; }

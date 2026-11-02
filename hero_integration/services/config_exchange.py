@@ -200,7 +200,6 @@ def import_config(snapshot_name: str, payload_json: str, source_instance: str = 
         raise ConfigExchangeError("A read query does not fit the target HERO schema: " + "; ".join(invalid))
     selected = _selection(package)
     settings = _settings_changes(payload)
-    _apply_settings(settings)
     adopted = adoption.start(snapshot_name, package_json, selected, package["preview_revision"]) if selected else None
     results = []
     created: dict[str, str] = {}
@@ -212,6 +211,7 @@ def import_config(snapshot_name: str, payload_json: str, source_instance: str = 
         service = _import_service(snapshot_name, item, source_instance, created)
         created[item["target_operation"]] = service
         results.append({"target_operation": item["target_operation"], "state": "Approved", "service": service})
+    _apply_settings(settings)  # last: settings change only after mappings and read services succeeded
     return {"snapshot": snapshot_state, "snapshot_name": snapshot_name, "settings": sorted(settings),
             "adopted": len(selected), "adoption": (adopted or {}).get("adoption_name"), "read_services": results}
 

@@ -5,25 +5,27 @@
     --pc-canvas: var(--bg-color, #f4f5f6);
     --pc-surface: var(--card-bg, #ffffff);
     --pc-surfaceRaised: var(--control-bg, #f0f1f2);
-    --pc-surfaceHover: #e6e8ea;
+    --pc-surfaceHover: var(--fg-hover-color, #e6e8ea);
     --pc-border: var(--border-color, #c7cdd3);
     --pc-controlBorder: var(--border-color, #65717d);
-    /* HERO text is intentionally monochrome; borders and surfaces carry state. */
-    --hero-text: #000000;
+    /* Light theme: Frappe's own text colours, with muted secondary text. */
+    --hero-text: var(--text-color, #1f272e);
     --pc-text: var(--hero-text);
-    --pc-textSecondary: var(--hero-text);
+    --pc-textSecondary: var(--text-muted, #525a63);
     --pc-dangerText: var(--hero-text);
     --pc-primary: var(--primary, #2490ef);
     --pc-primaryHover: #1679c7;
     --pc-focus: #2490ef;
     --pc-diagramText: var(--hero-text);
     --pc-diagramBorder: #697680;
-    /* Keep editable HERO controls distinct from their card in every theme. */
-    --hero-field-bg: #f4f5f6;
-    --hero-field-border: #65717d;
-    --hero-field-readonly-bg: #e7e9eb;
-    --hero-field-disabled-bg: #dfe3e6;
-    --hero-field-placeholder: var(--hero-text);
+    /* Light theme: Frappe's control look (1px border, no extra ring). */
+    --hero-field-bg: var(--control-bg, #f4f5f6);
+    --hero-field-border: var(--border-color, #d1d8dd);
+    --hero-field-border-width: 1px;
+    --hero-field-ring: 0 0 0 0 transparent;
+    --hero-field-readonly-bg: var(--disabled-control-bg, #e7e9eb);
+    --hero-field-disabled-bg: var(--disabled-control-bg, #dfe3e6);
+    --hero-field-placeholder: var(--text-light, #7c8790);
     --hero-field-error: #b42318;
     /* Syntax and state colours for GraphQL editors and results (contrast >= 4.5:1 on HERO field surfaces). */
     --hero-syntax-keyword: #cf222e;
@@ -48,9 +50,13 @@
 }
 
 :is(html[data-theme="dark"], body[data-theme="dark"], .theme-dark) :is(.admin-hero-tool-host, .admin-compat-modal, .ht-focus-dialog, .hero-integration-ui) {
+    /* Dark theme keeps its high-contrast, monochrome look. */
     --hero-text: #ffffff;
+    --pc-textSecondary: var(--hero-text);
     --hero-field-bg: #30363d;
     --hero-field-border: #aab3bb;
+    --hero-field-border-width: 2px;
+    --hero-field-ring: inset 0 0 0 1px var(--hero-field-border);
     --hero-field-readonly-bg: #272d33;
     --hero-field-disabled-bg: #20252a;
     --hero-field-placeholder: var(--hero-text);
@@ -75,7 +81,7 @@
 
 /* Frappe applies data-theme during automatic-mode changes; no OS-only override. */
 :is(html[data-theme="light"], body[data-theme="light"], .theme-light) :is(.admin-hero-tool-host, .admin-compat-modal, .ht-focus-dialog, .hero-integration-ui) {
-    --hero-text: #000000;
+    --hero-text: var(--text-color, #1f272e);
 }
 
 .admin-workspace.admin-workspace--tool {
@@ -158,12 +164,12 @@
 .hero-integration-ui .form-control {
     width: 100%;
     min-height: 34px;
-    border: 2px solid var(--hero-field-border) !important;
+    border: var(--hero-field-border-width) solid var(--hero-field-border) !important;
     border-radius: 6px;
     padding: 6px 8px;
     background-color: var(--hero-field-bg) !important;
     color: var(--pc-text) !important;
-    box-shadow: inset 0 0 0 1px var(--hero-field-border);
+    box-shadow: var(--hero-field-ring);
 }
 
 .admin-hero-tool-host :is(.form-control, .hero-settings-input, .ht-editor),
@@ -171,9 +177,9 @@
 .ht-focus-dialog :is(input:not([type="button"]):not([type="checkbox"]):not([type="file"]):not([type="hidden"]):not([type="image"]):not([type="radio"]):not([type="reset"]):not([type="submit"]), select, textarea, .form-control, .hero-settings-input, .ht-editor),
 .hero-integration-ui :is(input:not([type="button"]):not([type="checkbox"]):not([type="file"]):not([type="hidden"]):not([type="image"]):not([type="radio"]):not([type="reset"]):not([type="submit"]), select, textarea, .form-control, .hero-settings-input, .ht-editor) {
     background-color: var(--hero-field-bg) !important;
-    border: 2px solid var(--hero-field-border) !important;
+    border: var(--hero-field-border-width) solid var(--hero-field-border) !important;
     color: var(--pc-text) !important;
-    box-shadow: inset 0 0 0 1px var(--hero-field-border);
+    box-shadow: var(--hero-field-ring);
 }
 
 .admin-hero-tool-host :is(input, textarea, .form-control, .hero-settings-input)::placeholder,

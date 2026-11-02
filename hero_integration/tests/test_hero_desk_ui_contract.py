@@ -180,7 +180,7 @@ class TestHeroDeskUiContract(unittest.TestCase):
     def test_workspace_theme_tokens_are_scoped_to_hero_hosts(self):
         source = ADAPTER_CSS.read_text()
         self.assertIn(".admin-hero-tool-host,\n.admin-compat-modal", source)
-        for token in ("--hero-text: #000000", "--pc-text:", "--pc-diagramText:", "--pc-diagramBorder:"):
+        for token in ("--hero-text: var(--text-color", "--pc-text:", "--pc-diagramText:", "--pc-diagramBorder:"):
             with self.subTest(token=token):
                 self.assertIn(token, source)
         self.assertNotIn(":root", source)
