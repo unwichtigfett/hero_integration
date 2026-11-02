@@ -2312,3 +2312,10 @@ Publish the saved personal draft? No HERO synchronization will be started.,Den g
 No open personal draft exists. Create one from the active definition?,Es gibt keinen offenen persönlichen Entwurf. Einen Entwurf aus der aktiven Definition erstellen?
 Discard your saved personal draft and all unsaved local changes? Saved revisions remain available.,Ihren gespeicherten persönlichen Entwurf und alle ungespeicherten lokalen Änderungen verwerfen? Gespeicherte Revisionen bleiben verfügbar.
 Discard your saved personal draft? Saved revisions remain available.,Ihren gespeicherten persönlichen Entwurf verwerfen? Gespeicherte Revisionen bleiben verfügbar.
+New,Neu
+Changed,Geändert
+Unchanged,Unverändert
+Invalid,Ungültig
+Invalid: {0},Ungültig: {0}
+selected,ausgewählt
+newest on this site,neuester auf dieser Site
