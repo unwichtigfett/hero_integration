@@ -7,6 +7,7 @@ from frappe.model.document import Document
 
 from hero_integration.services.graphql_graph import analyze_snapshot
 from hero_integration.services.mutation_draft import operation_kind, validate as validate_mutation_draft
+from hero_integration.services.localized_error import translate_error
 
 
 class HEROGraphQLService(Document):
@@ -25,8 +26,12 @@ class HEROGraphQLService(Document):
             self.execution_status = "Pending Approval"
             self.approved_service_revision = 0
             self.approved_mapping_revision = 0
-        if operation_kind(self.query_document) == "mutation":
-            detail = validate_mutation_draft(json.loads(snapshot.snapshot_json), self.query_document)
+        try:
+            kind = operation_kind(self.query_document)
+            detail = validate_mutation_draft(json.loads(snapshot.snapshot_json), self.query_document) if kind == "mutation" else None
+        except ValueError as error:
+            frappe.throw(translate_error(error, frappe._))
+        if kind == "mutation":
             # A mutation is local-only metadata.  Never preserve or derive an
             # executable/validated state from a direct DocType save.
             self.status = "Draft"

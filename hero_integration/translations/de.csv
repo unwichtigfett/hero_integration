@@ -2345,3 +2345,11 @@ HERO endpoint must use HTTPS and include a hostname.,Der HERO-Endpunkt muss HTTP
 HERO endpoint host is not allowed.,Der Host des HERO-Endpunkts ist nicht erlaubt.
 Schema refresh interval must be between {0} and {1} minutes.,Das Schema-Aktualisierungsintervall muss zwischen {0} und {1} Minuten liegen.
 mapping must be an object,Mapping muss ein Objekt sein
+The GraphQL document must be text.,Das GraphQL-Dokument muss Text sein.
+A draft must contain exactly one GraphQL operation.,Ein Entwurf muss genau eine GraphQL-Operation enthalten.
+A local mutation draft must contain exactly one mutation operation.,Ein lokaler Mutation-Entwurf muss genau eine Mutation-Operation enthalten.
+Mutation drafts must not contain literal values.,Mutation-Entwürfe dürfen keine Literalwerte enthalten.
+A local mutation draft must start with a GraphQL mutation operation.,Ein lokaler Mutation-Entwurf muss mit einer GraphQL-Mutation-Operation beginnen.
+The saved schema has no mutation root.,Das gespeicherte Schema hat keinen Mutation-Root.
+The mutation operation does not exist in the saved schema.,Die Mutation-Operation ist im gespeicherten Schema nicht vorhanden.
+The GraphQL document contains an unterminated string.,Das GraphQL-Dokument enthält eine nicht abgeschlossene Zeichenkette.

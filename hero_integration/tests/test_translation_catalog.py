@@ -226,6 +226,19 @@ class TestGermanCatalog(unittest.TestCase):
         self.assertTrue(effects)
         self.assertEqual(sorted((labels | effects) - messages.keys()), [])
 
+    def test_mutation_draft_errors_have_german_entries(self):
+        with (APP / "translations" / "de.csv").open(encoding="utf-8", newline="") as stream:
+            messages = dict(csv.reader(stream))
+        path = APP / "services" / "mutation_draft.py"
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        errors = [node.exc.args[0].value for node in ast.walk(tree)
+                  if isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call)
+                  and isinstance(node.exc.func, ast.Name) and node.exc.func.id == "ValueError"
+                  and node.exc.args and isinstance(node.exc.args[0], ast.Constant)
+                  and isinstance(node.exc.args[0].value, str)]
+        self.assertTrue(errors)
+        self.assertEqual([message for message in errors if message not in messages], [])
+
     def test_static_migration_results_have_german_entries(self):
         with (APP / "translations" / "de.csv").open(encoding="utf-8", newline="") as stream:
             messages = dict(csv.reader(stream))

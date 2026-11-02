@@ -33,3 +33,22 @@ class TestControllerTranslations(unittest.TestCase):
                 side_effect=GraphQLContractError(source, 'target_id')):
             with self.assertRaisesRegex(ValueError, r'^Ungültiger Vertrag: GraphQL-Variable \$target_id fehlt\.$'):
                 contract.HEROMutationContract.validate(document)
+
+    def test_mutation_draft_api_and_controller_translate_at_frappe_boundary(self):
+        from hero_integration import api
+        from hero_integration.hero_integration.doctype.hero_graphql_service import hero_graphql_service as service_controller
+        from hero_integration.services.mutation_draft import operation_kind
+
+        source = 'A draft must contain exactly one GraphQL operation.'
+        def throw(message): raise ValueError(message)
+        snapshot = SimpleNamespace(analysis_status='Validated', snapshot_json='{}', schema_fingerprint='fingerprint')
+        fake = SimpleNamespace(only_for=lambda role: None, get_doc=lambda *_args: snapshot,
+                               _=lambda message: 'Genau eine GraphQL-Operation ist erforderlich.' if message == source else message,
+                               throw=throw)
+        with patch.object(api, 'frappe', fake), self.assertRaisesRegex(ValueError, '^Genau eine GraphQL-Operation'):
+            api._mutation_draft_call(operation_kind, 'not an operation')
+        document = SimpleNamespace(schema_snapshot='SNAP-1', query_document='not an operation', is_new=lambda: True)
+        with patch.object(service_controller, 'frappe', fake), \
+             patch.object(service_controller, 'analyze_snapshot', return_value=SimpleNamespace(fingerprint='fingerprint')):
+            with self.assertRaisesRegex(ValueError, '^Genau eine GraphQL-Operation'):
+                service_controller.HEROGraphQLService.validate(document)

@@ -2399,10 +2399,10 @@ def _save_workspace_service(snapshot_name, payload, query_id, expected_revision,
             request = _workspace_generated_query(snapshot, payload['mapping_generation']).request
         payload['query'] = request.document
         payload['operation_name'] = request.operation_name
-    if document_kind(payload["query"]) != kind:
+    if _mutation_draft_call(document_kind, payload["query"]) != kind:
         frappe.throw(frappe._("The declared GraphQL service kind does not match the document."))
     if kind == "mutation":
-        validate_mutation_draft(schema, payload["query"])
+        _mutation_draft_call(validate_mutation_draft, schema, payload["query"])
     if query_id:
         service = frappe.get_doc("HERO GraphQL Service", query_id)
         if service.schema_snapshot != snapshot.name:
@@ -2435,6 +2435,14 @@ def workspace_service_validate(
     return result
 
 
+def _mutation_draft_call(function, *args):
+    """Translate local draft validation failures at the Frappe boundary."""
+    try:
+        return function(*args)
+    except ValueError as error:
+        frappe.throw(translate_error(error, frappe._))
+
+
 def _parse_variables_json(variables_json: str) -> dict[str, object]:
     try:
         values = json.loads(variables_json or "{}")
@@ -2449,7 +2457,7 @@ def _validated_variable_names(schema: dict[str, object], document: str, variable
     from hero_integration.services.mutation_draft import operation_kind as document_kind
 
     values = _parse_variables_json(variables_json)
-    if document_kind(document) == "mutation":
+    if _mutation_draft_call(document_kind, document) == "mutation":
         from hero_integration.services.graphql_contract import GraphQLContractError, parse_mutation, validate_mutation
 
         try:
@@ -2468,7 +2476,7 @@ def _workspace_service_validate(snapshot_name, payload_json, query_id, expected_
         if kind == "mutation":
             from hero_integration.services.mutation_draft import validate as validate_mutation_draft
 
-            detail = validate_mutation_draft(schema, payload["query"])
+            detail = _mutation_draft_call(validate_mutation_draft, schema, payload["query"])
             return {
                 "valid": True, "can_execute": False, "mutation": detail, "_document": payload["query"],
                 "reason": "Mutation drafts are local-only; HERO mutation execution is disabled.",
@@ -2481,9 +2489,9 @@ def _workspace_service_validate(snapshot_name, payload_json, query_id, expected_
         frappe.throw(frappe._("The saved service changed or belongs to another schema snapshot."))
     from hero_integration.services.mutation_draft import operation_kind as document_kind, validate as validate_mutation_draft
 
-    if document_kind(service.query_document) == "mutation":
+    if _mutation_draft_call(document_kind, service.query_document) == "mutation":
         _snapshot, schema = _validated_snapshot(snapshot_name)
-        detail = validate_mutation_draft(schema, service.query_document)
+        detail = _mutation_draft_call(validate_mutation_draft, schema, service.query_document)
         return {
             "valid": True, "can_execute": False, "mutation": detail, "query": _workspace_service(service.as_dict()),
             "_document": service.query_document,
@@ -2506,7 +2514,7 @@ def workspace_mutation_draft_validate(snapshot_name: str, payload_json: str, var
     snapshot, schema = _validated_snapshot(snapshot_name)
     from hero_integration.services.mutation_draft import validate
 
-    detail = validate(schema, payload["query"])
+    detail = _mutation_draft_call(validate, schema, payload["query"])
     extra = {"variables_validated": _validated_variable_names(schema, payload["query"], variables_json)} if variables_json else {}
     return {
         **extra,
@@ -2692,7 +2700,7 @@ def workspace_service_execute(snapshot_name: str, query_id: str, expected_revisi
         frappe.throw(frappe._("The saved service changed or belongs to another schema snapshot; reload it before executing."))
     from hero_integration.services.mutation_draft import operation_kind as document_kind
 
-    if document_kind(service.query_document) != "query":
+    if _mutation_draft_call(document_kind, service.query_document) != "query":
         frappe.throw(MUTATION_EXECUTION_DISABLED)
     if service.status != "Validated":
         frappe.throw(frappe._("Validate the saved query against its schema before executing it."))
@@ -2875,7 +2883,7 @@ def _workspace_service(service: dict[str, object]) -> dict[str, object]:
     return {
         "query_id": service["name"], "name": service["service_name"], "operation_name": service["operation_name"],
         "query": service["query_document"], "revision": int(service.get("service_revision") or 1),
-        "provenance": service.get("provenance") or "HERO Integration", "service_kind": operation_kind(service["query_document"]),
+        "provenance": service.get("provenance") or "HERO Integration", "service_kind": _mutation_draft_call(operation_kind, service["query_document"]),
         "status": service.get("status"), "schema_snapshot": service.get("schema_snapshot"),
         "schema_fingerprint": service.get("schema_fingerprint"),
         "validation_summary": service.get("validation_summary"), "variables": {},
