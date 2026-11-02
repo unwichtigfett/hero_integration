@@ -81,9 +81,9 @@
     }
 
     function errorMessage(error) {
-        return typeof error?.message === "string" && error.message
+        return uiText(typeof error?.message === "string" && error.message
             ? error.message
-            : "Please check the saved HERO settings and try again.";
+            : "Please check the saved HERO settings and try again.");
     }
 
     function toolLink(label, route, params = {}) {
