@@ -1,8 +1,10 @@
 # DocType Extensions
 
 **HERO Integration — four-domain Frappe/ERPNext v16 schema contract**  
-**Updated:** 23 October 2026  
+**Original four-domain package baseline:** 23 October 2026  
 **Applies to:** Customer, Project, Calendar Events and external Tasks
+
+> **Current source note (2 November 2026):** The installer-owned nine fields and additional 35-field package below are a historical baseline, **not** the complete current source-controlled DocType inventory. Verify installed metadata against the exact commit. Later native Task and assignment policy/state DocTypes are separate from the legacy external Task package.
 
 This document separates three schema sets: source-controlled app DocTypes, the **nine** installer-managed Custom Fields and the **35** additional Custom Field definitions in the four-domain mapping package. A completed review does not override an explicit schema-adoption, service-approval or business-data execution gate.
 
@@ -56,7 +58,11 @@ The app's lifecycle hooks install these nine definitions. No manual Customize Fo
 ### External Task
 
 - `HERO External Task` is a controlled external-data projection, **not** a local Frappe/ERPNext `Task` or executable workflow step.
-- The external `target_user_id` stays observational. It is not a User/Employee assignment. A reviewed Project relation requires canonical external-to-local resolution. Completion and deletion attributes stay observations, not transitions or deletions.
+- In the legacy external Task projection, `target_user_id` is observational, not a native assignment. Its Project link must be verified; completion and deletion remain observations.
+
+### Native Task intake — separate source path
+
+The current source also supports guarded native ERPNext `Task` creation and updates, using a confirmed source instance/Task identity, an approved read/mapping contract and the existing Integration Link. A subject is required; optional fields follow selected rules and conflict baselines. Task lifecycle and ToDo handling have further policy, Frappe-patch and runtime requirements. The legacy `HERO External Task` mapping does not activate native Task behavior.
 
 ## 3. Additional four-domain schema package
 
@@ -182,6 +188,6 @@ The deterministic offline fixture [`hero_mapping_fixture_v1.json`](../hero_integ
 - Check each new schema definition against `frappe.get_meta()`: field type, flags, link/table targets, permissions and module registration. After adoption, preview unchanged definitions again.
 - Run regression tests for Customer V1/V2 including M-099, Project/Company resolution, Event native fields and child tables, external Task projection, source identity, duplicates and rollback.
 - Keep Calendar at `Pending Approval` until its explicit timezone/all-day and runtime gates are complete. Keep scheduler/polling disabled. This document authorizes no live HERO requests and no production migration.
-- An adopted four-domain site configuration and the **GitHub `version-16` source checkout may differ**. Reconcile source, schema, runtime tests and the target Git revision before you declare this document a released implementation. The GitHub installer contains only the nine baseline fields. The three new Custom DocTypes and 35 Custom Fields depend on the separate schema-adoption flow.
+- An adopted four-domain site configuration and a checkout of `hero_int_1.0` or `hero_int_dev` can differ. Reconcile the exact Git commit, installed DocTypes, schema, active read service/mapping revisions and target tests before asserting release parity. The three additional Custom DocTypes and 35 Custom Fields still depend on their guarded schema-adoption flow.
 
 [Mapping matrix](mapping_matrix_1.0.md) · [Installation](../installation_guide_1.0.md)

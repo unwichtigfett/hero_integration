@@ -1,8 +1,10 @@
 # Mapping Matrix
 
 **HERO Integration — four-domain mapping contract (Frappe/ERPNext v16)**  
-**Updated:** 23 October 2026  
+**Reviewed baseline:** 23 October 2026  
 **Scope:** Customer, Project Match, Calendar Events and Tasks
+
+> **Status (2 November 2026):** The 76-definition count and service status table below reflect this **historical reviewed four-domain baseline**, not a fresh query of the active target site. The source now also supports native Task intake, generated Task Query drafts and Customer V3/V4 read contracts. These must not be confused with the external Task observation rows below. See [Feature matrix](feature_matrix_1.0.md) for current implementation status.
 
 This document specifies the reviewed source-to-target contracts, approved native projections and excluded mappings. A completed review or prepared guarded code does **not** approve blocked semantics. It does **not** activate inactive mapping definitions either.
 
@@ -14,7 +16,7 @@ This document specifies the reviewed source-to-target contracts, approved native
 | `HeroProjectMatches` | 21 | `Project` | Approved |
 | `HeroCalendarEvents` | 25 | `Event`, two HERO child tables | **Pending Approval** |
 | `HeroTasks` | 15 | `HERO External Task` | Approved |
-| **Unique active mapping definitions** | **76** | | |
+| **Unique definitions in this reviewed baseline** | **76** | | |
 
 Customer V1 has its own approval and selects 14 of the same 15 Customer definitions. V2 adds M-099. A run selects V1 or V2 explicitly; they are alternatives, **not** two automatic passes. Calendar mapping definitions can be Active while the Calendar *service* stays `Pending Approval`. Active definitions do not authorize a Calendar run. Scheduler and polling stay off.
 
@@ -176,6 +178,6 @@ The field-coverage audit contains **108 review positions**. This number differs 
 
 ## Release consistency
 
-This document describes the **accepted four-domain contract**. A clean Git checkout may lack the same runtime changes or adopted site metadata. Before a release, compare the Git revision with the target site's four-operation registry, DocType/controller definitions, mapping and service revisions, import preview and focused fixture regressions. **A committed Markdown file does not prove that the four-domain deployment is present.**
+This document records the **accepted four-domain contract at its original reviewed baseline**. It does not prove active site adoption of these definitions or describe every subsequent native adapter. A clean Git checkout may lack the same runtime changes or adopted site metadata. Before a release, compare the Git revision with the target site's four-operation registry, DocType/controller definitions, mapping and service revisions, import preview and focused fixture regressions. **A committed Markdown file does not prove that the four-domain deployment is present.**
 
 [Installation](../installation_guide_1.0.md) · [DocType extensions](doctype_extensions_1.0.md)

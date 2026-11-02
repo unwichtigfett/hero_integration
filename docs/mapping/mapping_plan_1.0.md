@@ -1,5 +1,7 @@
 # HERO ↔ ERPNext: Mapping-Plan
 
+> **Historical source-field proposal, not executable configuration.** This earlier inventory is retained to explain planning decisions. For current object/field/relationship contracts see [Mapping architecture](../mapping_1.0.md); for implemented capabilities, approval gates and missing runtime evidence see [Feature matrix](../feature_matrix_1.0.md) and [Synchronization handoff](../sync_handoff_1.0.md). No proposal row grants mapping activation or execution.
+
 Schema: HERO-Schemadatei `Schema.txt`, SHA-256 `7b6d360ba876aad51369c1fd7e6f82a6f3b1c4a683f2a7a4f347793101d33f7c`. Plattform: Frappe/ERPNext v16.
 
 Der Plan aktiviert nichts, importiert keine Daten und führt keine Mutation aus. Das Schema belegt Feldnamen und Typen. Es belegt keine Berechtigungen, kein Verhalten, keine Vollständigkeit und keine aktive Site-Konfiguration. Die Vorschläge ergänzen bestehende Verträge und ändern keine Freigaben.
