@@ -2365,3 +2365,12 @@ Reject this record? The {0} {1} is deleted and not imported again.,Diesen Datens
 {0} · {1}/{2} HERO requests · {3} records,{0} · {1}/{2} HERO-Anfragen · {3} Datensätze
 Results unavailable,Ergebnisse nicht verfügbar
 PENDING,Ausstehend
+HERO response omits the source of: {0}.,Die HERO-Antwort enthält keine Quelle für: {0}.
+HERO cleared values that the no-clear policy does not write: {0}.,"HERO hat Werte geleert, die aufgrund der Regel gegen das Leeren nicht geschrieben werden: {0}."
+Existing {0} has no stable HERO link.,Für das vorhandene Objekt {0} gibt es keinen stabilen HERO-Link.
+Awaits administrator approval: {0},Wartet auf Freigabe durch einen Administrator: {0}
+Event time or recurrence requires review; unrelated field changes were considered. {0},Terminzeit oder Wiederholung erfordert eine Prüfung; unabhängige Feldänderungen wurden berücksichtigt. {0}
+{0} Local changes were preserved: {1}.,{0} Lokale Änderungen wurden beibehalten: {1}.
+Non-conflicting HERO field changes were applied through native Frappe validation.,Konfliktfreie HERO-Feldänderungen wurden mit der regulären Frappe-Validierung übernommen.
+HERO and Frappe changed to the same values; the baseline was advanced without a write.,HERO und Frappe wurden auf dieselben Werte geändert; die Basis wurde ohne Schreibvorgang aktualisiert.
+Local field change observed; no outbound HERO mutation was prepared.,Lokale Feldänderung erkannt; es wurde keine ausgehende HERO-Mutation vorbereitet.
