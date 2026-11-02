@@ -49,23 +49,47 @@ The app installs:
 this. `bench migrate` creates missing records again (create-only). It does not
 reset later form changes.
 
-The install creates no field mappings and no read services. You get them from a
-**configuration file** exported on an existing site:
+The install creates no field mappings and no read services. You move them from
+an existing site (e.g. development) with **one package file**.
 
-- Mapping Editor → "Complete configuration" → *Export* (or
-  `bench --site <site> execute hero_integration.api.config_export_file --kwargs '{"path": "/tmp/hero-config.json"}'`).
-  The file holds the field mappings with their HERO Custom Fields/DocTypes and
-  the read service of every sync area. It never contains credentials or data.
-- On the new site, save the HERO connection and refresh the HERO schema once.
-  Without HERO access, use `hero_integration.api.snapshot_import_file` with an
-  introspection JSON file instead. Then import the file in the Mapping Editor
-  or with `hero_integration.api.config_import_file`. The default is a preview;
-  pass `"dry_run": 0` to import. The import adopts the mapping package. It then
-  creates, validates and approves the read services. HERO's schema changes
-  often. The import therefore binds the package to the new site's own snapshot
-  and checks it by content. Every field rule and every read query must fit that
-  schema, or nothing is imported. A second import of the same file changes
-  nothing.
+**What the package contains:** the HERO schema snapshot, the operational
+settings (sync areas, automatic sync, polling, schema refresh), the field
+mappings with their HERO Custom Fields and DocTypes, and the read service of
+every sync area.
+
+**What it never contains:** HERO URL and API token, allowed hosts, admin
+notification recipients, the mutation and deletion switches, testing mode,
+runtime status and any HERO or ERPNext data.
+
+**Export** on the source site: Mapping Editor → "Complete configuration" →
+*Export complete configuration*, or
+
+```bash
+bench --site <site> execute hero_integration.api.config_export_file --kwargs '{"path": "/tmp/hero-integration-config.json"}'
+```
+
+**Import** on the target site:
+
+1. Install the app (steps 1–4 above). If you want the automatic sync to run,
+   enter the HERO connection (URL, token) in the HERO settings first.
+2. Mapping Editor → "Complete configuration" → choose the file. The preview
+   lists the snapshot, the changed settings and the read services. Confirm once.
+   Or use
+
+   ```bash
+   bench --site <site> execute hero_integration.api.config_import_file --kwargs '{"path": "/tmp/hero-integration-config.json", "dry_run": 0}'
+   ```
+
+   (without `"dry_run": 0` it only previews).
+
+The import creates the snapshot from the file if the site has none for that
+schema. It then applies the settings, adopts the fields and mappings, and
+creates, validates and approves the read services. No HERO request is made.
+To bind the package to a different HERO schema snapshot of the target site, pass
+`"snapshot_name": "<snapshot>"` to `config_import_file`. The package is then
+checked by content: every field rule and read query must fit that schema, or
+nothing is activated. A second import of the
+same file changes nothing. The mutation switch stays off until you switch it on.
 
 Check an install with
 `bench --site <site> execute hero_integration.app_setup.verify_install`.

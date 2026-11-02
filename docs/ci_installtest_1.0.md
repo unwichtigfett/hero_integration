@@ -12,9 +12,9 @@ The test never contacts HERO. It runs these steps:
    fields, role, Project Types, salutations, DocTypes, mutation gate off.
 4. `migrate` twice; the install state must not change (create-only setup).
 5. `bench build --app hero_integration`, offline unit tests, `bench run-tests`.
-6. With `HERO_SCHEMA_FILE` (introspection JSON): offline snapshot. With
-   `HERO_CONFIG_FILE` (a configuration export, see below):
-   configuration preview, import, and a second preview that must report nothing new.
+6. With `HERO_CONFIG_FILE` (complete package export, see below): package preview,
+   import, and a second preview that must report nothing new. `HERO_SCHEMA_FILE`
+   (introspection JSON) is optional; the package brings its own snapshot.
 7. `uninstall-app hero_integration`.
 
 Image requirements: Python 3.14 (`requires-python >=3.14`), Node 20+, yarn,
@@ -22,18 +22,15 @@ git, MariaDB client, `frappe-bench` (pip). Services: MariaDB 11, Redis 7.
 The first `bench init` takes long on a small CI server. Use a prebuilt image
 with an initialised bench (Frappe + ERPNext); `WORKDIR` reuses `bench/`.
 
-Neither input file is part of the repository. Put both on the CI server in
-`/srv/hero-ci/`:
-
-- `hero-schema.json`: HERO's API description (a GraphQL introspection result).
-- `hero-integration-config.json`: a site's own configuration export (Mapping
-  Editor → "Complete configuration" → Export).
+The package file is not part of the repository. Put it on the CI server as
+`/srv/hero-ci/hero-integration-config.json` (Mapping Editor → "Complete
+configuration" → Export on a configured site). It contains the HERO schema
+snapshot, so no separate schema file is needed.
 
 The pipeline mounts `/srv/hero-ci` read-only at `/hero-ci`. Woodpecker only allows
-volume mounts for repositories marked as *trusted*. If a configured file is missing,
-the test fails. To run without the configuration import, remove `HERO_SCHEMA_FILE`
-and `HERO_CONFIG_FILE` from `.woodpecker.yml`; the log then says the import was
-skipped.
+volume mounts for repositories marked as *trusted*. If the configured file is
+missing, the test fails. To run without the package import, remove
+`HERO_CONFIG_FILE` from `.woodpecker.yml`; the log then says the import was skipped.
 
 The test also fails when fewer than `MIN_TESTS` (default 1000) offline or site tests
 run. A crash during test discovery therefore never counts as a pass.

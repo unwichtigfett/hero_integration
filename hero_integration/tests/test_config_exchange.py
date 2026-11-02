@@ -16,8 +16,15 @@ def entry(operation, **mapping):
             "mapping_operation_name": operation.lower(), "query": f"query {operation} {{ x }}", "mapping": mapping}
 
 
-def payload(*services):
-    return json.dumps({"format_version": cx.FORMAT_VERSION, "mapping_package": {}, "read_services": list(services)})
+SNAPSHOT = {"schema_fingerprint": "SOURCE", "schema": {"__schema": {"types": []}}}
+
+
+def payload(*services, settings=None, version=None):
+    if version == cx.FORMAT_V1:
+        return json.dumps({"format_version": version, "mapping_package": {}, "read_services": list(services)})
+    return json.dumps({"format_version": cx.FORMAT_VERSION, "schema_snapshot": SNAPSHOT,
+                       "settings": settings if settings is not None else {"polling_mode": "AUTO_SYNC"},
+                       "mapping_package": {}, "read_services": list(services)})
 
 
 class TestConfigParse(unittest.TestCase):
@@ -28,6 +35,30 @@ class TestConfigParse(unittest.TestCase):
                     payload({**entry("HeroTasks"), "api_token": "x"}), payload(entry("Unknown"))):
             with self.assertRaises(cx.ConfigExchangeError):
                 cx._parse(bad)
+
+
+class TestPackageContent(unittest.TestCase):
+    def test_version_1_files_still_import(self):
+        self.assertEqual(cx._parse(payload(entry("HeroCustomers"), version=cx.FORMAT_V1))["format_version"], cx.FORMAT_V1)
+
+    def test_credentials_and_safety_switches_are_never_accepted(self):
+        for key in ("hero_api_token", "hero_api_url", "allowed_hero_hosts", "admin_notification_recipients",
+                    "allow_graphql_mutation_execution", "allow_deletion"):
+            self.assertNotIn(key, cx.SETTINGS_KEYS)
+            with self.assertRaises(cx.ConfigExchangeError):
+                cx._parse(payload(entry("HeroCustomers"), settings={key: "x"}))
+
+    def test_the_files_snapshot_is_reused_or_created(self):
+        existing = SimpleNamespace(get_all=lambda *a, **k: ["SNAP-1"], session=SimpleNamespace(user="Administrator"))
+        with patch.object(cx, "frappe", existing):
+            self.assertEqual(cx._package_snapshot({"schema_snapshot": SNAPSHOT}, create=True), ("SNAP-1", "Unchanged"))
+        missing = SimpleNamespace(get_all=lambda *a, **k: [], session=SimpleNamespace(user="Administrator"))
+        with patch.object(cx, "frappe", missing):
+            self.assertEqual(cx._package_snapshot({"schema_snapshot": SNAPSHOT}, create=False), (None, "New"))
+            with patch("hero_integration.services.schema_refresh.capture_from_schema",
+                       return_value={"snapshot_name": "SNAP-2"}) as capture:
+                self.assertEqual(cx._package_snapshot({"schema_snapshot": SNAPSHOT}, create=True), ("SNAP-2", "Created"))
+            capture.assert_called_once_with(SNAPSHOT["schema"], "Administrator")
 
 
 class TestServiceReferences(unittest.TestCase):
@@ -69,6 +100,8 @@ class TestImportOrder(unittest.TestCase):
                    "preview_revision": "rev"}
         fake = SimpleNamespace(only_for=lambda role: None, db=SimpleNamespace(get_value=lambda *a: "TARGET"))
         with patch.object(cx, "frappe", fake), patch.object(cx, "_query_problem", return_value=None), \
+                patch.object(cx, "_resolve_snapshot", return_value=("SNAP", "Unchanged")), \
+                patch.object(cx, "_settings_changes", return_value={}), \
                 patch("hero_integration.services.schema_provisioning.preview_package", return_value=package), \
                 patch("hero_integration.services.adoption.start",
                       side_effect=lambda *args: calls.append(("adopt", args[2])) or {"adoption_name": "AD-1"}), \
@@ -84,6 +117,7 @@ class TestImportOrder(unittest.TestCase):
         package = {"items": [{"id": "rule-1", "state": "Conflict"}], "preview_revision": "rev"}
         with patch.object(cx, "frappe", SimpleNamespace(only_for=lambda role: None,
                                                        db=SimpleNamespace(get_value=lambda *a: "TARGET"))), \
+                patch.object(cx, "_resolve_snapshot", return_value=("SNAP", "Unchanged")), \
                 patch("hero_integration.services.schema_provisioning.preview_package", return_value=package):
             with self.assertRaises(cx.ConfigExchangeError):
                 cx.import_config("SNAP", payload(entry("HeroCustomers")))
