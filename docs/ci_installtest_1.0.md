@@ -2,7 +2,7 @@
 
 `ci/bench-install-test.sh` checks that the app installs on a fresh Frappe/ERPNext
 v16 bench without manual steps. `.woodpecker.yml` runs it on a Woodpecker CI
-server (draft).
+server for pushes to `hero_int_1.0` and `hero_int_dev` and on manual runs.
 
 The test never contacts HERO. It runs these steps:
 
@@ -22,11 +22,18 @@ git, MariaDB client, `frappe-bench` (pip). Services: MariaDB 11, Redis 7.
 The first `bench init` takes long on a small CI server. Use a prebuilt image
 with an initialised bench (Frappe + ERPNext); `WORKDIR` reuses `bench/`.
 
-Neither input file is part of the repository:
+Neither input file is part of the repository. Put both on the CI server in
+`/srv/hero-ci/`:
 
-- The schema file is HERO's API description. Provide its path through the
-  `hero_schema_file_path` secret/volume.
-- The configuration file is a site's own mapping export (Mapping Editor →
-  "Complete configuration" → Export). Provide its path through the
-  `hero_config_file_path` secret/volume. Without both files the test skips the
-  configuration import.
+- `hero-schema.json`: HERO's API description (a GraphQL introspection result).
+- `hero-integration-config.json`: a site's own configuration export (Mapping
+  Editor → "Complete configuration" → Export).
+
+The pipeline mounts `/srv/hero-ci` read-only at `/hero-ci`. Woodpecker only allows
+volume mounts for repositories marked as *trusted*. If a configured file is missing,
+the test fails. To run without the configuration import, remove `HERO_SCHEMA_FILE`
+and `HERO_CONFIG_FILE` from `.woodpecker.yml`; the log then says the import was
+skipped.
+
+The test also fails when fewer than `MIN_TESTS` (default 1000) offline or site tests
+run. A crash during test discovery therefore never counts as a pass.

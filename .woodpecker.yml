@@ -1,8 +1,11 @@
-# Bench-native install test.  Logic lives in ci/bench-install-test.sh.
-# Draft: adapt the image to one with Python 3.14, Node 20+, yarn, git, mariadb client and bench.
+# Bench-native install test. The logic lives in ci/bench-install-test.sh.
+#
+# The HERO schema and the configuration export are not in the repository. Put them
+# on the CI server in /srv/hero-ci/ (hero-schema.json, hero-integration-config.json).
+# The repository must be "trusted" in Woodpecker so the read-only volume can be mounted.
 when:
   - event: [manual, push]
-    branch: [hero_int_1.0]
+    branch: [hero_int_1.0, hero_int_dev]
 
 services:
   - name: mariadb
@@ -15,14 +18,14 @@ services:
 steps:
   - name: install-test
     image: frappe-ci:py314   # prebuilt image on the CI server (see docs/ci_installtest_1.0.md)
+    volumes:
+      - /srv/hero-ci:/hero-ci:ro
     environment:
       DB_HOST: mariadb
       DB_ROOT_PASSWORD: ci-root
       REDIS_CACHE: redis://redis:6379
       WORKDIR: /tmp/ci-bench
-      HERO_CONFIG_FILE:
-        from_secret: hero_config_file_path
-      HERO_SCHEMA_FILE:
-        from_secret: hero_schema_file_path
+      HERO_SCHEMA_FILE: /hero-ci/hero-schema.json
+      HERO_CONFIG_FILE: /hero-ci/hero-integration-config.json
     commands:
       - ci/bench-install-test.sh
