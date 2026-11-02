@@ -1,16 +1,8 @@
-"""App-owned records and form layout, for fresh installs as well as upgrades.
+"""Create app-owned records on install/migrate and apply form layout on install/adoption.
 
-Patches only run on existing sites; ``bench install-app`` marks them as done
-without running them.  Everything the v0_2 patches created is therefore also
-created here:
-
-- ``ensure_app_records`` (after_install and after_migrate, create-only): role
-  "HERO Writeback", the trade Project Types, the Project Phase and Volume
-  fields, the Task HERO Assignee field and the German salutations.
-- ``apply_form_layout`` (after_install and after a mapping package adoption):
-  the Project form Property Setters (labels, read-only, hidden, order).  It is
-  not run on every migrate, so an administrator's later form changes stay.
-"""
+Patches are skipped on fresh installs, so setup also creates their roles,
+Project Types, fields and salutations. Records are create-only; layout is not
+reapplied on migrate, preserving administrator customizations."""
 
 from __future__ import annotations
 

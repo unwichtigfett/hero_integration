@@ -1,4 +1,4 @@
-"""HERO project logbook in the Project activity (2026-11-02)."""
+"""HERO project logbook in the Project activity."""
 
 from __future__ import annotations
 

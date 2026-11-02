@@ -126,7 +126,7 @@ def after_migrate() -> None:
 
 
 def _reference_apps_installed() -> bool:
-    """Helpdesk or CRM reference ERPNext Customers/Projects (user decision 2026-11-01)."""
+    """Helpdesk or CRM reference ERPNext Customers/Projects."""
     return bool({"helpdesk", "crm"} & set(frappe.get_installed_apps()))
 
 

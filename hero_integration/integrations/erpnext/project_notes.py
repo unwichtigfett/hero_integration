@@ -7,12 +7,8 @@ class NativeProjectNotesError(ValueError):
 
 
 def require_native_project_notes(meta) -> None:
-    """Require the editable standard ``Project.notes`` field supplied by ERPNext.
-
-    HERO notes have no implicit write path.  In particular, this guard never
-    creates ``custom_hero_notes`` and a separately approved partner-notes
-    mapping is validated by the mapping/provisioning path.
-    """
+    """Require ERPNext Project.notes without creating an implicit HERO write path.
+    Custom partner-notes mappings require separate provisioning approval."""
     field = meta.get_field("notes") if meta else None
     if field is None:
         raise NativeProjectNotesError("ERPNext Project.notes is required for local project notes.")

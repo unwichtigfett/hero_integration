@@ -1,9 +1,7 @@
-"""Deterministic, validated ERPNext project titles for HERO ProjectMatch records.
+"""Build deterministic ERPNext titles from approved HERO ProjectMatch reads.
 
-This module deliberately has no Frappe, GraphQL, or mapping-document dependency.
-The importer supplies a ProjectMatch payload which has already been selected by the
-approved read-only operation.  It never falls back to a Customer address or an
-unreviewed field mapping.
+No Frappe, GraphQL or mapping-document dependency. Never infer values from
+Customer addresses or unreviewed field mappings.
 """
 from __future__ import annotations
 
@@ -11,7 +9,7 @@ from collections.abc import Mapping
 
 
 PROJECT_NAME_MAX_LENGTH = 140
-# Confirmed HERO project types (user decision 2026-10-30).
+# Supported HERO project types.
 TRADE_CATALOG = {
     "PV": "Photovoltaik",
     "KLIM": "Klimatechnik",
@@ -28,7 +26,7 @@ class ProjectTitleValidationError(ValueError):
 
 
 class ProjectAddressError(ProjectTitleValidationError):
-    """The project address is missing or incomplete (admin review, user decision 2026-10-31)."""
+    """A missing or incomplete project address requires administrator review."""
 
 
 def project_title_missing(record: Mapping[str, object]) -> bool:

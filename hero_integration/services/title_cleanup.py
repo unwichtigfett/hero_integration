@@ -1,9 +1,7 @@
-"""One-time: remove the customer salutation from imported Project titles (no HERO request).
+"""Remove salutations from imported Project titles without HERO I/O.
 
-The title format no longer contains the salutation.  Titles still in the old
-format ("<trade>, <salutation> <name>, ...") are rewritten locally from the
-stored HERO salutation, and the link baselines are moved along so the next
-import sees no change.  A title edited in ERPNext is never touched.
+Rewrite old titles from stored HERO salutations and advance Link baselines.
+Locally edited ERPNext titles remain untouched.
 """
 
 from __future__ import annotations

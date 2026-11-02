@@ -36,8 +36,7 @@ CUSTOMER_CONTRACT_V1 = "v1"
 CUSTOMER_CONTRACT_V2 = "v2"
 CUSTOMER_CONTRACT_V3 = "v3"
 CUSTOMER_CONTRACT_V4 = "v4"
-# V4 = V2 plus the salutation `title` (owner decision 2026-11-02: salutation table
-# only, no legal form).
+# V4 adds salutation title to V2 without the legal form.
 CUSTOMER_QUERY_V4 = CUSTOMER_QUERY_V2.replace("id nr first_name last_name full_name ", "id nr title first_name last_name full_name ")
 PROJECT_QUERY_V1 = """
 query HeroProjectMatches($first: Int!, $offset: Int!, $orderBy: String!) {
@@ -75,7 +74,7 @@ PROJECT_SELECTED_PATHS = (
 )
 PROJECT_SELECTED_PATHS_V2 = (*PROJECT_SELECTED_PATHS, "measure.short", "measure.name")
 PROJECT_CONTRACT_V3 = "v3"
-# V3 also reads the project volume in euros (owner confirmation 2026-11-01).
+# V3 also reads the project volume in euros.
 PROJECT_QUERY_V3 = PROJECT_QUERY_V2.replace("    measure { short name }\n", "    measure { short name }\n    volume\n")
 PROJECT_SELECTED_PATHS_V3 = (*PROJECT_SELECTED_PATHS_V2, "volume")
 
@@ -190,13 +189,9 @@ class GraphQLServiceSource:
         return self._page(offset, "HeroProjectMatches")
 
     def project_reference_states(self, ids) -> dict[int, str]:
-        """Classify ProjectMatch IDs that the project list does not return (read-only).
-
-        HERO lists neither deleted projects nor contact requests (``KONT-``)
-        in ``project_matches``, but Tasks and Events still reference them.
-        Returns DELETED, LEAD or UNLISTED per ID; IDs HERO cannot resolve are
-        left out.  One aliased query per 50 IDs keeps the request count low.
-        """
+        """Classify missing ProjectMatch IDs as DELETED, LEAD or UNLISTED without writes.
+        Lists omit deleted projects and KONT- leads still referenced by Tasks/Events.
+        Query 50 IDs per request; omit unresolvable IDs."""
         from hero_integration.client.graphql import HeroClientError
 
         wanted = sorted({value for value in ids if type(value) is int and value > 0})
@@ -311,13 +306,8 @@ class GraphQLServiceSource:
 
 
 class TestingPreviewSource:
-    """One shared, fail-closed request budget for a manual Preview run.
-
-    It is deliberately a source wrapper, not a second sync path: it only
-    forwards to an existing approved reader after that reader explicitly proves
-    its newest-first ordering.  The caller constructs its GraphQL client with
-    zero retries, so one forwarded page is exactly one external request.
-    """
+    """Share a fail-closed request budget across approved newest-first Preview readers.
+    The client uses zero retries, so each forwarded page is one external request."""
 
     def __init__(self, source, max_actions: int):
         if not isinstance(max_actions, int) or isinstance(max_actions, bool) or not 1 <= max_actions <= 100:

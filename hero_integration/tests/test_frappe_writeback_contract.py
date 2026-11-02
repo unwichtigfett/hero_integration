@@ -74,7 +74,7 @@ class TestFrappeWritebackContract(unittest.TestCase):
         )
 
     def test_project_title_number_and_type_are_never_written_back(self):
-        # Owner decision 2026-11-01: per-field Project writeback is limited to Notes.
+        # per-field Project writeback is limited to Notes.
         for field in ("project_name", "custom_hero_project_number", "custom_hero_project_type", "custom_hero_display_id"):
             with self.subTest(field=field), self.assertRaisesRegex(WritebackContractError, "not approved"):
                 reviewed_input_target("Project", field, schema())

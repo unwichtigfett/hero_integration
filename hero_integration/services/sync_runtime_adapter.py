@@ -240,11 +240,10 @@ def _require_area_enabled(frappe, settings, selection) -> None:
 
 
 def run_pending_sync(expected_plan_generation: int, *, frappe_module=None, provider=None) -> RuntimePreflight:
-    """Run an explicitly requested bound-only reconciliation while polling is OFF.
+    """Run explicitly requested bound-only reconciliation while polling is OFF.
 
-    The caller must supply the generation observed in its reviewed plan.  This
-    is intentionally not a global cursor claim: an unproven provider returns
-    an explicit incomplete/reconciliation status before any read is made.
+    Require the reviewed plan generation. An unproven provider returns incomplete
+    or reconciliation status before reading; this grants no global cursor claim.
     """
     frappe = _frappe(frappe_module)
     settings = frappe.get_single("HERO Integration Settings")

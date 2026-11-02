@@ -1,4 +1,4 @@
-"""Complete configuration export/import: mapping package plus read services (2026-11-02)."""
+"""Complete configuration export/import: mapping package plus read services."""
 
 from __future__ import annotations
 

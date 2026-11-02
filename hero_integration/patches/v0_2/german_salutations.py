@@ -1,4 +1,4 @@
-"""One-time: German salutations used by the HERO salutation table (owner decision 2026-11-02)."""
+"""One-time: German salutations used by the HERO salutation table."""
 import frappe
 
 

@@ -1,9 +1,4 @@
-"""Offline source-contract tests for the reviewed four-domain package.
-
-The JSON fixtures are intentionally test-only.  Installation continues to own
-only the nine baseline fields, while schema adoption remains an explicit,
-reviewed operation.
-"""
+"""Test-only four-domain fixtures preserve baseline installation fields and explicit schema adoption."""
 from __future__ import annotations
 
 import hashlib
@@ -53,9 +48,8 @@ class TestFourDomainContractPackage(unittest.TestCase):
             "relations": 4,
         })
 
-        # Project is an installed target, and the remaining links resolve to
-        # package-owned custom DocTypes.  This validates the manifest without
-        # creating a DocType, Custom Field, mapping, or business record.
+        # Validate links to installed Project and package-owned DocTypes
+        # without creating schema, mappings or business records.
         with patch.object(schema_provisioning, "_doctype_exists", return_value=True):
             definitions = schema_provisioning._definitions(parsed["schema"])
         self.assertEqual(len(definitions["relations"]), 4)

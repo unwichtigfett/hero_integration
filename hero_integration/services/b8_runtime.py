@@ -1,9 +1,7 @@
 """Reconstruct the approved B2/B7 read boundary for B8 without persistence.
 
-The versioned ``b8_compilation`` object in an approved read mapping is the
-canonical compilation input. It contains no credentials, source payload, or
-transport state. This module calls the existing B2 ``QueryAdapter`` instead
-of parsing or compiling GraphQL itself.
+The versioned ``b8_compilation`` input contains no credentials, payload or
+transport state. Existing B2 ``QueryAdapter`` owns GraphQL compilation.
 """
 from __future__ import annotations
 
@@ -58,11 +56,10 @@ def reconstruct_materialized_read_plan(selection: RuntimePlanSelection, *, frapp
 
 
 def canonical_operation_contract(selection: RuntimePlanSelection, request) -> dict[str, object]:
-    """Return the immutable B8 approval payload for one B2 materialization.
+    """Return the immutable B8 approval payload for a B2 materialization.
 
-    The payload is persisted inside the approved mapping revision.  The
-    runtime plan separately approves that revision, so changing any seal
-    invalidates the plan through the existing revision/generation gate.
+    It belongs to the separately approved mapping revision; a changed seal
+    invalidates the runtime plan through its revision/generation gate.
     """
     response_paths = [list(binding.response_path) for binding in request.result_bindings]
     payload = {
@@ -152,11 +149,10 @@ def _draft(value: Mapping[str, object], selection: RuntimePlanSelection) -> Quer
 
 
 def _validate_against_sealed_read(sealed: SealedRead, draft: QueryDraft) -> None:
-    """Bind persisted B2 arguments and result bindings to the B7 read contract.
+    """Bind B2 arguments and result bindings to the B7 read contract.
 
-    The materializer's rendered query alone cannot expose a changed scalar
-    variable value.  Resolve the two reviewed symbolic values locally, then
-    require the persisted B2 input to be exactly that concrete mapping.
+    Rendered queries hide scalar variable changes. Resolve the two approved
+    symbolic arguments and require an exact match with persisted B2 input.
     """
     contract = sealed.contract
     if draft.alias != contract.records_path or contract.identity_path not in draft.selected_paths:

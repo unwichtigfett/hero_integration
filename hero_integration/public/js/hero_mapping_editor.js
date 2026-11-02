@@ -844,9 +844,8 @@
             body.append(section); loadSnapshots(snapshotFilter);
         }
         function renderSavedNodes(section, view) {
-            // Saved HERO Nodes: personal bookmarks from API Analyzer / Graph Viewer.
-            // Selecting one only preselects explorer inputs; it never edits a draft,
-            // bumps a revision, activates a mapping, syncs or calls HERO.
+            // Personal bookmarks only preselect explorer inputs; selection
+            // never changes mappings or revisions, synchronizes or calls HERO.
             const store = window.hero_integration_bookmarks;
             if (!store) return;
             const box = $("<details class='hero-mapping-saved-nodes'></details>").append($('<summary></summary>').text(text('Saved HERO Nodes')));

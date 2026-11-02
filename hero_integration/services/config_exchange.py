@@ -1,26 +1,12 @@
-"""Complete HERO integration configuration export and import.
+"""Export and import a complete HERO integration configuration without HERO I/O.
 
-One JSON file (format v2) carries everything a new site needs besides
-credentials and data:
+Format v2 contains the schema snapshot, operational settings, checked mapping
+package/schema and approved area read services. Customer-service references
+use areas rather than site-specific names. Excluded: credentials, URL/hosts,
+recipients, mutation/deletion switches, testing mode and runtime status.
 
-- ``schema_snapshot``: the HERO schema the configuration was built on.  On a
-  site without that schema it becomes the site's snapshot, so no HERO request
-  is needed before the import;
-- ``settings``: the operational settings (sync areas, automatic sync, polling,
-  schema refresh).  Never included: HERO URL and token, allowed hosts,
-  notification recipients, the mutation and deletion switches, testing mode
-  and runtime status;
-
-- ``mapping_package``: the field rules with their Custom Field / Custom DocType
-  schema (the existing checked package, adopted through the existing adoption
-  workflow);
-- ``read_services``: the approved read service of every sync area (GraphQL
-  document and read-mapping configuration).  A reference to the customer read
-  service is exported by its area, never by the site-specific document name.
-
-Import is idempotent: an identical configuration reports "Unchanged" and writes
-nothing.  Approvals and revisions are created on the target site.  No HERO
-request is made.  Format v1 files (without snapshot and settings) still import.
+Import uses the existing adoption workflow and target-side approvals/revisions.
+Identical configurations write nothing. Format v1 remains supported.
 """
 
 from __future__ import annotations
@@ -154,12 +140,10 @@ def preview_config(snapshot_name: str, payload_json: str, source_instance: str =
 
 
 def _rebased_package(snapshot_name: str, payload: dict) -> tuple[str, str | None]:
-    """Bind the package to the target site's snapshot.
+    """Bind the package to the target snapshot by content, not source fingerprint.
 
-    HERO changes its schema often, so a new site almost never has the source
-    site's fingerprint.  Compatibility is checked by content instead: every
-    field rule is validated by the package preview and every read query
-    against the target schema before anything is written.
+    Validate every field rule and read query against the target schema before
+    writing; the source schema may differ.
     """
     package = dict(payload["mapping_package"])
     target = frappe.db.get_value("HERO GraphQL Schema Snapshot", snapshot_name, "schema_fingerprint")

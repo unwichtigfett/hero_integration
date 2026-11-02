@@ -108,14 +108,11 @@ _COMPATIBILITY: dict[tuple[str, str], str] = {}
 
 
 def schema_incompatibility(operation, snapshot):
-    """Return why a reviewed projection cannot read from this snapshot, or '' when it can.
+    """Return why a reviewed projection cannot read this snapshot, or an empty string.
 
-    The contract is bound to what it reads, not to the whole schema: its exact
-    reviewed query must validate against the snapshot, and every contract path
-    must keep its reviewed scalar or list type. Unrelated HERO schema changes,
-    which a periodic schema refresh captures as new snapshots, therefore do not
-    block the projection. The recorded ``fingerprint`` names the schema the
-    contract was originally reviewed on; that schema stays compatible.
+    The exact query and reviewed scalar/list paths must validate. Unrelated schema
+    changes do not block reading; the recorded fingerprint identifies the original
+    reviewed schema, which remains compatible.
     """
     key = (operation, str(getattr(snapshot, 'schema_fingerprint', '') or ''))
     if key[1] == CONTRACTS[operation]['fingerprint']:

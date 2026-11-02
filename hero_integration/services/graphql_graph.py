@@ -115,11 +115,10 @@ def _node(node_id: str, kind: str, label: str, **detail: object) -> dict[str, An
 
 
 def normalize_schema(snapshot: object) -> dict[str, object]:
-    """Return saved standard or historic introspection in the GraphQL schema shape.
+    """Normalize saved standard or historic introspection without modifying it.
 
-    This is deliberately read-only: it neither repairs persisted snapshots nor
-    infers absent operation roots.  Consumers must validate the root and its
-    operations for their own use case.
+    Do not infer missing roots. Consumers must validate roots and operations
+    for their own use case.
     """
     if not isinstance(snapshot, dict):
         raise GraphSnapshotError("GraphQL snapshot must be an object.")

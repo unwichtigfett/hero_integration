@@ -25,14 +25,9 @@ class HeroConfiguration:
 
 
 def next_source_binding(revision: int, confirmed_revision: int, *, binding_changed: bool, confirm: bool) -> tuple[int, int]:
-    """Return (revision, confirmed revision) after one Settings save.
-
-    HERO exposes no account identity that could be verified independently,
-    and the API token must not become an identity.  Every change of the
-    endpoint, token or source-instance label therefore opens a new binding
-    revision that stays unconfirmed until an administrator explicitly
-    confirms it; the binding in force before this rule existed is revision 0.
-    """
+    """Return binding and confirmed revisions after Settings save.
+    Endpoint, token or source changes require explicit confirmation because HERO
+    provides no independent account identity. Legacy bindings start at revision 0."""
     revision = int(revision or 0) + (1 if binding_changed else 0)
     confirmed_revision = revision if confirm else int(confirmed_revision or 0)
     return revision, confirmed_revision

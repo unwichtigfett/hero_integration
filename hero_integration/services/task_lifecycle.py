@@ -1,12 +1,8 @@
-"""HERO task dates, completion and assignee (owner decisions 2026-11-02).
+"""Reconcile HERO task dates, completion and assignee field by field.
 
-- Start date = HERO creation date, end date = HERO due ("erledigen bis") date.
-- A task is done when the assignee ticks it in HERO (done_date).
-- Assignees are matched to ERPNext users by e-mail; anyone may assign anyone.
-
-The fields are reconciled field by field like the other task fields. They were
-added after the first task import, so a missing baseline is bootstrapped when
-ERPNext still holds the untouched default; anything else needs review.
+Start/end dates use HERO creation/due dates; done_date records completion.
+Assignees match ERPNext users by email; anyone may assign anyone. Missing
+baselines bootstrap only untouched local defaults; other values need review.
 """
 
 from __future__ import annotations

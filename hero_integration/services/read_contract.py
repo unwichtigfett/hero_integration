@@ -53,11 +53,10 @@ def task_materialization(snapshot, config, plan):
 
 
 def from_documents(service, mapping, snapshot) -> ReadContract:
-    """Validate the immutable legacy B7 saved-query contract.
+    """Validate the legacy B7 saved-query contract used by the migration executor.
 
-    This remains the only contract accepted by the legacy migration executor.
-    Universal B8 materialization must opt into ``universal_from_documents``
-    and present its own canonical-operation seal.
+    B8 materialization instead requires ``universal_from_documents`` and its
+    separately approved canonical-operation seal.
     """
     contract, config = _common_contract(service, mapping, snapshot)
     target = contract.target_operation
@@ -193,12 +192,10 @@ def _customer_selected_literals(definition_ids, mapping):
 
 
 def universal_from_documents(service, mapping, snapshot) -> ReadContract:
-    """Validate shared B7 identities without adopting the legacy query bytes.
+    """Validate shared B7 identities after B8 recomputes its canonical-operation seal.
 
-    Only B8 calls this helper, after the separately approved canonical
-    operation seal has been recomputed.  The caller owns that additional
-    universal-contract validation; this helper deliberately cannot make a
-    legacy executor accept a materialized query.
+    The caller owns seal validation. This path cannot make the legacy executor
+    accept materialized queries.
     """
     contract, _config = _common_contract(service, mapping, snapshot)
     return contract

@@ -85,11 +85,9 @@ COMPATIBILITY_INTROSPECTION_QUERY = INTROSPECTION_QUERY.replace(" locations isRe
 
 
 def canonical_schema(payload: object) -> dict[str, object]:
-    """Validate and normalize a complete introspection envelope.
+    """Validate and normalize complete standard ``data.__schema`` introspection.
 
-    Only the standard ``data.__schema`` envelope is accepted.  This prevents a
-    response with GraphQL errors or a partial arbitrary payload from becoming a
-    trusted snapshot.
+    GraphQL errors and partial/arbitrary envelopes cannot become trusted snapshots.
     """
     if not isinstance(payload, Mapping):
         raise IntrospectionError("GraphQL introspection response must be an object.")

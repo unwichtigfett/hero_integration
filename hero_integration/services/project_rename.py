@@ -1,14 +1,10 @@
-"""Rename imported HERO projects to their HERO ID ``<trade>-<display_id>-H``.
+"""Rename imported projects to HERO IDs ``<trade>-<display_id>-H``.
 
-Owner decision 2026-11-01: every HERO project ID must be taken in Frappe before
-productive work starts, and HERO IDs end in -H.  Older imports still carry
-``PROJ-…`` IDs.  The trade is read from HERO (``measure``, read-only); project
-titles are never used to guess it.  Only rows the business-number preview marks
-as safe are renamed; Frappe's rename moves every reference.
+Trade comes from HERO ``measure``, never from titles. Only business-number
+preview rows marked safe can replace older PROJ- IDs; Frappe moves references.
 
     bench --site <site> execute hero_integration.services.project_rename.rename_hero_projects
-    bench --site <site> execute hero_integration.services.project_rename.rename_hero_projects \
-        --kwargs "{'dry_run': 0, 'confirm': 'RENAME HERO PROJECTS'}"
+    bench --site <site> execute hero_integration.services.project_rename.rename_hero_projects --kwargs "{'dry_run': 0, 'confirm': 'RENAME HERO PROJECTS'}"
 """
 
 from __future__ import annotations

@@ -1,7 +1,5 @@
-"""Explicitly opt-in MariaDB tests in the dedicated storage-04 site only.
-
-Run with HERO_DRAFT_DB_TEST=1 and this worktree first on PYTHONPATH. Workers
-use spawn (not inherited connections) and independent committed transactions.
+"""Opt-in storage-04 tests require HERO_DRAFT_DB_TEST=1 and this worktree on PYTHONPATH.
+Workers spawn independent connections and commit separate transactions.
 """
 from __future__ import annotations
 

@@ -1,9 +1,5 @@
-"""Dedicated mutation transport boundary.
-
-Mutation execution paths reuse the shared HTTPS implementation for TLS,
-proxy denial and redirect denial. The wrapper does not itself validate the
-operation or authorize a caller; those checks belong to the execution paths.
-"""
+"""Mutation transport with shared TLS, proxy and redirect guards.
+Callers must validate operations and authorize execution."""
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping

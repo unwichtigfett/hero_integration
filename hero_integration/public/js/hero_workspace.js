@@ -21,10 +21,8 @@
         services: "GraphQL Services",
     });
     const LEGACY_SECTION_TO_TOOL = Object.freeze({analyzer: "analyzer", graph: "graph", services: "services"});
-    // Styles are inserted directly after the Desk page has started, so they
-    // need an explicit release token. JavaScript must stay query-free when it
-    // enters frappe.require(): Frappe owns the version parameter and uses the
-    // original extension to select its script loader.
+    // Dynamically inserted styles need a release token. Keep frappe.require()
+    // JavaScript URLs query-free so Frappe can select its loader and version.
     const ASSET_RELEASE = "20261102.7";
     const ASSETS = [
         "/assets/hero_integration/css/hero_tools.css",
@@ -93,9 +91,7 @@
             throw new Error("This historic action is intentionally unavailable in the native workspace. Use the ERPNext Mapping Editor or saved read-only service definitions.");
         }
         const snapshot_name = snapshotName(args);
-        // The API tools still invoke this established workspace action.  It is
-        // now backed by the server-side snapshot workflow rather than a legacy
-        // connection binding.
+        // Keep the API tools' workspace action backed by server-side snapshots.
         if (method === "refresh_schema") return request("workspace_schema_refresh");
         if (method === "get_context") return request("workspace_context", {snapshot_name});
         if (method === "get_schema") return request("workspace_schema", {snapshot_name, search: args.search || "", kind: args.kind || "", start: args.start || 0, page_size: args.page_size || 50});
@@ -120,9 +116,8 @@
         link.onerror = () => reject(new Error(__("HERO interface stylesheet could not be loaded: {0}").replace("{0}", path)));
         document.head.append(link);
     });
-    // Frappe owns script URL versioning. Its compatibility loader resolves even
-    // after an onerror, so verify the public module contract afterwards instead
-    // of appending a second script tag or adding a manual JavaScript query string.
+    // Frappe's versioned loader resolves even after onerror; verify exports
+    // afterward instead of inserting another script or query string.
     const loadScript = (path) => {
         const globalName = REQUIRED_ASSET_GLOBALS.find(([asset]) => path.endsWith(`/${asset}`))?.[1];
         return globalName && window[globalName] ? Promise.resolve() : frappe.require(path);

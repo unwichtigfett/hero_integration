@@ -195,9 +195,8 @@ class TestTestingPreviewContract(unittest.TestCase):
 
         config = SimpleNamespace(endpoint="synthetic", api_token="synthetic", timeout_seconds=1, source_instance="synthetic",
                                  source_binding_revision=0, source_binding_confirmed=True)
-        # Historical runs without an approved endpoint-bound read service are
-        # rejected before any client exists; approved service runs keep the
-        # zero-retry client for testing previews (see _source_for_run).
+        # Runs without approved endpoint-bound reads fail before client creation;
+        # approved testing previews use a zero-retry client (_source_for_run).
         with patch.object(migration, "HeroGraphQLClient", Client):
             for testing in (1, 0):
                 with self.assertRaises(migration.MappingPlanError):

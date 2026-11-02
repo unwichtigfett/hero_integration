@@ -1,11 +1,9 @@
-"""Read-only preview: could existing HERO Customers and Projects take their business number as name?
+"""Preview business-number names for existing HERO Customers and Projects.
 
-Nothing is renamed or written to the database. Renaming an existing record needs
-a separate, explicit approval and a fresh database backup. Reference counts are
-point-in-time evidence, not a guarantee that every reference can be renamed.
+No database writes occur. Renaming requires approval, a backup and a fresh
+preflight; point-in-time reference counts cannot prove every reference safe.
 
-    bench --site <site> execute hero_integration.services.business_number_preview.write_csv \
-        --kwargs "{'path': '/path/to/preview.csv'}"
+    bench --site <site> execute hero_integration.services.business_number_preview.write_csv --kwargs "{'path': '/path/to/preview.csv'}"
 """
 from __future__ import annotations
 
@@ -145,11 +143,10 @@ def _judge(rows) -> None:
 
 
 def _reference_records(doctype: str, target_names: set[str]) -> dict[str, list[dict[str, str]]]:
-    """List native static/dynamic references, including child rows and Single fields.
+    """List native static/dynamic references, including child rows and Singles.
 
-    This is a point-in-time preview. Custom string references and external systems
-    cannot be proven by metadata; approval, backup and a fresh rename preflight
-    remain mandatory.
+    Metadata cannot prove custom string or external references. Renaming still
+    requires approval, a backup and a fresh preflight.
     """
     from frappe.model.dynamic_links import get_dynamic_links
     from frappe.model.rename_doc import get_link_fields

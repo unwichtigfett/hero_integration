@@ -54,12 +54,10 @@ class MappingRegistryStorage(Protocol):
 
 
 class InMemoryMappingRegistryStorage:
-    """Thread-safe isolated transaction provider; it is not a MariaDB proof.
+    """Publish complete immutable registry versions under one lock.
 
-    Candidate data and the active pointer are prepared off-state and published
-    by one lock-protected replacement. A reader can therefore observe either
-    the old complete active version or the new complete active version, never
-    an intermediate candidate. Prior revisions are append-only.
+    Readers see the old or new complete active version, never a partial candidate.
+    History is append-only. Thread safety does not prove MariaDB behavior.
     """
 
     def __init__(self) -> None:
@@ -91,12 +89,10 @@ class InMemoryMappingRegistryStorage:
     def replace(
         self, site_scope: str, expected_revision: int | None, payload: object
     ) -> StoredMappingVersion:
-        """Atomically persist and activate a complete replacement revision.
+        """Persist and activate a validated complete replacement atomically.
 
-        ``payload`` is opaque to storage: import/edit services must validate it
-        first. It is deep-frozen before publication so later caller mutation
-        cannot alter historical records. ``None`` is the sole expected value
-        for a fresh empty registry; all updates require exact CAS revision.
+        Deep-freeze opaque payloads before publication. Only an empty registry accepts
+        an expected revision of None; updates require the exact CAS revision.
         """
         _validate_site_scope(site_scope)
         _validate_expected_revision(expected_revision)
@@ -175,11 +171,10 @@ def _copy_frozen(value: object) -> object:
 
 
 class FrappeMappingRegistryStorage:
-    """Frappe-v16 document adapter for the same site-scoped CAS contract.
+    """Frappe v16 adapter for site-scoped CAS, without DDL, commits or transport.
 
-    The source DocTypes are installed only by a separately authorized migration.
-    This adapter deliberately performs no DDL, migration, commit, or transport
-    action.  Its transaction behaviour is not asserted by the isolated tests.
+    A separately authorized migration installs the DocTypes. Isolated tests do
+    not prove this adapter's transaction behavior.
     """
 
     _REGISTRY = "HERO Mapping Registry"
@@ -215,10 +210,10 @@ class FrappeMappingRegistryStorage:
         )
 
     def replace(self, site_scope: str, expected_revision: int | None, payload: object) -> StoredMappingVersion:
-        """Persist then point to one complete version under a row lock.
+        """Persist and activate a validated complete replacement atomically.
 
-        A failure rolls back this adapter's savepoint.  It does not claim that
-        external effects or a caller-owned transaction are rollback-capable.
+        Deep-freeze opaque payloads before publication. Only an empty registry accepts
+        an expected revision of None; updates require the exact CAS revision.
         """
         _validate_site_scope(site_scope)
         _validate_expected_revision(expected_revision)

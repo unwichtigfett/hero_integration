@@ -1,4 +1,4 @@
-"""Existing HERO projects are renamed to <trade>-<display_id>-H only when safe (2026-11-01)."""
+"""Existing HERO projects are renamed to <trade>-<display_id>-H only when safe."""
 
 from __future__ import annotations
 

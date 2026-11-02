@@ -1,8 +1,4 @@
-"""Real ERPNext v16: HERO business numbers name new Customers and Projects.
-
-Needs a connected Frappe site with ERPNext. Every test rolls back, so the site
-keeps no records and no naming-series counter moves.
-"""
+"""ERPNext naming tests require a connected site; rollback preserves records and naming counters."""
 from __future__ import annotations
 
 import random

@@ -1,8 +1,4 @@
-"""Every result a run records must be a valid HERO Integration Record option.
-
-The Select is validated by Frappe only on a real site; this offline check keeps
-new Result codes from failing a live run (PENDING_REVIEW, 2026-11-01).
-"""
+"""Check recorded result codes against Frappe Select options without requiring a live site."""
 
 from __future__ import annotations
 

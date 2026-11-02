@@ -129,11 +129,7 @@
     width: min(1180px, calc(100vw - 48px));
 }
 
-/*
- * The Administrator hierarchy owns navigation.
- * HERO's former internal Desk navigation remains available
- * for legacy Desk use but is hidden inside this frontend.
- */
+/* Administrator navigation replaces HERO's legacy Desk navigation here. */
 .admin-hero-tool-host > .hero-tools > .pc-shell-nav {
     display: none !important;
 }

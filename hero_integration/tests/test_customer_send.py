@@ -1,4 +1,4 @@
-"""Customer Send to HERO: fields and values (owner decision 2026-11-02)."""
+"""Customer Send to HERO: fields and values."""
 
 from __future__ import annotations
 

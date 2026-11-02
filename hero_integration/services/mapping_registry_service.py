@@ -1,9 +1,7 @@
 """Backend-owned replace-only Mapping Registry v3 operations.
 
-No function in this module is whitelisted.  Validation only builds immutable
-configuration versions; it neither provisions Frappe schema nor executes a
-HERO operation.  Actual Frappe-site transaction behaviour is intentionally
-outside the isolated test evidence for B4.
+No whitelisted endpoints, schema provisioning or HERO execution. Validation
+builds immutable versions; isolated tests do not prove Frappe transactions.
 """
 from __future__ import annotations
 

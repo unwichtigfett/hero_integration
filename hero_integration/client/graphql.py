@@ -64,12 +64,8 @@ def validate_endpoint(url: str, allowed_hosts: set[str]) -> HeroEndpoint:
 
 
 def assert_read_only(document: str) -> None:
-    """Accept exactly one GraphQL query operation (fragments allowed).
-
-    The complete executable document is parsed: lexical token splitting let
-    e.g. ``mutation($id: ID!)`` through and cannot handle literals or
-    fragments.  Without graphql-core, reads fail closed.
-    """
+    """Parse exactly one Query operation, allowing fragments.
+    Fail closed without graphql-core; token checks cannot validate full documents."""
     try:
         from graphql import GraphQLError, parse
         from graphql.language import OperationDefinitionNode, OperationType
@@ -118,12 +114,8 @@ class HeroGraphQLClient:
         return self._post(document, variables)
 
     def introspect(self, document: str, *, operation_name: str = "") -> dict[str, object]:
-        """Execute the fixed read-only introspection document.
-
-        Introspection uses the same HTTPS-only, allowlisted, no-redirect
-        transport as queries, but its caller must still validate the complete
-        response before persistence.
-        """
+        """Execute fixed introspection through HTTPS, allowlist and redirect guards.
+        The caller validates the complete response before saving it."""
         assert_read_only(document)
         return {"data": self._post(document, None, operation_name=operation_name)}
 

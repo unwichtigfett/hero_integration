@@ -1,4 +1,4 @@
-// One "Send to HERO" button per imported Project: Notes and Phase (owner decision 2026-11-01).
+// Send imported Project Notes and Phase to HERO.
 (() => {
 	"use strict";
 

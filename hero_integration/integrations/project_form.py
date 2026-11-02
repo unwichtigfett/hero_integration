@@ -1,9 +1,5 @@
-"""Project form: HERO values appear as ordinary ERPNext fields (owner decision 2026-11-01).
-
-HERO custom fields keep their data and definitions; only Property Setters change
-labels, visibility, read-only state and order, so the HERO schema checks and the
-field-wise sync are unaffected.  The native Project Type holds the trade (Gewerk).
-"""
+"""Display HERO data through Project Property Setters, preserving field definitions.
+The native Project Type holds the trade."""
 
 from __future__ import annotations
 

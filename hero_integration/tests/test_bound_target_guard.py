@@ -1,8 +1,4 @@
-"""A HERO-bound ERPNext record is deleted only by the purge or an administrator rejection.
-
-Deleting it elsewhere would leave a binding without target, and every later run
-would report a conflict for it (hardening 2026-11-01).
-"""
+"""Guard HERO-bound targets against deletion outside purge or administrator rejection."""
 
 from __future__ import annotations
 

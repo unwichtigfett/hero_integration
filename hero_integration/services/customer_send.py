@@ -1,14 +1,9 @@
-"""Send a Customer to HERO (owner decision 2026-11-02: all customer data except the number).
+"""Send mapped Customer data except its number through one audited mutation.
 
-One "Send to HERO" button per imported Customer, built like the Project and
-Task buttons.  The preview reads the live HERO customer, derives the values the
-import would write (same mapping rules, salutation table and phone cleaning)
-and compares them with ERPNext: salutation, first/last name, company name,
-e-mail, mobile, phone and the primary address.  A value HERO changed since the
-last import is not overwritten.  Sending is one ``update_contact`` mutation
-behind the global mutation gate and the mutation audit; it is verified by
-reading HERO again and the sync baselines are advanced so the next import sees
-no change.  The customer number is never sent.
+Preview derives names, salutation, contact details and primary Address through
+the import rules, including phone cleaning. Remote edits since import block
+sending. The global mutation gate, post-write readback and baseline update
+protect ``update_contact``; the customer number is never sent.
 """
 
 from __future__ import annotations

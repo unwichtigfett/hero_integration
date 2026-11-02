@@ -1,11 +1,8 @@
-"""Send a Project's Notes and Phase to HERO (owner decision 2026-11-01).
+"""Send Project Notes and Phase through one audited HERO mutation.
 
-One button per Project: the preview reads the live HERO values, shows what would
-change and refuses a field that HERO changed since the last import.  Sending is
-one ``update_project_match`` mutation behind the global mutation gate, an exact
-preview fingerprint and the existing mutation audit; it is verified by reading
-HERO again, and the sync baseline is advanced so the next import sees no change.
-Only System Managers and the role "HERO Writeback" may send.
+Preview rejects remote changes since import. The global gate, exact preview
+fingerprint and readback protect update_project_match; verified writes advance
+baselines. Sending requires System Manager or HERO Writeback.
 """
 
 from __future__ import annotations
@@ -20,10 +17,8 @@ SEND_ROLES = ("System Manager", "HERO Writeback")
 NOTES_FIELD = "custom_hero_partner_notes"
 PHASE_ID_FIELD = "custom_hero_observed_status_id"
 PHASE_NAME_FIELD = "custom_hero_observed_status_name"
-# A phase is a ProjectStatusStep of the project's HERO project type; the project's
-# statuses are its history.  The first live test (2026-11-01) showed that HERO
-# ignores ProjectMatchInput.step_id; a new status is passed as the nested
-# ProjectMatchInput.current_project_match_status { step_id }.
+# Phase is a ProjectStatusStep; project statuses are history. HERO ignores
+# ProjectMatchInput.step_id, so updates use current_project_match_status { step_id }.
 PHASE_INPUT = "current_project_match_status"
 READ_DOCUMENT = (
     "query HeroProjectSendRead($id: Int) { project_match(project_match_id: $id) { id partner_notes "

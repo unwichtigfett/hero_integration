@@ -1,4 +1,4 @@
-"""One-time: HERO values on the Project form appear as ERPNext fields (owner decision 2026-11-01)."""
+"""One-time: HERO values on the Project form appear as ERPNext fields."""
 
 
 def execute():

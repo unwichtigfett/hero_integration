@@ -1,9 +1,4 @@
-"""The ERPNext Company that owns every HERO project.
-
-One HERO account belongs to one business, so there is no per-integration
-Company setting: HERO projects use the ERPNext Default Company (Global
-Defaults). A site with exactly one Company uses that Company.
-"""
+"""Resolve the Company for HERO projects from Global Defaults or the sole Company."""
 from __future__ import annotations
 
 from dataclasses import dataclass

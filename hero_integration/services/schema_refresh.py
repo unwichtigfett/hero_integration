@@ -1,13 +1,8 @@
-"""Capture the live HERO schema as a validated snapshot.
+"""Capture validated HERO schema snapshots through one refresh path.
 
-One code path serves the explicit refresh action, the check that runs after
-the connection settings are saved, and the periodic refresh. A schema that
-did not change keeps its snapshot: the fingerprint is the identity, so no new
-snapshot is created and nothing is re-inherited.
-
-The first successful capture for the current source binding verifies the API
-token. Only a verified binding is refreshed periodically, so an invalid token
-never causes repeated HERO requests.
+Manual, settings-save and periodic refreshes reuse unchanged fingerprints
+without new snapshots or inheritance. The first successful capture verifies
+the current source binding's token; only verified bindings refresh periodically.
 """
 from __future__ import annotations
 

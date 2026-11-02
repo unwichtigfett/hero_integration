@@ -1,14 +1,9 @@
-"""Send a Task to HERO, both ways (owner decisions 2026-11-02).
+"""Send Task fields or create a linked Task on a HERO project.
 
-One "Send to HERO" button per Task, built like the Project button: the preview
-reads the live HERO task, shows what would change and refuses a field HERO
-changed since the last import.  Sent are title, description, end date (HERO
-"erledigen bis"), done and the assignee (an ERPNext user matched to a HERO user
-by e-mail; HERO allows one assignee).  A task created in ERPNext on a HERO
-project is created in HERO and linked.  Sending is one ``update_task`` mutation
-behind the global mutation gate and the mutation audit; it is verified by
-reading HERO again and the sync baseline is advanced so the next import sees no
-change.  Only System Managers and the role "HERO Writeback" may send.
+Preview covers title, description, due date, completion and one email-matched
+assignee, rejecting remote changes since import. Sending uses the global gate,
+mutation audit and readback, then advances baselines. Only System Managers and
+HERO Writeback may send.
 """
 
 from __future__ import annotations
@@ -209,7 +204,7 @@ def _wire(field: str, value, current: dict):
         zone = ZoneInfo(frappe.db.get_single_value("System Settings", "time_zone"))
         day = getdate(value)
         moment = now_datetime() if field == "done_date" and day == getdate() else datetime.combine(day, time(12))
-        # HERO silently ignores a timestamp with microseconds (live test 2026-11-02).
+        # HERO ignores timestamps containing microseconds.
         return moment.replace(microsecond=0, tzinfo=zone).isoformat()
     return value
 

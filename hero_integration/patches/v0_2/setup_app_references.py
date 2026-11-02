@@ -1,4 +1,4 @@
-"""One-time: Helpdesk and CRM reference ERPNext Customer/Project (user decision 2026-11-01)."""
+"""One-time: Helpdesk and CRM reference ERPNext Customer/Project."""
 
 
 def execute():

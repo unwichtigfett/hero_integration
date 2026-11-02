@@ -129,8 +129,7 @@ class TestProjectCompanyMigration(FakeFrappeMigrationHarness, unittest.TestCase)
         self.assertEqual(self.frappe.links[("project", "201")].target_name, "PROJ-0001")
 
     def test_empty_contact_projection_of_a_company_is_no_local_change(self):
-        # ERPNext fetches Customer.first_name etc. from the primary Contact and
-        # stores an empty projection as ''; HERO sent null (point 5, 2026-10-31).
+        # ERPNext projects an empty primary Contact value as '', while HERO sends null.
         record = {"id": 301, "full_name": "Synthetic Person", "company_name": "Synthetic Company", "category": "A",
                   "first_name": None, "last_name": None, "email": None, "mobile": None}
         self.assertEqual(self._execute(record).code, "CREATED")
@@ -609,7 +608,7 @@ class TestProjectCompanyMigration(FakeFrappeMigrationHarness, unittest.TestCase)
             SimpleNamespace(mode="Execute"),
         )
 
-        # User decision 2026-10-31: created without customer and held for review.
+        # created without customer and held for review.
         self.assertEqual(result.code, "PENDING_REVIEW")
         self.assertIsNone(self.frappe.projects[0].get("customer"))
 
@@ -682,8 +681,8 @@ class TestProjectCompanyMigration(FakeFrappeMigrationHarness, unittest.TestCase)
         self.assertEqual(project["project_name"], "Locally edited title")
 
     def test_hero_customer_change_alone_never_renames_a_project(self):
-        # User decision 2026-10-31: a changed customer name or salutation does
-        # not rename an existing Project; trade, number and address still do.
+        # Customer name or salutation changes preserve the Project title;
+        # trade, number and address changes still rename it.
         record = _project_title_inputs(id=781, customer_id=101)
         self.assertEqual(self._project(record).code, "CREATED")
         title = self.frappe.projects[0]["project_name"]
@@ -718,9 +717,8 @@ class TestProjectCompanyMigration(FakeFrappeMigrationHarness, unittest.TestCase)
             self.assertEqual(project["project_name"], "Locally edited title")
 
     def test_baseline_without_title_basis_preserves_the_title_once(self):
-        # Links created before the title basis existed cannot tell a customer
-        # change from a number change: the existing title is preserved and the
-        # basis recorded, so the next component change applies again.
+        # Without a prior title basis, preserve the title and record its basis
+        # so subsequent component changes can rename it.
         record = _project_title_inputs(id=783, customer_id=101)
         self._project(record)
         title = self.frappe.projects[0]["project_name"]

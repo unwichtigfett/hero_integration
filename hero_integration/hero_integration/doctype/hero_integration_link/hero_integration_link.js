@@ -1,4 +1,4 @@
-// Held HERO records offer only Approve / Reject (user decision 2026-10-31).
+// Held HERO records offer only Approve / Reject.
 frappe.ui.form.on("HERO Integration Link", {
 	refresh(frm) {
 		// Translate known read-only diagnostics for display without changing the

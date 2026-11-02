@@ -1,10 +1,5 @@
-"""Helpdesk and CRM reference the real ERPNext records instead of copying them.
-
-User decision 2026-11-01 (option A): HD Ticket, CRM Lead and CRM Deal get two
-plain Link fields to the ERPNext Customer and Project.  No HD Customer or CRM
-Organization mirror is created, and the apps' own ERPNext integrations stay
-disabled.  Contacts are already the shared Frappe ``Contact``.
-"""
+"""Helpdesk and CRM link to native ERPNext Customer/Project and shared Contact.
+Their ERPNext mirroring integrations stay disabled."""
 
 from __future__ import annotations
 
@@ -137,12 +132,8 @@ def _customer_for(doc) -> str | None:
 
 
 def refuse_record_mirrors(doc, method=None) -> None:
-    """doc_events validate: the apps' own ERPNext integrations would copy or create records.
-
-    ERPNext HD Settings mirrors every Customer as an HD Customer; ERPNext CRM
-    Settings can create Customers from deals.  Both contradict option A
-    (docs/app_integration_1.0.md): ERPNext data is referenced, not copied.
-    """
+    """Reject Helpdesk/CRM integrations that mirror or create ERPNext records.
+    These apps must reference existing Customer/Project records."""
     if doc.doctype == "ERPNext HD Settings" and doc.get("enabled"):
         frappe.throw(frappe._("The Helpdesk ERPNext mirror stays disabled: tickets reference the ERPNext Customer "
                               "and Project directly (HERO integration, option A)."))

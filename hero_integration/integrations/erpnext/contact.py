@@ -23,12 +23,9 @@ def synchronize_home_phone(customer, source_phone_home: object) -> None:
 
 
 def synchronize_primary_contact(customer, source_values: dict[str, object]) -> None:
-    """Persist selected HERO customer details on one exclusive native Contact.
-
-    Customer's visible person fields are ERPNext read-only projections.  This
-    adapter owns only the linked primary Contact and its native child rows; it
-    neither searches by name/email nor changes shared Contacts.
-    """
+    """Persist selected details on the exclusive primary Contact and child rows.
+    Customer person fields are read-only projections. Never match by name/email
+    or change shared Contacts."""
     values = {
         field: _text(source_values.get(field))
         for field in ("first_name", "last_name", "email_id", "mobile_no", "salutation")
