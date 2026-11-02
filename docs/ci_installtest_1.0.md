@@ -12,9 +12,10 @@ The test never contacts HERO. It runs these steps:
    fields, role, Project Types, salutations, DocTypes, mutation gate off.
 4. `migrate` twice; the install state must not change (create-only setup).
 5. `bench build --app hero_integration`, offline unit tests, `bench run-tests`.
-6. With `HERO_CONFIG_FILE` (complete package export, see below): package preview,
-   import, and a second preview that must report nothing new. `HERO_SCHEMA_FILE`
-   (introspection JSON) is optional; the package brings its own snapshot.
+6. On a fresh separate CI site, with `HERO_CONFIG_FILE` (complete package export,
+   see below): package preview, import, and a second preview that must report
+   nothing new. This avoids state left by the app test suite. `HERO_SCHEMA_FILE`
+   (introspection JSON) is optional; a v2 package brings its own snapshot.
 7. `uninstall-app hero_integration`.
 
 Image requirements: Python 3.14 (`requires-python >=3.14`), Node 20+, yarn,

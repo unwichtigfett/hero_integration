@@ -91,6 +91,21 @@ for var in HERO_SCHEMA_FILE HERO_CONFIG_FILE; do
   file="${!var:-}"
   if [ -n "$file" ] && [ ! -s "$file" ]; then echo "$var is set but $file is missing or empty"; exit 1; fi
 done
+# The application test suite can leave a different source instance or schema
+# snapshot behind. Import the user's package on a fresh, separate CI site so
+# its safety checks see the same clean installation as a new deployment.
+if [ -n "${HERO_SCHEMA_FILE:-}" ] || [ -n "${HERO_CONFIG_FILE:-}" ]; then
+  MAIN_TEST_SITE="$SITE"
+  SITE=hero-config-ci.localhost
+  if [ "$SITE" = "$MAIN_TEST_SITE" ] || [ -e "sites/$SITE" ]; then
+    echo "Configuration test site is already present; refusing to reuse it" >&2
+    exit 1
+  fi
+  step "fresh site for offline configuration import"
+  bench new-site "$SITE" --db-host "$DB_HOST" --db-root-password "$DB_ROOT_PASSWORD" --admin-password admin --no-mariadb-socket
+  bench --site "$SITE" install-app erpnext
+  bench --site "$SITE" install-app hero_integration
+fi
 if [ -n "${HERO_SCHEMA_FILE:-}" ]; then
   step "offline HERO schema snapshot (optional; a v2 configuration package brings its own)"
   run_py hero_integration.api.snapshot_import_file "{\"path\": \"$HERO_SCHEMA_FILE\"}"
@@ -108,6 +123,9 @@ else
   echo "NOTE: HERO_CONFIG_FILE not set - package import skipped."
 fi
 
+if [ -n "${MAIN_TEST_SITE:-}" ]; then
+  SITE="$MAIN_TEST_SITE"
+fi
 step "uninstall"
 bench --site "$SITE" uninstall-app hero_integration --yes --no-backup
 
