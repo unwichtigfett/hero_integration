@@ -40,7 +40,10 @@ class HEROGraphQLService(Document):
                 "HERO mutation execution is disabled."
             )
             return
-        from hero_integration.client.graphql import assert_read_only
+        from hero_integration.client.graphql import HeroClientError, assert_read_only
 
-        assert_read_only(self.query_document)
+        try:
+            assert_read_only(self.query_document)
+        except HeroClientError as error:
+            frappe.throw(translate_error(error, frappe._))
         self.validation_summary = "Read-only GraphQL document bound to the selected schema fingerprint."
