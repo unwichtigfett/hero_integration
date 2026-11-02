@@ -67,6 +67,22 @@ class TestFillReferences(unittest.TestCase):
 
 
 class TestSetup(unittest.TestCase):
+    def test_only_installed_app_interfaces_are_configured(self):
+        for apps, helpdesk_calls, crm_calls in (
+            ([], 0, 0),
+            (["helpdesk"], 1, 0),
+            (["crm"], 0, 2),
+            (["helpdesk", "crm"], 1, 2),
+        ):
+            with self.subTest(apps=apps), patch.object(refs, "READ_ROLES", {}), \
+                    patch.object(refs.frappe, "get_installed_apps", return_value=apps), \
+                    patch.object(refs, "ensure_reference_fields"), \
+                    patch.object(refs, "_show_in_helpdesk") as helpdesk, \
+                    patch.object(refs, "_show_in_crm_side_panel") as crm:
+                refs.setup_reference_access()
+                self.assertEqual(helpdesk.call_count, helpdesk_calls)
+                self.assertEqual(crm.call_count, crm_calls)
+
     def test_crm_side_panel_gains_one_erpnext_section(self):
         layout = SimpleNamespace(layout=json.dumps([{"label": "Details", "columns": [{"fields": ["organization"]}]}]),
                                  save=lambda **kwargs: None)

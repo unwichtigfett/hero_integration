@@ -66,7 +66,7 @@ KNOWN=apps/hero_integration/ci
 MIN_TESTS="${MIN_TESTS:-1000}"
 (cd apps/hero_integration && ../../env/bin/python -m unittest discover -s hero_integration/tests -t . \
   > /tmp/hero-offline.log 2>&1) || true   # the result is judged below, not by the exit code
-grep -E "^(ERROR|FAIL):" /tmp/hero-offline.log | sort > /tmp/hero-offline-now.txt
+{ grep -E "^(ERROR|FAIL):" /tmp/hero-offline.log || true; } | sort > /tmp/hero-offline-now.txt
 offline_ran=$(grep -oE "^Ran [0-9]+ tests" /tmp/hero-offline.log | grep -oE "[0-9]+" || echo 0)
 echo "offline tests: $offline_ran run, $(wc -l < /tmp/hero-offline-now.txt) failed (known: $(wc -l < $KNOWN/known-offline-failures.txt))"
 if [ "$offline_ran" -lt "$MIN_TESTS" ]; then echo "Offline suite did not run (only $offline_ran tests)"; tail -20 /tmp/hero-offline.log; TEST_FAILED=1; fi
@@ -74,7 +74,7 @@ new_failures=$(comm -23 /tmp/hero-offline-now.txt <(sort $KNOWN/known-offline-fa
 if [ -n "$new_failures" ]; then echo "New offline test failures:"; echo "$new_failures"; TEST_FAILED=1; fi
 # Site tests: failures listed in known-site-failures.txt predate this pipeline; only new ones fail the build.
 bench --site "$SITE" run-tests --app hero_integration > /tmp/hero-site-tests.log 2>&1 || true   # judged below
-sed 's/\x1b\[[0-9;]*m//g' /tmp/hero-site-tests.log | grep -E "^\s*✖ " | awk '{print $2}' | sort -u > /tmp/hero-site-failed.txt
+{ sed 's/\x1b\[[0-9;]*m//g' /tmp/hero-site-tests.log | grep -E "^\s*✖ " || true; } | awk '{print $2}' | sort -u > /tmp/hero-site-failed.txt
 grep -q "Failed to discover tests" /tmp/hero-site-tests.log && { echo "Test discovery failed"; TEST_FAILED=1; }
 new_site=$(comm -23 /tmp/hero-site-failed.txt <(sort -u $KNOWN/known-site-failures.txt))
 if [ -n "$new_site" ]; then echo "New site test failures:"; echo "$new_site"; TEST_FAILED=1; fi

@@ -5,7 +5,7 @@
 # The repository must be "trusted" in Woodpecker so the read-only volume can be mounted.
 when:
   - event: [manual, push]
-    branch: [hero_int_1.0, hero_int_dev]
+    branch: [hero_int_dev]
 
 services:
   - name: mariadb
@@ -25,7 +25,7 @@ steps:
       DB_ROOT_PASSWORD: ci-root
       REDIS_CACHE: redis://redis:6379
       WORKDIR: /tmp/ci-bench
-      HERO_SCHEMA_FILE: /hero-ci/hero-schema.json
-      HERO_CONFIG_FILE: /hero-ci/hero-integration-config.json
     commands:
+      - if [ -s /hero-ci/hero-schema.json ]; then export HERO_SCHEMA_FILE=/hero-ci/hero-schema.json; fi
+      - if [ -s /hero-ci/hero-integration-config.json ]; then export HERO_CONFIG_FILE=/hero-ci/hero-integration-config.json; fi
       - ci/bench-install-test.sh
