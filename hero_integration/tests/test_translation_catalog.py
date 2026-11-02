@@ -266,6 +266,32 @@ class TestGermanCatalog(unittest.TestCase):
                     self.assertEqual([Path(path).resolve() for path in paths], [(APP / "public" / "js" / "hero_diagnostics.js").resolve()])
                     self.assertIn("hero_integration_diagnostics", Path(paths[0]).read_text(encoding="utf-8"))
 
+    def test_native_diagnostic_fields_are_read_only_and_hooked(self):
+        import json
+        from hero_integration import hooks
+
+        expected = {
+            "HERO GraphQL Mapping": ["suggestion_reason"],
+            "HERO GraphQL Schema Snapshot": ["analysis_detail"],
+            "HERO Snapshot Mapping Inheritance": ["reason"],
+            "HERO Mutation Audit": ["detail"],
+            "HERO Integration Run": ["error_message"],
+            "HERO Mapping Adoption": ["error_message"],
+            "HERO Integration Settings": ["schema_check_message", "sync_error"],
+            "HERO Migration Progress Ledger": ["detail"],
+        }
+        source = (APP / "public" / "js" / "hero_native_diagnostics.js").read_text(encoding="utf-8")
+        for doctype, fields in expected.items():
+            with self.subTest(doctype=doctype):
+                path = APP / "hero_integration" / "doctype" / doctype.lower().replace(" ", "_")
+                metadata = json.loads((path / (path.name + ".json")).read_text(encoding="utf-8"))
+                definitions = {field.get("fieldname"): field for field in metadata["fields"]}
+                self.assertTrue(all(definitions[field].get("read_only") for field in fields))
+                self.assertIn(f'"{doctype}"', source)
+                self.assertTrue(all(f'"{field}"' in source for field in fields))
+                self.assertEqual(hooks.doctype_js[doctype],
+                                 ["public/js/hero_diagnostics.js", "public/js/hero_native_diagnostics.js"])
+
     def test_send_preview_labels_and_effect_summaries_have_german_entries(self):
         with (APP / "translations" / "de.csv").open(encoding="utf-8", newline="") as stream:
             messages = dict(csv.reader(stream))
