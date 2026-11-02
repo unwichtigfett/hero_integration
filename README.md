@@ -1,33 +1,28 @@
 # HERO Integration
 
-HERO Integration is a Frappe v16 app that manages HERO GraphQL data. It requires a site with ERPNext v16 installed. It creates native Customer and Project records.
-Installation does not contact HERO.
-Before it adds the HERO schema, the pre-install guard verifies the ERPNext
-Customer, Contact, Contact Email, Contact Phone and Project DocTypes.
-Helpdesk is optional.
+HERO Integration connects HERO GraphQL with Frappe/ERPNext v16. It provides saved read services, a Mapping Editor, native ERPNext adapters and guarded synchronization. Installing the app does **not** contact HERO or activate any mappings.
 
-Install from the branch `hero_int_1.0`:
-<https://github.com/unwichtigfett/hero_integration/tree/hero_int_1.0>. See `installation_guide_1.0.md`.
+The installation branch is [`hero_int_1.0`](https://github.com/unwichtigfett/hero_integration/tree/hero_int_1.0). Development continues on `hero_int_dev`; these branches can differ. See the [installation guide](installation_guide_1.0.md).
 
-## Supported scope
+## What the source supports
 
-- HERO Customer, Project Match, Calendar Events and Task operations with fixed,
-  versioned selection sets.
-- Preview and execute mode, result records, source-to-target bindings,
-  idempotent repeats, conflict detection, retry policy and scheduled sync.
-- Data flow only after an explicit Company confirmation.
-- Linear variable mappings define the data transmission.
+- **Customer:** Native Customer, primary Contact and Address using HERO Integration Link identities. Shared Contacts and Addresses need proven update authority.
+- **Project:** A resolved Customer link, independently confirmed ERPNext Company and protected server-generated title. HERO Project document names use the reserved `-H` suffix.
+- **Task:** A scoped native ERPNext Task intake exists alongside the legacy `HERO External Task` observation projection. Selected fields are reconciled against baselines; assignment, completion and deadlines need additional acceptance.
+- **Calendar:** Native Event projection with project resolution and conflict safeguards. Timezone, all-day, recurrence and participant semantics remain approval-bound.
+- **GraphQL:** Saved, validated Query services can execute explicitly through a read-only workspace endpoint. Generated Task queries remain drafts until approval. Mutation drafts grant no external execution authority.
+- **Mapping:** Personal Drafts, revisions, directional Query/Mutation exchange and explicit activation gates.
+- **Synchronization:** Manual runs, checkpoints, conflict reporting and polling controls. Code coverage alone does not establish live HERO acceptance. Automatic polling currently enumerates Customer and Project, not all four areas.
 
-## Documentation
+Existing reviewed Query documents retain their contracts; generated operations never silently replace them.
 
-- [Installation](installation_guide_1.0.md)
-- [Configuration](docs/configuration_guide_1.0.md)
-- [Manual acceptance](docs/manual_acceptance_1.0.md)
-- [Feature matrix](docs/feature_matrix_1.0.md)
-- [Portability report](docs/portability_report_1.0.md)
-- [DocType extensions](docs/doctype_extensions_1.0.md)
-- [Mapping matrix](docs/mapping_matrix_1.0.md)
-- [Desk workspace](docs/ui_overview_1.0.md)
+## Safety and approval
+
+A saved Draft, schema preview, imported package or validated service is **not** permission to synchronize. Before execution, check the source instance and binding, schema fingerprint, active mapping and selected rule content, read-service revision, permissions and recovery evidence.
+
+Integration Links, not names or email addresses, own external identity. Omitted fields stay unchanged. Do not interpret unconfirmed NULL/empty values as permission to clear, delete, complete or unassign. Legacy Task lifecycle and ToDo paths require explicit negative testing before use.
+
+Use HTTPS and an allowlisted HERO host. The token stays in a Frappe `Password` field and must not be exposed in Desk responses, logs or queue arguments.
 
 ## Language
 
@@ -41,25 +36,19 @@ Technical names and user-provided or external-system content are retained as
 received. A message without a matching translation remains in its source
 language. Terms such as Mapping and Polling remain in English in the German UI.
 
-## Adapter tools
+## Documentation
 
-The app stores GraphQL schema snapshots, versioned services and cyclic polling. The API Analyzer builds a deterministic graph from a saved snapshot without contacting HERO.
-The **Mapping** tab in the **HERO Integration** Desk workspace requires an explicit saved, validated schema snapshot. Only then does it load source fields, open the graph or supply searchable source and target pickers.
-Schema-only fields are visible but disabled.
-The target picker reads the installed site's Frappe metadata. This covers Custom Fields, identity, Company, status, standard-mapping, standard fields and unresolved child-record fields.
-Suggestions are bidirectional and non-binding. They can only create a Draft mapping. An administrator must explicitly validate and activate it.
-Custom direct mappings target only writable fields on approved DocTypes.
-Before activation, Frappe validates metadata, types, relations, permissions, snapshot fingerprints and the mapping revision.
+| Topic | Documents |
+| --- | --- |
+| Installation and operation | [Install](installation_guide_1.0.md) · [Configure](docs/configuration_guide_1.0.md) · [Workspace](docs/ui_overview_1.0.md) |
+| Current source capabilities | [Feature matrix](docs/feature_matrix_1.0.md) · [Synchronization handoff](docs/sync_handoff_1.0.md) |
+| Mapping and data model | [Mapping decision](docs/mapping_1.0.md) · [Mapping baseline](docs/mapping_matrix_1.0.md) · [DocType extensions](docs/doctype_extensions_1.0.md) · [Query field contract](docs/query_fieldcontract_1.0.md) |
+| Quality and evidence | [Manual acceptance](docs/manual_acceptance_1.0.md) · [CI](docs/ci_installtest_1.0.md) · [Run checkpoints](docs/run_checkpoints_1.0.md) · [Portability](docs/portability_report_1.0.md) |
+| Architecture and provenance | [App integration](docs/app_integration_1.0.md) · [File topology revision 00](docs/architecture/hero-integration_f-topology_00.md) · [Materializer](docs/materializer_1.0.md) |
+| Historical mapping decisions | [Reviewed legacy mapping](docs/mapping/hero_mapping_1.0.md) · [Original proposal](docs/mapping/mapping_plan_1.0.md) |
 
-Fresh installations contain no mapping definitions. The Mapping Editor exports
-deterministic, versioned packages. After an import, the editor shows a checklist for HERO-owned Custom DocTypes, Custom Fields, relations and mappings.
-A System Manager selects entries and confirms the adoption action once.
-The action provisions the schema first. It activates the selected mappings only
-after the checks pass. It never triggers a migration by itself.
+## Verification state
 
-## Security model
+Offline and disposable-site CI checks are useful evidence for their exact commit and test scope. They do not prove live HERO execution, installed target metadata, active mapping/service approval, production synchronization or recovery.
 
- - The endpoint must use HTTPS.
- - The exact hostname must appear in **Allowed HERO Hosts**.
- - The API token is a Frappe `Password` value. Only a worker reads it. The app
-   never returns it to Desk, writes it to a log or passes it as a queue argument.
+**Documentation reviewed:** 2 November 2026. **Runtime acceptance:** `EXECUTION_UNVERIFIED`.
