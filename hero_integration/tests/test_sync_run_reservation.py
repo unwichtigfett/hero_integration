@@ -7,6 +7,10 @@ from hero_integration.services import migration, run_reservation
 from hero_integration.services.sync_engine import FrappeSyncLedger, SyncConflict, SyncRun
 
 
+class QueryDeadlockError(RuntimeError):
+    pass
+
+
 class TestSyncRunReservation(unittest.TestCase):
     def facade(self, *, legacy='', legacy_state='Running', b8=(), acquired=True):
         events = []
@@ -25,6 +29,7 @@ class TestSyncRunReservation(unittest.TestCase):
             raise AssertionError(query)
         doc = SimpleNamespace(insert=Mock(side_effect=lambda: events.append('INSERT RUN')))
         frappe = SimpleNamespace(local=SimpleNamespace(site='site'), session=SimpleNamespace(user='Administrator'),
+            QueryDeadlockError=QueryDeadlockError,
             get_roles=lambda: [], has_permission=Mock(),
             db=SimpleNamespace(sql=sql, table_exists=lambda _name: True, commit=Mock(), rollback=Mock()),
             get_doc=Mock(return_value=doc), get_all=Mock(side_effect=AssertionError('snapshot read forbidden during claim')))
@@ -89,3 +94,22 @@ class TestSyncRunReservation(unittest.TestCase):
             FrappeSyncLedger(frappe).claim(SyncRun('one', 'site', 'Administrator', 1, False))
         self.assertIn('RELEASE_LOCK', events[-1])
         frappe.db.commit.assert_not_called()
+
+    def test_database_reservation_conflicts_block_without_taking_transaction_ownership(self):
+        for stage in ('slot', 'active_runs', 'insert'):
+            with self.subTest(stage=stage):
+                frappe, events = self.facade()
+                error = QueryDeadlockError('synthetic stale snapshot')
+                target = {'slot': (run_reservation, 'locked_legacy_slot'),
+                          'active_runs': (run_reservation, 'locked_b8_runs'),
+                          'insert': (frappe.get_doc.return_value, 'insert')}[stage]
+                with patch.object(*target, side_effect=error):
+                    with self.assertRaises(SyncConflict) as caught:
+                        FrappeSyncLedger(frappe).claim(SyncRun('one', 'site', 'Administrator', 1, False))
+                self.assertIs(caught.exception.__cause__, error)
+                self.assertIn('RELEASE_LOCK', events[-1])
+                self.assertNotIn('INSERT RUN', events)
+                if stage != 'insert':
+                    frappe.get_doc.assert_not_called()
+                frappe.db.commit.assert_not_called()
+                frappe.db.rollback.assert_not_called()
