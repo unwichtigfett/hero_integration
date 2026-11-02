@@ -20,6 +20,7 @@ for (const language of input.languages) {
     assert.equal(window.hero_integration_i18n.text('Draft'), language === 'en' ? 'Draft' : 'Entwurf');
     assert.equal(window.hero_integration_i18n.text('ACTIVE_ONLY'), language === 'en' ? 'ACTIVE_ONLY' : 'Nur aktiv geändert');
     assert.equal(window.hero_integration_i18n.text('TOO_LARGE'), language === 'en' ? 'TOO_LARGE' : 'Zu groß');
+    assert.equal(window.hero_integration_i18n.text('Identity'), language === 'en' ? 'Identity' : 'Identität');
     const expectedError = language === 'en'
         ? 'Line 2: variable "id" is defined more than once.'
         : 'Zeile 2: Die Variable „id“ ist mehrfach definiert.';
