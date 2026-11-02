@@ -13,7 +13,8 @@ frappe.ui.form.on("HERO Integration Link", {
 			const original = field.set_disp_area;
 			field.set_disp_area = function (...args) {
 				const result = original.apply(this, args);
-				renderDetail(this, this.value ?? args[0]);
+				// Match Frappe's ControlInput.set_disp_area value selection.
+				renderDetail(this, this.value || args[0]);
 				return result;
 			};
 			field._heroDiagnosticWrapped = true;

@@ -65,4 +65,10 @@ test('field-only refresh retains translation without stacking wrappers or changi
   assert.equal(originalCalls, 1);
   assert.equal(display.textContent, 'Bekannt');
   assert.equal(frm.doc.conflict_detail, 'Known');
+  // Frappe falls back to the supplied value when the control value is empty.
+  field.value = '';
+  assert.equal(field.set_disp_area('Known'), 'done');
+  assert.equal(originalCalls, 2);
+  assert.equal(display.textContent, 'Bekannt');
+  assert.equal(frm.doc.conflict_detail, 'Known');
 });
