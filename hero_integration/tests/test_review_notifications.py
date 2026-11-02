@@ -52,6 +52,13 @@ class TestReviewNotifications(unittest.TestCase):
                          "REC-1 | project | 41 | PENDING_REVIEW | Address &lt;missing&gt;<br>"
                          "REC-2 | project | 42 | PENDING_REVIEW | Address &lt;missing&gt;")
 
+    def test_unmatched_task_assignees_are_one_notice_per_run(self):
+        self.assertTrue(notices.notify_unmatched_assignees("HERO-RUN-3", {"b@example.invalid": 2, "a@example.invalid": 1}))
+        (notice,) = self.sent
+        self.assertIn("2 HERO assignees have no ERPNext user", notice["subject"])
+        self.assertTrue(notice["email_content"].endswith("a@example.invalid | 1 task(s)<br>b@example.invalid | 2 task(s)"))
+        self.assertFalse(notices.notify_unmatched_assignees("HERO-RUN-4", {}))
+
     def test_run_without_failures_sends_nothing(self):
         self.assertFalse(notices.notify_run_summary("HERO-RUN-2"))
         self.assertEqual(self.sent, [])

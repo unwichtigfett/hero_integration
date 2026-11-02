@@ -82,3 +82,14 @@ def notify_run_summary(run_name: str) -> bool:
     ]
     subject = f"HERO run {run_name}: {len(rows)} records were not imported"
     return _notify(subject, "<br>".join(lines), "HERO Integration Run", run_name)
+
+
+def notify_unmatched_assignees(run_name: str, emails: dict[str, int]) -> bool:
+    """One notice per run: HERO assignees without an ERPNext user (tasks stay unassigned)."""
+    if not emails:
+        return False
+    lines = [f"{escape(email)} | {count} task(s)" for email, count in sorted(emails.items())]
+    subject = f"HERO run {run_name}: {len(emails)} HERO assignees have no ERPNext user"
+    detail = ("Create an ERPNext user with the same e-mail; the next task run assigns the tasks.<br>"
+              + "<br>".join(lines))
+    return _notify(subject, detail, "HERO Integration Run", run_name)
