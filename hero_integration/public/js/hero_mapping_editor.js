@@ -1132,7 +1132,7 @@
                         };
                         const tr = $("<tr tabindex='0'></tr>").toggleClass("is-selected", isSelected).toggleClass("is-draft", isDraft).attr({"aria-selected": String(isSelected), "aria-label": format("{0}: {1} to {2}", item.operation_name || item.operation, row.source, row.target), "data-mapping-name": item.name});
                         tr.on("click", select).on("keydown", (event) => { if (["Enter", " "].includes(event.key)) { event.preventDefault(); select(); } });
-                        for (const value of [isDraft ? text("Personal draft") : item.status || "Active", item.operation_name || item.operation, row.source, row.app, row.target, item.revision]) tr.append($("<td></td>").text(String(value ?? "Not provided")));
+                for (const value of [isDraft ? text("Personal draft") : text(item.status || "Active"), item.operation_name || item.operation, row.source, row.app, row.target, item.revision]) tr.append($("<td></td>").text(String(value ?? text("Not provided"))));
                         table.find("tbody").append(tr);
                     });
                 });
@@ -1460,7 +1460,7 @@
                 heroMeta.Name.text((mutation ? selectedAction() : selectedObject()) || text("Not provided"));
                 heroMeta.Type.text(rule?.source_type || (mutation ? value.target?.graphql_type || value.target?.input_type : value.source?.type) || text("Not provided"));
                 heroMeta.Node.text(rule?.source_path || (mutation ? value.target?.argument : value.records_path || value.record_path) || text("Not provided"));
-                for (const fields of [heroMeta, frappeMeta]) { fields.Revision.text(active ? `${text("Mapping")} ${active.revision}` : text("Not provided")); fields.Status.text(active ? mode === "draft" ? text("Personal draft") : active.status || text("Active") : text("No selection")); }
+                for (const fields of [heroMeta, frappeMeta]) { fields.Revision.text(active ? `${text("Mapping")} ${active.revision}` : text("Not provided")); fields.Status.text(active ? mode === "draft" ? text("Personal draft") : text(active.status || "Active") : text("No selection")); }
                 frappeMeta.ID.text(text("Not provided")); frappeMeta.Name.text(rule?.target_field || frappeValue.field_path || frappeValue.field || text("Not provided"));
                 frappeMeta.Type.text(frappeValue.fieldtype || text("Not provided")); frappeMeta.Node.text(rule?.target_doctype || frappeValue.doctype || text("Not provided"));
                 const fieldContext = row?.reference ? value.field_contexts?.[row.id] : assignment.source;
