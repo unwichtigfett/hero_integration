@@ -77,36 +77,6 @@ class TestSchedulerContract(unittest.TestCase):
         self.assertEqual(calls, [("only_for", "System Manager")])
         self.assertEqual(start.call_args.kwargs, {"action": "Sync", "dry_run": 0, "scheduled": False, "graphql_service": ""})
 
-    def test_scheduler_uses_the_internal_entrypoint_only(self):
-        frappe_module = types.ModuleType("frappe")
-        frappe_module.whitelist = lambda *args, **kwargs: lambda function: function
-        frappe_module.get_single = lambda _doctype: SimpleNamespace(scheduled_sync_enabled=1)
-        frappe_module.utils = SimpleNamespace(now_datetime=lambda: datetime(2026, 10, 21, 10, 0))
-        adapter = types.ModuleType("hero_integration.services.sync_runtime_adapter")
-        calls: list[str] = []
-        adapter.run_scheduled_auto_sync = lambda: calls.append("canonical")
-        previous_frappe = sys.modules.get("frappe")
-        previous_adapter = sys.modules.get("hero_integration.services.sync_runtime_adapter")
-        sys.modules.pop("hero_integration.tasks", None)
-        sys.modules["frappe"] = frappe_module
-        sys.modules["hero_integration.services.sync_runtime_adapter"] = adapter
-        try:
-            tasks = importlib.import_module("hero_integration.tasks")
-            tasks.run_scheduled_sync()
-        finally:
-            sys.modules.pop("hero_integration.tasks", None)
-            if previous_frappe is None:
-                sys.modules.pop("frappe", None)
-            else:
-                sys.modules["frappe"] = previous_frappe
-            if previous_adapter is None:
-                sys.modules.pop("hero_integration.services.sync_runtime_adapter", None)
-            else:
-                sys.modules["hero_integration.services.sync_runtime_adapter"] = previous_adapter
-
-        self.assertEqual(calls, ["canonical"])
-
-
 class TestSchedulerCadence(unittest.TestCase):
     def test_scheduler_ticks_every_minute_so_short_intervals_are_honoured(self):
         import ast

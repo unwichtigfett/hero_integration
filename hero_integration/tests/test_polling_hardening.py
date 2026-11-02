@@ -214,31 +214,6 @@ class TestScheduledEntry(unittest.TestCase):
         self.assertEqual(fake.events[-1]["status"], "Skipped")
         self.assertIn("previous polling run is still active", fake.events[-1]["detail"])
 
-    def test_blocked_and_failed_auto_sync_are_recorded_instead_of_crashing(self):
-        class RuntimeBridgeError(ValueError):
-            pass
-
-        adapter = types.ModuleType("hero_integration.services.sync_runtime_adapter")
-        adapter.RuntimeBridgeError = RuntimeBridgeError
-        adapter.BLOCKED_NO_B7_MATERIALIZED_RUNTIME = "BLOCKED"
-        settings = _settings(polling_mode="AUTO_SYNC", sync_status="", sync_error="")
-
-        adapter.run_scheduled_auto_sync = MagicMock(side_effect=RuntimeBridgeError("No approved canonical runtime plan exists."))
-        fake, _ = self.run_tasks(settings, adapter)
-        self.assertEqual((fake.events[-1]["mode"], fake.events[-1]["status"]), ("AUTO_SYNC", "Skipped"))
-        self.assertIn("No approved canonical runtime plan exists.", fake.events[-1]["detail"])
-
-        adapter.run_scheduled_auto_sync = MagicMock(side_effect=KeyError("token=secret"))
-        fake, _ = self.run_tasks(settings, adapter)
-        self.assertEqual(fake.events[-1]["status"], "Failed")
-        self.assertNotIn("secret", fake.events[-1]["detail"])
-        self.assertEqual(fake.logged, ["HERO automatic sync failed"])
-
-        adapter.run_scheduled_auto_sync = MagicMock(return_value=SimpleNamespace(status="BLOCKED"))
-        fake, _ = self.run_tasks(settings, adapter)
-        self.assertIn("no materialized runtime", fake.events[-1]["detail"])
-
-
 class TestPollingSettingsSave(unittest.TestCase):
     def save(self, **values):
         package = importlib.import_module("hero_integration")

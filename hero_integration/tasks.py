@@ -41,6 +41,9 @@ def run_scheduled_sync() -> None:
     mode = effective_mode(settings)
     if mode == "OFF":
         return
+    if mode == "AUTO_SYNC":
+        _auto_sync_tick(settings, record_scheduler_outcome)
+        return
     plan = runtime_plan(settings)
     if plan["unsupported_sources"]:
         # Visible instead of a silent no-op on every tick: the configuration blocks every run.
@@ -119,3 +122,55 @@ def _run(mode: str, record_scheduler_outcome) -> None:
     if getattr(result, "status", None) == getattr(adapter, "BLOCKED_NO_B7_MATERIALIZED_RUNTIME", object()):
         record_scheduler_outcome("AUTO_SYNC", "Skipped",
                                  "Automatic sync is blocked: no materialized runtime is available; no HERO request was made.")
+
+
+def _auto_sync_tick(settings, record_scheduler_outcome) -> str | None:
+    """Automatic sync = the Synchronisation page's Start/Update, one area at a time.
+
+    Every enabled area (contacts, projects, events, tasks, in this order) gets an
+    Execute run once per polling interval inside the execution window.  Only
+    one run is ever queued or running; the next tick starts the next due area.
+    Runs only read HERO; nothing is sent to HERO.
+    """
+    from hero_integration import api
+    from hero_integration.services.polling import runtime_plan, scheduler_due
+    from hero_integration.services.sync_page import ACTIVE_STATES, AREAS
+
+    plan = runtime_plan(settings)
+    if plan["unsupported_sources"]:
+        record_scheduler_outcome("AUTO_SYNC", "Skipped", "Polling configuration is not supported ("
+                                 + ", ".join(map(str, plan["unsupported_sources"])) + "); no HERO request was made.")
+        return None
+    now = frappe.utils.now_datetime()
+    timezone = _system_timezone()
+    if not scheduler_due(settings, now, None, system_timezone=timezone):
+        return None  # off, paused, no area enabled or outside the execution window
+    if frappe.db.exists("HERO Integration Run", {"state": ["in", list(ACTIVE_STATES)]}):
+        return None
+    instance = str(getattr(settings, "hero_source_instance", "default") or "default").strip() or "default"
+    for item in AREAS:
+        if not plan["areas"].get(item.key):
+            continue
+        last = frappe.get_all("HERO Integration Run", filters={"action": item.run_action, "mode": "Execute"},
+                              pluck="creation", order_by="creation desc", limit_page_length=1)
+        if last and not scheduler_due(settings, now, last[0], system_timezone=timezone):
+            continue
+        services = api._sync_area_read_services(instance).get(item.operation) or []
+        if not services:
+            record_scheduler_outcome("AUTO_SYNC", "Skipped", api._sync_area_blocker(item, instance))
+            continue
+        try:
+            with _polling_lock():
+                result = api._start_migration(action=item.run_action, dry_run=0, scheduled=True,
+                                              graphql_service=services[0]["service"], source_instance=instance)
+        except _lock_timeout_error():
+            return None
+        except Exception:
+            frappe.log_error(title="HERO automatic sync could not start a run")
+            record_scheduler_outcome("AUTO_SYNC", "Failed", f"{item.label}: the automatic run could not be started; see the error log.")
+            return None
+        frappe.db.commit()
+        if result.get("run"):
+            record_scheduler_outcome("AUTO_SYNC", "Started", f"{item.label}: run {result['run']} queued.")
+        return result.get("run")
+    return None

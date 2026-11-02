@@ -722,11 +722,10 @@ def _process_phase(run, phase: str, reader, *, checkpoint=None) -> bool:
             run.resume_record_index = 0
             run.save()
             if page.next_offset is None:
-                # Every Customer was processed; a blocked Customer only blocks its own Projects.
-                if phase == "project" and _phase_has_blockers(run, phase):
-                    _set_phase_state(run, phase, "Blocked")
-                    _block_run(run, "Project phase contains unresolved records.")
-                    return False
+                # Every record was processed.  Single records that could not be
+                # imported are reported (run "Completed With Conflicts", one admin
+                # summary, conflict list) like Tasks and Events; they no longer
+                # mark the whole Project run as Blocked.
                 _set_phase_state(run, phase, "Completed")
                 return True
         offset = page.next_offset
@@ -1591,7 +1590,7 @@ def _migrate_project(record: dict[str, object], run) -> Result:
                 if existing:
                     keep.add("customer")
                     return None
-                review.append("The HERO customer has no unambiguous ERPNext link; the Project has no customer.")
+                review.append(_unlinked_customer_reason(value))
                 return None
 
         def title_for(source):
@@ -2182,6 +2181,20 @@ def _update_link_baseline(link, source_hash, target_hash, source_fields, target_
 def _save_link(link) -> None:
     if hasattr(link, "save"):
         link.save()
+
+
+def _unlinked_customer_reason(value) -> str:
+    """Say why the Project has no customer, so the administrator can decide."""
+    reason = "The HERO customer has no unambiguous ERPNext link; the Project has no customer."
+    try:
+        rows = frappe.db.sql("""SELECT result FROM `tabHERO Integration Record` WHERE source_type='customer'
+                                AND source_id=%s ORDER BY creation DESC LIMIT 1""", (str(value),))
+    except Exception:
+        return reason
+    hints = {"SKIPPED_SOURCE_DELETED": "The HERO customer is deleted in HERO",
+             "SKIPPED_CONTACT_PERSON": "The HERO customer is a contact person, not a customer"}
+    hint = hints.get(rows[0][0]) if rows else None
+    return f"{hint}; the Project has no customer." if hint else reason
 
 
 class UnlinkedCustomerError(MappingPlanError):

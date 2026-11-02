@@ -379,23 +379,25 @@
             add(main, el("h3", {text: "Importing Conflicts"}));
             if (!data) { add(main, el("p", {class: "hero-sync-hint", text: "Loading conflicts …"})); return; }
             if (!data.rows.length) { add(main, el("p", {class: "hero-sync-hint", text: "No open conflicts."})); return; }
-            const chosen = () => data.rows.filter((row) => state.selectedConflicts.has(row.name));
+            const decidable = (row) => row.kind !== "record";
+            const chosen = () => data.rows.filter((row) => decidable(row) && state.selectedConflicts.has(row.name));
             add(main, el("div", {class: "hero-sync-actions"},
                 el("button", {type: "button", text: "Approve selected", disabled: state.busy || undefined, onclick: () => decideConflicts(chosen(), "approve")}),
                 el("button", {type: "button", text: "Decline selected", disabled: state.busy || undefined, onclick: () => decideConflicts(chosen(), "reject")})),
                 el("div", {class: "hero-sync-table-wrap"}, el("table", {class: "hero-sync-table"},
                     el("thead", {}, el("tr", {}, ["Select", "ID", "Conflict", "Entity Type", "Sync State", "Approve / Decline"].map((label) => el("th", {scope: "col", text: label})))),
                     el("tbody", {}, data.rows.map((row) => el("tr", {},
-                        el("td", {}, el("input", {type: "checkbox", "aria-label": `Select ${row.name}`, checked: state.selectedConflicts.has(row.name) || undefined,
-                            onchange: (event) => event.target.checked ? state.selectedConflicts.add(row.name) : state.selectedConflicts.delete(row.name)})),
-                        el("td", {class: "hero-sync-mono", text: row.name}),
+                        el("td", {}, decidable(row) ? el("input", {type: "checkbox", "aria-label": `Select ${row.name}`, checked: state.selectedConflicts.has(row.name) || undefined,
+                            onchange: (event) => event.target.checked ? state.selectedConflicts.add(row.name) : state.selectedConflicts.delete(row.name)}) : null),
+                        el("td", {class: "hero-sync-mono", text: decidable(row) ? row.name : `HERO ${row.source_id}`}),
                         el("td", {text: row.conflict_detail || "Conflict requires review."}),
                         el("td", {text: row.area}),
-                        el("td", {text: row.sync_status === "Pending Review" ? "Confirmation pending" : (row.conflict_detail || "").startsWith("Recheck requested: ") ? "Recheck requested" : "Conflict"}),
-                        el("td", {}, el("button", {type: "button", class: "hero-sync-small", text: "Approve", disabled: state.busy || undefined, onclick: () => decideConflicts([row], "approve")}),
-                            el("button", {type: "button", class: "hero-sync-small", text: "Decline", disabled: state.busy || undefined, onclick: () => decideConflicts([row], "reject")}))))))),
+                        el("td", {text: !decidable(row) ? `Not imported (${row.run})` : row.sync_status === "Pending Review" ? "Confirmation pending" : (row.conflict_detail || "").startsWith("Recheck requested: ") ? "Recheck requested" : "Conflict"}),
+                        el("td", {}, decidable(row) ? [el("button", {type: "button", class: "hero-sync-small", text: "Approve", disabled: state.busy || undefined, onclick: () => decideConflicts([row], "approve")}),
+                            el("button", {type: "button", class: "hero-sync-small", text: "Decline", disabled: state.busy || undefined, onclick: () => decideConflicts([row], "reject")})]
+                            : el("span", {class: "hero-sync-hint", text: "Fix in HERO; the next run imports it."}))))))),
                 pager(data.start, data.total, data.rows.length, (start) => { state.conflictsStart = Math.max(0, start); state.selectedConflicts.clear(); loadConflicts(); }));
-            add(side, el("p", {class: "hero-sync-hint", text: "Approving a field conflict requests a recheck on the next synchronization. Declining keeps the existing record and stops further updates."}));
+            add(side, el("p", {class: "hero-sync-hint", text: "Approving a field conflict requests a recheck on the next synchronization. Declining keeps the existing record and stops further updates. Records that were not imported at all come from the latest run of each area and have nothing to approve."}));
         }
 
         // --- Loading -------------------------------------------------------------------------
