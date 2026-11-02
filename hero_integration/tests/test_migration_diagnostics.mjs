@@ -90,3 +90,11 @@ test('phase and testing summaries translate status and retain counts', () => {
   assert.equal(testingSummary(run), 'Ausstehend · 2/5 HERO-Anfragen · 7 Datensätze');
   assert.equal(run.testing_executed_actions, 2);
 });
+
+test('invalid language codes do not prevent numeric summaries', () => {
+  window.hero_integration_i18n.text = value => value;
+  frappe.boot.lang = 'de_DE';
+  assert.equal(window.hero_integration_migration.phaseSummary('Running', 1234), 'Running · 1.234 processed');
+  frappe.boot.lang = 'bad_locale_!';
+  assert.equal(window.hero_integration_migration.phaseSummary('Running', 1234), 'Running · 1,234 processed');
+});
