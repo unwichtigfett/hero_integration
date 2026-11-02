@@ -5,6 +5,7 @@
 
     const platform = window.hero_integration_platform;
     const text = (value) => window.hero_integration_i18n?.text(value) ?? String(value);
+    const format = (message, ...values) => text(message).replace(/\{(\d+)\}/g, (_, index) => String(values[index] ?? ""));
 
     function node(tag, className = "", text) {
         const element = document.createElement(tag);
@@ -100,7 +101,7 @@
             snapshot.replaceChildren(node("option", "", "Choose a validated GraphQL schema snapshot"));
             snapshot.options[0].value = "";
             available.forEach((item) => {
-                const option = node("option", "", `${item.name}${item.coverage?.type_count ? ` · ${item.coverage.type_count} types` : ""}`);
+                const option = node("option", "", `${item.name}${item.coverage?.type_count ? ` · ${format("{0} types", item.coverage.type_count)}` : ""}`);
                 option.value = item.name;
                 option.selected = item.name === selectedName || item.name === context?.selected_snapshot;
                 snapshot.append(option);
@@ -130,7 +131,7 @@
         } catch (error) {
             badge.textContent = text("Stored metadata unavailable");
             badge.dataset.state = "";
-            state.textContent = error?.message || text("Could not load stored HERO API metadata.");
+            state.textContent = text(error?.message || "Could not load stored HERO API metadata.");
             state.dataset.state = "error";
         }
 
