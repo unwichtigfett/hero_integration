@@ -130,6 +130,32 @@ class TestGermanCatalog(unittest.TestCase):
                    if ast.literal_eval(match.group('description')) not in messages]
         self.assertEqual(missing, [])
 
+    def test_framework_extractable_messages_have_german_entries(self):
+        try:
+            from frappe.translate import extract_messages_from_python_code, extract_messages_from_javascript_code
+            from frappe.gettext.extractors.utils import extract_messages_from_code
+        except ModuleNotFoundError:
+            self.skipTest("Frappe is not installed")
+        with (APP / "translations" / "de.csv").open(encoding="utf-8", newline="") as stream:
+            messages = dict(csv.reader(stream))
+        missing = []
+        extracted_count = 0
+        for path in APP.rglob("*"):
+            if "tests" in path.relative_to(APP).parts or path.suffix not in {".py", ".js", ".html", ".vue"}:
+                continue
+            content = path.read_text(encoding="utf-8")
+            extracted = extract_messages_from_python_code(content) if path.suffix == ".py" else extract_messages_from_code(content)
+            if path.suffix == ".js":
+                extracted += extract_messages_from_javascript_code(content)
+            for line, source, context in extracted:
+                if not isinstance(source, str) or not source:
+                    continue
+                extracted_count += 1
+                if source not in messages and (not context or f"{source}:{context}" not in messages):
+                    missing.append(f"{path.relative_to(APP)}:{line}: {source}")
+        self.assertGreater(extracted_count, 0)
+        self.assertEqual(missing, [])
+
     def test_static_browser_errors_have_german_entries(self):
         with (APP / "translations" / "de.csv").open(encoding="utf-8", newline="") as stream:
             messages = dict(csv.reader(stream))

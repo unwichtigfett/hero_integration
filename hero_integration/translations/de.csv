@@ -2356,3 +2356,8 @@ The GraphQL document contains an unterminated string.,Das GraphQL-Dokument enth�
 GraphQL query validation is unavailable.,Die Validierung von GraphQL-Queries ist nicht verfügbar.
 HERO GraphQL document is invalid.,Das HERO-GraphQL-Dokument ist ungültig.
 Only one HERO GraphQL query operation is allowed.,Nur eine HERO-GraphQL-Query-Operation ist erlaubt.
+Approve Read Contract,Lesevertrag freigeben
+Approve this saved service and mapping revision? This does not start a data transfer.,Diesen gespeicherten Service und diese Mapping-Revision freigeben? Dadurch wird keine Datenübertragung gestartet.
+Approve this record? Linked HERO records are imported by the next run.,Diesen Datensatz freigeben? Verknüpfte HERO-Datensätze werden beim nächsten Lauf importiert.
+Reject,Ablehnen
+Reject this record? The {0} {1} is deleted and not imported again.,Diesen Datensatz ablehnen? {0} {1} wird gelöscht und nicht erneut importiert.
