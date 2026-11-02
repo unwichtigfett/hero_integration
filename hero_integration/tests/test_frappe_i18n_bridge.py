@@ -20,7 +20,7 @@ class TestFrappeTranslationBridge(unittest.TestCase):
             from frappe.translate import get_translation_dict_from_file
         except ModuleNotFoundError:
             self.skipTest('Frappe is not installed')
-        from hero_integration.services.conflict_notifications import recipient_text
+        from hero_integration.services.conflict_notifications import recipient_diagnostic, recipient_text
 
         catalog = get_translation_dict_from_file(str(APP / 'translations' / 'de.csv'), 'de', 'hero_integration', throw=True)
         with patch.object(frappe, 'local', SimpleNamespace(lang='en')), \
@@ -29,6 +29,13 @@ class TestFrappeTranslationBridge(unittest.TestCase):
              patch('frappe.translate.get_all_translations', side_effect=lambda lang: catalog if lang == 'de' else {}):
             self.assertEqual(recipient_text('de@example.invalid', 'HERO polling status'), 'HERO-Polling-Status')
             self.assertEqual(recipient_text('en@example.invalid', 'HERO polling status'), 'HERO polling status')
+            detail = 'Field conflict requires review: customer_name, custom_id.'
+            self.assertEqual(recipient_diagnostic('de@example.invalid', detail), 'Feldkonflikt erfordert Prüfung: customer_name, custom_id.')
+            self.assertEqual(recipient_diagnostic('en@example.invalid', detail), detail)
+            nested = 'Recheck requested: Awaits administrator approval: ' + detail
+            self.assertEqual(recipient_diagnostic('de@example.invalid', nested),
+                             'Erneute Prüfung angefordert: Wartet auf Freigabe durch einen Administrator: Feldkonflikt erfordert Prüfung: customer_name, custom_id.')
+            self.assertEqual(recipient_diagnostic('de@example.invalid', 'Unknown external detail'), 'Unknown external detail')
 
     def test_framework_catalog_reaches_workspace_controls_in_both_languages(self):
         if not shutil.which('node'):
