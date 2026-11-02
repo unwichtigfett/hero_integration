@@ -82,6 +82,9 @@ ALLOWED_TARGET_TYPES = {"Data", "Small Text", "Int", "Float", "Currency", "Check
 # Read-only HERO observation fields that are not text: (operation, path, field, transform) -> fieldtype.
 NATIVE_TYPED_OBSERVATIONS = {
     ("HeroProjectMatches", "volume", "custom_hero_volume", "Identity"): "Currency",  # euros, owner 2026-11-01
+    # Shown read-only on the Project form (HERO values, 2026-11-01); still written by the import.
+    ("HeroProjectMatches", "current_project_match_status.name", "custom_hero_observed_status_name", "Identity"): ("Data", "Small Text"),
+    ("HeroProjectMatches", "address.full_address", "custom_hero_address_full_address", "Trim"): ("Data", "Small Text"),
 }
 SYSTEM_FIELDS = {"name", "owner", "creation", "modified", "modified_by", "docstatus", "idx"}
 PROTECTED_FIELDS = {
@@ -302,7 +305,9 @@ def _validate_custom_field(spec: MappingSpec, metadata) -> None:
     }
     key = (spec.operation, spec.source_path, spec.target_field, spec.transformation)
     is_native = key in native or key in NATIVE_TYPED_OBSERVATIONS
-    if is_native and (field is None or field.fieldtype != NATIVE_TYPED_OBSERVATIONS.get(key, 'Data')):
+    allowed_types = NATIVE_TYPED_OBSERVATIONS.get(key, 'Data')
+    allowed_types = (allowed_types,) if isinstance(allowed_types, str) else allowed_types
+    if is_native and (field is None or field.fieldtype not in allowed_types):
         raise DirectMappingError('Native HERO observation field has an incompatible type.')
     if field is None or field.fieldtype not in ALLOWED_TARGET_TYPES or (field.read_only and not is_native):
         raise DirectMappingError("Target field is not a writable supported Frappe field.")

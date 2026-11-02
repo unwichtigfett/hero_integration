@@ -66,6 +66,10 @@ def execute(adoption_name: str) -> dict[str, object]:
         with service_write_context():
             adoption.save()
         raise
+    # Adopted HERO fields get their Project form labels, read-only state and order.
+    from hero_integration.app_setup import apply_form_layout
+
+    apply_form_layout()
     adoption.status = "Completed"
     adoption.outcome_json = json.dumps(result, sort_keys=True, separators=(",", ":"))
     adoption.error_message = ""

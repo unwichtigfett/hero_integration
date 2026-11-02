@@ -3710,3 +3710,76 @@ def customer_send(customer: str, fingerprint: str, confirmed: int | str = 0) -> 
         return send(customer, fingerprint, confirmed)
     except CustomerSendError as error:
         frappe.throw(str(error))
+
+
+@frappe.whitelist()
+def config_export(snapshot_name: str) -> dict[str, str]:
+    """Complete configuration (field mappings, HERO fields/DocTypes, read services); no credentials or data."""
+    frappe.only_for("System Manager")
+    from hero_integration.services.config_exchange import export_config
+
+    return {"filename": "hero-integration-config.json", "content": export_config(snapshot_name, _configured_source_instance())}
+
+
+@frappe.whitelist(methods=["POST"])
+def config_import_preview(snapshot_name: str, payload_json: str) -> dict[str, object]:
+    frappe.only_for("System Manager")
+    from hero_integration.services.config_exchange import ConfigExchangeError, preview_config
+    from hero_integration.services.mapping_exchange import MappingExchangeError
+    from hero_integration.services.schema_provisioning import SchemaProvisioningError
+
+    try:
+        return preview_config(snapshot_name, payload_json, _configured_source_instance())
+    except (ConfigExchangeError, MappingExchangeError, SchemaProvisioningError) as error:
+        frappe.throw(str(error))
+
+
+@frappe.whitelist(methods=["POST"])
+def config_import(snapshot_name: str, payload_json: str, confirmed: int | str = 0) -> dict[str, object]:
+    """Adopt the mapping package and approve the read services of a configuration file (no HERO request)."""
+    frappe.only_for("System Manager")
+    if not _as_bool(confirmed):
+        frappe.throw("Confirm the import first.")
+    from hero_integration.services.config_exchange import ConfigExchangeError, import_config
+    from hero_integration.services.mapping_exchange import MappingExchangeError
+    from hero_integration.services.schema_provisioning import SchemaProvisioningError
+
+    try:
+        return import_config(snapshot_name, payload_json, _configured_source_instance())
+    except (ConfigExchangeError, MappingExchangeError, SchemaProvisioningError) as error:
+        frappe.throw(str(error))
+
+
+def config_export_file(path: str, snapshot_name: str = "") -> dict[str, object]:
+    """bench execute: write the complete configuration to a file (newest validated snapshot by default)."""
+    from hero_integration.services.config_exchange import export_config
+
+    frappe.set_user("Administrator")
+    snapshot_name = snapshot_name or _config_snapshot()
+    content = export_config(snapshot_name, _configured_source_instance())
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(content)
+    return {"path": path, "snapshot": snapshot_name, "bytes": len(content)}
+
+
+def config_import_file(path: str, snapshot_name: str = "", dry_run: int = 1) -> dict[str, object]:
+    """bench execute: preview (default) or import a configuration file on this site."""
+    from hero_integration.services.config_exchange import import_config, preview_config
+
+    frappe.set_user("Administrator")
+    snapshot_name = snapshot_name or _config_snapshot()
+    with open(path, encoding="utf-8") as handle:
+        content = handle.read()
+    if int(dry_run):
+        return preview_config(snapshot_name, content, _configured_source_instance())
+    result = import_config(snapshot_name, content, _configured_source_instance())
+    frappe.db.commit()
+    return result
+
+
+def _config_snapshot() -> str:
+    names = frappe.get_all("HERO GraphQL Schema Snapshot", filters={"analysis_status": "Validated"},
+                           order_by="creation desc", pluck="name", limit_page_length=1)
+    if not names:
+        frappe.throw("No validated HERO schema snapshot exists; refresh the HERO schema first.")
+    return names[0]
