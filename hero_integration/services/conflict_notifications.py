@@ -40,6 +40,11 @@ def recipient_text(user: str, message: str) -> str:
     return frappe._(message, lang=get_user_lang(user))
 
 
+def recipient_format(user: str, message: str, *values: object) -> str:
+    """Format a translated template safely, falling back to canonical text."""
+    return LocalizedError(message, *values).translated(lambda value: recipient_text(user, value))
+
+
 def recipient_diagnostic(user: str, message: str) -> str:
     """Translate known diagnostic templates while preserving field names and IDs."""
     translated = recipient_text(user, message)
@@ -97,7 +102,7 @@ def notify_conflict_once(link, fields: set[str], detail: str) -> bool:
         frappe.get_doc({
             "doctype": "Notification Log", "for_user": user, "type": "Alert",
             "document_type": "HERO Integration Link", "document_name": link.name,
-            "subject": recipient_text(user, "Field conflict: {0}").format(field_list),
+            "subject": recipient_format(user, "Field conflict: {0}", field_list),
             "email_content": recipient_diagnostic(user, detail),
         }).insert(ignore_permissions=True)
     return True
@@ -113,7 +118,7 @@ def _notify(subject: str, detail, document_type: str, document_name: str, *, sub
         frappe.get_doc({
             "doctype": "Notification Log", "for_user": user, "type": "Alert",
             "document_type": document_type, "document_name": document_name,
-            "subject": recipient_text(user, subject).format(*subject_args),
+            "subject": recipient_format(user, subject, *subject_args),
             "email_content": detail(user) if callable(detail) else recipient_diagnostic(user, detail),
         }).insert(ignore_permissions=True)
     return bool(recipients)
@@ -152,7 +157,7 @@ def notify_unmatched_assignees(run_name: str, emails: dict[str, int]) -> bool:
     if not emails:
         return False
     def detail(user):
-        lines = [f"{escape(email)} | {recipient_text(user, '{0} task(s)').format(count)}"
+        lines = [f"{escape(email)} | {recipient_format(user, '{0} task(s)', count)}"
                  for email, count in sorted(emails.items())]
         return (recipient_text(user, "Create an ERPNext user with the same e-mail; the next task run assigns the tasks.")
                 + "<br>" + "<br>".join(lines))
