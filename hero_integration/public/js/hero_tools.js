@@ -1029,7 +1029,7 @@
             // HTTP/transport failures and GraphQL errors are labelled separately; partial data stays visible below.
             if(result.status==='ERROR'||result.status==='PARTIAL'||result.status==='TOO_LARGE'){
                 const errorsBox=$('div','ht-result-errors');errorsBox.setAttribute('role','alert');
-                errorsBox.append($('strong','',result.error_kind==='GRAPHQL'?tr('GraphQL errors'):result.error_kind==='TRANSPORT'?tr('HTTP/transport error'):result.error_kind==='RESPONSE'?tr('Invalid response'):tr('Not displayed')),$('div','',result.message||''));
+                errorsBox.append($('strong','',result.error_kind==='GRAPHQL'?tr('GraphQL errors'):result.error_kind==='TRANSPORT'?tr('HTTP/transport error'):result.error_kind==='RESPONSE'?tr('Invalid response'):tr('Not displayed')),$('div','',tr(result.message||'')));
                 const list=$('ul','');for(const message of result.graphql_errors||[])list.append($('li','',message));if(list.childElementCount)errorsBox.append(list);
                 body.append(errorsBox);
             }

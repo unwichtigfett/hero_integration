@@ -166,6 +166,25 @@ class TestGermanCatalog(unittest.TestCase):
                         missing.append(f"{doctype['name']}.{field.get('fieldname')}: {text}")
         self.assertEqual(missing, [])
 
+    def test_static_response_explanations_have_german_entries(self):
+        with (APP / "translations" / "de.csv").open(encoding="utf-8", newline="") as stream:
+            messages = dict(csv.reader(stream))
+        paths = [APP / "api.py"] + [APP / "services" / name for name in (
+            "mapping_draft_exchange.py", "mapping_exchange.py", "snapshot_inheritance.py",
+            "schema_operations.py", "personal_mapping_content.py", "node_bookmark.py")]
+        missing = []
+        for path in paths:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Dict):
+                    continue
+                for key, value in zip(node.keys, node.values):
+                    if (isinstance(key, ast.Constant) and key.value in {"message", "reason", "blocker", "detail", "description", "summary", "warning"}
+                        and isinstance(value, ast.Constant) and isinstance(value.value, str)
+                        and len(value.value) > 20 and " " in value.value and value.value not in messages):
+                        missing.append(f"{path.name}:{value.lineno}: {value.value}")
+        self.assertEqual(missing, [])
+
     def test_static_migration_results_have_german_entries(self):
         with (APP / "translations" / "de.csv").open(encoding="utf-8", newline="") as stream:
             messages = dict(csv.reader(stream))
