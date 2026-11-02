@@ -119,7 +119,18 @@ def _record(settings, status: str, message: str, *, verified_revision: int | Non
         frappe.db.set_single_value(SETTINGS, field, value, update_modified=False)
 
 
-def _capture(actor: str) -> dict[str, object]:
+def capture_from_file(path: str, actor: str = "Administrator") -> dict[str, object]:
+    """Offline: store an introspection result from a file as a snapshot (CI, air-gapped installs).
+
+    The same validation, fingerprint and inheritance rules apply as for a live
+    refresh; no HERO request is made.
+    """
+    with open(path, encoding="utf-8") as handle:
+        response = json.load(handle)
+    return _capture(actor, response=response)
+
+
+def _capture(actor: str, response: object = None) -> dict[str, object]:
     from hero_integration.client.graphql import HeroClientError, HeroGraphQLClient
     from hero_integration.client.settings import HeroConfigurationError, get_configuration
     from hero_integration.services.introspection import (
@@ -133,6 +144,12 @@ def _capture(actor: str) -> dict[str, object]:
     )
 
     try:
+        if response is not None:
+            configuration = _offline_configuration()
+            endpoint_hash = endpoint_fingerprint(configuration.endpoint.url, configuration.source_instance)
+            envelope = response if isinstance(response, dict) and "data" in response else {"data": response}
+            schema = canonical_schema(envelope)
+            raise _OfflineSchema(schema)
         configuration = get_configuration()
         endpoint_hash = endpoint_fingerprint(configuration.endpoint.url, configuration.source_instance)
         client = HeroGraphQLClient(
@@ -148,6 +165,8 @@ def _capture(actor: str) -> dict[str, object]:
                 raise
             response = client.introspect(COMPATIBILITY_INTROSPECTION_QUERY)
         schema = canonical_schema(response)
+    except _OfflineSchema as offline:
+        schema = offline.schema
     except HeroClientError as error:
         raise SchemaRefreshError(_client_error_message(error)) from error
     except (HeroConfigurationError, IntrospectionError, ValueError) as error:
@@ -208,6 +227,25 @@ def _capture(actor: str) -> dict[str, object]:
         "type_count": type_count,
         "structural_diff": diff,
     }
+
+
+class _OfflineSchema(Exception):
+    def __init__(self, schema):
+        super().__init__("offline schema")
+        self.schema = schema
+
+
+def _offline_configuration():
+    """The configured endpoint if there is one, otherwise a fixed offline endpoint identity."""
+    from types import SimpleNamespace
+    from hero_integration.client.settings import HeroConfigurationError, get_configuration
+
+    try:
+        return get_configuration()
+    except (HeroConfigurationError, ValueError, frappe.ValidationError):
+        settings = frappe.get_single("HERO Integration Settings")
+        instance = str(getattr(settings, "hero_source_instance", "") or "default").strip() or "default"
+        return SimpleNamespace(endpoint=SimpleNamespace(url="https://offline.invalid/graphql"), source_instance=instance)
 
 
 def _client_error_message(error) -> str:

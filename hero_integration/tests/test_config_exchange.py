@@ -41,14 +41,34 @@ class TestServiceReferences(unittest.TestCase):
                 cx._resolved_mapping(item, "default")
 
 
+class TestSchemaRebase(unittest.TestCase):
+    def test_the_package_is_bound_to_the_target_snapshot(self):
+        fake = SimpleNamespace(db=SimpleNamespace(get_value=lambda *a: "TARGET"))
+        payload = {"mapping_package": {"schema_fingerprint": "SOURCE", "mappings": []}}
+        with patch.object(cx, "frappe", fake):
+            package, source = cx._rebased_package("SNAP", payload)
+        self.assertEqual((json.loads(package)["schema_fingerprint"], source), ("TARGET", "SOURCE"))
+
+    def test_a_query_that_does_not_fit_the_target_schema_blocks_the_import(self):
+        package = {"items": [], "preview_revision": "rev"}
+        fake = SimpleNamespace(only_for=lambda role: None, db=SimpleNamespace(get_value=lambda *a: "TARGET"))
+        with patch.object(cx, "frappe", fake), \
+                patch("hero_integration.services.schema_provisioning.preview_package", return_value=package), \
+                patch.object(api, "_workspace_service_validate", side_effect=ValueError("Field x does not exist")), \
+                patch.object(cx, "_import_service") as created:
+            with self.assertRaises(cx.ConfigExchangeError):
+                cx.import_config("SNAP", payload(entry("HeroCustomers")))
+        created.assert_not_called()
+
+
 class TestImportOrder(unittest.TestCase):
     def test_customers_are_imported_before_projects_and_unchanged_services_are_kept(self):
         calls = []
         states = {"HeroCustomers": "New", "HeroProjectMatches": "New", "HeroTasks": "Unchanged"}
         package = {"items": [{"id": "rule-1", "state": "New"}, {"id": "field-1", "state": "Unchanged"}],
                    "preview_revision": "rev"}
-        fake = SimpleNamespace(only_for=lambda role: None)
-        with patch.object(cx, "frappe", fake), \
+        fake = SimpleNamespace(only_for=lambda role: None, db=SimpleNamespace(get_value=lambda *a: "TARGET"))
+        with patch.object(cx, "frappe", fake), patch.object(cx, "_query_problem", return_value=None), \
                 patch("hero_integration.services.schema_provisioning.preview_package", return_value=package), \
                 patch("hero_integration.services.adoption.start",
                       side_effect=lambda *args: calls.append(("adopt", args[2])) or {"adoption_name": "AD-1"}), \
@@ -62,7 +82,8 @@ class TestImportOrder(unittest.TestCase):
 
     def test_conflicting_packages_import_nothing(self):
         package = {"items": [{"id": "rule-1", "state": "Conflict"}], "preview_revision": "rev"}
-        with patch.object(cx, "frappe", SimpleNamespace(only_for=lambda role: None)), \
+        with patch.object(cx, "frappe", SimpleNamespace(only_for=lambda role: None,
+                                                       db=SimpleNamespace(get_value=lambda *a: "TARGET"))), \
                 patch("hero_integration.services.schema_provisioning.preview_package", return_value=package):
             with self.assertRaises(cx.ConfigExchangeError):
                 cx.import_config("SNAP", payload(entry("HeroCustomers")))
