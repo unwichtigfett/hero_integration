@@ -48,6 +48,15 @@ class TestSavedReadContract(unittest.TestCase):
                 page = GraphQLServiceSource(client, self.service, contract, instance).customers()
                 self.assertEqual(page.records[0]["_hero_source_instance"], instance)
 
+    def test_non_read_only_service_is_rejected_with_translatable_contract_error(self):
+        self.service.query_document = "mutation Change { change { id } }"
+        with self.assertRaises(ReadContractError) as caught:
+            from_documents(self.service, self.mapping, self.snapshot)
+        source = "Only one HERO GraphQL query operation is allowed."
+        self.assertEqual(str(caught.exception), source)
+        self.assertEqual(caught.exception.translated(lambda text: "Nur eine Query ist erlaubt." if text == source else text),
+                         "Nur eine Query ist erlaubt.")
+
     def test_unapproved_or_stale_contract_is_rejected_before_transport(self):
         self.service.execution_status = "Pending Approval"
         with self.assertRaisesRegex(ReadContractError, "explicit execution approval"):

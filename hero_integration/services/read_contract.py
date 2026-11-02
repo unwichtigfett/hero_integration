@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from hashlib import sha256
 
-from hero_integration.client.graphql import assert_read_only
+from hero_integration.client.graphql import HeroClientError, assert_read_only
 from hero_integration.services.localized_error import LocalizedError
 from hero_integration.services.projection_contracts import CONTRACTS as PROJECTIONS, approved_query
 
@@ -225,7 +225,10 @@ def _common_contract(service, mapping, snapshot) -> tuple[ReadContract, Mapping[
         raise ReadContractError('The selected read mapping no longer matches the snapshot source.')
     if int(getattr(service, "approved_mapping_revision", 0) or 0) != int(mapping.mapping_revision or 0):
         raise ReadContractError("The selected read mapping approval is stale.")
-    assert_read_only(service.query_document)
+    try:
+        assert_read_only(service.query_document)
+    except HeroClientError as error:
+        raise ReadContractError.from_error(error) from error
     try:
         from hero_integration.services.personal_mapping_content import unique_json_object
         config = json.loads(mapping.mapping_json, object_pairs_hook=unique_json_object)
