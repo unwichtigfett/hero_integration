@@ -74,6 +74,15 @@ offline_ran=$(grep -oE "^Ran [0-9]+ tests" /tmp/hero-offline.log | grep -oE "[0-
 grep -F "Site-dependent tests reserved for the full site suite:" /tmp/hero-offline.log || true
 echo "offline tests: $offline_ran run"
 if [ "$offline_ran" -lt "$MIN_TESTS" ]; then echo "Offline suite did not run (only $offline_ran tests)"; tail -20 /tmp/hero-offline.log; TEST_FAILED=1; fi
+# The disposable site does not run the ERPNext setup wizard. Provide its
+# minimal Company dependency without creating the unrelated ERPNext fixtures.
+company_count=$(bench --site "$SITE" execute frappe.db.count --args '["Company"]')
+if [ -z "$company_count" ] || [ "$company_count" = 0 ]; then
+  if [ -z "$(bench --site "$SITE" execute frappe.db.exists --kwargs '{"dt":"Warehouse Type","dn":"Transit"}')" ]; then
+    bench --site "$SITE" execute frappe.client.insert --kwargs '{"doc":{"doctype":"Warehouse Type","name":"Transit"}}' >/dev/null
+  fi
+  bench --site "$SITE" execute frappe.client.insert --kwargs '{"doc":{"doctype":"Company","company_name":"HERO CI Company","abbr":"HCI","country":"Germany","default_currency":"EUR"}}' >/dev/null
+fi
 if ! bench --site "$SITE" run-tests --app hero_integration > /tmp/hero-site-tests.log 2>&1; then
   echo "Site tests failed:"; tail -100 /tmp/hero-site-tests.log; TEST_FAILED=1
 fi
