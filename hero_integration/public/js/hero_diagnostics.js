@@ -39,7 +39,7 @@
         }
         const preserved = text.match(/^(.*) Local changes were preserved: (.+)\.$/);
         if (preserved) {
-            const translated = format('{0} Local changes were preserved: {1}.', tr(preserved[1]), preserved[2]);
+            const translated = format('{0} Local changes were preserved: {1}.', diagnostic(preserved[1]), preserved[2]);
             return recheck ? format("Recheck requested: {0}", translated) : translated;
         }
         const areaBlocker = text.match(/^(.*?) needs an approved read service with an active mapping for (.*?) on a snapshot of the HERO source instance "(.*)"\. Approve one under API & Schema and Mapping\.$/);
@@ -89,7 +89,7 @@
         for (const [pattern, template, translatedValues = []] of templates) {
             const match = text.match(pattern);
             if (match) {
-                const values = match.slice(1).map((value, index) => translatedValues.includes(index) ? tr(value) : value);
+                const values = match.slice(1).map((value, index) => translatedValues.includes(index) ? diagnostic(value) : value);
                 const translated = format(template, ...values);
                 return recheck ? format("Recheck requested: {0}", translated) : translated;
             }
