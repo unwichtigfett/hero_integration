@@ -21,6 +21,23 @@
     const REFRESH_SCHEMA = "workspace_schema_refresh";
     const SET_MUTATION_EXECUTION = "workspace_mutation_execution_set";
 
+    function packageState(value) {
+        const state = String(value ?? '');
+        return state.startsWith('Invalid: ')
+            ? format('Invalid: {0}', uiText(state.slice('Invalid: '.length)))
+            : uiText(state);
+    }
+
+    function packagePreviewSummary(preview) {
+        const counts = preview.mapping_package
+            ? Object.entries(preview.mapping_package).filter(([, count]) => count).map(([state, count]) => `${packageState(state)} ${count}`).join(', ')
+            : uiText('checked during import');
+        const services = preview.read_services.map((row) => `${row.target_operation}: ${packageState(row.state)}`).join(', ');
+        const settings = preview.settings.length ? preview.settings.join(', ') : uiText('none');
+        return `${uiText('Schema snapshot')}: ${packageState(preview.snapshot)}. ${uiText('Mappings')}: ${counts}. ` +
+            `${uiText('Read services')}: ${services}. ${uiText('Changed settings')}: ${settings}.`;
+    }
+
     function node(tag, cls, text) {
         const el = document.createElement(tag);
         if (cls) el.className = cls;
@@ -504,13 +521,7 @@
             try {
                 const payload = await file.text();
                 const preview = await platform.api("config_import_preview", {payload_json: payload});
-                const counts = preview.mapping_package
-                    ? Object.entries(preview.mapping_package).filter(([, count]) => count).map(([state, count]) => `${state} ${count}`).join(", ")
-                    : uiText("checked during import");
-                const services = preview.read_services.map((row) => `${row.target_operation}: ${row.state}`).join(", ");
-                const settings = preview.settings.length ? preview.settings.join(", ") : uiText("none");
-                const summary = `${uiText("Schema snapshot")}: ${preview.snapshot}. ${uiText("Mappings")}: ${counts}. ` +
-                    `${uiText("Read services")}: ${services}. ${uiText("Changed settings")}: ${settings}.`;
+                const summary = packagePreviewSummary(preview);
                 showPackageState(summary);
                 frappe.confirm(`${summary}<br><br>${uiText("Import and activate this configuration now?")}`, async () => {
                     showPackageState(uiText("Importing …"));
@@ -543,5 +554,5 @@
         };
     }
 
-    window.hero_integration_settings_ui = Object.freeze({mount});
+    window.hero_integration_settings_ui = Object.freeze({mount, packagePreviewSummary});
 })();

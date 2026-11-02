@@ -151,3 +151,46 @@ test("failed settings save reports an error and restores controls", async () => 
     assert.ok(status);
     assert.equal(status.dataset.state, "error");
 });
+
+test('package preview translates states while keeping operation and settings identifiers', () => {
+    const messages = {'Schema snapshot':'Schema-Snapshot', 'New':'Neu', 'Mappings':'Mappings',
+        'Changed':'Geändert', 'Conflict':'Konflikt', 'Read services':'Leseservices',
+        'Invalid: {0}':'Ungültig: {0}', 'Changed settings':'Geänderte Einstellungen'};
+    const window = {hero_integration_platform: {}, hero_integration_i18n: {text: value => messages[value] || value}};
+    vm.runInNewContext(source, {window});
+    const preview = {snapshot:'New', mapping_package:{Changed:2, Conflict:1},
+        read_services:[{target_operation:'HeroCustomers', state:'Invalid: schema mismatch'}], settings:['polling_mode']};
+    assert.equal(window.hero_integration_settings_ui.packagePreviewSummary(preview),
+        'Schema-Snapshot: Neu. Mappings: Geändert 2, Konflikt 1. Leseservices: HeroCustomers: Ungültig: schema mismatch. Geänderte Einstellungen: polling_mode.');
+    assert.equal(preview.mapping_package.Conflict, 1);
+    assert.equal(preview.read_services[0].state, 'Invalid: schema mismatch');
+});
+
+test('package confirmation shows translated preview without importing before confirmation', async () => {
+    const messages = {'Schema snapshot':'Schema-Snapshot', 'New':'Neu', 'Mappings':'Mappings',
+        'Changed':'Geändert', 'Conflict':'Konflikt', 'Read services':'Leseservices',
+        'Changed settings':'Geänderte Einstellungen', 'none':'keine',
+        'Import and activate this configuration now?':'Dieses Konfigurationspaket jetzt importieren und aktivieren?'};
+    const preview = {snapshot:'New', mapping_package:{Changed:2, Conflict:1},
+        read_services:[{target_operation:'HeroCustomers', state:'New'}], settings:[]};
+    const calls = [];
+    const api = async method => {
+        calls.push(method);
+        if (method === 'workspace_settings_get') return {polling:{}, testing:{}};
+        if (method === 'config_import_preview') return preview;
+        throw new Error('Unexpected import without confirmation');
+    };
+    let confirmation;
+    const window = {hero_integration_platform:{api}, hero_integration_i18n:{text:value => messages[value] || value}};
+    const frappe = {confirm: message => { confirmation = message; }};
+    vm.runInNewContext(source, {window, frappe, document:{createElement: tag => new Element(tag)}});
+    const workspace = new Element('main');
+    await window.hero_integration_settings_ui.mount(workspace);
+    const input = workspace.find(element => element.type === 'file');
+    input.files = [{text:async () => '{}'}];
+    await input.handlers.change();
+    assert.match(confirmation, /Mappings: Geändert 2, Konflikt 1/);
+    assert.match(confirmation, /HeroCustomers: Neu/);
+    assert.match(confirmation, /jetzt importieren und aktivieren/);
+    assert.deepEqual(calls, ['workspace_settings_get', 'config_import_preview']);
+});
