@@ -54,9 +54,9 @@ class TestProjectReference(unittest.TestCase):
         self.assertEqual(project_reference({"display_id": "0042", "project_type": {"code": "KLIM"}}), "KLIM-0042-H")
 
     def test_project_reference_length_includes_the_trade_prefix(self):
-        display_id = "0" * 136 + "2"
+        display_id = "0" * (140 - len("PV-") - len("-H") - 1) + "2"
         self.assertEqual(project_reference({"display_id": display_id, "measure": {"short": "PV"}}),
-                         "PV-" + display_id)
+                         "PV-" + display_id + "-H")
         with self.assertRaises(BusinessNumberError):
             project_reference({"display_id": "0" + display_id, "measure": {"short": "PV"}})
 
@@ -282,11 +282,11 @@ class TestBusinessNumberMigration(FakeFrappeMigrationHarness, unittest.TestCase)
     def test_project_reference_and_title_keep_separate_source_numbers(self):
         record = self.project(id=202, display_id="0033", project_nr="9876")
         created = self.migrate_project(record)
-        self.assertEqual((created.code, created.target_name), ("CREATED", "PV-0033"))
+        self.assertEqual((created.code, created.target_name), ("CREATED", "PV-0033-H"))
         project, = self.frappe.projects
         self.assertEqual(project["custom_hero_display_id"], "0033")
         self.assertTrue(project["project_name"].startswith("PV-9876 | Photovoltaik,"))
-        self.assertEqual(self.frappe.links[("project", "202")].target_name, "PV-0033")
+        self.assertEqual(self.frappe.links[("project", "202")].target_name, "PV-0033-H")
         self.assertEqual(self.migrate_project(record).code, "SKIPPED")
         self.assertEqual(len(self.frappe.projects), 1)
 
@@ -350,7 +350,7 @@ class TestBusinessNumberMigration(FakeFrappeMigrationHarness, unittest.TestCase)
     def test_explicit_null_display_id_is_a_drift_conflict(self):
         self.migrate_project(self.project(display_id="0033"))
         result = self.migrate_project(self.project(display_id=None))
-        self.assertEqual((result.code, result.target_name), ("CONFLICT", "PV-0033"))
+        self.assertEqual((result.code, result.target_name), ("CONFLICT", "PV-0033-H"))
         self.assertEqual(self.frappe.projects[0]["custom_hero_display_id"], "0033")
 
     def test_an_omitted_display_id_preserves_the_linked_reference(self):
@@ -358,10 +358,10 @@ class TestBusinessNumberMigration(FakeFrappeMigrationHarness, unittest.TestCase)
         record = self.project()
         del record["display_id"]
         result = self.migrate_project(record)
-        self.assertEqual(result.target_name, "PV-0033")
+        self.assertEqual(result.target_name, "PV-0033-H")
         self.assertEqual(len(self.frappe.projects), 1)
         self.assertEqual(self.frappe.projects[0]["custom_hero_display_id"], "0033")
-        self.assertEqual(self.frappe.links[("project", "201")].target_name, "PV-0033")
+        self.assertEqual(self.frappe.links[("project", "201")].target_name, "PV-0033-H")
 
     def test_a_project_links_to_its_customer_by_the_customer_number(self):
         self.migrate_customer(self.customer(id=401, nr="2222"))
@@ -387,9 +387,9 @@ class TestBusinessNumberMigration(FakeFrappeMigrationHarness, unittest.TestCase)
                                                    _hero_source_instance="account-b"))
         self.assertEqual((first.code, second.code), ("CREATED", "CREATED"))
         self.assertEqual({row["name"]: row["customer"] for row in self.frappe.projects},
-                         {"PV-3333": "2222", "PV-5555": "4444"})
-        self.assertEqual(self.frappe.links[("project", "201")].target_name, "PV-3333")
-        self.assertEqual(self.frappe.links[("project", "201", "account-b")].target_name, "PV-5555")
+                         {"PV-3333-H": "2222", "PV-5555-H": "4444"})
+        self.assertEqual(self.frappe.links[("project", "201")].target_name, "PV-3333-H")
+        self.assertEqual(self.frappe.links[("project", "201", "account-b")].target_name, "PV-5555-H")
 
 
 class TestRenamePreview(unittest.TestCase):

@@ -3,7 +3,21 @@
 from dataclasses import replace
 from types import SimpleNamespace
 
-import pytest
+import re
+import unittest
+from contextlib import contextmanager
+
+
+@contextmanager
+def _raises(expected, match):
+    """unittest replacement for pytest.raises(expected, match=...)."""
+    try:
+        yield
+    except expected as error:
+        if not re.search(match, str(error)):
+            raise AssertionError(f"{expected.__name__} message {str(error)!r} does not match {match!r}") from error
+        return
+    raise AssertionError(f"{expected.__name__} not raised")
 
 from hero_integration.services.frappe_schema_provisioning_approval import FrappeProvisioningApprovalStore
 from hero_integration.services.schema_provisioning_lifecycle import ProvisioningLifecycleError
@@ -46,7 +60,7 @@ def test_approval_consumed_once_and_stale_replay_rejected():
     store.consume(plan(), approved, "admin", 2.0)
     assert fake.documents[approved.approval_id].approval_state == "CONSUMED"
     assert fake.documents[approved.approval_id].consumed_at_epoch == 2.0
-    with pytest.raises(ProvisioningLifecycleError, match="not available"):
+    with _raises(ProvisioningLifecycleError, "not available"):
         store.consume(plan(), approved, "admin", 3.0)
     assert [permission[1] for permission in fake.permissions] == ["create", "write", "write"]
     assert all("for update" in query.lower() for query in fake.queries)
@@ -56,9 +70,9 @@ def test_tampered_or_expired_approval_does_not_change_stored_state():
     fake = FakeFrappe()
     store = FrappeProvisioningApprovalStore(fake, clock=lambda: 1.0)
     approved = store.issue(plan(), "synthetic-correlation", ttl_seconds=30)
-    with pytest.raises(ProvisioningLifecycleError, match="stale, forged, expired"):
+    with _raises(ProvisioningLifecycleError, "stale, forged, expired"):
         store.consume(plan(), replace(approved, actor="other"), "admin", 2.0)
-    with pytest.raises(ProvisioningLifecycleError, match="stale, forged, expired"):
+    with _raises(ProvisioningLifecycleError, "stale, forged, expired"):
         store.consume(plan(), approved, "admin", 31.0)
     assert fake.documents[approved.approval_id].approval_state == "APPROVED"
 
@@ -69,8 +83,21 @@ def test_revoked_manager_role_prevents_consumption_before_lock_lookup():
     approved = store.issue(plan(), "synthetic-correlation", ttl_seconds=30)
     fake.get_roles = lambda *_args: []
 
-    with pytest.raises(PermissionError, match="System Manager"):
+    with _raises(PermissionError, "System Manager"):
         store.consume(plan(), approved, "admin", 2.0)
 
     assert fake.queries == []
     assert fake.documents[approved.approval_id].approval_state == "APPROVED"
+
+
+class TestOfflineEvidence(unittest.TestCase):
+    """Runs the evidence functions under the bench unittest runner (no pytest installed)."""
+
+    def test_approval_consumed_once_and_stale_replay_rejected(self):
+        test_approval_consumed_once_and_stale_replay_rejected()
+
+    def test_tampered_or_expired_approval_does_not_change_stored_state(self):
+        test_tampered_or_expired_approval_does_not_change_stored_state()
+
+    def test_revoked_manager_role_prevents_consumption_before_lock_lookup(self):
+        test_revoked_manager_role_prevents_consumption_before_lock_lookup()
