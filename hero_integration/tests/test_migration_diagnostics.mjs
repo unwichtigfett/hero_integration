@@ -11,6 +11,10 @@ const translations = {
   'A known static error.': 'Ein bekannter Fehler.',
   'Automatic sync is blocked: {0}': 'Automatischer Sync blockiert: {0}',
   'A known reason.': 'Ein bekannter Grund.',
+  "{0} {1} already exists without this HERO record's link. The HERO number is not reassigned, suffixed or merged; check whether {1} is the same {2} and link or rename it.": '{0} {1} existiert bereits; Nummer bleibt unverändert. Prüfen: {1}, {2}.',
+  'HERO {0} changed from {1} to {2}. {3} {4} keeps its name and number until reviewed; set {5} to {2} to accept the new number.': 'HERO-{0}: {1} → {2}; {3} {4} bleibt. {5} auf {2} setzen.',
+  'customer number':'Kundennummer',
+
   'HERO response omits the source of: {0}.':'HERO-Antwort ohne Quelle: {0}.',
   'Existing {0} has no stable HERO link.':'Vorhandenes {0} hat keinen stabilen HERO-Link.',
   '{0} Local changes were preserved: {1}.':'{0} Lokale Änderungen beibehalten: {1}.',
@@ -33,6 +37,11 @@ test('stored diagnostics translate at display time while preserving identifiers'
   assert.equal(diagnostic('Recheck requested: Task fields require review: owner'), 'Erneute Prüfung angefordert: Task-Felder erfordern Prüfung: owner');
   assert.equal(diagnostic('Another HERO run is active: RUN-007.'), 'Ein anderer HERO-Lauf ist aktiv: RUN-007.');
   assert.equal(diagnostic('A known static error.'), 'Ein bekannter Fehler.');
+  assert.equal(diagnostic("Customer 'C-42' already exists without this HERO record's link. The HERO number is not reassigned, suffixed or merged; check whether 'C-42' is the same customer and link or rename it."), "Customer 'C-42' existiert bereits; Nummer bleibt unverändert. Prüfen: 'C-42', customer.");
+  const drift = "HERO customer number changed from 'old' to 'new'. Customer CUST-42 keeps its name and number until reviewed; set custom_hero_customer_number to 'new' to accept the new number.";
+  assert.equal(diagnostic(drift), "HERO-Kundennummer: 'old' → 'new'; Customer CUST-42 bleibt. custom_hero_customer_number auf 'new' setzen.");
+  const mismatch = drift.replace("to 'new' to accept", "to 'other' to accept");
+  assert.equal(diagnostic(mismatch), mismatch);
   assert.equal(diagnostic('HERO response omits the source of: customer_type, phone.'), 'HERO-Antwort ohne Quelle: customer_type, phone.');
   assert.equal(diagnostic('Existing Customer has no stable HERO link.'), 'Vorhandenes Customer hat keinen stabilen HERO-Link.');
   assert.equal(diagnostic('Local field change observed; no outbound HERO mutation was prepared. Local changes were preserved: subject.'), 'Lokale Änderung erkannt. Lokale Änderungen beibehalten: subject.');
@@ -47,6 +56,10 @@ test('stored diagnostics translate at display time while preserving identifiers'
 test('the same stored English message follows the active language', () => {
   window.hero_integration_i18n.text = value => value;
   assert.equal(diagnostic('Field conflict requires review: name.'), 'Field conflict requires review: name.');
+  const drift = "HERO customer number changed from 'old' to 'new'. Customer CUST-42 keeps its name and number until reviewed; set custom_hero_customer_number to 'new' to accept the new number.";
+  assert.equal(diagnostic(drift), drift);
+  const collision = "Customer 'C-42' already exists without this HERO record's link. The HERO number is not reassigned, suffixed or merged; check whether 'C-42' is the same customer and link or rename it.";
+  assert.equal(diagnostic(collision), collision);
 });
 
 
