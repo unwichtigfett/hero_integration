@@ -24,7 +24,7 @@ class TestProjectNaming(unittest.TestCase):
     def test_exact_contract_example_is_byte_exact(self):
         self.assertEqual(
             build_project_title(project_match()),
-            "PV-1111 | Photovoltaik, Herr Max Mustermann, Musterstraße 10, 77777 Musterstadt",
+            "PV-1111 | Photovoltaik, Max Mustermann, Musterstraße 10, 77777 Musterstadt",
         )
 
     def test_preserves_leading_zeroes_and_does_not_repeat_existing_prefix(self):
@@ -43,6 +43,12 @@ class TestProjectNaming(unittest.TestCase):
         with self.assertRaisesRegex(ProjectTitleValidationError, "no confirmed"):
             project_trade({"measure": {"short": "UNKNOWN"}, "project_type": {"code": "PV"}})
         self.assertEqual(project_trade({"measure": None, "project_type": {"code": "ELEK"}})[0], "ELEK")
+
+    def test_removes_only_the_explicit_matching_salutation_from_the_name(self):
+        customer = {"title": "Herr", "full_name": "Herr Herr Max Mustermann"}
+        self.assertIn(", Max Mustermann,", build_project_title(project_match(customer=customer)))
+        customer = {"title": "Herr", "full_name": "Herrmann Müller"}
+        self.assertIn(", Herrmann Müller,", build_project_title(project_match(customer=customer)))
 
     def test_missing_personal_or_trade_data_blocks_instead_of_guessing(self):
         for key, value in (
@@ -66,7 +72,7 @@ class TestProjectNaming(unittest.TestCase):
         record = project_match(address={"street": "Musterstraße", "house_number": "10", "postal_code": "77777"})
         with self.assertRaises(ProjectAddressError):
             build_project_title(record)
-        self.assertEqual(build_project_title(record, include_address=False), "PV-1111 | Photovoltaik, Herr Max Mustermann")
+        self.assertEqual(build_project_title(record, include_address=False), "PV-1111 | Photovoltaik, Max Mustermann")
 
     def test_title_is_not_silently_truncated(self):
         with self.assertRaisesRegex(ProjectTitleValidationError, "field limit"):

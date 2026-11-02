@@ -117,7 +117,7 @@ class TestProjectCompanyMigration(FakeFrappeMigrationHarness, unittest.TestCase)
             self.frappe.projects[0],
             {
                 "name": "PROJ-0001",
-                "project_name": "PV-1111 | Photovoltaik, Herr Max Mustermann, Musterstraße 10, 77777 Musterstadt",
+                "project_name": "PV-1111 | Photovoltaik, Max Mustermann, Musterstraße 10, 77777 Musterstadt",
                 "customer": "Synthetic Customer",
                 "company": "Executing Company",
                 "custom_hero_source_id": "default:201",
@@ -648,6 +648,39 @@ class TestProjectCompanyMigration(FakeFrappeMigrationHarness, unittest.TestCase)
             self.assertEqual(self._project(record).code, "SKIPPED")
         self.assertEqual(self.frappe.projects[0]["project_name"], title)
 
+    def test_existing_legacy_salutation_title_is_cleaned_on_replay(self):
+        record = _project_title_inputs(id=7971, customer_id=101)
+        self._project(record)
+        project = self.frappe.projects[0]
+        old_title = project["project_name"].replace("Photovoltaik, ", "Photovoltaik, Herr ")
+        project["project_name"] = old_title
+        link = self.migration._link("project", "7971", "default")
+        for field in ("source_field_hashes", "target_field_hashes"):
+            hashes = self.migration.decode_hashes(getattr(link, field))
+            hashes["project_name"] = self.migration.field_hashes({"project_name": old_title})["project_name"]
+            setattr(link, field, self.migration.encode_hashes(hashes))
+        self.assertEqual(self._project(record, "Preview").code, "PREVIEW_OK")
+        self.assertEqual(project["project_name"], old_title)
+        self.assertEqual(self._project(record).code, "UPDATED")
+        self.assertNotIn(", Herr ", project["project_name"])
+        self.assertEqual(self._project(record).code, "SKIPPED")
+
+    def test_automatic_legacy_cleanup_does_not_overwrite_a_local_title(self):
+        record = _project_title_inputs(id=7972, customer_id=101)
+        self._project(record)
+        project = self.frappe.projects[0]
+        old_title = project["project_name"].replace("Photovoltaik, ", "Photovoltaik, Herr ")
+        link = self.migration._link("project", "7972", "default")
+        for field in ("source_field_hashes", "target_field_hashes"):
+            hashes = self.migration.decode_hashes(getattr(link, field))
+            hashes["project_name"] = self.migration.field_hashes({"project_name": old_title})["project_name"]
+            setattr(link, field, self.migration.encode_hashes(hashes))
+        project["project_name"] = "Locally edited title"
+        result = self._project(record)
+        # A local title is kept without review or notice (no automatic cleanup).
+        self.assertNotEqual(result.code, "CONFLICT")
+        self.assertEqual(project["project_name"], "Locally edited title")
+
     def test_hero_customer_change_alone_never_renames_a_project(self):
         # User decision 2026-10-31: a changed customer name or salutation does
         # not rename an existing Project; trade, number and address still do.
@@ -666,7 +699,7 @@ class TestProjectCompanyMigration(FakeFrappeMigrationHarness, unittest.TestCase)
         self.assertEqual(self.frappe.projects[0]["project_name"], title)
         self.assertEqual(self._project({**renamed, "project_nr": "1112"}).code, "UPDATED")
         self.assertEqual(self.frappe.projects[0]["project_name"],
-                         "PV-1112 | Photovoltaik, Frau Erika Muster, Musterstraße 10, 77777 Musterstadt")
+                         "PV-1112 | Photovoltaik, Erika Muster, Musterstraße 10, 77777 Musterstadt")
 
     def test_local_project_title_survives_customer_and_title_component_changes(self):
         record = _project_title_inputs(id=782, customer_id=101)
@@ -720,14 +753,14 @@ class TestProjectCompanyMigration(FakeFrappeMigrationHarness, unittest.TestCase)
         self.assertFalse(self.frappe.projects)
         result = self._project(record)
         self.assertEqual(result.code, "PENDING_REVIEW")
-        self.assertEqual(self.frappe.projects[0]["project_name"], "PV-1111 | Photovoltaik, Herr Max Mustermann")
+        self.assertEqual(self.frappe.projects[0]["project_name"], "PV-1111 | Photovoltaik, Max Mustermann")
         link = self.migration._link("project", "792", "default")
         self.assertEqual(link.sync_status, "Pending Review")
         self.assertIn("address", link.conflict_detail)
         self.assertEqual([source for source, _ in self.reviews], ["792"])
         # While held, HERO changes are not applied and linked records wait.
         self.assertEqual(self._project({**record, "project_nr": "1112"}).code, "PENDING_REVIEW")
-        self.assertEqual(self.frappe.projects[0]["project_name"], "PV-1111 | Photovoltaik, Herr Max Mustermann")
+        self.assertEqual(self.frappe.projects[0]["project_name"], "PV-1111 | Photovoltaik, Max Mustermann")
         with self.assertRaises(self.migration.MappingPlanError):
             self.migration._project_name_for_source(792, "default")
         self.assertEqual(len(self.reviews), 1)

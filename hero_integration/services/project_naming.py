@@ -47,11 +47,12 @@ def project_title_missing(record: Mapping[str, object]) -> bool:
 
 def build_project_title(
     record: Mapping[str, object], *, max_length: int = PROJECT_NAME_MAX_LENGTH, include_address: bool = True,
+    _legacy_salutation: bool = False,
 ) -> str:
     """Build the native ``Project.project_name`` without guessing domain values.
 
-    A missing salutation is no block (user decision 2026-10-31).  Without
-    ``include_address`` the title ends after the customer, for a new Project
+    The customer salutation is omitted. Without ``include_address`` the title
+    ends after the customer, for a new Project
     that waits for administrator review of its missing address.
     """
     if not isinstance(max_length, int) or isinstance(max_length, bool) or max_length < 1:
@@ -62,7 +63,13 @@ def build_project_title(
     customer = _mapping(record.get("customer"), "ProjectMatch.customer")
     salutation = customer.get("title") if isinstance(customer.get("title"), str) else ""
     customer_name = _required_text(customer.get("full_name"), "ProjectMatch.customer.full_name")
-    title = f"{trade_code}-{project_number} | {trade_name}, {salutation} {customer_name}"
+    salutation = " ".join(salutation.split())
+    if _legacy_salutation:
+        customer_name = f"{salutation} {customer_name}"
+    else:
+        while salutation and customer_name.casefold().startswith(salutation.casefold() + " "):
+            customer_name = _required_text(customer_name[len(salutation):], "ProjectMatch.customer.full_name")
+    title = f"{trade_code}-{project_number} | {trade_name}, {customer_name}"
     if include_address:
         title += f", {_project_address(record.get('address'))}"
     title = " ".join(title.split())

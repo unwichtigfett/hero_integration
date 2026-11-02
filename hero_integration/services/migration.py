@@ -1718,7 +1718,9 @@ def _hold_customer_only_title_change(record, values, link) -> dict | None:
     """
     if not values.get("project_name"):
         return None
-    neutral = {**record, "customer": {"title": "-", "full_name": "-"}}
+    # Preserve the previously persisted neutral basis when the visible title
+    # format changes, so existing titles are not treated as changed trade data.
+    neutral = {**record, "customer": {"title": "", "full_name": "- -"}}
     try:
         basis = {PROJECT_TITLE_BASIS: build_project_title(neutral, max_length=10_000)}
     except ProjectTitleValidationError:
@@ -1728,10 +1730,29 @@ def _hold_customer_only_title_change(record, values, link) -> dict | None:
         return basis
     title_changed = prior["project_name"] != field_hashes({"project_name": values["project_name"]})["project_name"]
     prior_basis = prior.get(PROJECT_TITLE_BASIS)
+    # Only regenerate an old-format title (with salutation) when the stored
+    # source baseline exactly matches this record's previous title and the
+    # title was not edited in ERPNext; a local title is kept without review.
+    if title_changed and prior_basis == field_hashes(basis)[PROJECT_TITLE_BASIS]:
+        try:
+            legacy = build_project_title(record, max_length=10_000, _legacy_salutation=True)
+            if (prior["project_name"] == field_hashes({"project_name": legacy})["project_name"]
+                    and not _project_title_edited_locally(link)):
+                return basis
+        except ProjectTitleValidationError:
+            pass
     if title_changed and (prior_basis is None or prior_basis == field_hashes(basis)[PROJECT_TITLE_BASIS]):
         del values["project_name"]
         values.missing.add("project_name")
     return basis
+
+
+def _project_title_edited_locally(link) -> bool:
+    prior = decode_hashes(getattr(link, "target_field_hashes", "")) or {}
+    if prior.get("project_name") is None or not getattr(link, "target_name", ""):
+        return True
+    current = frappe.db.get_value("Project", link.target_name, "project_name")
+    return prior["project_name"] != field_hashes({"project_name": current})["project_name"]
 
 
 def observe_monitor_record(operation: str, record: dict[str, object]) -> Result | None:
