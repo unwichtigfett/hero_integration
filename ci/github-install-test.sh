@@ -85,7 +85,8 @@ if [[ ",$selection," == *,hero_integration,* ]]; then
   if [ -z "$(bench --site hero-ci.localhost execute frappe.db.exists --kwargs '{"dt":"Warehouse Type","dn":"Transit"}')" ]; then
     bench --site hero-ci.localhost execute frappe.client.insert --kwargs '{"doc":{"doctype":"Warehouse Type","name":"Transit"}}' >/dev/null
   fi
-  if [ "$(bench --site hero-ci.localhost execute frappe.db.count --args '["Company"]')" = 0 ]; then
+  company_count=$(bench --site hero-ci.localhost execute frappe.db.count --args '["Company"]')
+  if [ -z "$company_count" ] || [ "$company_count" = 0 ]; then
     bench --site hero-ci.localhost execute frappe.client.insert --kwargs '{"doc":{"doctype":"Company","company_name":"HERO CI Company","abbr":"HCI","country":"Germany","default_currency":"EUR"}}' >/dev/null
   fi
   run_hero_test_gates

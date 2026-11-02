@@ -82,3 +82,27 @@ printf 'GATE_PASSED\\n'
         self.assertIn('branch: [hero_int_dev, hero_int_1.0]', woodpecker)
         update = woodpecker.split('  - name: update-test-site\n', 1)[1].split('  - name: install-test', 1)[0]
         self.assertIn('depends_on: [install-test]', update)
+
+    def test_company_setup_handles_bench_zero_output_and_query_failures(self):
+        source = (ROOT / 'ci/github-install-test.sh').read_text()
+        setup = source.split('  # The setup wizard is deliberately absent on this disposable site.\n', 1)[1]
+        setup = setup.split('  run_hero_test_gates\n', 1)[0]
+        for count, status, should_insert in (('', 0, True), ('0', 0, True), ('1', 0, False), ('', 7, False)):
+            with self.subTest(count=count, status=status), tempfile.TemporaryDirectory() as tmp:
+                trace = Path(tmp) / 'trace'
+                env = dict(os.environ, COMPANY_COUNT=count, COUNT_STATUS=str(status), TRACE=str(trace))
+                script = '''
+bench() {
+  case "$*" in
+    *"execute frappe.db.count"*) printf '%s' "$COMPANY_COUNT"; return "$COUNT_STATUS" ;;
+    *"execute frappe.db.exists"*) printf 'Transit' ;;
+    *"execute frappe.client.insert"*) printf '%s\\n' "$*" >> "$TRACE" ;;
+    *) return 99 ;;
+  esac
+}
+''' + setup
+                result = subprocess.run(['bash', '-euo', 'pipefail', '-c', script], env=env,
+                                        text=True, capture_output=True)
+                self.assertEqual(result.returncode, status, result.stderr)
+                inserted = trace.read_text() if trace.exists() else ''
+                self.assertEqual('"doctype":"Company"' in inserted, should_insert)
