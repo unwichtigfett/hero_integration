@@ -106,6 +106,20 @@ class TestGermanCatalog(unittest.TestCase):
                     missing.append(f"{path.name}: {source}")
         self.assertEqual(missing, [])
 
+    def test_package_setting_labels_match_exported_doctype_metadata(self):
+        import json
+
+        tree = ast.parse((APP / "services" / "config_exchange.py").read_text(encoding="utf-8"))
+        assignment = next(node for node in tree.body if isinstance(node, ast.Assign)
+                          and any(isinstance(target, ast.Name) and target.id == "SETTINGS_KEYS" for target in node.targets))
+        keys = ast.literal_eval(assignment.value)
+        doctype = json.loads((APP / "hero_integration" / "doctype" / "hero_integration_settings" / "hero_integration_settings.json").read_text(encoding="utf-8"))
+        labels = {field.get("fieldname"): field.get("label") for field in doctype["fields"]}
+        source = (APP / "public" / "js" / "hero_settings.js").read_text(encoding="utf-8")
+        section = source.split("const packageSettingLabels = Object.freeze({", 1)[1].split("});", 1)[0]
+        actual = dict(re.findall(r'^\s*(\w+): "([^"\n]+)",\s*$', section, re.MULTILINE))
+        self.assertEqual(actual, {key: labels[key] for key in keys})
+
     def test_mapping_editor_literal_dialog_descriptions_have_german_entries(self):
         with (APP / "translations" / "de.csv").open(encoding="utf-8", newline="") as stream:
             messages = dict(csv.reader(stream))
