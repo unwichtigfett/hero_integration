@@ -42,13 +42,13 @@ class TestPortableRelease(unittest.TestCase):
     def test_required_release_documents_are_present(self):
         required = {
             "README.md",
-            "INSTALLATION.md",
-            "docs/CONFIGURATION.md",
-            "docs/MANUAL_ACCEPTANCE.md",
-            "docs/FEATURE_MATRIX.md",
-            "docs/PORTABILITY_REPORT.md",
-            "docs/DOCTYPE_EXTENSIONS.md",
-            "docs/MAPPING_MATRIX.md",
+            "installation_guide_1.0.md",
+            "docs/configuration_guide_1.0.md",
+            "docs/manual_acceptance_1.0.md",
+            "docs/feature_matrix_1.0.md",
+            "docs/portability_report_1.0.md",
+            "docs/doctype_extensions_1.0.md",
+            "docs/mapping_matrix_1.0.md",
         }
 
         self.assertTrue(all((ROOT / filename).is_file() for filename in required))

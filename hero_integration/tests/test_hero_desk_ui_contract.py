@@ -17,7 +17,7 @@ SETTINGS_JS = PACKAGE_ROOT / "public" / "js" / "hero_settings.js"
 MAPPING_EDITOR_JS = PACKAGE_ROOT / "public" / "js" / "hero_mapping_editor.js"
 MIGRATION_JS = PACKAGE_ROOT / "public" / "js" / "hero_migration.js"
 ADAPTER_CSS = PACKAGE_ROOT / "public" / "css" / "hero_adapter.css"
-UI_DOCUMENTATION = PACKAGE_ROOT.parent / "docs" / "UI.md"
+UI_DOCUMENTATION = PACKAGE_ROOT.parent / "docs" / "ui_overview_1.0.md"
 SIDEBAR_JSON = PACKAGE_ROOT / "hero_integration" / "sidebar" / "hero_integration" / "hero_integration.json"
 
 

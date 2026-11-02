@@ -1,4 +1,4 @@
-# Bench-native install test (ci-server).  Logic lives in ci/bench-install-test.sh.
+# Bench-native install test.  Logic lives in ci/bench-install-test.sh.
 # Draft: adapt the image to one with Python 3.14, Node 20+, yarn, git, mariadb client and bench.
 when:
   - event: [manual, push]
@@ -14,7 +14,7 @@ services:
 
 steps:
   - name: install-test
-    image: frappe-ci:py314   # local prebuilt image on ci-server (see docs/CI.md)
+    image: frappe-ci:py314   # prebuilt image on the CI server (see docs/ci_installtest_1.0.md)
     environment:
       DB_HOST: mariadb
       DB_ROOT_PASSWORD: ci-root

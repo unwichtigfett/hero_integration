@@ -1,12 +1,12 @@
-# HERO ↔ ERPNext: geprüftes Mapping (Stand 01.11.2026)
+# HERO ↔ ERPNext: geprüftes Mapping
 
-Dieses Dokument ersetzt den Vorschlag
-[HERO_MAPPING_PLAN_vorschlag_2026-11-01.md](HERO_MAPPING_PLAN_vorschlag_2026-11-01.md)
-als verbindliche Übersicht. Es führt drei Quellen zusammen:
+Dieses Dokument ist die verbindliche Übersicht. Es ersetzt den Vorschlag
+[mapping_plan_1.0.md](mapping_plan_1.0.md).
+Es führt drei Quellen zusammen:
 
-- den Vorschlag (Schema `Schema.txt`, SHA-256 `7b6d360b…`, Code-Stand `29b32cf`),
-- die auf der Dev-Site **aktiven** Mapping-Regeln (`HERO Frappe Mapping`, Status Active, abgefragt am 01.11.2026),
-- die Entscheidungen des Inhabers vom 30.10. bis 01.11.2026.
+- den Vorschlag (Schema `Schema.txt`, SHA-256 `7b6d360b…`),
+- die aktiven Mapping-Regeln (`HERO Frappe Mapping`, Status Active),
+- die Entscheidungen des Inhabers.
 
 Status-Werte:
 
@@ -34,16 +34,11 @@ Status-Werte:
 | Stelle im Vorschlag | Richtig ist |
 | --- | --- |
 | `measure` nur über die Titelregel | `measure` bestimmt auch das native **Project Type** (Gewerk). |
-| `current_project_match_status*` „kein natives Ziel und kein Writeback“ | Das Feld **Phase** zeigt den HERO-Schritt. Gesendet wird die Phase über `current_project_match_status { step_id }`. Live getestet am Testprojekt KLIM-2676. |
-| `step_id` „nicht geplant“ | `ProjectMatchInput.step_id` wird von HERO **ignoriert**, nachgewiesen im Live-Test. Nicht verwenden. |
-| `project_match_statuses` | Das ist nur die Status-Historie. Die möglichen Phasen sind `type.project_status_steps`, sortiert nach `status_code`, `sort_order` und `id`, was genau der HERO-Anzeige entspricht. |
-| Projekt-ID | HERO-Projekte heißen `<Gewerk>-<display_id>-H`, und `-H` ist reserviert. |
-| Ausgangs-Whitelist Projekt: `project_name`, `project_nr`, `project_type`, `display_id` | **Abgelehnt.** Der ERPNext-Titel ist zusammengesetzt und würde den HERO-Projekttitel überschreiben. Nummer, Display-ID und Typ sind Identitäts- bzw. Namensdaten. Code seit `5aba6ae` auf Notes beschränkt. |
-
-**Hinweis zum Vorschlag:** Sein Verfasser hat am Testprojekt 11997764 selbst eine
-Notiz-Mutation ausgeführt und wieder zurückgesetzt. Den Ausgangszustand hat er in
-`/tmp/hero-test-project-rggsdwm7.json` gespeichert. HERO-Historie und
-Änderungszeitpunkt des Testprojekts enthalten diese Vorgänge.
+| `current_project_match_status*` „kein natives Ziel und kein Writeback“ | Das Feld **Phase** zeigt den HERO-Schritt. Die App sendet die Phase über `current_project_match_status { step_id }`. Live getestet. |
+| `step_id` „nicht geplant“ | HERO **ignoriert** `ProjectMatchInput.step_id`. Der Live-Test belegt das. Nicht verwenden. |
+| `project_match_statuses` | Das ist nur die Status-Historie. Die möglichen Phasen stehen in `type.project_status_steps`. Sortiert nach `status_code`, `sort_order` und `id` entsprechen sie genau der HERO-Anzeige. |
+| Projekt-ID | HERO-Projekte heißen `<Gewerk>-<display_id>-H`. `-H` ist reserviert. |
+| Ausgangs-Whitelist Projekt: `project_name`, `project_nr`, `project_type`, `display_id` | **Abgelehnt.** Der ERPNext-Titel ist zusammengesetzt und würde den HERO-Projekttitel überschreiben. Nummer, Display-ID und Typ sind Identitäts- und Namensdaten. Der Code sendet nur Notes. |
 
 ## 2. Projekt (`HeroProjectMatches` → Project)
 
@@ -54,7 +49,7 @@ Notiz-Mutation ausgeführt und wieder zurückgesetzt. Den Ausgangszustand hat er
 | `id` | HERO Integration Link, `custom_hero_source_id` | aktiv |
 | `display_id` + `measure` | Projekt-ID `<Gewerk>-<display_id>-H`; „Project Nr.“ | aktiv / entschieden |
 | `measure` | **Project Type** = Gewerk (Photovoltaik, Elektrohandwerk, Klimatechnik, Dachsanierung, Absturzsicherung, Sonstiges) | entschieden |
-| Titelbestandteile (`project_nr`, `measure`, `customer.title/full_name`, `address`) | `project_name` nach Titelregel, **ohne Anrede** (2026-11-02; vorhandene Titel einmalig lokal bereinigt, lokal bearbeitete Titel unverändert). Eine reine Kundenänderung benennt nicht um. Ab 140 Zeichen abgelehnt (2 Projekte, manuell). | aktiv |
+| Titelbestandteile (`project_nr`, `measure`, `customer.title/full_name`, `address`) | `project_name` nach Titelregel, **ohne Anrede**. Vorhandene Titel wurden einmalig lokal bereinigt; lokal bearbeitete Titel bleiben unverändert. Eine reine Kundenänderung benennt nicht um. Titel ab 140 Zeichen werden abgelehnt und manuell bearbeitet. | aktiv |
 | `customer_id` | `customer` über den Kunden-Link. Ohne eindeutigen Link → Freigabe nötig. | aktiv |
 | `customer_id` | `company` (bestätigte ERPNext-Firma) | aktiv |
 | `address.full_address` | „Project Address“. Fehlt sie → Freigabe nötig. | aktiv |
@@ -65,8 +60,8 @@ Notiz-Mutation ausgeführt und wieder zurückgesetzt. Den Ausgangszustand hat er
 | `partner_notes` | „Notes“ (`custom_hero_partner_notes`), nicht `Project.notes` | aktiv |
 | `project_nr`, `project_type` (HERO-Wert, z. B. „unmanaged“) | ausgeblendete Beobachtungsfelder | aktiv |
 | `is_deleted` | keine Löschung. Aufgaben und Termine gelöschter Projekte werden übersprungen. | entschieden |
-| `volume` | — | **offen**: Einheit und Bedeutung klären, dann `custom_hero_volume` |
-| `ppl_price` | — | **offen**: Bedeutung und Währung klären |
+| `volume` | `custom_hero_volume` (Währung, nur lesbar): Projektvolumen in Euro | aktiv |
+| `ppl_price` | — | nicht zugeordnet: Bedeutung unbekannt |
 | `measure_id`, `address_id`, `company_branch_id`, `partner_id`, `contact_id`, `type_id`, `marked_*`, `name`, `partner_source`, `relative_id` | — | ausgeschlossen (nur IDs bzw. Flags ohne fachliche Verwendung) |
 | `partner`, `company_branch`, `project`, `contact`, `available_actions`, `custom_fields_searchable` | — | ausgeschlossen, bis ein fachlicher Bedarf besteht |
 | `file_uploads`, `customer_documents`, `histories`, `project_match_assignments` | — | später (siehe Abschnitt 6) |
@@ -81,19 +76,23 @@ Notiz-Mutation ausgeführt und wieder zurückgesetzt. Den Ausgangszustand hat er
 
 Regeln:
 - Senden dürfen nur System Manager und die Rolle „HERO Writeback“.
-- Es gibt einen globalen Schalter (`allow_graphql_mutation_execution`).
-- Der Dialog zeigt eine Vorschau mit Fingerabdruck. Ein Feld, das in HERO zwischenzeitlich geändert wurde, wird nicht überschrieben.
-- Gesendet wird einmal, mit Audit-Eintrag. Danach wird in HERO nachgelesen, und erst dann zieht die Abgleich-Basis nach.
+- Ein globaler Schalter (`allow_graphql_mutation_execution`) gibt das Senden frei.
+- Der Dialog zeigt eine Vorschau mit Fingerabdruck. Hat HERO ein Feld zwischenzeitlich geändert, überschreibt die App es nicht.
+- Die App sendet einmal und schreibt einen Audit-Eintrag. Danach liest sie in HERO nach. Erst dann zieht die Abgleich-Basis nach.
 
 ### Logbuch (Aktivität)
 
-HERO-Logbuch (`ProjectMatch.histories`) erscheint in der „Aktivität“ des
-ERPNext-Projekts als Info-Zeile „HERO Logbuch · Titel · Autor“ mit Text und
-HERO-Datum. Gelesen nach jedem Projektlauf (Execute), verschachtelt in der
-Projektliste, 25 Projekte je Abfrage (HERO lehnt einen globalen
-`project_histories`-Abruf und 100 Projekte je Abfrage ab), bis 500 Einträge je
-Projekt. Neue Einträge werden ergänzt, nichts doppelt (Link-Typ
-`project_history`), nichts wird an HERO gesendet.
+Das HERO-Logbuch (`ProjectMatch.histories`) erscheint in der „Aktivität“ des
+ERPNext-Projekts. Jeder Eintrag ist eine Info-Zeile „HERO Logbuch · Titel ·
+Autor“ mit Text und HERO-Datum.
+
+Die App liest das Logbuch nach jedem Projektlauf (Execute). Die Abfrage liegt
+verschachtelt in der Projektliste, mit 25 Projekten je Abfrage. HERO lehnt
+einen globalen `project_histories`-Abruf und 100 Projekte je Abfrage ab. Je
+Projekt liest die App bis zu 500 Einträge.
+
+Neue Einträge kommen dazu, keiner doppelt (Link-Typ `project_history`). Die App
+sendet nichts an HERO.
 
 ## 3. Kunde und Kontakt (`HeroCustomers` → Customer, Contact, Address)
 
@@ -113,20 +112,22 @@ Projekt. Neue Einträge werden ergänzt, nichts doppelt (Link-Typ
 | `is_contact_person` | Für Ansprechpartner wird kein Kunde angelegt. | aktiv |
 | `is_deleted` | Status der Verknüpfung, keine Löschung | aktiv |
 | `title` | `Contact.salutation` über die Anrede-Tabelle | aktiv |
-| `company_legal_form` | — | **offen**: Entwurf V3 vorhanden, Übernahme entscheiden |
-| `url` | — | **offen**: `Customer.website` |
-| `position` | — | **offen**: `Contact.designation` |
-| `phone_fax` | — | **offen**: Ziel festlegen |
+| `company_legal_form` | — | nicht übernommen (eingehend nur die Anrede-Tabelle) |
+| `url` | — | nicht übernommen |
+| `position` | — | nicht übernommen |
+| `phone_fax` | — | nicht übernommen |
 | `birth_date` | — | ausgeschlossen (Datenschutz) |
 | übrige IDs, Formatfelder, `offer_options`, `leitweg_nr`, `accounting`, `parent_customer*`, `contacts`, `customer_addresses` | — | ausgeschlossen, bis ein fachlicher Bedarf besteht |
 
 ### Ausgehend
 
-Entscheidung 2026-11-02: alle Kundendaten außer der Kundennummer. Button
-„Send to HERO“ auf jedem importierten Kunden (`update_contact`), gleiches
-Muster wie bei Projekt und Aufgabe (Vorschau liest HERO live, in HERO
-geänderte Werte werden nicht überschrieben, globaler Schalter, Audit,
-Nachlesen, Vergleichsbasis fortschreiben). Gesendet werden:
+Entscheidung: Die App sendet alle Kundendaten außer der Kundennummer. Jeder
+importierte Kunde hat den Button „Send to HERO“ (`update_contact`).
+
+Der Ablauf folgt dem Muster von Projekt und Aufgabe: Die Vorschau liest HERO
+live. In HERO geänderte Werte überschreibt die App nicht. Es gelten globaler
+Schalter, Audit, Nachlesen und Fortschreiben der Vergleichsbasis. Gesendet
+werden:
 
 | ERPNext | HERO |
 | --- | --- |
@@ -137,10 +138,10 @@ Nachlesen, Vergleichsbasis fortschreiben). Gesendet werden:
 | weitere Telefonnummer (Kontakt) | `phone_home` |
 | Hauptadresse: Straße, Zeile 2, PLZ, Ort | `address { street line_2 zipcode city }` |
 
-Nicht gesendet: Kundennummer, HERO-Kategorie/-Typ (HERO-eigene
-Klassifizierung), Land. Live getestet am Testkunden KD-01440 (HERO 7966175):
-Nachname und Adresszeile 2 hin und zurück. Ein HERO-Festnetz gleich der
-Mobilnummer speichert ERPNext nur einmal; das gilt nicht als Änderung.
+Nicht gesendet: Kundennummer, HERO-Kategorie und -Typ (HERO-eigene
+Klassifizierung), Land. Der Live-Test hat Nachname und Adresszeile 2 hin und
+zurück übertragen. Ist das HERO-Festnetz gleich der Mobilnummer, speichert
+ERPNext die Nummer nur einmal. Das gilt nicht als Änderung.
 
 ## 4. Aufgabe (`HeroTasks` → Task)
 
@@ -151,30 +152,37 @@ Mobilnummer speichert ERPNext nur einmal; das gilt nicht als Änderung.
 | `comment` | `description`. Leer → keine Prüfung. | aktiv / entschieden |
 | `target_project_match_id` | `project`. 0 = kein Projekt, gelöschtes HERO-Projekt → übersprungen, `KONT-` → ohne Projekt. | aktiv / entschieden |
 | `due_date` | `custom_hero_due_date` (geschützt) | aktiv |
-| `created` | `exp_start_date` (Startdatum). Liegt es nach dem Fälligkeitsdatum, gilt das Fälligkeitsdatum. | aktiv (2026-11-02) |
-| `due_date` | zusätzlich `exp_end_date` (Enddatum = „erledigen bis“) | aktiv (2026-11-02) |
-| `done_date` | erledigt → `status` Completed + `completed_on` (nie in der Zukunft); leer → wieder Open. ERPNext-„Overdue“ zählt nicht als Änderung. | aktiv (2026-11-02) |
-| `target_user_id` | `custom_hero_assignee` (E-Mail des HERO-Benutzers, nur lesbar). Gibt es einen aktiven ERPNext-Benutzer mit dieser E-Mail, bekommt er die Zuweisung (ToDo); ändert HERO den Zuständigen, wird die alte HERO-Zuweisung storniert. Ohne passenden Benutzer bleibt die Aufgabe unzugewiesen (kein Fehler). | aktiv (2026-11-02) |
+| `created` | `exp_start_date` (Startdatum). Liegt es nach dem Fälligkeitsdatum, gilt das Fälligkeitsdatum. | aktiv |
+| `due_date` | zusätzlich `exp_end_date` (Enddatum = „erledigen bis“) | aktiv |
+| `done_date` | erledigt → `status` Completed + `completed_on` (nie in der Zukunft); leer → wieder Open. ERPNext-„Overdue“ zählt nicht als Änderung. | aktiv |
+| `target_user_id` | `custom_hero_assignee` (E-Mail des HERO-Benutzers, nur lesbar). Hat ein aktiver ERPNext-Benutzer diese E-Mail, bekommt er die Zuweisung (ToDo). Ändert HERO den Zuständigen, storniert die App die alte HERO-Zuweisung. Ohne passenden Benutzer bleibt die Aufgabe unzugewiesen (kein Fehler). | aktiv |
 | `author_user_id` | — | nicht nötig: jeder darf jedem zuweisen |
 | `start`, `end` | — | ungenutzt (Start = Erstellung, Ende = Fälligkeit) |
-| Ausgehend (`update_task`) | Button „Send to HERO“ auf jeder Aufgabe: Titel, Beschreibung, Enddatum, Erledigt, Zuständiger. In ERPNext angelegte Aufgaben eines HERO-Projekts werden in HERO angelegt und verknüpft. | aktiv, Schalter AUS (2026-11-02) |
+| Ausgehend (`update_task`) | Button „Send to HERO“ auf jeder Aufgabe: Titel, Beschreibung, Enddatum, Erledigt, Zuständiger. Legt ERPNext eine Aufgabe in einem HERO-Projekt an, legt die App sie in HERO an und verknüpft sie. | aktiv, Schalter AUS |
 
-HERO-Benutzer kommen aus `company.partners.user { id email }` (HERO hat keine
-Benutzerliste); die Liste wird pro Aufgabenlauf einmal gelesen. Ist sie nicht
-lesbar, bleibt der Zuständige unverändert. Für vorhandene Aufgaben ohne
-Vergleichsbasis übernimmt der erste Lauf die HERO-Werte, solange ERPNext noch
-leer bzw. offen ist; sonst Prüfung.
+HERO hat keine Benutzerliste. Die App liest die HERO-Benutzer aus
+`company.partners.user { id email }`, einmal pro Aufgabenlauf. Ist die Liste
+nicht lesbar, bleibt der Zuständige unverändert.
 
-**Senden an HERO (Aufgaben).** Wie beim Projekt: Vorschau liest HERO live,
-ein seit dem letzten Import in HERO geänderter Wert wird nicht überschrieben,
-ein Mutation-Aufruf hinter dem globalen Schalter und dem Mutation-Audit, danach
-Nachlesen in HERO und Fortschreiben der Vergleichsbasis. Nur „System Manager“
-und „HERO Writeback“. Zuständiger: genau eine offene ERPNext-Zuweisung, deren
-Benutzer-E-Mail einem HERO-Benutzer entspricht (HERO kennt nur einen
-Zuständigen). Erkenntnisse aus dem Live-Test an Testprojekt KLIM-2676-H
-(HERO-Aufgabe 2305745): HERO ignoriert Zeitstempel mit Mikrosekunden und
-`null`; ein leerer String leert einen Wert (öffnet eine erledigte Aufgabe
-wieder). Datumswerte werden als 12:00 Ortszeit gesendet (Erledigt heute: jetzt).
+Vorhandene Aufgaben ohne Vergleichsbasis: Ist ERPNext noch leer bzw. offen,
+übernimmt der erste Lauf die HERO-Werte. Sonst geht die Aufgabe in die Prüfung.
+
+**Senden an HERO (Aufgaben).** Der Ablauf gleicht dem Projekt:
+
+- Die Vorschau liest HERO live.
+- Hat HERO einen Wert seit dem letzten Import geändert, überschreibt die App ihn nicht.
+- Die App ruft die Mutation einmal auf, hinter dem globalen Schalter und dem Mutation-Audit.
+- Danach liest sie in HERO nach und schreibt die Vergleichsbasis fort.
+- Senden dürfen nur „System Manager“ und „HERO Writeback“.
+
+HERO kennt nur einen Zuständigen. Die App sendet ihn nur bei genau einer
+offenen ERPNext-Zuweisung, deren Benutzer-E-Mail einem HERO-Benutzer
+entspricht.
+
+Erkenntnisse aus dem Live-Test: HERO ignoriert Zeitstempel mit Mikrosekunden
+und `null`. Ein leerer String leert einen Wert und öffnet so eine erledigte
+Aufgabe wieder. Die App sendet Datumswerte als 12:00 Ortszeit. Für „Erledigt
+heute“ sendet sie die aktuelle Zeit.
 
 ## 5. Termin (`HeroCalendarEvents` → Event)
 
@@ -201,10 +209,15 @@ wieder). Datumswerte werden als 12:00 Ortszeit gesendet (Erledigt heute: jetzt).
 | Abwesenheiten | `absences` | HRMS-Abwesenheitsarten, Genehmigung |
 | Kundenadressen ausgehend | `update_customer_address` | `street` vs. `line_1`, Länder-IDs |
 
-## 7. Entscheidungen, die das Mapping erweitern würden
+## 7. Entscheidungen
 
-1. Projekt: Bedeutung und Einheit von `volume` sowie `ppl_price`.
-2. Kunde: Anrede-Tabelle (`title`), Rechtsform, Website, Position, Fax.
-3. Kunde ausgehend: ja oder nein, und welche Felder.
-4. Aufgaben: Zuordnung HERO-Benutzer ↔ ERPNext-Mitarbeiter (Voraussetzung für Zuweisungen), Bedeutung von `done_date`, `start` und `end`.
+Getroffen:
+
+1. Projekt: `volume` ist das Projektvolumen in Euro. `ppl_price` bleibt ohne Zuordnung, bis seine Bedeutung bekannt ist.
+2. Kunde eingehend: nur die Anrede-Tabelle (`title`). Rechtsform, Website, Position und Fax werden nicht übernommen.
+3. Kunde ausgehend: alle Kundendaten außer der Kundennummer, über den Button „Send to HERO“.
+4. Aufgaben: Benutzer werden per E-Mail zugeordnet. Jeder darf jedem Aufgaben zuweisen. Erledigt ist eine Aufgabe, wenn der Zuständige sie abhakt (`done_date`). Startdatum ist das Erstellungsdatum, Enddatum das Fälligkeitsdatum; `start` und `end` bleiben ungenutzt.
+
+Offen:
+
 5. Reihenfolge der späteren Bereiche (Abschnitt 6).

@@ -4,7 +4,7 @@
 
 ## Unified Desk navigation
 
-`hero-integration` opens the preserved Adapter host and contains exactly five
+`hero-integration` opens the preserved Adapter host. It contains exactly five
 main tabs:
  - overview
  - API & Schema
@@ -16,27 +16,27 @@ API & Schema tab:
  - Graph Viewer
  - GraphQL Services [Query | Mutation]
 
-Mapping requires an explicit saved, validated snapshot selection.
-No default to the newest snapshot.
+Mapping requires an explicit selection of a saved, validated snapshot.
+It never defaults to the newest snapshot.
 
 ## Runtime Frappe target catalog
 
 The Mapping section discovers installed apps and their DocTypes from the active
-site at request time. It then exposes App → DocType → Field choices from Frappe
+site at request time. It exposes App → DocType → Field choices from Frappe
 metadata, including standard and Custom Fields.
 
-Any field of another installed app can become a validated **Draft proposal**,
-but the app does not activate it or use direct DocType writes.
+Any field of another installed app can become a validated **Draft proposal**.
+The app does not activate it and does not write to that DocType directly.
 
 ## Mutation drafts
 
-The Analyzer and Graph Viewer retain schema mutation nodes, input relations,
+The Analyzer and Graph Viewer keep schema mutation nodes, input relations
 and return types.
-Drafts never contain saved variables or credentials and are never
-executed. Every execution fails closed when `HERO_MUTATION_EXECUTION_DISABLED`.
+Drafts never contain saved variables or credentials. The app never executes
+them. Every execution fails closed when `HERO_MUTATION_EXECUTION_DISABLED`.
 
-The CSS/DOM source port has not been visually inspected in a browser in this
-step. Visual parity is therefore a manual step, not a claimed result.
+The CSS/DOM source port has no visual browser check. Visual parity needs a
+manual step in a browser.
 
 ## RPC inventory and bounded mapping
 
@@ -56,10 +56,5 @@ The source workspace displays Query and Mutation modes.
 
 ## Complete stored schema source
 
-The latest read-only source snapshot is `231026`
-`schema-fee37bfa55a02f7a4d09b6b902e6600a835c992c8fe6644c358f5e511e025201`
-(modified 23-10-2026 01:07:07 UTC). Its source fingerprint is
-`fee37bfa55a02f7a4d09b6b902e6600a835c992c8fe6644c358f5e511e025201`.
-The source payload was transferred only to an untracked temporary location for
-projection validation, not to Git. The actual source reports 307 types, 65
-queries and 88 mutations.
+Each stored source snapshot is read-only and carries a source fingerprint.
+Raw source payloads stay outside Git.
