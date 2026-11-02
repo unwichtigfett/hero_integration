@@ -2306,3 +2306,5 @@ Local provenance is stale.,Die lokale Herkunft ist veraltet.
 The remembered node is an operation; the operation is preselected.,Der gespeicherte Knoten ist eine Operation; die Operation ist vorausgewählt.
 The argument does not belong to a root operation; only navigation is offered.,Das Argument gehört nicht zu einer Root-Operation; es wird nur Navigation angeboten.
 The field is a root operation field; the operation is preselected.,Das Feld ist ein Feld einer Root-Operation; die Operation ist vorausgewählt.
+Publish the saved draft and acknowledge these warnings: {0}. No HERO synchronization will be started.,Den gespeicherten Entwurf veröffentlichen und diese Warnungen bestätigen: {0}. Es wird keine HERO-Synchronisation gestartet.
+Publish the saved personal draft? No HERO synchronization will be started.,Den gespeicherten persönlichen Entwurf veröffentlichen? Es wird keine HERO-Synchronisation gestartet.
