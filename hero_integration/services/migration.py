@@ -983,6 +983,11 @@ def _process_projection(run, source, *, checkpoint=None) -> None:
                 run.resume_offset, run.resume_record_index = offset, index + 1
                 run.save()
         if page.next_offset is None:
+            unmatched = _TASK_USER_DIRECTORY.get('unmatched')
+            if unmatched and getattr(run, 'mode', '') == 'Execute':
+                from hero_integration.services.conflict_notifications import notify_unmatched_assignees
+                with checkpoint():
+                    notify_unmatched_assignees(run.name, unmatched)
             return
         offset, index_start = page.next_offset, 0
         with checkpoint():
@@ -1251,6 +1256,7 @@ def _migrate_native_task(record, run, plan, scope) -> Result:
                 'mapping_version': version, 'last_synced_on': now_datetime(),
             }).insert()
             note = task_lifecycle.sync_assignment(task, None) if lifecycle.get(task_lifecycle.ASSIGNEE) else ''
+            _remember_unmatched_assignee(task, note)
         except Exception:
             frappe.db.rollback(save_point='hero_native_task_insert')
             raise
@@ -1323,6 +1329,7 @@ def _migrate_native_task(record, run, plan, scope) -> Result:
             target_base[field] = field_hashes({field: applied[field]})[field]
         if task_lifecycle.ASSIGNEE in lifecycle_updates:
             note = task_lifecycle.sync_assignment(task, current[task_lifecycle.ASSIGNEE])
+            _remember_unmatched_assignee(task, note)
     link.source_field_hashes = encode_hashes(source_base)
     link.target_field_hashes = encode_hashes(target_base)
     link.mapping_version = version
@@ -1346,6 +1353,13 @@ def _load_task_user_directory(source, operation) -> None:
     _TASK_USER_DIRECTORY.clear()
     if operation == 'HeroTasks':
         _TASK_USER_DIRECTORY['source'] = source
+
+
+def _remember_unmatched_assignee(task, note: str) -> None:
+    if note:
+        unmatched = _TASK_USER_DIRECTORY.setdefault('unmatched', {})
+        email = task.get(task_lifecycle.ASSIGNEE)
+        unmatched[email] = unmatched.get(email, 0) + 1
 
 
 def _task_user_emails() -> dict | None:

@@ -119,7 +119,7 @@ def sync_assignment(task, previous_email: str | None, frappe_api=None) -> str:
             return ""
         user = _user_for(email, frappe_api)
         if not user:
-            return f"No ERPNext user with the HERO assignee e-mail; the task stays unassigned."
+            return "No ERPNext user with the HERO assignee e-mail; the task stays unassigned."
         if frappe_api.db.exists("ToDo", {"reference_type": "Task", "reference_name": task.name,
                                          "allocated_to": user, "status": "Open"}):
             return ""
