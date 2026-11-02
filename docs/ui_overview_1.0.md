@@ -6,7 +6,7 @@
 
 `hero-integration` opens the preserved Adapter host. It contains exactly five
 main tabs:
- - overview
+ - Overview
  - API & Schema
  - Mapping
  - Synchronisation
@@ -17,7 +17,6 @@ API & Schema tab:
  - GraphQL Services [Query | Mutation]
 
 Mapping requires an explicit selection of a saved, validated snapshot.
-It never defaults to the newest snapshot.
 
 ## Runtime Frappe target catalog
 
