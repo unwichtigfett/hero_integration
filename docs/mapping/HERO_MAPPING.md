@@ -54,7 +54,7 @@ Notiz-Mutation ausgeführt und wieder zurückgesetzt. Den Ausgangszustand hat er
 | `id` | HERO Integration Link, `custom_hero_source_id` | aktiv |
 | `display_id` + `measure` | Projekt-ID `<Gewerk>-<display_id>-H`; „Project Nr.“ | aktiv / entschieden |
 | `measure` | **Project Type** = Gewerk (Photovoltaik, Elektrohandwerk, Klimatechnik, Dachsanierung, Absturzsicherung, Sonstiges) | entschieden |
-| Titelbestandteile (`project_nr`, `measure`, `customer.title/full_name`, `address`) | `project_name` nach Titelregel. Eine reine Kundenänderung benennt nicht um. Anrede optional. Ab 140 Zeichen abgelehnt. | aktiv |
+| Titelbestandteile (`project_nr`, `measure`, `customer.title/full_name`, `address`) | `project_name` nach Titelregel, **ohne Anrede** (2026-11-02; vorhandene Titel einmalig lokal bereinigt, lokal bearbeitete Titel unverändert). Eine reine Kundenänderung benennt nicht um. Ab 140 Zeichen abgelehnt (2 Projekte, manuell). | aktiv |
 | `customer_id` | `customer` über den Kunden-Link. Ohne eindeutigen Link → Freigabe nötig. | aktiv |
 | `customer_id` | `company` (bestätigte ERPNext-Firma) | aktiv |
 | `address.full_address` | „Project Address“. Fehlt sie → Freigabe nötig. | aktiv |
@@ -85,6 +85,16 @@ Regeln:
 - Der Dialog zeigt eine Vorschau mit Fingerabdruck. Ein Feld, das in HERO zwischenzeitlich geändert wurde, wird nicht überschrieben.
 - Gesendet wird einmal, mit Audit-Eintrag. Danach wird in HERO nachgelesen, und erst dann zieht die Abgleich-Basis nach.
 
+### Logbuch (Aktivität)
+
+HERO-Logbuch (`ProjectMatch.histories`) erscheint in der „Aktivität“ des
+ERPNext-Projekts als Info-Zeile „HERO Logbuch · Titel · Autor“ mit Text und
+HERO-Datum. Gelesen nach jedem Projektlauf (Execute), verschachtelt in der
+Projektliste, 25 Projekte je Abfrage (HERO lehnt einen globalen
+`project_histories`-Abruf und 100 Projekte je Abfrage ab), bis 500 Einträge je
+Projekt. Neue Einträge werden ergänzt, nichts doppelt (Link-Typ
+`project_history`), nichts wird an HERO gesendet.
+
 ## 3. Kunde und Kontakt (`HeroCustomers` → Customer, Contact, Address)
 
 ### Eingehend
@@ -102,7 +112,7 @@ Regeln:
 | `category`, `type` | `custom_hero_customer_category`, `custom_hero_customer_type` | aktiv |
 | `is_contact_person` | Für Ansprechpartner wird kein Kunde angelegt. | aktiv |
 | `is_deleted` | Status der Verknüpfung, keine Löschung | aktiv |
-| `title` | — | **offen**: Anrede-Wertetabelle für `Contact.salutation` |
+| `title` | `Contact.salutation` über die Anrede-Tabelle | aktiv |
 | `company_legal_form` | — | **offen**: Entwurf V3 vorhanden, Übernahme entscheiden |
 | `url` | — | **offen**: `Customer.website` |
 | `position` | — | **offen**: `Contact.designation` |

@@ -567,6 +567,7 @@ def _process_requested_phases(run, source: HeroSource, *, checkpoint=None) -> No
             return
         completed = _process_phase(run, "project", source.projects, checkpoint=checkpoint)
         _refresh_project_phases(run, source)
+        _refresh_project_logbook(run, source)
         if not completed:
             return
     if run.action == "Full Data Migration":
@@ -597,6 +598,21 @@ def _refresh_project_phases(run, source) -> None:
     except Exception:
         frappe.db.rollback()
         frappe.log_error(title="HERO project phase refresh failed")
+
+
+def _refresh_project_logbook(run, source) -> None:
+    """Add new HERO logbook entries to the Project activity (read-only, outside the checkpoint)."""
+    client = getattr(source, "client", None)
+    if getattr(run, "mode", "Preview") != "Execute" or client is None or not hasattr(source, "project_status_steps"):
+        return  # Preview and test doubles never read or write the logbook
+    from hero_integration.services.project_logbook import sync_logbook
+
+    try:
+        emails = source.user_emails() if hasattr(source, "user_emails") else {}
+        sync_logbook(client, emails)
+    except Exception:
+        frappe.db.rollback()
+        frappe.log_error(title="HERO project logbook refresh failed")
 
 
 def validate_run_mappings(run) -> None:
