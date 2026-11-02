@@ -13,3 +13,4 @@ hero_integration.patches.v0_2.project_send_to_hero
 hero_integration.patches.v0_2.project_phase_field
 hero_integration.patches.v0_2.project_volume_field
 hero_integration.patches.v0_2.german_salutations
+hero_integration.patches.v0_2.task_assignee_field
