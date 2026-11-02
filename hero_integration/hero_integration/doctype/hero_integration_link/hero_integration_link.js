@@ -1,6 +1,14 @@
 // Held HERO records offer only Approve / Reject (user decision 2026-10-31).
 frappe.ui.form.on("HERO Integration Link", {
 	refresh(frm) {
+		// Translate known read-only diagnostics for display without changing the
+		// stored canonical text, which is used by the review workflow.
+		const detail = frm.doc.conflict_detail;
+		const display = frm.fields_dict?.conflict_detail?.disp_area;
+		if (display && typeof detail === "string" && detail) {
+			const translated = __(detail);
+			if (translated !== detail) display.textContent = translated;
+		}
 		if (frm.doc.sync_status !== "Pending Review" || !frappe.user.has_role("System Manager")) {
 			return;
 		}
