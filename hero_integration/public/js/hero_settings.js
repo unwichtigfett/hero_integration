@@ -338,7 +338,7 @@
 
         function applyMutationState(data) {
             mutationEnabled.checked = Boolean(data.mutation_execution_requested);
-            mutationStatus.textContent = format("Effective mutation security status: {0}. {1}", data.mutation_execution_status || "DISABLED", uiText(data.mutation_execution_reason || ""));
+            mutationStatus.textContent = format("Effective mutation security status: {0}. {1}", uiText(data.mutation_execution_status || "DISABLED"), uiText(data.mutation_execution_reason || ""));
         }
 
         async function load() {

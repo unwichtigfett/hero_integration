@@ -17,6 +17,8 @@ import json
 import frappe
 from frappe.utils import add_to_date, get_datetime, now_datetime
 
+from hero_integration.services.localized_error import LocalizedRuntimeError
+
 SETTINGS = "HERO Integration Settings"
 SNAPSHOT = "HERO GraphQL Schema Snapshot"
 REFRESH_LOCK = "hero_integration_schema_refresh"
@@ -25,7 +27,7 @@ INTERVAL_MIN, INTERVAL_MAX, INTERVAL_DEFAULT = 10, 240, 60
 JOB_TIMEOUT = 600
 
 
-class SchemaRefreshError(RuntimeError):
+class SchemaRefreshError(LocalizedRuntimeError):
     """A reason why a refresh did not capture a schema."""
 
 
@@ -173,9 +175,9 @@ def _capture(actor: str, response: object = None) -> dict[str, object]:
     except _OfflineSchema as offline:
         schema = offline.schema
     except HeroClientError as error:
-        raise SchemaRefreshError(_client_error_message(error)) from error
+        raise _client_error(error) from error
     except (HeroConfigurationError, IntrospectionError, ValueError) as error:
-        raise SchemaRefreshError(f"HERO schema refresh failed safely: {error}") from error
+        raise SchemaRefreshError('HERO schema refresh failed safely: {0}', error) from error
 
     schema_json = {"__schema": schema}
     from hero_integration.services.graphql_graph import analyze_snapshot
@@ -254,11 +256,17 @@ def _offline_configuration():
 
 
 def _client_error_message(error) -> str:
+    return str(_client_error(error))
+
+
+def _client_error(error) -> SchemaRefreshError:
     if getattr(error, "code", "") in {"HTTP_401", "HTTP_403"}:
-        return "HERO rejected the API token. Check the token and save again."
+        return SchemaRefreshError("HERO rejected the API token. Check the token and save again.")
     detail = next((item for item in getattr(error, "details", ()) if item), "")
     # Server-provided error text is bounded here, but is not redacted here.
-    return f"HERO schema refresh failed safely: {error}" + (f" ({detail[:200]})" if detail else "")
+    if detail:
+        return SchemaRefreshError("HERO schema refresh failed safely: {0} ({1})", error, detail[:200])
+    return SchemaRefreshError("HERO schema refresh failed safely: {0}", error)
 
 
 def inherit_after_capture(snapshot_name: str, actor: str) -> dict[str, object]:

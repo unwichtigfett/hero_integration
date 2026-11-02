@@ -111,7 +111,7 @@
             viewSwitch.querySelectorAll("button").forEach((button) => button.setAttribute("aria-pressed", button.dataset.view === state.view ? "true" : "false"));
         }
 
-        function say(text, tone = "") { notice.textContent = text || ""; notice.dataset.tone = tone; }
+        function say(text, tone = "") { notice.textContent = text ? tr(text) : ""; notice.dataset.tone = tone; }
 
         // --- Subscription service (global switch) --------------------------------
         function renderSubscription() {
@@ -135,7 +135,7 @@
                 const blockedByOther = Boolean(activeRun) && !running;
                 const button = el("button", {type: "button", class: "hero-sync-action", "data-area": area.key,
                     disabled: (running || blockedByOther || !area.ready || state.busy) || undefined,
-                    title: running ? tr("This area is running.") : blockedByOther ? format("Run {0} is still in progress.", activeRun.name) : area.ready ? "" : area.blocker,
+                    title: running ? tr("This area is running.") : blockedByOther ? format("Run {0} is still in progress.", activeRun.name) : area.ready ? "" : tr(area.blocker),
                     onclick: () => startArea(area)}, tr(running ? "Running …" : area.button));
                 const scope = area.scope || {};
                 return el("article", {class: `hero-sync-card ${state.selectedArea === area.key ? "is-selected" : ""}`, "data-area": area.key},
@@ -318,7 +318,7 @@
             add(side, 
                 el("h4", {class: "hero-sync-mono", text: run.name}),
                 el("dl", {class: "hero-sync-facts"}, facts.map(([label, value]) => [el("dt", {text: tr(label)}), el("dd", {text: value})])),
-                run.error_message ? el("p", {class: "hero-sync-error", text: run.error_message}) : null,
+                run.error_message ? el("p", {class: "hero-sync-error", text: tr(run.error_message)}) : null,
                 outcomes.length ? el("div", {class: "hero-sync-chips"}, outcomes.map(([code, count]) => el("span", {class: "hero-sync-chip", text: `${code}: ${number(count)}`}))) : null,
                 run.conflicts?.length ? el("div", {class: "hero-sync-detail-list"}, el("h5", {text: tr("Conflicts in this run")}),
                     el("ul", {}, run.conflicts.map((item) => el("li", {text: `${item.source_type} ${item.source_id}: ${item.detail || item.result}`})))) : null,
@@ -362,7 +362,7 @@
                     el("dt", {text: tr("Snapshot")}), el("dd", {text: area.service?.snapshot || "—"}),
                     el("dt", {text: tr("Last successful")}), el("dd", {text: formatDateTime(area.last_successful)}),
                     el("dt", {text: tr("Automatic sync")}), el("dd", {text: tr(area.sync_enabled ? (area.polled ? "On · read by polling" : "On") : "Off")})),
-                area.blocker ? el("p", {class: "hero-sync-error", text: area.blocker}) : null);
+                area.blocker ? el("p", {class: "hero-sync-error", text: tr(area.blocker)}) : null);
         }
 
         async function decideConflicts(rows, decision) {
@@ -394,7 +394,7 @@
                         el("td", {}, decidable(row) ? el("input", {type: "checkbox", "aria-label": format("Select {0}", row.name), checked: state.selectedConflicts.has(row.name) || undefined,
                             onchange: (event) => event.target.checked ? state.selectedConflicts.add(row.name) : state.selectedConflicts.delete(row.name)}) : null),
                         el("td", {class: "hero-sync-mono", text: decidable(row) ? row.name : `HERO ${row.source_id}`}),
-                        el("td", {text: row.conflict_detail || tr("Conflict requires review.")}),
+                        el("td", {text: row.conflict_detail ? tr(row.conflict_detail) : tr("Conflict requires review.")}),
                         el("td", {text: tr(row.area)}),
                         el("td", {text: !decidable(row) ? format("Not imported ({0})", row.run) : tr(row.sync_status === "Pending Review" ? "Confirmation pending" : (row.conflict_detail || "").startsWith("Recheck requested: ") ? "Recheck requested" : "Conflict")}),
                         el("td", {}, decidable(row) ? [el("button", {type: "button", class: "hero-sync-small", text: tr("Approve"), disabled: state.busy || undefined, onclick: () => decideConflicts([row], "approve")}),

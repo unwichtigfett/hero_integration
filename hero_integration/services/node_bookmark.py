@@ -11,11 +11,12 @@ import hashlib
 import json
 
 from hero_integration.services.graphql_graph import analyze_snapshot
+from hero_integration.services.localized_error import LocalizedError
 
 MAX_ALIAS_LENGTH = 80
 
 
-class NodeBookmarkError(ValueError):
+class NodeBookmarkError(LocalizedError):
     pass
 
 
@@ -27,7 +28,7 @@ def normalize_alias(value: object) -> tuple[str, str]:
     if not alias:
         raise NodeBookmarkError("Alias is required.")
     if len(alias) > MAX_ALIAS_LENGTH:
-        raise NodeBookmarkError(f"Alias must not exceed {MAX_ALIAS_LENGTH} characters.")
+        raise NodeBookmarkError("Alias must not exceed {0} characters.", MAX_ALIAS_LENGTH)
     if any(ord(char) < 32 or ord(char) == 127 for char in value):
         raise NodeBookmarkError("Alias must not contain control characters.")
     return alias, alias.casefold()

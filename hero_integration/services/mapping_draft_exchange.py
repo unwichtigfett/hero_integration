@@ -13,6 +13,7 @@ from uuid import UUID, uuid4
 
 import frappe
 
+from hero_integration.services.localized_error import LocalizedError
 from hero_integration.services.frappe_mapping_draft_storage import FrappeMappingDraftStorage, assert_portable_identity_schema, lock_definition_drafts, lock_identity_drafts
 from hero_integration.services.mapping_draft_service import DraftConflict, MappingDraftError
 from hero_integration.services.personal_mapping_content import bounded, prepare_exchange_content, references, RULE_FIELDS, validate_exchange_action
@@ -39,7 +40,7 @@ _ITEM_KEYS = {
 }
 
 
-class MappingDraftExchangeError(ValueError):
+class MappingDraftExchangeError(LocalizedError):
     pass
 
 
@@ -1163,7 +1164,7 @@ def _prepare_item(item, row, local_content, schema, *, portable=False):
                 storage._validate_object_contexts(prepared['content'])
             return prepared
     except (MappingDraftError, ValueError) as error:
-        raise MappingDraftExchangeError(str(error)) from error
+        raise MappingDraftExchangeError.from_error(error) from error
 
 
 def _rule_target_metadata(content, schema):
@@ -1385,7 +1386,7 @@ def save_import(payload_json: str, source_instance: str, snapshot_name: str, dir
         frappe.db.rollback(save_point=savepoint)
         detail = json.dumps(schema_result["created"], sort_keys=True, separators=(",", ":"))
         raise MappingDraftExchangeError(
-            "Import Draft persistence failed; prior Drafts were restored. Schema provisioning result: " + detail
+            "Import Draft persistence failed; prior Drafts were restored. Schema provisioning result: {0}", detail
         ) from error
     return {"status": "SAVED_DRAFTS_ONLY", "direction": direction, "schema": schema_result,
             "drafts": {key: sorted(set(value)) for key, value in created.items()}, "activation": False}

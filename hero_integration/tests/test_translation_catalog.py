@@ -13,6 +13,40 @@ APP = Path(__file__).resolve().parents[1]
 
 
 class TestGermanCatalog(unittest.TestCase):
+    def test_parameterized_errors_translate_only_at_the_display_boundary(self):
+        from hero_integration.services.localized_error import LocalizedError, LocalizedRuntimeError, translate_error
+        from hero_integration.services.node_bookmark import NodeBookmarkError, normalize_alias
+
+        with self.assertRaises(NodeBookmarkError) as caught:
+            normalize_alias("x" * 81)
+        error = caught.exception
+        self.assertEqual(str(error), "Alias must not exceed 80 characters.")
+        catalog = {"Alias must not exceed {0} characters.": "Der Alias darf höchstens {0} Zeichen lang sein."}
+        translate = lambda message: catalog.get(message, message)
+        self.assertEqual(translate_error(error, translate), "Der Alias darf höchstens 80 Zeichen lang sein.")
+        wrapped = LocalizedError.from_error(error)
+        self.assertEqual(str(wrapped), str(error))
+        self.assertEqual(translate_error(wrapped, translate), "Der Alias darf höchstens 80 Zeichen lang sein.")
+        self.assertEqual(translate_error(ValueError("Unknown error"), translate), "Unknown error")
+        self.assertEqual(translate_error(error, lambda _message: "Fehler ohne Platzhalter"), str(error))
+        self.assertEqual(translate_error(error, lambda _message: "Fehler {"), str(error))
+        runtime = LocalizedRuntimeError("Alias must not exceed {0} characters.", 80)
+        self.assertIsInstance(runtime, RuntimeError)
+        self.assertEqual(translate_error(runtime, translate), "Der Alias darf höchstens 80 Zeichen lang sein.")
+
+    def test_graphql_error_preserves_code_detail_in_both_languages(self):
+        from hero_integration.services.localized_error import translate_error
+        from hero_integration.services.query_draft import QueryDraftError, _tokens
+
+        with self.assertRaises(QueryDraftError) as caught:
+            _tokens("'")
+        error = caught.exception
+        self.assertEqual(str(error), 'Unsupported GraphQL character "\'".')
+        with (APP / "translations" / "de.csv").open(encoding="utf-8", newline="") as stream:
+            messages = dict(csv.reader(stream))
+        self.assertEqual(translate_error(error, lambda message: messages.get(message, message)),
+                         'Nicht unterstütztes GraphQL-Zeichen "\'".')
+
     def test_catalog_is_valid_and_preserves_placeholders(self):
         with (APP / "translations" / "de.csv").open(encoding="utf-8", newline="") as stream:
             rows = list(csv.reader(stream))
@@ -23,8 +57,12 @@ class TestGermanCatalog(unittest.TestCase):
             self.assertTrue(source and translation)
             self.assertNotIn(source, seen)
             seen.add(source)
-            self.assertEqual(sorted(re.findall(r"\{\w+\}", source)),
-                             sorted(re.findall(r"\{\w+\}", translation)))
+            placeholder = r"\{(\w+)(![rsa])?(?::([^{}]+))?\}"
+            self.assertEqual(sorted(re.findall(placeholder, source)),
+                             sorted(re.findall(placeholder, translation)))
+            for term in ("mapping", "polling"):
+                if term in source.lower():
+                    self.assertIn(term, translation.lower(), source)
         self.assertIn("Polling Settings", seen)
         self.assertIn("Configuration package", seen)
 
@@ -68,6 +106,28 @@ class TestGermanCatalog(unittest.TestCase):
                     missing.append(f"{path.name}: {source}")
         self.assertEqual(missing, [])
 
+    def test_api_exposed_service_error_literals_have_german_entries(self):
+        # These exception classes are passed to Frappe's translator at the API
+        # boundary. Dynamic messages and other exception types need separate review.
+        exposed = {"RuntimeBridgeError", "SyncError", "RuntimePlanConflict", "RuntimePlanError",
+                   "GraphQLContractError", "NodeBookmarkError", "QueryDraftError", "MappingExchangeError",
+                   "SchemaProvisioningError", "ProjectSendError", "TaskSendError", "CustomerSendError",
+                   "SchemaOperationError", "SchemaRefreshError", "ReadContractError", "MappingPlanError",
+                   "WritebackContractError", "MappingDraftExchangeError", "ConfigExchangeError"}
+        with (APP / "translations" / "de.csv").open(encoding="utf-8", newline="") as stream:
+            messages = dict(csv.reader(stream))
+        missing = []
+        for path in APP.rglob("*.py"):
+            if "tests" in path.relative_to(APP).parts:
+                continue
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"), filename=str(path))):
+                if (isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call)
+                    and isinstance(node.exc.func, ast.Name) and node.exc.func.id in exposed
+                    and node.exc.args and isinstance(node.exc.args[0], ast.Constant)
+                    and isinstance(node.exc.args[0].value, str) and node.exc.args[0].value not in messages):
+                    missing.append(f"{path.relative_to(APP)}:{node.lineno}: {node.exc.args[0].value}")
+        self.assertEqual(missing, [])
+
     def test_frappe_catalog_loader_and_language_precedence(self):
         try:
             import frappe
@@ -84,6 +144,12 @@ class TestGermanCatalog(unittest.TestCase):
              patch.object(frappe, "get_cached_value", return_value=None), \
              patch.object(frappe, "get_system_settings", return_value="de"):
             self.assertEqual(get_user_lang("synthetic@example.invalid"), "de")
+        # Exercise the installed framework translator, not just the CSV parser.
+        with patch.object(frappe, "local", SimpleNamespace(lang="de")), \
+             patch("frappe.translate.get_all_translations", side_effect=lambda lang: catalog if lang == "de" else {}):
+            self.assertEqual(frappe._("HERO Settings"), "HERO-Einstellungen")
+            self.assertEqual(frappe._("HERO Settings", lang="en"), "HERO Settings")
+            self.assertEqual(frappe._("A missing translation"), "A missing translation")
 
 
 if __name__ == "__main__":
