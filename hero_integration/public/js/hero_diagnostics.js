@@ -13,6 +13,25 @@
         const text = recheck ? String(value).slice(prefix.length) : String(value);
         const exact = tr(text);
         if (exact !== text) return recheck ? format("Recheck requested: {0}", exact) : exact;
+        // Import results append zero or more notes to a canonical result. Peel
+        // only recognized suffixes so names and external text remain intact.
+        const appendedNotes = [
+            "The HERO email address is not valid in ERPNext; it was not imported.",
+            "A HERO phone text is not a valid ERPNext number; the first number was imported and the full text kept as a comment.",
+            "Customer primary address is incomplete. It was not imported.",
+            "The HERO address has no country; Germany was assumed.",
+        ];
+        for (const note of appendedNotes) {
+            if (text.endsWith(` ${note}`)) {
+                const translated = `${diagnostic(text.slice(0, -note.length - 1))} ${tr(note)}`;
+                return recheck ? format("Recheck requested: {0}", translated) : translated;
+            }
+        }
+        const namingNote = text.match(/^(.*?) (HERO has no (?:customer number|project display_id)\.|HERO number .*? (?:is not text\.|cannot be an ERPNext document name \(only letters, digits and single inner hyphens, at most 140 characters\)\.)) (A collision-safe internal ID names the document; no replacement business number was generated\. The original HERO value stays in its field\.|ERPNext's naming series names the new document; the HERO value stays in its field\.)$/);
+        if (namingNote) {
+            const translated = `${diagnostic(namingNote[1])} ${diagnostic(namingNote[2])} ${tr(namingNote[3])}`;
+            return recheck ? format("Recheck requested: {0}", translated) : translated;
+        }
         const addressReview = text.match(/^The project address is missing or incomplete \((.*)\); the title omits it\.$/);
         if (addressReview) {
             const translated = format("The project address is missing or incomplete ({0}); the title omits it.", diagnostic(addressReview[1]));
@@ -42,6 +61,9 @@
             return recheck ? format("Recheck requested: {0}", translated) : translated;
         }
         const templates = [
+            [/^HERO has no (customer number|project display_id)\.$/, "HERO has no {0}.", [0]],
+            [/^HERO number (.+) is not text\.$/, "HERO number {0} is not text."],
+            [/^HERO number (.+) cannot be an ERPNext document name \(only letters, digits and single inner hyphens, at most 140 characters\)\.$/, "HERO number {0} cannot be an ERPNext document name (only letters, digits and single inner hyphens, at most 140 characters)."],
             [/^Generated Project\.project_name exceeds its (\d+)-character field limit\.$/, "Generated Project.project_name exceeds its {0}-character field limit."],
             [/^Project trade (.+) has no confirmed HERO-to-ERPNext title mapping\.$/, "Project trade {0} has no confirmed HERO-to-ERPNext title mapping."],
             [/^(ProjectMatch\.[\w.]+) is not a complete formatted project address\.$/, "{0} is not a complete formatted project address."],

@@ -44,4 +44,7 @@ for (const language of input.languages) {
     assert.equal(migration.diagnostic(address), expectedAddress);
     const trade = "Project trade 'NEW' has no confirmed HERO-to-ERPNext title mapping.";
     assert.equal(migration.diagnostic(trade), language === 'en' ? trade : "Für das Projektgewerk 'NEW' gibt es kein bestätigtes HERO-zu-ERPNext-Titel-Mapping.");
+    const notes = "Target created through native Frappe validation. The HERO email address is not valid in ERPNext; it was not imported. HERO number 'bad/123' cannot be an ERPNext document name (only letters, digits and single inner hyphens, at most 140 characters). A collision-safe internal ID names the document; no replacement business number was generated. The original HERO value stays in its field.";
+    const expectedNotes = language === 'en' ? notes : "Ziel durch die reguläre Frappe-Validierung erstellt. Die HERO-E-Mail-Adresse ist in ERPNext ungültig; sie wurde nicht importiert. Die HERO-Nummer 'bad/123' kann kein ERPNext-Dokumentname sein (nur Buchstaben, Ziffern und einzelne Bindestriche innerhalb des Namens, höchstens 140 Zeichen). Das Dokument erhält eine kollisionssichere interne ID; es wurde keine Ersatzgeschäftsnummer erzeugt. Der ursprüngliche HERO-Wert bleibt in seinem Feld.";
+    assert.equal(migration.diagnostic(notes), expectedNotes);
 }
