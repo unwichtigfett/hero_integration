@@ -50,3 +50,6 @@ the default branch for GitHub to offer manual dispatch. HERO requires ERPNext.
 `erpnext,helpdesk`
 also installs Telephony. The automatic GitHub run does not import schema or
 configuration files. Woodpecker and GitHub receive push events independently.
+
+The `MIN_TESTS` threshold and known-failure lists apply to the Woodpecker
+suite; GitHub Actions runs the focused app-reference tests instead.
