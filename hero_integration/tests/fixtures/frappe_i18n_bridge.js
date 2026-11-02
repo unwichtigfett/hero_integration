@@ -42,6 +42,9 @@ for (const language of input.languages) {
     const address = 'The project address is missing or incomplete (ProjectMatch.address.city is required for the ERPNext project title.); the title omits it.';
     const expectedAddress = language === 'en' ? address : 'Die Projektadresse fehlt oder ist unvollständig (ProjectMatch.address.city ist für den ERPNext-Projekttitel erforderlich.); sie wird im Titel ausgelassen.';
     assert.equal(migration.diagnostic(address), expectedAddress);
+    const pending = `Recheck requested: Awaits administrator approval: ${address}`;
+    const expectedPending = language === 'en' ? pending : `Erneute Prüfung angefordert: Wartet auf Freigabe durch einen Administrator: ${expectedAddress}`;
+    assert.equal(migration.diagnostic(pending), expectedPending);
     const trade = "Project trade 'NEW' has no confirmed HERO-to-ERPNext title mapping.";
     assert.equal(input.tradeError, trade);
     assert.equal(migration.diagnostic(trade), language === 'en' ? trade : "Für das Projektgewerk 'NEW' gibt es kein bestätigtes HERO-zu-ERPNext-Titel-Mapping.");
