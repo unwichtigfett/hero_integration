@@ -64,9 +64,12 @@ def setup_reference_access() -> None:
             if not frappe.db.exists("Custom DocPerm", {"parent": doctype, "role": role, "permlevel": 0, "if_owner": 0}):
                 add_permission(doctype, role, 0)
             update_permission_property(doctype, role, 0, "read", 1)
-    _show_in_helpdesk()
-    for doctype in ("CRM Lead", "CRM Deal"):
-        _show_in_crm_side_panel(doctype)
+    installed_apps = set(frappe.get_installed_apps())
+    if "helpdesk" in installed_apps:
+        _show_in_helpdesk()
+    if "crm" in installed_apps:
+        for doctype in ("CRM Lead", "CRM Deal"):
+            _show_in_crm_side_panel(doctype)
 
 
 def _show_in_helpdesk() -> None:

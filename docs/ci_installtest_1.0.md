@@ -2,7 +2,7 @@
 
 `ci/bench-install-test.sh` checks that the app installs on a fresh Frappe/ERPNext
 v16 bench without manual steps. `.woodpecker.yml` runs it on a Woodpecker CI
-server for pushes to `hero_int_1.0` and `hero_int_dev` and on manual runs.
+server for pushes to `hero_int_dev` and on manual runs.
 
 The test never contacts HERO. It runs these steps:
 
@@ -28,9 +28,26 @@ configuration" → Export on a configured site). It contains the HERO schema
 snapshot, so no separate schema file is needed.
 
 The pipeline mounts `/srv/hero-ci` read-only at `/hero-ci`. Woodpecker only allows
-volume mounts for repositories marked as *trusted*. If the configured file is
-missing, the test fails. To run without the package import, remove
-`HERO_CONFIG_FILE` from `.woodpecker.yml`; the log then says the import was skipped.
+volume mounts for repositories marked as *trusted*. The workflow supplies each
+file only when it is present and nonempty. If either is absent, the configuration
+import is skipped. A directly configured path that is missing still fails.
 
 The test also fails when fewer than `MIN_TESTS` (default 1000) offline or site tests
 run. A crash during test discovery therefore never counts as a pass.
+
+## GitHub Actions
+
+Pushes to `hero_int_dev` run the package checks and an isolated install test on a
+GitHub-hosted runner. It uses fresh MariaDB and Redis services, not the VPS test
+site or production secrets. The push test installs ERPNext, Telephony, Helpdesk
+and HERO and runs the app-reference tests.
+
+To run a different selection, open **Actions → CI → Run workflow**, choose
+`hero_int_dev`, and select `install_apps`. The workflow must also be present on
+the default branch for GitHub to offer manual dispatch. HERO requires ERPNext.
+`erpnext,helpdesk`
+also installs Telephony. The automatic GitHub run does not import schema or
+configuration files. Woodpecker and GitHub receive push events independently.
+
+The `MIN_TESTS` threshold and known-failure lists apply to the Woodpecker
+suite; GitHub Actions runs the focused app-reference tests instead.

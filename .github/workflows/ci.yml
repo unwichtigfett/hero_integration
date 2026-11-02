@@ -2,9 +2,23 @@ name: CI
 
 on:
   pull_request:
+    branches: [hero_int_dev]
+  workflow_dispatch:
+    inputs:
+      install_apps:
+        description: Apps to install on the disposable site
+        type: choice
+        default: erpnext,helpdesk,hero_integration
+        options:
+          - none
+          - erpnext
+          - helpdesk
+          - erpnext,helpdesk
+          - erpnext,hero_integration
+          - erpnext,helpdesk,hero_integration
   push:
     branches:
-      - hero_int_1.0
+      - hero_int_dev
 
 permissions:
   contents: read
@@ -21,3 +35,30 @@ jobs:
       - run: python -m compileall -q hero_integration
       - run: python -m unittest hero_integration.tests.test_portable_release
       - run: python -m build
+
+  install-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    container:
+      image: frappe/bench@sha256:39cf23b0084c03daa3755153313cdbee6b84c32d0ab85295cdd9c99a691a2972
+      options: --user root
+    services:
+      mariadb:
+        image: mariadb:11.8.9@sha256:6a4b3c20cffebc8b2d9248924f6a63285176c15a532b8e4840b8804e1c2c0443
+        env:
+          MARIADB_ROOT_PASSWORD: ci-throwaway-root
+          MARIADB_ROOT_HOST: "%"
+      redis:
+        image: redis:6.2-alpine@sha256:63d5174750e285bc3069c4519c53c8b6de6ebe70715140a6c9d21d6f04b77319
+    env:
+      DB_ROOT_PASSWORD: ci-throwaway-root
+      INSTALL_APPS: ${{ inputs.install_apps || 'erpnext,helpdesk,hero_integration' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Prepare isolated workspace
+        run: chown -R frappe:frappe "$GITHUB_WORKSPACE"
+      - name: Install selected apps and run focused tests
+        shell: bash
+        run: su -s /bin/bash frappe -c 'bash "$GITHUB_WORKSPACE/ci/github-install-test.sh"'
