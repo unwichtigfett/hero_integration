@@ -33,6 +33,21 @@ class TestFrappeTranslationBridge(unittest.TestCase):
                 user_language = get_user_lang('synthetic@example.invalid')
         self.assertEqual((global_language, user_language), ('de', 'en'))
         languages = [global_language, user_language, 'de-DE']
+        from hero_integration.services.business_numbers import BusinessNumberError, business_number
+        from hero_integration.services.project_naming import ProjectTitleValidationError, project_trade
+
+        try:
+            business_number('bad/123')
+        except BusinessNumberError as error:
+            number_error = str(error)
+        else:
+            self.fail('Invalid HERO number was unexpectedly accepted')
+        try:
+            project_trade({'project_type': 'NEW'})
+        except ProjectTitleValidationError as error:
+            trade_error = str(error)
+        else:
+            self.fail('Unknown project trade was unexpectedly accepted')
         boot_catalogs = {}
         for language in languages:
             catalog = get_translations_from_apps(language, apps=['hero_integration'])
@@ -48,6 +63,8 @@ class TestFrappeTranslationBridge(unittest.TestCase):
         payload = {
             'languages': languages,
             'catalogs': boot_catalogs,
+            'numberError': number_error,
+            'tradeError': trade_error,
             'frappeTranslate': str(Path(frappe.__file__).parent / 'public' / 'js' / 'frappe' / 'translate.js'),
             'jsDir': str(APP / 'public' / 'js'),
         }
