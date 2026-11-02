@@ -1,5 +1,7 @@
 # Configuration
 
+> This guide explains configuration, not authorization to execute. Verify the source binding, active mapping and service revisions, schema fingerprint and permissions before any run.
+
 `HERO Source Instance` is the stable identity namespace paired with every
 `ProjectMatch.id`. Keep the explicit `default` value only for the original
 source. Give a separate HERO source its own confirmed value.
@@ -74,8 +76,7 @@ legacy mapping specifies Trim. A missing or unsuitable customer number gets a
 `HERO-CUSTOMER-<UUID>` technical ID with an explanation, not a competing
 business number. Unrelated manual customers keep the site's naming settings.
 
-New Project IDs use the confirmed trade and the exact `ProjectMatch.display_id`,
-for example `PV-3333` or `ELEK-1769`. The shared trade catalog validates the
+New HERO-linked Project document names use the confirmed trade and exact `ProjectMatch.display_id` with the reserved `-H` suffix, such as `PV-3333-H` or `ELEK-1769-H`. This ERPNext document name differs from the protected server title (`project_name`) and the integration's external source identity. The shared trade catalog validates the
 measure. When one value (code or name) is confirmed, the app ignores an unknown
 other value. Two different confirmed trades require review. `project_nr`
 remains separate, and the protected project-title rule still applies. A missing
@@ -161,5 +162,16 @@ Offset pagination ends only on an empty page, because a short page can be a
 server page cap. An offset is a scan position, not a watermark. A record
 missing from HERO never counts as a deletion.
 
-Attachments, Helpdesk tickets, and reverse synchronization are unavailable.
+## Native Task and Calendar boundaries
+
+Customer and Project remain the original native migration phases. The current source also contains separately guarded **native Task intake** and **native Event projection** paths. Their presence does not prove that a target site's read service, mapping, source instance or DocTypes are approved.
+
+- Task creation requires source/Task identity, approved rules and a nonempty subject. Optional fields use baselines. Assignment and ToDo state, deadline NULL/timezone interpretation and completion are separate acceptance concerns. The optional assignment-intent framework extension must be verified before relying on protected ToDo operations.
+- Calendar requires reviewed timezone and all-day semantics. Unknown recurrence flags are blocked; recurrence without a source rule is held. Raw partner/resource observations do not establish native participants or a Customer relationship.
+- Saved, validated Query documents can be run explicitly through the read-only workspace executor. Mutation drafts are not execution grants.
+- Automatic polling currently enumerates **Customer and Project** only, even though manual synchronization areas can show Task and Event projections.
+
+Attachments and HERO Helpdesk-ticket transfer have no approved current source contract. General reverse synchronization is unavailable; restricted writeback actions are separate, opt-in operations.
+
+See [Feature matrix](feature_matrix_1.0.md) and [Synchronization handoff](sync_handoff_1.0.md) for remaining gates.
 The app infers no source contract or target mapping for them.

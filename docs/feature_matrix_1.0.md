@@ -1,34 +1,33 @@
-# Feature matrix
+# Feature matrix — implementation and acceptance
 
-| Area | State | Evidence or limitation |
+**Reviewed:** 2 November 2026 · **Source:** `hero_int_dev`  
+**This is not a target-site approval inventory.** It separates code-supported behavior from the evidence still needed to enable it.
+
+| Area | Source status | Current boundary |
 | --- | --- | --- |
-| ERPNext v16 prerequisite | Implemented and offline-tested | A pre-install guard rejects missing, non-v16, or incomplete ERPNext before HERO writes. It never auto-installs ERPNext. Fresh-site acceptance is a separate step. |
-| HERO Custom Fields | Implemented and offline-tested | The create-only, conflict-safe baseline installer defines four Customer and five Project HERO fields. Extended schemas add further provisioned Custom Fields. |
-| HERO Customer read | Implemented and mock-tested | Fixed `HeroCustomers` source query; no runtime field selection in the native reader. |
-| HERO Project Match read | Implemented and mock-tested | Fixed `HeroProjectMatches` source query. Native Project creation and naming use only validated inputs. |
-| HERO Calendar mapping | Configured; approval pending | Mapping definitions for `HeroCalendarEvents` can be technically Active. The native migration runner has no Calendar read/import phase. |
-| HERO Task mapping | Configured; execution limited | Approved mapping definitions for `HeroTasks` can be technically Active. The native migration runner has no Task read/import phase. |
-| ERPNext Project title | Implemented and mock-tested | The server generates `PV-<number> \| Photovoltaik, <salutation> <customer>, <project address>`. Generation blocks incomplete or unknown data and never overwrites a conflict. A changed HERO customer name or salutation alone never renames an existing Project. Trade, number and address changes regenerate a locally unchanged title. A missing salutation does not block. Titles over the field limit stay rejected for manual migration. |
-| Administrator review of held records | Implemented and offline-tested | The import creates these records as `Pending Review` and notifies the administrators: a new Project with a missing or incomplete address (title without address), a new Project without an unambiguous Customer link, and a new recurring Event. HERO supplies no recurrence rule, so only the delivered occurrence is imported. Runs never update a held record. Tasks/Events of a held Project wait. Administrators can only Approve (normal sync) or Reject. Reject deletes the target unless other records reference it, and the HERO record is never imported again. Every Execute run also sends one notice that lists all records it could not import, grouped by reason. |
-| Mapping installation state | Implemented and offline-tested | Fresh installation and repeated migrate create no mapping definitions. Active definitions are site configuration, not an installation default. |
-| Mapping package import and export | Implemented and offline-tested | Deterministic versioned packages validate GraphQL fingerprints, schema, metadata, permissions, types, relations, and conflicts. Upload writes nothing. |
-| Bulk schema and mapping adoption | Implemented and offline-tested | One checklist selects HERO-owned Custom DocTypes, Custom Fields, relations, and mappings. Confirmed adoption provisions schema before mapping activation. It does not migrate business data or guarantee DDL rollback. |
-| Customer mapping | V1 approved; V2 pending | Customer V1 mappings are Active. Customer V2 adds draft M-099 for `Address.address_line2`, but the native Address persistence path does not write that field yet. |
-| Project mapping | Approved; configured | Project mappings are technically Active. Migration requires source identity, record name, Customer link, and confirmed Company bindings. |
-| Article and Item migration | Not implemented | Requested future scope. No approved executable Item mapping and no verified Article/Product migration exist. |
-| Canonical source link | Implemented and mock-tested | One HERO Integration Link carries source system, optional instance, entity type, external ID, unique source key, target, hashes, mapping version, and status. |
-| GraphQL schema snapshots and graph viewer | Implemented and offline-tested | Saved introspection JSON produces a deterministic graph. The viewer does not call HERO. |
-| Mapping field pickers and suggestions | Implemented and offline-tested | Saved operation selection sets and the installed site's Frappe metadata drive searchable bidirectional suggestions. Incompatible, protected, stale, or unresolved targets cannot be activated. |
-| GraphQL service management | Implemented and offline-tested | Saved query services are schema-bound. Mutation drafts can be inspected and validated locally, but mutation execution is disabled. Subscriptions are not supported for execution. |
-| API Analyzer and workspace | Implemented; browser acceptance pending | The Desk workspace exposes API & Schema, Mapping, Synchronisation, and Settings views. Authenticated visual/browser acceptance is not yet evidenced. |
-| Custom direct mappings | Implemented and offline-tested | Approved writable targets use Frappe metadata and Document APIs. Generic mappings cannot override protected and standard fields. |
-| Preview, idempotency, conflicts, retry | Implemented and mock-tested | Preview does not write targets. Changed source or target data is reported as a conflict, never silently overwritten. |
-| Manual migration | Implemented and mock-tested | The native runner supports only Customer and Project phases. Project import requires a completed Customer phase. The runner does not implement Calendar, Task, and Item imports. |
-| Scheduled sync | Implemented; disabled pending acceptance | Configuration and active-run state guard the one-way HERO-to-Frappe hourly hook. No successful live scheduled run is evidenced. |
-| ERPNext persistence | Implemented; live acceptance pending | Native Customer, Contact, Address, and Project write paths have offline/mock coverage. End-to-end live HERO-to-ERPNext persistence is unverified. |
-| Helpdesk profile | Limited | The app detects the optional Helpdesk installation. ERPNext stays responsible for Customer mirroring. |
-| CRM / LEADS | Not connected | Installed CRM provides no working LEADS adapter or HERO-to-CRM migration. |
-| Attachments | Not available | No approved HERO attachment query or transfer contract. |
-| Helpdesk tickets | Not available | No approved HERO ticket source or target write contract. |
-| Reverse sync and deletion | Not available | No approved reverse-write contract or authorization for source-driven deletion of target business records. |
-| Live integration acceptance | EXECUTION_UNVERIFIED | No completed live HERO query/import, production synchronization, or end-to-end browser acceptance is evidenced for the reviewed revision. |
+| ERPNext v16 installation | Implemented and offline checked | ERPNext is installed first; repeat install/migrate acceptance on the actual target site. |
+| App DocTypes and schema | Implemented | Nine installer-owned fields and additional package-provisioned schema have different owners. Verify installed metadata. |
+| HERO schema snapshots | Implemented | Source instance, HTTPS endpoint and fingerprint must match the confirmed binding. |
+| Saved GraphQL Query | Implemented | Explicit read-only workspace execution is available for validated, revision-matched Query services. |
+| GraphQL Mutation | Draft, guarded action and writeback code present | Metadata does not authorize external mutations. Active contract, preview, role, switch, audit and no-blind-retry gates apply. |
+| Customer | Native Customer/primary Contact/Address implemented | Shared records require proven ownership. Source supports V1–V4 read contracts, but fresh sites start without active mappings. |
+| Project | Native Project/Customer link/title rules implemented | Confirm Company separately; `-H` is the HERO document-name suffix; server-generated titles omit the salutation. |
+| Native Task | Scoped native Task intake implemented | Stable identity, required subject, optional selected fields and conflict baselines; target-site execution remains unverified. |
+| External Task | Historical four-domain observation projection retained | `HERO External Task` is not a native ERPNext Task or ToDo. |
+| Task lifecycle and assignment | Source paths, policy/state hooks and ToDo code exist | Validate external NULL/timezone semantics, permission and Company binding, framework patch, negative cases and transfers. |
+| Calendar | Native Event projection and conflict protection implemented | Source timezone, all-day boundary, recurrence and participant/resource/Customer identity remain approval-bound. |
+| Mapping Editor | Drafts, personal revisions and publish gates implemented | Schema pickers, proposals or generated operations do not silently enable a read or write. |
+| Mapping exchange | Legacy complete package and separate directional/personal boundaries implemented | Full target preview, CAS/provenance and guarded schema provisioning required. |
+| Generated Task reads | Read-only service drafts and seals implemented | Separate mapping/service approval and per-page rule checks required; legacy reviewed documents remain valid. |
+| Manual runs | Customer/Project phases and Task/Event projection runner implemented | Active approved service/mapping, source binding and site permissions required. |
+| Polling | Scheduler and monitor guards implemented | Automatic source enumeration currently covers Customer and Project, not every visible sync area. |
+| Checkpoints/recovery | Source contract and recorded focused tests | Target schema, queued-worker and live HERO recovery acceptance pending. |
+| Helpdesk/CRM links | Reference and mirror-prevention hooks implemented | App-specific permissions and installed-version behavior require runtime checks. |
+| Articles, versions, prices, inventory, accounting | **Out of current mapping scope** | Internal adapter code does not make these approved migrations. |
+| Live external execution | **EXECUTION_UNVERIFIED** | CI and source tests cannot substitute for target-site and HERO acceptance. |
+
+## How to read these states
+
+**Implemented** means a path exists in source, not that it is activated. **Tested** refers to a named test, revision and environment. **Approved** means an actor authorized specific mapping/service/action revisions. **Verified** means the intended behavior was observed on the actual target runtime.
+
+The [mapping matrix](mapping_matrix_1.0.md) preserves a historical four-domain baseline; its counts are not a live registry query. See [synchronization handoff](sync_handoff_1.0.md) for execution prerequisites.

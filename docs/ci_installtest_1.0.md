@@ -1,5 +1,7 @@
 # CI: bench-native install test
 
+> CI checks source and disposable Frappe-site behavior. Passing CI is not proof of live HERO synchronization, target deployment or recovery.
+
 `ci/bench-install-test.sh` checks that the app installs on a fresh Frappe/ERPNext
 v16 bench without manual steps. `.woodpecker.yml` runs it on a Woodpecker CI
 server for pushes to `hero_int_dev` and on manual runs.
@@ -17,6 +19,8 @@ The test never contacts HERO. It runs these steps:
    nothing new. This avoids state left by the app test suite. `HERO_SCHEMA_FILE`
    (introspection JSON) is optional; a v2 package brings its own snapshot.
 7. `uninstall-app hero_integration`.
+
+The disposable test site now seeds a minimal ERPNext Company when the setup wizard has not run. Optional schema and configuration imports use a **separate new site** so the app test suite cannot affect the import checks. This does not install or verify the separately distributed assignment-intent framework patch.
 
 Image requirements: Python 3.14 (`requires-python >=3.14`), Node 20+, yarn,
 git, MariaDB client, `frappe-bench` (pip). Services: MariaDB 11, Redis 7.
@@ -50,8 +54,7 @@ the default branch for GitHub to offer manual dispatch. HERO requires ERPNext.
 also installs Telephony. The automatic GitHub run does not import schema or
 configuration files. Woodpecker and GitHub receive push events independently.
 
-The `MIN_TESTS` threshold and known-failure lists apply to the Woodpecker
-suite; GitHub Actions runs the focused app-reference tests instead.
+On `hero_int_dev`, Woodpecker uses strict exit-code checks: offline tests run through `ci/run-offline-tests.py`, while site-dependent tests run in Frappe. The former known-failure allowlists no longer authorize a passing result. `MIN_TESTS` is a coverage floor, not an alternative to a successful test command. GitHub Actions runs its own scoped package and installation checks.
 
 ## Test-site update on Forgejo push
 
