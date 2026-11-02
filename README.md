@@ -51,7 +51,7 @@ returns Navy users to Dark and removes only that option.
 | --- | --- |
 | Installation and operation | [Install](installation_guide_1.0.md) · [Configure](docs/configuration_guide_1.0.md) · [Workspace](docs/ui_overview_1.0.md) |
 | Current source capabilities | [Feature matrix](docs/feature_matrix_1.0.md) · [Synchronization handoff](docs/sync_handoff_1.0.md) |
-| Mapping and data model | [Mapping decision](docs/mapping_1.0.md) · [Mapping baseline](docs/mapping_matrix_1.0.md) · [DocType extensions](docs/doctype_extensions_1.0.md) · [Query field contract](docs/query_fieldcontract_1.0.md) |
+| Mapping and data model | [Mapping decision](docs/mapping_1.0.md) · [Mapping baseline](docs/mapping_matrix_1.0.md) · [DocType extensions](docs/doctype_extensions_1.0.md) · [Query field contract](docs/query_fieldcontract_1.0.md) · [Configurable adapters](docs/configurable_mappings_1.0.md) |
 | Quality and evidence | [Manual acceptance](docs/manual_acceptance_1.0.md) · [CI](docs/ci_installtest_1.0.md) · [Run checkpoints](docs/run_checkpoints_1.0.md) · [Portability](docs/portability_report_1.0.md) |
 | Architecture and provenance | [App integration](docs/app_integration_1.0.md) · [File topology revision 00](docs/architecture/hero-integration_f-topology_00.md) · [Materializer](docs/materializer_1.0.md) |
 | Historical mapping decisions | [Reviewed legacy mapping](docs/mapping/hero_mapping_1.0.md) · [Original proposal](docs/mapping/mapping_plan_1.0.md) |

@@ -1,9 +1,4 @@
-"""Send Project Notes and Phase through one audited HERO mutation.
-
-Preview rejects remote changes since import. The global gate, exact preview
-fingerprint and readback protect update_project_match; verified writes advance
-baselines. Sending requires System Manager or HERO Writeback.
-"""
+"""Project Send uses grouped Mutation mappings; fixed helpers retain compatibility coverage."""
 
 from __future__ import annotations
 
@@ -39,7 +34,7 @@ def may_send() -> bool:
     return bool(set(SEND_ROLES) & set(frappe.get_roles()))
 
 
-def preview(project: str, phase_id=None, client=None) -> dict:
+def legacy_preview(project: str, phase_id=None, client=None) -> dict:
     """What a send would change, computed from current server and HERO state."""
     if not may_send():
         raise ProjectSendError("Only System Managers and HERO Writeback users may send projects to HERO.")
@@ -87,13 +82,13 @@ def preview(project: str, phase_id=None, client=None) -> dict:
     }
 
 
-def send(project: str, phase_id=None, fingerprint: str = "", confirmed=0, client=None, mutation_client=None) -> dict:
+def legacy_send(project: str, phase_id=None, fingerprint: str = "", confirmed=0, client=None, mutation_client=None) -> dict:
     """Send exactly the previewed changes once; verify and advance the sync baseline."""
     from hero_integration.api import _assert_mutation_execution_released, _finalize_mutation, _reserve_mutation
 
     _assert_mutation_execution_released()
     read_client = client or _read_client()
-    current = preview(project, phase_id, client=read_client)
+    current = legacy_preview(project, phase_id, client=read_client)
     if confirmed not in (True, 1, "1", "true") or fingerprint != current["fingerprint"]:
         raise ProjectSendError("HERO or ERPNext changed since the preview; open the preview again.")
     if current["conflicts"]:
@@ -250,3 +245,20 @@ def _mutation_client():
 
     config = get_configuration()
     return HeroMutationClient(config.endpoint, lambda: config.api_token, config.timeout_seconds)
+
+
+def preview(project: str, phase_id=None, client=None) -> dict:
+    from hero_integration.services.mapped_send import preview as mapped_preview
+    try:
+        return mapped_preview('Project', project, phase_id=phase_id, client=client)
+    except ValueError as error:
+        raise ProjectSendError.from_error(error) from error
+
+
+def send(project: str, phase_id=None, fingerprint: str = '', confirmed=0, client=None, mutation_client=None) -> dict:
+    from hero_integration.services.mapped_send import send as mapped_send
+    try:
+        return mapped_send('Project', project, phase_id=phase_id, fingerprint=fingerprint,
+                           confirmed=confirmed, client=client, mutation_client=mutation_client)
+    except ValueError as error:
+        raise ProjectSendError.from_error(error) from error

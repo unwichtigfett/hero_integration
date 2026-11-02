@@ -50,7 +50,7 @@ def identity_sets(content, direction):
         raise MappingDraftError('Personal Draft field-rule snapshots are invalid.')
     rules.update(snapshots)
     additions = content.get('additional_mappings') or []
-    validate_additional_mappings(additions)
+    validate_additional_mappings(additions, query_adapter=bool(content.get('query_adapter')))
     additional_ids = {item['id'] for item in additions}
     if direction == 'QUERY_TO_FRAPPE':
         canonical_rules = set()
@@ -99,6 +99,22 @@ def validate_edits(prior, submitted):
     """Validate edits and retain exact stored values at immutable paths."""
     result = deepcopy(submitted)
     for key in set(prior) | set(submitted):
+        if key == 'usage':
+            if key in submitted and submitted[key] != 'SEND_TO_HERO':
+                raise MappingDraftError('Unsupported mutation mapping usage.')
+            continue
+        if key in {'query_adapter', 'send_options'}:
+            if key not in submitted:
+                continue
+            if not isinstance(submitted[key], dict):
+                raise MappingDraftError('Adapter configuration must be an object.')
+            bounded(submitted[key])
+            if key == 'query_adapter':
+                from hero_integration.services.query_mapping import validate_query_adapter
+                validate_query_adapter(submitted[key])
+            elif submitted.get('usage') != 'SEND_TO_HERO':
+                raise MappingDraftError('Send options require an explicit Send to HERO mapping.')
+            continue
         if key == 'native_task_onboarding':
             if key not in submitted:
                 continue
@@ -112,7 +128,7 @@ def validate_edits(prior, submitted):
                 raise MappingDraftError('Native Task onboarding requires an explicit Task source scope.')
             continue
         if key == 'additional_mappings':
-            validate_additional_mappings(submitted.get(key, []))
+            validate_additional_mappings(submitted.get(key, []), query_adapter=bool(submitted.get('query_adapter')))
             continue
         if key == 'field_contexts':
             contexts = submitted.get(key, {})
@@ -159,7 +175,7 @@ def validate_edits(prior, submitted):
     return result
 
 
-def validate_additional_mappings(items):
+def validate_additional_mappings(items, *, query_adapter=False):
     if not isinstance(items, list) or len(items) > 100:
         raise MappingDraftError('Additional mappings must be a bounded list.')
     seen = set()
@@ -173,7 +189,10 @@ def validate_additional_mappings(items):
         if identity != item['id'] or identity in seen:
             raise MappingDraftError('Additional mapping identities must be unique canonical UUIDs.')
         seen.add(identity)
-        if not isinstance(item['transformation'], str) or item['transformation'] not in {'Identity', 'Trim'}:
+        transformations = {'Identity', 'Trim'}
+        if query_adapter:
+            transformations |= {'Value Map', 'Link Map', 'Local Date', 'Local Datetime', 'Safe HTML', 'Table Rows', 'Scalar Text', 'Positive Int To Text', 'Number', 'Integer'}
+        if not isinstance(item['transformation'], str) or item['transformation'] not in transformations:
             raise MappingDraftError('Unsupported additional mapping transformation.')
         for side in ('source', 'target'):
             value = item[side]
@@ -196,6 +215,12 @@ def validate_rule(rule):
             raise MappingDraftError('Invalid field-rule text.')
 
 
+
+def remap_query_options(content, identities):
+    options = content.get('query_adapter', {}).get('transform_options')
+    if isinstance(options, dict):
+        content['query_adapter']['transform_options'] = {identities.get(key, key): value for key, value in options.items()}
+
 def validate_exchange_action(content, schema, operation_name):
     """Project a primary mutation Draft onto the existing reviewed action contract.
 
@@ -205,6 +230,12 @@ def validate_exchange_action(content, schema, operation_name):
     from hero_integration.services.frappe_writeback import (
         WritebackContractError, normalise_mapping, reviewed_input_target,
     )
+    if isinstance(content, dict) and content.get('usage') == 'SEND_TO_HERO':
+        from hero_integration.services.mapped_send import normalise_send_mapping
+        action = normalise_send_mapping(content, schema)
+        if action['target']['operation'] != operation_name:
+            raise MappingDraftError('Send mapping does not match the selected mutation operation.')
+        return {'mapping': action, 'graphql_type': action['target']['graphql_type']}
     try:
         if not isinstance(content, dict):
             raise WritebackContractError('Action configuration must be an object.')

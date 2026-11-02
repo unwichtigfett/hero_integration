@@ -612,3 +612,66 @@ test('activation confirmation translates warnings without altering the saved val
  assert.match(activationDescription(null), /^Persönlichen Entwurf/);
  delete window.hero_integration_i18n;
 });
+
+
+test('removing a selected Query rule removes only its options and Undo restores the full draft', () => {
+ const initial={mapping_definition_ids:['id','title','phase'],
+  field_contexts:{phase:{object_type:'ProjectMatch',schema_context:'step.name'}},
+  query_adapter:{version:2,transform_options:{id:{target_type:'Data'},title:{target_type:'Data'},
+   phase:{target_type:'Data',map:{null:'Unknown',review:'Review'},default:'Unknown'}}}};
+ const state=new DraftState({content:initial});
+ state.remove(2);
+ assert.equal(state.content.mapping_definition_ids.join(','),'id,title');
+ assert.equal(Object.hasOwn(state.content.query_adapter.transform_options,'phase'),false);
+ assert.equal(stable(state.content.query_adapter.transform_options.title),stable(initial.query_adapter.transform_options.title));
+ state.restore();
+ assert.equal(stable(state.content),stable(initial));
+ assert.equal(state.dirty,false);
+});
+
+test('relinking a removed Query reference restores its options in original order', () => {
+ const initial={mapping_definition_ids:['id','phase','title'],query_adapter:{version:2,transform_options:{
+  id:{target_type:'Data'},phase:{target_type:'Data',default:0},title:{target_type:'Data'}}}};
+ const state=new DraftState({content:initial});
+ state.remove(1);state.addReference('phase');
+ assert.equal(stable(state.content),stable(initial));
+ assert.equal(state.undo.length,0);
+});
+
+test('removing an additional Query row removes its transformation options without pruning unrelated entries', () => {
+ const initial={mapping_definition_ids:['id','title'],additional_mappings:[{id:'new-field',source:{field:'amount'},
+  target:{doctype:'Task',field:'custom_hero_amount'},transformation:'Number'}],
+  query_adapter:{version:2,transform_options:{id:{target_type:'Data'},title:{target_type:'Data'},
+   'new-field':{target_type:'Currency'},'unrelated-review':{default:'preserve'}}}};
+ const state=new DraftState({content:initial});
+ state.removeAdditional(0);
+ assert.equal(Object.hasOwn(state.content.query_adapter.transform_options,'new-field'),false);
+ assert.equal(state.content.query_adapter.transform_options['unrelated-review'].default,'preserve');
+ state.restore();
+ assert.equal(stable(state.content),stable(initial));
+});
+
+test('removing an additional Send row removes only its assignment options and Undo restores nested settings', () => {
+ const initial={usage:'SEND_TO_HERO',source:{doctype:'Task',field:'subject'},target:{field:'title'},
+  additional_mappings:[{id:'assignee',source:{doctype:'ToDo',field:'allocated_to'},target:{field:'target_user_id'},transformation:'Identity'}],
+  send_options:{read_service:'approved-query',assignments:{primary:{resolver:'FIELD',read_path:'title'},
+   assignee:{resolver:'USER_LINK',lookup:{service:'user-lookup',key:'email',value:'id'},
+    when:{field:'status',equals:'Open',otherwise:'OMIT'}}}}};
+ const state=new DraftState({content:initial});
+ state.removeAdditional(0);
+ assert.equal(Object.hasOwn(state.content.send_options.assignments,'assignee'),false);
+ assert.equal(stable(state.content.send_options.assignments.primary),stable(initial.send_options.assignments.primary));
+ state.restore();
+ assert.equal(stable(state.content),stable(initial));
+});
+
+test('removing the primary Send mapping preserves additional options and restores its own settings on Undo', () => {
+ const initial={usage:'SEND_TO_HERO',source:{doctype:'Task',field:'subject'},target:{field:'title'},
+  send_options:{assignments:{primary:{resolver:'FIELD',read_path:'title'},other:{resolver:'FIELD',read_path:'comment'}}}};
+ const state=new DraftState({content:initial});
+ state.remove(0);
+ assert.equal(Object.hasOwn(state.content.send_options.assignments,'primary'),false);
+ assert.equal(state.content.send_options.assignments.other.read_path,'comment');
+ state.restore();
+ assert.equal(stable(state.content),stable(initial));
+});

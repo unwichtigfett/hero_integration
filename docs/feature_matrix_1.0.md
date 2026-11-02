@@ -17,6 +17,9 @@
 | Task lifecycle and assignment | Source paths, policy/state hooks and ToDo code exist | Validate external NULL/timezone semantics, permission and Company binding, framework patch, negative cases and transfers. |
 | Calendar | Native Event projection and conflict protection implemented | Source timezone, all-day boundary, recurrence and participant/resource/Customer identity remain approval-bound. |
 | Mapping Editor | Drafts, personal revisions and publish gates implemented | Schema pickers, proposals or generated operations do not silently enable a read or write. |
+| Configurable native Query adapters | Opt-in v2 code and offline tests | Phase, trade, Tasks, Calendar and primary Contact/Address fields use selected rules; exact saved Query and service reapproval required. Legacy mappings retain their existing behavior. |
+| Project logbook | Configurable inline Project collection and legacy deduplication | Explicit child fields, timestamp conversion and collection bound; reaching the bound blocks incomplete history. Target-site acceptance pending. |
+| Native Send to HERO | Grouped Mutation profiles and verified readback | Separate from fixed field writeback. Explicit source, relationship resolvers and approved read contract required; no automatic legacy fallback. |
 | Mapping exchange | Legacy complete package and separate directional/personal boundaries implemented | Full target preview, CAS/provenance and guarded schema provisioning required. |
 | Generated Task reads | Read-only service drafts and seals implemented | Separate mapping/service approval and per-page rule checks required; legacy reviewed documents remain valid. |
 | Manual runs | Customer/Project phases and Task/Event projection runner implemented | Active approved service/mapping, source binding and site permissions required. |

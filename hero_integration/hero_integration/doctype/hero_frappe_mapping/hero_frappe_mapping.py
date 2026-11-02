@@ -106,7 +106,16 @@ class HEROFrappeMapping(Document):
                              and row.base_active_mapping == scope) or first_publication_admits('rule', portable_candidate, row)):
                         frappe.throw(frappe._('Field-rule identity is already used by a personal draft.'))
         spec = _spec(self)
-        if self.status == "Draft" and self.purpose == PURPOSE_FIELD:
+        adapter_options = None
+        if scope:
+            parent = frappe.get_doc('HERO GraphQL Mapping', scope)
+            from hero_integration.services.frappe_mapping_draft_storage import publication_query_adapter
+            adapter_options = publication_query_adapter(scope) or json.loads(parent.mapping_json).get('query_adapter')
+        if adapter_options:
+            from hero_integration.services.query_mapping import validate_v2_spec
+            validate_v2_spec(spec, _FrappeMetadata(), adapter_options)
+            self.validation_summary = 'Query adapter mapping validated against current Frappe metadata.'
+        elif self.status == "Draft" and self.purpose == PURPOSE_FIELD:
             target = validate_draft_spec(spec, FrappePickerMetadata())
             self.validation_summary = (
                 "Draft proposal only; activation requires an app-owned integration."

@@ -356,9 +356,24 @@
             this.content.additional_mappings = [...items, {id: window.crypto.randomUUID(), source: clone(value.source), target: clone(value.target), transformation: 'Identity'}];
             this.creation = null;
         }
+        takeRowOptions(id) {
+            const options = [];
+            for (const path of [["query_adapter", "transform_options"], ["send_options", "assignments"]]) {
+                const container = path.reduce((value, key) => value?.[key], this.content);
+                if (object(container) && Object.hasOwn(container, id)) {
+                    options.push({path: [...path, id], value: clone(container[id])});
+                    delete container[id];
+                }
+            }
+            return options;
+        }
+        restoreRowOptions(removed) {
+            for (const option of removed.rowOptions || []) this.set(option.path, clone(option.value));
+        }
         removeAdditional(index) {
             this.invalidateReconciliation();
-            this.undo.push({kind: 'additional', index, value: this.content.additional_mappings[index]});
+            const value = this.content.additional_mappings[index];
+            this.undo.push({kind: 'additional', index, value, rowOptions: this.takeRowOptions(value.id)});
             this.content.additional_mappings.splice(index, 1);
             if (!this.content.additional_mappings.length && !Object.hasOwn(this.saved.content, 'additional_mappings')) delete this.content.additional_mappings;
         }
@@ -393,7 +408,7 @@
             if (Array.isArray(this.content.mapping_definition_ids)) {
                 const id = this.content.mapping_definition_ids[index];
                 const fieldContext = this.content.field_contexts?.[id];
-                this.undo.push({kind: "reference", index, value: id, ...(fieldContext ? {fieldContext: clone(fieldContext)} : {})});
+                this.undo.push({kind: "reference", index, value: id, rowOptions: this.takeRowOptions(id), ...(fieldContext ? {fieldContext: clone(fieldContext)} : {})});
                 if (fieldContext) {
                     delete this.content.field_contexts[id];
                     if (!Object.keys(this.content.field_contexts).length && !Object.hasOwn(this.saved.content, 'field_contexts')) delete this.content.field_contexts;
@@ -402,7 +417,7 @@
             } else {
                 const removed = {};
                 for (const key of ["source", "target"]) if (Object.hasOwn(this.content, key)) removed[key] = clone(this.content[key]);
-                this.undo.push({kind: "single", value: removed});
+                this.undo.push({kind: "single", value: removed, rowOptions: this.takeRowOptions("primary")});
                 delete this.content.source; delete this.content.target;
             }
         }
@@ -416,6 +431,7 @@
                 this.content.field_contexts ||= {};
                 this.content.field_contexts[removed.value] = clone(removed.fieldContext);
             }
+            this.restoreRowOptions(removed);
         }
         addReference(id) {
             const ids = this.content.mapping_definition_ids;
@@ -430,8 +446,14 @@
             if (!removed) return;
             this.invalidateReconciliation();
             if (removed.kind === "reference") this.restoreReference(removed);
-            else if (removed.kind === 'additional') { this.content.additional_mappings ||= []; this.content.additional_mappings.splice(removed.index, 0, removed.value); }
-            else Object.assign(this.content, removed.value);
+            else if (removed.kind === 'additional') {
+                this.content.additional_mappings ||= [];
+                this.content.additional_mappings.splice(removed.index, 0, removed.value);
+                this.restoreRowOptions(removed);
+            } else {
+                Object.assign(this.content, removed.value);
+                this.restoreRowOptions(removed);
+            }
         }
         applyReconciliation(contentJson, reconciliationJson, activeRevision, reconciliationRevision) {
             if (typeof reconciliationJson !== "string" || !Number.isInteger(activeRevision) || activeRevision < 1
@@ -605,6 +627,56 @@
             input.on("input", () => { change(input.val()); updateDirty(); }); return input;
         };
         const safeJson = (value) => $("<pre class='hero-mapping-preview'></pre>").text(JSON.stringify(value, null, 2));
+        function configurationDialog(title, value, apply, usage = null) {
+            if (locked() || !model || root.find("dialog").length) return;
+            const state = model, opener = document.activeElement;
+            const dialog = $("<dialog class='hero-mapping-dialog'></dialog>").attr("aria-label", text(title));
+            dialog.append($("<h3></h3>").text(text(title)));
+            let usageChoice = null;
+            if (usage !== null) {
+                usageChoice = $("<select class='form-control'></select>")
+                    .append($("<option></option>").val("").text(text("Field writeback")),
+                        $("<option></option>").val("SEND_TO_HERO").text(text("Send to HERO"))).val(usage);
+                dialog.append($("<label></label>").append($("<span></span>").text(text("Mutation usage")), usageChoice));
+            }
+            const editor = $("<textarea class='form-control' rows='16' maxlength='65536' spellcheck='false'></textarea>")
+                .attr("aria-label", text("Adapter configuration JSON")).val(JSON.stringify(value, null, 2));
+            const status = $("<p role='alert'></p>");
+            dialog.append($("<p></p>").text(text("Configuration stays in your personal draft. Publication validates the schema, fields and selected read service; it does not start synchronization.")), editor, status);
+            const close = () => { dialog[0].close(); dialog.remove(); if (opener?.isConnected) opener.focus(); };
+            dialog.append(button("Apply configuration", () => {
+                if (model !== state || mode !== "draft") return close();
+                try {
+                    const parsed = usageChoice?.val() === "" ? null : parseContent(editor.val());
+                    if (parsed !== null && (!object(parsed) || Array.isArray(parsed))) throw new Error("Adapter configuration must be an object.");
+                    apply(parsed, usageChoice?.val()); close(); renderDetail();
+                } catch (error) { status.text(errorText(error)); editor.trigger("focus"); }
+            }, true), button("Cancel", close));
+            dialog.on("cancel", (event) => { event.preventDefault(); close(); });
+            root.append(dialog); dialog[0].showModal(); editor.trigger("focus");
+        }
+        function configureMappingAdapter(value) {
+            if (active.direction === "QUERY_TO_FRAPPE") {
+                configurationDialog("Query adapter configuration", value.query_adapter ||
+                    {version: 2, read_service: "", transform_options: {}}, (options) => {
+                        if (options?.version !== 2) throw new Error("Unsupported Query adapter version.");
+                        model.set(["query_adapter"], options);
+                    });
+                return;
+            }
+            const assignments = Object.fromEntries(rows(value).map((row) => [row.additional ? row.id : "primary",
+                value.send_options?.assignments?.[row.additional ? row.id : "primary"] ||
+                {resolver: "FIELD", read_path: row.value?.target?.field || "", missing: "ERROR", null: "OMIT"}]));
+            const options = value.send_options || {read_service: "", mode: "UPDATE",
+                identity_argument: value.target?.argument || "", identity_field: "id", read_identity_path: "id", assignments};
+            configurationDialog("Mutation mapping configuration", options, (next, usage) => {
+                if (usage === "SEND_TO_HERO") {
+                    model.set(["usage"], usage); model.set(["send_options"], next);
+                } else {
+                    model.invalidateReconciliation(); delete model.content.usage; delete model.content.send_options;
+                }
+            }, value.usage || "");
+        }
         function modal(title, description, actions, cancel = () => {}) {
             if (root.find("dialog").length) return;
             const opener = document.activeElement;
@@ -1234,6 +1306,10 @@
             // Transformation, rule parameters and definition settings stay available as collapsible details under Map Fields.
             const parameters = $("<details class='hero-mapping-parameters hero-mapping-rule-details'></details>")
                 .append($("<summary></summary>").text(text("Rule details (transformation and parameters)")));
+            if (editable && active.mapping_type === "graphql") {
+                parameters.append(button(active.direction === "QUERY_TO_FRAPPE" ? "Configure Query adapter" : "Configure Mutation usage",
+                    () => configureMappingAdapter(value)));
+            }
             const detail = $("<section class='hero-mapping-row-detail'></section>").attr("aria-label", text("Selected field mapping")).attr("data-editable", String(editable)).appendTo(parameters);
             for (const key of ["records_path", "record_path", "identity_path", "target_operation"]) {
                 if (!(key in value)) continue;
@@ -1298,7 +1374,9 @@
                 if (!admin) return {apps: [], doctypes: [], fields: []};
                 if (!fieldCatalog) {
                     const method = mutation && !row.reference && chosenSnapshot ? "writeback_mapper_catalog" : "mapping_target_catalog";
-                    fieldCatalog = rpc(method, method === "writeback_mapper_catalog" ? {snapshot_name: chosenSnapshot} : {}).then((result) => {
+                    fieldCatalog = rpc(method, method === "writeback_mapper_catalog"
+                        ? {snapshot_name: chosenSnapshot, usage: value.usage || ""}
+                        : {adapter_version: value.query_adapter?.version === 2 ? 2 : 0}).then((result) => {
                         if (method === "writeback_mapper_catalog" && !disposed && epoch === catalogEpoch && context[0].isConnected) contractState.text(text(writebackContractLabel(result, active?.operation_name)));
                         return result;
                     }).catch((error) => { fieldCatalog = null; throw error; });
@@ -1425,7 +1503,7 @@
                 const catalog = await getFieldCatalog();
                 const selectedDoc = catalog.doctypes.find((item) => item.app_name === browseApp && item.doctype === browseDoctype && item.selectable);
                 if (!selectedDoc) return {items: [], total: 0, emptyMessage: "Choose an available App and DocType before choosing a Frappe field."};
-                if (mutation && !row.reference) return page((catalog.fields || []).filter((f) => f.app_name === browseApp && f.doctype === browseDoctype).map((f) => ({...f, label: f.path, searchText: f.description || "", context: `${f.label || ""} · ${f.fieldtype || ""}${reviewedTargetLabel(f) ? ` · ${text("Reviewed HERO target")}: ${reviewedTargetLabel(f)}` : ""}${f.selectable === false ? ` · ${text(f.reason || "not permitted")}` : ""}`, disabled: f.selectable === false})), search, offset);
+                if ((mutation && !row.reference) || (!mutation && value.query_adapter?.version === 2)) return page((catalog.fields || []).filter((f) => f.app_name === browseApp && f.doctype === browseDoctype).map((f) => ({...f, label: f.path, searchText: f.description || "", context: `${f.label || ""} · ${f.fieldtype || ""}${reviewedTargetLabel(f) ? ` · ${text("Reviewed HERO target")}: ${reviewedTargetLabel(f)}` : ""}${f.selectable === false ? ` · ${text(f.reason || "not permitted")}` : ""}`, disabled: f.selectable === false})), search, offset);
                 const result = await rpc("mapping_target_catalog_page", {app_name: browseApp, doctype: browseDoctype, search, start: offset, page_size: 20});
                 return {items: result.items.map((f) => ({...f, label: f.path, context: `${f.fieldtype || f.type || ""}${f.selectable === false ? ` · ${text(f.reason || "not permitted")}` : ""}`, disabled: f.selectable === false})), total: result.total};
             }, (item) => setField(item, true));
@@ -1493,6 +1571,10 @@
                     const destination = panel;
                     field(label, rule[key] ?? "", (next) => model.set(["field_rules", row.id, key], next), destination);
                 }
+                if (model.content.query_adapter?.version === 2) panel.append(button("Configure transformation options", () => {
+                    configurationDialog("Transformation options", model.content.query_adapter.transform_options?.[row.id] || {},
+                        (options) => model.set(["query_adapter", "transform_options", row.id], options));
+                }));
                 const priority = field("Priority", rule.priority ?? "", (next) => model.set(["field_rules", row.id, "priority"], next === "" ? null : Number(next)), panel);
                 priority.attr({type: "number", step: "1", min: "-1000000", max: "1000000"});
                 panel.append($("<p class='text-muted'></p>").text(text("Changes belong to your personal draft. The active field rule stays unchanged.")));
@@ -1512,7 +1594,16 @@
             }
             const value = row.value;
             panel.append($("<h4></h4>").text(text("Field mapping details")));
-            if (row.additional) { panel.append(safeJson(value)); return; }
+            if (row.additional) {
+                if (mode === "draft" && model?.content.query_adapter?.version === 2) {
+                    field("Transformation", value.transformation, (next) => { model.invalidateReconciliation(); value.transformation = next; }, panel);
+                    panel.append(button("Configure transformation options", () => {
+                        configurationDialog("Transformation options", model.content.query_adapter.transform_options?.[row.id] || {},
+                            (options) => model.set(["query_adapter", "transform_options", row.id], options));
+                    }));
+                }
+                panel.append(safeJson(value)); return;
+            }
             if (mode !== "draft" || panel.attr("data-editable") !== "true") { panel.append(safeJson(value)); return; }
             const mutation = mutationMapping(value);
             const descriptors = mutation ? [

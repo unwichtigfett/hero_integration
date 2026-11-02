@@ -1,10 +1,4 @@
-"""Send mapped Customer data except its number through one audited mutation.
-
-Preview derives names, salutation, contact details and primary Address through
-the import rules, including phone cleaning. Remote edits since import block
-sending. The global mutation gate, post-write readback and baseline update
-protect ``update_contact``; the customer number is never sent.
-"""
+"""Customer Send uses grouped Mutation mappings; fixed helpers retain compatibility coverage."""
 
 from __future__ import annotations
 
@@ -56,7 +50,7 @@ def may_send() -> bool:
     return bool(set(SEND_ROLES) & set(frappe.get_roles()))
 
 
-def preview(customer: str, client=None) -> dict:
+def legacy_preview(customer: str, client=None) -> dict:
     if not may_send():
         raise CustomerSendError("Only System Managers and HERO Writeback users may send customers to HERO.")
     document = frappe.get_doc("Customer", customer)
@@ -101,12 +95,12 @@ def preview(customer: str, client=None) -> dict:
             "sending_enabled": enabled}
 
 
-def send(customer: str, fingerprint: str = "", confirmed=0, client=None, mutation_client=None) -> dict:
+def legacy_send(customer: str, fingerprint: str = "", confirmed=0, client=None, mutation_client=None) -> dict:
     from hero_integration.api import _assert_mutation_execution_released, _finalize_mutation, _reserve_mutation
 
     _assert_mutation_execution_released()
     read_client = client or _read_client()
-    current = preview(customer, client=read_client)
+    current = legacy_preview(customer, client=read_client)
     if confirmed not in (True, 1, "1", "true") or fingerprint != current["fingerprint"]:
         raise CustomerSendError("HERO or ERPNext changed since the preview; open the preview again.")
     if current["conflicts"]:
@@ -322,3 +316,20 @@ def _address_values(customer, address) -> dict:
     if isinstance(address.get("line_2"), str) and address["line_2"].strip():
         values["address_line2"] = address["line_2"].strip()
     return values
+
+
+def preview(customer: str, client=None) -> dict:
+    from hero_integration.services.mapped_send import preview as mapped_preview
+    try:
+        return mapped_preview('Customer', customer, client=client)
+    except ValueError as error:
+        raise CustomerSendError.from_error(error) from error
+
+
+def send(customer: str, fingerprint: str = '', confirmed=0, client=None, mutation_client=None) -> dict:
+    from hero_integration.services.mapped_send import send as mapped_send
+    try:
+        return mapped_send('Customer', customer, fingerprint=fingerprint, confirmed=confirmed,
+                           client=client, mutation_client=mutation_client)
+    except ValueError as error:
+        raise CustomerSendError.from_error(error) from error

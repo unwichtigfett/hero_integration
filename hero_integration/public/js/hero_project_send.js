@@ -1,4 +1,4 @@
-// Send imported Project Notes and Phase to HERO.
+// Send through the configured native Mutation mapping.
 (() => {
 	"use strict";
 

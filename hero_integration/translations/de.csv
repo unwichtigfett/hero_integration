@@ -11,13 +11,24 @@ A HERO run is active ({0}); wait for it to finish.,"Ein HERO-Lauf ist aktiv ({0}
 A HERO run is active; wait for it to finish.,"Ein HERO-Lauf ist aktiv; warten Sie, bis er abgeschlossen ist."
 A HERO schema refresh is already running.,Eine HERO-Schema-Aktualisierung läuft bereits.
 A Running run whose lease expired belongs to a stopped worker and is released automatically.,Ein laufender Prozess mit abgelaufener Lease gehört zu einem gestoppten Worker und wird automatisch freigegeben.
+A Send date resolver requires a Date or Datetime source.,Ein Datumsresolver zum Senden benötigt eine Quelle vom Typ Date oder Datetime.
+A Send mapping must belong to one native document and mutation operation.,Ein Mapping zum Senden muss zu einem nativen Dokument und einer Mutation-Operation gehören.
+A Send project resolver requires a Project Link source.,Ein Projektresolver zum Senden benötigt eine Project-Link-Quelle.
+A Send source field must have one unambiguous mutation target.,Ein Frappe-Quellfeld muss genau ein eindeutiges Mutation-Ziel haben.
+A Send text resolver requires a text source.,Ein Textresolver zum Senden benötigt eine Textquelle.
+A Send user resolver requires a User Link source.,Ein Benutzerresolver zum Senden benötigt eine User-Link-Quelle.
 A checkpoint requires explicit unique mapping rule identities.,Ein Checkpoint erfordert ausdrücklich eindeutige Mapping-Regelidentitäten.
 A company with an abbreviation is required.,Ein Unternehmen mit einer Abkürzung ist erforderlich.
 A compatible validated schema snapshot is required for a mutation contract.,Für einen Mutation-Vertrag ist ein kompatibler validierter Schema-Snapshot erforderlich.
 A compatible validated schema snapshot is required.,Ein kompatibler validierter Schema-Snapshot ist erforderlich.
 A field must not have duplicate relation definitions.,Ein Feld darf keine doppelten Beziehungsdefinitionen haben.
 A field was changed in HERO since the last import; it is not overwritten.,Ein Feld wurde seit dem letzten Import in HERO geändert; es wird nicht überschrieben.
+A linked HERO identity requires an Int or ID mutation input.,Eine verknüpfte HERO-Identität benötigt einen Mutation-Eingang vom Typ Int oder ID.
+A mapped Task title is required for intake.,Für den Import ist ein gemappter Aufgabentitel erforderlich.
+A mapped default must be a scalar value.,Ein gemappter Standardwert muss ein Skalarwert sein.
+A mapped lookup is required for this resolver.,Dieser Resolver benötigt einen gemappten Lookup.
 A mapping owned by another user cannot be replaced.,Ein Mapping eines anderen Benutzers kann nicht ersetzt werden.
+A matching validated read service is required before publication.,Vor der Veröffentlichung ist ein passender validierter Lesedienst erforderlich.
 A mutation assignment identity is already in use on the target.,Eine Mutation-Zuweisungsidentität wird auf dem Ziel bereits verwendet.
 A mutation contract must contain exactly one operation and root field.,Ein Mutation-Vertrag muss genau eine Operation und ein Root-Feld enthalten.
 A mutation contract must select exactly one root field.,Ein Mutation-Vertrag muss genau ein Root-Feld auswählen.
@@ -31,8 +42,10 @@ A query service must contain exactly one GraphQL operation.,Ein Query-Service mu
 A read query does not fit the target HERO schema: {0},Eine Lese-Query passt nicht zum HERO-Zielschema: {0}
 A read service entry is incomplete or duplicated.,Ein Lese-Service-Eintrag ist unvollständig oder doppelt vorhanden.
 A readable name for the Mapping Editor. It never replaces the technical node identity.,Ein lesbarer Name für den Mapping Editor. Er ersetzt niemals die technische Knotenidentität.
+A related external identity must be an Int or ID input.,Eine verknüpfte externe Identität muss ein Eingang vom Typ Int oder ID sein.
 A relation must reference a declared Link or Table field.,Eine Beziehung muss auf ein deklariertes Link- oder Table-Feld verweisen.
 A remembered saved-schema GraphQL node with a personal alias. The alias is a label only; it never replaces the technical node identity.,Ein gemerkter GraphQL-Knoten eines gespeicherten Schemas mit persönlichem Alias. Der Alias ist nur eine Bezeichnung und ersetzt niemals die technische Knotenidentität.
+A required mapped Frappe source is absent.,Eine erforderliche gemappte Frappe-Quelle fehlt.
 A required schema dependency is unknown.,Eine erforderliche Schema-Abhängigkeit ist unbekannt.
 A runtime plan already exists for this site/source instance.,Für diese Site-/Quellinstanz existiert bereits ein Laufzeitplan.
 A runtime plan cannot move between site/source scopes.,Ein Laufzeitplan kann nicht zwischen Site-/Quellbereichen verschoben werden.
@@ -94,10 +107,14 @@ Active search results,Aktive Suchergebnisse
 Active version,Aktive Version
 Active writeback normalization would lose mapping parameters.,Bei der Normalisierung des aktiven Writeback würden Mapping-Parameter verloren gehen.
 Actor,Ausführender Benutzer
+Adapter configuration JSON,Adapterkonfiguration als JSON
+Adapter configuration must be an object.,Die Adapterkonfiguration muss ein Objekt sein.
 Add existing field rule,Vorhandene Feldregel hinzufügen
 Add field mapping,Feld-Mapping hinzufügen
 Add mapping to draft,Mapping zum Entwurf hinzufügen
 Additional local changes are not saved.,Weitere lokale Änderungen sind nicht gespeichert.
+Additional source field is not approved.,Das zusätzliche Quellfeld ist nicht freigegeben.
+Address fields require the primary-address relationship.,Adressfelder benötigen die Beziehung zur primären Adresse.
 Administrator Notification Recipients,Empfänger von Administrator-Benachrichtigungen
 Administrator confirmation is required before adoption.,Vor der Übernahme ist eine Administratorbestätigung erforderlich.
 Adoption Outcome,Ergebnis der Übernahme
@@ -128,9 +145,12 @@ Allowed HERO Hosts,Erlaubte HERO-Hosts
 Allowed hosts,Erlaubte Hosts
 Allows a bounded scan of up to 100 pages per source instead of one page.,Erlaubt eine begrenzte Prüfung von bis zu 100 Seiten pro Quelle statt einer Seite.
 Always the newest validated snapshot; selected automatically.,Immer der neueste validierte Snapshot; wird automatisch ausgewählt.
+An Address mutation requires its explicit server-owned related identity.,"Eine Address-Mutation benötigt ihre ausdrücklich konfigurierte, serververwaltete verknüpfte Identität."
+An active Send to HERO mapping already owns this document type and source.,Ein aktives Send-to-HERO-Mapping ist bereits für diesen Dokumenttyp und diese Quelle zuständig.
 An active mapping already owns this target field.,Ein aktives Mapping ist diesem Zielfeld bereits zugeordnet.
 An active mapping cannot be replaced by bulk adoption.,Ein aktives Mapping kann nicht durch Massenübernahme ersetzt werden.
 An active mapping definition direction is immutable; create a separate definition for the other direction.,Die Richtung einer aktiven Mapping-Definition ist unveränderlich; erstellen Sie eine separate Definition für die andere Richtung.
+An active mutation mapping cannot be inspected safely.,Ein aktives Mutation-Mapping lässt sich nicht sicher prüfen.
 An active query definition is required for rule enrollment.,Für die Regelregistrierung ist eine aktive Query-Definition erforderlich.
 An active writeback mapping already owns this Frappe field.,Ein aktives Writeback-Mapping ist diesem Frappe-Feld bereits zugeordnet.
 An active writeback source cannot be safely inspected.,Eine aktive Writeback-Quelle kann nicht sicher geprüft werden.
@@ -146,6 +166,7 @@ Another HERO run is still queued or running. Start this area when it has finishe
 Any time,Jederzeit
 App,App
 Apply Connection,Verbindung übernehmen
+Apply configuration,Konfiguration übernehmen
 Apply mutation setting,Mutation-Einstellung übernehmen
 Apply reconciliation choices locally,Reconciliation-Auswahl lokal übernehmen
 Applying reconciliation choices locally…,Reconciliation-Auswahl wird lokal übernommen…
@@ -160,6 +181,7 @@ Approved Mapping Revision,Freigegebene Mapping-Revision
 Approved Read Mapping,Freigegebenes Lese-Mapping
 Approved Revision,Freigegebene Revision
 Approved Service Revision,Freigegebene Service-Revision
+Approved logbook collection is absent from the project response.,Die freigegebene Logbuch-Collection fehlt in der Projektantwort.
 Approved monitoring plan changed before the read.,Der freigegebene Monitoring-Plan wurde vor dem Lesezugriff geändert.
 Approved schema snapshot does not match the current HERO endpoint and source instance.,Der freigegebene Schema-Snapshot stimmt nicht mit dem aktuellen HERO-Endpunkt und der Quellinstanz überein.
 Approving a field conflict requests a recheck on the next synchronization. Declining keeps the existing record and stops further updates. Records that were not imported at all come from the latest run of each area and have nothing to approve.,Die Freigabe eines Feldkonflikts veranlasst eine erneute Prüfung bei der nächsten Synchronisierung. Eine Ablehnung behält den vorhandenen Datensatz bei und stoppt weitere Aktualisierungen. Gar nicht importierte Datensätze stammen aus dem letzten Lauf des jeweiligen Bereichs und können nicht freigegeben werden.
@@ -170,6 +192,7 @@ Assigned Frappe DocType no longer exists.,Der zugeordnete Frappe-DocType existie
 Assigned Frappe field metadata is ambiguous.,Die Metadaten des zugeordneten Frappe-Feldes sind mehrdeutig.
 Assigned Frappe field no longer exists.,Das zugeordnete Frappe-Feld existiert nicht mehr.
 Assigned field has metadata overrides requiring reconciliation.,"Das zugeordnete Feld hat Metadatenüberschreibungen, die Reconciliation erfordern."
+Assignment requires an explicit source-user mapping.,Die Zuweisung benötigt ein ausdrückliches Quellbenutzer-Mapping.
 Audit Payload,Audit-Daten
 Automatic Synchronization,Automatische Synchronisierung
 Automatic execution requires an AUTO_SYNC runtime plan.,Automatische Ausführung erfordert einen AUTO_SYNC-Laufzeitplan.
@@ -227,6 +250,7 @@ Canonical scheduled sync requires current site and source identities.,Die kanoni
 Capabilities & permissions,Funktionen und Berechtigungen
 Captured,Erfasst
 Captured At (UTC),Erfasst am (UTC)
+Case-folded Value Map keys must remain unique.,Value-Map-Schlüssel müssen auch ohne Beachtung der Groß-/Kleinschreibung eindeutig bleiben.
 Category,Kategorie
 Changed Fields,Geänderte Felder
 Changed settings,Geänderte Einstellungen
@@ -273,6 +297,8 @@ Close,Schließen
 Close field search,Feldsuche schließen
 Close or save the shared draft editor before leaving.,"Schließen oder speichern Sie den Editor für geteilte Entwürfe, bevor Sie die Ansicht verlassen."
 Colours are turned off for this large result; the text is complete.,Für dieses große Ergebnis sind Farben ausgeschaltet; der Text ist vollständig.
+Comment fields require the configured logbook collection.,Comment-Felder benötigen die konfigurierte Logbuch-Collection.
+Company requires the independently confirmed company resolver.,Company benötigt den unabhängig bestätigten Company-Resolver.
 Compare active changes,Aktive Änderungen vergleichen
 "Comparing the original base, current active mapping, and your local draft…","Ursprüngliche Basis, aktuelles aktives Mapping und lokaler Entwurf werden verglichen…"
 Compatible,Kompatibel
@@ -288,7 +314,9 @@ Configuration changed or is new. Apply the connection before using the tools.,"D
 Configuration package,Konfigurationspaket
 Configuration package exported.,Konfigurationspaket exportiert.
 Configuration package file,Datei des Konfigurationspakets
+"Configuration stays in your personal draft. Publication validates the schema, fields and selected read service; it does not start synchronization.","Die Konfiguration bleibt in Ihrem persönlichen Entwurf. Die Veröffentlichung prüft Schema, Felder und gewählten Lesedienst; sie startet keine Synchronisation."
 Configure the connection stored by HERO Integration.,Konfigurieren Sie die von HERO Integration gespeicherte Verbindung.
+Configure transformation options,Transformationsoptionen konfigurieren
 Configured,Konfiguriert
 Configured HERO source changed before monitoring.,Die konfigurierte HERO-Quelle wurde vor dem Monitoring geändert.
 Configured event target timezone differs from the native System Settings timezone.,Die konfigurierte Zielzeitzone für Termine unterscheidet sich von der Zeitzone der nativen Systemeinstellungen.
@@ -307,6 +335,7 @@ Confirmed Company resolver is unavailable.,Der Resolver für bestätigte Unterne
 Confirmed ERPNext Company,Bestätigtes ERPNext-Unternehmen
 Confirmed Source Binding Revision,Bestätigte Quellenbindungsrevision
 Confirmed ToDo Version,Bestätigte ToDo-Version
+Confirmed company resolver is unavailable.,Der Resolver für die bestätigte Company ist nicht verfügbar.
 Conflict,Konflikt
 Conflict Detail,Konfliktdetails
 Conflict Records,Konfliktdatensätze
@@ -325,6 +354,7 @@ Connector,Connector
 Consumed At Epoch,Verwendet zum Epoch-Zeitpunkt
 Contact Migration,Kontaktmigration
 "Contact and customer data with the objects, fields and relations of the active mapping.","Kontakt- und Kundendaten mit den Objekten, Feldern und Beziehungen des aktiven Mappings."
+Contact fields require the exclusive primary-contact adapter.,Contact-Felder benötigen den Adapter für den ausschließlich zugeordneten primären Contact.
 Contacts,Kontakte
 Contacts phase,Kontaktphase
 Content Json,Inhalt als JSON
@@ -381,7 +411,11 @@ Customer V3 requires the selected primary-address line_2 and company legal-form 
 Customer V4 cannot select the company legal-form binding.,Customer V4 kann die Bindung der Unternehmensrechtsform nicht auswählen.
 Customer V4 requires the selected line_2 and salutation bindings.,Customer V4 benötigt die ausgewählten Bindungen für line_2 und die Anrede.
 Customer Watermark,Kunden-Watermark
+Customer classification may only bind the native Customer type.,Die Kundenklassifizierung darf nur den nativen Customer-Typ binden.
 Customer dependency must use the Customer adapter on the same snapshot.,Die Customer-Abhängigkeit muss den Customer-Adapter auf demselben Snapshot verwenden.
+Customer identity resolution may only bind the Project customer.,Die Kundenidentitätsauflösung darf nur den Kunden des Projekts binden.
+Customer identity resolver is unavailable.,Der Resolver für die Kundenidentität ist nicht verfügbar.
+Customer intake requires an explicit customer-type binding.,Der Kundenimport benötigt ein ausdrückliches Kundentyp-Binding.
 Customer primary address does not match the approved source contract.,Die Hauptadresse des Kunden stimmt nicht mit dem freigegebenen Quellvertrag überein.
 Customer primary address identity is missing or invalid.,Die Identität der Hauptadresse des Kunden fehlt oder ist ungültig.
 Customer primary address requires exactly one selected native binding.,Die Hauptadresse des Kunden erfordert genau eine ausgewählte native Bindung.
@@ -395,6 +429,7 @@ DRAFT_CREATED,Entwurf erstellt
 DRAFT_SAVE,Entwurf speichern
 DRAFT_UPDATED,Entwurf aktualisiert
 Data sources,Datenquellen
+Date resolution requires explicit DATE or DATETIME semantics.,Die Datumsauflösung benötigt eine ausdrückliche DATE- oder DATETIME-Semantik.
 Declared rule target metadata differs from the schema contract.,Die deklarierten Regelzielmetadaten unterscheiden sich vom Schema-Vertrag.
 Declared rule target metadata requires reconciliation.,Die deklarierten Regelzielmetadaten erfordern Reconciliation.
 Decline,Ablehnen
@@ -466,6 +501,7 @@ ENABLED,Aktiviert
 ERPNext schema is incomplete: {0}.,Das ERPNext-Schema ist unvollständig: {0}.
 ERPNext v16 must be importable before HERO Integration.,ERPNext v16 muss vor HERO Integration importierbar sein.
 ERPNext v16 must be installed before HERO Integration.,ERPNext v16 muss vor HERO Integration installiert sein.
+Each Send assignment requires explicit resolver and readback configuration.,Jede Zuordnung zum Senden benötigt eine ausdrückliche Resolver- und Readback-Konfiguration.
 Edit my shared draft,Meinen geteilten Entwurf bearbeiten
 Edit shared writeback draft,Geteilten Writeback-Entwurf bearbeiten
 Edit these values under Settings.,Bearbeiten Sie diese Werte in den Einstellungen.
@@ -483,14 +519,17 @@ Enter a synthetic JSON object.,Geben Sie ein synthetisches JSON-Objekt ein.
 Entity Type,Entitätstyp
 Enums,Enums
 Event Migration,Terminmigration
+"Event intake requires subject, start and all-day bindings.","Der Event-Import benötigt Bindings für Betreff, Beginn und Ganztägigkeit."
 Events,Termine
 Every Link or Table field requires an explicit relation.,Jedes Link- oder Table-Feld benötigt eine ausdrückliche Beziehung.
 Every conflict-free active change must be explicitly accepted together.,Alle konfliktfreien aktiven Änderungen müssen gemeinsam ausdrücklich angenommen werden.
 Every reconciliation conflict requires an explicit choice.,Jeder Reconciliation-Konflikt erfordert eine ausdrückliche Auswahl.
 Every schema definition needs one unique ID.,Jede Schema-Definition benötigt eine eindeutige ID.
+Exactly one active Send to HERO mapping is required for this document and source.,Für dieses Dokument und diese Quelle ist genau ein aktives Send-to-HERO-Mapping erforderlich.
 Exactly one active definition is required for enrollment.,Für die Registrierung ist genau eine aktive Definition erforderlich.
 Exactly one active schema-bound HERO Mutation Contract is required for writeback activation.,Für die Writeback-Aktivierung ist genau ein aktiver schemagebundener HERO-Mutation-Vertrag erforderlich.
 Exactly one active schema-bound HERO Mutation Contract is required for writeback.,Für Writeback ist genau ein aktiver schemagebundener HERO-Mutation-Vertrag erforderlich.
+Exactly one active schema-bound mutation contract is required for Send.,"Zum Senden ist genau ein aktiver, schemagebundener Mutation-Vertrag erforderlich."
 Exactly one valid HERO Integration Link is required for writeback.,Für Writeback ist genau eine gültige HERO-Integrationsverknüpfung erforderlich.
 Exec. time,Ausführungszeit
 Execute Mutation,Mutation ausführen
@@ -535,6 +574,7 @@ Field bindings for selected definition,Feldbindungen der ausgewählten Definitio
 Field constraints must be 0 or 1.,Feldeinschränkungen müssen 0 oder 1 sein.
 Field mapping details,Details zum Feld-Mapping
 Field selection does not grant read access. Inclusion in the approved fetch configuration must be checked separately.,Die Feldauswahl gewährt keinen Lesezugriff. Die Aufnahme in die freigegebene Abrufkonfiguration muss separat geprüft werden.
+Field writeback,Feld-Writeback
 Field {0}.{1} does not exist in the saved schema.,Das Feld {0}.{1} existiert nicht im gespeicherten Schema.
 Field {0}.{1} returns the leaf type {2} and cannot have a selection set.,Das Feld {0}.{1} liefert den Blatttyp {2} und darf kein Selection Set haben.
 Field {0}.{1} returns {2} and needs a selection set.,Das Feld {0}.{1} liefert {2} und benötigt ein Selection Set.
@@ -649,12 +689,15 @@ HERO Task Assignment Policy,HERO Aufgabenzuweisungs-Policy
 HERO Task Assignment State,HERO Aufgabenzuweisungsstatus
 HERO Tools,HERO-Werkzeuge
 HERO allows one assignee; the task has several open assignments in ERPNext.,HERO erlaubt eine zugewiesene Person; die Aufgabe hat mehrere offene Zuweisungen in ERPNext.
+HERO changed a mapped related record identity during Send.,HERO hat während des Sendens eine gemappte verknüpfte Datensatzidentität geändert.
 HERO did not confirm the customer.,HERO hat den Kunden nicht bestätigt.
+HERO did not confirm the mapped bound record identity.,HERO hat die gemappte Identität des gebundenen Datensatzes nicht bestätigt.
 HERO did not confirm the project.,HERO hat das Projekt nicht bestätigt.
 HERO did not confirm the task.,HERO hat die Aufgabe nicht bestätigt.
 HERO did not return this customer.,HERO hat diesen Kunden nicht zurückgegeben.
 HERO did not return this project.,HERO hat dieses Projekt nicht zurückgegeben.
 HERO did not return this task.,HERO hat diese Aufgabe nicht zurückgegeben.
+HERO did not store the configured mapped field value.,HERO hat den konfigurierten gemappten Feldwert nicht gespeichert.
 HERO did not store {0}.,HERO hat {0} nicht gespeichert.
 HERO field,HERO-Feld
 HERO integration availability,Verfügbarkeit der HERO Integration
@@ -701,6 +744,7 @@ Import package,Paket importieren
 Import project information from HERO GraphQL.,Projektinformationen aus HERO GraphQL importieren.
 Import task information from HERO GraphQL.,Aufgabeninformationen aus HERO GraphQL importieren.
 Imported,Importiert
+Imported Send mapping has a different mutation operation.,Das importierte Mapping zum Senden hat eine andere Mutation-Operation.
 Importing Conflicts,Importkonflikte
 Importing …,Wird importiert …
 In HERO,In HERO
@@ -726,6 +770,7 @@ Interfaces,Interfaces
 Introspection fields are not allowed in GraphQL Services.,Introspection-Felder sind in GraphQL Services nicht erlaubt.
 Invalid HERO mutation contract: {0},Ungültiger HERO-Mutation-Vertrag: {0}
 Invalid HERO response,Ungültige HERO-Antwort
+Invalid Send to HERO mapping configuration.,Ungültige Konfiguration des Send-to-HERO-Mappings.
 Invalid directional import preview.,Ungültige Vorschau für den richtungsbezogenen Import.
 Invalid generated mapping service specification.,Ungültige generierte Mapping-Service-Spezifikation.
 Invalid legacy preview response.,Ungültige Antwort der Legacy-Vorschau.
@@ -778,6 +823,9 @@ Legacy run has no explicit checkpoint reader/mapping evidence; queue a new run.,
 Lifecycle Flag,Lebenszyklus-Flag
 Lifecycle State,Lebenszyklusstatus
 Limits manual synchronization previews only. It never starts work by itself.,Begrenzt nur manuelle Synchronisierungsvorschauen. Startet niemals selbstständig eine Verarbeitung.
+Link Map,Link-Zuordnung
+Link Map must name the native field reference type.,Link Map muss den nativen Referenztyp des Feldes angeben.
+Link Map target is not a supported native reference.,Das Link-Map-Ziel ist keine unterstützte native Referenz.
 Link relations require an installed or declared target DocType.,Link-Beziehungen erfordern einen installierten oder deklarierten Ziel-DocType.
 Linked records per area,Verknüpfte Datensätze je Bereich
 Links,Verknüpfungen
@@ -806,9 +854,30 @@ Loading your saved revisions…,Ihre gespeicherten Revisionen werden geladen…
 Loading · {0}/{1} nodes · {2}/{3} relationships,Lädt · {0}/{1} Knoten · {2}/{3} Beziehungen
 Loading …,Wird geladen …
 Local Configuration Access,Zugriff auf lokale Konfiguration
+Local Date,Lokales Datum
+Local Datetime,Lokaler Zeitpunkt
 Local changes — not saved,Lokale Änderungen — nicht gespeichert
 Local configuration permission,Lokale Konfigurationsberechtigung
 Locking rule reads are restricted to the native Task contract.,Sperrende Regel-Lesezugriffe sind auf den nativen Task-Vertrag beschränkt.
+Logbook collection first must match its explicitly approved limit.,Der Parameter first der Logbuch-Collection muss ihrem ausdrücklich freigegebenen Limit entsprechen.
+Logbook collection requires an explicit Comment content binding.,Die Logbuch-Collection benötigt ein ausdrückliches Binding für Comment.content.
+Logbook dates require an explicit timezone conversion.,Logbuchdaten benötigen eine ausdrückliche Zeitzonenumwandlung.
+Logbook headings must be selected child paths.,Logbuchüberschriften müssen ausgewählte untergeordnete Pfade sein.
+Logbook reached its approved collection bound; review pagination before importing.,Das Logbuch hat sein freigegebenes Collection-Limit erreicht; prüfen Sie vor dem Import die Paginierung.
+"Logbook requires explicit collection, identity and bounded first limit.","Das Logbuch benötigt eine ausdrückliche Collection, Identität und ein begrenztes first-Limit."
+Lookup mappings cannot authorize a native document writer.,Lookup-Mappings dürfen keinen Writer für native Dokumente freigeben.
+Lookup query differs from its explicitly selected read service.,Die Lookup-Query unterscheidet sich von ihrem ausdrücklich gewählten Lesedienst.
+Lookup query does not validate against its saved schema.,Die Lookup-Query ist gegen ihr gespeichertes Schema ungültig.
+Lookup query must select one unconditional root.,Die Lookup-Query muss genau ein bedingungsloses Root-Feld auswählen.
+Lookup query requires an explicit read-only role and record bound.,Die Lookup-Query benötigt eine ausdrückliche Nur-Lese-Rolle und eine Datensatzgrenze.
+Lookup query variables are incompatible with its saved schema.,Die Variablen der Lookup-Query sind mit ihrem gespeicherten Schema inkompatibel.
+Lookup records and identity must be selected from an explicit collection.,Lookup-Datensätze und Identität müssen aus einer ausdrücklichen Collection ausgewählt werden.
+Lookup result bound must be explicit.,Die Grenze für Lookup-Ergebnisse muss ausdrücklich festgelegt sein.
+Lookup selection is absent from the saved schema.,Die Lookup-Auswahl fehlt im gespeicherten Schema.
+Lookup selections must be unconditional explicit fields.,"Lookup-Auswahlen müssen bedingungslose, ausdrückliche Felder sein."
+Lookup service must contain exactly one read-only Query.,Der Lookup-Dienst muss genau eine schreibgeschützte Query enthalten.
+Lookup service requires explicit record and identity paths.,Der Lookup-Dienst benötigt ausdrückliche Datensatz- und Identitätspfade.
+Lookup services require an approved versioned Query adapter.,"Lookup-Dienste benötigen einen freigegebenen, versionierten Query-Adapter."
 MAPPING_CONFIRMATION_REQUIRED: Explicit discard confirmation is required.,MAPPING_CONFIRMATION_REQUIRED: Eine ausdrückliche Bestätigung zum Verwerfen ist erforderlich.
 MAPPING_DRAFT_CONFLICT: Reload the current personal draft.,MAPPING_DRAFT_CONFLICT: Laden Sie den aktuellen persönlichen Entwurf erneut.
 MAPPING_DRAFT_INVALID: Invalid content or unavailable active definition.,MAPPING_DRAFT_INVALID: Ungültiger Inhalt oder aktive Definition nicht verfügbar.
@@ -828,10 +897,52 @@ MAPPING_INPUT_INVALID: {0} must be a JSON object.,MAPPING_INPUT_INVALID: {0} mus
 Managed ToDo,Verwaltetes ToDo
 Manual Actions,Manuelle Aktionen
 Map Fields,Felder zuordnen
+Mapped Address fields require reconciliation.,Die gemappten Address-Felder benötigen einen Abgleich.
+Mapped Address requires a verified field baseline.,Die gemappte Address benötigt eine verifizierte Feld-Baseline.
+Mapped Customer lifecycle flags must be explicitly returned as booleans.,Gemappte Customer-Lifecycle-Flags müssen ausdrücklich als boolesche Werte zurückgegeben werden.
+Mapped Event lifecycle flags must be explicitly returned as booleans.,Gemappte Event-Lifecycle-Flags müssen ausdrücklich als boolesche Werte zurückgegeben werden.
+Mapped Task deletion state must be explicitly returned as a boolean.,Der Löschstatus der gemappten Aufgabe muss ausdrücklich als boolescher Wert zurückgegeben werden.
+Mapped Task intake requires explicit matching source approval.,"Der gemappte Task-Import benötigt eine ausdrückliche, passende Quellenfreigabe."
 "Mapped appointment data with its project, participant and resource relations.","Zugeordnete Termindaten mit ihren Projekt-, Teilnehmer- und Ressourcenbeziehungen."
+Mapped assignee differs from its verified native User binding.,Der gemappte Verantwortliche stimmt nicht mit seiner verifizierten nativen User-Verknüpfung überein.
+"Mapped child selections cannot contain fragments, aliases or directives.","Gemappte untergeordnete Auswahlen dürfen keine Fragmente, Aliase oder Direktiven enthalten."
+Mapped collection is invalid or too large.,Die gemappte Collection ist ungültig oder zu groß.
+Mapped date requires an ISO datetime.,Das gemappte Datum benötigt einen ISO-Datumszeitwert.
+Mapped date transformation differs from the native target type.,Die gemappte Datumsumwandlung entspricht nicht dem nativen Zieltyp.
+Mapped dates require an explicit source timezone.,Gemappte Datumswerte benötigen eine ausdrückliche Quellzeitzone.
+Mapped local time is ambiguous or nonexistent.,Die gemappte lokale Zeit ist mehrdeutig oder existiert nicht.
+Mapped logbook comment belongs to another parent.,Der gemappte Logbuchkommentar gehört zu einem anderen übergeordneten Datensatz.
+Mapped logbook content is absent or empty.,Der gemappte Logbuchinhalt fehlt oder ist leer.
+Mapped logbook heading has an incompatible type.,Die gemappte Logbuchüberschrift hat einen inkompatiblen Typ.
+Mapped logbook identities are missing or repeated.,Gemappte Logbuchidentitäten fehlen oder wiederholen sich.
+Mapped logbook identity is ambiguous.,Die gemappte Logbuchidentität ist mehrdeutig.
+Mapped logbook link has an incompatible or missing target.,Der gemappte Logbuch-Link hat ein inkompatibles oder fehlendes Ziel.
+Mapped logbook requires the approved source instance.,Das gemappte Logbuch benötigt die freigegebene Quellinstanz.
+Mapped logbook response is not a collection of entries.,Die gemappte Logbuchantwort ist keine Collection von Einträgen.
+Mapped native field is absent or computed.,Das gemappte native Feld fehlt oder wird berechnet.
+Mapped native field is read-only.,Das gemappte native Feld ist schreibgeschützt.
+Mapped native field type is unsupported.,Der Typ des gemappten nativen Feldes wird nicht unterstützt.
+Mapped native reference does not exist.,Die gemappte native Referenz existiert nicht.
 Mapped objects,Zugeordnete Objekte
+Mapped primary address is incomplete; no country is assumed.,Die gemappte primäre Adresse ist unvollständig; es wird kein Land angenommen.
+Mapped primary address requires a stable source identity.,Die gemappte primäre Adresse benötigt eine stabile Quellidentität.
 Mapped project data. The referenced contacts are processed first in the same run.,Zugeordnete Projektdaten. Die referenzierten Kontakte werden zuerst im selben Lauf verarbeitet.
+Mapped queries cannot conditionally omit their root.,Gemappte Querys dürfen ihr Root-Feld nicht bedingt auslassen.
+Mapped query approval or selected field configuration changed.,Die Freigabe der gemappten Query oder die ausgewählte Feldkonfiguration hat sich geändert.
+Mapped query differs from its explicitly selected read service.,Die gemappte Query unterscheidet sich von ihrem ausdrücklich gewählten Lesedienst.
+Mapped query does not validate against its saved schema.,Die gemappte Query ist gegen ihr gespeichertes Schema ungültig.
+Mapped query field is absent from its schema.,Das Feld der gemappten Query fehlt in ihrem Schema.
+Mapped query page size is invalid.,Die Seitengröße der gemappten Query ist ungültig.
+Mapped query variables are incompatible with their schema.,Die Variablen der gemappten Query sind mit ihrem Schema inkompatibel.
+Mapped read must contain exactly one collection root.,Der gemappte Lesezugriff muss genau ein Collection-Root-Feld enthalten.
+Mapped read must contain one Query and no fragments.,Der gemappte Lesezugriff muss genau eine Query und keine Fragmente enthalten.
+Mapped read root differs from its native adapter.,Das Root-Feld des gemappten Lesezugriffs entspricht nicht seinem nativen Adapter.
+Mapped reads require explicit bounded first/offset variables.,Gemappte Lesezugriffe benötigen ausdrücklich begrenzte first-/offset-Variablen.
+Mapped service operation does not match its saved Query.,Die Operation des gemappten Dienstes entspricht nicht seiner gespeicherten Query.
+Mapped source type differs from its saved schema.,Der gemappte Quelltyp entspricht nicht seinem gespeicherten Schema.
 Mapped task fields with their approved relations and assignments.,Zugeordnete Aufgabenfelder mit ihren freigegebenen Beziehungen und Zuweisungen.
+Mapped timezone must be an explicit IANA identifier.,Die gemappte Zeitzone muss ein ausdrücklicher IANA-Bezeichner sein.
+Mapped value conversion requires an explicit table.,Die gemappte Wertumwandlung benötigt eine ausdrückliche Tabelle.
 Mapping,Mapping
 Mapping Count,Anzahl der Mappings
 Mapping Editor,Mapping Editor
@@ -911,8 +1022,11 @@ Mutation Security,Mutation-Sicherheit
 Mutation argument or bound variable is unknown.,Mutation-Argument oder gebundene Variable ist unbekannt.
 Mutation contains undeclared variables: {0},Die Mutation enthält nicht deklarierte Variablen: {0}
 "Mutation drafts are local-only, stored locally, and validated only against the saved schema. Execution from this editor is blocked. Server mutation gate: {0}{1}","Mutation-Entwürfe sind ausschließlich lokal, werden lokal gespeichert und nur gegen das gespeicherte Schema validiert. Die Ausführung aus diesem Editor ist gesperrt. Serverseitige Mutation-Sperre: {0}{1}"
+Mutation mapping configuration,Konfiguration des Mutation-Mappings
+Mutation mapping has unexpected Query field rules.,Das Mutation-Mapping enthält unerwartete Query-Feldregeln.
 Mutation mapping must be an object with mode ADMIN_INPUT or VALIDATED_RESOLVER.,Das Mutation-Mapping muss ein Objekt mit dem Modus ADMIN_INPUT oder VALIDATED_RESOLVER sein.
 Mutation setting was not saved. The global gate remains fail-closed until the server accepts it.,"Die Mutation-Einstellung wurde nicht gespeichert. Die globale Sperre bleibt geschlossen, bis der Server sie akzeptiert."
+Mutation usage,Mutation-Verwendung
 Mutation variable type does not match its schema argument.,Der Mutation-Variablentyp stimmt nicht mit seinem Schema-Argument überein.
 Mutation variables must be a JSON object.,Mutation-Variablen müssen ein JSON-Objekt sein.
 My new personal drafts,Meine neuen persönlichen Entwürfe
@@ -922,6 +1036,7 @@ Name,Name
 "Name, ID or type","Name, ID oder Typ"
 Named fragment spreads are not supported in GraphQL Services.,Benannte Fragment-Spreads werden in GraphQL Services nicht unterstützt.
 Native Adapter,Nativer Adapter
+Native Adapter is reserved for mapped Event value groups.,Native Adapter ist für gemappte Event-Wertgruppen reserviert.
 Native Binding,Native Bindung
 Native Task field authorization is no longer valid.,Die native Task-Feldberechtigung ist nicht mehr gültig.
 Native Task intake requires the current database identity.,Die native Task-Übernahme erfordert die aktuelle Datenbankidentität.
@@ -934,6 +1049,11 @@ Native Task requires explicitly selected approved rules.,Ein nativer Task erford
 Native adapter requires its exact reviewed read-only query and variables.,Der native Adapter benötigt seine exakt geprüfte schreibgeschützte Query und die zugehörigen Variablen.
 Native field authorization is no longer valid.,Die native Feldberechtigung ist nicht mehr gültig.
 Native field mappings require an explicit approved read mapping.,Native Feld-Mappings erfordern ein ausdrückliches freigegebenes Lese-Mapping.
+Native intake requires a record-name binding.,Der native Import benötigt ein Binding für den Datensatznamen.
+Native links require an explicit approved resolver.,Native Links benötigen einen ausdrücklich freigegebenen Resolver.
+Native query identity must use the canonical source id.,Die native Query-Identität muss die kanonische Quell-ID verwenden.
+Native table child is absent or incompatible.,Die native Tabellenzeile fehlt oder ist inkompatibel.
+Native tables require explicit child mappings.,Native Tabellen benötigen ausdrückliche Mappings für untergeordnete Felder.
 "Never included: HERO URL and API token, allowed hosts, notification recipients, the mutation and deletion switches, testing mode and data. The mutation switch stays off after an import.","Nicht enthalten sind HERO-URL und API-Token, erlaubte Hosts, Empfänger von Benachrichtigungen, Schalter für Mutation und Löschen sowie Testmodus und Daten. Der Mutation-Schalter bleibt nach einem Import ausgeschaltet."
 New Definition Context Json,JSON des neuen Definitionskontexts
 New definition context contains an invalid identity.,Der Kontext der neuen Definition enthält eine ungültige Identität.
@@ -1050,7 +1170,9 @@ Only Link and Table fields may declare options.,Nur Link- und Table-Felder dürf
 Only System Managers and HERO Writeback users may send customers to HERO.,Nur System Manager und HERO-Writeback-Benutzer dürfen Kunden an HERO senden.
 Only System Managers and HERO Writeback users may send projects to HERO.,Nur System Manager und HERO-Writeback-Benutzer dürfen Projekte an HERO senden.
 Only System Managers and HERO Writeback users may send tasks to HERO.,Nur System Manager und HERO-Writeback-Benutzer dürfen Aufgaben an HERO senden.
+Only System Managers and HERO Writeback users may send to HERO.,Nur System Manager und Benutzer mit der Rolle HERO Writeback dürfen an HERO senden.
 Only System Managers can change this global gate. It is OFF by default.,Nur System Manager können diese globale Sperre ändern. Sie ist standardmäßig auf OFF gesetzt.
+Only VALUE_MAP accepts a conversion table.,Nur VALUE_MAP akzeptiert eine Umwandlungstabelle.
 Only a current Draft may be activated.,Nur ein aktueller Entwurf darf aktiviert werden.
 Only a current shared draft can be edited.,Nur ein aktueller geteilter Entwurf kann bearbeitet werden.
 Only a draft runtime plan may be approved.,Nur ein Laufzeitplan im Entwurf darf freigegeben werden.
@@ -1058,6 +1180,7 @@ Only a draft runtime plan may be edited.,Nur ein Laufzeitplan im Entwurf darf be
 Only a validated service and active mapping on the same snapshot can be approved.,Nur ein validierter Service und ein aktives Mapping auf demselben Snapshot können freigegeben werden.
 Only an open conflict or a record that awaits review can be approved or rejected.,"Nur ein offener Konflikt oder ein Datensatz, der auf Prüfung wartet, kann freigegeben oder abgelehnt werden."
 "Only failed, cancelled, or blocked runs can resume.","Nur fehlgeschlagene, abgebrochene oder blockierte Läufe können fortgesetzt werden."
+Only identity may target the integration link.,Nur die Identität darf auf den Integration Link zielen.
 Only one GraphQL query operation is supported; fragments are not.,Nur eine GraphQL-Query-Operation wird unterstützt; Fragmente werden nicht unterstützt.
 Only tasks of a HERO project can be created in HERO.,Nur Aufgaben eines HERO-Projekts können in HERO erstellt werden.
 Only the administrator who last changed this Draft may activate it.,"Nur der Administrator, der diesen Entwurf zuletzt geändert hat, darf ihn aktivieren."
@@ -1143,6 +1266,7 @@ Personal mapping reconciliation evidence is stale.,Der persönliche Mapping-Reco
 Personal mapping revision not found.,Persönliche Mapping-Revision nicht gefunden.
 Personal mapping version access denied.,Zugriff auf die persönliche Mapping-Version verweigert.
 Phase,Phase
+Phase resolution requires an explicit active-phase filter.,Die Phasenauflösung benötigt einen ausdrücklichen Filter für aktive Phasen.
 Please check the saved HERO settings and try again.,Prüfen Sie die gespeicherten HERO-Einstellungen und versuchen Sie es erneut.
 Policy Fingerprint,Policy-Fingerprint
 Policy Revision,Policy-Revision
@@ -1175,6 +1299,7 @@ Polling requires automatic run identity.,Polling erfordert eine automatische Lau
 Polling timeout seconds,Polling-Zeitüberschreitung (Sekunden)
 Portable Definition ID,Portable Definitions-ID
 Portable DocType fields are invalid.,Die Felder des portablen DocTypes sind ungültig.
+Portable Query field type differs from the target schema.,Der portable Query-Feldtyp entspricht nicht dem Zielschema.
 Portable Rule Lineage,Portable Regelabstammung
 Portable Schema Dependencies,Portable Schema-Abhängigkeiten
 Portable Schema Manifest,Portables Schema-Manifest
@@ -1238,6 +1363,7 @@ Previous page,Vorherige Seite
 Previous revisions,Vorherige Revisionen
 Previous rules,Vorherige Regeln
 Previous snapshot of the same HERO source and endpoint. New snapshots inherit its mappings as personal drafts.,Vorheriger Snapshot derselben HERO-Quelle und desselben Endpunkts. Neue Snapshots erben dessen Mappings als persönliche Entwürfe.
+Primary address bindings require one explicit source relation.,Bindings für die primäre Adresse benötigen genau eine ausdrückliche Quellbeziehung.
 "Priority (0 first, 10 last)","Priorität (0 zuerst, 10 zuletzt)"
 Processed,Verarbeitet
 Processing,Verarbeitung
@@ -1254,6 +1380,11 @@ Project Phase State,Status der Projektphase
 Project Records,Projektdatensätze
 Project Relation,Projektbeziehung
 Project Watermark,Projekt-Watermark
+Project activity adapter; Project write permission is required.,Projektaktivitätsadapter; Schreibberechtigung für Project ist erforderlich.
+Project customer requires the native Customer identity resolver.,Der Projektkunde benötigt den nativen Resolver für die Customer-Identität.
+Project identity resolution must bind an approved native Project link.,Die Projektidentitätsauflösung muss einen freigegebenen nativen Project-Link binden.
+Project identity resolver is unavailable.,Der Resolver für die Projektidentität ist nicht verfügbar.
+Project intake requires customer and confirmed company bindings.,Der Projektimport benötigt Bindings für den Kunden und die bestätigte Company.
 Project read mapping requires an approved customer_service dependency.,Das Project-Lese-Mapping erfordert eine freigegebene customer_service-Abhängigkeit.
 Project read-contract version is not supported.,Die Version des Project-Lesevertrags wird nicht unterstützt.
 Project relation resolver is unavailable.,Der Resolver für Projektbeziehungen ist nicht verfügbar.
@@ -1280,6 +1411,30 @@ Published rule versions are immutable.,Veröffentlichte Regelversionen sind unve
 Published rule versions cannot be renamed.,Veröffentlichte Regelversionen können nicht umbenannt werden.
 Published rule versions must be retained.,Veröffentlichte Regelversionen müssen erhalten bleiben.
 Query Root,Query-Root
+Query adapter cannot write one target field twice.,Der Query-Adapter darf nicht zweimal in dasselbe Zielfeld schreiben.
+Query adapter configuration,Konfiguration des Query-Adapters
+Query adapter configuration exceeds its size limit.,Die Konfiguration des Query-Adapters überschreitet ihre Größenbegrenzung.
+Query adapter configuration has unsupported parameters.,Die Konfiguration des Query-Adapters enthält nicht unterstützte Parameter.
+Query adapter configuration requires a Query mapping.,Die Konfiguration des Query-Adapters benötigt ein Query-Mapping.
+Query adapter configuration requires version 2.,Die Konfiguration des Query-Adapters benötigt Version 2.
+Query adapter is unsupported.,Der Query-Adapter wird nicht unterstützt.
+Query adapter read service must be an explicit document name.,Der Lesedienst des Query-Adapters muss ein ausdrücklicher Dokumentname sein.
+Query adapter requires a bounded nonempty field-rule selection.,"Der Query-Adapter benötigt eine begrenzte, nicht leere Auswahl von Feldregeln."
+Query adapter requires exactly one source identity.,Der Query-Adapter benötigt genau eine Quellidentität.
+Query adapter role is unsupported.,Die Rolle des Query-Adapters wird nicht unterstützt.
+"Query adapter target; activation requires schema, relation and mapping validation.","Query-Adapter-Ziel; die Aktivierung benötigt eine Prüfung von Schema, Beziehungen und Mapping."
+Query field transformation has unsupported options.,Die Query-Feldtransformation enthält nicht unterstützte Optionen.
+Query field-rule identities must be nonempty and unique.,Die Identitäten der Query-Feldregeln dürfen nicht leer sein und müssen eindeutig sein.
+Query identity path differs from its selected rule.,Der Query-Identitätspfad entspricht nicht seiner ausgewählten Regel.
+Query rule crosses an unsupported native relationship.,Die Query-Regel überschreitet eine nicht unterstützte native Beziehung.
+Query rule has an unsupported adapter or source path.,Die Query-Regel hat einen nicht unterstützten Adapter oder Quellpfad.
+Query rule priority must be an integer from 0 through 10.,Die Priorität der Query-Regel muss eine ganze Zahl von 0 bis 10 sein.
+Query source identity requires a lossless identity transformation.,Die Query-Quellidentität benötigt eine verlustfreie Identitätsumwandlung.
+Query source type is unsupported.,Der Query-Quelltyp wird nicht unterstützt.
+Query target is protected or outside the supported adapter fields.,Das Query-Ziel ist geschützt oder liegt außerhalb der unterstützten Adapterfelder.
+Query target or transformation is unsupported.,Das Query-Ziel oder die Transformation wird nicht unterstützt.
+Query transform options must identify bounded field rules.,Die Query-Transformationsoptionen müssen eine begrenzte Menge von Feldregeln angeben.
+Query transform options refer to an unselected field rule.,Die Query-Transformationsoptionen verweisen auf eine nicht ausgewählte Feldregel.
 Query variables must be a JSON object.,Query-Variablen müssen ein JSON-Objekt sein.
 Queued,In Warteschlange
 RECONCILIATION_REQUIRED,Reconciliation erforderlich
@@ -1319,6 +1474,8 @@ Refresh Schema,Schema aktualisieren
 Refresh Status,Status aktualisieren
 Refresh shared writeback mappings,Geteilte Writeback-Mappings aktualisieren
 Refreshing schema …,Schema wird aktualisiert …
+Related Send identities must be a bounded explicit map.,Verknüpfte Identitäten zum Senden müssen eine begrenzte ausdrückliche Zuordnung bilden.
+Related Send identity is outside the verified native relation.,Die verknüpfte Identität zum Senden liegt außerhalb der verifizierten nativen Beziehung.
 Relation,Beziehung
 Relation dependencies must be a list of checklist IDs.,Beziehungsabhängigkeiten müssen eine Liste von Checklisten-IDs sein.
 Relation owner must match its declared field owner.,Der Eigentümer der Beziehung muss mit dem Eigentümer ihres deklarierten Feldes übereinstimmen.
@@ -1372,6 +1529,7 @@ Reviewed shared source,Geprüfte geteilte Quelle
 Reviewed source and target,Geprüfte Quelle und geprüftes Ziel
 Revision,Revision
 Revoked By,Widerrufen von
+Rich text fields require the HTML safety adapter.,Rich-Text-Felder benötigen den HTML-Sicherheitsadapter.
 Roots,Roots
 Rule details (transformation and parameters),Regeldetails (Transformation und Parameter)
 Rule enrollment requires scoped identities and positive revisions.,Die Regelregistrierung erfordert bereichsbezogene Identitäten und positive Revisionen.
@@ -1413,8 +1571,10 @@ SKIPPED_REJECTED,Übersprungen: abgelehnt
 SKIPPED_SOURCE_DELETED,Übersprungen: Quelle gelöscht
 SUCCEEDED,Erfolgreich
 SYSTEM,System
+Safe HTML,Bereinigtes HTML
 Safety and conflict notifications,Sicherheit und Konfliktbenachrichtigungen
 Salutation Table,Anredetabelle
+Salutation conversion requires a primary Contact salutation binding.,Die Anredenumwandlung benötigt ein Binding für die Anrede des primären Contact.
 Save,Speichern
 Save GraphQL mapping changes as a Draft before activation.,Speichern Sie GraphQL-Mapping-Änderungen vor der Aktivierung als Entwurf.
 Save Mutation,Mutation speichern
@@ -1508,6 +1668,7 @@ Select Query or Mutation.,Wählen Sie Query oder Mutation.
 Select a Query or Mutation operation.,Wählen Sie eine Query- oder Mutation-Operation.
 Select a run to view details.,"Wählen Sie einen Lauf, um Details anzuzeigen."
 Select a type on the left to inspect its definition and relations.,"Wählen Sie links einen Typ, um seine Definition und Beziehungen zu prüfen."
+Select a validated read service for the configurable Query adapter.,Wählen Sie einen validierten Lesedienst für den konfigurierbaren Query-Adapter.
 Select a validated saved schema before opening the existing read-only explorer tools.,"Wählen Sie ein validiertes gespeichertes Schema, bevor Sie die schreibgeschützten Explorer-Werkzeuge öffnen."
 Select all required dependencies first.,Wählen Sie zuerst alle erforderlichen Abhängigkeiten.
 Select at least one valid change.,Wählen Sie mindestens eine gültige Änderung.
@@ -1534,11 +1695,36 @@ Selected field rule lacks its saved provenance.,Der ausgewählten Feldregel fehl
 Selected field-rule identities are ambiguous.,Die Identitäten der ausgewählten Feldregeln sind mehrdeutig.
 Selected field-rule provenance is stale or out of scope.,Die Herkunft der ausgewählten Feldregel ist veraltet oder außerhalb des Geltungsbereichs.
 Selected field-rule schema dependencies are invalid or incomplete.,Die Schema-Abhängigkeiten der ausgewählten Feldregel sind ungültig oder unvollständig.
+Selected native field could not be resolved.,Das ausgewählte native Feld konnte nicht aufgelöst werden.
+Selected native value resolver is unavailable.,Der Resolver für den ausgewählten nativen Wert ist nicht verfügbar.
 Selected rule snapshot does not match the approved read mapping.,Der Snapshot der ausgewählten Regel stimmt nicht mit dem freigegebenen Lese-Mapping überein.
 Selected rule target DocType is missing.,Der Ziel-DocType der ausgewählten Regel fehlt.
 Selected rules do not match the approved mapping binding.,Die ausgewählten Regeln stimmen nicht mit der freigegebenen Mapping-Bindung überein.
 Selected source does not match the validated snapshot.,Die ausgewählte Quelle stimmt nicht mit dem validierten Snapshot überein.
+Selected source path is absent from the stored Query schema.,Der ausgewählte Quellpfad fehlt im gespeicherten Query-Schema.
+Selected source path must identify a scalar or an explicit collection.,Der ausgewählte Quellpfad muss einen Skalar oder eine ausdrückliche Collection bezeichnen.
+Send assignment identities must be unique canonical UUIDs.,Die Identitäten der Zuordnungen zum Senden müssen eindeutige kanonische UUIDs sein.
+Send assignment is incompatible with the saved mutation schema.,Die Zuordnung zum Senden ist mit dem gespeicherten Mutation-Schema inkompatibel.
+Send input annotations do not match the saved schema.,Die Eingangsanmerkungen zum Senden entsprechen nicht dem gespeicherten Schema.
+Send lookup must name exact approved query paths.,Der Lookup zum Senden muss genaue freigegebene Query-Pfade angeben.
+Send mapping does not match the selected mutation operation.,Das Mapping zum Senden entspricht nicht der ausgewählten Mutation-Operation.
+Send mapping exceeds its size limit.,Das Mapping zum Senden überschreitet seine Größenbegrenzung.
+Send mappings must be a bounded list.,Mappings zum Senden müssen eine begrenzte Liste bilden.
+Send mutation input paths overlap.,Mutation-Eingangspfade zum Senden überschneiden sich.
+Send options require an explicit Send to HERO mapping.,Sendeoptionen benötigen ein ausdrückliches Send-to-HERO-Mapping.
+Send readback and mutation must use the same approved source snapshot.,Readback und Mutation zum Senden müssen denselben freigegebenen Quell-Snapshot verwenden.
+Send readback pagination did not advance.,Die Readback-Paginierung beim Senden ist nicht vorangekommen.
+Send readback returned missing or repeated record identities.,Der Readback beim Senden hat fehlende oder wiederholte Datensatzidentitäten geliefert.
+Send requires an explicit update identity and approved read service.,Das Senden benötigt eine ausdrückliche Update-Identität und einen freigegebenen Lesedienst.
+Send requires exact Frappe sources and scalar mutation input paths.,Das Senden benötigt genaue Frappe-Quellen und skalare Mutation-Eingangspfade.
+Send requires mapped local changes without remote baseline conflicts.,Das Senden benötigt gemappte lokale Änderungen ohne Konflikte mit der Remote-Baseline.
+Send requires one approved Query binding for each source field and readback path.,Das Senden benötigt für jedes Quellfeld und jeden Readback-Pfad genau ein freigegebenes Query-Binding.
+Send requires one synchronized native HERO Integration Link; creation is not implicit.,Das Senden benötigt genau einen synchronisierten nativen HERO Integration Link; eine Anlage ist nicht implizit erlaubt.
+Send resolver or missing-value configuration is invalid.,Die Resolver- oder Fehlwertkonfiguration zum Senden ist ungültig.
+Send source; an active Mutation mapping and separate execution approval are required.,Sendequelle; ein aktives Mutation-Mapping und eine separate Ausführungsfreigabe sind erforderlich.
 Send to HERO,An HERO senden
+Send to HERO configuration requires a Mutation mapping.,Die Send-to-HERO-Konfiguration benötigt ein Mutation-Mapping.
+Sending to HERO could not be confirmed; no automatic retry was performed.,Das Senden an HERO konnte nicht bestätigt werden; es wurde kein automatischer Wiederholungsversuch ausgeführt.
 Sending to HERO could not be confirmed; nothing is retried automatically. Check the customer in HERO.,Das Senden an HERO konnte nicht bestätigt werden; es erfolgt kein automatischer erneuter Versuch. Prüfen Sie den Kunden in HERO.
 Sending to HERO could not be confirmed; nothing is retried automatically. Check the project in HERO.,Das Senden an HERO konnte nicht bestätigt werden; es erfolgt kein automatischer erneuter Versuch. Prüfen Sie das Projekt in HERO.
 Sending to HERO could not be confirmed; nothing is retried automatically. Check the task in HERO.,Das Senden an HERO konnte nicht bestätigt werden; es erfolgt kein automatischer erneuter Versuch. Prüfen Sie die Aufgabe in HERO.
@@ -1670,6 +1856,8 @@ Synchronized,Synchronisiert
 Synchronizing binding …,Bindung wird synchronisiert …
 System Issuer,Systemaussteller
 System Manager role is required,Die Rolle System Manager ist erforderlich
+Table Rows,Tabellenzeilen
+Table Rows requires explicit app-owned child-field bindings.,Table Rows benötigt ausdrückliche Bindings für app-eigene untergeordnete Felder.
 Table relations require a declared HERO child DocType.,Table-Beziehungen erfordern einen deklarierten untergeordneten HERO-DocType.
 Target,Ziel
 Target DocType,Ziel-DocType
@@ -1705,8 +1893,10 @@ Testing previews cannot resume because their shared HERO request budget is run-b
 Testing results,Testergebnisse
 Testing settings are not loaded yet.,Test-Einstellungen wurden noch nicht geladen.
 Testing settings saved.,Test-Einstellungen gespeichert.
+Text and date resolvers require a String mutation input.,Text- und Datumsresolver benötigen einen Mutation-Eingang vom Typ String.
 The ERPNext Default Company is disabled.,Das ERPNext-Standardunternehmen ist deaktiviert.
 The ERPNext Default Company no longer exists.,Das ERPNext-Standardunternehmen existiert nicht mehr.
+The Frappe value has no configured mutation value mapping.,Für den Frappe-Wert ist kein Mutation-Wert-Mapping konfiguriert.
 The GraphQL mapping belongs to another schema snapshot.,Das GraphQL-Mapping gehört zu einem anderen Schema-Snapshot.
 The GraphQL mapping must contain a valid JSON object and schema operation.,Das GraphQL-Mapping muss ein gültiges JSON-Objekt und eine Schema-Operation enthalten.
 The GraphQL query must be non-empty text.,Die GraphQL-Query muss nicht leerer Text sein.
@@ -1726,6 +1916,10 @@ The HERO schema no longer offers the project fields this button sends.,"Das HERO
 The HERO schema no longer offers the task fields this button sends.,"Das HERO-Schema bietet die Aufgabenfelder, die diese Schaltfläche sendet, nicht mehr an."
 The HERO target is not the reviewed target for this Frappe field.,Das HERO-Ziel ist nicht das geprüfte Ziel für dieses Frappe-Feld.
 "The Helpdesk ERPNext mirror stays disabled: tickets reference the ERPNext Customer and Project directly (HERO integration, option A).","Die Helpdesk-ERPNext-Spiegelung bleibt deaktiviert: Tickets referenzieren ERPNext-Kunden und -Projekte direkt (HERO-Integration, Option A)."
+The Send identity differs from its approved readback contract.,Die Identität zum Senden entspricht nicht ihrem freigegebenen Readback-Vertrag.
+The Send mapping no longer matches its executable schema and source.,Das Mapping zum Senden entspricht nicht mehr seinem ausführbaren Schema und seiner Quelle.
+The Send source is outside its verified native document relations.,Die Sendequelle liegt außerhalb ihrer verifizierten nativen Dokumentbeziehungen.
+The active Send mapping operation or source changed.,Die Operation oder Quelle des aktiven Mappings zum Senden hat sich geändert.
 The active mapping changed. Compare active changes before saving.,Das aktive Mapping wurde geändert. Vergleichen Sie aktive Änderungen vor dem Speichern.
 The active mapping could not be refreshed. Return to mappings and reopen the draft before editing.,Das aktive Mapping konnte nicht aktualisiert werden. Kehren Sie zu den Mappings zurück und öffnen Sie den Entwurf vor der Bearbeitung erneut.
 The active mutation contract no longer matches its schema snapshot.,Der aktive Mutation-Vertrag stimmt nicht mehr mit seinem Schema-Snapshot überein.
@@ -1733,16 +1927,29 @@ The active writeback mapping is no longer safe.,Das aktive Writeback-Mapping ist
 The alias is already used for {0}. Choose another alias.,Der Alias wird bereits für {0} verwendet. Wählen Sie einen anderen Alias.
 The analyzer draft must keep exactly the selected operation as its root field.,Der Analyzer-Entwurf muss genau die ausgewählte Operation als Root-Feld behalten.
 The approved HERO V1 reader has no cursor contract.,Der freigegebene HERO-V1-Reader hat keinen Cursor-Vertrag.
+The approved Query omitted the configured canonical source projection.,Die freigegebene Query hat die konfigurierte kanonische Quellprojektion ausgelassen.
+The approved Send readback exceeded its bounded page limit.,Der freigegebene Readback zum Senden hat seine begrenzte Seitenzahl überschritten.
+The approved Send readback query changed.,Die freigegebene Readback-Query zum Senden hat sich geändert.
 The approved V1 source reader executes one request at a time.,Der freigegebene V1-Quell-Reader führt jeweils eine Anfrage aus.
 The approved V1 source reader is intentionally single-worker.,Der freigegebene V1-Quell-Reader verwendet bewusst nur einen Worker.
+The approved lookup did not return the configured records.,Der freigegebene Lookup hat die konfigurierten Datensätze nicht geliefert.
 The approved mapping binding is invalid.,Die freigegebene Mapping-Bindung ist ungültig.
+The approved mutation service does not bind every configured input argument.,Der freigegebene Mutation-Dienst bindet nicht alle konfigurierten Eingangsargumente.
+The approved phase lookup omitted its active-state proof.,Der freigegebene Phasen-Lookup hat den Nachweis des Aktivstatus ausgelassen.
 The approved plan does not use the newest validated snapshot; review and approve an updated plan.,Der freigegebene Plan verwendet nicht den neuesten validierten Snapshot; prüfen und genehmigen Sie einen aktualisierten Plan.
+The approved query did not prove the unique bound HERO record.,Die freigegebene Query hat den eindeutig gebundenen HERO-Datensatz nicht nachgewiesen.
+The approved query omitted a configured Send readback field.,Die freigegebene Query hat ein konfiguriertes Readback-Feld zum Senden ausgelassen.
 The approved read page size exceeds the monitoring limit.,Die freigegebene Leseseitengröße überschreitet das Monitoring-Limit.
+The approved readback does not prove the related HERO identity.,Der freigegebene Readback weist die verknüpfte HERO-Identität nicht nach.
 The assigned ERPNext user has no HERO user with the same e-mail.,Für den zugewiesenen ERPNext-Benutzer gibt es keinen HERO-Benutzer mit derselben E-Mail-Adresse.
+The bound external identity is invalid.,Die gebundene externe Identität ist ungültig.
 The complete relationship set could not be verified.,Die vollständige Menge der Beziehungen konnte nicht geprüft werden.
+The configurable Query requires a validated service on the same snapshot.,Die konfigurierbare Query benötigt einen validierten Dienst auf demselben Snapshot.
 The configuration file is not valid JSON.,Die Konfigurationsdatei enthält kein gültiges JSON.
 The configured Frappe writeback field no longer exists.,Das konfigurierte Frappe-Writeback-Feld existiert nicht mehr.
 The configured HERO customer relation requires a positive integer identity.,Die konfigurierte HERO-Kundenbeziehung erfordert eine positive ganzzahlige Identität.
+The configured Send source and mutation input types are incompatible.,Die konfigurierte Sendequelle und der Mutation-Eingang haben inkompatible Typen.
+The configured Send source field is unavailable or protected.,Das konfigurierte Quellfeld zum Senden ist nicht verfügbar oder geschützt.
 The current HERO connection could not be verified.,Die aktuelle HERO-Verbindung konnte nicht verifiziert werden.
 The current token is never returned to the browser. An empty field keeps it unchanged.,Das aktuelle Token wird niemals an den Browser zurückgegeben. Ein leeres Feld behält es unverändert bei.
 The current user cannot read the ERPNext Default Company.,Der aktuelle Benutzer kann das ERPNext-Standardunternehmen nicht lesen.
@@ -1754,6 +1961,7 @@ The declared GraphQL service kind does not match the document.,Die angegebene Gr
 The exact HERO mutation variables are not schema-valid.,Die genauen HERO-Mutation-Variablen sind nicht schemagültig.
 The exact mutation must be confirmed before execution.,Die genaue Mutation muss vor der Ausführung bestätigt werden.
 The external HERO deadline is managed by HERO Integration.,Der externe HERO-Termin wird von HERO Integration verwaltet.
+The external record identity is server-owned and cannot be mapped.,Die externe Datensatzidentität wird vom Server verwaltet und darf nicht gemappt werden.
 The field rule is not selected by this mapping or its owned draft.,Die Feldregel ist nicht in diesem Mapping oder dessen eigenem Entwurf ausgewählt.
 The file cannot be imported.,Die Datei kann nicht importiert werden.
 The file contains settings that are never transferred (e.g. credentials).,"Die Datei enthält Einstellungen, die niemals übertragen werden (z. B. Zugangsdaten)."
@@ -1763,6 +1971,16 @@ The immutable personal draft base is unavailable; create a new draft instead.,Di
 The immutable personal draft base is unavailable; reconciliation is required.,Die unveränderliche Basis des persönlichen Entwurfs ist nicht verfügbar; Reconciliation ist erforderlich.
 The import schema fingerprint does not match the selected active context.,Der Schema-Fingerprint des Imports stimmt nicht mit dem ausgewählten aktiven Kontext überein.
 The linked HERO source changed after its synchronized baseline; writeback is blocked.,Die verknüpfte HERO-Quelle wurde nach ihrem synchronisierten Basisstand geändert; Writeback ist blockiert.
+The linked HERO source changed; reconcile before sending.,Die verknüpfte HERO-Quelle hat sich geändert; gleichen Sie sie vor dem Senden ab.
+The local phase source changed during Send; the remote result needs reconciliation.,Die lokale Phasenquelle hat sich während des Sendens geändert; das Remote-Ergebnis muss abgeglichen werden.
+The mapped Frappe source field is unavailable or protected.,Das gemappte Frappe-Quellfeld ist nicht verfügbar oder geschützt.
+The mapped Project has no unique synchronized HERO identity.,Das gemappte Project hat keine eindeutige synchronisierte HERO-Identität.
+The mapped Send preview changed; review and confirm it again.,Die gemappte Sendevorschau hat sich geändert; prüfen und bestätigen Sie sie erneut.
+The mapped User has no unique approved HERO lookup identity.,Der gemappte User hat keine eindeutige freigegebene HERO-Lookup-Identität.
+The mapped customer relation is not linked to this Customer.,Die gemappte Kundenbeziehung ist nicht mit diesem Customer verknüpft.
+The mapped lookup contains missing or ambiguous keys.,Der gemappte Lookup enthält fehlende oder mehrdeutige Schlüssel.
+The mapped related Frappe source is missing or ambiguous.,Die gemappte verknüpfte Frappe-Quelle fehlt oder ist mehrdeutig.
+The mapped relation has no unique synchronized baseline link.,Die gemappte Beziehung hat keinen eindeutigen synchronisierten Baseline-Link.
 The mapping context changed; reload it before approval.,Der Mapping-Kontext wurde geändert; laden Sie ihn vor der Freigabe erneut.
 The mapping package has conflicts or invalid entries: {0},Das Mapping-Paket enthält Konflikte oder ungültige Einträge: {0}
 The mapping source context changed; retry the save.,Der Mapping-Quellkontext wurde geändert; versuchen Sie das Speichern erneut.
@@ -1772,11 +1990,14 @@ The mutation contract no longer matches its schema snapshot.,Der Mutation-Vertra
 The mutation contract or variables are invalid.,Der Mutation-Vertrag oder die Variablen sind ungültig.
 The mutation contract service no longer matches its approved document.,Der Service des Mutation-Vertrags stimmt nicht mehr mit seinem freigegebenen Dokument überein.
 The mutation contract service no longer matches its schema snapshot.,Der Service des Mutation-Vertrags stimmt nicht mehr mit seinem Schema-Snapshot überein.
+The mutation returns a different object type than the native bound document.,Die Mutation liefert einen anderen Objekttyp als das nativ gebundene Dokument.
 The mutation schema snapshot is not executable.,Der Mutation-Schema-Snapshot ist nicht ausführbar.
 The mutation service no longer matches its schema snapshot.,Der Mutation-Service stimmt nicht mehr mit seinem Schema-Snapshot überein.
+The mutation service or contract changed after approval.,Der Mutation-Dienst oder Vertrag hat sich nach der Freigabe geändert.
 The native field resolver is unavailable.,Der native Feld-Resolver ist nicht verfügbar.
 The node detail does not belong to the requested schema.,Das Knotendetail gehört nicht zum angeforderten Schema.
 The operation does not exist in the saved schema.,Die Operation existiert nicht im gespeicherten Schema.
+The phase chooser belongs to a mapped Project source.,Die Phasenauswahl gehört zu einer gemappten Project-Quelle.
 "The polling interval counts from the last started poll, so a failing poll is not retried on every scheduler tick.","Das Polling-Intervall zählt ab dem zuletzt gestarteten Polling-Lauf, damit ein fehlgeschlagener Lauf nicht bei jedem Scheduler-Tick wiederholt wird."
 The previously selected snapshot is not available in this result. Select a validated snapshot again.,Der zuvor ausgewählte Snapshot ist in diesem Ergebnis nicht verfügbar. Wählen Sie erneut einen validierten Snapshot.
 The project belongs to another HERO account.,Das Projekt gehört zu einem anderen HERO-Konto.
@@ -1828,6 +2049,8 @@ The selected mapping target operation does not match the requested plan.,Die Zie
 The selected mutation operation does not exist in the saved schema.,Die ausgewählte Mutation-Operation existiert nicht im gespeicherten Schema.
 The selected node does not exist in this validated snapshot.,Der ausgewählte Knoten existiert nicht in diesem validierten Snapshot.
 The selected operation is not present in the selected schema snapshot.,Die ausgewählte Operation ist im ausgewählten Schema-Snapshot nicht vorhanden.
+The selected phase identity is invalid.,Die ausgewählte Phasenidentität ist ungültig.
+The selected phase is absent from the approved project phase lookup.,Die ausgewählte Phase fehlt im freigegebenen Phasen-Lookup des Projekts.
 The selected phase is not an active phase of this project's HERO project type.,Die ausgewählte Phase ist keine aktive Phase des HERO-Projekttyps dieses Projekts.
 The selected read contract is not a projection.,Der ausgewählte Lesevertrag ist keine Projektion.
 The selected read mapping approval is stale.,Die Freigabe des ausgewählten Lese-Mappings ist veraltet.
@@ -1846,6 +2069,7 @@ The selected schema has no mutation root.,Das ausgewählte Schema hat kein Mutat
 The selected schema snapshot does not exist.,Der ausgewählte Schema-Snapshot existiert nicht.
 The selected source context has no single validated schema fingerprint.,Der ausgewählte Quellkontext hat keinen eindeutigen validierten Schema-Fingerprint.
 The selected source is not available.,Die ausgewählte Quelle ist nicht verfügbar.
+The selected source value has no explicit mapping.,Der ausgewählte Quellwert hat kein ausdrückliches Mapping.
 The selected target adapter is not supported.,Der ausgewählte Zieladapter wird nicht unterstützt.
 The selected target is not a registered read-only projection.,Das ausgewählte Ziel ist keine registrierte schreibgeschützte Projektion.
 The selected variables or page size are invalid.,Die ausgewählten Variablen oder die Seitengröße sind ungültig.
@@ -1879,6 +2103,7 @@ This historic action is intentionally unavailable in the native workspace. Use t
 "This is a shared draft, separate from personal drafts. Saving never activates it.","Dies ist ein geteilter Entwurf, getrennt von persönlichen Entwürfen. Speichern aktiviert ihn niemals."
 This is not a HERO integration configuration file ({0}).,Dies ist keine HERO-Integrationskonfigurationsdatei ({0}).
 This list is read only and is separate from personal drafts.,Diese Liste ist schreibgeschützt und von persönlichen Entwürfen getrennt.
+This native Query binding needs a verified canonical Send baseline resolver.,Dieses native Query-Binding benötigt einen verifizierten kanonischen Baseline-Resolver zum Senden.
 This node belongs to the {0} view. Open that mapping tab to use it.,"Dieser Knoten gehört zur Ansicht {0}. Öffnen Sie diesen Mapping-Tab, um ihn zu verwenden."
 This node is already remembered as “{0}”. Rename that entry instead.,Dieser Knoten ist bereits als „{0}“ gemerkt. Benennen Sie stattdessen diesen Eintrag um.
 This node is already remembered under this alias.,Dieser Knoten ist bereits unter diesem Alias gemerkt.
@@ -1896,6 +2121,7 @@ Timezone,Zeitzone
 Total Types,Typen insgesamt
 Total definitions / field rules,Definitionen / Feldregeln insgesamt
 Transformation,Transformation
+Transformation options,Transformationsoptionen
 Trim,Trim
 Trim is only valid for a text Frappe field.,Trim ist nur für ein Frappe-Textfeld gültig.
 Type Class,Typklasse
@@ -1923,9 +2149,11 @@ Unselected field-rule snapshots require reconciliation before export.,Nicht ausg
 Unsupported GraphQL character {0!r}.,Nicht unterstütztes GraphQL-Zeichen {0!r}.
 Unsupported GraphQL mapping direction.,Nicht unterstützte GraphQL-Mapping-Richtung.
 Unsupported HERO migration action.,Nicht unterstützte HERO-Migrationsaktion.
+Unsupported Query adapter version.,Nicht unterstützte Query-Adapter-Version.
 Unsupported action version.,Nicht unterstützte Aktionsversion.
 Unsupported draft exchange format.,Nicht unterstütztes Entwurfsaustauschformat.
 Unsupported mapping direction.,Nicht unterstützte Mapping-Richtung.
+Unsupported mutation mapping usage.,Nicht unterstützte Verwendung des Mutation-Mappings.
 Unsupported or legacy checkpoint contract; queue a new run.,Nicht unterstützter oder Legacy-Checkpoint-Vertrag; reihen Sie einen neuen Lauf ein.
 Unsupported portable format or direction.,Nicht unterstütztes portables Format oder nicht unterstützte Richtung.
 Unsupported writeback transformation.,Nicht unterstützte Writeback-Transformation.
@@ -1943,6 +2171,7 @@ Use current active,Aktuell aktive Version verwenden
 Use in Mapping,Im Mapping verwenden
 Use the existing integration operations and analysis tools.,Vorhandene Integrationsoperationen und Analysewerkzeuge verwenden.
 Use the personal draft storage service.,Verwenden Sie den Speicherservice für persönliche Entwürfe.
+User and phase resolution require an explicitly configured lookup query.,Die Benutzer- und Phasenauflösung benötigt eine ausdrücklich konfigurierte Lookup-Query.
 Validate,Validieren
 Validate the saved query against its schema before executing it.,Validieren Sie die gespeicherte Query vor der Ausführung gegen ihr Schema.
 Validated,Validiert
@@ -1950,6 +2179,11 @@ Validated Input Mapping,Validiertes Eingabe-Mapping
 Validated schema available,Validiertes Schema verfügbar
 Validated snapshot,Validierter Snapshot
 Validation Summary,Validierungszusammenfassung
+Value Map,Wertezuordnung
+Value Map case folding must be explicit.,Die Groß-/Kleinschreibungsbehandlung der Value Map muss ausdrücklich festgelegt sein.
+Value Map contains an unsupported native Select value.,Die Value Map enthält einen nicht unterstützten nativen Select-Wert.
+Value Map requires a bounded scalar lookup table.,Value Map benötigt eine begrenzte skalare Lookup-Tabelle.
+"Value mapping requires bounded, unambiguous scalar pairs.","Das Wert-Mapping benötigt begrenzte, eindeutige Skalarwertpaare."
 Variable ${0} is used but not defined.,"Variable ${0} wird verwendet, ist aber nicht definiert."
 "Variable ${0} must use an input type, not {1}.","Variable ${0} muss einen Eingabetyp verwenden, nicht {1}."
 Variable ${0} of type {1} cannot be used for {2} ({3}).,Variable ${0} vom Typ {1} kann nicht für {2} ({3}) verwendet werden.
@@ -2475,3 +2709,108 @@ GitHub-style navy colors,Marineblaue Farben im GitHub-Stil
 Log in to change your Desk theme.,"Melden Sie sich an, um Ihr Desk-Design zu ändern."
 Unsupported Desk theme.,Dieses Desk-Design wird nicht unterstützt.
 The User Desk Theme field must be a Select field.,Das Feld Desk Theme im DocType User muss ein Select-Feld sein.
+A Date mutation input requires DATE semantics.,Ein Mutation-Eingang vom Typ Date benötigt DATE-Semantik.
+A Send condition must be an explicit bounded local-field equality.,"Eine Sendebedingung muss ein ausdrücklicher, begrenzter Gleichheitsvergleich eines lokalen Feldes sein."
+A native Send profile has only one explicit phase chooser.,Ein natives Sendeprofil darf nur eine ausdrückliche Phasenauswahl haben.
+A nonpaginated lookup can only read its approved single request.,Ein Lookup ohne Paginierung darf nur seine einzelne freigegebene Anfrage lesen.
+Address fields require the direct Customer.address primary relationship.,Adressfelder benötigen die direkte primäre Beziehung Customer.address.
+"An active Send to HERO mapping already owns this document type, source and mode.","Ein aktives Send-to-HERO-Mapping ist bereits für diesen Dokumenttyp, diese Quelle und diesen Modus zuständig."
+Child Scalar Text requires a finite scalar number or boolean.,Scalar Text für ein untergeordnetes Feld benötigt eine endliche Skalarzahl oder einen booleschen Wert.
+Child Trim requires a string.,Trim für ein untergeordnetes Feld benötigt eine Zeichenfolge.
+Configured mapped target type differs from native metadata.,Der konfigurierte gemappte Zieltyp weicht von den nativen Metadaten ab.
+Configured table child type differs from native metadata.,Der konfigurierte Typ des untergeordneten Tabellenfeldes weicht von den nativen Metadaten ab.
+Confirmed Company must bind the native Project company through its confirmed resolver.,Confirmed Company muss die native Company des Project über ihren bestätigten Resolver binden.
+Date conversion requires a string source.,Die Datumsumwandlung benötigt eine Zeichenfolgenquelle.
+"Date resolution requires a String, Date or DateTime mutation input.","Die Datumsauflösung benötigt einen Mutation-Eingang vom Typ String, Date oder DateTime."
+Event time fields require the native timezone and recurrence adapter.,Event-Zeitfelder benötigen den nativen Adapter für Zeitzonen und Wiederholungen.
+Existing Send mapping cannot be safely inspected.,Das bestehende Mapping zum Senden lässt sich nicht sicher prüfen.
+Integer requires a whole numeric value without truncation.,Integer benötigt einen ganzzahligen numerischen Wert ohne Abschneiden von Nachkommastellen.
+Integer source is not numeric or numeric text.,Die Integer-Quelle ist weder numerisch noch numerischer Text.
+Legacy logbook entry belongs to another Project; no identity was adopted.,Der bisherige Logbucheintrag gehört zu einem anderen Project; es wurde keine Identität übernommen.
+Legacy logbook identity is ambiguous; reconciliation is required.,Die bisherige Logbuchidentität ist mehrdeutig; ein Abgleich ist erforderlich.
+Legacy logbook source and Project identity are not uniquely proven.,Die bisherige Logbuchquelle und Project-Identität sind nicht eindeutig nachgewiesen.
+Legacy logbook target is missing or incompatible.,Das bisherige Logbuchziel fehlt oder ist inkompatibel.
+Lookup page size exceeds its approved record bound.,Die Lookup-Seitengröße überschreitet ihre freigegebene Datensatzgrenze.
+Lookup reads require a sealed role and source revalidation.,Lookup-Lesezugriffe benötigen eine versiegelte Rolle und eine erneute Quellenprüfung.
+Lookup services cannot contain unused target transformations or logbook configuration.,Lookup-Dienste dürfen keine ungenutzten Zieltransformationen oder Logbuchkonfiguration enthalten.
+Mapped Check target requires a boolean or zero/one.,Ein gemapptes Check-Ziel benötigt einen booleschen Wert oder null/eins.
+Mapped Date target requires an ISO date.,Ein gemapptes Date-Ziel benötigt ein ISO-Datum.
+Mapped Datetime target requires an ISO datetime.,Ein gemapptes Datetime-Ziel benötigt einen ISO-Datumszeitwert.
+Mapped Table target requires explicitly typed rows.,Ein gemapptes Table-Ziel benötigt Zeilen mit ausdrücklichen Typangaben.
+Mapped Time cannot discard a timezone offset.,Die gemappte Time darf keinen Zeitzonenoffset verwerfen.
+Mapped Time target requires an ISO time.,Ein gemapptes Time-Ziel benötigt eine ISO-Uhrzeit.
+Mapped assignment has no verified parent Task binding.,Die gemappte Zuweisung hat kein verifiziertes übergeordnetes Task-Binding.
+Mapped assignment parent Task binding changed.,Das übergeordnete Task-Binding der gemappten Zuweisung hat sich geändert.
+Mapped assignment requires a verified parent field baseline.,Die gemappte Zuweisung benötigt eine verifizierte übergeordnete Feld-Baseline.
+Mapped integer target requires an integer; choose Integer explicitly.,Ein gemapptes Ganzzahlziel benötigt eine ganze Zahl; wählen Sie ausdrücklich Integer.
+Mapped logbook content and configured headings are empty.,Der gemappte Logbuchinhalt und die konfigurierten Überschriften sind leer.
+Mapped logbook content has an incompatible type.,Der gemappte Logbuchinhalt hat einen inkompatiblen Typ.
+Mapped numeric target requires a number; choose Number explicitly.,Ein gemapptes numerisches Ziel benötigt eine Zahl; wählen Sie ausdrücklich Number.
+Mapped source transformation is incompatible with the native field type.,Die gemappte Quelltransformation ist mit dem nativen Feldtyp inkompatibel.
+Mapped target type is unsupported.,Der gemappte Zieltyp wird nicht unterstützt.
+Mapped text target requires a string; choose an explicit text transform.,Ein gemapptes Textziel benötigt eine Zeichenfolge; wählen Sie eine ausdrückliche Texttransformation.
+Native adapter output type differs from the native target.,Der Ausgabetyp des nativen Adapters weicht vom nativen Ziel ab.
+"Native table child is absent, protected or incompatible.","Das native untergeordnete Tabellenfeld fehlt, ist geschützt oder inkompatibel."
+Number must be finite.,Number muss endlich sein.
+Number requires an explicit finite numeric value.,Number benötigt einen ausdrücklichen endlichen numerischen Wert.
+Number source is not numeric or numeric text.,Die Number-Quelle ist weder numerisch noch numerischer Text.
+Numeric targets require an explicit metadata-bound target_type.,"Numerische Ziele benötigen einen ausdrücklichen, an die Metadaten gebundenen target_type."
+Phase resolution requires the active steps of this bound Project type.,Die Phasenauflösung benötigt die aktiven Schritte dieses gebundenen Project-Typs.
+Plain text resolution requires a String mutation input.,Die Klartextauflösung benötigt einen Mutation-Eingang vom Typ String.
+Positive Int To Text requires an integer source.,Positive Int To Text benötigt eine Ganzzahlquelle.
+Primary Address values must belong to the direct Customer.address relation.,Werte der primären Address müssen zur direkten Beziehung Customer.address gehören.
+Primary Contact purpose must bind a supported primary Contact field.,Der Zweck Primary Contact muss ein unterstütztes Feld des primären Contact binden.
+Project Relation requires the native Project identity resolver.,Project Relation benötigt den nativen Resolver für die Project-Identität.
+Project title must retain its coded title builder.,Der Projekttitel muss seine fest implementierte Titelbildung beibehalten.
+Query transform options do not apply to the selected transformation or technical role.,Die Query-Transformationsoptionen gelten nicht für die ausgewählte Transformation oder technische Rolle.
+Query transformation is unsupported.,Die Query-Transformation wird nicht unterstützt.
+Record Name must bind the native record title.,Record Name muss den nativen Datensatztitel binden.
+Safe HTML default must be text.,Der Safe-HTML-Standardwert muss Text sein.
+Safe HTML requires a string source.,Safe HTML benötigt eine Zeichenfolgenquelle.
+Scalar Text requires a numeric or boolean source.,Scalar Text benötigt eine numerische oder boolesche Quelle.
+Selected text transformation requires a string source.,Die ausgewählte Texttransformation benötigt eine Zeichenfolgenquelle.
+Send configuration must be bounded JSON.,Die Sendekonfiguration muss begrenztes JSON sein.
+Source identity may only bind its technical identity field.,Die Quellidentität darf nur ihr technisches Identitätsfeld binden.
+Table Rows requires a collection source.,Table Rows benötigt eine Collection-Quelle.
+Table Rows requires explicit native types for every child target.,Table Rows benötigt ausdrückliche native Typen für jedes untergeordnete Ziel.
+Table child targets must be unique.,Untergeordnete Tabellenziele müssen eindeutig sein.
+Table child transformation is unsupported.,Die Transformation des untergeordneten Tabellenfeldes wird nicht unterstützt.
+Table child transformations are unsupported.,Die Transformationen der untergeordneten Tabellenfelder werden nicht unterstützt.
+Temporal mutation inputs require an explicit DATE_TIME resolver.,Zeitbezogene Mutation-Eingänge benötigen einen ausdrücklichen DATE_TIME-Resolver.
+The approved Query lifecycle marks this HERO record as deleted.,Der freigegebene Query-Lifecycle kennzeichnet diesen HERO-Datensatz als gelöscht.
+The approved user lookup did not return a positive HERO identity.,Der freigegebene Benutzer-Lookup hat keine positive HERO-Identität geliefert.
+The approved user lookup has ambiguous HERO identities.,Der freigegebene Benutzer-Lookup enthält mehrdeutige HERO-Identitäten.
+The configured Query child field no longer exists.,Das konfigurierte untergeordnete Query-Feld existiert nicht mehr.
+The configured Query target field no longer exists.,Das konfigurierte Query-Zielfeld existiert nicht mehr.
+The configured local Send condition is not satisfied.,Die konfigurierte lokale Sendebedingung ist nicht erfüllt.
+The configured local condition field was not loaded.,Das konfigurierte lokale Bedingungsfeld wurde nicht geladen.
+The identity resolver does not match its reviewed HERO reference namespace.,Der Identitätsresolver entspricht nicht seinem geprüften HERO-Referenznamensraum.
+The local Send condition changed during execution; reconcile the remote result.,Die lokale Sendebedingung hat sich während der Ausführung geändert; gleichen Sie das Remote-Ergebnis ab.
+The main Send readback does not belong to the native bound object type.,Der primäre Readback zum Senden gehört nicht zum nativ gebundenen Objekttyp.
+The mapped Task has multiple open ToDo assignments.,Der gemappte Task hat mehrere offene ToDo-Zuweisungen.
+The mapped baseline changed during Send; reconcile the remote result.,Die gemappte Baseline hat sich während des Sendens geändert; gleichen Sie das Remote-Ergebnis ab.
+The mapped checkbox does not contain a valid Boolean value.,Das gemappte Kontrollkästchen enthält keinen gültigen booleschen Wert.
+The mapped related Frappe source is missing.,Die gemappte verknüpfte Frappe-Quelle fehlt.
+The mutation returns a different object type than the native bound Query root.,Die Mutation liefert einen anderen Objekttyp als das nativ gebundene Query-Root-Feld.
+The registered Comment timestamp column is unavailable.,Die registrierte Zeitstempelspalte von Comment ist nicht verfügbar.
+Timezone-aware source instants require Local Datetime conversion.,Quellzeitpunkte mit Zeitzone benötigen die Umwandlung Local Datetime.
+Typed native targets require an explicit target_type or a matching typed transform.,Typisierte native Ziele benötigen einen ausdrücklichen target_type oder eine passende typisierte Transformation.
+Number,Zahl
+Integer,Ganzzahl
+A mapped local source changed during creation; reconcile the external result.,Eine gemappte lokale Quelle hat sich während der Anlage geändert; gleichen Sie das externe Ergebnis ab.
+A previous Task creation needs manual reconciliation before another attempt.,Eine vorherige Task-Anlage muss vor einem weiteren Versuch manuell abgeglichen werden.
+HERO did not return a valid created Task identity.,HERO hat keine gültige Identität des angelegten Task geliefert.
+Send requires one synchronized native HERO Integration Link for this source.,Das Senden benötigt genau einen synchronisierten nativen HERO Integration Link für diese Quelle.
+Send resolver options are not applicable to this assignment.,Die Resolver-Optionen zum Senden gelten nicht für diese Zuordnung.
+Task creation requires a nonempty mapped title and verified Project.,Die Task-Anlage benötigt einen nicht leeren gemappten Titel und ein verifiziertes Project.
+Task creation requires an explicit title and a verified mapped Project.,Die Task-Anlage benötigt einen ausdrücklichen Titel und ein verifiziertes gemapptes Project.
+The Task is already bound; creation cannot be repeated.,Der Task ist bereits gebunden; die Anlage darf nicht wiederholt werden.
+The approved Query has no canonical mapping version for the new Task link.,Die freigegebene Query hat keine kanonische Mapping-Version für den neuen Task-Link.
+The approved Query marks the resulting HERO record as deleted.,Die freigegebene Query kennzeichnet den resultierenden HERO-Datensatz als gelöscht.
+The approved Task mutation does not support creation without an identity.,Die freigegebene Task-Mutation unterstützt keine Anlage ohne Identität.
+The approved user lookup must pair email and identity from the same schema User.,Der freigegebene Benutzer-Lookup muss E-Mail und Identität aus demselben User-Objekt im Schema verknüpfen.
+The local Task changed after its creation preview.,Der lokale Task hat sich nach seiner Anlagevorschau geändert.
+The local Task changed during creation; reconcile the external result.,Der lokale Task hat sich während der Anlage geändert; gleichen Sie das externe Ergebnis ab.
+The mapped binding identity or status changed during Send; reconcile the remote result.,Die Identität oder der Status des gemappten Bindings hat sich während des Sendens geändert; gleichen Sie das Remote-Ergebnis ab.
+This HERO reference input requires its reviewed identity resolver.,Dieser HERO-Referenzeingang benötigt seinen geprüften Identitätsresolver.
+This HERO relationship input has no reviewed identity resolver.,Dieser HERO-Beziehungseingang hat keinen geprüften Identitätsresolver.

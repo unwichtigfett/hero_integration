@@ -179,7 +179,7 @@ class MutationAdapter:
   return {'executable':False,'field':f.name,'snapshot_fingerprint':s.fingerprint,'source_instance':d.source_instance,
           'revision':d.revision,'input_paths':d.input_paths,'input_types':input_types,'null_mode':d.null_mode.value}
 
- def construct_preview_values(self,s,d,values):
+ def construct_preview_values(self,s,d,values,*,temporal=False):
   """Build schema-checked variables from explicit path-keyed sample values; never execute."""
   from hero_integration.graphql_protocol.graphql_argument_values import _validate, GraphQLArgumentValueError
   plan=self.materialize(s,d)
@@ -204,7 +204,7 @@ class MutationAdapter:
      if argument.type_ref.kind=='NON_NULL' and argument.default_value is None:
       raise GraphQLArgumentValueError('A required mutation argument is missing.')
      continue
-    variables[argument.name]=_validate(variables[argument.name],argument.type_ref,argument.name,schema=s.ir,strict_scalars=True)
+    variables[argument.name]=_validate(variables[argument.name],argument.type_ref,argument.name,schema=s.ir,strict_scalars=True,temporal=temporal)
   except (GraphQLArgumentValueError,ValueError,TypeError) as error:
    raise MappingContractError('Mutation preview variables do not satisfy the saved schema.') from error
   return {**plan,'variables':variables}

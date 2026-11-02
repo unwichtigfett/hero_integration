@@ -1,4 +1,4 @@
-"""Task Send to HERO: values compared and sent."""
+"""Historical fixed-adapter compatibility tests; public Send uses grouped Mutation mappings."""
 
 from __future__ import annotations
 

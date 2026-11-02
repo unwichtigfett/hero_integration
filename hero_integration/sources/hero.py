@@ -178,6 +178,7 @@ class GraphQLServiceSource:
     def __init__(self, client: HeroGraphQLClient, service, contract: ReadContract, source_instance: str, *, revalidate=None):
         self.client, self.service, self.contract = client, service, contract
         self.source_instance = source_instance.strip() or "default"
+        self.query_adapter = getattr(contract, "adapter_options", None) or {}
         self.revalidate = revalidate
 
     def customers(self, offset: int = 0) -> SourcePage:
@@ -269,6 +270,21 @@ class GraphQLServiceSource:
             raise ReadContractError('Read offset is invalid or exceeds the reviewed run bound.')
         if operation != self.contract.target_operation:
             return SourcePage((), None)
+        lookup = self.contract.target_operation == 'HeroLookup'
+        one_shot_lookup = False
+        lookup_bound = None
+        if lookup:
+            if (type(self.query_adapter.get('version')) is not int or self.query_adapter.get('version') != 2
+                    or self.query_adapter.get('role') != 'LOOKUP' or not callable(self.revalidate)):
+                raise ReadContractError('Lookup reads require a sealed role and source revalidation.')
+            lookup_bound = self.query_adapter.get('max_records')
+            if type(lookup_bound) is not int or not 1 <= lookup_bound <= 1000:
+                raise ReadContractError('Lookup result bound must be explicit.')
+            one_shot_lookup = '$offset' not in self.contract.variables.values()
+            if one_shot_lookup and offset != 0:
+                raise ReadContractError('A nonpaginated lookup can only read its approved single request.')
+            if not one_shot_lookup and self.contract.page_size > lookup_bound:
+                raise ReadContractError('Lookup page size exceeds its approved record bound.')
         if callable(self.revalidate) and self.revalidate() != self.contract:
             raise ReadContractError('Read approval changed before transport.')
         request = getattr(self.contract, 'materialized_request', None)
@@ -277,9 +293,10 @@ class GraphQLServiceSource:
                 raise ReadContractError('Generated read approval changed or revalidation is missing.')
             variables = request.variables
             offsets = [binding.variable_name for binding in request.argument_bindings if binding.argument_name == 'offset']
-            if len(offsets) != 1:
+            if len(offsets) > 1 or (not offsets and not one_shot_lookup):
                 raise ReadContractError('Generated read has no unique offset binding.')
-            variables[offsets[0]] = offset
+            if offsets and not one_shot_lookup:
+                variables[offsets[0]] = offset
         else:
             variables = dict(self.contract.variables)
             for name, value in tuple(variables.items()):
@@ -296,11 +313,14 @@ class GraphQLServiceSource:
         records = value_at(data, self.contract.records_path)
         if not isinstance(records, list) or not all(isinstance(row, dict) for row in records):
             raise ReadContractError("The selected result path is not a list of objects.")
-        if len(records) > self.contract.page_size:
-            raise ReadContractError('Response exceeds the approved page size.')
+        bound = lookup_bound if one_shot_lookup else self.contract.page_size
+        if len(records) > bound:
+            raise ReadContractError('Response exceeds the approved lookup bound.' if lookup else 'Response exceeds the approved page size.')
         for row in records:
             value_at(row, self.contract.identity_path)
         annotated = tuple({**row, "_hero_source_instance": self.source_instance} for row in records)
+        if one_shot_lookup:
+            return SourcePage(annotated, None)
         # Only an empty page ends an offset scan (see HeroSource._page).
         return SourcePage(annotated, offset + len(records) if records else None)
 

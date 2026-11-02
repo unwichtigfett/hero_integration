@@ -1,4 +1,4 @@
-"""Customer Send to HERO: fields and values."""
+"""Historical fixed-adapter compatibility tests; public Send uses grouped Mutation mappings."""
 
 from __future__ import annotations
 

@@ -1,10 +1,4 @@
-"""Send Task fields or create a linked Task on a HERO project.
-
-Preview covers title, description, due date, completion and one email-matched
-assignee, rejecting remote changes since import. Sending uses the global gate,
-mutation audit and readback, then advances baselines. Only System Managers and
-HERO Writeback may send.
-"""
+"""Task Send uses grouped Mutation mappings; fixed helpers retain compatibility coverage."""
 
 from __future__ import annotations
 
@@ -48,7 +42,7 @@ def may_send() -> bool:
     return bool(set(SEND_ROLES) & set(frappe.get_roles()))
 
 
-def preview(task: str, client=None) -> dict:
+def legacy_preview(task: str, client=None) -> dict:
     """What a send would change, computed from current server and HERO state."""
     if not may_send():
         raise TaskSendError("Only System Managers and HERO Writeback users may send tasks to HERO.")
@@ -95,13 +89,13 @@ def preview(task: str, client=None) -> dict:
             "can_send": bool(changes) and not conflicts and enabled, "sending_enabled": enabled}
 
 
-def send(task: str, fingerprint: str = "", confirmed=0, client=None, mutation_client=None) -> dict:
+def legacy_send(task: str, fingerprint: str = "", confirmed=0, client=None, mutation_client=None) -> dict:
     """Send exactly the previewed changes once; verify and advance the sync baseline."""
     from hero_integration.api import _assert_mutation_execution_released, _finalize_mutation, _reserve_mutation
 
     _assert_mutation_execution_released()
     read_client = client or _read_client()
-    current = preview(task, client=read_client)
+    current = legacy_preview(task, client=read_client)
     if confirmed not in (True, 1, "1", "true") or fingerprint != current["fingerprint"]:
         raise TaskSendError("HERO or ERPNext changed since the preview; open the preview again.")
     if current["conflicts"]:
@@ -324,3 +318,20 @@ def _apply_locally(task: str, after: dict, emails: dict, *, create: bool) -> Non
     frappe.db.set_value("HERO Integration Link", link.name,
                         {"source_field_hashes": encode(base_source), "target_field_hashes": encode(base_target)},
                         update_modified=False)
+
+
+def preview(task: str, client=None) -> dict:
+    from hero_integration.services.mapped_send import preview as mapped_preview
+    try:
+        return mapped_preview('Task', task, client=client)
+    except ValueError as error:
+        raise TaskSendError.from_error(error) from error
+
+
+def send(task: str, fingerprint: str = '', confirmed=0, client=None, mutation_client=None) -> dict:
+    from hero_integration.services.mapped_send import send as mapped_send
+    try:
+        return mapped_send('Task', task, fingerprint=fingerprint, confirmed=confirmed,
+                           client=client, mutation_client=mutation_client)
+    except ValueError as error:
+        raise TaskSendError.from_error(error) from error

@@ -1,4 +1,4 @@
-// Send Task title, description, end date, completion and assignee to HERO.
+// Send through the configured native Mutation mapping.
 (() => {
 	"use strict";
 

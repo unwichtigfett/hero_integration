@@ -563,6 +563,8 @@ def _refresh_project_phases(run, source) -> None:
     Phase comes from the imported step ID, not sync state. A blocked project
     phase has already left Running and still needs its display refreshed.
     """
+    if getattr(source, "query_adapter", None):
+        return  # v2 phase values come exclusively from selected Query rules
     reader = getattr(source, "project_status_steps", None)
     if getattr(run, "mode", "Preview") != "Execute" or reader is None:
         return  # Preview and test doubles without a mode never write
@@ -578,6 +580,8 @@ def _refresh_project_phases(run, source) -> None:
 
 def _refresh_project_logbook(run, source) -> None:
     """Add new HERO logbook entries to the Project activity (read-only, outside the checkpoint)."""
+    if getattr(source, "query_adapter", None):
+        return  # v2 collections are processed from the approved Project row
     client = getattr(source, "client", None)
     if getattr(run, "mode", "Preview") != "Execute" or client is None or not hasattr(source, "project_status_steps"):
         return  # Preview and test doubles never read or write the logbook
@@ -750,6 +754,8 @@ def _migrate_customer(record: dict[str, object], run) -> Result:
     try:
         plan = _mapping_plan_for_run(run, "HeroCustomers")
         source_id = plan.source_identity(record)
+        if getattr(plan, 'adapter_options', None) and any(type(record.get(flag)) is not bool for flag in ('is_deleted', 'is_contact_person')):
+            raise MappingPlanError('Mapped Customer lifecycle flags must be explicitly returned as booleans.')
         values = plan.values(record)
         # ERPNext rejects such an email address; the Customer is imported without it.
         email_note = _drop_invalid_email(values)
@@ -757,11 +763,15 @@ def _migrate_customer(record: dict[str, object], run) -> Result:
         contact_values = plan.customer_contact_values(values)
         address_note = ""
         try:
-            address = _customer_primary_address(record, plan.customer_primary_address_line2(record))
+            if getattr(plan, 'adapter_options', None):
+                from hero_integration.services.query_mapping import address_values
+                address = address_values(plan, record)
+            else:
+                address = _customer_primary_address(record, plan.customer_primary_address_line2(record))
         except IncompleteAddress as error:
             # The Customer is still imported; an incomplete address is skipped, as if HERO had none.
             address, address_note = None, f" {error} It was not imported."
-        if address is not None and not address.get("country_code"):
+        if not getattr(plan, 'adapter_options', None) and address is not None and not address.get("country_code"):
             # HERO customers are German unless HERO names another country.
             address["country_code"] = DEFAULT_ADDRESS_COUNTRY
             address_note = " The HERO address has no country; Germany was assumed."
@@ -923,16 +933,18 @@ def _process_projection(run, source, *, checkpoint=None) -> None:
     if (reviewed.target_operation != operation or reviewed.service_revision != int(run.service_revision)
             or reviewed.mapping_revision != int(run.mapping_revision)):
         raise MappingPlanError('The projection contract changed before processing.')
-    task_scope = json.loads(mapping.mapping_json).get('native_task_onboarding')
-    if task_scope is not None and (operation != 'HeroTasks' or source.source_instance != task_scope['source_instance']
-                                   or getattr(run, 'source_instance', '') != task_scope['source_instance']):
-        raise MappingPlanError('Native Task onboarding source does not match the approved run.')
     offset = int(run.resume_offset or 0)
     index_start = int(run.resume_record_index or 0)
     if offset or index_start:
         with checkpoint():
             _block_run(run, 'Cannot resume without a verified source snapshot and page identity evidence.')
         return
+    task_scope = json.loads(mapping.mapping_json).get('native_task_onboarding')
+    if getattr(plan, 'adapter_options', None) and operation == 'HeroTasks':
+        task_scope = {'confirmed': True, 'source_instance': snapshot.source_instance, 'source_type': 'Task'}
+    if task_scope is not None and (operation != 'HeroTasks' or source.source_instance != task_scope['source_instance']
+                                   or getattr(run, 'source_instance', '') != task_scope['source_instance']):
+        raise MappingPlanError('Native Task onboarding source does not match the approved run.')
     seen_ids: set[str] = set()
     _PROJECT_REFERENCE_STATES.clear()
     _load_task_user_directory(source, operation)
@@ -963,6 +975,7 @@ def _process_projection(run, source, *, checkpoint=None) -> None:
                     result = _migrate_isolated(lambda: _migrate_native_task(task_record, run, plan, task_scope))
                     if (result.code in {'CREATED', 'UPDATED', 'SKIPPED', 'PREVIEW_OK'}
                             and result.target_doctype == 'Task'
+                            and not getattr(plan, 'adapter_options', None)
                             and any(item.source_path == 'target_user_id' for item in plan.definitions)):
                         _record_task_assignment_pending(run, record, result.target_name, task_scope['source_instance'])
                 else:
@@ -1167,6 +1180,8 @@ def _migrate_native_task(record, run, plan, scope) -> Result:
     from hero_integration.services.native_projections import _html, _text
 
     frappe.only_for('System Manager')
+    if getattr(plan, 'adapter_options', None):
+        return _migrate_mapped_task(record, run, plan, scope)
     instance = _source_instance(record)
     if scope != {'confirmed': True, 'source_instance': instance, 'source_type': 'Task'}:
         raise MappingPlanError('Native Task intake source scope is not approved.')
@@ -1413,7 +1428,10 @@ def _migrate_projection(record, run, plan) -> Result:
     try:
         source_id = plan.source_identity(record)
         existing = _link(contract['source_type'], source_id, instance) if contract.get('native_kind') == 'event' else None
-        validate_projection_record(operation, record, allow_partial=bool(existing))
+        if not getattr(plan, 'adapter_options', None):
+            validate_projection_record(operation, record, allow_partial=bool(existing))
+        if getattr(plan, 'adapter_options', None) and contract.get('native_kind') == 'event' and any(type(record.get(flag)) is not bool for flag in ('deleted', 'is_recurring')):
+            raise MappingPlanError('Mapped Event lifecycle flags must be explicitly returned as booleans.')
         if record.get('is_deleted') is True or record.get('deleted') is True:
             if run.mode != 'Preview':
                 _mark_source_deleted(_link(contract['source_type'], source_id, instance))
@@ -1435,7 +1453,11 @@ def _migrate_projection(record, run, plan) -> Result:
             from hero_integration.services.native_projections import values as native_resolve, creation_defaults
             config = json.loads(frappe.get_doc('HERO GraphQL Mapping', run.graphql_mapping).mapping_json)
             options = config.get('native_options')
-            native_values = native_resolve(contract, record, source_id, instance, options, lookup=_native_lookup,
+            native_record = record
+            if getattr(plan, 'adapter_options', None):
+                from hero_integration.services.query_mapping import event_record
+                native_record = event_record(plan, record)
+            native_values = native_resolve(contract, native_record, source_id, instance, options, lookup=_native_lookup,
                                           item_link=lambda identity: _item_name_for_source(identity, instance),
                                           allow_partial=bool(existing), review=review)
             if contract.get('native_kind') == 'event' and options['target_timezone'] != frappe.db.get_single_value('System Settings', 'time_zone'):
@@ -1514,6 +1536,8 @@ _PROJECT_REFERENCE_STATES: dict[tuple[str, int], str] = {}
 
 def _prefetch_project_references(source, operation: str, records) -> None:
     """Classify unbound project references of one page with one bundled HERO read."""
+    if getattr(source, "query_adapter", None):
+        return  # mapped imports never issue supplemental literal project queries
     path = PROJECTIONS.get(operation, {}).get('project_path')
     probe = getattr(source, 'project_reference_states', None)
     if not path or probe is None:
@@ -1613,8 +1637,11 @@ def _migrate_project(record: dict[str, object], run) -> Result:
         source_instance=source_instance, required_on_create=("customer", "project_name"),
         comparison_extra=title_basis, document_name=document_name,
         review_reason=" ".join(review) or None,
-        creation_values=_project_creation_values(record, values.get("company")),
+        creation_values=None if getattr(plan, 'adapter_options', None) else _project_creation_values(record, values.get("company")),
     )
+    if getattr(plan, 'adapter_options', None) and result.target_name and result.code in {'CREATED', 'UPDATED', 'SKIPPED', 'CONVERGED', 'OBSERVED'}:
+        from hero_integration.services.project_logbook import sync_mapped_entries
+        sync_mapped_entries(plan, record, result.target_name, preview=run.mode == 'Preview')
     if name_note and _creates(result):
         from dataclasses import replace
         result = replace(result, detail=(result.detail or "") + name_note)
@@ -2243,13 +2270,18 @@ def _synchronize_customer_address(customer, address: dict[str, object], source_i
         raise CustomerAddressError("Address is not installed on this site.")
     source_id = str(address["id"])
     code = address.get('country_code')
-    if not isinstance(code, str) or not code.strip():
+    configured_country = address.get('country_name')
+    if configured_country:
+        country = _native_lookup('Country', configured_country).name
+    elif not isinstance(code, str) or not code.strip():
         raise CustomerAddressError('Primary address requires an explicit HERO country.code selection.')
-    countries = frappe.get_list('Country', filters={'code': code.strip().lower()}, pluck='name', limit_page_length=2)
-    if len(countries) != 1:
-        raise CustomerAddressError('HERO country code has no unique readable native Country binding.')
+    else:
+        countries = frappe.get_list('Country', filters={'code': code.strip().lower()}, pluck='name', limit_page_length=2)
+        if len(countries) != 1:
+            raise CustomerAddressError('HERO country code has no unique readable native Country binding.')
+        country = countries[0]
     values = {
-        'country': countries[0], 'address_type': 'Billing',
+        'country': country, 'address_type': 'Billing',
         "address_title": customer.name,
         "address_line1": address["street"],
         "pincode": address["zipcode"],
@@ -2257,6 +2289,8 @@ def _synchronize_customer_address(customer, address: dict[str, object], source_i
     }
     if isinstance(address.get("line_2"), str) and address["line_2"].strip():
         values["address_line2"] = address["line_2"].strip()
+    if "mapped_values" in address:
+        values = {**address["mapped_values"], "country": country}
     payload = {"customer": customer.name, **address}
     existing = _link("customer_address", source_id, source_instance)
     if existing:
@@ -2267,6 +2301,28 @@ def _synchronize_customer_address(customer, address: dict[str, object], source_i
             _mark_link_conflict(existing, "Stored customer address reference no longer exists.")
             raise CustomerAddressError("Stored customer address reference no longer exists.")
         target = frappe.get_doc("Address", existing.target_name)
+        if "mapped_values" in address:
+            _require_exclusive_customer_address(target, customer.name)
+            prior_source = decode_hashes(getattr(existing, "source_field_hashes", ""))
+            prior_target = decode_hashes(getattr(existing, "target_field_hashes", ""))
+            if prior_source is None or prior_target is None:
+                raise CustomerAddressError("Mapped Address requires a verified field baseline.")
+            comparison = _Comparison(values)
+            current = comparison.target_values(target, lambda doc: _target_values(doc, values))
+            outcome = comparison.reconcile(prior_source, prior_target, current)
+            if outcome.conflicts:
+                _mark_link_conflict(existing, "Mapped Address fields require reconciliation.")
+                raise CustomerAddressError("Mapped Address fields require reconciliation.")
+            if outcome.apply:
+                for field in outcome.apply:
+                    if field in values: target.set(field, values[field])
+                with managed_target_update('Address', target.name, existing.name): target.save()
+            if outcome.advances_baseline:
+                current = comparison.target_values(target, lambda doc: _target_values(doc, values))
+                _update_link_baseline(existing, _digest(payload), _digest(current),
+                    next_baseline(prior_source, comparison.source_hashes, outcome, tracked=comparison.tracked),
+                    next_baseline(prior_target, field_hashes(current), outcome, tracked=comparison.tracked), mapping_version)
+            return
         if "address_line2" not in values:
             prior_source = decode_hashes(getattr(existing, "source_field_hashes", ""))
             prior_target = decode_hashes(getattr(existing, "target_field_hashes", ""))
@@ -2451,3 +2507,66 @@ def _mark_sync_error(run) -> None:
 
 class _Cancelled(Exception):
     pass
+
+
+def _migrate_mapped_task(record, run, plan, scope) -> Result:
+    """Reuse field-wise upsert and the existing guarded assignment boundary."""
+    from hero_integration.services.query_mapping import mapped_values
+    instance = _source_instance(record)
+    if scope != {'confirmed': True, 'source_instance': instance, 'source_type': 'Task'}:
+        raise MappingPlanError('Native Task intake source scope is not approved.')
+    source_id = plan.source_identity(record)
+    if type(record.get('is_deleted')) is not bool:
+        return Result('BLOCKED_RECORD', 'Mapped Task deletion state must be explicitly returned as a boolean.')
+    if record.get('is_deleted') is True:
+        return Result('SKIPPED_SOURCE_DELETED', 'Source deletion does not delete or close a Task.')
+    try:
+        values = mapped_values(plan, record,
+            project_link=lambda value: _project_name_for_source(value, instance))
+        assignment = mapped_values(plan, record, target_doctype='ToDo')
+        if values.get('completed_on'):
+            values['status'] = 'Completed'
+    except (ValueError, MappingPlanError) as error:
+        return Result('BLOCKED_RECORD', str(error))
+    if not values.get('subject'):
+        return Result('BLOCKED_RECORD', 'A mapped Task title is required for intake.')
+    result = _upsert('Task', source_id, record, values, 'Task', 'subject', plan.mapping_version, run,
+        source_instance=instance, required_on_create=('subject',))
+    recipient = assignment.get('allocated_to')
+    if recipient and result.target_name and result.code in {'CREATED', 'UPDATED', 'SKIPPED', 'CONVERGED', 'OBSERVED', 'PREVIEW_OK'}:
+        assignment_rule = next(spec for spec in plan.definitions if spec.target_doctype == 'ToDo')
+        from hero_integration.services.direct_mapping import lookup
+        assignment_record = {**record, 'target_user_id': lookup(record, assignment_rule.source_path)}
+        admitted = _plan_task_assignment(run, assignment_record, result.target_name, instance)
+        if admitted.recipient and admitted.recipient != recipient:
+            return Result('CONFLICT', 'Mapped assignee differs from its verified native User binding.', 'Task', result.target_name)
+        _record_task_assignment_pending(run, assignment_record, result.target_name, instance)
+        _ack_mapped_assignment(run, assignment_record, result.target_name, instance, recipient)
+    return result
+
+
+def _ack_mapped_assignment(run, record, task_name, source_instance, recipient) -> bool:
+    """Acknowledge only the currently verified system-owned native assignment."""
+    if getattr(run, 'mode', '') != 'Execute':
+        return False
+    current = _plan_task_assignment(run, record, task_name, source_instance)
+    if current.action != 'KEEP' or current.recipient != recipient:
+        return False
+    link = _link('Task', str(record['id']), source_instance)
+    if not link:
+        raise MappingPlanError('Mapped assignment has no verified parent Task binding.')
+    locked = frappe.get_doc('HERO Integration Link', link.name, for_update=True)
+    if (locked.source_system != 'HERO' or locked.source_type != 'Task'
+            or str(locked.source_id) != str(record['id']) or (locked.source_instance or 'default') != source_instance
+            or locked.target_doctype != 'Task' or locked.target_name != task_name):
+        raise MappingPlanError('Mapped assignment parent Task binding changed.')
+    source = decode_hashes(locked.source_field_hashes)
+    target = decode_hashes(locked.target_field_hashes)
+    if source is None or target is None:
+        raise MappingPlanError('Mapped assignment requires a verified parent field baseline.')
+    key = 'ToDo.allocated_to'
+    acknowledged = field_hashes({key: recipient})[key]
+    source[key], target[key] = acknowledged, acknowledged
+    frappe.db.set_value('HERO Integration Link', locked.name,
+        {'source_field_hashes': encode_hashes(source), 'target_field_hashes': encode_hashes(target)}, update_modified=False)
+    return True

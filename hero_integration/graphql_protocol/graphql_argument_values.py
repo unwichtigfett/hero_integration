@@ -2,6 +2,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 import json
 import math
+from datetime import date, datetime
 from dataclasses import dataclass
 from graphql import GraphQLError, parse_const_value, value_from_ast_untyped
 from graphql.language import ObjectValueNode, ListValueNode
@@ -31,11 +32,14 @@ def _validate(
     schema: GraphQLSchema | None = None,
     strict_scalars: bool = False,
     numeric_only: bool = False,
+    temporal: bool = False,
 ) -> object:
     if ref.kind == "NON_NULL":
+        if temporal is True and value == "" and ref.named_type() in {"Date", "DateTime"}:
+            raise GraphQLArgumentValueError(f"GraphQL temporal argument {name!r} must not be cleared when non-null.")
         if value is None:
             raise GraphQLArgumentValueError(f"GraphQL argument {name!r} must not be null.")
-        return _validate(value, _unwrap(ref), name, schema=schema, strict_scalars=strict_scalars, numeric_only=numeric_only)
+        return _validate(value, _unwrap(ref), name, schema=schema, strict_scalars=strict_scalars, numeric_only=numeric_only, temporal=temporal)
     if value is None:
         return None
     if ref.kind == "LIST":
@@ -44,7 +48,7 @@ def _validate(
         if ref.of_type is None or not isinstance(value, list):
             raise GraphQLArgumentValueError(f"GraphQL list argument {name!r} requires a JSON array.")
         return [
-            _validate(v, ref.of_type, f"{name}[{index}]", schema=schema, strict_scalars=strict_scalars, numeric_only=numeric_only)
+            _validate(v, ref.of_type, f"{name}[{index}]", schema=schema, strict_scalars=strict_scalars, numeric_only=numeric_only, temporal=temporal)
             for index, v in enumerate(value)
         ]
     kind=ref.named_type()
@@ -55,6 +59,9 @@ def _validate(
         "String": lambda v: isinstance(v,str),
         "ID": lambda v: isinstance(v,(str,int)) and not isinstance(v,bool),
     }
+    if temporal is True:
+        valid.update({"Date": lambda v: _valid_temporal(v, date_only=True),
+                      "DateTime": lambda v: _valid_temporal(v, date_only=False)})
     if kind in valid and (not numeric_only or kind in {"Int", "Float"}) and not valid[kind](value):
         raise GraphQLArgumentValueError(f"Invalid value for GraphQL {kind} argument {name!r}.")
     # GraphQL Int is 32-bit and Float is finite for every operation, not only for mutation previews.
@@ -71,7 +78,7 @@ def _validate(
     if numeric_only:
         if graphql_type is not None and graphql_type.kind == "INPUT_OBJECT" and isinstance(value, Mapping):
             fields = {item.name: item for item in graphql_type.input_fields}
-            return {key: _validate(child, fields[key].type_ref, f"{name}.{key}", schema=schema, numeric_only=True)
+            return {key: _validate(child, fields[key].type_ref, f"{name}.{key}", schema=schema, numeric_only=True, temporal=temporal)
                     if key in fields else child for key, child in value.items()}
         return value
     if strict_scalars and kind not in valid and (graphql_type is None or graphql_type.kind not in {'ENUM', 'INPUT_OBJECT'}):
@@ -110,9 +117,25 @@ def _validate(
                 child_name,
                 schema=schema,
                 strict_scalars=strict_scalars,
+                temporal=temporal,
             )
         return result
     return value
+
+
+def _valid_temporal(value, *, date_only):
+    if not isinstance(value, str):
+        return False
+    if value == '':
+        return True  # Explicit opt-in HERO nullable temporal clearing.
+    try:
+        if date_only:
+            return date.fromisoformat(value).isoformat() == value
+        parsed = datetime.fromisoformat(value.replace('Z', '+00:00'))
+        return parsed.tzinfo is not None and parsed.utcoffset() is not None
+    except ValueError:
+        return False
+
 
 def _check_literal_fields(node, path: str) -> None:
     # The GraphQL parser accepts duplicate fields; conversion would discard one.
