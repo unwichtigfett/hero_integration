@@ -118,6 +118,7 @@ class TestFrappeTranslationBridge(unittest.TestCase):
             'numberError': number_error,
             'tradeError': trade_error,
             'frappeTranslate': str(Path(frappe.__file__).parent / 'public' / 'js' / 'frappe' / 'translate.js'),
+            'frappeFormScripts': str(Path(frappe.__file__).parent / 'public' / 'js' / 'frappe' / 'form' / 'script_manager.js'),
             'jsDir': str(APP / 'public' / 'js'),
         }
         result = subprocess.run(['node', str(APP / 'tests' / 'fixtures' / 'frappe_i18n_bridge.js')],

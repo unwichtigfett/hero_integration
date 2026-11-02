@@ -83,3 +83,29 @@ for (const language of input.languages) {
         }
     }
 }
+
+// Exercise the actual Frappe event registry across two native DocTypes.
+{
+    const window = {__: value => value === 'Record is already synchronized.' ? 'Der Datensatz ist bereits synchronisiert.' : value};
+    const frappe = {ui: {form: {}}, provide: () => { frappe.ui.form.handlers ||= {}; }};
+    const $ = {isPlainObject: value => value !== null && typeof value === 'object'};
+    const context = vm.createContext({window, frappe, $, cur_frm: null});
+    vm.runInContext(fs.readFileSync(input.frappeFormScripts, 'utf8'), context);
+    vm.runInContext(fs.readFileSync(input.jsDir + '/hero_diagnostics.js', 'utf8'), context);
+    const native = fs.readFileSync(input.jsDir + '/hero_native_diagnostics.js', 'utf8');
+    vm.runInContext(native, context);
+    vm.runInContext(native, context);
+    for (const [doctype, fieldname] of [['HERO Integration Run', 'error_message'], ['HERO Mutation Audit', 'detail']]) {
+        const handlers = frappe.ui.form.get_event_handler_list(doctype, 'refresh');
+        assert.equal(handlers.length, 1);
+        const value = 'Record is already synchronized.';
+        const display = {textContent: value};
+        const field = {value, disp_area: display, set_disp_area(text) { this.disp_area.textContent = text; }};
+        const frm = {doc: {[fieldname]: value}, fields_dict: {[fieldname]: field}};
+        handlers[0](frm);
+        assert.equal(display.textContent, 'Der Datensatz ist bereits synchronisiert.');
+        field.set_disp_area(value);
+        assert.equal(display.textContent, 'Der Datensatz ist bereits synchronisiert.');
+        assert.equal(frm.doc[fieldname], value);
+    }
+}
