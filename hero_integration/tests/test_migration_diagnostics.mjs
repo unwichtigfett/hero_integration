@@ -11,6 +11,11 @@ const translations = {
   'A known static error.': 'Ein bekannter Fehler.',
   'Automatic sync is blocked: {0}': 'Automatischer Sync blockiert: {0}',
   'A known reason.': 'Ein bekannter Grund.',
+  'HERO response omits the source of: {0}.':'HERO-Antwort ohne Quelle: {0}.',
+  'Existing {0} has no stable HERO link.':'Vorhandenes {0} hat keinen stabilen HERO-Link.',
+  '{0} Local changes were preserved: {1}.':'{0} Lokale Änderungen beibehalten: {1}.',
+  'Local field change observed; no outbound HERO mutation was prepared.':'Lokale Änderung erkannt.',
+
   'Automatic sync is blocked: no materialized runtime is available; no HERO request was made.': 'Kein Laufzeitsystem verfügbar.',
   '{0}: run {1} queued.': '{0}: Lauf {1} wartet.',
   'Polling configuration is not supported ({0}); no HERO request was made.': 'Polling-Konfiguration nicht unterstützt ({0}).',
@@ -28,6 +33,9 @@ test('stored diagnostics translate at display time while preserving identifiers'
   assert.equal(diagnostic('Recheck requested: Task fields require review: owner'), 'Erneute Prüfung angefordert: Task-Felder erfordern Prüfung: owner');
   assert.equal(diagnostic('Another HERO run is active: RUN-007.'), 'Ein anderer HERO-Lauf ist aktiv: RUN-007.');
   assert.equal(diagnostic('A known static error.'), 'Ein bekannter Fehler.');
+  assert.equal(diagnostic('HERO response omits the source of: customer_type, phone.'), 'HERO-Antwort ohne Quelle: customer_type, phone.');
+  assert.equal(diagnostic('Existing Customer has no stable HERO link.'), 'Vorhandenes Customer hat keinen stabilen HERO-Link.');
+  assert.equal(diagnostic('Local field change observed; no outbound HERO mutation was prepared. Local changes were preserved: subject.'), 'Lokale Änderung erkannt. Lokale Änderungen beibehalten: subject.');
   assert.equal(diagnostic('Automatic sync is blocked: A known reason.'), 'Automatischer Sync blockiert: Ein bekannter Grund.');
   assert.equal(diagnostic('Automatic sync is blocked: no materialized runtime is available; no HERO request was made.'), 'Kein Laufzeitsystem verfügbar.');
   assert.equal(diagnostic('Events: run RUN-123 queued.'), 'Termine: Lauf RUN-123 wartet.');
