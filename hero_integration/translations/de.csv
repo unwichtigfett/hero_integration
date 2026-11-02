@@ -2469,3 +2469,8 @@ The configured HERO endpoint does not match the approved writeback snapshot.,Der
 The HERO connection changed after the writeback preview; review it again.,Die HERO-Verbindung wurde seit der Writeback-Vorschau geändert; prüfen Sie die Vorschau erneut.
 Field writeback requires one approved field binding and runtime readback plan.,Feld-Writeback erfordert genau ein freigegebenes Field Binding und einen Runtime-Readback-Plan.
 This field writeback is not eligible under the current binding.,Dieses Feld kann mit dem aktuellen Binding nicht an HERO gesendet werden.
+Navy,Navy
+GitHub-style navy colors,Marineblaue Farben im GitHub-Stil
+Log in to change your Desk theme.,"Melden Sie sich an, um Ihr Desk-Design zu ändern."
+Unsupported Desk theme.,Dieses Desk-Design wird nicht unterstützt.
+The User Desk Theme field must be a Select field.,Das Feld Desk Theme im DocType User muss ein Select-Feld sein.

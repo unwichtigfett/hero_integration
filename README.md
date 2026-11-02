@@ -36,6 +36,15 @@ Technical names and user-provided or external-system content are retained as
 received. A message without a matching translation remains in its source
 language. Terms such as Mapping and Polling remain in English in the German UI.
 
+## Desk appearance
+
+The native Frappe appearance selector includes **Navy**, a GitHub-style dark
+color palette. Choose it alongside Light, Dark and Automatic under Appearance.
+The choice is saved per user in `User.desk_theme`. Navy uses Frappe's dark
+component behavior and changes color tokens only. Existing users keep their
+current theme. Install/migrate registers the extra Select option; uninstall
+returns Navy users to Dark and removes only that option.
+
 ## Documentation
 
 | Topic | Documents |
