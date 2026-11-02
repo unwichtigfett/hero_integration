@@ -51,6 +51,12 @@ class TestReviewNotifications(unittest.TestCase):
         self.assertEqual(en["subject"], "HERO run RUN-1: 1 records were not imported")
         self.assertTrue(en["email_content"].endswith("Known &lt;problem&gt;"))
 
+    def test_broken_custom_translation_cannot_prevent_notification(self):
+        link = SimpleNamespace(name="LINK-1", conflict_detail="")
+        with patch.object(notices, "recipient_text", side_effect=lambda _user, text: "Fehler {" if text == "Field conflict: {0}" else text):
+            self.assertTrue(notices.notify_conflict_once(link, {"customer_name"}, "new evidence"))
+        self.assertEqual(self.sent[0]["subject"], "Field conflict: customer_name")
+
     def test_held_record_asks_for_approval_or_rejection(self):
         link = SimpleNamespace(name="LINK-1", target_doctype="Project", target_name="PV-1")
         self.assertTrue(notices.notify_review(link, "The project address is missing."))
