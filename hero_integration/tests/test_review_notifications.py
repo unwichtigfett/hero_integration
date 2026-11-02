@@ -59,7 +59,8 @@ class TestReviewNotifications(unittest.TestCase):
     def test_summary_insertion_failure_is_logged_after_prior_recipient_attempt(self):
         from hero_integration.services import migration
 
-        self.records = [SimpleNamespace(source_type="project", result="CONFLICT", detail="synthetic")]
+        self.records = [SimpleNamespace(name="REC-1", source_type="project", source_id="41", result="CONFLICT",
+                                        detail="synthetic")]
         logged = []
 
         def get_doc(values):

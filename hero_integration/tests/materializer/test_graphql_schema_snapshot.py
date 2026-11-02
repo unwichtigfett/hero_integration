@@ -2,7 +2,21 @@
 
 from dataclasses import replace
 
-import pytest
+import re
+import unittest
+from contextlib import contextmanager
+
+
+@contextmanager
+def _raises(expected, match):
+    """unittest replacement for pytest.raises(expected, match=...)."""
+    try:
+        yield
+    except expected as error:
+        if not re.search(match, str(error)):
+            raise AssertionError(f"{expected.__name__} message {str(error)!r} does not match {match!r}") from error
+        return
+    raise AssertionError(f"{expected.__name__} not raised")
 
 from hero_integration.graphql_protocol.schema import (
     GraphQLArgument, GraphQLField, GraphQLSchema, GraphQLType, GraphQLTypeRef,
@@ -43,7 +57,7 @@ def test_snapshot_rejects_modified_schema_under_existing_fingerprint():
     stored = snapshot.to_dict()
     assert GraphQLSchemaSnapshot.from_dict(stored) == snapshot
     stored["schema"]["types"][0]["description"] = "tampered"
-    with pytest.raises(GraphQLSchemaSnapshotError, match="fingerprint does not match"):
+    with _raises(GraphQLSchemaSnapshotError, "fingerprint does not match"):
         GraphQLSchemaSnapshot.from_dict(stored)
 
 
@@ -65,3 +79,19 @@ def test_incomplete_snapshot_cannot_replace_complete_and_previous_is_preserved(t
     store.save(next_snapshot)
     assert store.load() == next_snapshot
     assert store.load_previous() == first
+
+
+class TestOfflineEvidence(unittest.TestCase):
+    """Runs the evidence functions under the bench unittest runner (no pytest installed)."""
+
+    def test_fingerprint_ignores_schema_type_field_and_argument_order(self):
+        test_fingerprint_ignores_schema_type_field_and_argument_order()
+
+    def test_snapshot_rejects_modified_schema_under_existing_fingerprint(self):
+        test_snapshot_rejects_modified_schema_under_existing_fingerprint()
+
+    def test_incomplete_snapshot_cannot_replace_complete_and_previous_is_preserved(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as directory:
+            test_incomplete_snapshot_cannot_replace_complete_and_previous_is_preserved(Path(directory))
