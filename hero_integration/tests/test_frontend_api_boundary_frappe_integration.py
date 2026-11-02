@@ -98,9 +98,8 @@ class TestFrontendApiBoundaryFrappeIntegration(IntegrationTestCase):
     def test_employee_read_admin_cas_activation_and_runtime_plan_approval(self):
         frappe.set_user(self.employee)
         employee_view = api.frontend_mapping_list()
-        row = next(item for item in employee_view["graphql_mappings"] if item["name"] == self.mapping.name)
-        self.assertEqual(row["status"], "Draft")
-        self.assertNotIn("must-not-leak", repr(row))
+        self.assertNotIn(self.mapping.name, [item["name"] for item in employee_view["graphql_mappings"]])
+        self.assertNotIn("must-not-leak", repr(employee_view))
         with self.assertRaises(frappe.PermissionError):
             api.graphql_mapping_save(
                 self.snapshot.name, "QUERY", "b11Read", "QUERY_TO_FRAPPE", self.mapping.mapping_json,
@@ -137,6 +136,18 @@ class TestFrontendApiBoundaryFrappeIntegration(IntegrationTestCase):
             mapping_name=self.mapping.name, expected_revision=2, activate=1,
         )
         self.assertEqual((activated["status"], activated["revision"]), ("Active", 2))
+        # Simulate a legacy active mapping containing a sensitive key and
+        # verify that the employee projection redacts it.
+        active_json = frappe.db.get_value("HERO GraphQL Mapping", self.mapping.name, "mapping_json")
+        frappe.db.set_value("HERO GraphQL Mapping", self.mapping.name, "mapping_json",
+                            json.dumps({"record_path": "b11ReadChanged", "api_token": "must-not-leak"}))
+        frappe.set_user(self.employee)
+        employee_view = api.frontend_mapping_list()
+        row = next(item for item in employee_view["graphql_mappings"] if item["name"] == self.mapping.name)
+        self.assertEqual(row["status"], "Active")
+        self.assertNotIn("must-not-leak", repr(row))
+        frappe.set_user("Administrator")
+        frappe.db.set_value("HERO GraphQL Mapping", self.mapping.name, "mapping_json", active_json)
 
         frappe.db.set_value("HERO GraphQL Service", self.service.name, {
             "execution_status": "Approved", "approved_service_revision": self.service.service_revision,

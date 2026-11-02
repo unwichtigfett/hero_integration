@@ -66,25 +66,19 @@ bench build --app hero_integration
 step "tests"
 bench --site "$SITE" set-config allow_tests true
 ./env/bin/python -m pip install -q "pytest>=8"   # test dependency (see pyproject optional "test")
-KNOWN=apps/hero_integration/ci
-# Offline suite: tests that need a real site or pytest are known failures; only new ones fail the build.
 MIN_TESTS="${MIN_TESTS:-1000}"
-(cd apps/hero_integration && ../../env/bin/python -m unittest discover -s hero_integration/tests -t . \
-  > /tmp/hero-offline.log 2>&1) || true   # the result is judged below, not by the exit code
-{ grep -E "^(ERROR|FAIL):" /tmp/hero-offline.log || true; } | sort > /tmp/hero-offline-now.txt
+if ! (cd apps/hero_integration && ../../env/bin/python ci/run-offline-tests.py > /tmp/hero-offline.log 2>&1); then
+  echo "Offline tests failed:"; tail -80 /tmp/hero-offline.log; TEST_FAILED=1
+fi
 offline_ran=$(grep -oE "^Ran [0-9]+ tests" /tmp/hero-offline.log | grep -oE "[0-9]+" || echo 0)
-echo "offline tests: $offline_ran run, $(wc -l < /tmp/hero-offline-now.txt) failed (known: $(wc -l < $KNOWN/known-offline-failures.txt))"
+grep -F "Site-dependent tests reserved for the full site suite:" /tmp/hero-offline.log || true
+echo "offline tests: $offline_ran run"
 if [ "$offline_ran" -lt "$MIN_TESTS" ]; then echo "Offline suite did not run (only $offline_ran tests)"; tail -20 /tmp/hero-offline.log; TEST_FAILED=1; fi
-new_failures=$(comm -23 /tmp/hero-offline-now.txt <(sort $KNOWN/known-offline-failures.txt))
-if [ -n "$new_failures" ]; then echo "New offline test failures:"; echo "$new_failures"; TEST_FAILED=1; fi
-# Site tests: failures listed in known-site-failures.txt predate this pipeline; only new ones fail the build.
-bench --site "$SITE" run-tests --app hero_integration > /tmp/hero-site-tests.log 2>&1 || true   # judged below
-{ sed 's/\x1b\[[0-9;]*m//g' /tmp/hero-site-tests.log | grep -E "^\s*✖ " || true; } | awk '{print $2}' | sort -u > /tmp/hero-site-failed.txt
-grep -q "Failed to discover tests" /tmp/hero-site-tests.log && { echo "Test discovery failed"; TEST_FAILED=1; }
-new_site=$(comm -23 /tmp/hero-site-failed.txt <(sort -u $KNOWN/known-site-failures.txt))
-if [ -n "$new_site" ]; then echo "New site test failures:"; echo "$new_site"; TEST_FAILED=1; fi
+if ! bench --site "$SITE" run-tests --app hero_integration > /tmp/hero-site-tests.log 2>&1; then
+  echo "Site tests failed:"; tail -100 /tmp/hero-site-tests.log; TEST_FAILED=1
+fi
 site_passed=$(sed 's/\x1b\[[0-9;]*m//g' /tmp/hero-site-tests.log | grep -cE '^\s*✔ ' || true)
-echo "site tests: $site_passed passed, $(wc -l < /tmp/hero-site-failed.txt) failed (known: $(wc -l < $KNOWN/known-site-failures.txt))"
+echo "site tests: $site_passed passed"
 if [ "$site_passed" -lt "$MIN_TESTS" ]; then echo "Site tests did not run (only $site_passed passed)"; tail -30 /tmp/hero-site-tests.log; TEST_FAILED=1; fi
 
 for var in HERO_SCHEMA_FILE HERO_CONFIG_FILE; do
