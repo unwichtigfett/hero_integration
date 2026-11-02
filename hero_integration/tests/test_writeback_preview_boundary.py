@@ -46,7 +46,7 @@ class TestWritebackPreviewBoundary(unittest.TestCase):
             if doctype == 'HERO Mutation Contract': return [self.contract]
             if doctype == 'HERO Integration Link': return [self.link]
             raise AssertionError(doctype)
-        self.frappe = SimpleNamespace(
+        self.frappe = SimpleNamespace(_=lambda message: message,
             only_for=lambda role: self.calls.append(('role', role)),
             has_permission=lambda *a, **kw: self.calls.append(('permission', a[1])),
             get_doc=get_doc, get_all=get_all,
@@ -239,7 +239,7 @@ class TestTypedMutationPreview(unittest.TestCase):
                                         analysis_status='Validated', execution_contract_status='Ready')
         docs = {'HERO Mutation Contract': self.contract, 'HERO GraphQL Service': self.service,
                 'HERO GraphQL Schema Snapshot': self.snapshot}
-        self.frappe = SimpleNamespace(only_for=lambda role: None, get_doc=lambda doctype, name: docs[doctype],
+        self.frappe = SimpleNamespace(_=lambda message: message, only_for=lambda role: None, get_doc=lambda doctype, name: docs[doctype],
                                       throw=lambda message: (_ for _ in ()).throw(ValueError(message)))
 
     def preview(self, variables):
@@ -296,7 +296,7 @@ class TestMutationReservationBoundary(unittest.TestCase):
         def throw(message):
             raise ValueError(message)
 
-        fake = SimpleNamespace(
+        fake = SimpleNamespace(_=lambda message: message,
             DuplicateEntryError=DuplicateEntryError,
             session=SimpleNamespace(user='synthetic'), local=SimpleNamespace(site='test.local'),
             db=SimpleNamespace(commit=commit), get_doc=Mock(return_value=audit), throw=throw,

@@ -31,6 +31,31 @@ class TestReviewNotifications(unittest.TestCase):
         recipients = patch.object(notices, "configured_recipients", return_value=["admin@example.invalid"])
         recipients.start()
         self.addCleanup(recipients.stop)
+        translation = patch.object(notices, "recipient_text", side_effect=lambda _user, text: text)
+        translation.start()
+        self.addCleanup(translation.stop)
+
+    def test_each_recipient_gets_their_own_language_and_details_remain_escaped(self):
+        self.records = [SimpleNamespace(name="REC-1", source_type="project", source_id="41",
+                                        result="CONFLICT", detail="Known <problem>")]
+        german = {
+            "HERO run {0}: {1} records were not imported": "HERO-Lauf {0}: {1} Datensätze wurden nicht importiert",
+            "Known <problem>": "Bekannt <Problem>",
+        }
+        with patch.object(notices, "configured_recipients", return_value=["de@example.invalid", "en@example.invalid"]), \
+             patch.object(notices, "recipient_text", side_effect=lambda user, text: german.get(text, text) if user.startswith("de@") else text):
+            self.assertTrue(notices.notify_run_summary("RUN-1"))
+        de, en = self.sent
+        self.assertEqual(de["subject"], "HERO-Lauf RUN-1: 1 Datensätze wurden nicht importiert")
+        self.assertTrue(de["email_content"].endswith("Bekannt &lt;Problem&gt;"))
+        self.assertEqual(en["subject"], "HERO run RUN-1: 1 records were not imported")
+        self.assertTrue(en["email_content"].endswith("Known &lt;problem&gt;"))
+
+    def test_broken_custom_translation_cannot_prevent_notification(self):
+        link = SimpleNamespace(name="LINK-1", conflict_detail="")
+        with patch.object(notices, "recipient_text", side_effect=lambda _user, text: "Fehler {" if text == "Field conflict: {0}" else text):
+            self.assertTrue(notices.notify_conflict_once(link, {"customer_name"}, "new evidence"))
+        self.assertEqual(self.sent[0]["subject"], "Field conflict: customer_name")
 
     def test_held_record_asks_for_approval_or_rejection(self):
         link = SimpleNamespace(name="LINK-1", target_doctype="Project", target_name="PV-1")
@@ -97,6 +122,19 @@ class TestReviewNotifications(unittest.TestCase):
         self.assertEqual(notice["subject"], "Field conflict: customer_name, email_id")
         self.assertEqual(notice["email_content"], "new evidence")
         self.assertEqual((notice["document_type"], notice["document_name"]), ("HERO Integration Link", "LINK-1"))
+
+    def test_conflict_notice_translates_dynamic_detail_for_each_recipient(self):
+        link = SimpleNamespace(name="LINK-1", conflict_detail="")
+        translations = {"Field conflict: {0}": "Feldkonflikt: {0}",
+                        "Field conflict requires review: {0}.": "Feldkonflikt erfordert Prüfung: {0}."}
+        with patch.object(notices, "configured_recipients", return_value=["de@example.invalid", "en@example.invalid"]), \
+             patch.object(notices, "recipient_text", side_effect=lambda user, text: translations.get(text, text) if user.startswith("de@") else text):
+            notices.notify_conflict_once(link, {"customer_name"}, "Field conflict requires review: customer_name.")
+        de, en = self.sent
+        self.assertEqual((de["subject"], de["email_content"]),
+                         ("Feldkonflikt: customer_name", "Feldkonflikt erfordert Prüfung: customer_name."))
+        self.assertEqual((en["subject"], en["email_content"]),
+                         ("Field conflict: customer_name", "Field conflict requires review: customer_name."))
 
 
 if __name__ == "__main__":

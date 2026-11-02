@@ -655,7 +655,7 @@ def _mapping_plan_for_run(run, target_operation: str):
     try:
         contract = from_documents(service, mapping, snapshot)
     except ReadContractError as error:
-        raise MappingPlanError(str(error)) from error
+        raise MappingPlanError.from_error(error) from error
     if int(getattr(run, 'customer_service_revision' if dependency else "service_revision", 0) or 0) != contract.service_revision:
         raise MappingPlanError("The queued run no longer matches its approved service revision.")
     if int(getattr(run, 'customer_mapping_revision' if dependency else "mapping_revision", 0) or 0) != contract.mapping_revision:
@@ -1496,7 +1496,7 @@ def _migrate_projection(record, run, plan) -> Result:
 
 def _native_lookup(doctype, name):
     if not isinstance(name, str) or not name or not frappe.db.exists(doctype, name):
-        raise MappingPlanError('Configured native reference does not exist: ' + doctype)
+        raise MappingPlanError('Configured native reference does not exist: {0}', doctype)
     document = frappe.get_doc(doctype, name)
     frappe.has_permission(doctype, 'read', doc=document, throw=True)
     return document

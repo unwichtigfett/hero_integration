@@ -11,6 +11,7 @@ import frappe
 
 from hero_integration.services import mapping_exchange
 from hero_integration.services.direct_mapping import MappingSpec, validate_spec
+from hero_integration.services.localized_error import LocalizedError
 
 
 OWNED_DOCTYPE_PREFIX = "HERO "
@@ -20,7 +21,7 @@ FIELD_TYPES.add('JSON')
 SCHEMA_STATES = ("New", "Unchanged", "Changed", "Conflict", "Invalid")
 
 
-class SchemaProvisioningError(ValueError):
+class SchemaProvisioningError(LocalizedError):
     pass
 
 
@@ -76,8 +77,8 @@ def provision_schema(schema: object) -> dict[str, object]:
     except Exception as error:
         detail = json.dumps(created, sort_keys=True, separators=(',', ':'))
         raise SchemaProvisioningError(
-            'Schema provisioning failed before Draft import. Completed creation calls: ' + detail
-            + '. Schema changes may persist, including a partially completed call; inspect schema and preview again.'
+            'Schema provisioning failed before Draft import. Completed creation calls: {0}. '
+            'Schema changes may persist, including a partially completed call; inspect schema and preview again.', detail
         ) from error
     return {"status": "COMPLETED", "created": created,
             "schema_note": "Frappe DDL rollback is not promised."}
@@ -367,10 +368,10 @@ def _validate_selection(items, selected):
         if item["state"] == "Unchanged":
             continue
         if not item["selectable"]:
-            raise SchemaProvisioningError(f"{item_id} cannot be selected in state {item['state']}.")
+            raise SchemaProvisioningError('{0} cannot be selected in state {1}.', item_id, item['state'])
         missing = [dependency for dependency in item["dependencies"] if dependency not in selected and items.get(dependency, {}).get("state") != "Unchanged"]
         if missing:
-            raise SchemaProvisioningError(f"{item_id} requires: {', '.join(missing)}.")
+            raise SchemaProvisioningError('{0} requires: {1}.', item_id, ', '.join(missing))
 
 
 def _required_schema_closure(items, selected):
@@ -746,7 +747,7 @@ def _claim_id(definition, ids):
 
 def _require_keys(value, expected, kind):
     if not isinstance(value, dict) or set(value) != expected:
-        raise SchemaProvisioningError(f"{kind} has an unknown or missing field.")
+        raise SchemaProvisioningError('{0} has an unknown or missing field.', kind)
 
 
 class _FrappeMetadata:

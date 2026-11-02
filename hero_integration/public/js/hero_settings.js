@@ -10,6 +10,7 @@
             : (
                 value
             ) => value;
+    const format = (message, ...values) => uiText(message).replace(/\{(\d+)\}/g, (_, index) => String(values[index] ?? ""));
 
     if (window.hero_integration_settings_ui) return;
 
@@ -19,6 +20,57 @@
     const SAVE_TESTING = "workspace_testing_settings_save";
     const REFRESH_SCHEMA = "workspace_schema_refresh";
     const SET_MUTATION_EXECUTION = "workspace_mutation_execution_set";
+
+    // Labels mirror the exportable HERO Integration Settings fields; keys stay unchanged.
+    const packageSettingLabels = Object.freeze({
+        hero_source_instance: "HERO Source Instance",
+        schema_refresh_interval_minutes: "Schema Refresh Interval Minutes",
+        timeout_seconds: "Timeout Seconds",
+        scheduled_sync_enabled: "Enable Scheduled Sync",
+        sync_service_paused: "Sync Service Paused",
+        sync_area_contacts: "Sync Contacts",
+        sync_area_projects: "Sync Projects",
+        sync_area_events: "Sync Events",
+        sync_area_tasks: "Sync Tasks",
+        polling_mode: "Polling Mode",
+        polling_interval_minutes: "Polling Interval Minutes",
+        polling_timezone: "Polling Timezone",
+        polling_execution_window: "Polling Execution Window",
+        polling_bootstrap: "Allow Bootstrap",
+        polling_page_size: "Polling Page Size",
+        polling_pagination_strategy: "Polling Pagination Strategy",
+        polling_allow_backfill: "Allow Backfill",
+        polling_full_inventory: "Allow Full Inventory",
+        polling_reconciliation: "Allow Reconciliation",
+        polling_retry_limit: "Polling Retry Limit",
+        polling_retry_backoff_seconds: "Polling Retry Backoff Seconds",
+        polling_timeout_seconds: "Polling Timeout Seconds",
+        polling_rate_limit: "Polling Rate Limit",
+        polling_concurrency: "Polling Concurrency",
+        polling_notifications: "Polling Notifications",
+    });
+    function escapeHtml(value) {
+        return String(value).replace(/[&<>"']/g, (character) => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+        })[character]);
+    }
+
+    function packageState(value) {
+        const state = String(value ?? '');
+        return state.startsWith('Invalid: ')
+            ? format('Invalid: {0}', uiText(state.slice('Invalid: '.length)))
+            : uiText(state);
+    }
+
+    function packagePreviewSummary(preview) {
+        const counts = preview.mapping_package
+            ? Object.entries(preview.mapping_package).filter(([, count]) => count).map(([state, count]) => `${packageState(state)} ${count}`).join(', ')
+            : uiText('checked during import');
+        const services = preview.read_services.map((row) => `${row.target_operation}: ${packageState(row.state)}`).join(', ');
+        const settings = preview.settings.length ? preview.settings.map((key) => Object.hasOwn(packageSettingLabels, key) ? `${uiText(packageSettingLabels[key])} (${key})` : key).join(', ') : uiText('none');
+        return `${uiText('Schema snapshot')}: ${packageState(preview.snapshot)}. ${uiText('Mappings')}: ${counts}. ` +
+            `${uiText('Read services')}: ${services}. ${uiText('Changed settings')}: ${settings}.`;
+    }
 
     function node(tag, cls, text) {
         const el = document.createElement(tag);
@@ -35,9 +87,9 @@
     }
 
     function errorMessage(error) {
-        return typeof error?.message === "string" && error.message
+        return uiText(typeof error?.message === "string" && error.message
             ? error.message
-            : "The server did not provide additional details.";
+            : "The server did not provide additional details.");
     }
 
     // One settings group: a panel with a title, an optional description and a field grid.
@@ -93,7 +145,7 @@
         const url = document.createElement("input");
         url.type = "url";
         url.className = "hero-settings-input";
-        url.placeholder = uiText("https://…/graphql");
+        url.placeholder = "https://…/graphql";
         url.autocomplete = "off";
 
         const allowedHosts = document.createElement("textarea");
@@ -288,9 +340,9 @@
             allowedHosts.value = data.allowed_hero_hosts || "";
             sourceInstance.value = data.hero_source_instance || "default";
             bindingConfirm.checked = false;
-            bindingStatus.textContent = uiText(data.source_binding_confirmed
-                ? "Source binding confirmed (revision " + (data.source_binding_revision || 0) + ")."
-                : "Source binding changed and is not confirmed. HERO reads are blocked.");
+            bindingStatus.textContent = data.source_binding_confirmed
+                ? format("Source binding confirmed (revision {0}).", data.source_binding_revision || 0)
+                : uiText("Source binding changed and is not confirmed. HERO reads are blocked.");
             bindingStatus.dataset.state = data.source_binding_confirmed ? "success" : "error";
             schemaInterval.value = String(data.schema_refresh?.refresh_interval_minutes || 60);
             allowDeletion.checked = Boolean(data.allow_deletion);
@@ -337,7 +389,7 @@
 
         function applyMutationState(data) {
             mutationEnabled.checked = Boolean(data.mutation_execution_requested);
-            mutationStatus.textContent = uiText(`Effective mutation security status: ${data.mutation_execution_status || "DISABLED"}. ${data.mutation_execution_reason || ""}`);
+            mutationStatus.textContent = format("Effective mutation security status: {0}. {1}", uiText(data.mutation_execution_status || "DISABLED"), uiText(data.mutation_execution_reason || ""));
         }
 
         async function load() {
@@ -352,7 +404,7 @@
                 }
             } catch (error) {
                 if (!destroyed) {
-                    status.textContent = `Could not load HERO settings. ${errorMessage(error)}`;
+                    status.textContent = format("Could not load HERO settings. {0}", errorMessage(error));
                     status.dataset.state = "error";
                 }
             } finally {
@@ -392,7 +444,7 @@
                 }
             } catch (error) {
                 if (!destroyed) {
-                    status.textContent = `Could not save HERO settings. ${errorMessage(error)}`;
+                    status.textContent = format("Could not save HERO settings. {0}", errorMessage(error));
                     status.dataset.state = "error";
                 }
             } finally {
@@ -415,7 +467,7 @@
                 }
             } catch (error) {
                 if (!destroyed) {
-                    testingStatus.textContent = `Could not save testing settings. ${errorMessage(error)}`;
+                    testingStatus.textContent = format("Could not save testing settings. {0}", errorMessage(error));
                     testingStatus.dataset.state = "error";
                 }
             } finally {
@@ -435,7 +487,7 @@
                     : "Settings saved. API token is valid; the HERO schema was loaded.";
                 state = "success";
             } catch (error) {
-                message = `Settings saved, but the API token could not be verified. ${errorMessage(error)}`;
+                message = format("Settings saved, but the API token could not be verified. {0}", errorMessage(error));
                 state = "error";
             }
             try {
@@ -503,15 +555,9 @@
             try {
                 const payload = await file.text();
                 const preview = await platform.api("config_import_preview", {payload_json: payload});
-                const counts = preview.mapping_package
-                    ? Object.entries(preview.mapping_package).filter(([, count]) => count).map(([state, count]) => `${state} ${count}`).join(", ")
-                    : uiText("checked during import");
-                const services = preview.read_services.map((row) => `${row.target_operation}: ${row.state}`).join(", ");
-                const settings = preview.settings.length ? preview.settings.join(", ") : uiText("none");
-                const summary = `${uiText("Schema snapshot")}: ${preview.snapshot}. ${uiText("Mappings")}: ${counts}. ` +
-                    `${uiText("Read services")}: ${services}. ${uiText("Changed settings")}: ${settings}.`;
+                const summary = packagePreviewSummary(preview);
                 showPackageState(summary);
-                frappe.confirm(`${summary}<br><br>${uiText("Import and activate this configuration now?")}`, async () => {
+                frappe.confirm(`${escapeHtml(summary)}<br><br>${escapeHtml(uiText("Import and activate this configuration now?"))}`, async () => {
                     showPackageState(uiText("Importing …"));
                     try {
                         const result = await platform.api("config_import", {payload_json: payload, confirmed: 1});
@@ -542,5 +588,5 @@
         };
     }
 
-    window.hero_integration_settings_ui = Object.freeze({mount});
+    window.hero_integration_settings_ui = Object.freeze({mount, packagePreviewSummary});
 })();

@@ -1,5 +1,7 @@
 # HERO ↔ ERPNext: geprüftes Mapping
 
+> **Historical reviewed mapping record.** This document preserves earlier decisions and reported live observations. Entries marked `aktiv` are not evidence that the same rule or action is active on the current Git branch or target site. In particular, the Task completion, email-driven ToDo transfer, Event time/recurrence and outbound mutation claims require the separate current approvals described in [Feature matrix](../feature_matrix_1.0.md) and [Synchronization handoff](../sync_handoff_1.0.md). Preserve the historical evidence instead of silently treating it as today's acceptance.
+
 Dieses Dokument ist die verbindliche Übersicht. Es ersetzt den Vorschlag
 [mapping_plan_1.0.md](mapping_plan_1.0.md).
 Es führt drei Quellen zusammen:

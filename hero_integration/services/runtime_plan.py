@@ -13,13 +13,15 @@ import re
 from threading import RLock
 from typing import Protocol
 
+from hero_integration.services.localized_error import LocalizedError
+
 
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 _FINGERPRINT = re.compile(r"^[0-9a-f]{64}$")
 _GRAPHQL_NAME = re.compile(r"^[_A-Za-z][_0-9A-Za-z]*$")
 
 
-class RuntimePlanError(ValueError):
+class RuntimePlanError(LocalizedError):
     """A runtime plan is malformed, stale, or cannot be approved."""
 
 
@@ -38,19 +40,19 @@ RUNTIME_EXECUTION_MODE = "AUTO_SYNC"
 
 def _identifier(value: object, label: str) -> str:
     if not isinstance(value, str) or not _IDENTIFIER.fullmatch(value):
-        raise RuntimePlanError(f"{label} must be a stable non-secret identifier.")
+        raise RuntimePlanError('{0} must be a stable non-secret identifier.', label)
     return value
 
 
 def _positive(value: object, label: str) -> int:
     if not isinstance(value, int) or isinstance(value, bool) or value < 1:
-        raise RuntimePlanError(f"{label} must be positive.")
+        raise RuntimePlanError('{0} must be positive.', label)
     return value
 
 
 def _actor(value: object, label: str) -> str:
     if not isinstance(value, str) or not value.strip() or len(value) > 140 or any(ord(char) < 32 for char in value):
-        raise RuntimePlanError(f"{label} must be a non-empty actor identity.")
+        raise RuntimePlanError('{0} must be a non-empty actor identity.', label)
     return value
 
 

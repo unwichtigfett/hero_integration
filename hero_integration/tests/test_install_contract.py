@@ -114,6 +114,7 @@ class _InstallEnvironment:
 
     def load(self):
         frappe_module = types.ModuleType("frappe")
+        frappe_module._ = lambda message: message
         frappe_module.get_installed_apps = lambda: self.apps
         frappe_module.db = types.SimpleNamespace(exists=self.exists)
         frappe_module.get_doc = self.get_doc

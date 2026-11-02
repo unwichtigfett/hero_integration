@@ -29,27 +29,27 @@ class HEROMappingDraft(Document):
         try:
             assert_storage_write(self)
         except PermissionError:
-            frappe.throw("Personal mapping document write denied.", frappe.PermissionError)
+            frappe.throw(frappe._("Personal mapping document write denied."), frappe.PermissionError)
         from hero_integration.services.mapping_draft_service import _new_definition
         if self.new_definition_json:
             try:
                 context = _new_definition(json.loads(self.new_definition_json))
             except (TypeError, ValueError):
-                frappe.throw('New-definition draft context is invalid.')
+                frappe.throw(frappe._('New-definition draft context is invalid.'))
             if (context['site_scope'] != self.site_scope or context['definition_id'] != self.definition_id
                     or context['schema_fingerprint'] != self.base_schema_fingerprint or self.base_active_mapping
                     or int(self.base_active_revision or 0) != 0 or self.base_active_hash):
-                frappe.throw('New-definition draft cannot claim an active baseline.')
+                frappe.throw(frappe._('New-definition draft cannot claim an active baseline.'))
         elif not self.base_active_mapping or int(self.base_active_revision or 0) < 1 or not self.base_active_hash:
-            frappe.throw('An existing-definition draft requires its active baseline.')
+            frappe.throw(frappe._('An existing-definition draft requires its active baseline.'))
         previous = self.get_doc_before_save() if not self.is_new() else None
         if previous is None:
             if self.owner_user != frappe.session.user:
-                frappe.throw("Draft owner must be the current administrator.")
+                frappe.throw(frappe._("Draft owner must be the current administrator."))
             return
         for field in ("draft_key", "site_scope", "definition_id", "owner_user"):
             if self.get(field) != previous.get(field):
-                frappe.throw(f"Personal mapping draft {field} is immutable.")
+                    frappe.throw(frappe._("Personal mapping draft {0} is immutable.").format(field))
         # The immutable base belongs to a generation. Opening a discarded
         # draft creates a new generation from the currently locked active
         # definition, so its base may legitimately differ from the old one.
@@ -59,18 +59,18 @@ class HEROMappingDraft(Document):
                     and int(self.reconciliation_revision or 0) == 0
                     and not self.reconciliation_json)
         if previous.state == "DISCARDED" and self.state == "OPEN" and not reopened:
-            frappe.throw("Personal mapping draft reopen must start a new generation.")
+            frappe.throw(frappe._("Personal mapping draft reopen must start a new generation."))
         if not _same_json(self.new_definition_json, previous.new_definition_json) and not (
                 reopened and previous.new_definition_json and not self.new_definition_json):
-            frappe.throw('New-definition context is immutable within a generation.')
+            frappe.throw(frappe._('New-definition context is immutable within a generation.'))
         if not _same_json(self.base_content_json, previous.base_content_json) and not reopened:
-            frappe.throw("Personal mapping draft base_content_json is immutable.")
+            frappe.throw(frappe._("Personal mapping draft base_content_json is immutable."))
 
     def db_set(self, *args, **kwargs):
-        frappe.throw("Use the personal draft storage service.")
+        frappe.throw(frappe._("Use the personal draft storage service."))
 
     def before_rename(self, *args, **kwargs):
-        frappe.throw("Personal draft identity is immutable.")
+        frappe.throw(frappe._("Personal draft identity is immutable."))
 
     def on_trash(self):
-        frappe.throw("Discard personal drafts through their service; history must be retained.")
+        frappe.throw(frappe._("Discard personal drafts through their service; history must be retained."))

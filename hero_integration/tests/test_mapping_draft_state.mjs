@@ -587,3 +587,28 @@ test('resuming automatic directional entry preserves keyboard focus on its tab',
  resumePendingView({kind:'detail',item:{name:'query'},mappingType:'graphql',focus:false},{detail:(item,kind,focus)=>reads.push([item.name,kind,focus])});
  assert.deepEqual(reads,[['query','graphql',false]]);
 });
+
+test('mapping choice context translates descriptions and preserves technical values', () => {
+ const messages = {'Definition {0}':'Definition {0}', 'Revision {0}':'Revision {0}',
+  'Arguments: {0}':'Argumente: {0}', 'Not permitted':'Nicht erlaubt'};
+ window.hero_integration_i18n = {text: value => messages[value] || String(value)};
+ const {definitionChoice, objectFieldContext} = window.hero_integration_mapping_editor;
+ assert.match(definitionChoice({operation:'customer', revision:2},0).context, /Definition 1.*Revision 2/);
+ assert.equal(objectFieldContext({fieldtype:'String', arguments:[{name:'id',type:'ID!'}],reason:'Not permitted'}),
+  'String · Argumente: id: ID! · Nicht erlaubt');
+ delete window.hero_integration_i18n;
+});
+
+test('activation confirmation translates warnings without altering the saved values', () => {
+ const messages = {'Publish the saved draft and acknowledge these warnings: {0}. No HERO synchronization will be started.':
+  'Gespeicherten Entwurf mit diesen Warnungen veröffentlichen: {0}. Keine HERO-Synchronisation wird gestartet.',
+  'Known warning':'Bekannte Warnung',
+  'Publish the saved personal draft? No HERO synchronization will be started.':'Persönlichen Entwurf veröffentlichen? Keine HERO-Synchronisation wird gestartet.'};
+ window.hero_integration_i18n = {text: value => messages[value] || String(value)};
+ const warnings = ['Known warning', 'External detail: RULE-1'];
+ const {activationDescription} = window.hero_integration_mapping_editor;
+ assert.equal(activationDescription(warnings), 'Gespeicherten Entwurf mit diesen Warnungen veröffentlichen: Bekannte Warnung; External detail: RULE-1. Keine HERO-Synchronisation wird gestartet.');
+ assert.deepEqual(warnings, ['Known warning', 'External detail: RULE-1']);
+ assert.match(activationDescription(null), /^Persönlichen Entwurf/);
+ delete window.hero_integration_i18n;
+});

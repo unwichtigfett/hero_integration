@@ -24,6 +24,6 @@ class HEROMappingAdoption(Document):
     def validate(self) -> None:
         frappe.only_for("System Manager")
         if not _service_write.get():
-            frappe.throw("Mapping adoption records are managed by the adoption service.")
+            frappe.throw(frappe._("Mapping adoption records are managed by the adoption service."))
         if self.package_json:
             self.package_fingerprint = hashlib.sha256(self.package_json.encode()).hexdigest()

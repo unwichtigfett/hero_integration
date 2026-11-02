@@ -52,6 +52,8 @@ class FakeDocument:
 
 
 class Fake:
+    _ = staticmethod(lambda message: message)
+
     def __init__(self):
         self.local, self.session = SimpleNamespace(site='test.local'), SimpleNamespace(user='owner')
         self.PermissionError = PermissionError

@@ -176,7 +176,7 @@ class TestLegacyCheckpoint(TestCase):
 
     def test_an_old_site_schema_cannot_silently_drop_the_queued_contract(self):
         from hero_integration import api
-        fake = SimpleNamespace(get_meta=lambda _: SimpleNamespace(has_field=lambda _: False),
+        fake = SimpleNamespace(_=lambda message: message, get_meta=lambda _: SimpleNamespace(has_field=lambda _: False),
                                throw=lambda message: (_ for _ in ()).throw(ValueError(message)))
         with mock.patch.object(api, 'frappe', fake), mock.patch.object(api, '_approved_read_service') as reader:
             with self.assertRaisesRegex(ValueError, 'checkpoint schema'):

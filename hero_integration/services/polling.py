@@ -191,12 +191,13 @@ def _record_event(mode: str, status: str, detail: str, result: MonitorResult | N
 
 def _notify_polling_event(event_name: str, detail: str) -> None:
     import frappe
-    from hero_integration.services.conflict_notifications import configured_recipients
+    from hero_integration.services.conflict_notifications import configured_recipients, recipient_diagnostic, recipient_text
 
     for user in configured_recipients():
         frappe.get_doc({"doctype": "Notification Log", "for_user": user, "type": "Alert",
             "document_type": "HERO Polling Event", "document_name": event_name,
-            "subject": "HERO polling status", "email_content": detail}).insert(ignore_permissions=True)
+            "subject": recipient_text(user, "HERO polling status"),
+            "email_content": recipient_diagnostic(user, detail)}).insert(ignore_permissions=True)
 
 
 def _monitor_observer(operation: str, record: dict[str, object]) -> None:

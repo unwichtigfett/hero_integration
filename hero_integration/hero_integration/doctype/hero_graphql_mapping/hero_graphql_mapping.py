@@ -21,14 +21,14 @@ class HEROGraphQLMapping(Document):
         protect_managed_mapping(self)
         previous = self.get_doc_before_save() if not self.is_new() else None
         if previous and previous.status == 'Active' and previous.direction != self.direction:
-            frappe.throw('An active mapping definition direction is immutable; create a separate definition for the other direction.')
+            frappe.throw(frappe._('An active mapping definition direction is immutable; create a separate definition for the other direction.'))
         if (self.direction, self.operation_kind) not in {
             ("QUERY_TO_FRAPPE", "QUERY"), ("FRAPPE_TO_MUTATION", "MUTATION"),
         }:
-            frappe.throw("GraphQL mapping direction and operation kind must agree.")
+            frappe.throw(frappe._("GraphQL mapping direction and operation kind must agree."))
         snapshot = frappe.get_doc("HERO GraphQL Schema Snapshot", self.schema_snapshot)
         if snapshot.analysis_status != "Validated":
-            frappe.throw("A validated schema snapshot is required.")
+            frappe.throw(frappe._("A validated schema snapshot is required."))
         # All supported membership changes in a directional exchange context
         # participate in the same narrowly scoped application lock.
         scopes = set()
@@ -66,23 +66,23 @@ class HEROGraphQLMapping(Document):
                             mapping["source"]["doctype"], mapping["source"]["field"], FrappePickerMetadata(),
                         )
                         if not draft_source_type_compatible(source_field.fieldtype, mapping["target"]["graphql_type"]):
-                            frappe.throw("The selected Frappe source and HERO scalar or enum input types are incompatible.")
+                            frappe.throw(frappe._("The selected Frappe source and HERO scalar or enum input types are incompatible."))
                 lossy_writeback = not _mapping_values_preserved(original, mapping)
                 source = mapping["source"]
                 if not frappe.get_meta(source["doctype"]).get_field(source["field"]):
-                    frappe.throw("The configured Frappe writeback field no longer exists.")
+                    frappe.throw(frappe._("The configured Frappe writeback field no longer exists."))
                 if self.operation_kind != "MUTATION" or self.operation_name != mapping["target"]["operation"]:
-                    frappe.throw("Writeback direction, operation kind and reviewed HERO target must agree.")
+                    frappe.throw(frappe._("Writeback direction, operation kind and reviewed HERO target must agree."))
                 self.mapping_json = json.dumps(mapping, ensure_ascii=False, sort_keys=True)
             available = {item["operation_name"] for item in catalog(json.loads(snapshot.snapshot_json), self.operation_kind)}
         except WritebackContractError as error:
             frappe.throw(str(error))
         except (ValueError, TypeError):
-            frappe.throw("The GraphQL mapping must contain a valid JSON object and schema operation.")
+            frappe.throw(frappe._("The GraphQL mapping must contain a valid JSON object and schema operation."))
         if lossy_writeback:
-            frappe.throw('Writeback normalization would lose mapping parameters.')
+            frappe.throw(frappe._('Writeback normalization would lose mapping parameters.'))
         if self.operation_name not in available:
-            frappe.throw("The selected operation is not present in the selected schema snapshot.")
+            frappe.throw(frappe._("The selected operation is not present in the selected schema snapshot."))
         self.schema_fingerprint = snapshot.schema_fingerprint
         self.source_instance = getattr(snapshot, "source_instance", "") or ""
         if self.direction == "FRAPPE_TO_MUTATION" and self.status == "Active":
@@ -92,7 +92,7 @@ class HEROGraphQLMapping(Document):
                 pluck="name",
             )
             if len(contracts) != 1:
-                frappe.throw("Exactly one active schema-bound HERO Mutation Contract is required for writeback activation.")
+                frappe.throw(frappe._("Exactly one active schema-bound HERO Mutation Contract is required for writeback activation."))
             if context_changed:
                 _check_active_writeback_conflicts(snapshot.name, mapping["source"], self.name or "")
         if not self.definition_id:
@@ -108,31 +108,31 @@ class HEROGraphQLMapping(Document):
                 matches = frappe.db.sql('select name from `tabHERO GraphQL Mapping` '
                                         'where portable_definition_id=%s for update', (portable_candidate,))
                 if matches:
-                    frappe.throw('Definition identity is already enrolled by another mapping.')
+                    frappe.throw(frappe._('Definition identity is already enrolled by another mapping.'))
                 from hero_integration.services.frappe_mapping_draft_storage import (
                     lock_definition_drafts, lock_identity_drafts, personal_publication_parent, first_publication_admits,
                 )
                 drafts = lock_definition_drafts(frappe, [portable_candidate])
                 if any(not first_publication_admits('definition', portable_candidate, row) for row in drafts):
-                    frappe.throw('Definition identity is already used by a personal draft.')
+                    frappe.throw(frappe._('Definition identity is already used by a personal draft.'))
                 for row in lock_identity_drafts(frappe, [portable_candidate], 'child'):
                     parent = personal_publication_parent()
                     if not ((parent and row.owner_user == frappe.session.user and row.base_active_mapping == parent)
                             or first_publication_admits('definition', portable_candidate, row)):
-                        frappe.throw('Definition identity is already used by a personal draft.')
+                        frappe.throw(frappe._('Definition identity is already used by a personal draft.'))
         if previous and previous.definition_id and self.definition_id != previous.definition_id:
-            frappe.throw("GraphQL mapping definition identity is immutable.")
+            frappe.throw(frappe._("GraphQL mapping definition identity is immutable."))
         portable = self.get('portable_definition_id') or ''
         from hero_integration.services.frappe_mapping_draft_storage import first_publication_admits
         if portable != ((previous.get('portable_definition_id') or '') if previous else '') and not (
                 not previous and portable == self.definition_id and first_publication_admits('definition', portable)):
-            frappe.throw('Portable identity may only be enrolled through the identity service.')
+            frappe.throw(frappe._('Portable identity may only be enrolled through the identity service.'))
         for field in ('portable_schema_manifest', 'portable_schema_dependencies'):
             value = self.get(field) or ''
             old = (previous.get(field) or '') if previous else ''
             if value != old and not (not previous and self.direction == 'QUERY_TO_FRAPPE'
                                      and first_publication_admits('definition', self.definition_id)):
-                frappe.throw('Portable mapping schema provenance is immutable and service-managed.')
+                frappe.throw(frappe._('Portable mapping schema provenance is immutable and service-managed.'))
         self.content_hash = hashlib.sha256(
             json.dumps(mapping, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
         ).hexdigest()
@@ -150,7 +150,7 @@ class HEROGraphQLMapping(Document):
             self.status = "Draft"
         if self.status == "Active" and previous and previous.status == "Draft":
             if previous.modified_by != frappe.session.user:
-                frappe.throw("Only the administrator who last changed this Draft may activate it.")
+                frappe.throw(frappe._("Only the administrator who last changed this Draft may activate it."))
 
     def on_trash(self):
         if self.status == 'Active':
@@ -172,7 +172,7 @@ def require_exchange_context(source_instance, snapshot_name, direction):
                      ensure_ascii=False, separators=(',', ':'))
     name = 'hero-map:' + hashlib.sha256(key.encode()).hexdigest()[:52]
     if name not in (getattr(frappe.db, '_hero_mapping_target_locks', None) or set()):
-        frappe.throw('Mapping context must be locked before saving an active definition; use the mapping service.')
+        frappe.throw(frappe._('Mapping context must be locked before saving an active definition; use the mapping service.'))
     _lock_active_target('personal-draft-exchange', source_instance or '', target)
 
 
@@ -204,6 +204,6 @@ def _check_active_writeback_conflicts(snapshot_name, source, name):
         except (TypeError, ValueError):
             other_source = None
         if not isinstance(other_source, dict) or not all(isinstance(other_source.get(key), str) for key in ("doctype", "field")):
-            frappe.throw("An active writeback source cannot be safely inspected.")
+            frappe.throw(frappe._("An active writeback source cannot be safely inspected."))
         if all(other_source[key] == source[key] for key in ("doctype", "field")):
-            frappe.throw("An active writeback mapping already owns this Frappe field.")
+            frappe.throw(frappe._("An active writeback mapping already owns this Frappe field."))

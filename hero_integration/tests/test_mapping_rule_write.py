@@ -106,7 +106,7 @@ class TestMappingRuleWrite(unittest.TestCase):
 
     def test_field_rule_deletion_is_fail_closed(self):
         def fail(message, *args): raise PermissionError(message)
-        fake = SimpleNamespace(throw=fail, PermissionError=PermissionError)
+        fake = SimpleNamespace(throw=fail, PermissionError=PermissionError, _=lambda message: message)
         doc = SimpleNamespace(personal_graphql_mapping='')
         with patch.object(hero_frappe_mapping, 'frappe', fake):
             with self.assertRaisesRegex(PermissionError, 'references are reconciled'):
@@ -122,7 +122,7 @@ class TestMappingRuleWrite(unittest.TestCase):
     def test_direct_active_update_and_foreign_draft_are_denied_by_controller(self):
         from hero_integration.services import frappe_mapping_draft_storage
         def fail(message, *args): raise PermissionError(message)
-        fake = SimpleNamespace(only_for=lambda role: None, session=self.session, throw=fail,
+        fake = SimpleNamespace(only_for=lambda role: None, session=self.session, throw=fail, _=lambda message: message,
                                PermissionError=PermissionError)
         for status, owner, expected in [('Active', 'alice', 'cannot be changed directly'),
                                         ('Draft', 'foreign', 'Only the owner')]:

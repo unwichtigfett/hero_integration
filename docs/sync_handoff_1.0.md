@@ -1,66 +1,35 @@
-# Synchronization Handoff — HERO Integration
+# Synchronization handoff — Customer, Project, Task and Calendar
 
-## 1. Confirmed — Source Behavior
-### Customer
-- HERO identity via existing Integration Link.
-- Native Customer, Contact and Address records.
-- Shared records protected against unauthorized updates.
-- Conflicts reported; no identity inference from names or emails.
+**Source review:** 2 November 2026 · **Delivery:** partial  
+**External execution:** not authorized · **Target runtime:** unverified
 
-### Project
-- Requires HERO identity, resolved Customer, confirmed Company and server-side title.
-- Partner notes separated from native Project notes.
-- No inferred Customer or Company assignment.
+A mapping Draft, approved Query document and execution permission are separate. Check the source instance/binding, schema fingerprint, selected active rules, service revision, site permissions and recovery evidence before running anything.
 
-### Task
-- Stable identity: `system/instance/type/source_id`.
-- Subject required; description optional.
-- Field baselines detect concurrent changes.
-- Conflicts and NULL/empty values require review.
-- Omitted fields remain unchanged.
-- No automatic deletion, closure or binding replacement.
-- Replay preserves identity.
+## Implemented source behavior
 
-### Task Read Service
-- Saved Task draft generates read-only service draft.
-- Publication binds rules, source instance and schema snapshot.
-- Separate System Manager approval required for execution.
-- Approval and locked rules revalidated before each generated page.
-- Existing HERO client/decoder reused.
+| Area | Current contract |
+| --- | --- |
+| **Customer** | Stable HERO Integration Link identity; native Customer, primary Contact and Address adapters. Shared updates without proven authority become conflicts. Names/emails are not identities. |
+| **Project** | HERO identity, resolved Customer, separately confirmed ERPNext Company and server-generated title. Partner notes stay separate. HERO Project document names use `-H`. |
+| **Task** | Separate native Task intake: stable system/instance/type/source ID, required subject, selected optional fields, conflict baselines and idempotent replay. Source deletion must not delete or close the Task. |
+| **Task read service** | Saved owned Draft can generate a read-only service Draft. Seal binds rules, source and snapshot. Publication is not read approval; generated pages recheck mapping/service revisions. |
+| **Mapping exchange** | Independent Query, Mutation and personal Draft boundaries. Preview protects complete target context, identities and provenance. Schema provisioning and runtime authority are separate. |
+| **Calendar** | Native Event identity, project resolver through existing readable Integration Link, omission preservation and conflict-aware updates. Partner/resource observations are not native participants. |
+| **Other safeguards** | Read service approval, rule locking, checkpoints and source-binding validation are implemented in source. Task lifecycle and guarded ToDo/assignment-policy code also exist, but need site-specific acceptance. |
 
-### Mapping Exchange
-- Query and Mutation strictly separated.
-- Independent revisions, owners and snapshots.
-- Target identities and provenance protected.
-- Authenticated preview binds complete active context.
-- Shared `site/source/snapshot/direction` writer lock.
-- Mutation metadata grants no execution authority.
+## Pending or unverified
 
-### Calendar
-- Native Event projection with stable CalendarEvent identity.
-- Project resolution exclusively via existing Integration Link.
-- Missing/NULL relationships preserved.
-- Local edits remain conflict-detectable.
-- Unknown recurrence blocked; explicit recurrence held.
-- Existing Event time-group changes require review.
-- Independent field updates remain possible.
+- **Task:** external deadline NULL/timezone semantics, completion/unassignment edge cases, initial ToDo policy and transfer acceptance, framework assignment-intent patch.
+- **Calendar:** source timezone, all-day boundaries, recurrence, Customer and participant/resource identity. Unknown recurrence is blocked; true recurrence needs review. Existing Event time-group conflicts hold changes while independent fields may proceed.
+- **Exchange:** business binding/action import and complete import preview, particularly when the target lacks a validated snapshot.
+- **Runtime:** target database/schema, permissions, external HERO execution, polling, recovery and full mandatory-area acceptance.
 
-## 2. Pending — Functional Coverage
+## Rules that remain in force
 
-- Task assignment and ToDo synchronization
-- External deadlines, NULL and timezone semantics
-- Calendar timezone, all-day and recurrence handling
-- Binding and action import
-- External synchronization execution
+- Never infer identity or permissions from names, emails, Project/Partner IDs or an unreviewed source value.
+- Omitted values are not clears. **Unverified NULL/empty semantics must not authorize clearing, deletion, completion or unassignment.** Legacy Task lifecycle paths still need negative tests against this requirement.
+- Mutation metadata does not authorize a write to HERO. A System Manager must approve exact active mapping/service revisions and the applicable action gates.
+- Preview the entire target context before importing; protect target provenance and run schema provisioning only when needed.
+- Articles, versions, prices, inventory and accounting are **outside the current mapping scope**.
 
-## 4. Safety Constraints
-
-- Drafts and previews grant **no execution authority**.
-- Unverified NULL values never automatically clear, delete, complete or unassign.
-- Existing Integration Links remain identity authority.
-- Raw DB writes and arbitrary DDL are outside exchange protection.
-- Source implementation and offline tests do not prove runtime acceptance.
-
-## 5. Out of Scope
-
-Articles, versions, prices, inventory and accounting.
+**Acceptance:** `PARTIAL / EXECUTION_UNVERIFIED`. Full acceptance requires evidence for every agreed mandatory area, the target runtime and recovery.

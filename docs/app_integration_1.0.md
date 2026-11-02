@@ -1,11 +1,12 @@
 # ERPNext, Helpdesk and CRM: how they work together
 
+> **Ownership and workflow decision.** This records the intended relationship between the apps, not proof that all steps are enabled on a target site. Current implementation and missing approvals are tracked in [Feature matrix](feature_matrix_1.0.md) and [Synchronization handoff](sync_handoff_1.0.md).
+
 **(decided)** marks decisions the owner has already taken.
 
 ## 1. Principles
 
-1. **One owner per record.** Exactly one system creates and changes each business
-   record. All other systems hold references, never copies.
+1. **Clear ownership per record and field.** HERO provides external source data while approved local users can edit eligible fields. Integration Links and field baselines prevent silent overwrites. Helpdesk and CRM reference canonical ERPNext records rather than maintaining competing copies.
 2. **HERO is the operational source; ERPNext is the shared master copy.** HERO creates
    and changes customers, contacts, addresses, tasks and appointments. The import copies
    them one-way into ERPNext. Projects come from HERO **or are created directly in
@@ -71,9 +72,7 @@ always with `erp_project`. The operator's e-mails thread into the ticket. The pr
 shows its open requests. HERO still owns the project status itself.
 
 ### 3.4 Execution in the field
-Tasks and appointments come from HERO. Electricians and roofers see their assigned
-Tasks/Events. They record time in Timesheets (HRMS) against the Project. Mapping HERO
-users to ERPNext users and employees is an open step (section 6).
+Tasks and events have guarded native intake paths. Assignment, Calendar time and participant semantics require additional contracts and site acceptance before employee-facing use. Timesheets remain a separate HRMS workflow.
 
 ## 4. Matching and identity rules
 
@@ -116,4 +115,4 @@ users to ERPNext users and employees is an open step (section 6).
 5. **Telephony**: the installed app supports only Exotel/Twilio. sipgate needs its own
    adapter that links calls to the Contact and the `erp_customer`.
 6. **CRM leads from HERO `KONT-`** contact requests (owner decision required).
-7. **Write-back to HERO**: later **(decided)**.
+7. **HERO writeback:** Limited Customer/Project/Task action paths exist, but each requires explicit permission, preview, mutation gates, audit and confirmation. Mapping import does not enable reverse sync.

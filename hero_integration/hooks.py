@@ -27,6 +27,17 @@ doctype_js = {
     "Customer": ["public/js/hero_writeback.js", "public/js/hero_customer_send.js"],
     "Project": ["public/js/hero_writeback.js", "public/js/hero_project_send.js"],
     "Task": ["public/js/hero_task_send.js"],
+    "HERO Integration Link": ["public/js/hero_diagnostics.js"],
+    "HERO Integration Record": ["public/js/hero_diagnostics.js"],
+    "HERO Polling Event": ["public/js/hero_diagnostics.js"],
+    "HERO GraphQL Mapping": ["public/js/hero_diagnostics.js", "public/js/hero_native_diagnostics.js"],
+    "HERO GraphQL Schema Snapshot": ["public/js/hero_diagnostics.js", "public/js/hero_native_diagnostics.js"],
+    "HERO Snapshot Mapping Inheritance": ["public/js/hero_diagnostics.js", "public/js/hero_native_diagnostics.js"],
+    "HERO Mutation Audit": ["public/js/hero_diagnostics.js", "public/js/hero_native_diagnostics.js"],
+    "HERO Integration Run": ["public/js/hero_diagnostics.js", "public/js/hero_native_diagnostics.js"],
+    "HERO Mapping Adoption": ["public/js/hero_diagnostics.js", "public/js/hero_native_diagnostics.js"],
+    "HERO Integration Settings": ["public/js/hero_diagnostics.js", "public/js/hero_native_diagnostics.js"],
+    "HERO Migration Progress Ledger": ["public/js/hero_diagnostics.js", "public/js/hero_native_diagnostics.js"],
 }
 
 # The deletion gate applies to the explicitly listed HERO-owned DocTypes.

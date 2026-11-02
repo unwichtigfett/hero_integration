@@ -59,6 +59,8 @@ class Document:
 
 
 class Fake:
+    _ = staticmethod(lambda message: message)
+
     def __init__(self, site, source, snapshot):
         self.local = SimpleNamespace(site=site, conf={'encryption_key': 'synthetic-key'})
         self.session = SimpleNamespace(user='owner@example.invalid')
@@ -784,7 +786,7 @@ class TestPortableDraftExchange(unittest.TestCase):
         doc = SimpleNamespace(is_new=lambda: False, get_doc_before_save=lambda: previous,
                               direction='FRAPPE_TO_MUTATION')
         def fail(message): raise ValueError(message)
-        fake = SimpleNamespace(only_for=lambda role: None, throw=fail)
+        fake = SimpleNamespace(_=lambda message: message, only_for=lambda role: None, throw=fail)
         with patch.object(hero_graphql_mapping, 'frappe', fake), patch.object(mapping_draft_access, 'protect_managed_mapping'):
             with self.assertRaisesRegex(ValueError, 'direction is immutable'):
                 hero_graphql_mapping.HEROGraphQLMapping.validate(doc)
@@ -792,7 +794,7 @@ class TestPortableDraftExchange(unittest.TestCase):
     def test_existing_mapping_requires_preheld_context_without_acquiring_it(self):
         from hero_integration.hero_integration.doctype.hero_graphql_mapping import hero_graphql_mapping
         def fail(message): raise ValueError(message)
-        fake = SimpleNamespace(local=SimpleNamespace(site='target.test'), db=SimpleNamespace(), throw=fail)
+        fake = SimpleNamespace(_=lambda message: message, local=SimpleNamespace(site='target.test'), db=SimpleNamespace(), throw=fail)
         with patch.object(hero_graphql_mapping, 'frappe', fake), patch.object(hero_frappe_mapping, '_lock_active_target') as lock:
             with self.assertRaisesRegex(ValueError, 'must be locked before'):
                 hero_graphql_mapping.require_exchange_context('source', 'snapshot', 'QUERY_TO_FRAPPE')
@@ -800,7 +802,7 @@ class TestPortableDraftExchange(unittest.TestCase):
 
     def test_existing_rule_requires_preheld_target_without_acquiring_it(self):
         def fail(message): raise ValueError(message)
-        fake = SimpleNamespace(local=SimpleNamespace(site='target.test'), db=SimpleNamespace(), throw=fail)
+        fake = SimpleNamespace(_=lambda message: message, local=SimpleNamespace(site='target.test'), db=SimpleNamespace(), throw=fail)
         with patch.object(hero_frappe_mapping, 'frappe', fake), patch.object(hero_frappe_mapping, '_lock_active_target') as lock:
             with self.assertRaisesRegex(ValueError, 'must be locked before'):
                 hero_frappe_mapping._require_active_target('operation', 'Customer', 'email')

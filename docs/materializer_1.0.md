@@ -1,9 +1,15 @@
-# Internal pure GraphQL materializer
+# Internal GraphQL materializer
 
-Decision: hero_integration ships a versioned, internal, pure-Python materializer package. The package is extracted from hero_connector revision 6908a5acf7fe00726cc379c9b1d72824bc7a601d. It has no runtime dependency on hero_connector, auto_domain, Frappe, site configuration, database, or HTTP transport.
+HERO Integration ships an internal, versioned pure-Python GraphQL materializer. It originated in `hero_connector` revision `6908a5acf7fe00726cc379c9b1d72824bc7a601d`. The original source revision and file hashes are recorded in `hero_integration/graphql_protocol/SOURCE_PROVENANCE.json`.
 
-Scope: The package covers deterministic operation rendering, typed variables, stable selections, result decoding, and request fingerprints. Nothing else. Snapshot adaptation and mapping-controller integration follow in later phases.
+The package renders deterministic operations, handles typed values and selections, decodes results and generates request fingerprints. It does not depend on `hero_connector`, Frappe, a site database or HTTP transport.
 
-Provenance: The source is MIT-licensed hero_connector code. hero_integration/graphql_protocol/SOURCE_PROVENANCE.json records the source revision and the hashes of the imported files.
+## How it is used now
 
-Safety: The package changes none of these: ReadContract, writeback gates, preview, confirmation, audit, no-retry mutation transport, mappings, services, and contracts.
+The current source includes `services/materializer_routing.py`, mapping-aware operation generation and generated read-only Task service drafts. These callers provide validated snapshots, selected rules and identity context; they **do not** obtain execution permission just by producing a valid GraphQL document.
+
+Legacy reviewed Query services keep their stored contracts until each is explicitly migrated and approved. Generated Task reads require matching active mapping and service approvals and revalidation before every page. A Mutation proposal is technical metadata, not a grant to write to HERO.
+
+The materializer does not bypass permission checks, personal Draft ownership, CAS, source binding, request budgets, read-service approval, native field protection, mutation audits or no-blind-retry behavior.
+
+**Evidence:** Implemented source behavior, not proof that every legacy executor has migrated or that external HERO runtime execution has been accepted.

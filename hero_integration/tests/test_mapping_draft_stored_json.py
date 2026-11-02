@@ -69,7 +69,8 @@ class TestStoredJsonComparison(unittest.TestCase):
         def fail(message, *_):
             raise ValueError(message)
 
-        fake = SimpleNamespace(session=SimpleNamespace(user="owner"), throw=fail, PermissionError=PermissionError)
+        fake = SimpleNamespace(session=SimpleNamespace(user="owner"), throw=fail, PermissionError=PermissionError,
+                               _=lambda message: message)
         with patch.object(self.controller, "frappe", fake), patch.object(storage, "assert_storage_write"):
             self.controller.HEROMappingDraft.validate(current)
 

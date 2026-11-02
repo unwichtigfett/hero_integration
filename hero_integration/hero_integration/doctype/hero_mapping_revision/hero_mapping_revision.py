@@ -12,18 +12,18 @@ class HEROMappingRevision(Document):
 
     def validate(self) -> None:
         if not self.is_new():
-            frappe.throw("Mapping revisions are immutable.")
+            frappe.throw(frappe._("Mapping revisions are immutable."))
         from hero_integration.services.frappe_mapping_draft_storage import assert_storage_write
         try:
             assert_storage_write(self)
         except PermissionError:
-            frappe.throw("Personal mapping document write denied.", frappe.PermissionError)
+            frappe.throw(frappe._("Personal mapping document write denied."), frappe.PermissionError)
 
     def on_trash(self):
-        frappe.throw("Mapping revision history must be retained.")
+        frappe.throw(frappe._("Mapping revision history must be retained."))
 
     def db_set(self, *args, **kwargs):
-        frappe.throw("Mapping revisions are immutable.")
+        frappe.throw(frappe._("Mapping revisions are immutable."))
 
     def before_rename(self, *args, **kwargs):
-        frappe.throw("Mapping revisions are immutable.")
+        frappe.throw(frappe._("Mapping revisions are immutable."))

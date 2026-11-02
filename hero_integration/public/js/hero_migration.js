@@ -4,6 +4,9 @@
 
     if (window.hero_integration_migration) return;
 
+    const tr = (value) => value == null ? value : (window.hero_integration_i18n?.text(value) ?? value);
+    const format = (message, ...values) => tr(message).replace(/\{(\d+)\}/g, (_, index) => String(values[index] ?? ""));
+    const diagnostic = (value) => window.hero_integration_diagnostics?.translate(value) ?? tr(value);
     const API = "hero_integration.api.";
     const PAGE_SIZE = 8;
     const REFRESH_MS = 5000;
@@ -35,13 +38,13 @@
     const add = (node, ...children) => node.append(...clean(children));
 
     function errorMessage(error) {
-        if (typeof error?.message === "string" && error.message) return error.message;
+        if (typeof error?.message === "string" && error.message) return diagnostic(error.message);
         try {
             const messages = JSON.parse(error?._server_messages || error?.responseJSON?._server_messages || "[]");
             const first = messages.map((item) => typeof item === "string" ? JSON.parse(item) : item).find(Boolean);
-            if (first?.message) return first.message;
+            if (first?.message) return diagnostic(first.message);
         } catch (_) { /* not JSON */ }
-        return "The server rejected the request. Check the server log for details.";
+        return tr("The server rejected the request. Check the server log for details.");
     }
 
     function call(method, args = {}, type = "GET") {
@@ -55,8 +58,14 @@
     function formatDateTime(value) {
         const date = toDate(value);
         if (!date || Number.isNaN(date.getTime())) return "—";
-        const pad = (number) => String(number).padStart(2, "0");
-        return `${pad(date.getDate())}.${pad(date.getMonth() + 1)}.${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+        const language = (frappe.boot?.lang || "en").replaceAll("_", "-");
+        const options = {year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit"};
+        try {
+            return new Intl.DateTimeFormat(language, options).format(date);
+        } catch (error) {
+            if (!(error instanceof RangeError)) throw error;
+            return new Intl.DateTimeFormat("en", options).format(date);
+        }
     }
     function formatDuration(start, end) {
         const from = toDate(start), to = end ? toDate(end) : new Date();
@@ -65,8 +74,21 @@
         const pad = (number) => String(number).padStart(2, "0");
         return `${pad(Math.floor(seconds / 3600))}:${pad(Math.floor(seconds / 60) % 60)}:${pad(seconds % 60)}`;
     }
-    const number = (value) => Number(value || 0).toLocaleString("de-DE");
-    const plural = (count, singular, pluralText) => `${number(count)} ${count === 1 ? singular : pluralText}`;
+    const number = (value) => {
+        const numeric = Number(value || 0);
+        const language = (frappe.boot?.lang || "en").replaceAll("_", "-");
+        try {
+            return numeric.toLocaleString(language);
+        } catch (error) {
+            if (!(error instanceof RangeError)) throw error;
+            return numeric.toLocaleString("en");
+        }
+    };
+    const plural = (count, singular, pluralText) => `${number(count)} ${tr(count === 1 ? singular : pluralText)}`;
+    const phaseSummary = (state, count) => format('{0} · {1} processed', tr(state), number(count));
+    const testingSummary = (run) => format('{0} · {1}/{2} HERO requests · {3} records',
+        tr(run.testing_status || 'PENDING'), number(run.testing_executed_actions),
+        number(run.testing_max_actions), number(run.testing_records_received));
 
     function icon(name) {
         const ns = "http://www.w3.org/2000/svg";
@@ -90,15 +112,15 @@
 
         const notice = el("div", {class: "hero-sync-notice", role: "status", "aria-live": "polite"});
         const head = el("header", {class: "hero-sync-panel hero-sync-head", "data-views": "migration"},
-            el("h2", {text: "Hero Migration / Synchronization"}),
-            el("p", {text: "Import and synchronize data from HERO to Frappe."}), notice);
-        const subscription = el("section", {class: "hero-sync-panel hero-sync-subscription", "data-views": "sync", "aria-label": "Subscription Service"});
-        const viewSwitch = el("nav", {class: "hero-sync-views", "aria-label": "Synchronization views"},
+            el("h2", {text: tr("Hero Migration / Synchronization")}),
+            el("p", {text: tr("Import and synchronize data from HERO to Frappe.")}), notice);
+        const subscription = el("section", {class: "hero-sync-panel hero-sync-subscription", "data-views": "sync", "aria-label": tr("Subscription Service")});
+        const viewSwitch = el("nav", {class: "hero-sync-views", "aria-label": tr("Synchronization views")},
             ...[["migration", "Migration"], ["sync", "Sync"], ["runtime", "Runtime"]].map(([key, label]) =>
-                el("button", {type: "button", class: "hero-sync-view-button", "data-view": key, text: label, onclick: () => { state.view = key; renderView(); }})));
+                el("button", {type: "button", class: "hero-sync-view-button", "data-view": key, text: tr(label), onclick: () => { state.view = key; renderView(); }})));
         const manual = el("section", {class: "hero-sync-panel hero-sync-manual", "data-views": "migration", "aria-labelledby": "hero-sync-manual-title"});
-        const service = el("section", {class: "hero-sync-panel hero-sync-service", "data-views": "sync", "aria-label": "Sync Services"});
-        const states = el("section", {class: "hero-sync-panel hero-sync-states", "data-views": "migration sync", "aria-label": "States"});
+        const service = el("section", {class: "hero-sync-panel hero-sync-service", "data-views": "sync", "aria-label": tr("Sync Services")});
+        const states = el("section", {class: "hero-sync-panel hero-sync-states", "data-views": "migration sync", "aria-label": tr("States")});
         const work = el("section", {class: "hero-sync-panel hero-sync-work", "data-views": "runtime"});
         const root = el("section", {class: "hero-sync", "data-view": state.view}, viewSwitch, head, subscription, manual, service, states, work);
         // The frame is the size container: the layout follows the space the page really has.
@@ -109,7 +131,7 @@
             viewSwitch.querySelectorAll("button").forEach((button) => button.setAttribute("aria-pressed", button.dataset.view === state.view ? "true" : "false"));
         }
 
-        function say(text, tone = "") { notice.textContent = text || ""; notice.dataset.tone = tone; }
+        function say(text, tone = "") { notice.textContent = text ? tr(text) : ""; notice.dataset.tone = tone; }
 
         // --- Subscription service (global switch) --------------------------------
         function renderSubscription() {
@@ -117,11 +139,11 @@
             const on = svc.allowed && !svc.paused;
             const label = !svc.allowed ? "Polling is off in Settings" : svc.mode === "MONITOR" ? "Monitor only: reads and reports, no data changes" : "Polling / Update";
             const button = el("button", {type: "button", role: "switch", class: "hero-sync-global", "aria-checked": on ? "true" : "false", disabled: (!svc.allowed || state.busy) || undefined,
-                title: svc.allowed ? "Switches automatic processing on or off. Polling settings stay unchanged." : "Choose a polling mode under Settings first.",
-                onclick: () => setService({enabled: on ? 0 : 1})}, el("span", {class: "hero-sync-dot", "aria-hidden": "true"}), on ? "Sync on" : "Sync off");
+                title: tr(svc.allowed ? "Switches automatic processing on or off. Polling settings stay unchanged." : "Choose a polling mode under Settings first."),
+                onclick: () => setService({enabled: on ? 0 : 1})}, el("span", {class: "hero-sync-dot", "aria-hidden": "true"}), tr(on ? "Sync on" : "Sync off"));
             put(subscription, 
                 el("span", {class: `hero-sync-lamp ${on ? "is-on" : ""}`, "aria-hidden": "true"}),
-                el("div", {class: "hero-sync-subscription-text"}, el("h3", {text: "Subscription Service"}), el("p", {text: label})),
+                el("div", {class: "hero-sync-subscription-text"}, el("h3", {text: tr("Subscription Service")}), el("p", {text: tr(label)})),
                 button);
         }
 
@@ -133,33 +155,33 @@
                 const blockedByOther = Boolean(activeRun) && !running;
                 const button = el("button", {type: "button", class: "hero-sync-action", "data-area": area.key,
                     disabled: (running || blockedByOther || !area.ready || state.busy) || undefined,
-                    title: running ? "This area is running." : blockedByOther ? `Run ${activeRun.name} is still in progress.` : area.ready ? "" : area.blocker,
-                    onclick: () => startArea(area)}, running ? "Running …" : area.button);
+                    title: running ? tr("This area is running.") : blockedByOther ? format("Run {0} is still in progress.", activeRun.name) : area.ready ? "" : tr(area.blocker),
+                    onclick: () => startArea(area)}, tr(running ? "Running …" : area.button));
                 const scope = area.scope || {};
                 return el("article", {class: `hero-sync-card ${state.selectedArea === area.key ? "is-selected" : ""}`, "data-area": area.key},
-                    el("button", {type: "button", class: "hero-sync-card-title", title: "Show function details", onclick: () => { state.selectedArea = area.key; state.tab = "details"; renderManual(); renderWork(); }},
-                        icon(area.key), el("h4", {text: area.action_label})),
-                    el("p", {class: "hero-sync-card-text", text: area.description}),
-                    el("div", {class: "hero-sync-card-block"}, el("span", {class: "hero-sync-caption", text: "Mapped objects"}),
-                        scope.object_count ? el("span", {text: plural(scope.object_count, "object", "objects")}) : el("span", {text: "No active mapping"}),
+                    el("button", {type: "button", class: "hero-sync-card-title", title: tr("Show function details"), onclick: () => { state.selectedArea = area.key; state.tab = "details"; renderManual(); renderWork(); }},
+                        icon(area.key), el("h4", {text: tr(area.action_label)})),
+                    el("p", {class: "hero-sync-card-text", text: tr(area.description)}),
+                    el("div", {class: "hero-sync-card-block"}, el("span", {class: "hero-sync-caption", text: tr("Mapped objects")}),
+                        scope.object_count ? el("span", {text: plural(scope.object_count, "object", "objects")}) : el("span", {text: tr("No active mapping")}),
                         scope.object_count ? el("span", {text: plural(scope.field_count, "field", "fields")}) : null),
-                    el("div", {class: "hero-sync-card-block"}, el("span", {class: "hero-sync-caption", text: "Last successful"}), el("span", {text: formatDateTime(area.last_successful)})),
-                    area.ready ? null : el("p", {class: "hero-sync-card-blocker", text: "Not ready: approved read service missing."}),
+                    el("div", {class: "hero-sync-card-block"}, el("span", {class: "hero-sync-caption", text: tr("Last successful")}), el("span", {text: formatDateTime(area.last_successful)})),
+                    area.ready ? null : el("p", {class: "hero-sync-card-blocker", text: tr("Not ready: approved read service missing.")}),
                     button);
             });
             put(manual, 
-                el("div", {class: "hero-sync-section-head"}, el("h3", {id: "hero-sync-manual-title", text: "Manual Actions"}), el("span", {text: "Start or update migrations for individual data areas"})),
+                el("div", {class: "hero-sync-section-head"}, el("h3", {id: "hero-sync-manual-title", text: tr("Manual Actions")}), el("span", {text: tr("Start or update migrations for individual data areas")})),
                 el("div", {class: "hero-sync-cards"}, cards));
         }
 
         function startArea(area) {
             const verb = area.button === "Start" ? "Start" : "Update";
-            frappe.confirm(`${verb} ${area.action_label}? This migrates the object fields of the active mapping for ${area.label} from HERO into Frappe.`, async () => {
+            frappe.confirm(format("{0} {1}? This migrates the object fields of the active mapping for {2} from HERO into Frappe.", tr(verb), tr(area.action_label), tr(area.label)), async () => {
                 state.busy = true; renderAll();
-                say(`${area.action_label} is being queued …`);
+                say(format("{0} is being queued …", tr(area.action_label)));
                 try {
                     const result = await call("sync_area_start", {area: area.key}, "POST");
-                    say(`${area.action_label} queued as ${result.run}.`, "ok");
+                    say(format("{0} queued as {1}.", tr(area.action_label), result.run), "ok");
                     state.selectedRun = result.run; state.tab = "history"; state.runsStart = 0;
                 } catch (error) {
                     say(error.message, "error");
@@ -172,42 +194,42 @@
 
         // --- Sync service ----------------------------------------------------------
         function readonly(label, value, unit = "") {
-            return el("div", {class: "hero-sync-row"}, el("span", {class: "hero-sync-row-label", text: label}),
+            return el("div", {class: "hero-sync-row"}, el("span", {class: "hero-sync-row-label", text: tr(label)}),
                 el("span", {class: "hero-sync-value"}, el("span", {text: value}), unit ? el("span", {class: "hero-sync-unit", text: unit}) : null));
         }
         function renderService() {
             const svc = state.data.service;
             const switches = state.data.areas.map((area) => el("div", {class: "hero-sync-row"},
-                el("span", {class: "hero-sync-row-label", text: area.label}),
+                el("span", {class: "hero-sync-row-label", text: tr(area.label)}),
                 el("span", {class: "hero-sync-switch-wrap"},
-                    toggle(`Sync ${area.label}`, area.sync_enabled, state.busy, (value) => setService({area: area.key, area_enabled: value ? 1 : 0})),
-                    el("span", {class: "hero-sync-switch-state", text: area.sync_enabled ? "On" : "Off"}))));
-            const monitorNote = svc.mode === "MONITOR" ? el("p", {class: "hero-sync-hint", text: "Monitor only reads Contacts and Projects; it never changes data."}) : null;
+                    toggle(format("Sync {0}", tr(area.label)), area.sync_enabled, state.busy, (value) => setService({area: area.key, area_enabled: value ? 1 : 0})),
+                    el("span", {class: "hero-sync-switch-state", text: tr(area.sync_enabled ? "On" : "Off")}))));
+            const monitorNote = svc.mode === "MONITOR" ? el("p", {class: "hero-sync-hint", text: tr("Monitor only reads Contacts and Projects; it never changes data.")}) : null;
             put(service, 
                 el("div", {class: "hero-sync-service-grid"},
-                    el("div", {class: "hero-sync-sub hero-sync-sub-areas"}, el("h3", {text: "Sync Services"}), el("p", {class: "hero-sync-hint", text: "Enable or disable synchronization per area."}), switches, monitorNote),
+                    el("div", {class: "hero-sync-sub hero-sync-sub-areas"}, el("h3", {text: tr("Sync Services")}), el("p", {class: "hero-sync-hint", text: tr("Enable or disable synchronization per area.")}), switches, monitorNote),
                     el("div", {class: "hero-sync-sub hero-sync-sub-mode"},
-                        el("div", {class: "hero-sync-row"}, el("h3", {text: "Mode"}), el("span", {class: `hero-sync-mode mode-${String(svc.mode).toLowerCase()}`, text: MODE_LABELS[svc.mode] || svc.mode})),
-                        readonly("Exec. time", svc.execution_window || "Any time"),
+                        el("div", {class: "hero-sync-row"}, el("h3", {text: tr("Mode")}), el("span", {class: `hero-sync-mode mode-${String(svc.mode).toLowerCase()}`, text: tr(MODE_LABELS[svc.mode] || svc.mode)})),
+                        readonly("Exec. time", svc.execution_window || tr("Any time")),
                         readonly("Timezone", svc.timezone),
                         readonly("Pagination", svc.pagination_strategy === "OFFSET" ? "Offset" : svc.pagination_strategy),
                         readonly("Timeout", String(svc.timeout_seconds), "sec"),
-                        readonly("Notification", svc.notifications ? "On" : "Off")),
-                    el("div", {class: "hero-sync-sub hero-sync-sub-info"}, el("h3", {text: "Service Information"}),
+                        readonly("Notification", tr(svc.notifications ? "On" : "Off"))),
+                    el("div", {class: "hero-sync-sub hero-sync-sub-info"}, el("h3", {text: tr("Service Information")}),
                         readonly("Polling interval", String(svc.interval_minutes), "min"),
                         readonly("Page size", String(svc.page_size)),
                         readonly("Retry limit", String(svc.retry_limit)),
                         readonly("Retry backoff", String(svc.retry_backoff_seconds), "sec"),
                         readonly("Requests per minute", String(svc.rate_limit)),
-                        el("p", {class: "hero-sync-hint", text: "Edit these values under Settings."}))),
-                svc.sync_error ? el("p", {class: "hero-sync-error", text: svc.sync_error}) : null);
+                        el("p", {class: "hero-sync-hint", text: tr("Edit these values under Settings.")}))),
+                svc.sync_error ? el("p", {class: "hero-sync-error", text: diagnostic(svc.sync_error)}) : null);
         }
 
         async function setService(args) {
             state.busy = true; renderAll();
             try {
                 state.data = await call("sync_service_set", args, "POST");
-                say("Sync service updated.", "ok");
+                say(tr("Sync service updated."), "ok");
             } catch (error) {
                 say(error.message, "error");
             } finally {
@@ -217,16 +239,16 @@
 
         // --- States ------------------------------------------------------------------
         function metric(label, value, tone = "") {
-            return el("div", {class: "hero-sync-metric"}, el("span", {class: "hero-sync-metric-label", text: label}), el("span", {class: `hero-sync-metric-value ${tone}`, text: number(value)}));
+            return el("div", {class: "hero-sync-metric"}, el("span", {class: "hero-sync-metric-label", text: tr(label)}), el("span", {class: `hero-sync-metric-value ${tone}`, text: number(value)}));
         }
         function renderStates() {
             const metrics = state.data.metrics, records = metrics.records, polling = metrics.polling;
             put(states, 
                 el("div", {class: "hero-sync-states-group"},
-                    el("div", {class: "hero-sync-section-head"}, el("h3", {text: "States"}), el("span", {text: "Linked records per area"})),
+                    el("div", {class: "hero-sync-section-head"}, el("h3", {text: tr("States")}), el("span", {text: tr("Linked records per area")})),
                     el("div", {class: "hero-sync-metrics"}, state.data.areas.map((area) => metric(area.label, records[area.key])))),
                 el("div", {class: "hero-sync-states-group"},
-                    el("div", {class: "hero-sync-section-head"}, el("h3", {text: "Polling"}), el("span", {text: `Last ${polling.period_days} days`})),
+                    el("div", {class: "hero-sync-section-head"}, el("h3", {text: tr("Polling")}), el("span", {text: format("Last {0} days", polling.period_days)})),
                     el("div", {class: "hero-sync-metrics"}, metric("Runs", polling.runs), metric("Pass", polling.pass, "ok"), metric("Fail", polling.fail, polling.fail ? "error" : ""),
                         metric("Incomplete", polling.incomplete), metric("Skipped", polling.skipped))));
         }
@@ -236,7 +258,7 @@
         function renderWork() {
             const tabs = el("div", {class: "hero-sync-tabs", role: "tablist"}, TABS.map(([key, label]) =>
                 el("button", {type: "button", role: "tab", class: "hero-sync-tab", "aria-selected": state.tab === key ? "true" : "false",
-                    onclick: () => { state.tab = key; renderWork(); loadTab(); }, text: label})));
+                    onclick: () => { state.tab = key; renderWork(); loadTab(); }, text: tr(label)})));
             const main = el("div", {class: "hero-sync-work-main"}), side = el("aside", {class: "hero-sync-work-side", "aria-live": "polite"});
             if (state.tab === "history") renderHistory(main, side);
             else if (state.tab === "details") renderDetails(main, side);
@@ -253,14 +275,14 @@
             }
             return el("div", {class: "hero-sync-pager"},
                 el("div", {class: "hero-sync-pages"},
-                    el("button", {type: "button", class: "hero-sync-page", "aria-label": "Previous page", disabled: current === 0 || undefined, text: "‹", onclick: () => onPage((current - 1) * PAGE_SIZE)}),
+                    el("button", {type: "button", class: "hero-sync-page", "aria-label": tr("Previous page"), disabled: current === 0 || undefined, text: "‹", onclick: () => onPage((current - 1) * PAGE_SIZE)}),
                     buttons,
-                    el("button", {type: "button", class: "hero-sync-page", "aria-label": "Next page", disabled: current >= pages - 1 || undefined, text: "›", onclick: () => onPage((current + 1) * PAGE_SIZE)})),
-                el("span", {class: "hero-sync-hint", text: total ? `${start + 1}–${start + shown} of ${number(total)}` : "0 of 0"}));
+                    el("button", {type: "button", class: "hero-sync-page", "aria-label": tr("Next page"), disabled: current >= pages - 1 || undefined, text: "›", onclick: () => onPage((current + 1) * PAGE_SIZE)})),
+                el("span", {class: "hero-sync-hint", text: total ? format("{0}–{1} of {2}", start + 1, start + shown, number(total)) : tr("0 of 0")}));
         }
 
         function statusBadge(value) {
-            return el("span", {class: `hero-sync-status tone-${STATE_TONE[value] || "muted"}`}, el("span", {class: "hero-sync-dot", "aria-hidden": "true"}), value || "—");
+            return el("span", {class: `hero-sync-status tone-${STATE_TONE[value] || "muted"}`}, el("span", {class: "hero-sync-dot", "aria-hidden": "true"}), value ? tr(value) : "—");
         }
         function progress(row) {
             const tone = STATE_TONE[row.state] || "muted";
@@ -268,25 +290,25 @@
             const finished = ["Completed", "Completed With Conflicts"].includes(row.state);
             return el("div", {class: "hero-sync-progress"},
                 finished || tone === "busy" ? el("span", {class: `hero-sync-bar tone-${tone} ${finished ? "is-full" : "is-running"}`, "aria-hidden": "true"}, el("span")) : null,
-                el("span", {text: `${number(row.processed)} processed${row.conflict_records ? ` · ${number(row.conflict_records)} conflicts` : ""}`}));
+                el("span", {text: format("{0} processed", number(row.processed)) + (row.conflict_records ? " · " + format("{0} conflicts", number(row.conflict_records)) : "")}));
         }
 
         function renderHistory(main, side) {
             const data = state.runs;
-            if (!data) { add(main, el("p", {class: "hero-sync-hint", text: "Loading runtime history …"})); }
-            else if (!data.rows.length) { add(main, el("p", {class: "hero-sync-hint", text: "No runs yet. Start a manual action to create the first run."})); }
+            if (!data) { add(main, el("p", {class: "hero-sync-hint", text: tr("Loading runtime history …")})); }
+            else if (!data.rows.length) { add(main, el("p", {class: "hero-sync-hint", text: tr("No runs yet. Start a manual action to create the first run.")})); }
             else {
                 const body = el("tbody", {}, data.rows.map((row) => el("tr", {class: row.name === state.selectedRun ? "is-selected" : ""},
                     el("td", {class: "hero-sync-mono", text: row.name}),
-                    el("td", {text: row.area}),
+                    el("td", {text: tr(row.area)}),
                     el("td", {}, statusBadge(row.state)),
                     el("td", {}, progress(row)),
                     el("td", {class: "is-optional", text: `${number(row.created_records)} / ${number(row.processed)}`}),
                     el("td", {text: formatDateTime(row.started_on || row.creation)}),
                     el("td", {class: "is-optional", text: row.started_on ? formatDuration(row.started_on, row.finished_on) : "—"}),
-                    el("td", {}, el("button", {type: "button", class: "hero-sync-small", text: "View", onclick: () => selectRun(row.name)})))));
+                    el("td", {}, el("button", {type: "button", class: "hero-sync-small", text: tr("View"), onclick: () => selectRun(row.name)})))));
                 add(main, el("div", {class: "hero-sync-table-wrap"}, el("table", {class: "hero-sync-table"},
-                    el("thead", {}, el("tr", {}, [["ID"], ["Action"], ["Status"], ["Progress"], ["Created / processed", "is-optional"], ["Started"], ["Duration", "is-optional"], ["Action"]].map(([label, cls]) => el("th", {scope: "col", class: cls, text: label})))),
+                    el("thead", {}, el("tr", {}, [["ID"], ["Action"], ["Status"], ["Progress"], ["Created / processed", "is-optional"], ["Started"], ["Duration", "is-optional"], ["Action"]].map(([label, cls]) => el("th", {scope: "col", class: cls, text: tr(label)})))),
                     body)), pager(data.start, data.total, data.rows.length, (start) => { state.runsStart = Math.max(0, start); loadRuns(); }));
             }
             renderRunDetail(side);
@@ -294,32 +316,32 @@
 
         function renderRunDetail(side) {
             const run = state.detail;
-            if (!state.selectedRun) { add(side, el("p", {class: "hero-sync-empty", text: "Select a run to view details."})); return; }
-            if (!run || run.name !== state.selectedRun) { add(side, el("p", {class: "hero-sync-hint", text: "Loading run details …"})); return; }
+            if (!state.selectedRun) { add(side, el("p", {class: "hero-sync-empty", text: tr("Select a run to view details.")})); return; }
+            if (!run || run.name !== state.selectedRun) { add(side, el("p", {class: "hero-sync-hint", text: tr("Loading run details …")})); return; }
             const facts = [
-                ["Action", run.area], ["Status", run.state], ["Mode", run.mode], ["Source instance", run.source_instance || "—"],
+                ["Action", tr(run.area)], ["Status", tr(run.state)], ["Mode", tr(run.mode)], ["Source instance", run.source_instance || "—"],
                 ["Started", formatDateTime(run.started_on)], ["Finished", formatDateTime(run.finished_on)],
                 ["Duration", run.started_on ? formatDuration(run.started_on, run.finished_on) : "—"],
                 ["Processed", number(run.processed)], ["Created", number(run.created_records)], ["Updated or unchanged", number(run.skipped_records)], ["Conflicts", number(run.conflict_records)],
                 ["Read service", run.graphql_service || "—"], ["Mapping version", run.graphql_mapping ? `${run.graphql_mapping} · rev. ${run.mapping_revision || 0}` : "—"],
             ];
-            if (run.customer_phase_state) facts.push(["Contacts phase", `${run.customer_phase_state} · ${number(run.customer_phase_processed)} processed`]);
-            if (run.project_phase_state && run.action === "Project Migration") facts.push(["Projects phase", `${run.project_phase_state} · ${number(run.project_phase_processed)} processed`]);
+            if (run.customer_phase_state) facts.push(["Contacts phase", phaseSummary(run.customer_phase_state, run.customer_phase_processed)]);
+            if (run.project_phase_state && run.action === "Project Migration") facts.push(["Projects phase", phaseSummary(run.project_phase_state, run.project_phase_processed)]);
             if (Number(run.testing_enabled)) {
-                facts.push(["Testing", `${run.testing_status || "PENDING"} · ${run.testing_executed_actions || 0}/${run.testing_max_actions || 0} HERO requests · ${number(run.testing_records_received)} records`]);
-                try { Object.entries(JSON.parse(run.testing_results_json || "{}")).forEach(([name, result]) => facts.push([name, result.status])); } catch (_) { facts.push(["Testing results", "Results unavailable"]); }
+                facts.push(["Testing", testingSummary(run)]);
+                try { Object.entries(JSON.parse(run.testing_results_json || "{}")).forEach(([name, result]) => facts.push([name, tr(result.status)])); } catch (_) { facts.push(["Testing results", tr("Results unavailable")]); }
             }
             const actions = el("div", {class: "hero-sync-detail-actions"},
-                run.can_cancel ? el("button", {type: "button", class: "hero-sync-small", text: "Cancel", onclick: () => runAction("cancel_run", run, "Cancel this run at the next safe point? Records already written stay in place.")}) : null,
-                run.can_continue ? el("button", {type: "button", class: "hero-sync-small is-primary", text: "Continue", onclick: () => runAction("resume_run", run, "Continue this run from its saved position? It keeps its original mapping version; current approvals are checked again.")}) : null);
+                run.can_cancel ? el("button", {type: "button", class: "hero-sync-small", text: tr("Cancel"), onclick: () => runAction("cancel_run", run, tr("Cancel this run at the next safe point? Records already written stay in place."))}) : null,
+                run.can_continue ? el("button", {type: "button", class: "hero-sync-small is-primary", text: tr("Continue"), onclick: () => runAction("resume_run", run, tr("Continue this run from its saved position? It keeps its original mapping version; current approvals are checked again."))}) : null);
             const outcomes = Object.entries(run.outcomes || {});
             add(side, 
                 el("h4", {class: "hero-sync-mono", text: run.name}),
-                el("dl", {class: "hero-sync-facts"}, facts.map(([label, value]) => [el("dt", {text: label}), el("dd", {text: value})])),
-                run.error_message ? el("p", {class: "hero-sync-error", text: run.error_message}) : null,
-                outcomes.length ? el("div", {class: "hero-sync-chips"}, outcomes.map(([code, count]) => el("span", {class: "hero-sync-chip", text: `${code}: ${number(count)}`}))) : null,
-                run.conflicts?.length ? el("div", {class: "hero-sync-detail-list"}, el("h5", {text: "Conflicts in this run"}),
-                    el("ul", {}, run.conflicts.map((item) => el("li", {text: `${item.source_type} ${item.source_id}: ${item.detail || item.result}`})))) : null,
+                el("dl", {class: "hero-sync-facts"}, facts.map(([label, value]) => [el("dt", {text: tr(label)}), el("dd", {text: value})])),
+                run.error_message ? el("p", {class: "hero-sync-error", text: diagnostic(run.error_message)}) : null,
+                outcomes.length ? el("div", {class: "hero-sync-chips"}, outcomes.map(([code, count]) => el("span", {class: "hero-sync-chip", text: `${tr(code)}: ${number(count)}`}))) : null,
+                run.conflicts?.length ? el("div", {class: "hero-sync-detail-list"}, el("h5", {text: tr("Conflicts in this run")}),
+                    el("ul", {}, run.conflicts.map((item) => el("li", {text: `${item.source_type} ${item.source_id}: ${diagnostic(item.detail || item.result)}`})))) : null,
                 actions);
         }
 
@@ -327,7 +349,7 @@
             frappe.confirm(question, async () => {
                 try {
                     await call(method, {run_name: run.name}, "POST");
-                    say(method === "cancel_run" ? `Run ${run.name} is being cancelled.` : `Run ${run.name} is queued to continue.`, "ok");
+                    say(format(method === "cancel_run" ? "Run {0} is being cancelled." : "Run {0} is queued to continue.", run.name), "ok");
                 } catch (error) {
                     say(error.message, "error");
                 }
@@ -338,27 +360,29 @@
         function renderDetails(main, side) {
             const area = state.data.areas.find((item) => item.key === state.selectedArea) || state.data.areas[0];
             add(main, 
-                el("div", {class: "hero-sync-area-picker", role: "group", "aria-label": "Action"}, state.data.areas.map((item) =>
-                    el("button", {type: "button", class: "hero-sync-small", "aria-pressed": item.key === area.key ? "true" : "false", text: item.action_label, onclick: () => { state.selectedArea = item.key; renderManual(); renderWork(); }}))),
-                el("h4", {text: area.action_label}),
-                el("p", {text: area.scope_note}),
-                el("p", {class: "hero-sync-quote", text: FUNCTION_TEXT}),
-                el("p", {class: "hero-sync-hint", text: `${area.button === "Start" ? "Start runs the first import" : "Update processes new records, changed records and newly mapped fields"} for the HERO source instance "${state.data.source_instance}". You do not choose GraphQL services; the server resolves them from the active mapping.`}),
-                el("h5", {text: "Mapped objects"}),
+                el("div", {class: "hero-sync-area-picker", role: "group", "aria-label": tr("Action")}, state.data.areas.map((item) =>
+                    el("button", {type: "button", class: "hero-sync-small", "aria-pressed": item.key === area.key ? "true" : "false", text: tr(item.action_label), onclick: () => { state.selectedArea = item.key; renderManual(); renderWork(); }}))),
+                el("h4", {text: tr(area.action_label)}),
+                el("p", {text: tr(area.scope_note)}),
+                el("p", {class: "hero-sync-quote", text: tr(FUNCTION_TEXT)}),
+                el("p", {class: "hero-sync-hint", text: area.button === "Start"
+                    ? format('Start runs the first import for the HERO source instance "{0}". You do not choose GraphQL services; the server resolves them from the active mapping.', state.data.source_instance)
+                    : format('Update processes new records, changed records and newly mapped fields for the HERO source instance "{0}". You do not choose GraphQL services; the server resolves them from the active mapping.', state.data.source_instance)}),
+                el("h5", {text: tr("Mapped objects")}),
                 area.scope.objects.length
                     ? el("div", {class: "hero-sync-scope"}, area.scope.objects.map((object) => el("div", {class: "hero-sync-scope-object"},
                         el("strong", {text: `${object.doctype} · ${plural(object.fields.length, "field", "fields")}`}),
                         el("div", {class: "hero-sync-chips"}, object.fields.map((field) => el("span", {class: "hero-sync-chip", text: field}))))))
-                    : el("p", {class: "hero-sync-hint", text: "No active mapping rules exist for this area. Create and activate them under Mapping."}));
+                    : el("p", {class: "hero-sync-hint", text: tr("No active mapping rules exist for this area. Create and activate them under Mapping.")}));
             add(side, 
-                el("h4", {text: "Prerequisites"}),
+                el("h4", {text: tr("Prerequisites")}),
                 el("dl", {class: "hero-sync-facts"},
-                    el("dt", {text: "Status"}), el("dd", {text: area.ready ? "Ready" : "Not ready"}),
-                    el("dt", {text: "Read service"}), el("dd", {text: area.service?.service || "—"}),
-                    el("dt", {text: "Snapshot"}), el("dd", {text: area.service?.snapshot || "—"}),
-                    el("dt", {text: "Last successful"}), el("dd", {text: formatDateTime(area.last_successful)}),
-                    el("dt", {text: "Automatic sync"}), el("dd", {text: area.sync_enabled ? (area.polled ? "On · read by polling" : "On") : "Off"})),
-                area.blocker ? el("p", {class: "hero-sync-error", text: area.blocker}) : null);
+                    el("dt", {text: tr("Status")}), el("dd", {text: tr(area.ready ? "Ready" : "Not ready")}),
+                    el("dt", {text: tr("Read service")}), el("dd", {text: area.service?.service || "—"}),
+                    el("dt", {text: tr("Snapshot")}), el("dd", {text: area.service?.snapshot || "—"}),
+                    el("dt", {text: tr("Last successful")}), el("dd", {text: formatDateTime(area.last_successful)}),
+                    el("dt", {text: tr("Automatic sync")}), el("dd", {text: tr(area.sync_enabled ? (area.polled ? "On · read by polling" : "On") : "Off")})),
+                area.blocker ? el("p", {class: "hero-sync-error", text: tr(area.blocker)}) : null);
         }
 
         async function decideConflicts(rows, decision) {
@@ -367,37 +391,37 @@
             let completed = 0;
             for (const row of rows) {
                 try { await call("decide_hero_review", {link: row.name, decision}, "POST"); completed++; state.selectedConflicts.delete(row.name); }
-                catch (error) { say(`${completed} processed. ${row.name}: ${error.message}`, "error"); break; }
+                catch (error) { say(format("{0} processed. {1}: {2}", completed, row.name, error.message), "error"); break; }
             }
             state.busy = false;
-            if (completed === rows.length) say(`${completed} decisions saved. Conflicts marked for recheck are checked on the next synchronization.`, "ok");
+            if (completed === rows.length) say(format("{0} decisions saved. Conflicts marked for recheck are checked on the next synchronization.", completed), "ok");
             await loadConflicts();
         }
 
         function renderConflicts(main, side) {
             const data = state.conflicts;
-            add(main, el("h3", {text: "Importing Conflicts"}));
-            if (!data) { add(main, el("p", {class: "hero-sync-hint", text: "Loading conflicts …"})); return; }
-            if (!data.rows.length) { add(main, el("p", {class: "hero-sync-hint", text: "No open conflicts."})); return; }
+            add(main, el("h3", {text: tr("Importing Conflicts")}));
+            if (!data) { add(main, el("p", {class: "hero-sync-hint", text: tr("Loading conflicts …")})); return; }
+            if (!data.rows.length) { add(main, el("p", {class: "hero-sync-hint", text: tr("No open conflicts.")})); return; }
             const decidable = (row) => row.kind !== "record";
             const chosen = () => data.rows.filter((row) => decidable(row) && state.selectedConflicts.has(row.name));
             add(main, el("div", {class: "hero-sync-actions"},
-                el("button", {type: "button", text: "Approve selected", disabled: state.busy || undefined, onclick: () => decideConflicts(chosen(), "approve")}),
-                el("button", {type: "button", text: "Decline selected", disabled: state.busy || undefined, onclick: () => decideConflicts(chosen(), "reject")})),
+                el("button", {type: "button", text: tr("Approve selected"), disabled: state.busy || undefined, onclick: () => decideConflicts(chosen(), "approve")}),
+                el("button", {type: "button", text: tr("Decline selected"), disabled: state.busy || undefined, onclick: () => decideConflicts(chosen(), "reject")})),
                 el("div", {class: "hero-sync-table-wrap"}, el("table", {class: "hero-sync-table"},
-                    el("thead", {}, el("tr", {}, ["Select", "ID", "Conflict", "Entity Type", "Sync State", "Approve / Decline"].map((label) => el("th", {scope: "col", text: label})))),
+                    el("thead", {}, el("tr", {}, ["Select", "ID", "Conflict", "Entity Type", "Sync State", "Approve / Decline"].map((label) => el("th", {scope: "col", text: tr(label)})))),
                     el("tbody", {}, data.rows.map((row) => el("tr", {},
-                        el("td", {}, decidable(row) ? el("input", {type: "checkbox", "aria-label": `Select ${row.name}`, checked: state.selectedConflicts.has(row.name) || undefined,
+                        el("td", {}, decidable(row) ? el("input", {type: "checkbox", "aria-label": format("Select {0}", row.name), checked: state.selectedConflicts.has(row.name) || undefined,
                             onchange: (event) => event.target.checked ? state.selectedConflicts.add(row.name) : state.selectedConflicts.delete(row.name)}) : null),
                         el("td", {class: "hero-sync-mono", text: decidable(row) ? row.name : `HERO ${row.source_id}`}),
-                        el("td", {text: row.conflict_detail || "Conflict requires review."}),
-                        el("td", {text: row.area}),
-                        el("td", {text: !decidable(row) ? `Not imported (${row.run})` : row.sync_status === "Pending Review" ? "Confirmation pending" : (row.conflict_detail || "").startsWith("Recheck requested: ") ? "Recheck requested" : "Conflict"}),
-                        el("td", {}, decidable(row) ? [el("button", {type: "button", class: "hero-sync-small", text: "Approve", disabled: state.busy || undefined, onclick: () => decideConflicts([row], "approve")}),
-                            el("button", {type: "button", class: "hero-sync-small", text: "Decline", disabled: state.busy || undefined, onclick: () => decideConflicts([row], "reject")})]
-                            : el("span", {class: "hero-sync-hint", text: "Fix in HERO; the next run imports it."}))))))),
+                        el("td", {text: row.conflict_detail ? diagnostic(row.conflict_detail) : tr("Conflict requires review.")}),
+                        el("td", {text: tr(row.area)}),
+                        el("td", {text: !decidable(row) ? format("Not imported ({0})", row.run) : tr(row.sync_status === "Pending Review" ? "Confirmation pending" : (row.conflict_detail || "").startsWith("Recheck requested: ") ? "Recheck requested" : "Conflict")}),
+                        el("td", {}, decidable(row) ? [el("button", {type: "button", class: "hero-sync-small", text: tr("Approve"), disabled: state.busy || undefined, onclick: () => decideConflicts([row], "approve")}),
+                            el("button", {type: "button", class: "hero-sync-small", text: tr("Decline"), disabled: state.busy || undefined, onclick: () => decideConflicts([row], "reject")})]
+                            : el("span", {class: "hero-sync-hint", text: tr("Fix in HERO; the next run imports it.")}))))))),
                 pager(data.start, data.total, data.rows.length, (start) => { state.conflictsStart = Math.max(0, start); state.selectedConflicts.clear(); loadConflicts(); }));
-            add(side, el("p", {class: "hero-sync-hint", text: "Approving a field conflict requests a recheck on the next synchronization. Declining keeps the existing record and stops further updates. Records that were not imported at all come from the latest run of each area and have nothing to approve."}));
+            add(side, el("p", {class: "hero-sync-hint", text: tr("Approving a field conflict requests a recheck on the next synchronization. Declining keeps the existing record and stops further updates. Records that were not imported at all come from the latest run of each area and have nothing to approve.")}));
         }
 
         // --- Loading -------------------------------------------------------------------------
@@ -450,10 +474,10 @@
         }
 
         renderView();
-        manual.append(el("p", {class: "hero-sync-hint", text: "Loading stored synchronization state …"}));
+        manual.append(el("p", {class: "hero-sync-hint", text: tr("Loading stored synchronization state …")}));
         refresh();
         return {destroy() { state.destroyed = true; clearTimeout(state.timer); }};
     }
 
-    window.hero_integration_migration = Object.freeze({mount});
+    window.hero_integration_migration = Object.freeze({mount, diagnostic, formatDateTime, phaseSummary, testingSummary});
 })();

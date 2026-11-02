@@ -16,19 +16,20 @@ from hero_integration.graphql_protocol.operation_kind import GraphQLOperationKin
 from hero_integration.services.binding_registry import BindingRegistryService, FieldBinding, BindingState
 from hero_integration.services.mapping_registry_model import MappingDirection
 from hero_integration.services.migration_engine import SealedRead
+from hero_integration.services.localized_error import LocalizedError
 
 
-class SyncError(ValueError): pass
+class SyncError(LocalizedError): pass
 class SyncConflict(SyncError): pass
 class SyncStatus(StrEnum): IDLE="IDLE"; RUNNING="RUNNING"; SUCCEEDED="SUCCEEDED"; PARTIAL="PARTIAL"; INCOMPLETE="INCOMPLETE"; RECONCILIATION_REQUIRED="RECONCILIATION_REQUIRED"; FAILED="FAILED"; DISABLED="DISABLED"
 class Eligibility(StrEnum): NOT_ELIGIBLE="NOT_ELIGIBLE"; UNBOUND_ELIGIBLE="UNBOUND_ELIGIBLE"; LOCAL_CHANGED="LOCAL_CHANGED"; MAPPING_CHANGED="MAPPING_CHANGED"; RECONCILIATION_REQUIRED="RECONCILIATION_REQUIRED"
 
 
 def _text(value, label):
-    if not isinstance(value, str) or not value.strip(): raise SyncError(f"{label} is required.")
+    if not isinstance(value, str) or not value.strip(): raise SyncError('{0} is required.', label)
     return value
 def _positive(value, label):
-    if not isinstance(value, int) or isinstance(value, bool) or value < 1: raise SyncError(f"{label} must be positive.")
+    if not isinstance(value, int) or isinstance(value, bool) or value < 1: raise SyncError('{0} must be positive.', label)
     return value
 def _fingerprint(value):
     value=_text(value,"schema fingerprint")

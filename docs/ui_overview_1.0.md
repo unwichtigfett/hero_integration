@@ -1,59 +1,26 @@
-# HERO workspace
+# HERO Desk workspace
 
-`hero-integration` is the only visible HERO Desk workspace.
+The `hero-integration` Desk workspace has five views: **Overview**, **API & Schema**, **Mapping**, **Synchronisation** and **Settings**. API & Schema contains API Analyzer, Graph Viewer and GraphQL Services (Query / Mutation).
 
-## Unified Desk navigation
+## Mapping and target fields
 
-`hero-integration` opens the preserved Adapter host. It contains exactly five
-main tabs:
- - Overview
- - API & Schema
- - Mapping
- - Synchronisation
- - Settings
-API & Schema tab:
- - API Analyzer
- - Graph Viewer
- - GraphQL Services [Query | Mutation]
+The editor requires an explicitly selected, saved and validated schema snapshot. It discovers installed apps, DocTypes and fields from the active site. Compatible targets are **Draft proposals**, not automatically active mappings or permission to write. Personal Drafts, revisions and Query/Mutation directions have separate authorization rules.
 
-Mapping requires an explicit selection of a saved, validated snapshot.
+## Query and Mutation execution
 
-## Runtime Frappe target catalog
+| Action | Actual behavior |
+| --- | --- |
+| Workspace context, schema and graph | Read saved validated snapshot information. |
+| GraphQL service list/detail/save/validate/delete | Permission-checked **local** management of saved service definitions. |
+| `workspace_service_execute` | **Explicit read-only Query execution** for System Manager. Requires validated saved Query, matching revision/snapshot and checked variables. Mutations are rejected before transport; no migration or record acknowledgment occurs. |
+| `execute_graphql_service` | **Separate mutation endpoint** guarded by active contract, global switch, role/confirmation and one-shot audit/transport. A Mutation Draft alone cannot execute. |
+| Mapping Draft and exchange endpoints | Local changes with owner, CAS, snapshot and publication guards; no automatic runtime permission. |
+| Settings and synchronization endpoints | Perform only their specific allowed reads/configuration/run requests after server-side checks. |
 
-The Mapping section discovers installed apps and their DocTypes from the active
-site at request time. It exposes App → DocType → Field choices from Frappe
-metadata, including standard and Custom Fields.
+Old compatibility RPC names and the prior classification of every `execute_service` call as a HERO mutation are **not** a reliable account of the current code. Review the actual endpoints in [`hero_integration/api.py`](../hero_integration/api.py).
 
-Any field of another installed app can become a validated **Draft proposal**.
-The app does not activate it and does not write to that DocType directly.
+## Acceptance boundary
 
-## Mutation drafts
+Source tests and earlier visual checks do not establish the behavior of the current deployed Desk UI. Verify the exact branch/commit, employee isolation, administrator controls, narrow layouts, Frappe permissions and browser runtime on the target site.
 
-The Analyzer and Graph Viewer keep schema mutation nodes, input relations
-and return types.
-Drafts never contain saved variables or credentials. The app never executes
-them. Every execution fails closed when `HERO_MUTATION_EXECUTION_DISABLED`.
-
-The CSS/DOM source port has no visual browser check. Visual parity needs a
-manual step in a browser.
-
-## RPC inventory and bounded mapping
-
-| Original RPC | Classification | Native result |
-| --- | --- | --- |
-| `get_context` | SAFE_READ | `workspace_context` from saved snapshots |
-| `get_schema` | SAFE_READ | `workspace_schema` full saved introspection projection |
-| `get_graph` | SAFE_READ | `workspace_graph` complete saved graph projection |
-| `list_services`, `get_query` | SAFE_READ | saved `HERO GraphQL Service` records |
-| `save_query`, `validate_saved_query`, `preview_query`, `delete_query` | SAFE_LOCAL_SERVICE_MANAGEMENT | permission-checked local read-only service definitions |
-| `get_settings` | SAFE_READ | redacted native settings read |
-| `save_settings` | SAFE_LOCAL_SERVICE_MANAGEMENT | native DocType validation; token is never returned |
-| `execute_service` | WRITE_HERO_MUTATION | visible Execute control; both workspace compatibility and `execute_graphql_service` fail closed with default setting `HERO_MUTATION_EXECUTION_DISABLED` |
-| `refresh_schema`, `synchronize_connection` | LEGACY_PROCESS_ONLY | visible overview actions disabled; they require old binding/transport state |
-
-The source workspace displays Query and Mutation modes.
-
-## Complete stored schema source
-
-Each stored source snapshot is read-only and carries a source fingerprint.
-Raw source payloads stay outside Git.
+Schema source payloads and credentials stay outside Git. Generated GraphQL Query documents do not bypass the active service/mapping and source-binding contracts.

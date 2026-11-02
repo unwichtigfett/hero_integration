@@ -137,7 +137,7 @@ class TestAdoptionRecordSecurity(unittest.TestCase):
     def test_controller_rejects_direct_record_creation_or_update(self):
         from hero_integration.hero_integration.doctype.hero_mapping_adoption import hero_mapping_adoption as controller
         doc = SimpleNamespace(package_json="{}")
-        fake = SimpleNamespace(only_for=lambda role: None, throw=lambda message: (_ for _ in ()).throw(PermissionError(message)))
+        fake = SimpleNamespace(_=lambda message: message, only_for=lambda role: None, throw=lambda message: (_ for _ in ()).throw(PermissionError(message)))
         with patch.object(controller, "frappe", fake):
             with self.assertRaises(PermissionError):
                 controller.HEROMappingAdoption.validate(doc)

@@ -18,9 +18,9 @@ class HEROIntegrationSettings(Document):
             try:
                 validate_endpoint(self.hero_api_url, hosts)
             except HeroClientError as exc:
-                raise ValueError(str(exc)) from exc
+                raise ValueError(frappe._(str(exc))) from exc
         if not INTERVAL_MIN <= refresh_interval(self) <= INTERVAL_MAX:
-            raise ValueError(f"Schema refresh interval must be between {INTERVAL_MIN} and {INTERVAL_MAX} minutes.")
+            raise ValueError(frappe._("Schema refresh interval must be between {0} and {1} minutes.").format(INTERVAL_MIN, INTERVAL_MAX))
 
     def _update_source_binding(self):
         confirm = bool(self.get("confirm_source_binding"))
