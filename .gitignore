@@ -14,3 +14,7 @@ docs/hardening-summary.md
 docs/mapping-delivery-coverage.md
 docs/personal-mapping-content.md
 docs/task-assignment-migration.md
+
+# Site configuration exports (pass to CI through a secret, never commit)
+ci/fixtures/
+hero-integration-config*.json

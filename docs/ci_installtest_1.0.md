@@ -13,7 +13,7 @@ The test never contacts HERO. It runs these steps:
 4. `migrate` twice; the install state must not change (create-only setup).
 5. `bench build --app hero_integration`, offline unit tests, `bench run-tests`.
 6. With `HERO_SCHEMA_FILE` (introspection JSON): offline snapshot. With
-   `HERO_CONFIG_FILE` (default fixture `ci/fixtures/hero-integration-config.json`):
+   `HERO_CONFIG_FILE` (a configuration export, see below):
    configuration preview, import, and a second preview that must report nothing new.
 7. `uninstall-app hero_integration`.
 
@@ -22,5 +22,11 @@ git, MariaDB client, `frappe-bench` (pip). Services: MariaDB 11, Redis 7.
 The first `bench init` takes long on a small CI server. Use a prebuilt image
 with an initialised bench (Frappe + ERPNext); `WORKDIR` reuses `bench/`.
 
-The schema file is HERO's API description and is not part of the repository.
-Provide its path through the `hero_schema_file_path` secret/volume.
+Neither input file is part of the repository:
+
+- The schema file is HERO's API description. Provide its path through the
+  `hero_schema_file_path` secret/volume.
+- The configuration file is a site's own mapping export (Mapping Editor →
+  "Complete configuration" → Export). Provide its path through the
+  `hero_config_file_path` secret/volume. Without both files the test skips the
+  configuration import.

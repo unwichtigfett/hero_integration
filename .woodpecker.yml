@@ -20,7 +20,8 @@ steps:
       DB_ROOT_PASSWORD: ci-root
       REDIS_CACHE: redis://redis:6379
       WORKDIR: /tmp/ci-bench
-      HERO_CONFIG_FILE: ${CI_WORKSPACE}/ci/fixtures/hero-integration-config.json
+      HERO_CONFIG_FILE:
+        from_secret: hero_config_file_path
       HERO_SCHEMA_FILE:
         from_secret: hero_schema_file_path
     commands:
