@@ -48,6 +48,16 @@ class TestFrappeTranslationBridge(unittest.TestCase):
                         '(ProjectMatch.address.city ist für den ERPNext-Projekttitel erforderlich.); sie wird im Titel ausgelassen.')
             self.assertEqual(recipient_diagnostic('de@example.invalid', review), expected)
             self.assertEqual(recipient_diagnostic('en@example.invalid', review), review)
+            collision = ("Project 'P-42' already exists without this HERO record's link. The HERO number is not "
+                         "reassigned, suffixed or merged; check whether 'P-42' is the same project and link or rename it.")
+            self.assertEqual(recipient_diagnostic('en@example.invalid', collision), collision)
+            self.assertEqual(recipient_diagnostic('de@example.invalid', collision),
+                             "Projekt 'P-42' existiert bereits ohne Link zu diesem HERO-Datensatz. Die HERO-Nummer wird weder neu vergeben noch mit einem Zusatz versehen oder zusammengeführt; prüfen Sie, ob 'P-42' dasselbe Objekt (Projekt) ist, und verknüpfen oder benennen Sie es um.")
+            drift = ("HERO customer number changed from 'old' to 'new'. Customer CUST-42 keeps its name and number "
+                     "until reviewed; set custom_hero_customer_number to 'new' to accept the new number.")
+            self.assertEqual(recipient_diagnostic('en@example.invalid', drift), drift)
+            self.assertEqual(recipient_diagnostic('de@example.invalid', drift),
+                             "HERO-Kundennummer wurde von 'old' auf 'new' geändert. Kunde CUST-42 behält seinen Namen und seine Nummer bis zur Prüfung; setzen Sie custom_hero_customer_number auf 'new', um die neue Nummer zu übernehmen.")
 
     def test_framework_catalog_reaches_workspace_controls_in_both_languages(self):
         if not shutil.which('node'):
