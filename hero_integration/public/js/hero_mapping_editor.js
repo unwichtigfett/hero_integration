@@ -784,7 +784,8 @@
                         const rows = legacyWritebackRows(result);
                         legacyState.text(`${text('Shared writeback mappings')}: ${rows.length}. ${text('This list is read only and is separate from personal drafts.')}`);
                         rows.forEach((row) => {
-                            const line = $('<p></p>').text(`${row.name} · ${row.operation_name} · ${row.status} · ${text('Revision')}: ${row.mapping_revision} · ${text('Reason')}: ${row.suggestion_reason || '—'} · ${text('Confidence')}: ${row.confidence ?? '—'} `);
+                            const reason = row.suggestion_reason ? (window.hero_integration_diagnostics?.translate(row.suggestion_reason) ?? row.suggestion_reason) : '—';
+                            const line = $('<p></p>').text(`${row.name} · ${row.operation_name} · ${row.status} · ${text('Revision')}: ${row.mapping_revision} · ${text('Reason')}: ${reason} · ${text('Confidence')}: ${row.confidence ?? '—'} `);
                             line.append(button('Inspect shared mapping', async () => {
                                 const detailRequest = ++detailSerial; legacyDetail.empty().text(text('Loading shared mapping…'));
                                 try {
