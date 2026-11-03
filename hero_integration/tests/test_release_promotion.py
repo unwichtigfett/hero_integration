@@ -131,6 +131,28 @@ class TestPromotion(unittest.TestCase):
         self.assertEqual(self.repo.head(self.repo.github, "hero_int_1.0"), release)
         self.assertEqual(self.repo.head(self.repo.github, "v1.0.1"), tag)
 
+    def test_reused_release_commit_with_extra_changes_is_rejected(self):
+        tested = self.repo.commit("feature")
+        self.repo.push("hero_int_dev")
+        for extra in ({"hero_integration/__init__.py": '__version__ = "1.0.1"\nimport os\nos.system("x")\n'},
+                      {"pyproject.toml": '[project]\nname = "x"\nversion = "1.0.1"\ndependencies = ["evil"]\n'
+                                         '[tool.ruff]\ntarget-version = "py310"\n'}):
+            with self.subTest(extra=list(extra)):
+                git(self.repo.work, "checkout", "-q", "--detach", tested)
+                (self.repo.work / "hero_integration/__init__.py").write_text('__version__ = "1.0.1"\n')
+                (self.repo.work / "pyproject.toml").write_text('[project]\nname = "x"\nversion = "1.0.1"\n'
+                                                               '[tool.ruff]\ntarget-version = "py310"\n')
+                for path, content in extra.items():
+                    (self.repo.work / path).write_text(content)
+                git(self.repo.work, "commit", "-q", "-am", "Release 1.0.1 [skip ci]")
+                self.repo.push("hero_int_dev", remotes=(self.repo.forgejo,))
+                result = self.repo.promote(tested)
+                git(self.repo.forgejo, "update-ref", "refs/heads/hero_int_dev", tested)  # reset for the next case
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("changes more than the version", result.stderr)
+                for bare in (self.repo.forgejo, self.repo.github):
+                    self.assertEqual(self.repo.head(bare, "hero_int_1.0"), self.base)
+
     def test_version_raised_by_hand_is_released_without_a_bump_commit(self):
         tested = self.repo.commit("minor release", version="1.1.0")
         self.repo.push("hero_int_dev")
@@ -158,27 +180,27 @@ class TestWaitForGitHub(unittest.TestCase):
             return subprocess.run(["sh", str(WAIT)], env=env, text=True, capture_output=True)
 
     @staticmethod
-    def run(name, status="completed", conclusion="success", started="2026-11-03T10:00:00Z"):
+    def check_run(name, status="completed", conclusion="success", started="2026-11-03T10:00:00Z"):
         return {"name": name, "status": status, "conclusion": conclusion, "started_at": started,
                 "app": {"slug": "github-actions"}}
 
     def test_waits_until_both_checks_succeeded(self):
-        result = self.wait([self.run("package"), self.run("install-test", "in_progress", None)],
-                           [self.run("package"), self.run("install-test")], wait_seconds=10)
+        result = self.wait([self.check_run("package"), self.check_run("install-test", "in_progress", None)],
+                           [self.check_run("package"), self.check_run("install-test")], wait_seconds=10)
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_failed_check_stops_the_chain(self):
-        result = self.wait([self.run("package"), self.run("install-test", conclusion="failure")], wait_seconds=10)
+        result = self.wait([self.check_run("package"), self.check_run("install-test", conclusion="failure")], wait_seconds=10)
         self.assertEqual(result.returncode, 1)
         self.assertIn("failure", result.stderr)
 
     def test_missing_check_times_out(self):
-        result = self.wait([self.run("package")])
+        result = self.wait([self.check_run("package")])
         self.assertEqual(result.returncode, 1)
 
     def test_rerun_replaces_an_older_failure(self):
-        result = self.wait([self.run("package"), self.run("install-test", conclusion="failure"),
-                            self.run("install-test", started="2026-11-03T11:00:00Z")])
+        result = self.wait([self.check_run("package"), self.check_run("install-test", conclusion="failure"),
+                            self.check_run("install-test", started="2026-11-03T11:00:00Z")])
         self.assertEqual(result.returncode, 0, result.stderr)
 
 

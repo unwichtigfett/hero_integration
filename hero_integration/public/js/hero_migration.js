@@ -468,7 +468,8 @@
                 el("thead", {}, el("tr", {}, ["HERO variable", "Doctype field", "Value in ERPNext", withHero ? "New HERO value" : null]
                     .filter(Boolean).map((label) => el("th", {scope: "col", text: tr(label)})))),
                 el("tbody", {}, report.fields.map((field) => el("tr", {},
-                    el("td", {}, field.hero_variable ? el("span", {class: "hero-sync-mono", text: field.hero_variable}) : empty()),
+                    el("td", {}, field.hero_variable ? el("span", {class: "hero-sync-mono", text: field.hero_variable})
+                        : el("span", {class: "hero-sync-hint", text: tr("Unknown"), title: tr("The rules of the run that processed this record can no longer be reconstructed.")})),
                     el("td", {}, el("span", {text: `${tr(field.doctype)} · ${tr(field.label)}`}), " ", el("span", {class: "hero-sync-mono hero-sync-hint", text: `(${field.field})`})),
                     el("td", {}, value(field.value)),
                     withHero ? el("td", {}, value(field.hero_value), field.previous_hero_value != null

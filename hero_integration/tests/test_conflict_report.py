@@ -52,9 +52,14 @@ def _link(**values):
             "target_doctype": "Task", "target_name": "TASK-1", "sync_status": "Conflict", **values}
 
 
+def _run_rules(fake):
+    """The rules frozen onto the processing run (here: the fixture's rule list)."""
+    return tuple(((rule["target_doctype"], rule["target_field"]), rule["source_path"]) for rule in fake.rules) or None
+
+
 class TestConflictReport(unittest.TestCase):
     def report(self, fake, name="LINK-1", instance="default"):
-        with patch.object(cr, "frappe", fake):
+        with patch.object(cr, "frappe", fake), patch.object(cr, "_run_rules", return_value=_run_rules(fake)):
             return cr.report(name, instance)
 
     def test_field_conflict_names_hero_variable_doctype_field_and_erpnext_value(self):
@@ -136,12 +141,41 @@ class TestConflictReport(unittest.TestCase):
                        rules=[{"operation": "HeroCustomers", "status": "Active", "target_field": "customer_type",
                                "target_doctype": "Customer", "source_path": "type"}],
                        labels={"Customer": {"customer_type": "Customer Type"}})
-        with patch.object(cr, "frappe", fake):
+        with patch.object(cr, "frappe", fake), patch.object(cr, "_run_rules", return_value=_run_rules(fake)) as rules:
             report = cr.record_report("REC-1")
+        rules.assert_called_once_with("customer", "301", run="RUN-1")
         self.assertFalse(report["decidable"])
         self.assertEqual((report["status"], report["doctype"]), ("Not imported", "Customer"))
         self.assertEqual([(f["hero_variable"], f["label"], f["value"]) for f in report["fields"]],
                          [("type", "Customer Type", None)])
+
+
+class TestHeroVariableComesFromTheProcessingRun(unittest.TestCase):
+    def rules(self, run_doc, plan=None, error=None, sql_rows=(("RUN-1",),)):
+        fake = SimpleNamespace(db=SimpleNamespace(sql=lambda *a: list(sql_rows), exists=lambda doctype, name: run_doc is not None),
+                               get_doc=lambda doctype, name: run_doc)
+        target = patch("hero_integration.services.migration._mapping_plan_for_run",
+                       side_effect=error, return_value=plan)
+        with patch.object(cr, "frappe", fake), target as build:
+            return cr._run_rules("Task", "2293879"), build
+
+    def test_only_the_rule_selected_for_the_run_is_named(self):
+        from hero_integration.services.direct_mapping import MappingSpec
+
+        # Historical (comment) and foreign (foreign_note) rules for Task.description stay
+        # Active in HERO Frappe Mapping; the run's plan selects only the current one.
+        plan = SimpleNamespace(definitions=(MappingSpec("HeroTasks", "title", "Task", "description", "string|null"),))
+        run = SimpleNamespace(name="RUN-1", graphql_mapping="MAP-1")
+        rules, build = self.rules(run, plan)
+        build.assert_called_once_with(run, "HeroTasks")
+        self.assertEqual(cr._hero_variable("Task", "Task", "description", rules), "title")
+
+    def test_unknown_when_the_run_cannot_be_reconstructed(self):
+        run = SimpleNamespace(name="RUN-1", graphql_mapping="MAP-1")
+        self.assertIsNone(self.rules(run, error=RuntimeError("revision changed"))[0])
+        self.assertIsNone(self.rules(SimpleNamespace(name="RUN-1", graphql_mapping=""))[0])
+        self.assertIsNone(self.rules(None, sql_rows=())[0])
+        self.assertIsNone(cr._hero_variable("Task", "Task", "description", None))
 
 
 class TestReportPage(unittest.TestCase):

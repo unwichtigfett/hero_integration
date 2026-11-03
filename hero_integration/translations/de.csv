@@ -2874,3 +2874,4 @@ The {0} price {1} was changed in ERPNext. The newer HERO article was not applied
 Several general {0} prices exist for {1} ({2}); none was changed. The newer HERO article was not applied.,Für {1} ({2}) gibt es mehrere allgemeine Preise in {0}; keiner wurde geändert. Der neuere HERO-Artikel wurde nicht übernommen.
 The conflict belongs to a different HERO source.,Der Konflikt gehört zu einer anderen HERO-Quelle.
 The record has no open conflict.,Der Datensatz hat keinen offenen Konflikt.
+"The rules of the run that processed this record can no longer be reconstructed.","Die Regeln des Laufs, der diesen Datensatz verarbeitet hat, lassen sich nicht mehr rekonstruieren."

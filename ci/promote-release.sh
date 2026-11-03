@@ -81,26 +81,37 @@ current=$(version_of "$sha")
 [[ -n $current ]] || { echo "No __version__ in $sha." >&2; exit 1; }
 released=$(newest "$(version_of refs/r/forgejo/rel)" "$(version_of refs/r/github/rel)")
 
+# The only allowed release change: the two version lines of the tested commit.
+version_commit() {  # tested-sha version -> commit with exactly that change
+    git checkout -q --detach "$1"
+    sed -i -E "s/^__version__ = \"[0-9.]+\"$/__version__ = \"$2\"/" hero_integration/__init__.py
+    sed -i -E "s/^version = \"[0-9.]+\"$/version = \"$2\"/" pyproject.toml
+    git add "${VERSION_FILES[@]}"
+    git commit -q --allow-empty -m "$RELEASE_PREFIX$2 $SKIP_MARK" -m "Tested commit: $1"
+    git rev-parse HEAD
+}
+pyproject_version() { git show "$1:pyproject.toml" | sed -nE 's/^version = "([0-9]+\.[0-9]+\.[0-9]+)"$/\1/p'; }
+
 if [[ -n $release ]]; then
     version=$(version_of "$release")
+    [[ -n $version ]] || { echo "The existing release commit has no version." >&2; exit 1; }
+    # Reuse only a commit whose whole tree equals the tested tree plus the version lines.
+    expected=$(version_commit "$sha" "$version")
+    if [[ $(git rev-parse "$expected^{tree}") != $(git rev-parse "$release^{tree}") ]]; then
+        echo "The existing release commit ${release:0:10} changes more than the version; nothing is pushed." >&2
+        git diff --stat "$expected" "$release" >&2
+        exit 1
+    fi
 elif [[ $(newest "$current" "$released") == "$current" && $current != "$released" ]]; then
     version=$current   # a version raised by hand on hero_int_dev is released as it is
     release=$sha
 else
     version=$(bump_patch "$(newest "$current" "$released")")
-    git checkout -q --detach "$sha"
-    sed -i -E "s/^__version__ = \"[0-9.]+\"$/__version__ = \"$version\"/" hero_integration/__init__.py
-    sed -i -E "s/^version = \"[0-9.]+\"$/version = \"$version\"/" pyproject.toml
-    git add "${VERSION_FILES[@]}"
-    git commit -q -m "$RELEASE_PREFIX$version $SKIP_MARK" -m "Tested commit: $sha"
-    release=$(git rev-parse HEAD)
+    release=$(version_commit "$sha" "$version")
 fi
 
-# The release commit may only change the version lines.
-changed=$(git diff --name-only "$sha" "$release" | sort | tr '\n' ' ')
-[[ -z $changed || $changed == "$(printf '%s\n' "${VERSION_FILES[@]}" | sort | tr '\n' ' ')" ]] || {
-    echo "Release commit changes more than the version: $changed" >&2; exit 1; }
-[[ $(version_of "$release") == "$version" ]] || { echo "Version bump failed." >&2; exit 1; }
+[[ $(version_of "$release") == "$version" && $(pyproject_version "$release") == "$version" ]] || {
+    echo "hero_integration/__init__.py and pyproject.toml must both carry version $version." >&2; exit 1; }
 
 tag="v$version"
 reuse_tag=''
