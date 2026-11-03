@@ -87,3 +87,12 @@ class TestNativeFieldMoves(unittest.TestCase):
         Field.read_only = 1
         with self.assertRaises(direct_mapping.DirectMappingError):
             direct_mapping._validate_custom_field(ok, Metadata())
+
+
+class TestProductOrderFields(unittest.TestCase):
+    def test_builtin_product_mapping_fills_native_order_fields(self):
+        from hero_integration.services import direct_operations as direct
+        rules = {(r["source_path"], r["target_field"], r["transformation"]) for r in direct.DEFAULT_RULES["HeroProducts"]}
+        self.assertIn(("base_data.quantity_min", "min_order_qty", "Number"), rules)
+        self.assertIn(("base_data.delivery_time", "lead_time_days", "Integer"), rules)
+        self.assertTrue({"min_order_qty", "lead_time_days"} <= direct.FIELDS["Item"])

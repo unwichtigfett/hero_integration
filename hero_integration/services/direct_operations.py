@@ -51,7 +51,7 @@ def records_path(name: str) -> str:
 # Configurable target fields per DocType (besides app-owned custom_hero_* fields of the owner).
 FIELDS = {
     "Item": frozenset({"item_code", "item_name", "description", "item_group", "stock_uom", "brand", "disabled", "barcodes",
-                       "supplier_items"}),
+                       "supplier_items", "min_order_qty", "lead_time_days"}),
     "Item Price": frozenset({"price_list_rate"}),
     "File": frozenset({"file_name"}),
 }
@@ -228,6 +228,9 @@ DEFAULT_RULES = {
         _rule("HeroProducts", "base_data.manufacturer_nr", "Item", "custom_hero_manufacturer_nr", "string|null",
               "Field", "Trim"),
         _rule("HeroProducts", "nr", "Item", "item_code", "string|null", "Field", "Trim"),
+        # Native order data: minimum order quantity and delivery time in days.
+        _rule("HeroProducts", "base_data.quantity_min", "Item", "min_order_qty", "float|null", "Field", "Number"),
+        _rule("HeroProducts", "base_data.delivery_time", "Item", "lead_time_days", "int|null", "Field", "Integer"),
         _rule("HeroProducts", "base_price", "Item Price", "price_list_rate", "float|null", "Field", "HERO Price",
               "Standard Buying"),
         _rule("HeroProducts", "sales_prices", "Item Price", "price_list_rate", "json", "Field",
