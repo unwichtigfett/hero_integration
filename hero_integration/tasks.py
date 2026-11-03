@@ -162,8 +162,10 @@ def _auto_sync_tick(settings, record_scheduler_outcome) -> str | None:
             frappe.log_error(title="HERO automatic sync could not start a run")
             record_scheduler_outcome("AUTO_SYNC", "Failed", f"{item.label}: the automatic run could not be started; see the error log.")
             return None
-        frappe.db.commit()
         if result.get("run"):
-            record_scheduler_outcome("AUTO_SYNC", "Started", f"{item.label}: run {result['run']} queued.")
+            record_scheduler_outcome("AUTO_SYNC", "Started", f"{item.label}: run {result['run']} queued.",
+                                     run=result["run"], source_instance=instance)
+        # The run and its polling receipt must exist before enqueue_after_commit fires.
+        frappe.db.commit()
         return result.get("run")
     return None

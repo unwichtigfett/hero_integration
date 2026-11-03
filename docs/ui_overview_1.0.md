@@ -19,6 +19,23 @@ The editor requires an explicitly selected, saved and validated schema snapshot.
 
 Old compatibility RPC names and the prior classification of every `execute_service` call as a HERO mutation are **not** a reliable account of the current code. Review the actual endpoints in [`hero_integration/api.py`](../hero_integration/api.py).
 
+## Polling status
+
+The Synchronisation view counts polling executions for the configured source over
+30 days. Each automatic area run has a start receipt linked to its Integration Run;
+its displayed outcome follows that run without changing the run or business records.
+Manual imports are excluded. Skipped ticks are shown separately and do not count as
+executions. Runs with conflicts and cancellations have separate counters; a completed
+run with conflicts can still advance the last-successful timestamp, as in the area cards.
+
+The open page refreshes local state every 30 seconds while idle and every 5 seconds
+while a run is active. Hidden browser tabs make no refresh requests. These requests
+never contact HERO. Historical runs without a polling receipt are not reclassified
+based on their execution time.
+
+Deployment requires DocType migration for the `Started` option and `run` link, plus
+updated frontend assets. A source checkout alone does not update a running container.
+
 ## Acceptance boundary
 
 Source tests and earlier visual checks do not establish the behavior of the current deployed Desk UI. Verify the exact branch/commit, employee isolation, administrator controls, narrow layouts, Frappe permissions and browser runtime on the target site.

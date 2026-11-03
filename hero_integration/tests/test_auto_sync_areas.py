@@ -46,13 +46,27 @@ class TestAutoSyncAreas(unittest.TestCase):
         services = {item: [{"service": "SVC"}] for item in ("HeroCustomers", "HeroProjectMatches", "HeroCalendarEvents", "HeroTasks")}
         with patch.object(tasks, "frappe", fake), patch.object(api, "_start_migration", side_effect=start), \
                 patch.object(api, "_sync_area_read_services", return_value=services):
-            tasks._auto_sync_tick(config, lambda *args: outcomes.append(args))
+            tasks._auto_sync_tick(config, lambda *args, **kwargs: outcomes.append((*args, kwargs)))
         return started, outcomes
 
     def test_the_first_due_area_is_started_and_only_one_per_tick(self):
         started, outcomes = self.tick(settings(), {})
         self.assertEqual(started, ["Customer Migration"])
         self.assertEqual(outcomes[-1][:2], ("AUTO_SYNC", "Started"))
+        self.assertEqual(outcomes[-1][-1], {"run": "RUN-1", "source_instance": "default"})
+
+    def test_receipt_failure_does_not_commit_or_enqueue_the_run(self):
+        fake = _Frappe({})
+        def receipt(*args, **kwargs):
+            self.assertEqual(fake.committed, 0)
+            raise ValueError("invalid polling receipt")
+        with patch.object(tasks, "frappe", fake), \
+                patch.object(api, "_start_migration", return_value={"run": "RUN-1"}), \
+                patch.object(api, "_sync_area_read_services", return_value={"HeroCustomers": [{"service": "SVC"}]}):
+            with self.assertRaisesRegex(ValueError, "invalid polling receipt"):
+                tasks._auto_sync_tick(settings(), receipt)
+        self.assertEqual(fake.committed, 0)
+
 
     def test_areas_run_once_per_interval(self):
         recent = NOW - timedelta(minutes=10)

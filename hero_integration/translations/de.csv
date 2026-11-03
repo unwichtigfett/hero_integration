@@ -2875,3 +2875,5 @@ Several general {0} prices exist for {1} ({2}); none was changed. The newer HERO
 The conflict belongs to a different HERO source.,Der Konflikt gehört zu einer anderen HERO-Quelle.
 The record has no open conflict.,Der Datensatz hat keinen offenen Konflikt.
 "The rules of the run that processed this record can no longer be reconstructed.","Die Regeln des Laufs, der diesen Datensatz verarbeitet hat, lassen sich nicht mehr rekonstruieren."
+Not started,Noch nicht gestartet
+Run,Lauf

@@ -165,28 +165,82 @@ def run_monitor() -> None:
         frappe.log_error(title="HERO materialized monitoring failed")
 
 
-def record_scheduler_outcome(mode: str, status: str, detail: str) -> str | None:
-    """Make a scheduler skip or failure visible once; repeats of the same state add no new event."""
+def record_scheduler_outcome(mode: str, status: str, detail: str, *, run: str = "", source_instance: str = "") -> str | None:
+    """Record each queued run; deduplicate repeated scheduler skips or failures."""
     import frappe
 
     settings = frappe.get_single("HERO Integration Settings")
+    source_instance = source_instance or str(getattr(settings, "hero_source_instance", "") or "default")
+    if run:
+        return _record_event(mode, status, detail, run=run, source_instance=source_instance)
     label = f"{mode} {status.lower()}"
     if (getattr(settings, "sync_status", "") or "") == label and (getattr(settings, "sync_error", "") or "") == detail:
         return None
-    event = _record_event(mode if mode in {"MONITOR", "AUTO_SYNC"} else "MONITOR", status, detail)
+    event = _record_event(mode if mode in {"MONITOR", "AUTO_SYNC"} else "MONITOR", status, detail, source_instance=source_instance)
     settings.sync_status, settings.sync_error = label, detail
     settings.save(ignore_permissions=True)
     return event
 
 
-def _record_event(mode: str, status: str, detail: str, result: MonitorResult | None = None) -> str:
+def _record_event(mode: str, status: str, detail: str, result: MonitorResult | None = None, *,
+                  run: str = "", source_instance: str = "") -> str:
     import frappe
 
-    event = frappe.get_doc({"doctype": "HERO Polling Event", "mode": mode, "status": status,
-        "source_instance": result.source_instance if result else "", "customer_records": result.customer_records if result else 0,
+    if not source_instance and result is None:
+        settings = frappe.get_single("HERO Integration Settings")
+        source_instance = str(getattr(settings, "hero_source_instance", "") or "default")
+    event = frappe.get_doc({"doctype": "HERO Polling Event", "mode": mode, "status": status, "run": run or None,
+        "source_instance": result.source_instance if result else source_instance, "customer_records": result.customer_records if result else 0,
         "project_records": result.project_records if result else 0, "detail": detail})
     event.insert(ignore_permissions=True)
     return event.name
+
+
+def execution_summary(frappe_api, instance: str, since) -> dict[str, object]:
+    """Count automatic executions once, using the linked run's current state.
+
+    Start receipts stay immutable. Manual runs have no receipt; skipped scheduler
+    ticks are shown separately and are not executions.
+    """
+    rows = frappe_api.db.sql("""
+        SELECT outcome, COUNT(*) AS count, MAX(creation) AS latest,
+               MAX(success_on) AS success_on
+        FROM (
+            SELECT COALESCE(NULLIF(event.run, ''), event.name) AS identity,
+                CASE
+                    WHEN COALESCE(event.run, '') = '' THEN event.status
+                    WHEN run.state IN ('Queued', 'Running') THEN 'Running'
+                    WHEN run.state = 'Completed' THEN 'Succeeded'
+                    WHEN run.state = 'Completed With Conflicts' THEN 'Conflicts'
+                    WHEN run.state = 'Failed' THEN 'Failed'
+                    WHEN run.state = 'Cancelled' THEN 'Cancelled'
+                    ELSE 'Incomplete'
+                END AS outcome,
+                MAX(event.creation) AS creation,
+                MAX(CASE WHEN COALESCE(event.run, '') = '' AND event.status = 'Succeeded'
+                         THEN event.creation
+                         WHEN run.state IN ('Completed', 'Completed With Conflicts')
+                         THEN run.finished_on END) AS success_on
+            FROM `tabHERO Polling Event` event
+            LEFT JOIN `tabHERO Integration Run` run
+                ON run.name = event.run AND run.source_instance = event.source_instance
+                   AND run.mode = 'Execute'
+            WHERE event.source_instance = %(instance)s AND event.creation >= %(since)s
+            GROUP BY identity, outcome
+        ) executions
+        GROUP BY outcome
+    """, {"instance": instance, "since": since}, as_dict=True)
+    counts = {row["outcome"]: row["count"] for row in rows}
+    latest = max(rows, key=lambda row: str(row["latest"]), default=None)
+    return {
+        "runs": sum(count for status, count in counts.items() if status != "Skipped"),
+        "pass": counts.get("Succeeded", 0), "fail": counts.get("Failed", 0),
+        "incomplete": counts.get("Incomplete", 0) + counts.get("Started", 0),
+        "skipped": counts.get("Skipped", 0), "running": counts.get("Running", 0),
+        "conflicts": counts.get("Conflicts", 0), "cancelled": counts.get("Cancelled", 0),
+        "last_status": latest["outcome"] if latest else "Not started",
+        "last_successful": max((row["success_on"] for row in rows if row["success_on"]), default=None),
+    }
 
 
 def _notify_polling_event(event_name: str, detail: str) -> None:
