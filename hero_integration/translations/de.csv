@@ -2977,3 +2977,63 @@ Project Designation,Bezeichnung
 Project Responsible,Projektverantwortlicher
 User By Email,Benutzer per E-Mail
 User By Partner ID,Benutzer per Partner-ID
+Service Migration,Leistungsmigration
+HeroServices,HeroServices
+Services,Leistungen
+Service Price,Leistungspreis
+Service Calculation,Leistungskalkulation
+Internal Identifier,Interne Kennung
+Fixed Price,Festpreis
+Default Quantity,Vorgabemenge
+Calculated Time (Minutes),Kalkulierte Arbeitszeit (Minuten)
+Source Tax Rate,Steuersatz im Quellsystem
+Component Type,Positionsart
+Material,Material
+Labor,Arbeit
+Unit,Einheit
+Source Cost Rate,Kostenansatz im Quellsystem
+Hourly Billing Rate,Verrechnungsstundensatz
+Markup,Aufschlag
+Resolution,Zuordnung
+Linked,Verknüpft
+Unresolved,Zuordnung offen
+Additional Source Data,Weitere Quelldaten
+Import services with selling prices and material/labor calculations.,Leistungen mit Verkaufspreisen sowie Material- und Arbeitskalkulation importieren.
+Non-stock articles. Local edits require review; unresolved material references remain visible.,Nicht lagergeführte Artikel. Lokale Änderungen erfordern eine Prüfung; offene Materialzuordnungen bleiben sichtbar.
+Service prices require Standard Selling.,Leistungspreise benötigen Standard Selling.
+Service calculation contains an invalid number.,Die Leistungskalkulation enthält eine ungültige Zahl.
+Service article number is empty or too long.,Die Leistungsartikelnummer ist leer oder zu lang.
+Service article name exceeds the ERPNext limit.,Der Leistungsartikelname überschreitet die ERPNext-Längengrenze.
+A service unit is required.,Eine Leistungseinheit ist erforderlich.
+Install the service mapping schema before starting migration.,Vor dem Start der Migration das Leistungsmapping-Schema installieren.
+An enabled Standard Selling price list with currency is required.,Eine aktive Preisliste Standard Selling mit Währung ist erforderlich.
+Service migration requires a validated source schema.,Die Leistungsmigration benötigt ein validiertes Quellschema.
+The service composition query differs from the validated source schema.,Die Abfrage der Leistungsbestandteile weicht vom validierten Quellschema ab.
+Service source identity has several bindings.,Die Quellidentität der Leistung hat mehrere Bindungen.
+The service binding target is missing or has another type.,Das Ziel der Leistungsbindung fehlt oder hat einen anderen Typ.
+The service article or activity type was edited locally; review the conflict.,Der Leistungsartikel oder die Tätigkeitsart wurde lokal geändert; den Konflikt prüfen.
+Service tax rate requires one unambiguous Item Tax Template in the ERPNext company.,Der Leistungssteuersatz benötigt eine eindeutig passende Artikelsteuervorlage im ERPNext-Unternehmen.
+A labor group identity is required.,Eine Lohngruppenidentität ist erforderlich.
+The labor group binding requires review.,Die Lohngruppenbindung muss geprüft werden.
+Labor group name is invalid or too long.,Der Lohngruppenname ist ungültig oder zu lang.
+An existing activity type requires an explicit labor group binding.,Eine vorhandene Tätigkeitsart benötigt eine ausdrückliche Lohngruppenbindung.
+Service composition is missing or exceeds its bound.,Die Leistungszusammensetzung fehlt oder überschreitet ihre Grenze.
+Unknown service component type or identity.,Unbekannte Art oder Identität eines Leistungsbestandteils.
+The service attachment was changed locally.,Der Leistungsanhang wurde lokal geändert.
+The service binding requires review.,Die Leistungsbindung muss geprüft werden.
+Service article number is already used; bind the existing article explicitly.,Die Leistungsartikelnummer ist bereits vergeben; den vorhandenen Artikel ausdrücklich verknüpfen.
+A changed service article number requires an explicit rename.,Eine geänderte Leistungsartikelnummer benötigt eine ausdrückliche Umbenennung.
+An existing selling price requires explicit review before adoption.,Ein vorhandener Verkaufspreis muss vor der Übernahme ausdrücklich geprüft werden.
+"Service source, schema, company or mapping changed; start a new run.","Leistungsquelle, Schema, Unternehmen oder Mapping wurde geändert; einen neuen Lauf starten."
+HERO returned invalid or duplicate service identities.,HERO hat ungültige oder doppelte Leistungsidentitäten zurückgegeben.
+Service pagination changed or repeated; start a new run.,Die Leistungsseiten wurden geändert oder wiederholt; einen neuen Lauf starten.
+HERO returned an incomplete service composition list.,HERO hat eine unvollständige Liste der Leistungsbestandteile zurückgegeben.
+Service changed between its record and composition reads; retry the slice.,Die Leistung wurde zwischen den beiden Abfragen geändert; den Abschnitt erneut ausführen.
+Service validation failed; check the error log.,Die Leistungsprüfung ist fehlgeschlagen; das Fehlerprotokoll prüfen.
+Item,Artikel
+Activity Type,Tätigkeitsart
+Quantity,Menge
+Unit Price,Einzelpreis
+Labor group billing rates differ between service calculations; review the mapping.,Die Verrechnungsstundensätze der Lohngruppe weichen zwischen Leistungskalkulationen ab; das Mapping prüfen.
+Service selling price currency must match the ERPNext company currency.,Die Verkaufspreiswährung der Leistung muss der ERPNext-Unternehmenswährung entsprechen.
+"Run all migrations one after another: projects with contacts, events, tasks, products, services, documents, pictures.","Alle Migrationen nacheinander ausführen: Projekte mit Kontakten, Termine, Aufgaben, Artikel, Leistungen, Dokumente und Bilder."

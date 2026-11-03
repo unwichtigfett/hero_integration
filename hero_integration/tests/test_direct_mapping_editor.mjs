@@ -15,14 +15,15 @@ const plain = (value) => JSON.parse(JSON.stringify(value));
 test('all three direct Query adapters offer exactly the registry HERO resolvers', () => {
     const block = registry.match(/TRANSFORM_TARGETS = \{([\s\S]*?)\n\}/)[1];
     const expected = [...block.matchAll(/^    "([^"]+)":/gm)].map((match) => match[1]);
-    assert.equal(expected.length, 8);
-    for (const target_operation of ['HeroProducts', 'HeroDocuments', 'HeroPictures']) {
+    assert.equal(expected.length, 9);
+    for (const target_operation of ['HeroProducts', 'HeroDocuments', 'HeroPictures', 'HeroServices']) {
         assert.deepEqual(plain(directRuleChoices({...content, target_operation}, rule).transformation), expected);
     }
 });
 
 test('price-list choices apply only to direct Item Price rules and retain canonical values', () => {
     assert.deepEqual(plain(directRuleChoices(content, rule).relation), ['Standard Buying', 'Standard Selling']);
+    assert.deepEqual(plain(directRuleChoices({...content, target_operation:'HeroServices'}, rule).relation), ['Standard Selling']);
     for (const target_doctype of ['Item', 'File', 'HERO Integration Link']) {
         assert.equal(directRuleChoices(content, {target_doctype}).relation, undefined);
     }

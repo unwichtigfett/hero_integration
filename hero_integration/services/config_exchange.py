@@ -31,7 +31,7 @@ SETTINGS_KEYS = (
     "polling_timeout_seconds", "polling_rate_limit", "polling_concurrency", "polling_notifications",
 )
 AREA_ORDER = ("HeroCustomers", "HeroProjectMatches", "HeroCalendarEvents", "HeroTasks",
-              "HeroProducts", "HeroDocuments", "HeroPictures")
+              "HeroProducts", "HeroDocuments", "HeroPictures", "HeroServices")
 SERVICE_REFERENCE = "$read_service:"
 SERVICE_KEYS = {"target_operation", "service_name", "operation_name", "mapping_operation_name", "query", "mapping"}
 

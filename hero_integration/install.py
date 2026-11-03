@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import frappe
 
+from hero_integration.services.service_schema import ITEM_FIELDS as SERVICE_ITEM_FIELDS
+
 
 ERPNext_VERSION_CONSTRAINT = ">=16.0.0-dev,<17.0.0"
 
@@ -32,6 +34,7 @@ HERO_CUSTOM_FIELDS = {
         },
     ],
     "Item": [
+        *SERVICE_ITEM_FIELDS,
         {
             "fieldname": "custom_hero_manufacturer_nr",
             "fieldtype": "Data",

@@ -48,7 +48,7 @@ class ObjectMappingCatalogTest(unittest.TestCase):
         self.assertEqual(found['Address'], ['Customers'])
         self.assertEqual(found['ProjectMatch'], ['Projects'])
         self.assertNotIn('Calendar', found['Task'])
-        self.assertEqual(catalog(value)['areas'], ['Customers', 'Projects', 'Tasks', 'Calendar', 'Products', 'Documents', 'Pictures'])
+        self.assertEqual(catalog(value)['areas'], ['Customers', 'Projects', 'Tasks', 'Calendar', 'Services', 'Products', 'Documents', 'Pictures'])
 
     def test_product_and_file_objects_belong_to_their_direct_migration_areas(self):
         value = schema()

@@ -60,6 +60,16 @@ class TestFullMigrationChain(unittest.TestCase):
         self.db.runs[child]["state"] = state
         fm.advance_full("FULL")
 
+    def test_new_full_run_keeps_services_after_product_links_and_before_files(self):
+        steps = [*fm.FULL_STEPS[:4], fm.SERVICE_ACTION, *fm.FULL_STEPS[4:]]
+        fm._save_full("FULL", {"step": 0, "child": "", "notes": [], "steps": steps})
+        fm.advance_full("FULL")
+        for _ in steps:
+            self.finish_current()
+        self.assertEqual(self.started, steps)
+        self.assertEqual(self.started.index(fm.SERVICE_ACTION), self.started.index(fm.PRODUCT_ACTION) + 1)
+        self.assertEqual(self.db.runs["FULL"]["state"], "Completed")
+
     def test_steps_run_one_after_another_and_complete(self):
         fm.advance_full("FULL")
         self.assertEqual(self.started, ["Project Migration"])

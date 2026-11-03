@@ -50,7 +50,7 @@ class TestInstallContract(unittest.TestCase):
         self.assertEqual(len(environment.create_calls), 1)
         fields, update = environment.create_calls[0]
         self.assertFalse(update)
-        self.assertEqual(sum(map(len, fields.values())), 15)
+        self.assertEqual(sum(map(len, fields.values())), 23)
         self.assertEqual(
             {row["fieldname"] for rows in fields.values() for row in rows},
             {
@@ -59,6 +59,7 @@ class TestInstallContract(unittest.TestCase):
                 "custom_hero_source_created", "custom_hero_source_modified", "custom_hero_manufacturer_nr",
                 "custom_hero_lead_source", "custom_hero_designation", "custom_hero_project_manager",
                 "custom_hero_partner_id", "custom_hero_user_id",
+                *{field["fieldname"] for field in install.SERVICE_ITEM_FIELDS},
             },
         )
 
@@ -159,9 +160,9 @@ class _InstallEnvironment:
 
     def call(self, function):
         # Theme lifecycle has its own metadata tests; this fixture owns ERPNext fields.
-        with mock.patch.dict(sys.modules, self.modules), \
-                mock.patch("hero_integration.services.desk_theme.ensure_navy_theme"), \
-                mock.patch("hero_integration.integrations.field_labels.relabel_fields") as relabel:
+        with mock.patch("hero_integration.services.desk_theme.ensure_navy_theme"), \
+                mock.patch("hero_integration.integrations.field_labels.relabel_fields") as relabel, \
+                mock.patch.dict(sys.modules, self.modules):
             result = function()
             self.relabel_calls += relabel.call_count
             return result

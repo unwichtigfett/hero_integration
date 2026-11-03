@@ -84,7 +84,7 @@ test('object field context displays relationship role, list cardinality and argu
 test('area filter uses catalog memberships and preserves unclassified objects under All', () => {
  const {objectsInArea,mappingAreas}=window.hero_integration_mapping_editor;
  const items=[{name:'Customer',areas:['Customers','Projects']},{name:'Task',areas:['Tasks']},{name:'Other',areas:[]}];
- assert.equal(mappingAreas.join(','),'All areas,Customers,Projects,Tasks,Calendar,Products,Documents,Pictures');
+ assert.equal(mappingAreas.join(','),'All areas,Customers,Projects,Tasks,Calendar,Products,Documents,Pictures,Services');
  assert.equal(objectsInArea(items,'All areas').map(x=>x.name).join(','),'Customer,Task,Other');
  assert.equal(objectsInArea(items,'Projects').map(x=>x.name).join(','),'Customer');
  assert.equal(objectsInArea(items,'Tasks').map(x=>x.name).join(','),'Task');

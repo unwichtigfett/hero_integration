@@ -815,7 +815,7 @@ def _validate_output_compatibility(spec, options, fieldtype):
     """Reject incompatible mappings before Frappe can coerce source values."""
     if spec.transformation in direct.TRANSFORMS:
         kind = spec.source_type.split('|')[0]
-        allowed = {'HERO Price': {'int', 'float'}, 'HERO Default Sales Price': {'json'}}.get(spec.transformation, {'string'})
+        allowed = {'Service Price': {'int', 'float'}, 'HERO Price': {'int', 'float'}, 'HERO Default Sales Price': {'json'}}.get(spec.transformation, {'string'})
         if kind not in allowed:
             raise ValueError(spec.transformation + ' requires a ' + '/'.join(sorted(allowed)) + ' source.')
         if options:
