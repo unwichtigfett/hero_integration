@@ -26,7 +26,8 @@ steps:
     image: alpine:3.22.2@sha256:4b7ce07002c69e8f3d704a9c5d6fd3053be500b7f1c69fc0d80990c2ad8dd412
     commands:
       - apk add --no-cache -q curl jq
-      - sh ci/wait-github-checks.sh
+      # hero_int_dev also needs the OpenAI code review; hero_int_1.0 only receives promoted commits.
+      - if [ "$${CI_COMMIT_BRANCH}" = hero_int_dev ]; then export REQUIRED_CHECKS="package install-test ai-review"; fi; sh ci/wait-github-checks.sh
 
   # Push only: the dedicated key is restricted to the test-site updater.
   - name: update-test-site
