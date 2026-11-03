@@ -36,6 +36,8 @@ class _Frappe:
         return (doctype, name) in self.docs
 
     def get_value(self, doctype, name, field):
+        if doctype == "HERO Integration Run":
+            return "default"
         return self.docs[(doctype, name)].get(field)
 
     def get_meta(self, doctype):
@@ -142,8 +144,8 @@ class TestConflictReport(unittest.TestCase):
                                "target_doctype": "Customer", "source_path": "type"}],
                        labels={"Customer": {"customer_type": "Customer Type"}})
         with patch.object(cr, "frappe", fake), patch.object(cr, "_run_rules", return_value=_run_rules(fake)) as rules:
-            report = cr.record_report("REC-1")
-        rules.assert_called_once_with("customer", "301", run="RUN-1")
+            report = cr.record_report("REC-1", "default")
+        rules.assert_called_once_with("customer", "301", "default", run="RUN-1")
         self.assertFalse(report["decidable"])
         self.assertEqual((report["status"], report["doctype"]), ("Not imported", "Customer"))
         self.assertEqual([(f["hero_variable"], f["label"], f["value"]) for f in report["fields"]],
@@ -151,31 +153,58 @@ class TestConflictReport(unittest.TestCase):
 
 
 class TestHeroVariableComesFromTheProcessingRun(unittest.TestCase):
-    def rules(self, run_doc, plan=None, error=None, sql_rows=(("RUN-1",),)):
-        fake = SimpleNamespace(db=SimpleNamespace(sql=lambda *a: list(sql_rows), exists=lambda doctype, name: run_doc is not None),
-                               get_doc=lambda doctype, name: run_doc)
-        target = patch("hero_integration.services.migration._mapping_plan_for_run",
-                       side_effect=error, return_value=plan)
-        with patch.object(cr, "frappe", fake), target as build:
-            return cr._run_rules("Task", "2293879"), build
+    """Runs of source A (rule title) and a newer run of source B (rule foreign_note)
+    processed the same HERO Task id 42."""
 
-    def test_only_the_rule_selected_for_the_run_is_named(self):
+    def setUp(self):
         from hero_integration.services.direct_mapping import MappingSpec
 
-        # Historical (comment) and foreign (foreign_note) rules for Task.description stay
-        # Active in HERO Frappe Mapping; the run's plan selects only the current one.
-        plan = SimpleNamespace(definitions=(MappingSpec("HeroTasks", "title", "Task", "description", "string|null"),))
-        run = SimpleNamespace(name="RUN-1", graphql_mapping="MAP-1")
-        rules, build = self.rules(run, plan)
-        build.assert_called_once_with(run, "HeroTasks")
-        self.assertEqual(cr._hero_variable("Task", "Task", "description", rules), "title")
+        self.runs = {"RUN-A": SimpleNamespace(name="RUN-A", source_instance="source-a", graphql_mapping="MAP-A"),
+                     "RUN-B": SimpleNamespace(name="RUN-B", source_instance="source-b", graphql_mapping="MAP-B")}
+        self.plans = {"RUN-A": ("title", "Task", "description"), "RUN-B": ("foreign_note", "Task", "description")}
+        self.records = [("RUN-A", "2026-11-01"), ("RUN-B", "2026-11-02")]  # B is newer
+        self.spec = MappingSpec
+
+    def rules(self, instance, run=None, error=None):
+        def sql(query, params):
+            source_type, source_id, wanted = params
+            matching = [(name, created) for name, created in self.records
+                        if self.runs[name].source_instance == wanted and self.runs[name].graphql_mapping]
+            return [(max(matching, key=lambda item: item[1])[0],)] if matching else []
+
+        def plan(run_doc, operation):
+            if error:
+                raise error
+            path, doctype, field = self.plans[run_doc.name]
+            return SimpleNamespace(definitions=(self.spec("HeroTasks", path, doctype, field, "string|null"),))
+
+        fake = SimpleNamespace(db=SimpleNamespace(sql=sql, exists=lambda doctype, name: name in self.runs),
+                               get_doc=lambda doctype, name: self.runs[name])
+        with patch.object(cr, "frappe", fake), \
+                patch("hero_integration.services.migration._mapping_plan_for_run", side_effect=plan):
+            return cr._run_rules("Task", "42", instance, run=run)
+
+    def test_a_newer_run_of_another_source_is_never_used(self):
+        self.assertEqual(cr._hero_variable("Task", "Task", "description", self.rules("source-a")), "title")
+        self.assertEqual(cr._hero_variable("Task", "Task", "description", self.rules("source-b")), "foreign_note")
+
+    def test_an_explicit_run_of_another_source_is_unknown(self):
+        self.assertIsNone(self.rules("source-a", run="RUN-B"))
+        self.assertIsNotNone(self.rules("source-a", run="RUN-A"))
 
     def test_unknown_when_the_run_cannot_be_reconstructed(self):
-        run = SimpleNamespace(name="RUN-1", graphql_mapping="MAP-1")
-        self.assertIsNone(self.rules(run, error=RuntimeError("revision changed"))[0])
-        self.assertIsNone(self.rules(SimpleNamespace(name="RUN-1", graphql_mapping=""))[0])
-        self.assertIsNone(self.rules(None, sql_rows=())[0])
+        self.assertIsNone(self.rules("source-a", error=RuntimeError("revision changed")))
+        self.runs["RUN-A"].graphql_mapping = ""
+        self.assertIsNone(self.rules("source-a"))  # without a frozen mapping no run qualifies
+        self.assertIsNone(self.rules("source-c"))
         self.assertIsNone(cr._hero_variable("Task", "Task", "description", None))
+
+    def test_report_passes_the_link_source_to_the_run_selection(self):
+        fake = _Frappe(links={"LINK-1": _link(source_instance="source-a", conflict_detail="Task fields require review: description")},
+                       docs={("Task", "TASK-1"): {"description": "x"}}, labels={"Task": {"description": "Description"}})
+        with patch.object(cr, "frappe", fake), patch.object(cr, "_run_rules", return_value=None) as rules:
+            cr.report("LINK-1", "source-a")
+        rules.assert_called_once_with("Task", "2293879", "source-a")
 
 
 class TestReportPage(unittest.TestCase):

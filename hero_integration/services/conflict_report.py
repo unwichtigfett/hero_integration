@@ -61,14 +61,15 @@ _DECISIONS = {
 def report(link_name: str, source_instance: str) -> dict:
     """Report for one open conflict link of ``source_instance``."""
     link = frappe.get_doc("HERO Integration Link", link_name)
-    if (link.source_instance or "default") != source_instance:
+    instance = link.source_instance or "default"
+    if instance != source_instance:
         raise frappe.PermissionError("The conflict belongs to a different HERO source.")
     if link.sync_status not in ("Conflict", "Pending Review"):
         raise frappe.ValidationError("The record has no open conflict.")
     detail = link.conflict_detail or ""
     recheck = detail.startswith(RECHECK_PREFIX)
     problem = detail[len(RECHECK_PREFIX):] if recheck else detail
-    rules = _run_rules(link.source_type, link.source_id)
+    rules = _run_rules(link.source_type, link.source_id, instance)
     kind, fields = _fields(link, problem, rules)
     approve, decline = _DECISIONS[link.sync_status]
     return {
@@ -83,13 +84,16 @@ def report(link_name: str, source_instance: str) -> dict:
     }
 
 
-def record_report(record_name: str) -> dict:
+def record_report(record_name: str, source_instance: str) -> dict:
     """Report for a HERO record the latest run could not import (nothing to decide)."""
     record = frappe.get_doc("HERO Integration Record", record_name)
+    run_instance = frappe.db.get_value("HERO Integration Run", record.run, "source_instance") if record.run else None
+    if (run_instance or "default") != source_instance:
+        raise frappe.PermissionError("The conflict belongs to a different HERO source.")
     detail = record.detail or record.result or ""
     names = _FIELD_LIST.match(detail) or re.match(r"^HERO response omits the source of: (?P<fields>[\w, ]+)\.$", detail)
     doctype = _target_doctype(record.source_type)
-    rules = _run_rules(record.source_type, record.source_id, run=record.run)
+    rules = _run_rules(record.source_type, record.source_id, source_instance, run=record.run)
     fields = [_field(record.source_type, doctype, None, name, rules) for name in _split(names)] if names else []
     return {
         "name": record.name, "kind": "record", "hero_id": record.source_id, "source_type": record.source_type,
@@ -152,9 +156,11 @@ def _hero_variable(source_type: str, doctype: str, field: str, rules) -> str | N
     return ", ".join(dict.fromkeys(paths)) or None
 
 
-def _run_rules(source_type: str, source_id: str, run: str | None = None) -> tuple | None:
-    """(doctype, field) → HERO path of exactly the rules frozen onto the run that
-    processed this record. None when no such run exists or its rules changed."""
+def _run_rules(source_type: str, source_id: str, source_instance: str, run: str | None = None) -> tuple | None:
+    """(doctype, field) → HERO path of exactly the rules frozen onto the run of
+    ``source_instance`` that processed this record. HERO ids repeat across
+    sources, so a run of another source never counts. None when no such run
+    exists or its rules changed."""
     operation = _operation(source_type)
     if not operation or source_type == "supply_product":
         return None
@@ -162,11 +168,14 @@ def _run_rules(source_type: str, source_id: str, run: str | None = None) -> tupl
         rows = frappe.db.sql("""SELECT x.run FROM `tabHERO Integration Record` x
             JOIN `tabHERO Integration Run` r ON r.name = x.run
             WHERE x.source_type=%s AND x.source_id=%s AND r.mode='Execute' AND IFNULL(r.graphql_mapping, '') != ''
-            ORDER BY x.creation DESC LIMIT 1""", (source_type, str(source_id)))
+              AND COALESCE(NULLIF(r.source_instance, ''), 'default')=%s
+            ORDER BY x.creation DESC LIMIT 1""", (source_type, str(source_id), source_instance))
         run = rows[0][0] if rows else None
     if not run or not frappe.db.exists("HERO Integration Run", run):
         return None
     document = frappe.get_doc("HERO Integration Run", run)
+    if (getattr(document, "source_instance", "") or "default") != source_instance:
+        return None
     if not getattr(document, "graphql_mapping", ""):
         return None  # without a frozen mapping every active rule would qualify
     from hero_integration.services.migration import _mapping_plan_for_run
