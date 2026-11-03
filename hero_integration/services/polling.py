@@ -171,9 +171,13 @@ def record_scheduler_outcome(mode: str, status: str, detail: str, *, run: str = 
 
     settings = frappe.get_single("HERO Integration Settings")
     source_instance = source_instance or str(getattr(settings, "hero_source_instance", "") or "default")
-    if run:
-        return _record_event(mode, status, detail, run=run, source_instance=source_instance)
     label = f"{mode} {status.lower()}"
+    if run:
+        event = _record_event(mode, status, detail, run=run, source_instance=source_instance)
+        # A started run ends the previous skip/failure state: the next identical failure is new again
+        # and the page no longer shows the outdated error. Written directly; no Settings validation.
+        frappe.db.set_single_value("HERO Integration Settings", {"sync_status": label, "sync_error": ""})
+        return event
     if (getattr(settings, "sync_status", "") or "") == label and (getattr(settings, "sync_error", "") or "") == detail:
         return None
     event = _record_event(mode if mode in {"MONITOR", "AUTO_SYNC"} else "MONITOR", status, detail, source_instance=source_instance)

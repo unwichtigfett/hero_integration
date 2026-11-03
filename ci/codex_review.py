@@ -191,7 +191,8 @@ def main(argv=None, runner=subprocess.run) -> int:
     if not reused:
         stored.write_text(json.dumps({"base": base, "head": head, "model": args.model, "effort": args.effort,
                                       "review": review}, ensure_ascii=False, indent=2))
-        (REPORTS / f"{head}.md").write_text(report)
+    # Only the review is reused; the report always shows this run's threshold and verdict.
+    (REPORTS / f"{head}.md").write_text(report)
     print(report + (f"\n(Gespeicherter Bericht: {REPORTS / (head + '.md')})" if reused else
                     f"\nBericht: {REPORTS / (head + '.md')}"))
     return 1 if blocked else 0

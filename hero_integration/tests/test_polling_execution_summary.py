@@ -19,10 +19,13 @@ class TestPollingReceipts(unittest.TestCase):
             self.assertIn(payload['status'], statuses)
             return SimpleNamespace(name='POLL-1', insert=lambda **kw: receipts.append(payload))
         settings = SimpleNamespace(hero_source_instance='source-a')
-        fake = SimpleNamespace(get_single=lambda dt: settings, get_doc=doc)
+        written = []
+        fake = SimpleNamespace(get_single=lambda dt: settings, get_doc=doc,
+                               db=SimpleNamespace(set_single_value=lambda dt, values: written.append((dt, values))))
         with patch.dict(sys.modules, {'frappe': fake}):
             result = record_scheduler_outcome('AUTO_SYNC', 'Started', 'Queued.', run='RUN-1')
         self.assertEqual(result, 'POLL-1')
+        self.assertEqual(written, [('HERO Integration Settings', {'sync_status': 'AUTO_SYNC started', 'sync_error': ''})])
         self.assertEqual(receipts[0]['run'], 'RUN-1')
         self.assertEqual(receipts[0]['source_instance'], 'source-a')
 
@@ -103,4 +106,31 @@ class TestPollingEventSchemaMigrates(unittest.TestCase):
         schema = json.loads((Path(__file__).parents[1] / 'hero_integration/doctype/hero_polling_event/hero_polling_event.json').read_text())
         self.assertGreater(schema['modified'], '2026-10-21 00:00:00.000000')
         self.assertIn('run', [field['fieldname'] for field in schema['fields']])
+
+
+class TestFailureAfterAStartIsRecordedAgain(unittest.TestCase):
+    """Failed → Started → Failed (same text) must give three receipts, not two."""
+
+    def test_failure_start_failure(self):
+        settings = SimpleNamespace(hero_source_instance='default', sync_status='', sync_error='',
+                                   save=lambda **kw: None)
+        receipts = []
+
+        def doc(payload):
+            return SimpleNamespace(name=f"POLL-{len(receipts) + 1}", insert=lambda **kw: receipts.append(payload))
+
+        def set_single_value(doctype, values):
+            for key, value in values.items():
+                setattr(settings, key, value)
+
+        fake = SimpleNamespace(get_single=lambda dt: settings, get_doc=doc,
+                               db=SimpleNamespace(set_single_value=set_single_value))
+        failure = 'Customers: the automatic run could not be started; see the error log.'
+        with patch.dict(sys.modules, {'frappe': fake}):
+            record_scheduler_outcome('AUTO_SYNC', 'Failed', failure)
+            record_scheduler_outcome('AUTO_SYNC', 'Started', 'Customers: run RUN-1 queued.', run='RUN-1')
+            self.assertEqual(settings.sync_error, '')
+            record_scheduler_outcome('AUTO_SYNC', 'Failed', failure)
+            record_scheduler_outcome('AUTO_SYNC', 'Failed', failure)  # an uninterrupted repeat stays deduplicated
+        self.assertEqual([r['status'] for r in receipts], ['Failed', 'Started', 'Failed'])
 
