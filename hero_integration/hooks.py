@@ -25,6 +25,8 @@ scheduler_events = {
         "hero_integration.tasks.run_scheduled_sync",
         "hero_integration.tasks.run_scheduled_schema_refresh",
     ]},
+    # New HERO employees get an ERPNext user (no roles, no e-mail).
+    "daily": ["hero_integration.integrations.hero_people.sync_daily"],
 }
 
 # Native Desk extension only.  It asks the server for eligible, linked fields
