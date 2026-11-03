@@ -2971,3 +2971,5 @@ Status Name,Statusname
 Status Short Name,Status-Kurzname
 Status Step ID,Statusschritt-ID
 Supplier Part No,Lieferanten-Artikelnummer
+Customer Type From HERO Type,Kundentyp aus HERO-Typ
+Plain Text To HTML,Klartext zu HTML

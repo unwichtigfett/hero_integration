@@ -63,11 +63,20 @@ TRANSFORM_IDENTITY = "Identity"
 TRANSFORM_TRIM = "Trim"
 TRANSFORM_POSITIVE_INT_TO_TEXT = "Positive Int To Text"
 TRANSFORM_CUSTOMER_TYPE = "Customer Type From Company Name"
+# HERO says itself whether a customer is private or commercial; this is the native Customer Type.
+TRANSFORM_HERO_CUSTOMER_TYPE = "Customer Type From HERO Type"
+HERO_CUSTOMER_TYPES = {"commercial": "Company", "private": "Individual"}
+# HERO plain text in a native Text Editor field (inverse: task_send.plain_text).
+TRANSFORM_PLAIN_TEXT_HTML = "Plain Text To HTML"
+NOTES_BINDING = ("partner_notes", "Project", "notes", TRANSFORM_PLAIN_TEXT_HTML)
+# Older mapping revisions keep their app field; new revisions use the native notes.
+LEGACY_NOTES_BINDING = ("partner_notes", "Project", "custom_hero_partner_notes", TRANSFORM_TRIM)
 TRANSFORM_HERO_CUSTOMER_LINK = "HERO Customer Link"
 TRANSFORM_CONFIRMED_COMPANY = "Confirmed ERPNext Company"
 TRANSFORMATIONS = {
     TRANSFORM_IDENTITY, TRANSFORM_TRIM, TRANSFORM_POSITIVE_INT_TO_TEXT,
-    TRANSFORM_CUSTOMER_TYPE, TRANSFORM_HERO_CUSTOMER_LINK, TRANSFORM_CONFIRMED_COMPANY,
+    TRANSFORM_CUSTOMER_TYPE, TRANSFORM_HERO_CUSTOMER_TYPE, TRANSFORM_HERO_CUSTOMER_LINK, TRANSFORM_CONFIRMED_COMPANY,
+    TRANSFORM_PLAIN_TEXT_HTML,
 }
 TRANSFORMATIONS.update({'JSON Value', 'Scalar Text', 'HERO Project Link'})
 TRANSFORMATIONS.update({'Native Adapter', 'Nonempty String ID'})
@@ -190,7 +199,25 @@ def transformed_value(spec: MappingSpec, value: object) -> object | None:
         return json.dumps(value, allow_nan=False)
     if spec.transformation == TRANSFORM_CUSTOMER_TYPE:
         return "Company" if isinstance(value, str) and value.strip() else "Individual"
+    if spec.transformation == TRANSFORM_HERO_CUSTOMER_TYPE:
+        return hero_customer_type(value)
+    if spec.transformation == TRANSFORM_PLAIN_TEXT_HTML:
+        return plain_text_html(value)
     return value
+
+
+def plain_text_html(value: object) -> str | None:
+    """``a\nb`` -> ``<p>a<br>b</p>``; empty text stays empty."""
+    from html import escape
+
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return "<p>" + escape(value.strip()).replace("\r\n", "\n").replace("\n", "<br>") + "</p>"
+
+
+def hero_customer_type(value: object) -> str:
+    """HERO ``commercial`` is a Company; ``private`` and anything else is an Individual."""
+    return HERO_CUSTOMER_TYPES.get(value.strip().lower(), "Individual") if isinstance(value, str) else "Individual"
 
 
 class _Missing:
@@ -242,7 +269,10 @@ def _validate_binding(spec: MappingSpec, metadata) -> None:
         _require(spec, target_doctype=SOURCE_CONTRACTS[spec.operation]['target_doctype'], target_field=target, transformation=TRANSFORM_TRIM)
         return
     if spec.purpose == PURPOSE_CUSTOMER_TYPE:
-        _require(spec, "company_name", "string|null", "Customer", "customer_type", TRANSFORM_CUSTOMER_TYPE)
+        if spec.transformation == TRANSFORM_HERO_CUSTOMER_TYPE:
+            _require(spec, "type", "string|null", "Customer", "customer_type", TRANSFORM_HERO_CUSTOMER_TYPE)
+        else:
+            _require(spec, "company_name", "string|null", "Customer", "customer_type", TRANSFORM_CUSTOMER_TYPE)
         return
     if spec.purpose == PURPOSE_CUSTOMER_CONTACT:
         if spec.operation != "HeroCustomers" or spec.target_doctype != "Customer":
@@ -280,12 +310,14 @@ def _validate_custom_field(spec: MappingSpec, metadata) -> None:
     contract = SOURCE_CONTRACTS[spec.operation]
     if spec.target_doctype != contract["target_doctype"]:
         raise DirectMappingError("A field mapping may only write its operation target DocType.")
-    if spec.source_path == "partner_notes" and (
-        spec.target_doctype != "Project"
-        or spec.target_field != "custom_hero_partner_notes"
-        or spec.transformation != TRANSFORM_TRIM
-    ):
-        raise DirectMappingError("HERO partner notes may only map explicitly to Project.custom_hero_partner_notes.")
+    binding = (spec.source_path, spec.target_doctype, spec.target_field, spec.transformation)
+    if spec.source_path == "partner_notes" and binding != LEGACY_NOTES_BINDING or spec.transformation == TRANSFORM_PLAIN_TEXT_HTML:
+        if binding != NOTES_BINDING:
+            raise DirectMappingError("HERO partner notes may only map to the native Project notes (Plain Text To HTML).")
+        field = metadata.field("Project", "notes")
+        if field is None or field.fieldtype != "Text Editor" or field.read_only or spec.relation:
+            raise DirectMappingError("ERPNext Project.notes must be an editable Text Editor field.")
+        return
     protected = SYSTEM_FIELDS | PROTECTED_FIELDS[spec.target_doctype] | RESERVED_TARGET_FIELDS[spec.target_doctype]
     if spec.target_field in protected:
         raise DirectMappingError("Identity, Company, status, and standard bindings are protected.")

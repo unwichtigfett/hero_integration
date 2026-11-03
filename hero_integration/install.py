@@ -44,14 +44,7 @@ HERO_CUSTOM_FIELDS = {
             "read_only": 1,
             "no_copy": 1,
         },
-        {
-            "fieldname": "custom_hero_customer_type",
-            "fieldtype": "Data",
-            "label": "Customer Type",
-            "insert_after": "custom_hero_customer_category",
-            "read_only": 1,
-            "no_copy": 1,
-        }
+        # The HERO customer type sets the native Customer Type; no separate field.
     ],
     "Project": [
         {

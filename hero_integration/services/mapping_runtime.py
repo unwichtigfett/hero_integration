@@ -210,7 +210,7 @@ class MappingPlan:
                     values[definition.target_field] = native_value(definition.target_field)
                 except KeyError:
                     if not (allow_partial and (self.target_operation or self.operation) == 'HeroCalendarEvents'
-                            and definition.target_field in {'starts_on', 'ends_on', 'all_day', 'custom_hero_original_start', 'custom_hero_original_end'}):
+                            and definition.target_field in {'starts_on', 'ends_on', 'all_day', 'status', 'custom_hero_original_start', 'custom_hero_original_end'}):
                         raise
             elif definition.purpose == 'Project Relation':
                 if value is None:

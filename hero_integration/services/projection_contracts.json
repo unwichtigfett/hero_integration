@@ -86,17 +86,10 @@
         "purpose": "Field"
       },
       "color": {
-        "field": "custom_hero_color",
-        "fieldtype": "Small Text",
+        "field": "color",
+        "fieldtype": "Color",
         "options": "",
         "transformation": "Identity",
-        "purpose": "Field"
-      },
-      "is_done": {
-        "field": "custom_hero_is_done",
-        "fieldtype": "Data",
-        "options": "",
-        "transformation": "Scalar Text",
         "purpose": "Field"
       },
       "is_recurring": {
@@ -235,6 +228,11 @@
     "fingerprint": "fee37bfa55a02f7a4d09b6b902e6600a835c992c8fe6644c358f5e511e025201",
     "native_kind": "event",
     "native_bindings": {
+      "status": {
+        "source_path": "is_done",
+        "fieldtype": "Select",
+        "options": "Open\nCompleted\nClosed\nCancelled"
+      },
       "custom_hero_original_start": {
         "source_path": "start",
         "fieldtype": "Data",

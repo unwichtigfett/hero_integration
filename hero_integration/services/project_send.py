@@ -9,7 +9,7 @@ import frappe
 
 from hero_integration.services.localized_error import LocalizedError
 SEND_ROLES = ("System Manager", "HERO Writeback")
-NOTES_FIELD = "custom_hero_partner_notes"
+NOTES_FIELD = "notes"  # native ERPNext Notes (Text Editor); HERO partner_notes is plain text
 PHASE_ID_FIELD = "custom_hero_observed_status_id"
 PHASE_NAME_FIELD = "custom_hero_observed_status_name"
 # Phase is a ProjectStatusStep; project statuses are history. HERO ignores
@@ -49,10 +49,10 @@ def legacy_preview(project: str, phase_id=None, client=None) -> dict:
     baseline = _decode(link.source_field_hashes)
     changes, conflicts = [], []
 
-    local_notes = _text(document.get(NOTES_FIELD))
+    local_notes = _text(_plain(document.get(NOTES_FIELD)))
     hero_notes = _text(hero.get("partner_notes"))
     if local_notes != hero_notes:
-        hero_changed = NOTES_FIELD in baseline and baseline[NOTES_FIELD] != _hash(NOTES_FIELD, hero_notes)
+        hero_changed = NOTES_FIELD in baseline and baseline[NOTES_FIELD] != _hash(NOTES_FIELD, _html(hero_notes))
         (conflicts if hero_changed else changes).append(
             {"field": "partner_notes", "label": "Notes", "hero": hero_notes, "new": local_notes})
 
@@ -134,7 +134,7 @@ def _apply_locally(project, link, changes, after) -> None:
 
     updates = {}
     if any(change["field"] == "partner_notes" for change in changes):
-        updates[NOTES_FIELD] = after.get("partner_notes")
+        updates[NOTES_FIELD] = _html(after.get("partner_notes"))
     if any(change["field"] == PHASE_INPUT for change in changes):
         updates[PHASE_ID_FIELD] = str(after.get("current_project_match_status_id"))
         updates[PHASE_NAME_FIELD] = (after.get("current_project_match_status") or {}).get("name")
@@ -213,6 +213,18 @@ def _types(obj) -> dict:
         elif isinstance(item, list):
             stack.extend(item)
     return {}
+
+
+def _plain(value):
+    from hero_integration.services.task_send import plain_text
+
+    return plain_text(value)
+
+
+def _html(value):
+    from hero_integration.services.direct_mapping import plain_text_html
+
+    return plain_text_html(value)
 
 
 def _text(value):

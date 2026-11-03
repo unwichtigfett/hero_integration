@@ -15,10 +15,13 @@ class TestProjectNotesMappingContract(unittest.TestCase):
         with self.assertRaises(NativeProjectNotesError):
             require_native_project_notes(SimpleNamespace(get_field=lambda name: SimpleNamespace(read_only=1)))
 
-    def test_partner_notes_never_target_native_project_notes(self):
+    def test_partner_notes_target_native_notes_only_as_converted_text(self):
         metadata = _Metadata()
         with self.assertRaises(DirectMappingError):
             validate_spec(MappingSpec("HeroProjectMatches", "partner_notes", "Project", "notes", "string|null"), metadata)
+        validate_spec(MappingSpec("HeroProjectMatches", "partner_notes", "Project", "notes", "string|null",
+                                  transformation="Plain Text To HTML"), metadata)
+        # Older mapping revisions keep their app field.
 
         validate_spec(
             MappingSpec(
@@ -38,6 +41,8 @@ class _Metadata:
     def field(doctype, fieldname):
         if (doctype, fieldname) == ("Project", "custom_hero_partner_notes"):
             return SimpleNamespace(fieldtype="Small Text", read_only=0, is_custom_field=1)
+        if (doctype, fieldname) == ("Project", "notes"):
+            return SimpleNamespace(fieldtype="Text Editor", read_only=0, is_custom_field=0)
         return None
 
 

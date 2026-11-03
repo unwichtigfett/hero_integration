@@ -14,16 +14,17 @@ SHOWN = {
     "custom_hero_source_created": "Creation",
     "custom_hero_source_modified": "Modified",
     "custom_hero_address_full_address": "Project Address",
-    "custom_hero_partner_notes": "Notes",
 }
-# Edited in ERPNext and sent with the Project's "Send to HERO" button.
-EDITABLE = {"custom_hero_partner_notes"}
+# HERO notes live in the native Notes field; it stays editable and is sent with "Send to HERO".
+EDITABLE: set[str] = set()
 PHASE_FIELD = "custom_hero_phase"  # app-owned display field: the HERO status step name
 VOLUME_FIELD = "custom_hero_volume"  # HERO volume: project volume in euros (read-only)
 HIDDEN = (
     "custom_hero_observed_status_name",
     "custom_hero_source_id", "custom_hero_project_number", "custom_hero_customer_title",
-    "custom_hero_customer_full_name", "custom_hero_project_type", "custom_hero_project_type_copy",
+    "custom_hero_customer_full_name", "custom_hero_project_type",
+    # Superseded by the native Notes (older mapping revisions only).
+    "custom_hero_partner_notes", "custom_hero_project_type_copy",
     "custom_hero_observed_status_id", "custom_hero_observed_status_status_code",
     "custom_hero_observed_status_short_name", "custom_hero_observed_status_step_id",
     "custom_hero_observed_status_created", "custom_hero_observed_status_modified",
@@ -37,7 +38,6 @@ PLACEMENT = (
     ("custom_hero_source_modified", "custom_hero_source_created"),
     ("custom_hero_address_full_address", "custom_hero_source_modified"),
     (VOLUME_FIELD, "custom_hero_address_full_address"),
-    ("custom_hero_partner_notes", "notes"),
 )
 
 

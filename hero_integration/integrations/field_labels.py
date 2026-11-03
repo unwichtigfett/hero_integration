@@ -66,6 +66,17 @@ LABELS = {
 }
 
 
+# Technical sync fields that duplicate a visible native value or only identify the source record.
+# They stay (the sync compares against them) but are hidden on the form.
+HIDDEN = {
+    "Event": ("custom_hero_source_id", "custom_hero_key", "custom_hero_source_instance", "custom_hero_deleted",
+              "custom_hero_type", "custom_hero_project_match_id", "custom_hero_category_id",
+              "custom_hero_partner_id", "custom_hero_readonly"),
+    # The HERO due date is also the native Expected End Date; this copy is the sync baseline.
+    "Task": ("custom_hero_due_date",),
+}
+
+
 def strip_prefix(label: str | None) -> str:
     """``HERO Source ID`` -> ``Source ID``; a label that is only the prefix stays."""
     text = (label or "").strip()
@@ -102,6 +113,25 @@ def relabel_fields() -> dict:
             frappe.db.set_value("DocField", row.name, "label", label, update_modified=False)
             changed += 1
             doctypes.add(row.parent)
+    hidden = hide_technical_fields()
     for doctype in sorted(doctypes):
         frappe.clear_cache(doctype=doctype)
-    return {"fields_relabelled": changed, "doctypes": sorted(doctypes)}
+    return {"fields_relabelled": changed, "doctypes": sorted(doctypes), "fields_hidden": hidden}
+
+
+def hide_technical_fields() -> int:
+    """Hide the technical sync fields of ``HIDDEN`` that exist (idempotent)."""
+    import frappe
+    from frappe.custom.doctype.property_setter.property_setter import make_property_setter
+
+    hidden = 0
+    for doctype, fieldnames in HIDDEN.items():
+        present = set(frappe.get_all("Custom Field", filters={"dt": doctype, "fieldname": ["in", fieldnames]},
+                                     pluck="fieldname", limit_page_length=0))
+        for fieldname in fieldnames:
+            if fieldname in present:
+                make_property_setter(doctype, fieldname, "hidden", "1", "Check", validate_fields_for_doctype=False)
+                hidden += 1
+        if present:
+            frappe.clear_cache(doctype=doctype)
+    return hidden
