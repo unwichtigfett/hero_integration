@@ -9,7 +9,7 @@ and `HeroPictures`. A mapping alone does not authorize execution.
 
 | Operation | Saved Query root / records path | Configurable targets |
 | --- | --- | --- |
-| `HeroProducts` | `supply_product_versions` | `Item.item_name`, `description`, `item_group`, `stock_uom`, `brand`, `disabled`, `barcodes`; `Item Price.price_list_rate`; app-owned `Item.custom_hero_*` fields |
+| `HeroProducts` | `supply_product_versions` | `Item.item_name`, `description`, `item_group`, `stock_uom`, `brand`, `disabled`, `barcodes`, `min_order_qty`, `lead_time_days`; `Item Price.price_list_rate`; app-owned `Item.custom_hero_*` fields |
 | `HeroDocuments` | `FileUpload_FileUploads.edges.node` | `File.file_name` and app-owned `File.custom_hero_*` fields |
 | `HeroPictures` | `FileUpload_FileUploads.edges.node` | Same File targets as Documents |
 
@@ -42,6 +42,7 @@ runtime uses the built-in rules and a Query generated from them. Products use
 (Item Group, falling back to `base_data.supply_catalog.name`), `base_data.unit_type`,
 `base_data.manufacturer`, `base_data.manufacturer_nr` (`custom_hero_manufacturer_nr`),
 `base_data.ean`, `supply_operator.name` with `base_data.supplier_id` (Item Supplier),
+`base_data.quantity_min` (Minimum Order Qty), `base_data.delivery_time` (Lead Time in days),
 `is_deleted`, `base_price` and `sales_prices` (with `list_price` as the sales
 fallback). An article without HERO description keeps an empty description.
 
