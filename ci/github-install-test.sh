@@ -1,36 +1,9 @@
 #!/usr/bin/env bash
 # Runs only in an isolated CI container with disposable MariaDB and Redis services.
 set -Eeuo pipefail
-# BEGIN HERO TEST GATES
-run_hero_test_gates() {
-  local minimum=${MIN_TESTS:-1000} log_dir=${HERO_TEST_LOG_DIR:-/tmp} count rc
-  [[ "$minimum" =~ ^[1-9][0-9]*$ ]] || { echo 'MIN_TESTS must be positive.' >&2; return 2; }
-  if (cd apps/hero_integration && ../../env/bin/python ci/run-offline-tests.py > "$log_dir/hero-github-offline.log" 2>&1); then
-    :
-  else
-    rc=$?; tail -80 "$log_dir/hero-github-offline.log"; return "$rc"
-  fi
-  count=$(sed -nE 's/^Ran ([0-9]+) tests.*/\1/p' "$log_dir/hero-github-offline.log")
-  [[ "$count" =~ ^[0-9]+$ ]] && (( count >= minimum )) || {
-    echo 'Offline test discovery did not reach the required coverage.' >&2; return 1;
-  }
-  if HERO_RUN_RESERVATION_TEST_SITE=hero-ci.localhost HERO_WRITEBACK_SOURCE_TEST_SITE=hero-ci.localhost bench --site hero-ci.localhost run-tests --app hero_integration > "$log_dir/hero-github-site.log" 2>&1; then
-    :
-  else
-    rc=$?
-    printf 'HERO site test command failed (exit %s):\n' "$rc"
-    cat "$log_dir/hero-github-site.log"
-    return "$rc"
-  fi
-  count=$(sed 's/\x1b\[[0-9;]*m//g' "$log_dir/hero-github-site.log" | grep -cE '^\s*✔ ' || true)
-  (( count >= minimum )) || {
-    echo 'Site test discovery did not reach the required coverage.' >&2; return 1;
-  }
-  printf 'HERO offline and complete site test suites passed.\n'
-}
-# END HERO TEST GATES
-
 : "${GITHUB_WORKSPACE:?}" "${DB_ROOT_PASSWORD:?}"
+export HERO_TEST_LOG_DIR="${HERO_TEST_LOG_DIR:-$GITHUB_WORKSPACE/.ci-results}"
+source "$GITHUB_WORKSPACE/ci/test-gates.sh"
 selection=${INSTALL_APPS:-erpnext,helpdesk,hero_integration}
 case "$selection" in
   none|erpnext|helpdesk|erpnext,helpdesk|erpnext,hero_integration|erpnext,helpdesk,hero_integration) ;;
@@ -82,7 +55,7 @@ if [[ ",$selection," == *,hero_integration,* ]]; then
   result=$(bench --site hero-ci.localhost execute hero_integration.app_setup.verify_install)
   printf "%s\n" "$result" | python3 -c 'import json,sys; r=json.load(sys.stdin); assert not r["missing"] and not r["unsafe_defaults"], "HERO installation verification failed"'
   bench --site hero-ci.localhost set-config allow_tests true
-  ./env/bin/python -m pip install -q 'pytest>=8'
+  ./env/bin/python -m pip install -q 'pytest>=8' 'unittest-xml-reporting>=3.2,<4'
   bench build --app hero_integration
   # The setup wizard is deliberately absent on this disposable site.
   if [ -z "$(bench --site hero-ci.localhost execute frappe.db.exists --kwargs '{"dt":"Warehouse Type","dn":"Transit"}')" ]; then

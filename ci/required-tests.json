@@ -1,0 +1,85 @@
+{
+  "offline": {
+    "N-01 source isolation": [
+      "hero_integration.tests.test_file_transfer.TestSourceAndTargetBinding.test_project_ids_resolve_only_within_the_run_source",
+      "hero_integration.tests.test_file_transfer.TestSourceAndTargetBinding.test_new_file_link_records_the_run_source",
+      "hero_integration.tests.test_file_transfer.TestSourceAndTargetBinding.test_known_files_of_another_source_are_not_reused",
+      "hero_integration.tests.test_file_transfer.TestSourceAndTargetBinding.test_cursor_of_another_source_is_not_resumed",
+      "hero_integration.tests.test_file_migration.TestSourceBinding.test_run_uses_only_the_confirmed_binding_it_was_queued_under",
+      "hero_integration.tests.test_file_migration.TestSourceBinding.test_start_records_source_and_binding_revision",
+      "hero_integration.tests.test_file_migration.TestSourceBinding.test_source_change_before_execution_blocks_without_reading_hero",
+      "hero_integration.tests.test_file_migration.TestEveryStartPathIsSourceBound.test_unconfirmed_binding_blocks_both_public_starts",
+      "hero_integration.tests.test_file_migration.TestEveryStartPathIsSourceBound.test_legacy_start_creates_a_bound_run",
+      "hero_integration.tests.test_file_migration.TestEveryStartPathIsSourceBound.test_already_queued_legacy_job_transfers_nothing",
+      "hero_integration.tests.test_file_migration.TestEveryStartPathIsSourceBound.test_transfer_without_a_bound_client_requires_a_confirmed_binding",
+      "hero_integration.tests.test_product_migration.TestManagedPrices.test_links_and_offset_belong_to_one_source"
+    ],
+    "N-02 file rollback and commit failure": [
+      "hero_integration.tests.test_file_transfer.TestReplaceKeepsAValidFile.test_failed_link_update_restores_the_old_file_and_keeps_its_blob",
+      "hero_integration.tests.test_file_transfer.TestReplaceKeepsAValidFile.test_failed_commit_removes_the_new_blob_and_keeps_the_old",
+      "hero_integration.tests.test_file_transfer.TestReplaceKeepsAValidFile.test_successful_replace_removes_the_old_blob_after_commit"
+    ],
+    "N-03 price dimensions and baselines": [
+      "hero_integration.tests.test_product_migration.TestManagedPrices.test_customer_specific_unit_price_is_never_overwritten",
+      "hero_integration.tests.test_product_migration.TestManagedPrices.test_only_the_general_price_of_the_unit_is_adopted",
+      "hero_integration.tests.test_product_migration.TestManagedPrices.test_ambiguous_general_prices_block",
+      "hero_integration.tests.test_product_migration.TestManagedPrices.test_locally_changed_managed_price_is_a_conflict",
+      "hero_integration.tests.test_product_migration.TestManagedPrices.test_managed_price_later_bound_to_a_customer_is_a_conflict",
+      "hero_integration.tests.test_product_migration.TestManagedPrices.test_managed_price_with_a_new_customer_binding_blocks_the_whole_article",
+      "hero_integration.tests.test_product_migration.TestManagedPrices.test_price_conflict_marks_the_link_before_any_item_write"
+    ],
+    "N-04 customer lifecycle": [
+      "hero_integration.tests.test_query_mapping_v2.TestV2CustomerLifecycle.test_deleted_customer_is_never_upserted_and_its_link_is_marked",
+      "hero_integration.tests.test_query_mapping_v2.TestV2CustomerLifecycle.test_active_customer_still_reaches_upsert"
+    ],
+    "N-05 optional related identity": [
+      "hero_integration.tests.test_mapped_send.TestGroupedNestedSend.test_grouped_nested_inputs_are_built_and_read_back_with_bound_related_identity",
+      "hero_integration.tests.test_mapped_send.TestGroupedNestedSend.test_omitted_optional_address_does_not_block_an_independent_customer_field",
+      "hero_integration.tests.test_mapped_send.TestGroupedNestedSend.test_related_identity_is_selected_only_for_sent_nested_inputs",
+      "hero_integration.tests.test_mapped_send.TestGroupedNestedSend.test_related_address_identity_must_be_proven_by_pre_read"
+    ],
+    "N-06 unchanged file reassignment": [
+      "hero_integration.tests.test_file_transfer.TestSourceAndTargetBinding.test_unchanged_unassigned_file_is_attached_once_its_project_exists",
+      "hero_integration.tests.test_file_transfer.TestSourceAndTargetBinding.test_unchanged_file_without_resolvable_target_stays_untouched"
+    ],
+    "writeback readback and source guard": [
+      "hero_integration.tests.test_verified_writeback.TestVerifiedWriteback.test_preflight_rejects_wrong_source_type_field_or_missing_selection",
+      "hero_integration.tests.test_verified_writeback.TestVerifiedWriteback.test_id_only_response_cannot_acknowledge_a_write",
+      "hero_integration.tests.test_verified_writeback.TestVerifiedWriteback.test_matching_value_hashes_the_canonical_field_and_uses_exact_approved_request",
+      "hero_integration.tests.test_verified_writeback.TestVerifiedWriteback.test_null_false_and_zero_are_distinct_and_errors_are_not_success",
+      "hero_integration.tests.test_verified_writeback.TestVerifiedWriteback.test_transport_requires_prepared_readback_before_any_mutation",
+      "hero_integration.tests.test_verified_writeback.TestVerifiedWriteback.test_transport_preserves_binding_when_readback_fails_and_never_retries_mutation",
+      "hero_integration.tests.test_verified_writeback.TestVerifiedWriteback.test_transport_checks_remote_baseline_before_mutation_and_hashes_verified_value",
+      "hero_integration.tests.test_verified_writeback.TestVerifiedWriteback.test_missing_bound_record_in_approved_page_blocks_before_mutation",
+      "hero_integration.tests.test_verified_writeback.TestVerifiedWriteback.test_transport_rejects_wrong_or_unconfirmed_current_source_before_clients",
+      "hero_integration.tests.test_verified_writeback.TestOutboundConflictGate.test_conflicts_and_revision_changes_never_reach_transport",
+      "hero_integration.tests.test_verified_writeback.TestOutboundConflictGate.test_api_conflict_preview_is_ineligible_and_execute_creates_no_audit",
+      "hero_integration.tests.test_verified_writeback.TestOutboundConflictGate.test_acknowledgment_for_a_different_local_state_is_rejected",
+      "hero_integration.tests.test_form_verified_writeback.TestFormVerifiedWriteback.test_success_requires_matching_field_readback_and_marks_audit_succeeded",
+      "hero_integration.tests.test_form_verified_writeback.TestFormVerifiedWriteback.test_wrong_or_unconfirmed_source_blocks_all_network_access",
+      "hero_integration.tests.test_form_verified_writeback.TestFormVerifiedWriteback.test_connection_switch_between_pre_read_and_mutation_blocks_write",
+      "hero_integration.tests.test_form_verified_writeback.TestFormVerifiedWriteback.test_unstored_value_and_uncertain_timeout_never_acknowledge_or_retry",
+      "hero_integration.tests.test_form_verified_writeback.TestFormVerifiedWriteback.test_missing_runtime_plan_is_blocked_without_transport"
+    ],
+    "binding resume after acknowledgment": [
+      "hero_integration.tests.test_binding_registry.TestBindingRegistry.test_resolve_after_acknowledgment_preserves_revision_baselines_and_reconciliation"
+    ]
+  },
+  "site": {
+    "fresh source despite request snapshot": [
+      "hero_integration.tests.test_writeback_source_frappe.TestWritebackSourceSnapshotMariaDB.test_committed_foreign_source_is_seen_before_mutation_despite_old_snapshot",
+      "hero_integration.tests.test_writeback_source_frappe.TestWritebackSourceSnapshotMariaDB.test_committed_unconfirmed_revision_is_seen_before_mutation_despite_old_snapshot",
+      "hero_integration.tests.test_writeback_source_frappe.TestWritebackSourceSnapshotMariaDB.test_unchanged_source_can_succeed_without_restarting_the_caller_transaction"
+    ],
+    "atomic site reservation": [
+      "hero_integration.tests.test_sync_run_reservation_frappe.TestSyncRunReservationMariaDB.test_two_distinct_run_ids_get_only_one_site_reservation",
+      "hero_integration.tests.test_sync_run_reservation_frappe.TestSyncRunReservationMariaDB.test_legacy_migration_and_b8_cannot_claim_together"
+    ],
+    "checkpoint persistence and concurrent changes": [
+      "hero_integration.tests.test_run_checkpoint_frappe.TestCheckpointMariaDB.test_acknowledged_customer_survives_later_contract_conflict_and_interruption",
+      "hero_integration.tests.test_run_checkpoint_frappe.TestCheckpointMariaDB.test_concurrent_field_change_waits_for_checkpoint_then_rejects_stale_continuation",
+      "hero_integration.tests.test_run_checkpoint_frappe.TestCheckpointMariaDB.test_actual_run_reader_releases_database_locks_before_transport",
+      "hero_integration.tests.test_run_checkpoint_frappe.TestCheckpointMariaDB.test_mapping_publication_uses_same_transaction_scoped_root_lock"
+    ]
+  }
+}

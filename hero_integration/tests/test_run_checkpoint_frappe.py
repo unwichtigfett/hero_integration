@@ -22,6 +22,10 @@ class TestCheckpointMariaDB(TestCase):
         self.rule = self.token + '-rule'
         self.customers = []
         self.started = frappe.utils.now_datetime()
+        # The app runner may leave a read/write transaction from its setup or
+        # previous tests. This opt-in suite owns a disposable site and must
+        # start a clean fixture transaction before Frappe permits any DDL.
+        self.db.rollback()
         self.db.sql('CREATE TEMPORARY TABLE `hero_checkpoint_08a_fixture` '
                     '(name varchar(140) primary key, checkpoint_contract_json longtext, resume_record_index int) ENGINE=InnoDB')
         self.db.sql('INSERT INTO `tabHERO Frappe Mapping` '

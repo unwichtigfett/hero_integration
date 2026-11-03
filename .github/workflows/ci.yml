@@ -63,3 +63,12 @@ jobs:
       - name: Install selected apps and run complete HERO tests
         shell: bash
         run: su -s /bin/bash frappe -c 'bash "$GITHUB_WORKSPACE/ci/github-install-test.sh"'
+      - name: Retain test reports and complete logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hero-test-results-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .ci-results/
+          include-hidden-files: true
+          retention-days: 14
+          if-no-files-found: warn

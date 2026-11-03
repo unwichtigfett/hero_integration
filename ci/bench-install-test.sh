@@ -17,7 +17,10 @@
 set -euo pipefail
 
 APP_PATH="${APP_PATH:-$(cd "$(dirname "$0")/.." && pwd)}"
+APP_PATH="$(cd "$APP_PATH" && pwd)"
+source "$APP_PATH/ci/test-gates.sh"
 WORKDIR="${WORKDIR:-$PWD/.ci-bench}"
+export HERO_TEST_LOG_DIR="${HERO_TEST_LOG_DIR:-$WORKDIR/results}"
 FRAPPE_BRANCH="${FRAPPE_BRANCH:-version-16}"
 ERPNEXT_BRANCH="${ERPNEXT_BRANCH:-version-16}"
 PYTHON="${PYTHON:-python3.14}"
@@ -43,6 +46,7 @@ git_config=$(mktemp "$WORKDIR/git-safe.XXXXXXXX")
 git config --file "$git_config" --add safe.directory "$APP_PATH/.git"
 GIT_CONFIG_GLOBAL="$git_config" bench get-app "$APP_PATH"
 rm -f "$git_config"
+test "$(git -C apps/hero_integration rev-parse HEAD)" = "$(git -c safe.directory="$APP_PATH" -C "$APP_PATH" rev-parse HEAD)"
 
 step "new site + ERPNext"
 bench drop-site "$SITE" --db-root-password "$DB_ROOT_PASSWORD" --force --no-backup >/dev/null 2>&1 || true
@@ -65,15 +69,7 @@ bench build --app hero_integration
 
 step "tests"
 bench --site "$SITE" set-config allow_tests true
-./env/bin/python -m pip install -q "pytest>=8"   # test dependency (see pyproject optional "test")
-MIN_TESTS="${MIN_TESTS:-1000}"
-if ! (cd apps/hero_integration && ../../env/bin/python ci/run-offline-tests.py > /tmp/hero-offline.log 2>&1); then
-  echo "Offline tests failed:"; tail -80 /tmp/hero-offline.log; TEST_FAILED=1
-fi
-offline_ran=$(grep -oE "^Ran [0-9]+ tests" /tmp/hero-offline.log | grep -oE "[0-9]+" || echo 0)
-grep -F "Site-dependent tests reserved for the full site suite:" /tmp/hero-offline.log || true
-echo "offline tests: $offline_ran run"
-if [ "$offline_ran" -lt "$MIN_TESTS" ]; then echo "Offline suite did not run (only $offline_ran tests)"; tail -20 /tmp/hero-offline.log; TEST_FAILED=1; fi
+./env/bin/python -m pip install -q 'pytest>=8' 'unittest-xml-reporting>=3.2,<4'
 # The disposable site does not run the ERPNext setup wizard. Provide its
 # minimal Company dependency without creating the unrelated ERPNext fixtures.
 company_count=$(bench --site "$SITE" execute frappe.db.count --args '["Company"]')
@@ -83,12 +79,7 @@ if [ -z "$company_count" ] || [ "$company_count" = 0 ]; then
   fi
   bench --site "$SITE" execute frappe.client.insert --kwargs '{"doc":{"doctype":"Company","company_name":"HERO CI Company","abbr":"HCI","country":"Germany","default_currency":"EUR"}}' >/dev/null
 fi
-if ! HERO_RUN_RESERVATION_TEST_SITE="$SITE" HERO_WRITEBACK_SOURCE_TEST_SITE="$SITE" bench --site "$SITE" run-tests --app hero_integration > /tmp/hero-site-tests.log 2>&1; then
-  echo "Site tests failed:"; tail -100 /tmp/hero-site-tests.log; TEST_FAILED=1
-fi
-site_passed=$(sed 's/\x1b\[[0-9;]*m//g' /tmp/hero-site-tests.log | grep -cE '^\s*✔ ' || true)
-echo "site tests: $site_passed passed"
-if [ "$site_passed" -lt "$MIN_TESTS" ]; then echo "Site tests did not run (only $site_passed passed)"; tail -30 /tmp/hero-site-tests.log; TEST_FAILED=1; fi
+run_hero_test_gates
 
 for var in HERO_SCHEMA_FILE HERO_CONFIG_FILE; do
   file="${!var:-}"
@@ -132,5 +123,4 @@ fi
 step "uninstall"
 bench --site "$SITE" uninstall-app hero_integration --yes --no-backup
 
-[ -z "${TEST_FAILED:-}" ] || { echo "Tests failed (see above)."; exit 1; }
 echo "INSTALL TEST PASSED"
