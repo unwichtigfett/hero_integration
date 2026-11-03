@@ -80,8 +80,8 @@ A push to Forgejo `hero_int_dev` runs these Woodpecker steps in order. Each
 step starts only when the previous one succeeded:
 
 1. `wait-github` waits up to 50 minutes for the GitHub Actions checks
-   `package`, `install-test` and, on `hero_int_dev`, `ai-review` of the same
-   commit (`ci/wait-github-checks.sh`). A failed or missing check stops the chain.
+   `package` and `install-test` of the same commit (`ci/wait-github-checks.sh`).
+   A failed or missing check stops the chain.
 2. `install-test` runs the bench install test.
 3. `update-test-site` updates the test site.
 4. `promote` (`ci/promote-release.sh`) releases the tested commit:
@@ -116,28 +116,23 @@ plus the install test (at least 120 minutes). If branch protection on
 `hero_int_1.0` requires status checks, the token owner must be allowed to
 bypass it, because the release commit itself is not built again.
 
-## OpenAI code review
+## Codex code review before the push
 
-The GitHub job `ai-review` (push to `hero_int_dev`) sends the diff since the last
-release (`origin/hero_int_1.0..HEAD`) to the OpenAI Responses API
-(`ci/ai_review.py`) and asks for evidence-backed findings with severity P1–P3,
-answered in German. Translations, built bundles and binary files are not sent;
-large diffs are split into up to 8 requests, and files beyond that are listed
-as not reviewed. The report is the job summary of the GitHub run; the raw
-findings are kept as the `ai-review` artifact.
+The review runs before anything is pushed, on vps1, where the Codex CLI is
+signed in with the owner's ChatGPT subscription (no API key). The Mac push
+script calls
 
-A P1 finding fails the check, so Woodpecker does not promote the commit and
-`hero_int_1.0` keeps its state. A failed request or a missing key also fails
-the check (the release stays blocked). The next commit is reviewed again
-against the last release.
+```bash
+python3 /home/dev/frappe-bench/apps/hero_integration/ci/codex_review.py --head <commit>
+```
 
-GitHub repository settings (Settings → Secrets and variables → Actions):
+on vps1. It reviews `origin/hero_int_1.0..<commit>` in a temporary detached
+worktree with `codex exec` (read-only sandbox, ephemeral session, strict JSON
+schema) and asks for evidence-backed findings with severity P1–P3, answered in
+German. The report is stored in `~/hero-reviews/<commit>.md` (and `.json`); a
+second run for the same commit and release reuses it (`--force` reviews again).
 
-| Kind | Name | Content |
-|---|---|---|
-| Secret | `OPENAI_API_KEY` | OpenAI API key (required) |
-| Variable | `OPENAI_REVIEW_MODEL` | model name; default `gpt-5` |
-| Variable | `AI_REVIEW_BLOCK` | `P1` (default), `P2`, or `none` for report only |
-
-The diff leaves the repository for the OpenAI API.
-
+A P1 finding (exit 1) or a review that cannot run (exit 2) stops the push
+script: nothing is pushed, the pipeline does not start and `hero_int_1.0`
+keeps its state. `--block P2` is stricter, `--block none` reports only. The
+review uses the Codex allowance of the subscription.
