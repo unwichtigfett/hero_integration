@@ -1,51 +1,65 @@
-# Consolidated mapping deployment
+# Mapping configuration transfer
 
-`pipe deploy` captures the committed app, builds the Docker image and runs
-`bench migrate`. The final app migration hook loads the site-scoped package in
-`hero_integration/deployment/consolidated_mappings_20261103.json`.
+Code deployment and mapping import are separate operations. `pipe deploy`
+updates code and app metadata. The site-specific draft deployment hook is no
+longer registered: a migration must not replay a historical mapping bundle or
+fail because a target draft differs from the development site's hash.
 
-The package combines eight reviewed old/new draft inputs. It keeps all useful
-selected field mappings and transformation options; identical rules are combined.
-The sole explicitly replaced redundant field is the custom Item category, whose
-source is represented by the native Item Group. Company/person naming fallback
-and separate buying/selling price lists remain distinct rules.
+Transfer mappings through **Settings → Configuration package → Import package**.
+The complete JSON uses `hero-integration-config-v2` and explicitly declares
+`replace_mappings: true`. The existing preview and confirmation remain the entry
+point. A replacement file contains nine areas exactly once:
 
-Customer, Project and Item drafts are saved against the actual active target
-mapping revisions, with freshly captured field-rule provenance. Later changes
-to an input draft, extra active fields missing from the package, ambiguous
-parents, or incompatible metadata stop the transaction rather than losing work.
-Only after all replacement drafts are saved are superseded input generations
-archived through the owning draft service. Their revision history remains.
-No merged draft is automatically published.
+| Area | Operation |
+| --- | --- |
+| Customers / contacts | `HeroCustomers` |
+| Projects | `HeroProjectMatches` |
+| Calendar | `HeroCalendarEvents` |
+| Tasks | `HeroTasks` |
+| Employees | `HeroEmployees` |
+| Products | `HeroProducts` |
+| Services | `HeroServices` |
+| Documents | `HeroDocuments` |
+| Pictures | `HeroPictures` |
 
-Missing app-owned fields are created through Frappe using plain labels. Existing
-fields are checked, never overwritten. Frappe DDL can persist if later draft
-writes fail; draft writes share a savepoint and remain retryable. The target
-schema is resolved by source instance and fingerprint, not copied document names.
+Full Migration orchestrates these areas; it is not another mapping area.
+Customer relationships include the native contact and address handling. The
+current complete package contains 122 selected rules, 60 custom fields, two
+custom child DocTypes and four relations.
 
-The one-time reader repair validates the existing Customer, Project and Calendar
-plans and approves their exact current revisions. Calendar's broken scalar
-partner binding is removed and native color/status are used. A Patch Log receipt
-prevents later deployments from undoing a subsequent manual approval revocation.
-No HERO request or business-data import is started by deployment.
+The file carries complete selected field rules, transformation options, required
+schema declarations, nine saved read queries and their mapping configurations.
+Customer/person naming fallbacks and buying/selling price lists remain distinct
+rules. Identical mappings are not duplicated. Target-side service identifiers,
+current revisions and approvals are resolved on import; source-site document
+names and execution seals must not be reused as approvals.
 
-Services, Documents, Pictures and Employees receive ordinary editable mapping drafts and
-validated read-query definitions when no own mapping exists. These are not
-approved automatically. Direct migrations require an approved own mapping and
-cannot silently execute a built-in fallback.
+Replacement makes the file's selected mappings authoritative for the included
+areas. Existing definitions and drafts are handled through their owning mapping
+services so revisions remain traceable. Native Customer/Project/Calendar/Task
+contracts remain native; Products/Services/Documents/Pictures/Employees use
+Query adapter v2. Mapping import sends no HERO request and imports no business
+records. Obsolete active rules and parent mappings are disabled; selected
+rules remain active. Verified historical predecessors remain available for
+lineage checks. Open drafts belonging to the importing user are discarded
+through the normal draft service; other users' private drafts remain intact.
 
-In Mapping, **My personal drafts** appears before the active mapping table and
-includes both new-definition drafts and drafts of existing active definitions.
-The deployed drafts belong to Administrator. Other System Managers cannot read
-these private drafts. Draft rows display their saved field rules and draft
-revision; active-rule caches cannot conceal a private edit. Company relations
-explain that the confirmed ERPNext Company is used, not the HERO customer ID.
+Deploy the required importer code first, then select the JSON file, inspect the
+preview and confirm the import. This is the existing import-and-activate flow,
+not the historical draft-only deployment format. Existing native parents for
+Customer, Project, Calendar and Task must be present on the target; this file
+is a replacement package for the existing site, not a fresh-site bootstrap.
+Schema provisioning precedes mapping publication; newly required schema can
+remain installed if a later mapping validation fails. Missing or revoked read
+approval blocks migration; there is no implicit built-in mapping fallback.
 
-Migration logs report `HERO draft deployment` and `HERO mapping repair`, including
-current baseline revisions and draft keys. Activation and execution approvals
-for newly configured mappings remain separate. No database restore or manual
-JSON import is needed.
+The historical `deployment/consolidated_mappings_20261103.json` remains an audit
+input. It is not the JSON file accepted by the Settings importer and is no
+longer applied by `bench migrate`.
 
-The bundle includes mapping configuration only: no customer/employee records,
-credentials, tokens, or schema response dump. It is a deployment format, not a
-portable-v2 editor-exchange file.
+Verification used the real local Frappe API in a rollback transaction: all nine
+approved readers were available, a repeated import made no replacements, and
+export/reimport retained every area unchanged. The same checks passed with the
+legacy Calendar selection and stale approval restored temporarily. Business
+document counts remained unchanged. These checks do not substitute for the
+user-run Docker deployment and JSON import.

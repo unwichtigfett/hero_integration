@@ -17,7 +17,7 @@ from hero_integration.services.localized_error import LocalizedError
 
 OWNED_DOCTYPE_PREFIX = "HERO "
 OWNED_FIELD_PREFIX = "custom_hero_"
-FIELD_TYPES = {"Data", "Small Text", "Int", "Float", "Check", "Date", "Datetime", "Link", "Table"}
+FIELD_TYPES = {"Data", "Small Text", "Int", "Float", "Currency", "Check", "Date", "Datetime", "Link", "Table"}
 FIELD_TYPES.add('JSON')
 SCHEMA_STATES = ("New", "Unchanged", "Changed", "Conflict", "Invalid")
 

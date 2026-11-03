@@ -1783,10 +1783,39 @@ class FrappeMappingDraftStorage:
             candidate = parent.as_dict()
             candidate.update(mapping_json=json.dumps(content, ensure_ascii=False, sort_keys=True),
                              mapping_revision=int(parent.mapping_revision) + 1, status='Active')
-            from_documents(SimpleNamespace(**values), SimpleNamespace(**candidate), snapshot)
+            try:
+                from_documents(SimpleNamespace(**values), SimpleNamespace(**candidate), snapshot)
+            except ValueError:
+                continue  # A newer native contract can require a different saved query.
             approved.append(service.name)
         if not approved:
-            raise MappingDraftError('A current approved read service is required for publication.')
+            # As for query adapters, publication may precede read approval.
+            # Prove the proposed native revision against an explicitly saved,
+            # actor-validated query without changing any execution permission.
+            candidates = f.db.sql('select * from `tabHERO GraphQL Service` where schema_snapshot=%s '
+                                  'and status=%s and modified_by=%s for update',
+                                  (parent.schema_snapshot, 'Validated', f.session.user), as_dict=True)
+            for row in candidates:
+                service = f.get_doc(dict(row, doctype='HERO GraphQL Service'))
+                service.check_permission('read')
+                if (getattr(service, 'modified_by', None) != f.session.user
+                        or getattr(service, 'status', None) != 'Validated'
+                        or getattr(service, 'schema_snapshot', None) != parent.schema_snapshot
+                        or getattr(service, 'schema_fingerprint', None) != parent.schema_fingerprint):
+                    continue
+                values = service.as_dict()
+                values.update(read_mapping=parent.name, execution_status='Approved',
+                              approved_service_revision=int(service.service_revision),
+                              approved_mapping_revision=int(parent.mapping_revision) + 1)
+                candidate = parent.as_dict()
+                candidate.update(mapping_json=json.dumps(content, ensure_ascii=False, sort_keys=True),
+                                 mapping_revision=int(parent.mapping_revision) + 1, status='Active')
+                try:
+                    from_documents(SimpleNamespace(**values), SimpleNamespace(**candidate), snapshot)
+                except ValueError:
+                    continue
+                return
+            raise MappingDraftError('A matching validated read service is required before publication.')
 
     def _publication_objects(self, created, content):
         objects = list(created)

@@ -3086,3 +3086,33 @@ One confirmed Company per Project,Ein bestätigtes Unternehmen je Projekt
 Employee Status,Mitarbeiterstatus
 Employee Language,Benutzersprache
 HeroEmployees,Mitarbeiter
+"Affected areas ({0}): {1}.","Betroffene Bereiche ({0}): {1}."
+Existing mappings in these areas will be replaced: {0} field mappings and {1} GraphQL mappings. Previous versions remain in history.,Bestehende Mappings in diesen Bereichen werden ersetzt: {0} Feldmappings und {1} GraphQL-Mappings. Bisherige Versionen bleiben im Verlauf erhalten.
+Replaced: {0} field mappings and {1} GraphQL mappings. Previous versions remain in history.,Ersetzt: {0} Feldmappings und {1} GraphQL-Mappings. Bisherige Versionen bleiben im Verlauf erhalten.
+Native replacement requires its current source-bound mapping.,Zum Ersetzen wird das aktuelle native Mapping der zugeordneten Quelle benötigt.
+Native replacement contains a duplicate target field.,Das native Ersatzmapping enthält ein Zielfeld mehrfach.
+Native replacement changes a target-owned reader contract: {0},Das native Ersatzmapping verändert eine lokal festgelegte Lesevorgabe: {0}
+Export snapshot belongs to another HERO source.,Der Snapshot für den Export gehört zu einer anderen HERO-Quelle.
+replace_mappings must be a boolean.,replace_mappings muss ein boolescher Wert sein.
+Replacement requires a mapping package.,Zum Ersetzen wird ein Mapping-Paket benötigt.
+Replacement requires an explicit field mapping package.,Zum Ersetzen wird ein Paket mit ausdrücklich festgelegten Feldmappings benötigt.
+Replacement package contains unselected field rules.,Das Ersatzpaket enthält nicht ausgewählte Feldregeln.
+Replacement cannot change the configured HERO source instance.,Beim Ersetzen darf die konfigurierte HERO-Quellinstanz nicht geändert werden.
+Packaged schema fingerprint does not match its content.,Der Schema-Fingerabdruck des Pakets stimmt nicht mit seinem Inhalt überein.
+Replacement schema contains invalid or conflicting declarations.,Das Ersatzschema enthält ungültige oder widersprüchliche Definitionen.
+The native read service belongs to another snapshot.,Der native Leseservice gehört zu einem anderen Snapshot.
+Native mapping replacement requires one current source-bound parent: {0},Zum Ersetzen des nativen Mappings wird genau eine aktuelle übergeordnete Mapping-Definition der zugeordneten Quelle benötigt: {0}
+Approved readers use different schema versions; reconcile before export.,Freigegebene Leseservices verwenden unterschiedliche Schemaversionen. Gleichen Sie diese vor dem Export ab.
+Replacement field identities are missing or duplicated.,Kennungen von Ersatzfeldregeln fehlen oder kommen mehrfach vor.
+Replacement field rules are incomplete.,Die Ersatzfeldregeln sind unvollständig.
+"Replacement readers require a complete, unique field-rule selection.",Ersatzleseservices benötigen eine vollständige und eindeutige Auswahl von Feldregeln.
+Replacement field rules cross an operation boundary.,Ersatzfeldregeln überschreiten die Grenze eines Vorgangs.
+Replacement snapshot belongs to another or unvalidated HERO source.,Der Ersatzsnapshot gehört zu einer anderen oder nicht validierten HERO-Quelle.
+Created schema belongs to another HERO source.,Das erstellte Schema gehört zu einer anderen HERO-Quelle.
+Replacement query does not match its schema: {0},Die Ersatzabfrage passt nicht zu ihrem Schema: {0}
+Replacement mapping contains duplicate field targets.,Das Ersatzmapping enthält doppelte Feldziele.
+A mapping changed during replacement; preview again.,Ein Mapping wurde während des Ersetzens geändert. Rufen Sie die Vorschau erneut auf.
+Native Task replacement cannot introduce or change onboarding authority.,Beim Ersetzen des nativen Aufgabenmappings darf die Berechtigung zur Ersteinrichtung weder neu erteilt noch geändert werden.
+A replacement reader points to another mapping area.,Ein Ersatzleseservice verweist auf einen anderen Mapping-Bereich.
+An approved mapping field rule is unavailable for export.,Eine freigegebene Mapping-Feldregel ist für den Export nicht verfügbar.
+Native replacement contains unsupported configuration fields.,Das native Ersatzmapping enthält nicht unterstützte Konfigurationsfelder.

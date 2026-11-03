@@ -70,6 +70,17 @@ class TestSchemaProvisioning(unittest.TestCase):
         with self.assertRaisesRegex(mapping_exchange.MappingExchangeError, "bulk adoption"):
             mapping_exchange.import_json("SYNTHETIC", json.dumps(package()))
 
+    def test_currency_schema_is_preserved_and_reimported_without_type_conversion(self):
+        schema = package()["schema"]
+        schema["custom_fields"][0]["fieldtype"] = "Currency"
+        first = schema_provisioning.provision_schema(schema)
+        self.assertIn("Customer.custom_hero_schema_value", first["created"]["custom_fields"])
+        self.assertEqual(self.frappe.get_meta("Customer").get_field("custom_hero_schema_value").fieldtype, "Currency")
+        self.assertEqual(schema_provisioning.provision_schema(schema)["status"], "UNCHANGED")
+        schema["custom_fields"][0]["fieldtype"] = "Float"
+        states = schema_provisioning.preview_schema(schema)["items"]
+        self.assertEqual(next(row["state"] for row in states if row["id"] == "field:customer-schema-value"), "Conflict")
+
     def test_confirmed_bulk_adoption_provisions_schema_before_mapping_activation(self):
         preview = schema_provisioning.preview_package("SYNTHETIC", json.dumps(package()))
         selected = [item["id"] for item in preview["items"] if item["selectable"]]
