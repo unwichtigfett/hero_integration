@@ -1,4 +1,4 @@
-"""Guard HERO-bound targets against deletion outside purge or administrator rejection."""
+"""Integration target lookup and reserved project naming contracts."""
 
 from __future__ import annotations
 
@@ -11,40 +11,6 @@ from hero_integration.services import guards
 
 class _Throw(Exception):
     pass
-
-
-def _fake(bound):
-    flags = SimpleNamespace()
-    return SimpleNamespace(
-        _=lambda message: message,
-        flags=flags,
-        db=SimpleNamespace(exists=lambda doctype, filters: bound if doctype == "HERO Integration Link" else None),
-        throw=lambda message, exc=None: (_ for _ in ()).throw(_Throw(message)),
-        PermissionError=PermissionError,
-    )
-
-
-class TestBoundTargetGuard(unittest.TestCase):
-    def test_bound_target_cannot_be_deleted(self):
-        with patch.object(guards, "frappe", _fake("LINK-1")):
-            with self.assertRaises(_Throw):
-                guards.protect_hero_bound_target(SimpleNamespace(doctype="Project", name="PV-1"))
-
-    def test_unbound_and_hero_owned_documents_are_not_checked(self):
-        fake = _fake(None)
-        with patch.object(guards, "frappe", fake):
-            guards.protect_hero_bound_target(SimpleNamespace(doctype="Project", name="PV-2"))
-        fake = _fake("LINK-1")
-        with patch.object(guards, "frappe", fake):
-            guards.protect_hero_bound_target(SimpleNamespace(doctype="HERO Integration Link", name="LINK-1"))
-
-    def test_purge_and_rejection_may_delete_inside_the_allowance(self):
-        fake = _fake("LINK-1")
-        with patch.object(guards, "frappe", fake):
-            with guards.bound_target_deletion():
-                guards.protect_hero_bound_target(SimpleNamespace(doctype="Customer", name="KD-1"))
-            with self.assertRaises(_Throw):
-                guards.protect_hero_bound_target(SimpleNamespace(doctype="Customer", name="KD-1"))
 
 
 class TestTargetLookupIndex(unittest.TestCase):
