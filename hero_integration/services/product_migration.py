@@ -222,10 +222,13 @@ def plan_price(item_code: str, price_list: str, rate: float | None, uom: str, ma
         return None
     name = (managed or {}).get("name")
     if name and frappe.db.exists("Item Price", name):
-        current = frappe.db.get_value("Item Price", name, ["item_code", "price_list", "price_list_rate", "uom"],
-                                      as_dict=True)
+        current = frappe.db.get_value("Item Price", name,
+                                      ["item_code", "price_list", "price_list_rate", "uom", *_DIMENSIONS], as_dict=True)
         if (current.item_code, current.price_list) != (item_code, price_list):
             raise PriceConflict(f"The imported {price_list} price {name} now belongs to another item or list.")
+        if any(current.get(field) for field in _DIMENSIONS):
+            raise PriceConflict(f"The {price_list} price {name} is now limited to a customer, supplier, batch, "
+                                "packing unit or period in ERPNext.")
         if _rate(current.price_list_rate) != _rate(managed.get("rate")) or (current.uom or "") != (managed.get("uom") or ""):
             raise PriceConflict(f"The {price_list} price {name} was changed in ERPNext.")
         return {"name": name, "rate": rate, "uom": uom}
