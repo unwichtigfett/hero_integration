@@ -38,6 +38,9 @@ PLACEMENT = (
     ("custom_hero_source_modified", "custom_hero_source_created"),
     ("custom_hero_address_full_address", "custom_hero_source_modified"),
     (VOLUME_FIELD, "custom_hero_address_full_address"),
+    ("custom_hero_lead_source", VOLUME_FIELD),
+    ("custom_hero_designation", "custom_hero_display_id"),
+    ("custom_hero_project_manager", PHASE_FIELD),
 )
 
 

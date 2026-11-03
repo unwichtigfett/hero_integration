@@ -96,3 +96,50 @@ class TestProductOrderFields(unittest.TestCase):
         self.assertIn(("base_data.quantity_min", "min_order_qty", "Number"), rules)
         self.assertIn(("base_data.delivery_time", "lead_time_days", "Integer"), rules)
         self.assertTrue({"min_order_qty", "lead_time_days"} <= direct.FIELDS["Item"])
+
+
+class TestPeopleAndSourceFields(unittest.TestCase):
+    def test_project_v4_and_customer_v5_read_the_new_fields(self):
+        from hero_integration.sources.hero import customer_query, project_query
+        query = project_query("v4")
+        for part in ("name partner_source", "partner { email }", "project_match_assignments { user { email } }", "volume"):
+            self.assertIn(part, query)
+        self.assertIn(" type source ", customer_query("v5"))
+        self.assertNotIn("source", customer_query("v4").replace("source_", ""))
+
+    def test_assignee_emails_and_sync(self):
+        from types import SimpleNamespace
+        from unittest import mock
+        from hero_integration.integrations import project_assignments as pa
+        record = {"project_match_assignments": [{"user": {"email": "Anna@Example.invalid "}}, {"user": None},
+                                                {"user": {"email": "bob@example.invalid"}}]}
+        self.assertEqual(pa.assignee_emails(record), {"anna@example.invalid", "bob@example.invalid"})
+        self.assertIsNone(pa.assignee_emails({}))
+        inserted, saved = [], []
+
+        class Todo(dict):
+            __getattr__ = dict.get
+
+        open_rows = [Todo(name="T1", allocated_to="old@x", description=pa.MARKER + ": P"),
+                     Todo(name="T2", allocated_to="manual@x", description="by hand")]
+        api = SimpleNamespace(
+            db=SimpleNamespace(get_value=lambda *a: "Project title"),
+            get_all=lambda *a, **k: open_rows,
+            get_doc=lambda value, name=None: SimpleNamespace(insert=lambda **k: inserted.append(value)) if isinstance(value, dict)
+            else SimpleNamespace(status="Open", save=lambda **k: saved.append(name)),
+        )
+        with mock.patch("hero_integration.services.task_lifecycle._user_for",
+                        side_effect=lambda email, _api: "anna" if email.startswith("anna") else None):
+            result = pa.sync("P-1", record, api)
+        self.assertEqual(result, {"added": 1, "closed": 1, "unmatched": 1})
+        self.assertEqual(inserted[0]["allocated_to"], "anna")
+        self.assertEqual(saved, ["T1"])  # the manual ToDo stays
+
+    def test_task_author_is_resolved_only_with_a_resolver(self):
+        from datetime import date
+        from hero_integration.services import task_lifecycle as life
+        record = {"author_user_id": 7, "title": "x"}
+        local = lambda value: None
+        self.assertNotIn(life.AUTHOR, life.source_values(record, local, {7: "a@b.c"}, date(2026, 1, 1)))
+        values = life.source_values(record, local, {7: " A@B.c"}, date(2026, 1, 1), user_for=lambda e: e.upper())
+        self.assertEqual(values[life.AUTHOR], "A@B.C")
