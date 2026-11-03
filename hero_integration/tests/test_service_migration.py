@@ -86,6 +86,13 @@ class TestTaxAndBaseline(unittest.TestCase):
         fake.get_all=lambda *a,**k:['zero','other-zero']
         with patch.object(sm,'frappe',fake),self.assertRaises(sm.ServiceBlocked):sm.tax_template('Company',0)
 
+    def test_tax_template_supports_multiple_accounts_and_zero_overrides(self):
+        fake=SimpleNamespace(get_all=lambda *a,**k:['standard'],get_doc=lambda *a:SimpleNamespace(
+            taxes=[SimpleNamespace(tax_rate=19),SimpleNamespace(tax_rate=0),SimpleNamespace(tax_rate=19)]))
+        with patch.object(sm,'frappe',fake):
+            self.assertEqual(sm.tax_template('Company',19),'standard')
+            with self.assertRaises(sm.ServiceBlocked):sm.tax_template('Company',7)
+
     def test_local_edit_blocks_even_when_source_is_unchanged(self):
         baseline={'item_name':'Original'}
         link=SimpleNamespace(target_field_hashes=json.dumps({'values':baseline}),target_payload_hash=sm.products.digest(baseline))

@@ -125,6 +125,18 @@ class TestFileSlice(unittest.TestCase):
                          ("client", "downloader"))
         return db.runs["R"], queued
 
+    def test_employee_action_dispatches_to_employee_importer(self):
+        db=_DB();db.runs['R']={'state':'Running'}
+        fake=SimpleNamespace(db=db,log_error=lambda **k:None)
+        lock=SimpleNamespace(filelock=lambda *a,**k:contextlib.nullcontext())
+        with patch.object(fm,'frappe',fake),patch.object(fm,'now_datetime',lambda:'now'), \
+                patch.dict('sys.modules',{'frappe.utils.synchronization':lock}), \
+                patch('hero_integration.services.file_transfer._client_and_downloader',return_value=('c','d','default')), \
+                patch('hero_integration.services.employee_migration.sync_employees',return_value={'done':True,'counts':{'added':1}}) as importer:
+            fm._file_slice(SimpleNamespace(name='R',action=fm.EMPLOYEE_ACTION),SimpleNamespace(source_instance='default'))
+        self.assertEqual(importer.call_args.kwargs['run_name'],'R')
+        self.assertEqual(db.runs['R']['state'],'Completed')
+
     def test_unfinished_phase_queues_the_next_slice(self):
         run, queued = self.run_slice({"done": False, "counts": {"added": 3, "unchanged": 2}})
         self.assertEqual(queued, ["R"])

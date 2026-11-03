@@ -84,6 +84,7 @@ def sync_logbook(client, user_emails: dict[int, str] | None = None, max_pages: i
           AND IFNULL(NULLIF(l.source_instance, ''), 'default')=%s""", (source_instance,)))
     counts = {"requests": 0, "added": 0, "known": 0, "without_project": 0, "projects": 0, "complete": False, "restricted": 0, "file_references": 0, "weather_entries": 0}
     seen_projects = set()
+    metadata = _metadata(source_instance)
 
     def request(document, variables):
         if verify_source:
@@ -108,7 +109,7 @@ def sync_logbook(client, user_emails: dict[int, str] | None = None, max_pages: i
             elif key in known:
                 if known[key] != project:
                     raise ValueError('An existing logbook binding has a missing or different Project target.')
-                enrich_entry(project, entry, user_emails or {}, source_instance)
+                enrich_entry(project, entry, user_emails or {}, source_instance, current=metadata.get(key))
                 counts['known'] += 1
             else:
                 add_entry(project, entry, user_emails or {}, source_instance)
@@ -198,14 +199,23 @@ def _context(entry):
     return json.dumps({key: entry[key] for key in CONTEXT_FIELDS if key in entry}, sort_keys=True, ensure_ascii=False)
 
 
-def enrich_entry(project, entry, user_emails, source_instance):
+def _metadata(source_instance):
+    rows = frappe.db.sql("""SELECT l.source_id, l.name AS link_name, c.name, c.subject, c.comment_by,
+        c.reference_doctype, c.reference_name, c.custom_hero_project, c.custom_hero_logbook_context
+        FROM `tabHERO Integration Link` l JOIN `tabComment` c ON l.target_doctype='Comment' AND c.name=l.target_name
+        WHERE l.source_system='HERO' AND l.source_type='project_history'
+          AND IFNULL(NULLIF(l.source_instance, ''), 'default')=%s""", (source_instance,), as_dict=True)
+    return {row.source_id: row for row in rows}
+
+
+def enrich_entry(project, entry, user_emails, source_instance, *, current=None):
     """Fill new native metadata, retaining historical content, authors and timestamps.
 
     HERO role codes are not ERPNext roles. Restricted entries stay accessible to
     System Managers via their Integration Link, outside the Project timeline.
     Once restricted, an entry is never automatically made public by a later read.
     """
-    rows = frappe.db.sql("""SELECT l.name AS link_name, c.name, c.subject, c.comment_by,
+    rows = [current] if current is not None else frappe.db.sql("""SELECT l.name AS link_name, c.name, c.subject, c.comment_by,
         c.reference_doctype, c.reference_name, c.custom_hero_project, c.custom_hero_logbook_context
         FROM `tabHERO Integration Link` l JOIN `tabComment` c ON l.target_doctype='Comment' AND c.name=l.target_name
         WHERE l.source_system='HERO' AND l.source_type='project_history'

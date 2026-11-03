@@ -23,8 +23,8 @@ OPERATION = "HeroServices"
 SOURCE_TYPE = "supply_service"
 VERSION = "service-migration-v1"
 CALCULATION = "custom_hero_service_calculation"
-DETAIL_QUERY = '''query ServiceComposition($ids:[Int]) {
- supply_services(service_ids:$ids) {
+DETAIL_QUERY = '''query ServiceComposition($ids:[Int], $first:Int!) {
+ supply_services(service_ids:$ids, first:$first) {
   id company_id modified created is_deleted
   positions { __typename
    ... on Documents_SupplyProduct { id name unit_type quantity net_price_per_unit base_price time_minutes
@@ -155,7 +155,8 @@ def tax_template(company, rate):
     names = frappe.get_all("Item Tax Template", filters={"company": company, "disabled": 0}, pluck="name", limit_page_length=0)
     for name in names:
         rows = frappe.get_doc("Item Tax Template", name).taxes or []
-        if len(rows) == 1 and number(rows[0].tax_rate) == rate:
+        rates = {number(row.tax_rate) for row in rows}
+        if rows and (rates == {0} if rate == 0 else rates - {0} == {rate}):
             matches.append(name)
     if len(matches) != 1:
         raise ServiceBlocked("Service tax rate requires one unambiguous Item Tax Template in the ERPNext company.")
@@ -325,7 +326,7 @@ def sync_services(client, *, source_instance, run_name, downloader, should_stop=
             raise ServiceBlocked("HERO returned invalid or duplicate service identities.")
         if ids != sorted(ids) or (state.get("last_id") is not None and ids[0] <= state["last_id"]):
             raise ServiceBlocked("Service pagination changed or repeated; start a new run.")
-        detailed = client.query(DETAIL_QUERY, {"ids": ids}).get("supply_services")
+        detailed = client.query(DETAIL_QUERY, {"ids": ids, "first": len(ids)}).get("supply_services")
         if not isinstance(detailed, list) or len(detailed) != len(ids) or {d.get("id") for d in detailed} != set(ids):
             raise ServiceBlocked("HERO returned an incomplete service composition list.")
         details = {d["id"]: d for d in detailed}

@@ -48,6 +48,28 @@ def _rule(mapping, spec: dict) -> str:
     return spec["definition_id"]
 
 
+def _save_mapping(mapping, config):
+    """Use the owning personal-draft publisher for existing mapping revisions."""
+    from hero_integration.services.frappe_mapping_draft_storage import FrappeMappingDraftStorage
+
+    parent = frappe.get_doc('HERO GraphQL Mapping', mapping.name)
+    storage = FrappeMappingDraftStorage()
+    draft = storage.service().open_draft(parent.definition_id, frappe.session.user)
+    if draft.content != draft.base_content:
+        raise ValueError('An edited personal mapping draft requires review before this upgrade.')
+    if draft.base_active_revision != parent.mapping_revision:
+        storage.service().discard(parent.definition_id, frappe.session.user, draft.generation,
+                                  draft.content_revision, confirmed=True)
+        draft = storage.service().open_draft(parent.definition_id, frappe.session.user)
+    content = dict(draft.content)
+    content.update(config)
+    draft = storage.service().save(parent.definition_id, frappe.session.user, draft.content_revision,
+        parent.mapping_revision, content, expected_generation=draft.generation,
+        expected_reconciliation_revision=draft.reconciliation_revision).draft
+    return storage.publish(parent.definition_id, frappe.session.user, draft.generation,
+        draft.content_revision, parent.mapping_revision, draft.reconciliation_revision, confirmed=True)
+
+
 def extend_mapping(operation: str) -> str:
     """Add the new rules and contract version to the area's active read mapping and service."""
     from hero_integration import api
@@ -68,12 +90,7 @@ def extend_mapping(operation: str) -> str:
         return "already extended"
     config[key] = version
     config["mapping_definition_ids"] = [*ids, *(rule for rule in wanted if rule not in ids)]
-    draft = api.graphql_mapping_save(mapping.schema_snapshot, "QUERY", mapping.operation_name, "QUERY_TO_FRAPPE",
-                                     json.dumps(config), mapping_name=mapping.name,
-                                     expected_revision=mapping.mapping_revision, activate=0)
-    saved = api.graphql_mapping_save(mapping.schema_snapshot, "QUERY", mapping.operation_name, "QUERY_TO_FRAPPE",
-                                     json.dumps(config), mapping_name=draft["name"],
-                                     expected_revision=draft["revision"], activate=1)
+    saved = _save_mapping(mapping, config)
     service_names = [row["service"] for row in services] or frappe.get_all(
         "HERO GraphQL Service", filters={"read_mapping": mapping.name}, pluck="name", limit_page_length=0)
     for name in service_names:
@@ -143,12 +160,7 @@ def upgrade_projects_to_ids() -> str:
     config["mapping_definition_ids"] = [*ids, *(rule for rule in wanted if rule not in ids)]
     services = [row["service"] for row in api._sync_area_read_services("default").get("HeroProjectMatches") or []] \
         or frappe.get_all("HERO GraphQL Service", filters={"read_mapping": mapping.name}, pluck="name", limit_page_length=0)
-    draft = api.graphql_mapping_save(mapping.schema_snapshot, "QUERY", mapping.operation_name, "QUERY_TO_FRAPPE",
-                                     json.dumps(config), mapping_name=mapping.name,
-                                     expected_revision=mapping.mapping_revision, activate=0)
-    saved = api.graphql_mapping_save(mapping.schema_snapshot, "QUERY", mapping.operation_name, "QUERY_TO_FRAPPE",
-                                     json.dumps(config), mapping_name=draft["name"],
-                                     expected_revision=draft["revision"], activate=1)
+    saved = _save_mapping(mapping, config)
     for name in services:
         service = frappe.get_doc("HERO GraphQL Service", name)
         service.query_document = _query("HeroProjectMatches", "v5")
