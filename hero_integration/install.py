@@ -6,12 +6,14 @@ import frappe
 
 ERPNext_VERSION_CONSTRAINT = ">=16.0.0-dev,<17.0.0"
 
+DISPLAY_PROPERTIES = frozenset({"label"})
+
 HERO_CUSTOM_FIELDS = {
     "Item": [
         {
             "fieldname": "custom_hero_manufacturer_nr",
             "fieldtype": "Data",
-            "label": "HERO Manufacturer Part No",
+            "label": "Manufacturer Part No",
             "insert_after": "brand",
             "read_only": 1,
         },
@@ -20,7 +22,7 @@ HERO_CUSTOM_FIELDS = {
         {
             "fieldname": "custom_hero_source_id",
             "fieldtype": "Data",
-            "label": "HERO Source ID",
+            "label": "Source ID",
             "insert_after": "customer_name",
             "read_only": 1,
             "no_copy": 1,
@@ -29,7 +31,7 @@ HERO_CUSTOM_FIELDS = {
         {
             "fieldname": "custom_hero_customer_number",
             "fieldtype": "Data",
-            "label": "HERO Customer Number",
+            "label": "Customer Number",
             "insert_after": "custom_hero_source_id",
             "read_only": 1,
             "no_copy": 1,
@@ -37,7 +39,7 @@ HERO_CUSTOM_FIELDS = {
         {
             "fieldname": "custom_hero_customer_category",
             "fieldtype": "Data",
-            "label": "HERO Customer Category",
+            "label": "Customer Category",
             "insert_after": "custom_hero_customer_number",
             "read_only": 1,
             "no_copy": 1,
@@ -45,7 +47,7 @@ HERO_CUSTOM_FIELDS = {
         {
             "fieldname": "custom_hero_customer_type",
             "fieldtype": "Data",
-            "label": "HERO Customer Type",
+            "label": "Customer Type",
             "insert_after": "custom_hero_customer_category",
             "read_only": 1,
             "no_copy": 1,
@@ -55,7 +57,7 @@ HERO_CUSTOM_FIELDS = {
         {
             "fieldname": "custom_hero_source_id",
             "fieldtype": "Data",
-            "label": "HERO Source ID",
+            "label": "Source ID",
             "insert_after": "project_name",
             "read_only": 1,
             "no_copy": 1,
@@ -64,7 +66,7 @@ HERO_CUSTOM_FIELDS = {
         {
             "fieldname": "custom_hero_related_project_id",
             "fieldtype": "Data",
-            "label": "HERO Related Project ID",
+            "label": "Project ID",
             "insert_after": "custom_hero_source_id",
             "read_only": 1,
             "no_copy": 1,
@@ -72,7 +74,7 @@ HERO_CUSTOM_FIELDS = {
         {
             "fieldname": "custom_hero_display_id",
             "fieldtype": "Data",
-            "label": "HERO Display ID",
+            "label": "Project Nr.",
             "insert_after": "custom_hero_related_project_id",
             "read_only": 1,
             "no_copy": 1,
@@ -80,7 +82,7 @@ HERO_CUSTOM_FIELDS = {
         {
             "fieldname": "custom_hero_source_created",
             "fieldtype": "Data",
-            "label": "HERO Source Created",
+            "label": "Creation",
             "insert_after": "custom_hero_display_id",
             "read_only": 1,
             "no_copy": 1,
@@ -88,7 +90,7 @@ HERO_CUSTOM_FIELDS = {
         {
             "fieldname": "custom_hero_source_modified",
             "fieldtype": "Data",
-            "label": "HERO Source Modified",
+            "label": "Modified",
             "insert_after": "custom_hero_source_created",
             "read_only": 1,
             "no_copy": 1,
@@ -154,6 +156,9 @@ def ensure_hero_source_fields() -> None:
         # ``update=False`` makes this a create-only path. Existing fields are
         # inspected first and a different foreign definition aborts migration.
         create_custom_fields(missing, update=False)
+    from hero_integration.integrations.field_labels import relabel_fields
+
+    relabel_fields()
 
 
 def _missing_custom_field_definitions() -> dict[str, list[dict[str, object]]]:
@@ -167,9 +172,10 @@ def _missing_custom_field_definitions() -> dict[str, list[dict[str, object]]]:
                 missing.setdefault(doctype, []).append(definition)
                 continue
             existing = frappe.get_doc("Custom Field", existing_name)
+            # The label is display only; the app sets it itself (field_labels).
             conflicts = [
                 key for key, expected in definition.items()
-                if _field_value(existing, key) != _normalised_field_value(expected)
+                if key not in DISPLAY_PROPERTIES and _field_value(existing, key) != _normalised_field_value(expected)
             ]
             if conflicts:
                 frappe.throw(frappe._("Custom Field {0}.{1} conflicts with the HERO schema ({2}).")

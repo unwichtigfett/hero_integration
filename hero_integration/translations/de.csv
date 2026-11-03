@@ -2931,3 +2931,43 @@ Item code {0} is already used by an ERPNext Item without this HERO article's lin
 HERO Manufacturer Part No,HERO Hersteller-Artikelnummer
 HERO Category Group,HERO-Kategorie als Artikelgruppe
 HERO Supplier,HERO-Lieferant
+Appointment Color,Terminfarbe
+Appointment Type,Terminart
+Appointment Type Code,Terminart-Code
+Category ID,Kategorie-ID
+Creation,Erstellt
+Customer Category,Kundenkategorie
+Customer Full Name,Vollständiger Kundenname
+Customer Number,Kundennummer
+Customer Title,Kundentitel
+Deleted,Gelöscht
+External Deadline,Externe Frist
+Is Contact Person,Ist Ansprechpartner
+Manufacturer Part No,Hersteller-Artikelnummer
+Modified,Geändert
+Original End,Ursprüngliches Ende
+Original Start,Ursprünglicher Beginn
+Partner ID,Partner-ID
+Partners,Partner
+Project Address,Projektadresse
+Project ID,Projekt-ID
+Project Kind,Projektart (Quelle)
+Project Nr.,Projekt-Nr.
+Project Number,Projektnummer
+Project Reference,Projektreferenz
+Provider,Anbieter
+Read Only,Schreibgeschützt
+Recurring,Wiederkehrend
+Resources,Ressourcen
+Responsible,Zuständig
+Source Created,Erstellt (Quelle)
+Source Key,Quellschlüssel
+Source Modified,Geändert (Quelle)
+Status Code,Statuscode
+Status Created,Status erstellt
+Status ID,Status-ID
+Status Modified,Status geändert
+Status Name,Statusname
+Status Short Name,Status-Kurzname
+Status Step ID,Statusschritt-ID
+Supplier Part No,Lieferanten-Artikelnummer
