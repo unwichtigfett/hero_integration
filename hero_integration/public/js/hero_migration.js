@@ -256,7 +256,7 @@
             put(states, 
                 el("div", {class: "hero-sync-states-group"},
                     el("div", {class: "hero-sync-section-head"}, el("h3", {text: tr("States")}), el("span", {text: tr("Linked records per area")})),
-                    el("div", {class: "hero-sync-metrics"}, state.data.areas.map((area) => metric(area.label, records[area.key])))),
+                    el("div", {class: "hero-sync-metrics"}, actionAreas().filter((area) => area.key in records).map((area) => metric(area.label, records[area.key])))),
                 el("div", {class: "hero-sync-states-group"},
                     el("div", {class: "hero-sync-section-head"}, el("h3", {text: tr("Polling")}), el("span", {text: format("Last {0} days", polling.period_days)})),
                     el("div", {class: "hero-sync-metrics"}, metric("Runs", polling.runs), metric("Pass", polling.pass, "ok"), metric("Fail", polling.fail, polling.fail ? "error" : ""),
@@ -348,7 +348,7 @@
             add(side, 
                 el("h4", {class: "hero-sync-mono", text: run.name}),
                 el("dl", {class: "hero-sync-facts"}, facts.map(([label, value]) => [el("dt", {text: tr(label)}), el("dd", {text: value})])),
-                run.error_message ? el("p", {class: "hero-sync-error", text: diagnostic(run.error_message)}) : null,
+                run.error_message ? el("p", {class: ["Completed", "Running", "Queued"].includes(run.state) ? "hero-sync-hint" : "hero-sync-error", text: diagnostic(run.error_message)}) : null,
                 outcomes.length ? el("div", {class: "hero-sync-chips"}, outcomes.map(([code, count]) => el("span", {class: "hero-sync-chip", text: `${tr(code)}: ${number(count)}`}))) : null,
                 run.conflicts?.length ? el("div", {class: "hero-sync-detail-list"}, el("h5", {text: tr("Conflicts in this run")}),
                     el("ul", {}, run.conflicts.map((item) => el("li", {text: `${item.source_type} ${item.source_id}: ${diagnostic(item.detail || item.result)}`})))) : null,
@@ -375,7 +375,7 @@
                 el("h4", {text: tr(area.action_label)}),
                 el("p", {text: tr(area.scope_note)}),
                 area.kind ? null : el("p", {class: "hero-sync-quote", text: tr(FUNCTION_TEXT)}),
-                el("p", {class: "hero-sync-hint", text: area.button === "Start"
+                area.kind ? el("p", {class: "hero-sync-hint", text: format('Reads HERO directly for the source instance "{0}" and writes nothing back to HERO. Unchanged records are skipped; a cancelled or stopped run continues where it stopped.', state.data.source_instance)}) : el("p", {class: "hero-sync-hint", text: area.button === "Start"
                     ? format('Start runs the first import for the HERO source instance "{0}". You do not choose GraphQL services; the server resolves them from the active mapping.', state.data.source_instance)
                     : format('Update processes new records, changed records and newly mapped fields for the HERO source instance "{0}". You do not choose GraphQL services; the server resolves them from the active mapping.', state.data.source_instance)}),
                 el("h5", {text: tr("Mapped objects")}),
@@ -388,10 +388,10 @@
                 el("h4", {text: tr("Prerequisites")}),
                 el("dl", {class: "hero-sync-facts"},
                     el("dt", {text: tr("Status")}), el("dd", {text: tr(area.ready ? "Ready" : "Not ready")}),
-                    el("dt", {text: tr("Read service")}), el("dd", {text: area.service?.service || "—"}),
-                    el("dt", {text: tr("Snapshot")}), el("dd", {text: area.service?.snapshot || "—"}),
+                    area.kind ? null : [el("dt", {text: tr("Read service")}), el("dd", {text: area.service?.service || "—"}),
+                        el("dt", {text: tr("Snapshot")}), el("dd", {text: area.service?.snapshot || "—"})],
                     el("dt", {text: tr("Last successful")}), el("dd", {text: formatDateTime(area.last_successful)}),
-                    el("dt", {text: tr("Automatic sync")}), el("dd", {text: tr(area.sync_enabled ? (area.polled ? "On · read by polling" : "On") : "Off")})),
+                    el("dt", {text: tr("Automatic sync")}), el("dd", {text: tr(area.kind ? "Manual start only" : area.sync_enabled ? (area.polled ? "On · read by polling" : "On") : "Off")})),
                 area.blocker ? el("p", {class: "hero-sync-error", text: tr(area.blocker)}) : null);
         }
 

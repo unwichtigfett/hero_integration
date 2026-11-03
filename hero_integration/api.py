@@ -809,6 +809,16 @@ def _file_areas(active: list[dict[str, object]], instance: str) -> list[dict[str
     return page_areas(active, instance)
 
 
+def _direct_area_records() -> dict[str, int]:
+    """Articles and files brought over by Product, Document and Picture Migration."""
+    from hero_integration.services.file_transfer import PHASE_FOLDER, ROOT_FOLDER
+
+    files = lambda phase: frappe.db.count("File", {"folder": ["like", f"Home/{ROOT_FOLDER}/{PHASE_FOLDER[phase]}%"],
+                                                   "is_folder": 0})
+    return {"products": frappe.db.count("HERO Integration Link", {"source_type": "supply_product"}),
+            "documents": files("documents"), "pictures": files("images")}
+
+
 def _sync_metrics(instance: str) -> dict[str, object]:
     """Uniquely linked records per area and polling runs of the recent period."""
     from frappe.utils import add_days, now_datetime
@@ -821,6 +831,7 @@ def _sync_metrics(instance: str) -> dict[str, object]:
         })
         for item in AREAS
     }
+    records.update(_direct_area_records())
     since = add_days(now_datetime(), -POLLING_PERIOD_DAYS)
     polling = {
         status.lower(): frappe.db.count("HERO Polling Event", {"status": status, "creation": [">=", since]})
