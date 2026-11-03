@@ -44,6 +44,28 @@ class Metadata:
 
 
 class TestConfiguredMappingPublication(TestCase):
+    def test_product_draft_completion_preserves_coded_resolver_options(self):
+        from hero_integration.services import direct_runtime, query_mapping
+        storage = object.__new__(FrappeMappingDraftStorage)
+        storage.frappe = NS(get_meta=lambda dt: NS(get_field=lambda name: field(name)))
+        specs = direct_runtime.builtin_plan('HeroProducts').definitions
+        content = {'query_adapter': {'version': 2},
+                   'mapping_definition_ids': [s.definition_id for s in specs],
+                   'field_rules': {s.definition_id: {'target_doctype': s.target_doctype,
+                       'target_field': s.target_field, 'transformation': s.transformation} for s in specs}}
+        storage._complete_query_target_types(content)
+        completed = deepcopy(content)
+        storage._complete_query_target_types(content)
+        self.assertEqual(content, completed)
+        options = content['query_adapter']['transform_options']
+        from hero_integration.services.direct_operations import TRANSFORMS
+        for spec in specs:
+            if spec.transformation in TRANSFORMS:
+                self.assertNotIn(spec.definition_id, options)
+                query_mapping._validate_output_compatibility(spec, {}, 'Data')
+            else:
+                self.assertEqual(options[spec.definition_id]['target_type'], 'Data')
+
     def test_create_and_update_profiles_have_separate_active_slots(self):
         from hero_integration.hero_integration.doctype.hero_graphql_mapping import hero_graphql_mapping as controller
         from hero_integration.hero_integration.doctype.hero_frappe_mapping import hero_frappe_mapping as rule_controller

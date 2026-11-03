@@ -50,7 +50,7 @@ def records_path(name: str) -> str:
 
 # Configurable target fields per DocType (besides app-owned custom_hero_* fields of the owner).
 FIELDS = {
-    "Item": frozenset({"item_name", "description", "item_group", "stock_uom", "brand", "disabled", "barcodes"}),
+    "Item": frozenset({"item_code", "item_name", "description", "item_group", "stock_uom", "brand", "disabled", "barcodes"}),
     "Item Price": frozenset({"price_list_rate"}),
     "File": frozenset({"file_name"}),
 }
@@ -199,6 +199,7 @@ DEFAULT_RULES = {
         _rule("HeroProducts", "base_data.manufacturer", "Item", "brand", "string|null", "Field", "HERO Brand"),
         _rule("HeroProducts", "is_deleted", "Item", "disabled", "boolean|null", "Field", "Identity"),
         _rule("HeroProducts", "base_data.ean", "Item", "barcodes", "string|null", "Field", "HERO EAN Barcode"),
+        _rule("HeroProducts", "nr", "Item", "item_code", "string|null", "Field", "Trim"),
         _rule("HeroProducts", "base_price", "Item Price", "price_list_rate", "float|null", "Field", "HERO Price",
               "Standard Buying"),
         _rule("HeroProducts", "sales_prices", "Item Price", "price_list_rate", "json", "Field",

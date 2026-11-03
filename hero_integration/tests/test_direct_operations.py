@@ -27,6 +27,15 @@ class TestRegistry(unittest.TestCase):
         self.assertEqual(direct.records_path("HeroDocuments"), "FileUpload_FileUploads.edges.node")
         self.assertTrue(direct.TRANSFORMS <= qm.TRANSFORMS)
 
+    def test_field_rule_doctype_exposes_direct_operations_and_resolvers(self):
+        import json
+        from pathlib import Path
+        root = Path(__file__).resolve().parents[1]
+        definition = json.loads((root / "hero_integration/doctype/hero_frappe_mapping/hero_frappe_mapping.json").read_text())
+        options = {field["fieldname"]: set(field.get("options", "").splitlines()) for field in definition["fields"]}
+        self.assertTrue(set(direct.OPERATIONS) <= options["operation"])
+        self.assertTrue(direct.TRANSFORMS <= options["transformation"])
+
     def test_the_built_in_mappings_are_valid_v2_plans(self):
         for operation in direct.OPERATIONS:
             with self.subTest(operation=operation):
@@ -48,12 +57,13 @@ class TestRuleValidation(unittest.TestCase):
 
     def test_free_fields_and_custom_fields_are_allowed(self):
         self.check(self.rule())
+        self.check(self.rule(source_path="nr", target_field="item_code"))
         self.check(self.rule(source_path="base_data.manufacturer_nr", target_field="custom_hero_manufacturer_nr"))
         self.check(self.rule(source_path="filename", operation="HeroDocuments", target_doctype="File",
                              target_field="custom_hero_category"))
 
     def test_protected_fields_other_doctypes_and_fixed_identity_are_rejected(self):
-        for spec in (self.rule(target_field="item_code"),                        # naming stays coded
+        for spec in (self.rule(target_field="name"),                             # document identity stays protected
                      self.rule(target_doctype="Customer", target_field="customer_name"),
                      self.rule(target_doctype="File", target_field="file_name"),  # File is not a product target
                      self.rule(target_doctype="HERO Integration Link", target_field="source_id",
