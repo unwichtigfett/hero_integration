@@ -260,6 +260,23 @@ def execute_run(run_name: str) -> None:
                 current = frappe.get_doc("HERO Integration Run", run.name, for_update=True)
                 if current.started_on == claim_started_on:
                     _release_run(run.name)
+        _advance_full_migration(run.name)
+
+
+def _advance_full_migration(run_name: str) -> None:
+    """A finished run that is a Full Migration step lets the chain continue."""
+    if not hasattr(getattr(frappe, "db", None), "get_default"):
+        return  # no site database (offline run doubles)
+    try:
+        from hero_integration.services.file_migration import CHILD_KEY, on_run_finished
+
+        if not frappe.db.get_default(CHILD_KEY.format(run_name)):
+            return  # not a Full Migration step
+        if frappe.db.get_value("HERO Integration Run", run_name, "state") not in TERMINAL_STATES:
+            return
+        on_run_finished(run_name)
+    except Exception:
+        frappe.log_error(title="HERO Full Migration could not continue")
 
 
 def _notify_not_imported(run) -> None:

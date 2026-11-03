@@ -416,6 +416,11 @@ def cancel_run(run_name: str) -> dict[str, str]:
     if run.state not in TERMINAL_STATES:
         run.state = "Cancelled"
         run.save()
+        from hero_integration.services.file_migration import FULL_ACTION, active_child
+
+        child = active_child(run.name) if getattr(run, "action", "") == FULL_ACTION else ""
+        if child:
+            cancel_run(child)
     return {"status": run.state, "run": run.name}
 
 
@@ -425,6 +430,11 @@ def resume_run(run_name: str) -> dict[str, str]:
     run = frappe.get_doc("HERO Integration Run", run_name)
     if run.state not in {"Failed", "Cancelled", "Blocked"}:
         frappe.throw(frappe._("Only failed, cancelled, or blocked runs can resume."))
+    from hero_integration.services.file_migration import RUN_ACTIONS, resume as resume_file_run
+
+    if getattr(run, "action", "") in RUN_ACTIONS:
+        resume_file_run(run)
+        return {"status": "QUEUED", "run": run.name}
     if _as_bool(getattr(run, "testing_enabled", 0)):
         frappe.throw(frappe._("Testing previews cannot resume because their shared HERO request budget is run-bound."))
     from hero_integration.services.migration import validate_run_mappings
@@ -548,6 +558,7 @@ def sync_page_state() -> dict[str, object]:
         "source_instance": instance,
         "active_run": active[0] if active else None,
         "areas": [_sync_area_state(item, instance, services.get(item.operation) or [], active, plan) for item in AREAS],
+        "file_areas": _file_areas(active, instance),
         "service": {
             "mode": plan["mode"], "allowed": plan["mode"] != "OFF", "paused": plan["paused"],
             "running": plan["mode"] != "OFF" and not plan["paused"] and any(plan["areas"].values()),
@@ -571,6 +582,15 @@ def sync_area_start(area: str) -> dict[str, object]:
     frappe.only_for("System Manager")
     from hero_integration.services.sync_page import ACTIVE_STATES
 
+    from hero_integration.services.file_migration import AREA_KEYS
+
+    key = str(area or "").strip().lower()
+    if key in AREA_KEYS:
+        if frappe.db.exists("HERO Integration Run", {"state": ["in", list(ACTIVE_STATES)]}):
+            frappe.throw(frappe._("Another HERO run is still queued or running. Start this area when it has finished."))
+        from hero_integration.services.file_migration import start
+
+        return {"status": "QUEUED", "run": start(AREA_KEYS[key]), "area": key}
     item = _sync_area(area)
     instance = _configured_source_instance()
     if frappe.db.exists("HERO Integration Run", {"state": ["in", list(ACTIVE_STATES)]}):
@@ -781,6 +801,12 @@ def _sync_area_state(item, instance: str, services: list[dict[str, str]], active
         "sync_enabled": bool(plan["areas"].get(item.key)),
         "polled": item.operation in plan["sources"],
     }
+
+
+def _file_areas(active: list[dict[str, object]], instance: str) -> list[dict[str, object]]:
+    from hero_integration.services.file_migration import page_areas
+
+    return page_areas(active, instance)
 
 
 def _sync_metrics(instance: str) -> dict[str, object]:

@@ -16,6 +16,9 @@
         projects: ["M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"],
         events: ["M4 6h16v14H4Z", "M4 10h16", "M8 3v5", "M16 3v5"],
         tasks: ["M4 4h16v16H4Z", "M8 12l3 3 5-6"],
+        documents: ["M6 3h9l4 4v14H6Z", "M14 3v5h5", "M9 13h7", "M9 17h7"],
+        pictures: ["M3 5h18v14H3Z", "M3 16l5-5 4 4 3-3 6 6", "M15 9.5a1.5 1.5 0 1 0 0-.01"],
+        full: ["M4 12a8 8 0 1 0 2.3-5.7", "M4 4v5h5"],
     };
     const MODE_LABELS = {OFF: "Off", MONITOR: "Monitor only", AUTO_SYNC: "Automatic sync"};
     const STATE_TONE = {Completed: "ok", "Completed With Conflicts": "warn", Running: "busy", Queued: "busy", Failed: "error", Blocked: "error", Cancelled: "muted"};
@@ -148,9 +151,12 @@
         }
 
         // --- Manual actions ------------------------------------------------------
+        // Mapping areas plus the file areas (Documents, Pictures) and Full Migration.
+        const actionAreas = () => [...state.data.areas, ...(state.data.file_areas || [])];
+
         function renderManual() {
             const activeRun = state.data.active_run;
-            const cards = state.data.areas.map((area) => {
+            const cards = actionAreas().map((area) => {
                 const running = Boolean(area.running_run);
                 const blockedByOther = Boolean(activeRun) && !running;
                 const button = el("button", {type: "button", class: "hero-sync-action", "data-area": area.key,
@@ -163,7 +169,7 @@
                         icon(area.key), el("h4", {text: tr(area.action_label)})),
                     el("p", {class: "hero-sync-card-text", text: tr(area.description)}),
                     el("div", {class: "hero-sync-card-block"}, el("span", {class: "hero-sync-caption", text: tr("Mapped objects")}),
-                        scope.object_count ? el("span", {text: plural(scope.object_count, "object", "objects")}) : el("span", {text: tr("No active mapping")}),
+                        scope.object_count ? el("span", {text: plural(scope.object_count, "object", "objects")}) : el("span", {text: tr(area.kind === "full" ? "All areas" : "No active mapping")}),
                         scope.object_count ? el("span", {text: plural(scope.field_count, "field", "fields")}) : null),
                     el("div", {class: "hero-sync-card-block"}, el("span", {class: "hero-sync-caption", text: tr("Last successful")}), el("span", {text: formatDateTime(area.last_successful)})),
                     area.ready ? null : el("p", {class: "hero-sync-card-blocker", text: tr("Not ready: approved read service missing.")}),
@@ -176,7 +182,10 @@
 
         function startArea(area) {
             const verb = area.button === "Start" ? "Start" : "Update";
-            frappe.confirm(format("{0} {1}? This migrates the object fields of the active mapping for {2} from HERO into Frappe.", tr(verb), tr(area.action_label), tr(area.label)), async () => {
+            const question = area.confirm
+                ? format("{0} {1}? {2}", tr(verb), tr(area.action_label), tr(area.description))
+                : format("{0} {1}? This migrates the object fields of the active mapping for {2} from HERO into Frappe.", tr(verb), tr(area.action_label), tr(area.label));
+            frappe.confirm(question, async () => {
                 state.busy = true; renderAll();
                 say(format("{0} is being queued …", tr(area.action_label)));
                 try {
@@ -358,13 +367,13 @@
         }
 
         function renderDetails(main, side) {
-            const area = state.data.areas.find((item) => item.key === state.selectedArea) || state.data.areas[0];
+            const area = actionAreas().find((item) => item.key === state.selectedArea) || state.data.areas[0];
             add(main, 
-                el("div", {class: "hero-sync-area-picker", role: "group", "aria-label": tr("Action")}, state.data.areas.map((item) =>
+                el("div", {class: "hero-sync-area-picker", role: "group", "aria-label": tr("Action")}, actionAreas().map((item) =>
                     el("button", {type: "button", class: "hero-sync-small", "aria-pressed": item.key === area.key ? "true" : "false", text: tr(item.action_label), onclick: () => { state.selectedArea = item.key; renderManual(); renderWork(); }}))),
                 el("h4", {text: tr(area.action_label)}),
                 el("p", {text: tr(area.scope_note)}),
-                el("p", {class: "hero-sync-quote", text: tr(FUNCTION_TEXT)}),
+                area.kind ? null : el("p", {class: "hero-sync-quote", text: tr(FUNCTION_TEXT)}),
                 el("p", {class: "hero-sync-hint", text: area.button === "Start"
                     ? format('Start runs the first import for the HERO source instance "{0}". You do not choose GraphQL services; the server resolves them from the active mapping.', state.data.source_instance)
                     : format('Update processes new records, changed records and newly mapped fields for the HERO source instance "{0}". You do not choose GraphQL services; the server resolves them from the active mapping.', state.data.source_instance)}),
@@ -373,7 +382,7 @@
                     ? el("div", {class: "hero-sync-scope"}, area.scope.objects.map((object) => el("div", {class: "hero-sync-scope-object"},
                         el("strong", {text: `${object.doctype} · ${plural(object.fields.length, "field", "fields")}`}),
                         el("div", {class: "hero-sync-chips"}, object.fields.map((field) => el("span", {class: "hero-sync-chip", text: field}))))))
-                    : el("p", {class: "hero-sync-hint", text: tr("No active mapping rules exist for this area. Create and activate them under Mapping.")}));
+                    : el("p", {class: "hero-sync-hint", text: tr(area.kind === "full" ? "Runs Project, Event, Task, Document and Picture Migration in this order." : "No active mapping rules exist for this area. Create and activate them under Mapping.")}));
             add(side, 
                 el("h4", {text: tr("Prerequisites")}),
                 el("dl", {class: "hero-sync-facts"},

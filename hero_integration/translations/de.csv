@@ -2814,3 +2814,18 @@ The local Task changed during creation; reconcile the external result.,Der lokal
 The mapped binding identity or status changed during Send; reconcile the remote result.,Die Identität oder der Status des gemappten Bindings hat sich während des Sendens geändert; gleichen Sie das Remote-Ergebnis ab.
 This HERO reference input requires its reviewed identity resolver.,Dieser HERO-Referenzeingang benötigt seinen geprüften Identitätsresolver.
 This HERO relationship input has no reviewed identity resolver.,Dieser HERO-Beziehungseingang hat keinen geprüften Identitätsresolver.
+Documents,Dokumente
+Pictures,Bilder
+Everything,Alles
+All areas,Alle Bereiche
+Document Migration,Dokumentenmigration
+Picture Migration,Bildmigration
+Full Migration,Komplettmigration
+"Transfer HERO documents (invoices, offers, confirmations, letters …) as private files.","HERO-Dokumente (Rechnungen, Angebote, Auftragsbestätigungen, Briefe …) als private Dateien übertragen."
+"Every HERO file except pictures, attached to its Project or Customer. Unchanged files are skipped.","Alle HERO-Dateien außer Bildern, angehängt an Projekt oder Kunde. Unveränderte Dateien werden übersprungen."
+Transfer HERO project pictures as private files.,HERO-Projektbilder als private Dateien übertragen.
+"All HERO pictures, attached to their Project. Unchanged files are skipped.","Alle HERO-Bilder, angehängt an ihr Projekt. Unveränderte Dateien werden übersprungen."
+"Run all migrations one after another: projects with contacts, events, tasks, documents, pictures.","Alle Migrationen nacheinander ausführen: Projekte mit Kontakten, Termine, Aufgaben, Dokumente, Bilder."
+Each step is its own run in the history. A stopped step blocks the chain; continue the run to retry it.,Jeder Schritt ist ein eigener Lauf im Verlauf. Ein abgebrochener Schritt hält die Kette an; Fortsetzen wiederholt ihn.
+"Runs Project, Event, Task, Document and Picture Migration in this order.","Führt Projekt-, Termin-, Aufgaben-, Dokumenten- und Bildmigration in dieser Reihenfolge aus."
+{0} {1}? {2},{0} {1}? {2}
