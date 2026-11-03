@@ -33,6 +33,7 @@ class TestEmployeeWrites(unittest.TestCase):
                                     utils=SimpleNamespace(now_datetime=lambda: 'now'))
         self.addCleanup(patch.stopall)
         patch.object(em, 'frappe', self.fake).start()
+        patch.object(em.runtime, 'resolve_read', return_value=em.runtime.builtin_read('HeroEmployees')).start()
         patch.object(em, '_link', side_effect=lambda instance, kind, *args: self.links.get(kind)).start()
         self.write_link = patch.object(em, '_write_link').start()
         self.find_user = patch.object(em, '_existing_user', return_value=None).start()
@@ -170,6 +171,7 @@ class TestEmployeeResume(unittest.TestCase):
         self.client = SimpleNamespace(query=lambda *a: {'partners':[{'id':1},{'id':2}]})
         self.addCleanup(patch.stopall)
         patch.object(em, 'frappe', self.fake).start()
+        patch.object(em.runtime, 'resolve_read', return_value=em.runtime.builtin_read('HeroEmployees')).start()
         patch.object(em, 'preflight', return_value=('Company','snapshot','query','partners')).start()
 
     def run_import(self, **kwargs):

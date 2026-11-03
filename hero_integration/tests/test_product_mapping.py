@@ -101,7 +101,7 @@ class TestOwnMapping(unittest.TestCase):
 
     def test_unmapped_or_empty_article_code_uses_technical_identity(self):
         self.assertEqual(pm.item_values(ROW, own_read(drop=("item_code",)))["item_code"], ROW["product_id"])
-        self.assertEqual(pm.item_values({**ROW, "nr": ""})["item_code"], ROW["product_id"])
+        self.assertEqual(pm.item_values({**ROW, "nr": ""}, own_read())["item_code"], ROW["product_id"])
 
     def test_an_added_custom_field_is_imported(self):
         row = {**ROW, "base_data": {**ROW["base_data"], "matchcode": " AC-415 "}}
@@ -205,11 +205,11 @@ SUPPLIER_ROW = {**ROW, "supply_operator": {"name": "Krannich Solar"},
 
 class TestProductDecisions(unittest.TestCase):
     def test_category_is_the_group_and_the_catalog_its_fallback(self):
-        self.assertEqual(pm.item_values(SUPPLIER_ROW)["item_group"], "Batteriespeicher")
-        self.assertEqual(pm.item_values(ROW)["item_group"], "Eigene Artikel")  # no category: catalog
+        self.assertEqual(pm.item_values(SUPPLIER_ROW, own_read())["item_group"], "Batteriespeicher")
+        self.assertEqual(pm.item_values(ROW, own_read())["item_group"], "Eigene Artikel")  # no category: catalog
 
     def test_description_stays_empty_and_the_manufacturer_part_number_is_kept(self):
-        values = pm.item_values(SUPPLIER_ROW)
+        values = pm.item_values(SUPPLIER_ROW, own_read())
         self.assertIsNone(values["description"])
         self.assertEqual(values["custom_hero_manufacturer_nr"], "0151230")
 
@@ -224,7 +224,7 @@ class TestProductDecisions(unittest.TestCase):
         item["supplier_items"].append({"supplier": "Local", "supplier_part_no": "L-1"})
         changed = {**SUPPLIER_ROW, "base_data": {**SUPPLIER_ROW["base_data"], "supplier_id": "0151299"}}
         with patch.object(pm, "frappe", fake):
-            pm._set_supplier(item, pm.item_values(changed)["supplier"], pm._Masters())
+            pm._set_supplier(item, pm.item_values(changed, own_read())["supplier"], pm._Masters())
         self.assertEqual(item["supplier_items"], [{"supplier": "Krannich Solar", "supplier_part_no": "0151299"},
                                                   {"supplier": "Local", "supplier_part_no": "L-1"}])
 

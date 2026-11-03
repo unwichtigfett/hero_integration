@@ -6,13 +6,14 @@
     // Operations are stored with their technical ids (HeroProducts …); people see the area name.
     const OPERATION_LABELS = Object.freeze({HeroCustomers: "Customers", HeroProjectMatches: "Projects", HeroTasks: "Tasks",
         HeroCalendarEvents: "Calendar", HeroProducts: "Products", HeroServices: "Services", HeroDocuments: "Documents", HeroPictures: "Pictures",
-        HeroLookup: "Lookup"});
+        HeroLookup: "Lookup", HeroEmployees: "Employees"});
     const operationLabel = (name) => (Object.hasOwn(OPERATION_LABELS, name || "") ? text(OPERATION_LABELS[name]) : String(name || ""));
     // Suggestions preserve the free-form transformations supported by other adapters.
     const directRuleChoices = (content, rule) => {
         if (content?.query_adapter?.version !== 2 || content.direction === "FRAPPE_TO_MUTATION" ||
             content.operation_kind === "MUTATION" ||
-            !["HeroProducts", "HeroDocuments", "HeroPictures", "HeroServices"].includes(content.target_operation)) return {};
+            !["HeroProducts", "HeroDocuments", "HeroPictures", "HeroServices", "HeroEmployees"].includes(content.target_operation)) return {};
+        if (content.target_operation === "HeroEmployees") return {transformation: ["Employee Status", "Employee Language"]};
         return {transformation: ["Service Price", "HERO Item Group", "HERO Category Group", "HERO Supplier", "HERO UOM", "HERO Brand",
             "HERO EAN Barcode", "HERO Price", "HERO Default Sales Price"],
             ...(rule.target_doctype === "Item Price" ? {relation: content.target_operation === "HeroServices" ? ["Standard Selling"] : ["Standard Buying", "Standard Selling"]} : {})};
@@ -50,6 +51,25 @@
     const stable = (value) => JSON.stringify(value, (_, item) => item && typeof item === "object" && !JSON.isRawJSON?.(item) && !Array.isArray(item)
         ? Object.fromEntries(Object.keys(item).sort().map((key) => [key, item[key]])) : item);
     const ownRule = (value, id) => Object.hasOwn(value.field_rules || {}, id) ? value.field_rules[id] : null;
+    const referencedRuleRow = (definition, id, linked = new Map()) => {
+        // A private snapshot can differ from its active rule and may never
+        // have existed as a published field-rule document.
+        const rule = ownRule(definition, id) || linked.get(id);
+        if (!rule) return {source: "Referenced field (details required)", target: "Not provided", app: "Not provided"};
+        const confirmedCompany = definition.target_operation === "HeroProjectMatches" &&
+            rule.target_doctype === "Project" && rule.target_field === "company" &&
+            rule.purpose === "Confirmed Company" && rule.transformation === "Confirmed ERPNext Company";
+        return {source: confirmedCompany ? text("Confirmed ERPNext Company") : rule.source_path,
+            target: `${rule.target_doctype}.${rule.target_field}${rule.relation ? ` (${text(rule.relation)})` : ""}`,
+            app: "Not provided"};
+    };
+    // Only rows left after snapshot, operation and field filtering participate.
+    // A parent on another page must not hide a standalone field rule here.
+    const uniqueVisibleMappingRows = (visible) => {
+        const referenced = new Set(visible.filter(({kind, row}) => kind === "graphql" && row.ruleId)
+            .map(({row}) => row.ruleId));
+        return visible.filter(({kind, item}) => kind !== "frappe" || !referenced.has(item.definition_id));
+    };
     const object = (value) => value && typeof value === "object" && !Array.isArray(value);
     const exchangeExpectedStates = (preview) => {
         if (!Array.isArray(preview?.items)) throw new Error("Invalid directional import preview.");
@@ -287,6 +307,12 @@
         area === "All areas" || (mappingAreas.includes(area) && Array.isArray(item.areas) && item.areas.includes(area)));
     const relationshipDescription = (rule, operation, fieldContext) => {
         const matchesObject = (name) => !fieldContext?.object_type || fieldContext.object_type === name;
+        if (rule && operation === "HeroProjectMatches" && rule.target_doctype === "Project" &&
+            rule.target_field === "company" && rule.purpose === "Confirmed Company" &&
+            rule.transformation === "Confirmed ERPNext Company")
+            return {source: "Confirmed ERPNext Company", target: "Project.company", role: "Company of your business",
+                identity: "Use the confirmed ERPNext Company. The HERO customer ID is not copied into Company.",
+                cardinality: "One confirmed Company per Project", state: "Existing reviewed relationship; unresolved identity requires review."};
         if (rule && operation === "HeroProjectMatches" && matchesObject("ProjectMatch") && rule.source_path === "customer_id" &&
             rule.target_doctype === "Project" && rule.target_field === "customer" &&
             rule.purpose === "Customer Relation" && rule.transformation === "HERO Customer Link" && rule.relation === "HERO Customer Link")
@@ -1005,15 +1031,18 @@
             section.append(box);
         }
         function renderList() {
-            toolbar.detach().empty(); body.empty(); renderWorkspaceContext(); renderContext({}); renderMappingsTable(body);
-            body.append($("<p class='text-muted'></p>").text(text("Choose an active mapping row or definition to inspect it. Reading and selection do not create a draft.")));
+            toolbar.detach().empty(); body.empty(); renderWorkspaceContext(); renderContext({});
             if (admin) renderPersonalDraftList();
+            renderMappingsTable(body);
+            body.append($("<p class='text-muted'></p>").text(text("Choose an active mapping row or definition to inspect it. Reading and selection do not create a draft.")));
             renderSchemaExplorer();
         }
         function renderPersonalDraftList() {
             const viewEpoch = epoch, viewTab = tab, section = $("<section data-personal-drafts></section>");
             const list = $("<div></div>"), message = $("<p role='status'></p>"), pager = $("<div></div>");
-            section.append($("<h3></h3>").text(text("My new personal drafts")), message, list, pager); body.append(section);
+            section.append($("<h3></h3>").text(text("My personal drafts")),
+                $("<p class='text-muted'></p>").text(text("Personal drafts are visible only to their owner. Deployment drafts belong to Administrator.")),
+                message, list, pager); body.append(section);
             let serial = 0;
             async function load(offset) {
                 const request = ++serial;
@@ -1024,8 +1053,13 @@
                     if (!Array.isArray(result.items)) throw new Error("Invalid personal draft list.");
                     list.empty(); message.text(result.items.length ? "" : text("No personal drafts on this page."));
                     result.items.forEach((item) => list.append($("<p></p>").append(button(
-                        `${item.operation_name} · ${snapshotLabel(item.snapshot_name)} · ${item.definition_id}`,
-                        () => leave(() => openParentlessDraft(item))))));
+                        `${operationLabel(item.target_operation || item.operation_name)} · ${snapshotLabel(item.snapshot_name)} · ${text("Personal draft revision")}: ${item.draft_revision ?? "—"}`,
+                        () => leave(async () => {
+                            if (item.active_mapping) {
+                                await open({name: item.active_mapping}, "graphql");
+                                if (active?.name === item.active_mapping) await openDraft();
+                            } else await openParentlessDraft(item);
+                        })))));
                     pager.empty().append(button("Previous drafts", () => load(Math.max(0, offset - 50))).prop("disabled", !offset),
                         button("Next drafts", () => load(offset + 50)).prop("disabled", !result.has_more));
                 } catch (error) { if (!disposed && epoch === viewEpoch && request === serial) message.text(errorText(error)); }
@@ -1202,6 +1236,7 @@
                     ...(tab === "Mutation" ? [] : (data.builtin_mappings || []).map((item) => ({item, kind: "builtin"})))];
                 if (mode === "draft" && model && active?.parentless && !entries.some(({item, kind}) => draftOpen(item, kind))) entries.unshift({item: active, kind: "graphql"});
                 const needle = fieldSearch.val().trim().toLowerCase();
+                const visibleRows = [];
                 entries.filter(({item, kind}) => draftOpen(item, kind) || mappingMatchesContext(item, kind, snapshotFilter, operation.val())).forEach(({item, kind}) => {
                     const isDraft = draftOpen(item, kind);
                     const definition = isDraft ? model.content : item.definition || item;
@@ -1209,8 +1244,8 @@
                     const projected = kind === "frappe" || kind === "builtin" ? [{source: item.source_path,
                         target: `${item.target_doctype}.${item.target_field}${item.relation ? ` (${text(item.relation)})` : ""}`, app: "Not provided", index: 0}]
                         : rows(definition).map((row, index) => {
-                            const rule = row.reference ? linked.get(row.id) || ruleCache.get(row.id) : null, value = row.value;
-                            return row.reference ? {source: rule?.source_path || "Referenced field (details required)", target: rule ? `${rule.target_doctype}.${rule.target_field}` : "Not provided", app: "Not provided", index}
+                            const value = row.value;
+                            return row.reference ? {...referencedRuleRow(definition, row.id, linked), index, ruleId: row.id}
                                 : {source: `${value.source?.doctype || ""}.${value.source?.field || ""}`, target: item.direction === "FRAPPE_TO_MUTATION" ? `${value.target?.operation || item.operation_name} / ${value.target?.argument || ""}.${value.target?.field_path ?? value.target?.field ?? ""}` : `${value.target?.doctype || ""}.${value.target?.field_path ?? value.target?.field ?? ""}`, app: (item.direction === "FRAPPE_TO_MUTATION" ? value.source?.app : value.target?.app) || "Not provided", index};
                         });
                     if (!projected.length) projected.push({source: "No configured field", target: "Not provided", app: "Not provided", index: 0});
@@ -1218,19 +1253,22 @@
                         const targetDoctype = kind === "frappe" ? item.target_doctype : item.direction === "FRAPPE_TO_MUTATION" ? definition.source?.doctype : definition.target?.doctype;
                         if (row.app === "Not provided") row.app = apps.get(targetDoctype || row.target.split(".")[0]) || row.app;
                         if (needle && !`${row.source} ${row.target} ${row.app}`.toLowerCase().includes(needle)) return;
-                        const isSelected = active?.name === item.name && active?.mapping_type === kind && selected === row.index;
-                        const select = () => {
-                            if (!mappingRowCanOpen(item, kind)) { say(format("Built-in mapping: used until an own mapping for this operation is activated. Create one from a saved read query (API & Schema) with target operation {0}.", operationLabel(item.operation))); return; }
-                            if (locked()) return;
-                            if (active?.name === item.name && active?.mapping_type === kind) { selected = row.index; renderDetail(); }
-                            else leave(async () => { await open(item, kind, false); if (active?.name === item.name) { selected = row.index; renderDetail(); } });
-                        };
-                        const tr = $("<tr tabindex='0'></tr>").toggleClass("is-selected", isSelected).toggleClass("is-draft", isDraft).attr({"aria-selected": String(isSelected), "aria-label": format("{0}: {1} to {2}", operationLabel(item.operation_name || item.operation), row.source, row.target), "data-mapping-name": item.name});
-                        tr.on("click", select).on("keydown", (event) => { if (["Enter", " "].includes(event.key)) { event.preventDefault(); select(); } });
-                        if (kind === "builtin") tr.addClass("is-builtin");
-                for (const value of [isDraft ? text("Personal draft") : text(item.status || "Active"), operationLabel(item.operation_name || item.operation), row.source, row.app, row.target, kind === "builtin" ? "—" : item.revision]) tr.append($("<td></td>").text(String(value ?? text("Not provided"))));
-                        table.find("tbody").append(tr);
+                        visibleRows.push({item, kind, definition, isDraft, row});
                     });
+                });
+                uniqueVisibleMappingRows(visibleRows).forEach(({item, kind, definition, isDraft, row}) => {
+                    const isSelected = active?.name === item.name && active?.mapping_type === kind && selected === row.index;
+                    const select = () => {
+                        if (!mappingRowCanOpen(item, kind)) { say(format("Built-in mapping: used until an own mapping for this operation is activated. Create one from a saved read query (API & Schema) with target operation {0}.", operationLabel(item.operation))); return; }
+                        if (locked()) return;
+                        if (active?.name === item.name && active?.mapping_type === kind) { selected = row.index; renderDetail(); }
+                        else leave(async () => { await open(item, kind, false); if (active?.name === item.name) { selected = row.index; renderDetail(); } });
+                    };
+                    const tr = $("<tr tabindex='0'></tr>").toggleClass("is-selected", isSelected).toggleClass("is-draft", isDraft).attr({"aria-selected": String(isSelected), "aria-label": format("{0}: {1} to {2}", operationLabel(item.operation_name || item.operation), row.source, row.target), "data-mapping-name": item.name});
+                    tr.on("click", select).on("keydown", (event) => { if (["Enter", " "].includes(event.key)) { event.preventDefault(); select(); } });
+                    if (kind === "builtin") tr.addClass("is-builtin");
+                    for (const value of [isDraft ? text("Personal draft") : text(item.status || "Active"), operationLabel(definition.target_operation || item.operation_name || item.operation), row.source, row.app, row.target, kind === "builtin" ? "—" : isDraft ? model.saved.content_revision : item.revision]) tr.append($("<td></td>").text(String(value ?? text("Not provided"))));
+                    table.find("tbody").append(tr);
                 });
                 if (!table.find("tbody").children().length) table.find("tbody").append($("<tr><td colspan='6'></td></tr>").find("td").text(text("No active mappings match this context or filter. Try another snapshot, search or page.")).end());
                 body.find(".hero-mapping-context").trigger("hero-mapping-summary-refresh");
@@ -2026,5 +2064,5 @@
         const controller = {beforeLeave: leaveWorkspace, destroy() { shell.removeClass("hero-mapping-shell"); disposed = true; epoch++; window.removeEventListener("beforeunload", unload); if (router.route === guardedRoute) router.route = originalRoute; document.removeEventListener("click", links, true); document.removeEventListener("pointerdown", closeChoiceOutside, true); }};
         current = controller; loadList(); return controller;
     }
-    window.hero_integration_mapping_editor = Object.freeze({mount, operationLabel, directRuleChoices, mappingMatchesContext, mappingRowCanOpen, DraftState, stable, readActiveRule, readSnapshotPages, exchangeExpectedStates, exchangeCounts, exchangeCanAdopt, reviewedTargetLabel, writebackContractLabel, activationDescription, legacyWritebackRows, legacyWritebackDetailMatches, sharedWritebackDraftAccess, reviewedWritebackEditable, buildReviewedWriteback, sharedWritebackRequest, sharedWritebackSaveAccepted, finishSharedWritebackSave, legacyWritebackCurrent, legacyPackageSelection, legacyPackageAdoptionArgs, legacyCandidateArgs, legacyCandidateMatches, legacyCandidateRawMessage, legacyCandidateRpc, legacyCandidatePreviewText, isOwnedExportLink, mappingTabs, mappingAreas, objectsInArea, relationshipDescription, directionForTab, definitionChoice, objectFieldContext, actionInputType, bindingAccess, selectedPickerApp, hasCurrentDraftBase, canSaveDraft, publicationResultName, publicationReadbackMatches, tabKeyTarget, MappingTabStates, resumePendingView});
+    window.hero_integration_mapping_editor = Object.freeze({mount, operationLabel, directRuleChoices, mappingMatchesContext, mappingRowCanOpen, referencedRuleRow, uniqueVisibleMappingRows, DraftState, stable, readActiveRule, readSnapshotPages, exchangeExpectedStates, exchangeCounts, exchangeCanAdopt, reviewedTargetLabel, writebackContractLabel, activationDescription, legacyWritebackRows, legacyWritebackDetailMatches, sharedWritebackDraftAccess, reviewedWritebackEditable, buildReviewedWriteback, sharedWritebackRequest, sharedWritebackSaveAccepted, finishSharedWritebackSave, legacyWritebackCurrent, legacyPackageSelection, legacyPackageAdoptionArgs, legacyCandidateArgs, legacyCandidateMatches, legacyCandidateRawMessage, legacyCandidateRpc, legacyCandidatePreviewText, isOwnedExportLink, mappingTabs, mappingAreas, objectsInArea, relationshipDescription, directionForTab, definitionChoice, objectFieldContext, actionInputType, bindingAccess, selectedPickerApp, hasCurrentDraftBase, canSaveDraft, publicationResultName, publicationReadbackMatches, tabKeyTarget, MappingTabStates, resumePendingView});
 })();

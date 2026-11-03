@@ -176,6 +176,21 @@ class TestFrontendApiBoundary(unittest.TestCase):
         self.assertEqual((m0['pagination']['graphql_total'], m0['pagination']['frappe_total'], m0['frappe_mappings']), (3, 0, []))
         self.assertEqual(all_rows['pagination']['graphql_total'], 6)
 
+    def test_unconfigured_operations_are_not_reported_as_builtin_active_mappings(self):
+        class EmptyMappings(_Frappe):
+            def get_all(self, doctype, **kwargs):
+                self.get_all_calls.append((doctype, kwargs))
+                return []
+
+        frappe = EmptyMappings(roles=("Employee",))
+        with patch.object(api, "frappe", frappe):
+            for direction in ("", "QUERY_TO_FRAPPE", "FRAPPE_TO_MUTATION"):
+                with self.subTest(direction=direction):
+                    result = api.frontend_mapping_list(direction=direction)
+                    self.assertEqual(result["graphql_mappings"], [])
+                    self.assertEqual(result["frappe_mappings"], [])
+                    self.assertEqual(result["builtin_mappings"], [])
+
     def test_employee_can_read_only_sanitized_mapping_status(self):
         frappe = _Frappe(roles=("Employee",), user="employee@example.invalid", mapping=_Mapping(status="Active"))
         with patch.object(api, "frappe", frappe):

@@ -23,7 +23,7 @@ ROW = {
 
 class TestMapping(unittest.TestCase):
     def test_article_fields(self):
-        values = pm.item_values(ROW)
+        values = pm.item_values(ROW, BUILTIN)
         self.assertEqual((values["item_code"], values["item_name"], values["item_group"], values["stock_uom"]),
                          ("PV-1001", "MODUL: AXIpremium", "Eigene Artikel", "Stk"))
         self.assertEqual((values["brand"], values["barcode"], values["disabled"]), ("AXITEC", "4260463020058", 0))
@@ -31,7 +31,7 @@ class TestMapping(unittest.TestCase):
 
     def test_fallbacks(self):
         values = pm.item_values({"product_id": "X1", "nr": "", "is_deleted": True, "base_price": 0, "list_price": 12.5,
-                                 "base_data": {"name": "", "unit_type": ""}})
+                                 "base_data": {"name": "", "unit_type": ""}}, BUILTIN)
         self.assertEqual((values["item_code"], values["item_name"], values["stock_uom"]), ("X1", "X1", "Stk"))
         self.assertEqual((values["item_group"], values["brand"], values["disabled"]), ("Ohne Katalog", None, 1))
         self.assertEqual((values["buying"], values["selling"]), (None, 12.5))
@@ -57,7 +57,7 @@ class _Client:
 
 class TestPaging(unittest.TestCase):
     def test_rejected_page_is_read_in_halves(self):
-        rows = pm.fetch_page(_Client(1000, reject_above=250), 0)
+        rows = pm.fetch_page(_Client(1000, reject_above=250), 0, read=BUILTIN)
         self.assertEqual(len(rows), 500)
         self.assertEqual(rows[0]["product_id"], "P0")
         self.assertEqual(rows[-1]["product_id"], "P499")
@@ -169,7 +169,7 @@ class TestManagedPrices(unittest.TestCase):
                                target_field_hashes=json.dumps({"prices": {pm.SELLING: {"name": "P1", "rate": 98, "uom": "Stk"}}}))
         with patch.object(pm, "frappe", fake), patch.object(pm, "owned_digest", return_value="x"):
             result = pm.upsert({**ROW, "base_price": None, "sales_prices": [], "list_price": 100}, link,
-                               pm._Masters(), "source-a")
+                               pm._Masters(), "source-a", read=BUILTIN)
         self.assertEqual(result, "conflict")
         self.assertEqual(db.prices["P1"]["price_list_rate"], 98)
         self.assertEqual([write[0] for write in db.writes], ["HERO Integration Link"])
@@ -182,7 +182,7 @@ class TestManagedPrices(unittest.TestCase):
         link = SimpleNamespace(name="L1", target_name="PV-1001", source_payload_hash="old", target_payload_hash="",
                                target_field_hashes="")
         with patch.object(pm, "frappe", fake), patch.object(pm, "owned_digest", return_value="x"):
-            result = pm.upsert({**ROW, "base_price": None}, link, pm._Masters(), "source-a")
+            result = pm.upsert({**ROW, "base_price": None}, link, pm._Masters(), "source-a", read=BUILTIN)
         self.assertEqual(result, "conflict")
         self.assertEqual(db.writes[0][0], "HERO Integration Link")
         self.assertEqual(db.writes[0][2]["sync_status"], "Conflict")

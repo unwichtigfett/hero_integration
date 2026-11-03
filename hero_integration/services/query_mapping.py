@@ -375,12 +375,17 @@ def seal_query(service, snapshot, config, plan):
     operation = plan.target_operation or plan.operation
     expected, _target = ROOTS[operation]
     prefix = direct.OPERATIONS.get(operation, {}).get('record_prefix', '')
+    if operation == 'HeroEmployees' and root.name.value == 'company':
+        expected, prefix = 'company', 'partners'
     records = (root.alias.value if root.alias else expected) + ('.' + prefix if prefix else '')
     if root.name.value != expected or config.get('records_path') != records:
         raise ValueError('Mapped read root differs from its native adapter.')
     variables = config.get('variables', {})
     args = {arg.name.value: arg.value for arg in root.arguments}
-    for name, marker in (('first', '$page_size'), ('offset', '$offset')):
+    unpaged = bool(direct.OPERATIONS.get(operation, {}).get("unpaged"))
+    if unpaged and (args or variables or definitions[0].variable_definitions):
+        raise ValueError("Employee reads require the complete source list without arguments or variables.")
+    for name, marker in (() if unpaged else (('first', '$page_size'), ('offset', '$offset'))):
         node = args.get(name)
         if not isinstance(node, VariableNode) or variables.get(node.name.value) != marker:
             raise ValueError('Mapped reads require explicit bounded first/offset variables.')
@@ -408,6 +413,8 @@ def seal_query(service, snapshot, config, plan):
                 selected.add(path)
                 leaf_types[path] = get_named_type(definition.type).name
     walk(root.selection_set, get_named_type(schema.query_type.fields[expected].type))
+    if unpaged and prefix and nodes.get(prefix) and nodes[prefix].arguments:
+        raise ValueError("Employee reads require the complete source list without arguments or variables.")
     if prefix:
         # Records are nested (connection edges); rule paths are relative to one record.
         inner = prefix + '.'
@@ -652,6 +659,8 @@ def source_type(schema, operation_name, path):
     current = types[(normalized.get('queryType') or {})['name']]
     root_name = ROOTS.get(operation_name, (operation_name, None))[0]
     segments = [root_name, *path.split('.')]
+    if operation_name == 'HeroEmployees' and not any(item.get('name') == 'partners' for item in current.get('fields', [])):
+        segments = ['company', 'partners', *path.split('.')]
     nullable = False
     named = None
     for index, segment in enumerate(segments):

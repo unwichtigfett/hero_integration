@@ -233,6 +233,7 @@ class TestServiceAttachments(unittest.TestCase):
         from hero_integration.services import file_migration as fm
         fake=SimpleNamespace(get_doc=Mock())
         with patch.object(fm,'frappe',fake), patch.object(fm,'confirmed_configuration',return_value=SimpleNamespace(source_instance='source')), \
-                patch.object(sm,'preflight',side_effect=sm.ServiceBlocked('Schema missing')):
+                patch.object(sm,'preflight',side_effect=sm.ServiceBlocked('Schema missing')), \
+                patch.object(fm.direct_runtime, 'resolve_read'):
             with self.assertRaises(sm.ServiceBlocked):fm.start(fm.SERVICE_ACTION)
         fake.get_doc.assert_not_called()

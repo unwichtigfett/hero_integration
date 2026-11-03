@@ -10,7 +10,7 @@ checkpoints. No automatic polling or outbound mutation is added.
 
 `HeroServices` is a Query adapter v2 operation for `supply_services`, paged
 with first/offset ordered by `id` (100 records per page). Its approved own
-mapping replaces the built-in scalar mapping. Set records_path to
+mapping is required for execution; default rules only provide an editable draft. Set records_path to
 `supply_services`, identity_path to `id`, and bind first/offset to
 `$page_size`/`$offset`; select every configured field and required guards
 `id`, `company_id`, `is_deleted`, `modified`. Use the normal saved read Query,

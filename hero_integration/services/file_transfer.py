@@ -234,6 +234,8 @@ def commit_file(row: dict, size: int, md5: str, temp: str, target: tuple, folder
 
 def store(row: dict, size: int, md5: str, temp: str, target: tuple, folder: str, existing, source_instance: str, read=None) -> StoredFile:
     """Move the downloaded blob into place and create or update the File and its link (not committed)."""
+    operation = "HeroPictures" if row.get("category") == "images" else "HeroDocuments"
+    read = read or direct_runtime.resolve_read(operation, source_instance)
     file_url = f"/private/files/hero-{row['id']}-{int(time.time())}-{safe_name(row.get('filename'))}"
     os.replace(temp, _disk_path(file_url))
     try:
@@ -266,7 +268,8 @@ def field_hashes(values: dict) -> str:
 
 
 def _record(row, size, md5, file_url, target, folder, existing, source_instance, read=None) -> StoredFile:
-    read = read or direct_runtime.builtin_read("HeroDocuments")
+    operation = "HeroPictures" if row.get("category") == "images" else "HeroDocuments"
+    read = read or direct_runtime.resolve_read(operation, source_instance)
     fields = mapped_values(read, row)
     doctype, name = target
     old_url = None

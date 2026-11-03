@@ -87,7 +87,16 @@ class Environment:
 class TestMappingDraftDeployment(unittest.TestCase):
     def setUp(self):
         self.package = json.loads(deployment.PACKAGE_PATH.read_text())
+        self.merge_inputs = self.package.pop("merge_inputs", [])
         self.environment = Environment(self.package)
+
+    def test_consolidation_does_not_recreate_missing_historical_inputs(self):
+        self.package["merge_inputs"] = self.merge_inputs
+        self.assertTrue(self.merge_inputs)
+        self.assertEqual(self.environment.call()["status"], "PREPARED")
+        self.assertEqual(self.environment.created, [])
+        self.assertEqual(self.environment.drafts, {})
+        self.assertEqual(self.environment.session.user, "migration-user")
 
     def test_bundle_has_closed_rules_and_no_local_document_ids_or_approval(self):
         self.assertEqual(len(self.package["mappings"]), 3)
