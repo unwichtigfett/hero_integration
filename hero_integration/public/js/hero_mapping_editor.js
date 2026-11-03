@@ -3,6 +3,11 @@
     if (window.hero_integration_mapping_editor) return;
     const text = (value, context) => window.hero_integration_i18n?.text(value, context) ?? String(value);
     const format = (message, ...values) => text(message).replace(/\{(\d+)\}/g, (_, index) => String(values[index] ?? ""));
+    // Operations are stored with their technical ids (HeroProducts …); people see the area name.
+    const OPERATION_LABELS = Object.freeze({HeroCustomers: "Customers", HeroProjectMatches: "Projects", HeroTasks: "Tasks",
+        HeroCalendarEvents: "Calendar", HeroProducts: "Products", HeroDocuments: "Documents", HeroPictures: "Pictures",
+        HeroLookup: "Lookup"});
+    const operationLabel = (name) => (Object.hasOwn(OPERATION_LABELS, name || "") ? text(OPERATION_LABELS[name]) : String(name || ""));
     // Suggestions preserve the free-form transformations supported by other adapters.
     const directRuleChoices = (content, rule) => {
         if (content?.query_adapter?.version !== 2 || content.direction === "FRAPPE_TO_MUTATION" ||
@@ -1215,15 +1220,15 @@
                         if (needle && !`${row.source} ${row.target} ${row.app}`.toLowerCase().includes(needle)) return;
                         const isSelected = active?.name === item.name && active?.mapping_type === kind && selected === row.index;
                         const select = () => {
-                            if (!mappingRowCanOpen(item, kind)) { say(format("Built-in mapping: used until an own mapping for this operation is activated. Create one from a saved read query (API & Schema) with target operation {0}.", item.operation)); return; }
+                            if (!mappingRowCanOpen(item, kind)) { say(format("Built-in mapping: used until an own mapping for this operation is activated. Create one from a saved read query (API & Schema) with target operation {0}.", operationLabel(item.operation))); return; }
                             if (locked()) return;
                             if (active?.name === item.name && active?.mapping_type === kind) { selected = row.index; renderDetail(); }
                             else leave(async () => { await open(item, kind, false); if (active?.name === item.name) { selected = row.index; renderDetail(); } });
                         };
-                        const tr = $("<tr tabindex='0'></tr>").toggleClass("is-selected", isSelected).toggleClass("is-draft", isDraft).attr({"aria-selected": String(isSelected), "aria-label": format("{0}: {1} to {2}", item.operation_name || item.operation, row.source, row.target), "data-mapping-name": item.name});
+                        const tr = $("<tr tabindex='0'></tr>").toggleClass("is-selected", isSelected).toggleClass("is-draft", isDraft).attr({"aria-selected": String(isSelected), "aria-label": format("{0}: {1} to {2}", operationLabel(item.operation_name || item.operation), row.source, row.target), "data-mapping-name": item.name});
                         tr.on("click", select).on("keydown", (event) => { if (["Enter", " "].includes(event.key)) { event.preventDefault(); select(); } });
                         if (kind === "builtin") tr.addClass("is-builtin");
-                for (const value of [isDraft ? text("Personal draft") : text(item.status || "Active"), item.operation_name || item.operation, row.source, row.app, row.target, kind === "builtin" ? "—" : item.revision]) tr.append($("<td></td>").text(String(value ?? text("Not provided"))));
+                for (const value of [isDraft ? text("Personal draft") : text(item.status || "Active"), operationLabel(item.operation_name || item.operation), row.source, row.app, row.target, kind === "builtin" ? "—" : item.revision]) tr.append($("<td></td>").text(String(value ?? text("Not provided"))));
                         table.find("tbody").append(tr);
                     });
                 });
@@ -1254,7 +1259,7 @@
                     }
                     const chosen = operation.val(); operation.find("option:not(:first)").remove();
                     [...new Set([...data.graphql_mappings.map((item) => item.operation_name), ...data.frappe_mappings.map((item) => item.operation),
-                        ...(tab === "Mutation" ? [] : (data.builtin_mappings || []).map((item) => item.operation))])].forEach((name) => operation.append($("<option></option>").val(name).text(name)));
+                        ...(tab === "Mutation" ? [] : (data.builtin_mappings || []).map((item) => item.operation))])].forEach((name) => operation.append($("<option></option>").val(name).text(operationLabel(name))));
                     operation.val(chosen || ""); if (operation.val() === null) operation.val(""); draw();
                     const total = Math.max(data.pagination.graphql_total, data.pagination.frappe_total);
                     pager.empty().append(button("Previous mappings", () => { offset = Math.max(0, offset - 20); load(); }).prop("disabled", !offset),
@@ -1334,7 +1339,14 @@
             const detail = $("<section class='hero-mapping-row-detail'></section>").attr("aria-label", text("Selected field mapping")).attr("data-editable", String(editable)).appendTo(parameters);
             for (const key of ["records_path", "record_path", "identity_path", "target_operation"]) {
                 if (!(key in value)) continue;
-                if (editable && typeof value[key] === "string") field(key.replaceAll("_", " "), value[key], (v) => model.set([key], v), parameters);
+                if (editable && key === "target_operation" && typeof value[key] === "string") {
+                    // A choice of the known operations by area name; an unknown stored value stays visible for review.
+                    const select = $("<select class='form-control'></select>").prop("disabled", busy);
+                    [...new Set([...Object.keys(OPERATION_LABELS), value[key]])].forEach((name) =>
+                        select.append($("<option></option>").val(name).text(operationLabel(name))));
+                    select.val(value[key]).on("change", () => { model.set([key], select.val()); updateDirty(); });
+                    $("<label class='hero-mapping-input'></label>").append($("<span></span>").text(text("Target operation")), select).appendTo(parameters);
+                } else if (editable && typeof value[key] === "string") field(key.replaceAll("_", " "), value[key], (v) => model.set([key], v), parameters);
                 else parameters.append($("<p></p>").text(`${key}: ${JSON.stringify(value[key])}`));
             }
             parameters.append($("<details></details>").append($("<summary></summary>").text(text("Configured structure and additional rules")), safeJson(value)));
@@ -2014,5 +2026,5 @@
         const controller = {beforeLeave: leaveWorkspace, destroy() { shell.removeClass("hero-mapping-shell"); disposed = true; epoch++; window.removeEventListener("beforeunload", unload); if (router.route === guardedRoute) router.route = originalRoute; document.removeEventListener("click", links, true); document.removeEventListener("pointerdown", closeChoiceOutside, true); }};
         current = controller; loadList(); return controller;
     }
-    window.hero_integration_mapping_editor = Object.freeze({mount, directRuleChoices, mappingMatchesContext, mappingRowCanOpen, DraftState, stable, readActiveRule, readSnapshotPages, exchangeExpectedStates, exchangeCounts, exchangeCanAdopt, reviewedTargetLabel, writebackContractLabel, activationDescription, legacyWritebackRows, legacyWritebackDetailMatches, sharedWritebackDraftAccess, reviewedWritebackEditable, buildReviewedWriteback, sharedWritebackRequest, sharedWritebackSaveAccepted, finishSharedWritebackSave, legacyWritebackCurrent, legacyPackageSelection, legacyPackageAdoptionArgs, legacyCandidateArgs, legacyCandidateMatches, legacyCandidateRawMessage, legacyCandidateRpc, legacyCandidatePreviewText, isOwnedExportLink, mappingTabs, mappingAreas, objectsInArea, relationshipDescription, directionForTab, definitionChoice, objectFieldContext, actionInputType, bindingAccess, selectedPickerApp, hasCurrentDraftBase, canSaveDraft, publicationResultName, publicationReadbackMatches, tabKeyTarget, MappingTabStates, resumePendingView});
+    window.hero_integration_mapping_editor = Object.freeze({mount, operationLabel, directRuleChoices, mappingMatchesContext, mappingRowCanOpen, DraftState, stable, readActiveRule, readSnapshotPages, exchangeExpectedStates, exchangeCounts, exchangeCanAdopt, reviewedTargetLabel, writebackContractLabel, activationDescription, legacyWritebackRows, legacyWritebackDetailMatches, sharedWritebackDraftAccess, reviewedWritebackEditable, buildReviewedWriteback, sharedWritebackRequest, sharedWritebackSaveAccepted, finishSharedWritebackSave, legacyWritebackCurrent, legacyPackageSelection, legacyPackageAdoptionArgs, legacyCandidateArgs, legacyCandidateMatches, legacyCandidateRawMessage, legacyCandidateRpc, legacyCandidatePreviewText, isOwnedExportLink, mappingTabs, mappingAreas, objectsInArea, relationshipDescription, directionForTab, definitionChoice, objectFieldContext, actionInputType, bindingAccess, selectedPickerApp, hasCurrentDraftBase, canSaveDraft, publicationResultName, publicationReadbackMatches, tabKeyTarget, MappingTabStates, resumePendingView});
 })();

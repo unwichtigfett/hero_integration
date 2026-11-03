@@ -2925,3 +2925,5 @@ HERO Default Sales Price may only feed Item Price.price_list_rate.,HERO Default 
 HERO returned an invalid record list for HeroProducts.,HERO hat eine ungültige Datensatzliste für HeroProducts zurückgegeben.
 HERO returned an invalid record list for HeroDocuments.,HERO hat eine ungültige Datensatzliste für HeroDocuments zurückgegeben.
 HERO returned an invalid record list for HeroPictures.,HERO hat eine ungültige Datensatzliste für HeroPictures zurückgegeben.
+Target operation,Zieloperation
+Lookup,Nachschlagen
