@@ -3,7 +3,8 @@
 A conflict link stores an English diagnostic and hash baselines, never the
 synchronized values. The report therefore names what the diagnostic proves:
 the HERO record, the affected Doctype fields with the HERO variables that
-feed them (from the active mapping rules), the current ERPNext value and, where
+feed them (from the rules of the run that processed the record; unknown when
+that run cannot be reconstructed), the current ERPNext value and, where
 the diagnostic carries them, the old and new HERO values. Texts stay English;
 the Synchronization page translates them at display time.
 """
@@ -67,7 +68,8 @@ def report(link_name: str, source_instance: str) -> dict:
     detail = link.conflict_detail or ""
     recheck = detail.startswith(RECHECK_PREFIX)
     problem = detail[len(RECHECK_PREFIX):] if recheck else detail
-    kind, fields = _fields(link, problem)
+    rules = _run_rules(link.source_type, link.source_id)
+    kind, fields = _fields(link, problem, rules)
     approve, decline = _DECISIONS[link.sync_status]
     return {
         "name": link.name, "kind": kind, "hero_id": link.source_id, "source_type": link.source_type,
@@ -87,7 +89,8 @@ def record_report(record_name: str) -> dict:
     detail = record.detail or record.result or ""
     names = _FIELD_LIST.match(detail) or re.match(r"^HERO response omits the source of: (?P<fields>[\w, ]+)\.$", detail)
     doctype = _target_doctype(record.source_type)
-    fields = [_field(record.source_type, doctype, None, name) for name in _split(names)] if names else []
+    rules = _run_rules(record.source_type, record.source_id, run=record.run)
+    fields = [_field(record.source_type, doctype, None, name, rules) for name in _split(names)] if names else []
     return {
         "name": record.name, "kind": "record", "hero_id": record.source_id, "source_type": record.source_type,
         "area": _area_label(record.source_type), "doctype": doctype, "record": "", "record_exists": False,
@@ -99,24 +102,24 @@ def record_report(record_name: str) -> dict:
 
 # ---------------------------------------------------------------- field resolution
 
-def _fields(link, problem: str) -> tuple[str, list[dict]]:
+def _fields(link, problem: str, rules) -> tuple[str, list[dict]]:
     doctype, name = link.target_doctype, link.target_name
     if match := _FIELD_LIST.match(problem):
-        return "field", [_field(link.source_type, doctype, name, field) for field in _split(match)]
+        return "field", [_field(link.source_type, doctype, name, field, rules) for field in _split(match)]
     if match := _NUMBER_DRIFT.match(problem):
-        entry = _field(link.source_type, doctype, name, match["field"])
+        entry = _field(link.source_type, doctype, name, match["field"], rules)
         entry["hero_value"] = _literal(match["new"])
         entry["previous_hero_value"] = _literal(match["old"])
         return "number", [entry]
     if link.source_type == "supply_product":
         if match := _PRICE.match(problem):
-            entry = _field(link.source_type, "Item Price", match["name"], "price_list_rate")
+            entry = _field(link.source_type, "Item Price", match["name"], "price_list_rate", rules)
             entry["hero_variable"] = _PRICE_PATHS.get(match["list"], "")
             return "product", [entry]
-        return "product", [_field(link.source_type, doctype, name, field) for field in _changed_item_fields(link)]
+        return "product", [_field(link.source_type, doctype, name, field, rules) for field in _changed_item_fields(link)]
     for reason, field in _REASON_FIELDS:
         if reason in problem:
-            return "review", [_field(link.source_type, doctype, name, field)]
+            return "review", [_field(link.source_type, doctype, name, field, rules)]
     return ("review" if link.sync_status == "Pending Review" else "other"), []
 
 
@@ -124,9 +127,9 @@ def _split(match) -> list[str]:
     return [item.strip() for item in match["fields"].split(",") if item.strip()][:MAX_FIELDS]
 
 
-def _field(source_type: str, doctype: str, name: str | None, field: str) -> dict:
-    entry = {"doctype": doctype or "", "field": field, "label": field, "hero_variable": _hero_variable(source_type, doctype, field),
-             "value": None}
+def _field(source_type: str, doctype: str, name: str | None, field: str, rules) -> dict:
+    entry = {"doctype": doctype or "", "field": field, "label": field,
+             "hero_variable": _hero_variable(source_type, doctype, field, rules), "value": None}
     if doctype and frappe.db.exists("DocType", doctype):
         meta = frappe.get_meta(doctype)
         docfield = meta.get_field(field)
@@ -137,17 +140,43 @@ def _field(source_type: str, doctype: str, name: str | None, field: str) -> dict
     return entry
 
 
-def _hero_variable(source_type: str, doctype: str, field: str) -> str:
+def _hero_variable(source_type: str, doctype: str, field: str, rules) -> str | None:
+    """HERO path of the rule that writes ``doctype.field``; None when it cannot be proven."""
     if source_type == "supply_product":
-        return _PRODUCT_PATHS.get(field, "")
+        return _PRODUCT_PATHS.get(field) or None
+    if not rules:
+        return None
+    exact = [path for (rule_doctype, rule_field), path in rules if rule_field == field and rule_doctype == doctype]
+    # Customer contact fields are written to the Contact of the Customer.
+    paths = exact or [path for (rule_doctype, rule_field), path in rules if rule_field == field]
+    return ", ".join(dict.fromkeys(paths)) or None
+
+
+def _run_rules(source_type: str, source_id: str, run: str | None = None) -> tuple | None:
+    """(doctype, field) → HERO path of exactly the rules frozen onto the run that
+    processed this record. None when no such run exists or its rules changed."""
     operation = _operation(source_type)
-    if not operation:
-        return ""
-    rows = frappe.get_all("HERO Frappe Mapping", filters={"operation": operation, "status": "Active", "target_field": field},
-                          fields=["source_path", "target_doctype"], order_by="priority asc, creation asc", limit_page_length=20)
-    exact = [row.source_path for row in rows if row.target_doctype == doctype and row.source_path]
-    paths = exact or [row.source_path for row in rows if row.source_path]
-    return ", ".join(dict.fromkeys(paths))
+    if not operation or source_type == "supply_product":
+        return None
+    if not run:
+        rows = frappe.db.sql("""SELECT x.run FROM `tabHERO Integration Record` x
+            JOIN `tabHERO Integration Run` r ON r.name = x.run
+            WHERE x.source_type=%s AND x.source_id=%s AND r.mode='Execute' AND IFNULL(r.graphql_mapping, '') != ''
+            ORDER BY x.creation DESC LIMIT 1""", (source_type, str(source_id)))
+        run = rows[0][0] if rows else None
+    if not run or not frappe.db.exists("HERO Integration Run", run):
+        return None
+    document = frappe.get_doc("HERO Integration Run", run)
+    if not getattr(document, "graphql_mapping", ""):
+        return None  # without a frozen mapping every active rule would qualify
+    from hero_integration.services.migration import _mapping_plan_for_run
+
+    try:
+        plan = _mapping_plan_for_run(document, operation)
+    except Exception:  # the run's service, mapping or rule revisions are no longer reconstructable
+        return None
+    return tuple(((spec.target_doctype, spec.target_field), spec.source_path)
+                 for spec in plan.definitions if spec.source_path and spec.target_field)
 
 
 def _changed_item_fields(link) -> list[str]:
