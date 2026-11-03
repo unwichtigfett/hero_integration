@@ -98,3 +98,11 @@ test('invalid language codes do not prevent numeric summaries', () => {
   frappe.boot.lang = 'bad_locale_!';
   assert.equal(window.hero_integration_migration.phaseSummary('Running', 1234), 'Running · 1,234 processed');
 });
+
+test('price conflicts of the product import translate with the price list name', () => {
+  const messages = {'The {0} price {1} was changed in ERPNext. The newer HERO article was not applied.': 'Preis {1} ({0}) in ERPNext geändert.',
+                    'Standard Selling': 'Standard-Verkauf'};
+  window.hero_integration_i18n.text = value => messages[value] || value;
+  assert.equal(diagnostic('The Standard Selling price PRICE-7 was changed in ERPNext. The newer HERO article was not applied.'),
+               'Preis PRICE-7 (Standard-Verkauf) in ERPNext geändert.');
+});

@@ -2839,3 +2839,38 @@ Manual start only,Nur manueller Start
 Area:HERO data area,Bereich
 Customers,Kunden
 Calendar,Kalender
+Report,Bericht
+Report for {0},Bericht zu {0}
+Conflict report,Konfliktbericht
+HERO ID,HERO-ID
+Doctype,Doctype
+Problem,Problem
+Affected fields,Betroffene Felder
+HERO variable,HERO-Variable
+Doctype field,Doctype-Feld
+Value in ERPNext,Wert in ERPNext
+New HERO value,Neuer HERO-Wert
+Previously {0},Bisher {0}
+(empty),(leer)
+No single field can be named for this conflict.,Für diesen Konflikt lässt sich kein einzelnes Feld benennen.
+If you approve,Beim Freigeben
+If you decline,Beim Ablehnen
+Next step,Nächster Schritt
+Not imported,Nicht importiert
+"The field was changed in HERO and in ERPNext since the last synchronization, so neither value was overwritten.",Das Feld wurde seit der letzten Synchronisierung sowohl in HERO als auch in ERPNext geändert; deshalb wurde keiner der Werte überschrieben.
+HERO changed the business number. The ERPNext record keeps its name and number until you decide.,"HERO hat die Geschäftsnummer geändert. Der ERPNext-Datensatz behält Namen und Nummer, bis Sie entscheiden."
+HERO delivered this record with a value ERPNext cannot use as it is. It was imported and waits for your confirmation.,"HERO hat diesen Datensatz mit einem Wert geliefert, den ERPNext so nicht übernehmen kann. Er wurde importiert und wartet auf Ihre Bestätigung."
+"The ERPNext Item or price was changed after the last import, so the newer HERO article was not applied.",Der ERPNext-Artikel oder sein Preis wurde nach dem letzten Import geändert; deshalb wurde der neuere HERO-Artikel nicht übernommen.
+"HERO delivered this record, but it could not be imported. It has no ERPNext record yet.","HERO hat diesen Datensatz geliefert, er konnte aber nicht importiert werden. In ERPNext gibt es ihn noch nicht."
+The synchronization stopped for this record and needs a decision.,Die Synchronisierung wurde für diesen Datensatz angehalten und braucht eine Entscheidung.
+The next synchronization checks the record again and applies HERO changes that no longer conflict.,"Die nächste Synchronisierung prüft den Datensatz erneut und übernimmt HERO-Änderungen, die keinen Konflikt mehr haben."
+ERPNext keeps its current values; later HERO changes to this record are not imported.,ERPNext behält die aktuellen Werte; spätere HERO-Änderungen an diesem Datensatz werden nicht importiert.
+The record is released as it was imported.,"Der Datensatz wird so freigegeben, wie er importiert wurde."
+"ERPNext keeps the record, but later HERO changes to it are not imported.","ERPNext behält den Datensatz, spätere HERO-Änderungen daran werden aber nicht importiert."
+Fix the record in HERO; the next run imports it.,Korrigieren Sie den Datensatz in HERO; der nächste Lauf importiert ihn.
+The imported {0} price {1} now belongs to another item or list. The newer HERO article was not applied.,Der importierte Preis {1} ({0}) gehört jetzt zu einem anderen Artikel oder einer anderen Preisliste. Der neuere HERO-Artikel wurde nicht übernommen.
+The {0} price {1} was changed in ERPNext. The newer HERO article was not applied.,Der Preis {1} ({0}) wurde in ERPNext geändert. Der neuere HERO-Artikel wurde nicht übernommen.
+"The {0} price {1} is now limited to a customer, supplier, batch, packing unit or period in ERPNext. The newer HERO article was not applied.","Der Preis {1} ({0}) ist in ERPNext jetzt auf einen Kunden, Lieferanten, eine Charge, Verpackungseinheit oder einen Zeitraum beschränkt. Der neuere HERO-Artikel wurde nicht übernommen."
+Several general {0} prices exist for {1} ({2}); none was changed. The newer HERO article was not applied.,Für {1} ({2}) gibt es mehrere allgemeine Preise in {0}; keiner wurde geändert. Der neuere HERO-Artikel wurde nicht übernommen.
+The conflict belongs to a different HERO source.,Der Konflikt gehört zu einer anderen HERO-Quelle.
+The record has no open conflict.,Der Datensatz hat keinen offenen Konflikt.

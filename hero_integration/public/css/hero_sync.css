@@ -235,3 +235,32 @@
     .hero-integration-ui .hero-sync[data-view="sync"] > [data-views]:not([data-views~="sync"]),
     .hero-integration-ui .hero-sync[data-view="runtime"] > [data-views]:not([data-views~="runtime"]) { display: none; }
 }
+
+/* Conflict report: a native modal dialog inside the page, so the page colours apply. */
+.hero-integration-ui .hero-sync-report {
+    width: min(720px, calc(100vw - 32px));
+    max-height: calc(100vh - 48px);
+    padding: 0;
+    border: 1px solid var(--pc-border);
+    border-radius: 10px;
+    background: var(--pc-surface);
+    color: var(--pc-text);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, .25);
+}
+.hero-integration-ui .hero-sync-report::backdrop { background: rgba(0, 0, 0, .35); }
+.hero-integration-ui .hero-sync-report[open] { display: flex; flex-direction: column; }
+.hero-integration-ui .hero-sync-report-head,
+.hero-integration-ui .hero-sync-report-actions { display: flex; align-items: center; gap: 8px; padding: 12px 16px; }
+.hero-integration-ui .hero-sync-report-head { justify-content: space-between; border-bottom: 1px solid var(--pc-border); }
+.hero-integration-ui .hero-sync-report-head h3 { margin: 0; font-size: 16px; font-weight: 600; }
+.hero-integration-ui .hero-sync-report-x { border: 0; background: none; color: inherit; font-size: 22px; line-height: 1; cursor: pointer; padding: 0 4px; }
+.hero-integration-ui .hero-sync-report-body { display: grid; gap: 14px; padding: 14px 16px; overflow: auto; }
+.hero-integration-ui .hero-sync-report-body h4 { margin: 0 0 6px; font-size: 13px; font-weight: 600; }
+.hero-integration-ui .hero-sync-report-body p { margin: 0 0 4px; line-height: 1.45; }
+.hero-integration-ui .hero-sync-report-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 16px; margin: 0; }
+.hero-integration-ui .hero-sync-report-facts dt { color: var(--pc-textSecondary); font-weight: 500; }
+.hero-integration-ui .hero-sync-report-facts dd { margin: 0; overflow-wrap: anywhere; }
+.hero-integration-ui .hero-sync-report-fields td { white-space: normal; vertical-align: top; }
+.hero-integration-ui .hero-sync-report-value { overflow-wrap: anywhere; }
+.hero-integration-ui .hero-sync-report-effects { padding: 10px 12px; border-radius: 8px; background: var(--hero-sync-field); }
+.hero-integration-ui .hero-sync-report-actions { justify-content: flex-end; border-top: 1px solid var(--pc-border); }

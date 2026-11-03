@@ -91,6 +91,11 @@ def owned_digest(doc) -> str:
     return digest({field: doc.get(field) or None for field in OWNED})
 
 
+def owned_field_digests(doc) -> dict[str, str]:
+    """Per-field baseline, so a conflict report can name the field changed in ERPNext."""
+    return {field: digest(doc.get(field) or None) for field in OWNED}
+
+
 # ---------------------------------------------------------------- Frappe side
 
 class _Masters:
@@ -187,7 +192,7 @@ def upsert(row: dict, link, masters: _Masters, source_instance: str) -> str:
             prices[price_list] = apply_price(item.name, price_list, plan)
     link_values = {"sync_status": "Synchronized", "target_name": item.name, "source_payload_hash": source,
                    "target_payload_hash": owned_digest(item), "conflict_detail": "",
-                   "target_field_hashes": json.dumps({"prices": prices}, sort_keys=True),
+                   "target_field_hashes": json.dumps({"prices": prices, "fields": owned_field_digests(item)}, sort_keys=True),
                    "mapping_version": MAPPING_VERSION, "last_synced_on": frappe.utils.now_datetime()}
     if link:
         frappe.db.set_value("HERO Integration Link", link.name, link_values)

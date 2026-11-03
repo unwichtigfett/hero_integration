@@ -25,7 +25,8 @@ WRITE_RPC_NAMES = {
 READ_RPC_NAMES = {"frontend_mapping_list", "frontend_mapping_detail", "runtime_plan_status",
                   "mapping_draft_read", "mapping_draft_revisions", "mapping_draft_exchange_export",
                   "workspace_node_bookmark_list", "workspace_node_bookmark_resolve",
-                  "sync_page_state", "sync_page_runs", "sync_page_run_detail", "sync_page_conflicts"}
+                  "sync_page_state", "sync_page_runs", "sync_page_run_detail", "sync_page_conflicts",
+                  "sync_page_conflict_report"}
 
 
 class TestApiMethodContract(unittest.TestCase):
