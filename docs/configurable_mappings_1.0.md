@@ -186,3 +186,19 @@ it is not a credential and no network request is made by that check.
 These checks do not establish a live HERO mutation or target-site migration.
 Any live mutation acceptance for this change is restricted to the explicitly
 identified test project. No production object is authorized as a test fixture.
+
+### Legacy project history pagination and visibility
+
+The legacy reader exhausts both `project_matches` and each nested `histories`
+collection, including short server pages. It never substitutes the differently
+filtered `project_histories` root. Repeated identities, lost parents and page
+bounds fail visibly. Existing content and historical timestamps remain immutable.
+Native Comment subject/author fields are filled only when empty. Source-only
+scalars, visibility, weather and attachment IDs are retained in a single hidden
+source-context field, without creating duplicate business fields.
+
+Nonempty source role restrictions are not interpreted as local ERPNext roles.
+Those comments are referenced from their System Manager-only Integration Link,
+outside the general Project timeline. The original Project relation is retained.
+An already restricted entry is never automatically made public. Attachment IDs
+are source references; they do not prove a downloaded file or a migrated mail.

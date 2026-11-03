@@ -20,8 +20,9 @@ from hero_integration.services.service_schema import ITEM_FIELDS as SERVICE_ITEM
 FILE_ACTIONS = {"Document Migration": "documents", "Picture Migration": "images"}
 PRODUCT_ACTION = "Product Migration"
 SERVICE_ACTION = "Service Migration"
+EMPLOYEE_ACTION = "Employee Migration"
 FULL_ACTION = "Full Migration"
-SLICE_ACTIONS = frozenset(FILE_ACTIONS) | {PRODUCT_ACTION, SERVICE_ACTION}
+SLICE_ACTIONS = frozenset(FILE_ACTIONS) | {PRODUCT_ACTION, SERVICE_ACTION, EMPLOYEE_ACTION}
 RUN_ACTIONS = SLICE_ACTIONS | {FULL_ACTION}
 # Project Migration processes the referenced contacts first in the same run.
 FULL_STEPS = ("Project Migration", "Schedule Migration", "Projection Migration", "Product Migration",
@@ -70,6 +71,10 @@ def start(action: str, parent: str = "") -> str:
     if action not in RUN_ACTIONS:
         raise ValueError("Unknown file migration action.")
     config = confirmed_configuration()
+    if action == EMPLOYEE_ACTION:
+        from hero_integration.services.employee_migration import preflight
+
+        preflight(config.source_instance)
     if action == SERVICE_ACTION:
         from hero_integration.services.service_migration import preflight
 
@@ -90,7 +95,7 @@ def start(action: str, parent: str = "") -> str:
         reset()
     elif action == FULL_ACTION:
         _save_full(run.name, {"step": 0, "child": "", "notes": [],
-                              "steps": [*FULL_STEPS[:4], SERVICE_ACTION, *FULL_STEPS[4:]]})
+                              "steps": [EMPLOYEE_ACTION, *FULL_STEPS[:4], SERVICE_ACTION, *FULL_STEPS[4:]]})
     if parent:
         frappe.db.set_default(CHILD_KEY.format(run.name), parent)
     _enqueue(run.name)
@@ -308,6 +313,9 @@ def active_child(run_name: str) -> str:
 # ---------------------------------------------------------------- Synchronization page
 
 AREA_TEXT = {
+    "employees": ("Employees", EMPLOYEE_ACTION, EMPLOYEE_ACTION,
+                  "Import employees into your ERPNext company.",
+                  "Joining date 2026-01-01. New active users receive only the Employee role; local changes require review."),
     "services": ("Services", SERVICE_ACTION, SERVICE_ACTION,
                  "Import services with selling prices and material/labor calculations.",
                  "Non-stock articles. Local edits require review; unresolved material references remain visible."),
@@ -328,6 +336,9 @@ AREA_TEXT = {
 AREA_KEYS = {key: text[2] for key, text in AREA_TEXT.items()}
 _FILE_FIELDS = ["file_name", "attached_to_doctype", "attached_to_name", "folder"]
 SCOPE = {
+    "employees": [{"doctype": "Employee", "fields": ["first_name", "last_name", "employee_name", "company_email",
+                  "cell_number", "status", "company", "date_of_joining", "user_id"]},
+                  {"doctype": "User", "fields": ["email", "phone", "language"]}],
     "services": [{"doctype": "Item", "fields": ["item_code", "item_name", "description", "stock_uom", "brand",
                   "taxes", "is_stock_item", "item_group", "barcodes", "disabled", *[field["fieldname"] for field in SERVICE_ITEM_FIELDS]]},
                  {"doctype": "Item Price", "fields": ["price_list", "price_list_rate"]},

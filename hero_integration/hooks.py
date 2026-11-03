@@ -25,7 +25,7 @@ scheduler_events = {
         "hero_integration.tasks.run_scheduled_sync",
         "hero_integration.tasks.run_scheduled_schema_refresh",
     ]},
-    # New HERO employees get an ERPNext user (no roles, no e-mail).
+    # New employees get an active ERPNext user with the Employee role, without e-mail.
     "daily": ["hero_integration.integrations.hero_people.sync_daily"],
 }
 

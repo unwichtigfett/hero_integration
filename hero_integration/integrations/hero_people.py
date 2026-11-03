@@ -1,11 +1,11 @@
 """HERO employees (company partners) as ERPNext users, so people fields and assignments can link them.
 
 Read-only towards HERO (one query). For every active partner with an e-mail and no
-ERPNext user yet, an enabled System User is created: no roles, no welcome e-mail,
+ERPNext user yet, an enabled System User with only the Employee role is created: no welcome e-mail,
 no password. Every user of a HERO partner carries the partner ID and the HERO user
 ID, so projects, assignments and tasks link people by ID, not by e-mail. Of an
 existing user only these two empty ID fields are filled; nothing else changes.
-Users of partners that left HERO are reported, not disabled. Admins grant roles in ERPNext.
+Users of partners that left HERO are reported, not disabled. Existing account roles remain local.
 """
 from __future__ import annotations
 
@@ -112,6 +112,7 @@ def sync_users(client) -> dict:
             "doctype": "User", "email": email, "first_name": first[:140],
             "last_name": (partner.get("last_name") or "").strip()[:140] or None,
             "user_type": "System User", "enabled": 1, "send_welcome_email": 0,
+            "roles": [{"role": "Employee"}],
             "phone": (partner.get("phone") or "").strip() or None,
             **{field: value for field, value in ids.items() if value and frappe.db.has_column("User", field)},
         })

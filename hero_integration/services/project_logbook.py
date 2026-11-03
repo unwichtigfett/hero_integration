@@ -8,67 +8,158 @@ retain the ERPNext entry.
 
 from __future__ import annotations
 
+import json
+
 import frappe
 
-PAGE_SIZE = 25
-ENTRIES_PER_PROJECT = 500
+PAGE_SIZE = 5
+ENTRIES_PER_PROJECT = 100
 SOURCE_TYPE = "project_history"
+CONTEXT_FIELDS = (
+    'modified', 'target_project_match_id', 'target_company_id', 'target', 'target_id',
+    'type_code', 'associated_outbox_mail_id', 'role_visibility', 'target_user_id',
+    'target_project_id', 'type', 'is_editable', 'additional_file_uploads', 'weather_attachment',
+)
+HISTORY_FIELDS = (
+    'id created custom_title custom_text author_name user_id modified target_project_match_id '
+    'target_company_id target target_id type_code associated_outbox_mail_id role_visibility '
+    'target_user_id target_project_id type is_editable '
+    'additional_file_uploads { id } weather_attachment { main description temp wind emoji icon }'
+)
 QUERY = (
-    "query HeroProjectLogbook($first: Int!, $offset: Int!) { project_matches(first: $first, offset: $offset, "
-    "orderBy: \"id\") { id histories(first: " + str(ENTRIES_PER_PROJECT) + ") { id created custom_title "
-    "custom_text author_name user_id } } }"
+    'query HeroProjectLogbook($first: Int!, $offset: Int!) { '
+    'project_matches(first: $first, offset: $offset, orderBy: "id") { '
+    'id histories(first: 100, offset: 0, orderBy: "id") { ' + HISTORY_FIELDS + ' } } }'
 )
 
 
-def sync_logbook(client, user_emails: dict[int, str] | None = None, max_pages: int = 200, *,
-                 source_instance: str) -> dict:
-    """Read every page once and add the entries not yet in ERPNext; returns counts.
+def _tail_query(pending):
+    """Batch independent history cursors without assuming HERO's page-size cap."""
+    declarations, fields, variables = [], [], {}
+    for index, (identity, offset) in enumerate(pending.items()):
+        declarations.extend((f'$id{index}: [Int]', f'$offset{index}: Int!'))
+        fields.append(f'p{index}: project_matches(ids: $id{index}, first: 1) {{ id '
+                      f'histories(first: 100, offset: $offset{index}, orderBy: "id") {{ {HISTORY_FIELDS} }} }}')
+        variables.update({f'id{index}': [int(identity)], f'offset{index}': offset})
+    return 'query HeroProjectLogbookPages(' + ', '.join(declarations) + ') { ' + ' '.join(fields) + ' }', variables
 
-    ``source_instance`` is the HERO source ``client`` reads from. HERO ids repeat
-    across sources, so projects and known entries are looked up only within it."""
+
+def _response(data):
+    data = data.get('data', data) if isinstance(data, dict) else None
+    if not isinstance(data, dict):
+        raise ValueError('HERO returned an invalid logbook response.')
+    return data
+
+
+def _rows(value):
+    if not isinstance(value, list) or not all(isinstance(row, dict) for row in value):
+        raise ValueError('HERO returned an invalid project/history collection.')
+    identities = [row.get('id') for row in value]
+    if any(type(key) is not int or key <= 0 for key in identities) or len(set(identities)) != len(identities):
+        raise ValueError('HERO returned missing or repeated logbook identities.')
+    return value
+
+
+def sync_logbook(client, user_emails: dict[int, str] | None = None, max_pages: int = 10000, *,
+                 source_instance: str, max_history_pages: int = 200, progress=None, verify_source=None) -> dict:
+    """Exhaust both nested collections; fail visibly if a bound/cursor is broken.
+
+    Short pages are not completion evidence. Each project is read to an empty
+    history page, including projects below 500 entries. Existing comments are
+    immutable and must belong to the same source and parent. A failed batch is
+    retryable: links and comments are committed together after the whole batch.
+    """
     if not isinstance(source_instance, str) or not source_instance.strip():
         raise ValueError("A HERO source instance is required.")
     projects = dict(frappe.db.sql("""SELECT source_id, target_name FROM `tabHERO Integration Link`
-        WHERE source_type='project' AND target_doctype='Project' AND IFNULL(target_name, '') != ''
+        WHERE source_system='HERO' AND source_type='project' AND target_doctype='Project'
+          AND IFNULL(target_name, '') != ''
           AND IFNULL(NULLIF(source_instance, ''), 'default')=%s""", (source_instance,)))
-    known = set(frappe.get_all("HERO Integration Link", filters={"source_type": SOURCE_TYPE,
-                                                                 "source_instance": source_instance},
-                               pluck="source_id", limit_page_length=0))
-    counts = {"requests": 0, "added": 0, "known": 0, "without_project": 0}
+    known = dict(frappe.db.sql("""SELECT l.source_id,
+        CASE WHEN c.reference_doctype='Project' THEN c.reference_name ELSE c.custom_hero_project END
+        FROM `tabHERO Integration Link` l
+        LEFT JOIN `tabComment` c ON l.target_doctype='Comment' AND c.name=l.target_name
+          AND c.reference_doctype IN ('Project', 'HERO Integration Link')
+        WHERE l.source_system='HERO' AND l.source_type='project_history'
+          AND IFNULL(NULLIF(l.source_instance, ''), 'default')=%s""", (source_instance,)))
+    counts = {"requests": 0, "added": 0, "known": 0, "without_project": 0, "projects": 0, "complete": False, "restricted": 0, "file_references": 0, "weather_entries": 0}
+    seen_projects = set()
+
+    def request(document, variables):
+        if verify_source:
+            verify_source()
+        counts['requests'] += 1
+        return _response(client.query(document, variables))
+
+    def consume(row, seen):
+        identity = str(row['id'])
+        entries = _rows(row.get('histories'))
+        project = projects.get(identity)
+        for entry in entries:
+            key = str(entry['id'])
+            counts['restricted'] += bool((entry.get('role_visibility') or '').strip())
+            counts['file_references'] += len(entry.get('additional_file_uploads') or [])
+            counts['weather_entries'] += bool(entry.get('weather_attachment'))
+            if key in seen:
+                raise ValueError('HERO history pagination repeated an identity; completion cannot be confirmed.')
+            seen.add(key)
+            if not project:
+                counts['without_project'] += 1
+            elif key in known:
+                if known[key] != project:
+                    raise ValueError('An existing logbook binding has a missing or different Project target.')
+                enrich_entry(project, entry, user_emails or {}, source_instance)
+                counts['known'] += 1
+            else:
+                add_entry(project, entry, user_emails or {}, source_instance)
+                known[key] = project
+                counts['added'] += 1
+        return len(entries)
+
     offset, size = 0, PAGE_SIZE
     for _ in range(max_pages):
         try:
-            data = client.query(QUERY, {"first": size, "offset": offset})
+            rows = _rows(request(QUERY, {'first': size, 'offset': offset}).get('project_matches'))
         except Exception:
-            counts["requests"] += 1
-            if size <= 5:
+            if size <= 1:
                 raise
-            size = max(5, size // 2)  # HERO rejected the page size; retry this offset smaller
+            size = max(1, size // 2)
             continue
-        counts["requests"] += 1
-        data = data.get("data", data) if isinstance(data, dict) else {}
-        rows = (data or {}).get("project_matches") or []
+        if not rows:
+            counts['complete'] = True
+            return counts
+        pending, seen = {}, {}
         for row in rows:
-            project = projects.get(str(row.get("id")))
-            entries = row.get("histories") or []
-            if len(entries) >= ENTRIES_PER_PROJECT:
-                frappe.log_error(title="HERO project logbook truncated",
-                                 message=f"HERO project {row.get('id')} has at least {ENTRIES_PER_PROJECT} logbook entries.")
-            for entry in entries:
-                key = str(entry.get("id"))
-                if key in known:
-                    counts["known"] += 1
-                elif not project:
-                    counts["without_project"] += 1
-                else:
-                    add_entry(project, entry, user_emails or {}, source_instance)
-                    known.add(key)
-                    counts["added"] += 1
+            identity = str(row['id'])
+            if identity in seen_projects:
+                raise ValueError('HERO project pagination repeated an identity.')
+            seen_projects.add(identity)
+            counts['projects'] += 1
+            seen[identity] = set()
+            length = consume(row, seen[identity])
+            if length and identity in projects:
+                pending[identity] = length
+        for _ in range(max_history_pages):
+            if not pending:
+                break
+            document, variables = _tail_query(pending)
+            data = request(document, variables)
+            next_pending = {}
+            for index, (identity, cursor) in enumerate(pending.items()):
+                tail = _rows(data.get(f'p{index}'))
+                if len(tail) != 1 or str(tail[0]['id']) != identity:
+                    raise ValueError('HERO history pagination lost its parent Project.')
+                length = consume(tail[0], seen[identity])
+                if length:
+                    next_pending[identity] = cursor + length
+            pending = next_pending
+        if pending:
+            raise ValueError('HERO history page bound reached; logbook import is incomplete.')
         frappe.db.commit()
-        if len(rows) < size:
-            break
-        offset += size
-    return counts
+        if progress:
+            progress(dict(counts))
+        offset += len(rows)
+    raise ValueError('HERO project page bound reached; logbook import is incomplete.')
 
 
 def add_entry(project: str, entry: dict, user_emails: dict[int, str], source_instance: str) -> str:
@@ -77,21 +168,68 @@ def add_entry(project: str, entry: dict, user_emails: dict[int, str], source_ins
     title = (entry.get("custom_title") or "").strip()
     text = sanitize_html(entry.get("custom_text") or "").strip()
     author = (entry.get("author_name") or "").strip() or user_emails.get(entry.get("user_id")) or ""
-    heading = " · ".join(filter(None, ("HERO Logbuch", title, author)))
+    heading = " · ".join(filter(None, ("Logbuch", title, author)))
     content = f"<b>{frappe.utils.escape_html(heading)}</b>" + (f"<br>{text}" if text else "")
-    comment = frappe.get_doc({"doctype": "Comment", "comment_type": "Info", "reference_doctype": "Project",
-                              "reference_name": project, "content": content})
+    restricted = bool((entry.get('role_visibility') or '').strip())
+    comment = frappe.get_doc({"doctype": "Comment", "comment_type": "Info",
+                              "reference_doctype": None if restricted else "Project",
+                              "reference_name": None if restricted else project, "content": content,
+                              "subject": title, "comment_by": author[:140] or None,
+                              "comment_email": user_emails.get(entry.get('user_id')),
+                              "custom_hero_project": project, "custom_hero_logbook_context": _context(entry)})
     comment.flags.ignore_permissions = True
     comment.insert(ignore_permissions=True)
     created = _local(entry.get("created"))
     if created:
         frappe.db.set_value("Comment", comment.name, {"creation": created, "modified": created}, update_modified=False)
-    frappe.get_doc({"doctype": "HERO Integration Link", "source_system": "HERO", "source_type": SOURCE_TYPE,
+    link = frappe.get_doc({"doctype": "HERO Integration Link", "source_system": "HERO", "source_type": SOURCE_TYPE,
                     "source_id": str(entry["id"]), "source_instance": source_instance, "sync_status": "Synchronized",
                     "target_doctype": "Comment", "target_name": comment.name, "mapping_version": "project-logbook-v1",
-                    "source_payload_hash": _digest(entry), "target_payload_hash": _digest({"content": content}),
+                    "source_payload_hash": _digest(entry), "target_payload_hash": _digest({"content": comment.content}),
                     "last_synced_on": frappe.utils.now_datetime()}).insert(ignore_permissions=True)
+    if restricted:
+        frappe.db.set_value('Comment', comment.name, {'reference_doctype':'HERO Integration Link',
+            'reference_name':link.name}, update_modified=False)
     return comment.name
+
+
+def _context(entry):
+    """Preserve source-only scalars and relations without duplicating native fields."""
+    return json.dumps({key: entry[key] for key in CONTEXT_FIELDS if key in entry}, sort_keys=True, ensure_ascii=False)
+
+
+def enrich_entry(project, entry, user_emails, source_instance):
+    """Fill new native metadata, retaining historical content, authors and timestamps.
+
+    HERO role codes are not ERPNext roles. Restricted entries stay accessible to
+    System Managers via their Integration Link, outside the Project timeline.
+    Once restricted, an entry is never automatically made public by a later read.
+    """
+    rows = frappe.db.sql("""SELECT l.name AS link_name, c.name, c.subject, c.comment_by,
+        c.reference_doctype, c.reference_name, c.custom_hero_project, c.custom_hero_logbook_context
+        FROM `tabHERO Integration Link` l JOIN `tabComment` c ON l.target_doctype='Comment' AND c.name=l.target_name
+        WHERE l.source_system='HERO' AND l.source_type='project_history'
+          AND IFNULL(NULLIF(l.source_instance, ''), 'default')=%s AND l.source_id=%s""",
+        (source_instance, str(entry['id'])), as_dict=True)
+    if len(rows) != 1:
+        raise ValueError('Logbook metadata requires one proven Comment binding.')
+    row = rows[0]
+    values = {}
+    if not row.subject and entry.get('custom_title'):
+        values['subject'] = entry['custom_title'].strip()
+    if not row.comment_by:
+        author = (entry.get('author_name') or '').strip() or user_emails.get(entry.get('user_id')) or ''
+        if author:
+            values['comment_by'] = author[:140]
+    if not row.custom_hero_project:
+        values['custom_hero_project'] = project
+    context = _context(entry)
+    if row.custom_hero_logbook_context != context:
+        values['custom_hero_logbook_context'] = context
+    if (entry.get('role_visibility') or '').strip() and row.reference_doctype == 'Project':
+        values.update(reference_doctype='HERO Integration Link', reference_name=row.link_name)
+    if values:
+        frappe.db.set_value('Comment', row.name, values, update_modified=False)
 
 
 def _digest(value) -> str:

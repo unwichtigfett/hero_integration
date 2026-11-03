@@ -4,6 +4,7 @@ from __future__ import annotations
 import frappe
 
 from hero_integration.services.service_schema import ITEM_FIELDS as SERVICE_ITEM_FIELDS
+from hero_integration.services.employee_mapping import OBSERVATIONS
 
 
 ERPNext_VERSION_CONSTRAINT = ">=16.0.0-dev,<17.0.0"
@@ -11,6 +12,12 @@ ERPNext_VERSION_CONSTRAINT = ">=16.0.0-dev,<17.0.0"
 DISPLAY_PROPERTIES = frozenset({"label"})
 
 HERO_CUSTOM_FIELDS = {
+    "Comment": [
+        {"fieldname":"custom_hero_project", "label":"Source Project", "fieldtype":"Link", "options":"Project",
+         "read_only":1, "no_copy":1, "hidden":1},
+        {"fieldname":"custom_hero_logbook_context", "label":"Source Context", "fieldtype":"Code", "options":"JSON",
+         "read_only":1, "no_copy":1, "hidden":1},
+    ],
     # The HERO person behind an ERPNext user: projects, assignments and tasks link it by these IDs.
     "User": [
         {
@@ -161,12 +168,31 @@ _REQUIRED_ERPNext_DOCTYPES = (
 )
 
 
+for _doctype, _fields in OBSERVATIONS.items():
+    HERO_CUSTOM_FIELDS.setdefault(_doctype, []).extend(
+        {"fieldname": field, "label": label, "fieldtype": "Data", "read_only": 1, "no_copy": 1}
+        for field, label in _fields
+    )
+
+
+def ensure_employee_optional_fields() -> None:
+    """Represent the owner's optional birth date/gender policy in metadata."""
+    from frappe.custom.doctype.property_setter.property_setter import make_property_setter
+
+    if not frappe.db.exists("DocType", "Employee"):
+        return
+    for field in ("gender", "date_of_birth"):
+        if frappe.get_meta("Employee").get_field(field).reqd:
+            make_property_setter("Employee", field, "reqd", 0, "Check", validate_fields_for_doctype=False)
+
+
 def before_install() -> None:
     _require_erpnext_schema()
 
 
 def after_install() -> None:
     ensure_hero_source_fields()
+    ensure_employee_optional_fields()
     from hero_integration.app_setup import apply_form_layout, ensure_app_records
 
     ensure_app_records()
@@ -182,6 +208,7 @@ def after_install() -> None:
 
 def after_migrate() -> None:
     ensure_hero_source_fields()
+    ensure_employee_optional_fields()
     from hero_integration.app_setup import ensure_app_records
 
     ensure_app_records()
