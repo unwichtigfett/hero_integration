@@ -74,6 +74,8 @@ class TestCodexReview(unittest.TestCase):
         self.assertEqual(self.main(codex), 0)
         command = codex.calls[0]["command"]
         self.assertEqual(command[command.index("--sandbox") + 1], "read-only")
+        self.assertEqual(command[command.index("--model") + 1], "gpt-6.1-sol")
+        self.assertEqual(command[command.index("--config") + 1], 'model_reasoning_effort="high"')
         self.assertIn("--ephemeral", command)
         worktree = Path(command[command.index("--cd") + 1])
         self.assertNotEqual(worktree, self.repo)
@@ -87,6 +89,8 @@ class TestCodexReview(unittest.TestCase):
         self.assertEqual(self.main(codex), 0)
         self.assertEqual(self.main(codex), 0)
         self.assertEqual(len(codex.calls), 1)  # second run reuses the stored report
+        self.assertEqual(self.main(codex, "--effort", "xhigh"), 0)
+        self.assertEqual(len(codex.calls), 2)  # another effort is a new review
         strict = _Codex({"summary": "s", "findings": [finding("P2")]})
         self.assertEqual(self.main(strict, "--block", "P2", "--force"), 1)
         self.assertEqual(self.main(_Codex({"summary": "s", "findings": [finding("P1")]}), "--block", "none", "--force"), 0)
