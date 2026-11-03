@@ -73,3 +73,46 @@ restricted Woodpecker SSH secret. The step waits up to two minutes for GitHub
 branches do not match, it fails safely; the twice-daily VPS check remains a
 fallback. The updater creates a backup and runs its own checks and migration.
 This step depends on the successful isolated install test; a failed release test gate prevents the update.
+
+## Release chain: hero_int_dev → hero_int_1.0
+
+A push to Forgejo `hero_int_dev` runs these Woodpecker steps in order. Each
+step starts only when the previous one succeeded:
+
+1. `wait-github` waits up to 50 minutes for the GitHub Actions checks
+   `package` and `install-test` of the same commit (`ci/wait-github-checks.sh`).
+   A failed or missing check stops the chain.
+2. `install-test` runs the bench install test.
+3. `update-test-site` updates the test site.
+4. `promote` (`ci/promote-release.sh`) releases the tested commit:
+   - it adds a release commit `Release <version> [skip ci]` on top of it that
+     changes only the version in `hero_integration/__init__.py` and
+     `pyproject.toml` (next patch version; a version raised by hand on
+     `hero_int_dev` is released as it is, without an extra commit);
+   - it tags `v<version>`;
+   - it fast-forwards `hero_int_dev` and `hero_int_1.0` on Forgejo and GitHub
+     to the release commit, both branches and the tag in one atomic push per
+     remote, never forced.
+
+If any step fails, `hero_int_1.0` keeps its state. If `hero_int_dev` moved on
+in the meantime, the older pipeline promotes nothing; the newer commit's
+pipeline does. An interrupted promotion is completed by re-running the
+pipeline; it reuses the release commit and tag already pushed to one remote.
+`[skip ci]` keeps the promotion push from starting GitHub Actions or
+Woodpecker again.
+
+Because of the release commit, local clones must fetch `hero_int_dev` before
+the next commit.
+
+Required Woodpecker secrets (repository settings, push events only):
+
+| Secret | Content |
+|---|---|
+| `forgejo_release_token` | Forgejo access token of `unwichtigfett` with repository write access |
+| `github_release_token` | GitHub fine-grained token for `unwichtigfett/hero_integration`, permission *Contents: Read and write* |
+
+The pipeline timeout of the Woodpecker repository must cover the GitHub wait
+plus the install test (at least 120 minutes). If branch protection on
+`hero_int_1.0` requires status checks, the token owner must be allowed to
+bypass it, because the release commit itself is not built again.
+
