@@ -681,9 +681,9 @@ def sync_page_conflict_report(name: str, kind: str = "link") -> dict[str, object
     frappe.only_for("System Manager")
     from hero_integration.services.conflict_report import record_report, report
 
-    if kind == "record":
-        return record_report(name)
     try:
+        if kind == "record":
+            return record_report(name, _configured_source_instance())
         return report(name, _configured_source_instance())
     except (frappe.PermissionError, frappe.ValidationError) as error:
         frappe.throw(frappe._(str(error)))
