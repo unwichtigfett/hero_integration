@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import os
+import json
+import sys
+import xml.etree.ElementTree as ET
 from pathlib import Path
 import subprocess
 import tempfile
@@ -11,21 +14,44 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class TestReleaseCiGate(unittest.TestCase):
-    def run_gate(self, *, offline_status=0, site_status=0, offline_count=2, site_count=2):
-        source = (ROOT / 'ci/github-install-test.sh').read_text()
-        function = source.split('# BEGIN HERO TEST GATES\n', 1)[1].split('# END HERO TEST GATES', 1)[0]
+    def run_gate(self, *, offline_status=0, site_status=0, offline_count=2, site_count=2,
+                 offline_outcome=None, site_outcome=None, stale_site=False):
+        function = (ROOT / 'ci/test-gates.sh').read_text()
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            (root / 'apps/hero_integration').mkdir(parents=True)
+            app = root / 'apps/hero_integration'
+            (app / 'ci').mkdir(parents=True)
+            (app / 'ci/check-test-report.py').write_text((ROOT / 'ci/check-test-report.py').read_text())
+            manifest = {phase: {'critical': [f'synthetic.{phase}.test_0']} for phase in ('offline', 'site')}
+            (app / 'ci/required-tests.json').write_text(json.dumps(manifest))
+            for phase, count, outcome in [('offline', offline_count, offline_outcome), ('site', site_count, site_outcome)]:
+                suite = ET.Element('testsuite')
+                for i in range(count):
+                    case = ET.SubElement(suite, 'testcase', classname=f'synthetic.{phase}', name=f'test_{i}')
+                    if i == 0 and outcome:
+                        ET.SubElement(case, outcome)
+                (root / f'{phase}-fixture.xml').write_bytes(ET.tostring(suite))
+            if stale_site:
+                (root / 'site.xml').write_text('<testsuite/>')
             (root / 'env/bin').mkdir(parents=True)
             python = root / 'env/bin/python'
-            python.write_text('#!/bin/bash\nprintf "Ran %s tests in 0s\\n" "$OFFLINE_COUNT"\nexit "$OFFLINE_STATUS"\n')
+            python.write_text('''#!/bin/bash
+if [[ "$1" == ci/run-offline-tests.py ]]; then
+  cp "$HERO_TEST_LOG_DIR/offline-fixture.xml" "$3"
+  printf "Ran %s tests in 0s\\n" "$OFFLINE_COUNT"
+  exit "$OFFLINE_STATUS"
+fi
+exec "$REAL_PYTHON" "$@"
+''')
             python.chmod(0o700)
             script = function + '''
+git() { printf 'synthetic-commit\\n'; }
 bench() {
   printf '%s\\n' "$*" >> "$TRACE"
+  printf '%s %s %s\\n' "$HERO_RUN_RESERVATION_TEST_SITE" "$HERO_WRITEBACK_SOURCE_TEST_SITE" "$HERO_CHECKPOINT_TEST_SITE" >> "$TRACE"
   printf 'SYNTHETIC_SITE_DIAGNOSTIC\\n'
   for (( i=0; i<SITE_COUNT; i++ )); do printf ' ✔ synthetic_test\\n'; done
+  if [[ "$STALE_SITE" != 1 ]]; then cp "$HERO_TEST_LOG_DIR/site-fixture.xml" "${@: -1}"; fi
   return "$SITE_STATUS"
 }
 run_hero_test_gates
@@ -33,7 +59,8 @@ printf 'GATE_PASSED\\n'
 '''
             env = dict(os.environ, MIN_TESTS='1', HERO_TEST_LOG_DIR=tmp,
                        OFFLINE_STATUS=str(offline_status), SITE_STATUS=str(site_status),
-                       OFFLINE_COUNT=str(offline_count), SITE_COUNT=str(site_count), TRACE=str(root / 'trace'))
+                       OFFLINE_COUNT=str(offline_count), SITE_COUNT=str(site_count), TRACE=str(root / 'trace'),
+                       REAL_PYTHON=sys.executable, STALE_SITE=str(int(stale_site)), SITE='hero-ci.localhost')
             result = subprocess.run(['bash', '-euo', 'pipefail', '-c', script], cwd=root, env=env,
                                     text=True, capture_output=True)
             trace = (root / 'trace').read_text() if (root / 'trace').exists() else ''
@@ -71,11 +98,41 @@ printf 'GATE_PASSED\\n'
         self.assertIn('GATE_PASSED', result.stdout)
         self.assertIn('--site hero-ci.localhost run-tests --app hero_integration', trace)
 
+    def test_required_skip_is_a_failure_despite_enough_other_successes(self):
+        for changes in ({'offline_outcome': 'skipped'}, {'site_outcome': 'skipped'}):
+            with self.subTest(changes=changes):
+                result, _ = self.run_gate(**changes)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('is skipped', result.stderr)
+                self.assertNotIn('GATE_PASSED', result.stdout)
+
+    def test_xml_failure_cannot_pass_even_when_process_exit_is_zero(self):
+        result, _ = self.run_gate(site_outcome='failure')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn('GATE_PASSED', result.stdout)
+
+    def test_stale_site_report_cannot_mask_missing_output(self):
+        result, _ = self.run_gate(stale_site=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('missing site report', result.stderr)
+
+    def test_database_regressions_are_enabled_for_the_exact_disposable_site(self):
+        result, trace = self.run_gate()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('hero-ci.localhost hero-ci.localhost hero-ci.localhost', trace)
+
+    def test_both_providers_use_the_shared_gate(self):
+        for path in ('ci/github-install-test.sh', 'ci/bench-install-test.sh'):
+            source = (ROOT / path).read_text()
+            self.assertIn('/ci/test-gates.sh"', source)
+            self.assertIn('run_hero_test_gates', source)
+            self.assertNotIn('TEST_FAILED', source)
+
     def test_manual_no_hero_selection_cannot_pass_a_maintained_branch_gate(self):
         source = (ROOT / 'ci/github-install-test.sh').read_text().split('cd /tmp', 1)[0]
         for branch in ('hero_int_dev', 'hero_int_1.0', 'diagnostic-feature'):
             with self.subTest(branch=branch):
-                env = dict(os.environ, GITHUB_WORKSPACE='/synthetic', DB_ROOT_PASSWORD='synthetic',
+                env = dict(os.environ, GITHUB_WORKSPACE=str(ROOT), DB_ROOT_PASSWORD='synthetic',
                            INSTALL_APPS='none', GITHUB_REF_NAME=branch, GITHUB_BASE_REF='')
                 result = subprocess.run(['bash', '-c', source], env=env, text=True, capture_output=True)
                 self.assertEqual(result.returncode, 0 if branch == 'diagnostic-feature' else 2)

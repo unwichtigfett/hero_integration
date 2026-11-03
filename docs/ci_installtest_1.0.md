@@ -37,8 +37,42 @@ volume mounts for repositories marked as *trusted*. The workflow supplies each
 file only when it is present and nonempty. If either is absent, the configuration
 import is skipped. A directly configured path that is missing still fails.
 
-The test also fails when fewer than `MIN_TESTS` (default 1000) offline or site tests
-run. A crash during test discovery therefore never counts as a pass.
+Both providers source `ci/test-gates.sh`. The gate preserves each test process's
+exit code and validates its JUnit report with `ci/check-test-report.py`. It fails
+on any reported error/failure, missing or malformed reports, fewer than `MIN_TESTS` (default 1000) **successful** tests, or a missing,
+skipped or failed required regression. Skips do not count toward the minimum.
+Console checkmarks and aggregate counts alone cannot pass the gate. Rediscovered
+identities count only once and retain their worst result; a repeated success
+cannot hide a failure or skip.
+
+`ci/required-tests.json` names the exact existing regression methods for N-01
+through N-06 (source isolation, file rollback/commit failure, price dimensions,
+Customer lifecycle, optional related identities and late file attachment), plus
+the verified writeback and binding-resume contracts. Renaming or deleting one
+requires an explicit manifest update with equivalent behavioral coverage.
+The manifest selects evidence; it does not introduce duplicate copies of tests.
+
+The site suite explicitly opts in to the disposable site's source-snapshot,
+site-reservation and checkpoint tests. These are real MariaDB checks, including
+concurrent connections, rather than mocks of transaction visibility. Their nine
+named tests must pass; the remaining site suite still runs in full. The offline
+suite reserves integration classes for the site runner.
+
+All skipped tests are listed by identity. Other opt-in tests requiring dedicated
+socket databases, a separately distributed framework patch or a saved reference
+schema are **not** implicitly enabled. A green gate does not claim those were
+executed. Add new mandatory contracts and their isolated prerequisites together.
+
+Full logs and `offline.xml`/`site.xml` are written to `HERO_TEST_LOG_DIR` (default
+`$WORKDIR/results` on Woodpecker, `.ci-results/` in the GitHub checkout); both
+success and failure logs are printed in CI. Woodpecker's report directory is
+owned by the bench user even when the source checkout is read-only or owned by root.
+Each invocation removes only its two previous XML files before starting, so an
+interrupted run cannot reuse stale evidence. GitHub retains this directory as
+an artifact for 14 days, including on failed runs. Woodpecker prints the full
+logs and per-contract results; its container-local files are ephemeral unless
+the operator supplies a dedicated persistent results directory. No report path
+is mounted to the running test site or production.
 
 ## GitHub Actions
 
@@ -46,8 +80,8 @@ Pushes and pull requests targeting `hero_int_dev` or `hero_int_1.0` run package 
 GitHub-hosted runner. It uses fresh MariaDB and Redis services, not the VPS test
 site or production secrets. The push test installs ERPNext, Telephony, Helpdesk
 and HERO, builds HERO assets, and runs both the offline suite and the complete
-HERO Frappe-site test suite. Both must exit successfully and discover at least
-`MIN_TESTS` tests (default 1000). Minimal selections without HERO remain available
+HERO Frappe-site test suite. Both must exit successfully, pass the shared JUnit regression gate and execute
+at least `MIN_TESTS` successful tests (default 1000). Minimal selections without HERO remain available
 through manual dispatch on other branches; maintained branches reject them so
 a required install-test check cannot pass without exercising HERO.
 

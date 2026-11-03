@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 import unittest
+import argparse
 
 from frappe.tests import IntegrationTestCase
 
@@ -33,6 +34,15 @@ for test in individual_tests(discovered):
     else:
         offline.addTest(test)
 
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--junit-xml-output")
+args = parser.parse_args()
 print(f"Site-dependent tests reserved for the full site suite: {site_only}", flush=True)
-result = unittest.TextTestRunner(verbosity=1).run(offline)
+if args.junit_xml_output:
+    import xmlrunner
+
+    with open(args.junit_xml_output, "wb") as output:
+        result = xmlrunner.XMLTestRunner(output=output, verbosity=1).run(offline)
+else:
+    result = unittest.TextTestRunner(verbosity=1).run(offline)
 sys.exit(0 if result.wasSuccessful() else 1)
