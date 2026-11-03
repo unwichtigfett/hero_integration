@@ -141,5 +141,37 @@ class TestPeopleAndSourceFields(unittest.TestCase):
         record = {"author_user_id": 7, "title": "x"}
         local = lambda value: None
         self.assertNotIn(life.AUTHOR, life.source_values(record, local, {7: "a@b.c"}, date(2026, 1, 1)))
-        values = life.source_values(record, local, {7: " A@B.c"}, date(2026, 1, 1), user_for=lambda e: e.upper())
-        self.assertEqual(values[life.AUTHOR], "A@B.C")
+        values = life.source_values(record, local, {7: " A@B.c"}, date(2026, 1, 1),
+                                    user_for=lambda uid, email: f"{uid}:{email}")
+        self.assertEqual(values[life.AUTHOR], "7:a@b.c")
+
+
+class TestPeopleById(unittest.TestCase):
+    def test_project_v5_reads_people_by_id(self):
+        from hero_integration.sources.hero import project_query
+        query = project_query("v5")
+        self.assertIn("name partner_source partner_id", query)
+        self.assertIn("project_match_assignments { user_id }", query)
+        self.assertNotIn("email", query)
+
+    def test_responsible_binds_only_by_partner_id_to_a_user_link(self):
+        class Field:
+            fieldtype, options, read_only = "Link", "User", 1
+
+        class Metadata:
+            def field(self, doctype, fieldname):
+                return Field()
+
+        ok = MappingSpec("HeroProjectMatches", "partner_id", "Project", "custom_hero_project_manager", "int|null",
+                         "Field", "User By Partner ID")
+        direct_mapping._validate_custom_field(ok, Metadata())
+        wrong = MappingSpec("HeroProjectMatches", "partner_id", "Project", "custom_hero_project_manager", "int|null",
+                            "Field", "User By Email")
+        with self.assertRaises(direct_mapping.DirectMappingError):
+            direct_mapping._validate_custom_field(wrong, Metadata())
+
+    def test_assignees_prefer_the_hero_user_id(self):
+        from hero_integration.integrations.project_assignments import assignees
+        self.assertEqual(assignees({"project_match_assignments": [{"user_id": 5}, {"user_id": 5},
+                                                                  {"user": {"email": "A@b.de"}}]}),
+                         [("email", "a@b.de"), ("id", 5)])

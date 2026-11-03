@@ -18,3 +18,4 @@ hero_integration.patches.v0_3.plain_field_labels
 hero_integration.patches.v0_3.native_field_moves
 hero_integration.patches.v0_3.people_and_source_fields
 hero_integration.patches.v0_3.hero_people_users
+hero_integration.patches.v0_3.hero_partner_ids

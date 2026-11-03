@@ -90,6 +90,14 @@ PROJECT_QUERY_V4 = PROJECT_QUERY_V3.replace(
 )
 PROJECT_SELECTED_PATHS_V4 = (*PROJECT_SELECTED_PATHS_V3, "name", "partner_source", "partner.email",
                              "project_match_assignments")
+PROJECT_CONTRACT_V5 = "v5"
+# V5 identifies people by HERO id instead of e-mail: partner_id and the assignees' user_id.
+PROJECT_QUERY_V5 = PROJECT_QUERY_V3.replace(
+    "    volume\n",
+    "    volume\n    name partner_source partner_id\n    project_match_assignments { user_id }\n",
+)
+PROJECT_SELECTED_PATHS_V5 = (*PROJECT_SELECTED_PATHS_V3, "name", "partner_source", "partner_id",
+                             "project_match_assignments")
 
 
 def project_query(contract_version: str) -> str:
@@ -103,6 +111,8 @@ def project_query(contract_version: str) -> str:
         return PROJECT_QUERY_V3
     if contract_version == PROJECT_CONTRACT_V4:
         return PROJECT_QUERY_V4
+    if contract_version == PROJECT_CONTRACT_V5:
+        return PROJECT_QUERY_V5
     raise ValueError("Unsupported Project read-contract version.")
 
 

@@ -1,6 +1,7 @@
 """HERO project assignees ("Bearbeiter") as native ERPNext assignments (ToDo) on the Project.
 
-Users are matched by e-mail; an unknown e-mail is skipped. Only assignments this
+Users are matched by the HERO user ID stored on the ERPNext user (people sync);
+records of the older e-mail contract are matched by e-mail. Unknown people are skipped. Only assignments this
 import created (marked in their description) are closed when HERO removes the
 assignee; assignments made in ERPNext stay untouched. No e-mail is sent.
 """
@@ -9,30 +10,41 @@ from __future__ import annotations
 MARKER = "Bearbeiter (Quelle)"
 
 
-def assignee_emails(record: dict) -> set[str] | None:
-    """The assigned users' e-mails, or None when the record did not include assignments."""
+def assignees(record: dict) -> list[tuple[str, object]] | None:
+    """("id", HERO user id) or ("email", e-mail) per assigned user; None when the record has no assignments."""
     if "project_match_assignments" not in record:
         return None
-    emails = set()
+    result = []
     for row in record.get("project_match_assignments") or []:
-        user = row.get("user") if isinstance(row, dict) else None
-        email = user.get("email") if isinstance(user, dict) else None
+        if not isinstance(row, dict):
+            continue
+        if type(row.get("user_id")) is int and row["user_id"] > 0:
+            result.append(("id", row["user_id"]))
+            continue
+        user = row.get("user") if isinstance(row.get("user"), dict) else {}
+        email = user.get("email")
         if isinstance(email, str) and "@" in email:
-            emails.add(email.strip().lower())
-    return emails
+            result.append(("email", email.strip().lower()))
+    return sorted(set(result), key=str)
+
+
+def assignee_emails(record: dict) -> set[str] | None:
+    found = assignees(record)
+    return None if found is None else {value for kind, value in found if kind == "email"}
 
 
 def sync(project: str, record: dict, frappe_api=None) -> dict:
     """Open one ToDo per matched HERO assignee; close the import's ToDos of removed assignees."""
-    emails = assignee_emails(record)
-    if emails is None:
+    found = assignees(record)
+    if found is None:
         return {"added": 0, "closed": 0, "unmatched": 0}
     if frappe_api is None:
         import frappe as frappe_api
+    from hero_integration.integrations.hero_people import user_by_hero_user
     from hero_integration.services.task_lifecycle import _user_for
     from hero_integration.services.task_assignment_state import managed_assignment
 
-    users = {email: _user_for(email, frappe_api) for email in sorted(emails)}
+    users = {key: (user_by_hero_user(key[1]) if key[0] == "id" else _user_for(key[1], frappe_api)) for key in found}
     wanted = {user for user in users.values() if user}
     title = frappe_api.db.get_value("Project", project, "project_name") or project
     open_todos = frappe_api.get_all("ToDo", filters={"reference_type": "Project", "reference_name": project,

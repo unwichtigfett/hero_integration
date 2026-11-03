@@ -262,7 +262,7 @@ class TestMappingExchange(unittest.TestCase):
         # Customer V5 source and Project V4 name/source/partner are later contract bindings too.
         native_relation_paths = {"HeroCustomers": {"address.country.code", "address.line_2", "company_legal_form", "title",
                                                    "source"},
-                                 "HeroProjectMatches": {"volume", "name", "partner_source", "partner.email"}}
+                                 "HeroProjectMatches": {"volume", "name", "partner_source", "partner.email", "partner_id"}}
         legacy = {operation: set(contract['paths']) for operation, contract in SOURCE_CONTRACTS.items() if operation not in CONTRACTS}
         legacy['HeroProjectMatches'] -= set(STATUS_PATHS)
         for operation, excluded in native_relation_paths.items():

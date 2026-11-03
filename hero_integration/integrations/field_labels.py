@@ -66,6 +66,8 @@ LABELS = {
     ("Project", "custom_hero_project_manager"): "Project Responsible",
     ("Task", "custom_hero_assignee"): "Responsible",
     ("Item", "custom_hero_manufacturer_nr"): "Manufacturer Part No",
+    ("User", "custom_hero_partner_id"): "Partner ID",
+    ("User", "custom_hero_user_id"): "Source User ID",
     ("Item", "custom_hero_category"): "Category",
     ("Item", "custom_hero_supplier_id"): "Supplier Part No",
 }

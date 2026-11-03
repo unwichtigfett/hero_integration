@@ -1410,7 +1410,11 @@ def _task_lifecycle_source(record) -> dict:
     wants_assignee = 'target_user_id' in record and _task_has_assignee_field()
     wants_author = 'author_user_id' in record and _task_has_field(task_lifecycle.AUTHOR)
     emails = _task_user_emails() if wants_assignee or wants_author else None
-    user_for = (lambda email: task_lifecycle._user_for(email, frappe)) if wants_author and emails is not None else None
+    def user_for(hero_user_id, email):
+        # The HERO user ID stored by the people sync identifies the person; the e-mail is the fallback.
+        from hero_integration.integrations.hero_people import user_by_hero_user
+        return user_by_hero_user(hero_user_id) or (task_lifecycle._user_for(email, frappe) if email else None)
+    user_for = user_for if wants_author and emails is not None else None
     values = task_lifecycle.source_values(record, _external_task_deadline, emails or {}, today, user_for=user_for)
     if emails is None or not wants_assignee:
         values.pop(task_lifecycle.ASSIGNEE, None)
