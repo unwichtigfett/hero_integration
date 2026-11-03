@@ -2877,3 +2877,14 @@ The record has no open conflict.,Der Datensatz hat keinen offenen Konflikt.
 "The rules of the run that processed this record can no longer be reconstructed.","Die Regeln des Laufs, der diesen Datensatz verarbeitet hat, lassen sich nicht mehr rekonstruieren."
 Not started,Noch nicht gestartet
 Run,Lauf
+Built-in,Standard (eingebaut)
+Built-in mapping: used until an own mapping for this operation is activated. Create one from a saved read query (API & Schema) with target operation {0}.,"Eingebautes Mapping: gilt, bis für diese Operation ein eigenes Mapping aktiviert ist. Lege es aus einer gespeicherten Lese-Abfrage (API & Schema) mit der Zieloperation {0} an."
+"Products, Documents and Pictures are mapped only through a versioned Query adapter.","Artikel, Dokumente und Bilder werden nur über einen versionierten Query-Adapter gemappt."
+"Products, Documents and Pictures require a versioned Query adapter.","Artikel, Dokumente und Bilder benötigen einen versionierten Query-Adapter."
+Each price list may be fed by one rule only.,Jede Preisliste darf nur von einer Regel befüllt werden.
+An Item Price rule must name its price list (Standard Buying or Standard Selling).,Eine Artikelpreis-Regel muss ihre Preisliste nennen (Standard Buying oder Standard Selling).
+Only Item Price rules name a relation.,Nur Artikelpreis-Regeln nennen eine Beziehung.
+Coded HERO resolvers take no transform options.,Fest eingebaute HERO-Umwandlungen haben keine Optionen.
+HeroProducts,HeroProducts
+HeroDocuments,HeroDocuments
+HeroPictures,HeroPictures

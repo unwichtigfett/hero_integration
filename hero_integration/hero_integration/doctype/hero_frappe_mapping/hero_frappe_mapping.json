@@ -1,7 +1,7 @@
 {
  "doctype": "DocType", "name": "HERO Frappe Mapping", "module": "HERO Integration", "autoname": "format:HERO-MAP-{#####}", "track_changes": 1,
  "fields": [
-  {"fieldname":"operation","label":"HERO Operation","fieldtype":"Select","options":"HeroCustomers\nHeroProjectMatches\nHeroCalendarEvents\nHeroTasks","reqd":1,"in_list_view":1},
+  {"fieldname":"operation","label":"HERO Operation","fieldtype":"Select","options":"HeroCustomers\nHeroProjectMatches\nHeroCalendarEvents\nHeroTasks\nHeroProducts\nHeroDocuments\nHeroPictures","reqd":1,"in_list_view":1},
   {"fieldname":"definition_id","label":"Definition ID","fieldtype":"Data","reqd":1,"unique":1,"read_only":1,"in_list_view":1},
   {"fieldname":"portable_definition_id","label":"Portable Definition ID","fieldtype":"Data","unique":1,"read_only":1},
   {"fieldname":"portable_lineage_json","label":"Portable Rule Lineage","fieldtype":"Code","options":"JSON","read_only":1,"hidden":1},
@@ -17,5 +17,5 @@
   {"fieldname":"schema_fingerprint","label":"Schema Fingerprint","fieldtype":"Data","reqd":1,"read_only":1}, {"fieldname":"mapping_revision","label":"Mapping Revision","fieldtype":"Int","default":"1","read_only":1},
   {"fieldname":"status","label":"Status","fieldtype":"Select","options":"Draft\nActive\nDisabled\nRejected","default":"Draft","reqd":1,"in_list_view":1},
   {"fieldname":"validation_summary","label":"Validation Summary","fieldtype":"Small Text","read_only":1}
- ], "permissions":[{"role":"System Manager","read":1,"write":1,"create":1,"delete":1}], "modified":"2026-10-19 00:00:00.000000"
+ ], "permissions":[{"role":"System Manager","read":1,"write":1,"create":1,"delete":1}], "modified":"2026-11-03 14:30:00.000000"
 }

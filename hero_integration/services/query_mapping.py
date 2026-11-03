@@ -9,14 +9,16 @@ import math
 import re
 from zoneinfo import ZoneInfo
 
+from hero_integration.services import direct_operations as direct
 from hero_integration.services.direct_mapping import MISSING, lookup, transformed_value
 
 ROOTS = {'HeroCustomers': ('contacts', 'Customer'), 'HeroProjectMatches': ('project_matches', 'Project'),
-         'HeroCalendarEvents': ('calendar_events', 'Event'), 'HeroTasks': ('tasks', 'Task')}
+         'HeroCalendarEvents': ('calendar_events', 'Event'), 'HeroTasks': ('tasks', 'Task'),
+         **{name: (item['root'], item['owner']) for name, item in direct.OPERATIONS.items()}}
 TRANSFORMS = {'Identity', 'Trim', 'Positive Int To Text', 'Nonempty String ID', 'Scalar Text',
               'JSON Value', 'Salutation Table', 'Customer Type From Company Name', 'HERO Customer Link',
               'Confirmed ERPNext Company', 'HERO Project Link', 'Native Adapter', 'Value Map', 'Link Map',
-              'Local Date', 'Local Datetime', 'Safe HTML', 'Table Rows', 'Number', 'Integer'}
+              'Local Date', 'Local Datetime', 'Safe HTML', 'Table Rows', 'Number', 'Integer'} | direct.TRANSFORMS
 FIELDS = {
     'Customer': {'customer_name', 'customer_type', 'first_name', 'last_name', 'email_id', 'mobile_no', 'salutation'},
     'Contact': {'first_name', 'last_name', 'email_id', 'mobile_no', 'salutation'},
@@ -25,6 +27,7 @@ FIELDS = {
     'Event': {'subject', 'description', 'location', 'starts_on', 'ends_on', 'all_day'},
     'Address': {'address_line1', 'address_line2', 'pincode', 'city', 'country', 'address_title', 'address_type'},
     'ToDo': {'allocated_to'}, 'Comment': {'content', 'creation'}, 'HERO Integration Link': {'source_id'},
+    **{doctype: set(fields) for doctype, fields in direct.FIELDS.items()},
 }
 PATH = re.compile(r'^[_A-Za-z][_0-9A-Za-z]*(?:\.[_A-Za-z][_0-9A-Za-z]*)*$')
 
@@ -125,69 +128,17 @@ def validate_v2_spec(spec, metadata, adapter_options=None):
         raise ValueError('Query target or transformation is unsupported.')
     if type(spec.priority) is not int or not 0 <= spec.priority <= 10:
         raise ValueError('Query rule priority must be an integer from 0 through 10.')
-    owner = ROOTS[spec.operation][1]
-    allowed = {owner, 'HERO Integration Link'}
-    if owner == 'Customer': allowed |= {'Address', 'Contact'}
-    if owner == 'Project': allowed |= {'Comment'}
-    if owner == 'Task': allowed |= {'ToDo'}
-    if spec.target_doctype not in allowed:
-        raise ValueError('Query rule crosses an unsupported native relationship.')
-    if (spec.target_field not in FIELDS[spec.target_doctype]
-            and (spec.target_doctype not in {owner} or not spec.target_field.startswith('custom_hero_'))):
-        raise ValueError('Query target is protected or outside the supported adapter fields.')
-    if spec.target_doctype == 'HERO Integration Link' and spec.purpose != 'Source Identity':
-        raise ValueError('Only identity may target the integration link.')
-    if spec.purpose == 'Source Identity' and (spec.target_doctype, spec.target_field) not in {
-            ('HERO Integration Link', 'source_id'), (owner, 'custom_hero_source_id')}:
-        raise ValueError('Source identity may only bind its technical identity field.')
-    record_name = {'Customer': 'customer_name', 'Project': 'project_name', 'Task': 'subject', 'Event': 'subject'}[owner]
-    if spec.purpose == 'Record Name' and (spec.target_doctype, spec.target_field) != (owner, record_name):
-        raise ValueError('Record Name must bind the native record title.')
-    if (owner == 'Project' and spec.target_field == 'project_name' and spec.purpose != 'Record Name'):
-        raise ValueError('Project title must retain its coded title builder.')
-    if spec.target_doctype == 'Event' and spec.target_field in {'starts_on', 'ends_on', 'all_day'} and spec.transformation != 'Native Adapter':
-        raise ValueError('Event time fields require the native timezone and recurrence adapter.')
-
-    if spec.target_doctype == 'Contact' and spec.purpose != 'Customer Primary Contact':
-        raise ValueError('Contact fields require the exclusive primary-contact adapter.')
-    if spec.target_doctype == 'Address' and (spec.relation != 'Customer Primary Address' or not spec.source_path.startswith('address.')):
-        raise ValueError('Address fields require the direct Customer.address primary relationship.')
-    if spec.target_doctype == 'Comment':
-        options = validate_query_adapter(adapter_options or {'version': 2})
-        collection = options.get('logbook')
-        if not collection or not spec.source_path.startswith(collection['path'] + '.'):
-            raise ValueError('Comment fields require the configured logbook collection.')
-        if spec.target_field == 'creation' and spec.transformation != 'Local Datetime':
-            raise ValueError('Logbook dates require an explicit timezone conversion.')
-    if spec.target_field == 'company' and (spec.purpose != 'Confirmed Company' or spec.transformation != 'Confirmed ERPNext Company'):
-        raise ValueError('Company requires the independently confirmed company resolver.')
-    if spec.purpose == 'Confirmed Company' and (spec.target_doctype, spec.target_field, spec.transformation) != ('Project', 'company', 'Confirmed ERPNext Company'):
-        raise ValueError('Confirmed Company must bind the native Project company through its confirmed resolver.')
-    if spec.purpose == 'Project Relation' and spec.transformation != 'HERO Project Link':
-        raise ValueError('Project Relation requires the native Project identity resolver.')
-    if spec.purpose == 'Customer Primary Contact' and (spec.target_doctype not in {'Customer', 'Contact'} or spec.target_field not in FIELDS['Contact']):
-        raise ValueError('Primary Contact purpose must bind a supported primary Contact field.')
-    if spec.transformation == 'HERO Customer Link' and (spec.target_doctype, spec.target_field) != ('Project', 'customer'):
-        raise ValueError('Customer identity resolution may only bind the Project customer.')
-    if spec.purpose == 'Customer Relation' and (spec.target_doctype, spec.target_field, spec.transformation) != ('Project', 'customer', 'HERO Customer Link'):
-        raise ValueError('Project customer requires the native Customer identity resolver.')
-    if spec.transformation == 'HERO Project Link' and not (
-            (spec.target_doctype, spec.target_field) == ('Task', 'project')
-            or (spec.target_doctype == 'Event' and spec.target_field.startswith('custom_hero_'))):
-        raise ValueError('Project identity resolution must bind an approved native Project link.')
-    if spec.transformation == 'Native Adapter' and spec.target_doctype != 'Event':
-        raise ValueError('Native Adapter is reserved for mapped Event value groups.')
-    if spec.transformation == 'Salutation Table' and (spec.target_doctype not in {'Customer', 'Contact'} or spec.target_field != 'salutation'):
-        raise ValueError('Salutation conversion requires a primary Contact salutation binding.')
-    if spec.transformation == 'Customer Type From Company Name' and (spec.target_doctype, spec.target_field) != ('Customer', 'customer_type'):
-        raise ValueError('Customer classification may only bind the native Customer type.')
-    if spec.target_doctype == 'ToDo' and spec.transformation not in {'Value Map', 'Link Map'}:
-        raise ValueError('Assignment requires an explicit source-user mapping.')
+    if spec.operation in direct.OPERATIONS:
+        direct.validate_spec(spec)
+    else:
+        _validate_native_spec(spec, adapter_options)
     if not isinstance(spec.source_type, str) or spec.source_type.split('|')[0] not in {'string', 'int', 'float', 'boolean', 'json'}:
         raise ValueError('Query source type is unsupported.')
     _validate_option_keys(spec, (adapter_options or {}).get('transform_options', {}).get(spec.definition_id, {}))
     if metadata is None:
         return
+    if (spec.target_doctype, spec.target_field) == ('HERO Integration Link', 'source_id'):
+        return  # the technical identity is written by the integration itself, never through a form
     metadata.ensure_write('Project' if spec.target_doctype == 'Comment' else spec.target_doctype)
     if (spec.target_doctype, spec.target_field) == ('Comment', 'creation'):
         _validate_output_compatibility(spec, (adapter_options or {}).get('transform_options', {}).get(spec.definition_id, {}), 'Datetime')
@@ -199,7 +150,10 @@ def validate_v2_spec(spec, metadata, adapter_options=None):
     if (field is None or getattr(field, 'is_virtual', False) or (getattr(field, 'fetch_from', None) and not contact_proxy)
             or getattr(field, 'hidden', False) or getattr(field, 'permlevel', 0)):
         raise ValueError('Mapped native field is absent or computed.')
-    if getattr(field, 'read_only', 0) and not spec.target_field.startswith('custom_hero_') and not contact_proxy and spec.target_doctype not in {'Customer', 'Comment'}:
+    if (getattr(field, 'read_only', 0) and not spec.target_field.startswith('custom_hero_') and not contact_proxy
+            and spec.target_doctype not in {'Customer', 'Comment'}
+            and spec.target_field not in direct.FIELDS.get(spec.target_doctype, ())):
+        # Explicitly listed direct-migration fields (e.g. File.file_name) are set by their importer.
         raise ValueError('Mapped native field is read-only.')
     if field.fieldtype == 'Text Editor' and spec.transformation not in {'Safe HTML', 'Native Adapter'}:
         raise ValueError('Rich text fields require the HTML safety adapter.')
@@ -207,6 +161,8 @@ def validate_v2_spec(spec, metadata, adapter_options=None):
         raise ValueError('Mapped native field type is unsupported.')
     opts = (adapter_options or {}).get('transform_options', {}).get(spec.definition_id, {})
     _validate_output_compatibility(spec, opts, field.fieldtype)
+    if spec.transformation in direct.TRANSFORMS:
+        return  # a coded HERO resolver writes exactly its registered field
     if spec.transformation in {'Local Date', 'Local Datetime'} and field.fieldtype != {'Local Date': 'Date', 'Local Datetime': 'Datetime'}[spec.transformation]:
         raise ValueError('Mapped date transformation differs from the native target type.')
     if spec.transformation == 'Link Map' and (field.fieldtype != 'Link' or getattr(field, 'options', '') != opts.get('link_doctype')):
@@ -245,12 +201,15 @@ def validate_plan(plan):
     identities = [d for d in plan.definitions if d.purpose == 'Source Identity']
     if len(identities) != 1:
         raise ValueError('Query adapter requires exactly one source identity.')
-    if identities[0].source_path != 'id':
+    if operation in direct.OPERATIONS:
+        direct.validate_plan(plan)
+    elif identities[0].source_path != 'id':
         raise ValueError('Native query identity must use the canonical source id.')
     if identities[0].transformation not in {'Positive Int To Text', 'Nonempty String ID'}:
         raise ValueError('Query source identity requires a lossless identity transformation.')
     contact_fields = FIELDS['Contact']
-    targets = [('Contact' if d.target_doctype == 'Customer' and d.target_field in contact_fields
+    targets = [direct.target_key(d) if operation in direct.OPERATIONS else
+               ('Contact' if d.target_doctype == 'Customer' and d.target_field in contact_fields
                 else d.target_doctype, d.target_field) for d in plan.definitions]
     if len(set(targets)) != len(targets):
         raise ValueError('Query adapter cannot write one target field twice.')
@@ -323,6 +282,68 @@ def _transform(spec, value, options):
             result.append(mapped)
         return result
     return transformed_value(spec, value)
+
+
+def _validate_native_spec(spec, adapter_options):
+    """Target rules of the native adapters (Customers, Projects, Tasks, Events)."""
+    owner = ROOTS[spec.operation][1]
+    allowed = {owner, 'HERO Integration Link'}
+    if owner == 'Customer': allowed |= {'Address', 'Contact'}
+    if owner == 'Project': allowed |= {'Comment'}
+    if owner == 'Task': allowed |= {'ToDo'}
+    if spec.target_doctype not in allowed:
+        raise ValueError('Query rule crosses an unsupported native relationship.')
+    if (spec.target_field not in FIELDS[spec.target_doctype]
+            and (spec.target_doctype not in {owner} or not spec.target_field.startswith('custom_hero_'))):
+        raise ValueError('Query target is protected or outside the supported adapter fields.')
+    if spec.target_doctype == 'HERO Integration Link' and spec.purpose != 'Source Identity':
+        raise ValueError('Only identity may target the integration link.')
+    if spec.purpose == 'Source Identity' and (spec.target_doctype, spec.target_field) not in {
+            ('HERO Integration Link', 'source_id'), (owner, 'custom_hero_source_id')}:
+        raise ValueError('Source identity may only bind its technical identity field.')
+    record_name = {'Customer': 'customer_name', 'Project': 'project_name', 'Task': 'subject', 'Event': 'subject'}[owner]
+    if spec.purpose == 'Record Name' and (spec.target_doctype, spec.target_field) != (owner, record_name):
+        raise ValueError('Record Name must bind the native record title.')
+    if (owner == 'Project' and spec.target_field == 'project_name' and spec.purpose != 'Record Name'):
+        raise ValueError('Project title must retain its coded title builder.')
+    if spec.target_doctype == 'Event' and spec.target_field in {'starts_on', 'ends_on', 'all_day'} and spec.transformation != 'Native Adapter':
+        raise ValueError('Event time fields require the native timezone and recurrence adapter.')
+
+    if spec.target_doctype == 'Contact' and spec.purpose != 'Customer Primary Contact':
+        raise ValueError('Contact fields require the exclusive primary-contact adapter.')
+    if spec.target_doctype == 'Address' and (spec.relation != 'Customer Primary Address' or not spec.source_path.startswith('address.')):
+        raise ValueError('Address fields require the direct Customer.address primary relationship.')
+    if spec.target_doctype == 'Comment':
+        options = validate_query_adapter(adapter_options or {'version': 2})
+        collection = options.get('logbook')
+        if not collection or not spec.source_path.startswith(collection['path'] + '.'):
+            raise ValueError('Comment fields require the configured logbook collection.')
+        if spec.target_field == 'creation' and spec.transformation != 'Local Datetime':
+            raise ValueError('Logbook dates require an explicit timezone conversion.')
+    if spec.target_field == 'company' and (spec.purpose != 'Confirmed Company' or spec.transformation != 'Confirmed ERPNext Company'):
+        raise ValueError('Company requires the independently confirmed company resolver.')
+    if spec.purpose == 'Confirmed Company' and (spec.target_doctype, spec.target_field, spec.transformation) != ('Project', 'company', 'Confirmed ERPNext Company'):
+        raise ValueError('Confirmed Company must bind the native Project company through its confirmed resolver.')
+    if spec.purpose == 'Project Relation' and spec.transformation != 'HERO Project Link':
+        raise ValueError('Project Relation requires the native Project identity resolver.')
+    if spec.purpose == 'Customer Primary Contact' and (spec.target_doctype not in {'Customer', 'Contact'} or spec.target_field not in FIELDS['Contact']):
+        raise ValueError('Primary Contact purpose must bind a supported primary Contact field.')
+    if spec.transformation == 'HERO Customer Link' and (spec.target_doctype, spec.target_field) != ('Project', 'customer'):
+        raise ValueError('Customer identity resolution may only bind the Project customer.')
+    if spec.purpose == 'Customer Relation' and (spec.target_doctype, spec.target_field, spec.transformation) != ('Project', 'customer', 'HERO Customer Link'):
+        raise ValueError('Project customer requires the native Customer identity resolver.')
+    if spec.transformation == 'HERO Project Link' and not (
+            (spec.target_doctype, spec.target_field) == ('Task', 'project')
+            or (spec.target_doctype == 'Event' and spec.target_field.startswith('custom_hero_'))):
+        raise ValueError('Project identity resolution must bind an approved native Project link.')
+    if spec.transformation == 'Native Adapter' and spec.target_doctype != 'Event':
+        raise ValueError('Native Adapter is reserved for mapped Event value groups.')
+    if spec.transformation == 'Salutation Table' and (spec.target_doctype not in {'Customer', 'Contact'} or spec.target_field != 'salutation'):
+        raise ValueError('Salutation conversion requires a primary Contact salutation binding.')
+    if spec.transformation == 'Customer Type From Company Name' and (spec.target_doctype, spec.target_field) != ('Customer', 'customer_type'):
+        raise ValueError('Customer classification may only bind the native Customer type.')
+    if spec.target_doctype == 'ToDo' and spec.transformation not in {'Value Map', 'Link Map'}:
+        raise ValueError('Assignment requires an explicit source-user mapping.')
 
 
 def seal_query(service, snapshot, config, plan):
@@ -402,6 +423,9 @@ def seal_query(service, snapshot, config, plan):
         required |= {'is_recurring', 'deleted'}
     if operation == 'HeroProjectMatches':
         required |= {'project_nr', 'project_type', 'customer.title', 'customer.full_name', 'address.full_address'}
+    if operation in direct.OPERATIONS:
+        required = (required - {d.source_path for d in plan.definitions
+                                if d.transformation == 'HERO Default Sales Price'}) | direct.required_paths(plan)
     logbook = options.get('logbook')
     if logbook:
         path = logbook['path']
@@ -780,6 +804,14 @@ def _output_family(source_type, transformation):
 
 def _validate_output_compatibility(spec, options, fieldtype):
     """Reject incompatible mappings before Frappe can coerce source values."""
+    if spec.transformation in direct.TRANSFORMS:
+        kind = spec.source_type.split('|')[0]
+        allowed = {'HERO Price': {'int', 'float'}, 'HERO Default Sales Price': {'json'}}.get(spec.transformation, {'string'})
+        if kind not in allowed:
+            raise ValueError(spec.transformation + ' requires a ' + '/'.join(sorted(allowed)) + ' source.')
+        if options:
+            raise ValueError('Coded HERO resolvers take no transform options.')
+        return
     if fieldtype not in TARGET_TYPES:
         raise ValueError('Mapped native field type is unsupported.')
     declared = options.get('target_type')

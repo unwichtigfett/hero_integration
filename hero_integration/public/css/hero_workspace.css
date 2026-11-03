@@ -207,6 +207,7 @@
 .hero-mapping-core .hero-mapping-rule-details { padding:0 12px; border:1px solid var(--pc-border, var(--border-color)); border-radius:8px; }
 .hero-mapping-core .hero-mapping-rule-details[open] { padding-bottom:12px; }
 .hero-mapping-core .hero-mapping-table tr.is-draft > td:first-child { font-weight:600; box-shadow:inset 4px 0 0 var(--hero-state-warning, #845700); }
+.hero-mapping-core .hero-mapping-table tr.is-builtin > td { color: var(--pc-textSecondary, inherit); font-style: italic; }
 
 /* Shared page layout for Overview, API & Schema and Settings.
    Same tokens as the Synchronization page: neutral grey surfaces, green only for status. */
