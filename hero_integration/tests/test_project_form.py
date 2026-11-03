@@ -24,7 +24,7 @@ class TestProjectForm(unittest.TestCase):
                                      "status", "project_type", "custom_hero_phase"])
         self.assertEqual(order[order.index("column_break_5") + 1:order.index("column_break_5") + 4],
                          ["custom_hero_source_created", "custom_hero_source_modified", "custom_hero_address_full_address"])
-        self.assertEqual(order[order.index("notes") + 1], "custom_hero_partner_notes")
+        self.assertNotIn("custom_hero_partner_notes", [field for field, _ in form.PLACEMENT])  # native Notes instead
         self.assertEqual(order[order.index("custom_hero_address_full_address") + 1], "custom_hero_volume")
 
     def test_setup_relabels_hides_and_orders_without_touching_field_definitions(self):
@@ -41,11 +41,11 @@ class TestProjectForm(unittest.TestCase):
             form.setup_project_form()
         labels = {a[1]: a[3] for a in setters if a[2] == "label"}
         self.assertEqual(labels["custom_hero_display_id"], "Project Nr.")
-        self.assertEqual(labels["custom_hero_partner_notes"], "Notes")
+        self.assertNotIn("custom_hero_partner_notes", labels)  # HERO notes are the native Notes
+        self.assertIn(("Project", "custom_hero_partner_notes", "hidden", "1", "Check"), setters)
         self.assertIn(("Project", "custom_hero_source_id", "hidden", "1", "Check"), setters)
         self.assertIn(("Project", "custom_hero_observed_status_name", "hidden", "1", "Check"), setters)
         self.assertIn(("Project", "custom_hero_address_full_address", "read_only", "1", "Check"), setters)
-        self.assertIn(("Project", "custom_hero_partner_notes", "read_only", "0", "Check"), setters)  # sent to HERO
         self.assertIn("HERO Writeback", inserted)
         order = json.loads(next(a[3] for a in setters if a[2] == "field_order"))
         self.assertEqual(len(order), len(CURRENT))  # Frappe applies field_order only when complete

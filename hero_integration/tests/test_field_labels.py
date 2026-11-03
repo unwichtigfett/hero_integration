@@ -37,12 +37,13 @@ class TestFieldLabels(unittest.TestCase):
             self.assertFalse(update_modified)
 
         fake = SimpleNamespace(get_all=get_all, db=SimpleNamespace(set_value=set_value), clear_cache=mock.Mock())
-        with mock.patch.dict("sys.modules", {"frappe": fake}):
+        with mock.patch.dict("sys.modules", {"frappe": fake}), \
+                mock.patch.object(field_labels, "hide_technical_fields", return_value=0):
             result = field_labels.relabel_fields()
         self.assertEqual(writes, [
             ("Custom Field", "Customer-custom_hero_customer_type",
              {"label": "Customer Type", "module": "HERO Integration"}, None),
             ("DocField", "row1", "label", "Source ID"),
         ])
-        self.assertEqual(result, {"fields_relabelled": 2, "doctypes": ["Customer", "HERO Event Resource"]})
+        self.assertEqual(result, {"fields_relabelled": 2, "doctypes": ["Customer", "HERO Event Resource"], "fields_hidden": 0})
         fake.clear_cache.assert_any_call(doctype="Customer")

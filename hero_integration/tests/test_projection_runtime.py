@@ -84,10 +84,13 @@ class TestProjectionRuntime(unittest.TestCase):
         result = plan.values(row, native_value=lambda field: native[field], allow_partial=True)
         for field in ("description", "location", "custom_hero_resources", "custom_hero_partners"):
             self.assertNotIn(field, result)
-        self.assertEqual(result["custom_hero_is_done"], "false")
+        self.assertEqual(result["status"], "Open")  # HERO "not done" is the native open Event
         self.assertEqual(result["custom_hero_category_id"], "0")
-        self.assertEqual(result["custom_hero_color"], "")
+        self.assertEqual(result["color"], "")
         self.assertEqual(result["all_day"], 0)
+        done = native_values(CONTRACTS["HeroCalendarEvents"], {**row, "is_done": True}, "9", "a",
+                             native_options("HeroCalendarEvents"), lookup=lambda *args: {}, allow_partial=True)
+        self.assertEqual(done["status"], "Completed")
         with self.assertRaises(ValueError):
             plan.values({**row, "category_id": False}, native_value=lambda field: native[field], allow_partial=True)
 

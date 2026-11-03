@@ -45,7 +45,8 @@ DEFINITIONS = {
         argument="project_match", input_type="ProjectMatchInput",
         # Per-field writeback covers Notes; Phase uses "Send to HERO".
         # Composed titles and HERO identity/naming fields must not be overwritten.
-        fields={"custom_hero_partner_notes": "partner_notes"},
+        # Native Notes; the app field remains for older mapping revisions.
+        fields={"notes": "partner_notes", "custom_hero_partner_notes": "partner_notes"},
     ),
 }
 _TRANSFORMS = frozenset({"Identity", "Trim"})

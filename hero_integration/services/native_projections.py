@@ -143,10 +143,12 @@ def values(contract, record, identity, instance, options, *, lookup, allow_parti
                   'custom_hero_resource_type': _text(r.get('type'), 'Resource type', limit=140), 'custom_hero_type_id': str(r['type_id']) if r.get('type_id') is not None else None}
                  for r in record.get('resources') or []]
     partners = [{'custom_hero_source_id': str(r['id']), 'custom_hero_partner_name': _text(r.get('full_name'), 'Partner name', limit=140)} for r in record.get('partners') or []]
+    # A HERO appointment marked done is a completed native Event.
+    status = {'status': 'Completed' if record['is_done'] is True else 'Open'} if 'is_done' in record else {}
     return {'subject': _event_subject(record, creating=not allow_partial), 'description': _html(_text(record.get('description'), 'Event description')),
             'location': _text(record.get('full_address'), 'Event location', limit=140),
             'custom_hero_resources': resources, 'custom_hero_partners': partners,
-            **times}
+            **status, **times}
 
 
 def creation_defaults(contract, options):

@@ -16,7 +16,7 @@ ROOTS = {'HeroCustomers': ('contacts', 'Customer'), 'HeroProjectMatches': ('proj
          'HeroCalendarEvents': ('calendar_events', 'Event'), 'HeroTasks': ('tasks', 'Task'),
          **{name: (item['root'], item['owner']) for name, item in direct.OPERATIONS.items()}}
 TRANSFORMS = {'Identity', 'Trim', 'Positive Int To Text', 'Nonempty String ID', 'Scalar Text',
-              'JSON Value', 'Salutation Table', 'Customer Type From Company Name', 'HERO Customer Link',
+              'JSON Value', 'Salutation Table', 'Customer Type From Company Name', 'Customer Type From HERO Type', 'HERO Customer Link',
               'Confirmed ERPNext Company', 'HERO Project Link', 'Native Adapter', 'Value Map', 'Link Map',
               'Local Date', 'Local Datetime', 'Safe HTML', 'Table Rows', 'Number', 'Integer'} | direct.TRANSFORMS
 FIELDS = {
@@ -340,7 +340,7 @@ def _validate_native_spec(spec, adapter_options):
         raise ValueError('Native Adapter is reserved for mapped Event value groups.')
     if spec.transformation == 'Salutation Table' and (spec.target_doctype not in {'Customer', 'Contact'} or spec.target_field != 'salutation'):
         raise ValueError('Salutation conversion requires a primary Contact salutation binding.')
-    if spec.transformation == 'Customer Type From Company Name' and (spec.target_doctype, spec.target_field) != ('Customer', 'customer_type'):
+    if spec.transformation in {'Customer Type From Company Name', 'Customer Type From HERO Type'} and (spec.target_doctype, spec.target_field) != ('Customer', 'customer_type'):
         raise ValueError('Customer classification may only bind the native Customer type.')
     if spec.target_doctype == 'ToDo' and spec.transformation not in {'Value Map', 'Link Map'}:
         raise ValueError('Assignment requires an explicit source-user mapping.')
@@ -740,7 +740,7 @@ def _inferred_target(spec):
     if spec.transformation == 'Native Adapter':
         return {'starts_on': 'Datetime', 'ends_on': 'Datetime', 'all_day': 'Check',
                 'subject': 'Small Text', 'description': 'Text Editor', 'location': 'Data',
-                'custom_hero_original_start': 'Data', 'custom_hero_original_end': 'Data',
+                'custom_hero_original_start': 'Data', 'custom_hero_original_end': 'Data', 'status': 'Select',
                 'custom_hero_resources': 'Table', 'custom_hero_partners': 'Table'}.get(spec.target_field)
     return None
 
@@ -781,7 +781,7 @@ def _child_transform(value, name):
 def _output_family(source_type, transformation):
     kind = source_type.split('|')[0]
     if transformation in {'Identity', 'Native Adapter'}: return kind
-    if transformation in {'Trim', 'Nonempty String ID', 'Salutation Table', 'Customer Type From Company Name'}:
+    if transformation in {'Trim', 'Nonempty String ID', 'Salutation Table', 'Customer Type From Company Name', 'Customer Type From HERO Type'}:
         if kind != 'string': raise ValueError('Selected text transformation requires a string source.')
         return 'string'
     if transformation == 'Positive Int To Text':
