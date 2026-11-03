@@ -230,6 +230,9 @@ class _FileFixture(unittest.TestCase):
         frappe_patch = patch.object(ft, "frappe", _fake_frappe(self.db, self.root))
         frappe_patch.start()
         self.addCleanup(frappe_patch.stop)
+        read_patch = patch.object(ft.direct_runtime, "resolve_read", side_effect=lambda op, source: ft.direct_runtime.builtin_read(op))
+        read_patch.start()
+        self.addCleanup(read_patch.stop)
         self.link = SimpleNamespace(name="L1", target_name="F1", source_payload_hash="old")
 
     def path(self, name):
@@ -338,7 +341,8 @@ class TestSourceAndTargetBinding(_FileFixture):
         self.db.data["HERO Integration Link"]["L1"]["source_payload_hash"] = ft.source_hash(row)
         self.db.commit()
         with patch.object(ft, "_known_files", return_value={
-                "5": SimpleNamespace(name="L1", target_name="F1", source_payload_hash=ft.source_hash(row))}):
+                "5": SimpleNamespace(name="L1", target_name="F1", source_payload_hash=ft.source_hash(row),
+                                     target_field_hashes=ft.field_hashes(ft.mapped_values(ft.direct_runtime.builtin_read("HeroDocuments"), row)))}):
             state = self.run_transfer([row], {"u5": {"uuid": "u5", "file_upload_matches": [{"project_match_id": 42}]}})
         self.assertEqual((state["counts"].get("relinked"), state["counts"].get("unchanged")), (1, None))
         self.assertEqual((self.current_file()["attached_to_doctype"], self.current_file()["attached_to_name"],
@@ -349,7 +353,8 @@ class TestSourceAndTargetBinding(_FileFixture):
         row = {"id": 5, "uuid": "u5", "filename": "Angebot.pdf", "modified": "1", "size": 3,
                "downloadUrl": URL, "category": "offer"}
         with patch.object(ft, "_known_files", return_value={
-                "5": SimpleNamespace(name="L1", target_name="F1", source_payload_hash=ft.source_hash(row))}):
+                "5": SimpleNamespace(name="L1", target_name="F1", source_payload_hash=ft.source_hash(row),
+                                     target_field_hashes=ft.field_hashes(ft.mapped_values(ft.direct_runtime.builtin_read("HeroDocuments"), row)))}):
             state = self.run_transfer([row], {"u5": {"uuid": "u5", "file_upload_matches": [{"project_match_id": 99}]}})
         self.assertEqual(state["counts"].get("unchanged"), 1)
         self.assertIsNone(self.current_file()["attached_to_name"])
