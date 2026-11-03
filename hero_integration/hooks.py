@@ -9,7 +9,10 @@ app_license = "MIT"
 
 before_install = "hero_integration.install.before_install"
 after_install = "hero_integration.install.after_install"
-after_migrate = "hero_integration.install.after_migrate"
+after_migrate = [
+    "hero_integration.install.after_migrate",
+    "hero_integration.services.mapping_draft_deployment.after_migrate",
+]
 before_uninstall = "hero_integration.services.desk_theme.remove_navy_theme"
 
 app_include_css = ["/assets/hero_integration/css/navy_theme.css"]

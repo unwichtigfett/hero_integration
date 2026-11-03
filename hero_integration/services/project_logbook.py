@@ -16,7 +16,7 @@ PAGE_SIZE = 5
 ENTRIES_PER_PROJECT = 100
 SOURCE_TYPE = "project_history"
 CONTEXT_FIELDS = (
-    'modified', 'target_project_match_id', 'target_company_id', 'target', 'target_id',
+    'user_id', 'modified', 'target_project_match_id', 'target_company_id', 'target', 'target_id',
     'type_code', 'associated_outbox_mail_id', 'role_visibility', 'target_user_id',
     'target_project_id', 'type', 'is_editable', 'additional_file_uploads', 'weather_attachment',
 )
