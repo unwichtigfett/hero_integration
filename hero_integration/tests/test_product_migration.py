@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -65,13 +66,118 @@ class TestPaging(unittest.TestCase):
                                commit=lambda: None, rollback=lambda: None),
             utils=SimpleNamespace(now_datetime=lambda: "now"), log_error=lambda **k: None)
         client = _Client(1200)
-        with patch.object(pm, "frappe", fake), patch.object(pm, "_links", return_value={}), \
-                patch.object(pm, "upsert", side_effect=lambda row, link, m: seen.append(row["product_id"]) or "added"):
-            state = pm.sync_products(client)
+        with patch.object(pm, "frappe", fake), patch.object(pm, "_links", return_value={}) as links, \
+                patch.object(pm, "upsert", side_effect=lambda row, link, m, instance: seen.append(row["product_id"]) or "added"):
+            state = pm.sync_products(client, source_instance="source-a")
+        links.assert_called_once_with("source-a")
         self.assertEqual(len(seen), 1200)
         self.assertEqual([offset for _, offset in client.calls], [0, 500, 1000])
         self.assertTrue(state["done"])
         self.assertEqual(state["counts"]["added"], 1200)
+
+
+class _Row(dict):
+    __getattr__ = dict.get
+
+
+class _PriceDB:
+    def __init__(self, prices):
+        self.prices = {name: dict(row) for name, row in prices.items()}
+        self.writes = []
+
+    def exists(self, doctype, name):
+        if doctype in ("Price List", "Item"):
+            return True
+        return name in self.prices
+
+    def get_value(self, doctype, name, fields, as_dict=False):
+        return _Row({field: self.prices[name].get(field) for field in fields})
+
+    def set_value(self, doctype, name, values, *args):
+        self.writes.append((doctype, name, values))
+        if doctype == "Item Price":
+            self.prices[name].update(values)
+
+
+def _price_frappe(db):
+    def get_all(doctype, filters, fields, limit_page_length=0):
+        return [_Row({"name": name, **row}) for name, row in db.prices.items()
+                if all(row.get(key) == value for key, value in filters.items())]
+
+    class _Doc(dict):
+        def insert(self, **kwargs):
+            self.name = f"PRICE-NEW{len(db.prices) + 1}"
+            db.prices[self.name] = {key: value for key, value in self.items() if key != "doctype"}
+            return self
+
+    return SimpleNamespace(db=db, get_all=get_all, get_doc=lambda values: _Doc(values),
+                           utils=SimpleNamespace(now_datetime=lambda: "now"))
+
+
+GENERAL = {"item_code": "PV-1001", "price_list": pm.SELLING, "uom": "Stk", "price_list_rate": 98}
+CUSTOMER_BOX = {"item_code": "PV-1001", "price_list": pm.SELLING, "uom": "Box", "customer": "C-1", "price_list_rate": 1200}
+
+
+class TestManagedPrices(unittest.TestCase):
+    def plan_and_apply(self, prices, rate=100, managed=None):
+        db = _PriceDB(prices)
+        with patch.object(pm, "frappe", _price_frappe(db)):
+            plan = pm.plan_price("PV-1001", pm.SELLING, rate, "Stk", managed)
+            baseline = pm.apply_price("PV-1001", pm.SELLING, plan)
+        return db, baseline
+
+    def test_customer_specific_unit_price_is_never_overwritten(self):
+        db, baseline = self.plan_and_apply({"BOX": CUSTOMER_BOX})
+        self.assertEqual(db.prices["BOX"], CUSTOMER_BOX)
+        self.assertEqual(db.prices[baseline["name"]]["price_list_rate"], 100)
+        self.assertEqual(db.prices[baseline["name"]]["uom"], "Stk")
+
+    def test_only_the_general_price_of_the_unit_is_adopted(self):
+        db, baseline = self.plan_and_apply({"BOX": CUSTOMER_BOX, "GEN": GENERAL,
+                                            "CUST": {**GENERAL, "customer": "C-1", "price_list_rate": 80}})
+        self.assertEqual(baseline, {"name": "GEN", "rate": 100, "uom": "Stk"})
+        self.assertEqual((db.prices["CUST"]["price_list_rate"], db.prices["BOX"]["price_list_rate"]), (80, 1200))
+
+    def test_ambiguous_general_prices_block(self):
+        db = _PriceDB({"A": GENERAL, "B": dict(GENERAL)})
+        with patch.object(pm, "frappe", _price_frappe(db)), self.assertRaises(pm.PriceConflict):
+            pm.plan_price("PV-1001", pm.SELLING, 100, "Stk", None)
+        self.assertEqual(db.writes, [])
+
+    def test_locally_changed_managed_price_is_a_conflict(self):
+        db = _PriceDB({"GEN": {**GENERAL, "price_list_rate": 120}})
+        with patch.object(pm, "frappe", _price_frappe(db)), self.assertRaises(pm.PriceConflict):
+            pm.plan_price("PV-1001", pm.SELLING, 100, "Stk", {"name": "GEN", "rate": 98, "uom": "Stk"})
+        _, baseline = self.plan_and_apply({"GEN": GENERAL}, managed={"name": "GEN", "rate": 98, "uom": "Stk"})
+        self.assertEqual(baseline, {"name": "GEN", "rate": 100, "uom": "Stk"})
+
+    def test_price_conflict_marks_the_link_before_any_item_write(self):
+        db = _PriceDB({"A": GENERAL, "B": dict(GENERAL)})
+        fake = _price_frappe(db)
+        item = SimpleNamespace(name="PV-1001", stock_uom="Stk", save=lambda **k: self.fail("Item must not be saved"))
+        fake.get_doc = lambda doctype, name: item
+        link = SimpleNamespace(name="L1", target_name="PV-1001", source_payload_hash="old", target_payload_hash="",
+                               target_field_hashes="")
+        with patch.object(pm, "frappe", fake), patch.object(pm, "owned_digest", return_value="x"):
+            result = pm.upsert({**ROW, "base_price": None}, link, pm._Masters(), "source-a")
+        self.assertEqual(result, "conflict")
+        self.assertEqual(db.writes[0][0], "HERO Integration Link")
+        self.assertEqual(db.writes[0][2]["sync_status"], "Conflict")
+
+    def test_links_and_offset_belong_to_one_source(self):
+        calls = []
+        fake = SimpleNamespace(get_all=lambda doctype, filters, fields, limit_page_length: calls.append(filters) or [])
+        with patch.object(pm, "frappe", fake):
+            pm._links("source-b")
+        self.assertEqual(calls[0]["source_instance"], "source-b")
+        saved = {pm.STATE_KEY: json.dumps({"source_instance": "source-b", "offset": 500})}
+        db = SimpleNamespace(get_default=saved.get, set_default=lambda k, v: saved.__setitem__(k, v),
+                             commit=lambda: None, rollback=lambda: None)
+        client = _Client(10)
+        with patch.object(pm, "frappe", SimpleNamespace(db=db, utils=SimpleNamespace(now_datetime=lambda: "now"))), \
+                patch.object(pm, "_links", return_value={}), patch.object(pm, "upsert", return_value="added"):
+            pm.sync_products(client, source_instance="source-a")
+        self.assertEqual(client.calls[0], (pm.PAGE_SIZE, 0))
 
 
 if __name__ == "__main__":

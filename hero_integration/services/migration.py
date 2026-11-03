@@ -797,7 +797,10 @@ def _migrate_customer(record: dict[str, object], run) -> Result:
         )
     except MappingPlanError as error:
         return Result("BLOCKED_RECORD", str(error))
-    if plan.source_deleted(record):
+    # A v2 query plan needs no lifecycle rule; its validated canonical
+    # ``is_deleted`` flag decides on its own.
+    adapter_deleted = bool(getattr(plan, 'adapter_options', None)) and record.get('is_deleted') is True
+    if adapter_deleted or plan.source_deleted(record):
         if run.mode != 'Preview':
             _mark_source_deleted(_link("customer", source_id, _source_instance(record)))
         return Result("SKIPPED_SOURCE_DELETED", "Source customer is deleted. No target deletion occurs.")

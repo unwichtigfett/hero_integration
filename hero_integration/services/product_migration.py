@@ -22,7 +22,7 @@ import time
 import frappe
 
 SOURCE_TYPE = "supply_product"
-MAPPING_VERSION = "product-migration-v1"
+MAPPING_VERSION = "product-migration-v2"  # v2: managed Item Price baseline in target_field_hashes
 PAGE_SIZE = 500  # HERO returns at most 500 articles per request
 STATE_KEY = "hero_product_migration"
 ROOT_GROUP = "HERO Artikel"
@@ -114,14 +114,38 @@ class _Masters:
         self.ensure("Brand", values["brand"], brand=values["brand"])
 
 
-def _links() -> dict:
-    rows = frappe.get_all("HERO Integration Link", filters={"source_type": SOURCE_TYPE},
-                          fields=["name", "source_id", "target_name", "source_payload_hash", "target_payload_hash"],
+def _links(source_instance: str) -> dict:
+    rows = frappe.get_all("HERO Integration Link", filters={"source_type": SOURCE_TYPE, "source_instance": source_instance},
+                          fields=["name", "source_id", "target_name", "source_payload_hash", "target_payload_hash",
+                                  "target_field_hashes"],
                           limit_page_length=0)
     return {row.source_id: row for row in rows}
 
 
-def upsert(row: dict, link, masters: _Masters) -> str:
+class PriceConflict(Exception):
+    """An imported price cannot be identified safely or was changed in ERPNext."""
+
+
+PRICE_LISTS = ((BUYING, "buying"), (SELLING, "selling"))
+
+
+def _managed_prices(link) -> dict:
+    try:
+        data = json.loads(getattr(link, "target_field_hashes", "") or "{}")
+    except (TypeError, ValueError):
+        return {}
+    prices = data.get("prices") if isinstance(data, dict) else None
+    return prices if isinstance(prices, dict) else {}
+
+
+def _conflict(link, source: str, detail: str) -> str:
+    frappe.db.set_value("HERO Integration Link", link.name, {
+        "sync_status": "Conflict", "observed_source_hash": source, "last_observed_on": frappe.utils.now_datetime(),
+        "conflict_detail": detail})
+    return "conflict"
+
+
+def upsert(row: dict, link, masters: _Masters, source_instance: str) -> str:
     """Create or update one Item; returns added, updated, unchanged or conflict."""
     values = item_values(row)
     source = digest(values)
@@ -129,10 +153,16 @@ def upsert(row: dict, link, masters: _Masters) -> str:
         return "unchanged"
     item = frappe.get_doc("Item", link.target_name) if link and frappe.db.exists("Item", link.target_name) else None
     if item is not None and link.target_payload_hash and owned_digest(item) != link.target_payload_hash:
-        frappe.db.set_value("HERO Integration Link", link.name, {
-            "sync_status": "Conflict", "observed_source_hash": source, "last_observed_on": frappe.utils.now_datetime(),
-            "conflict_detail": "The Item was changed in ERPNext; the newer HERO article was not applied."})
-        return "conflict"
+        return _conflict(link, source, "The Item was changed in ERPNext; the newer HERO article was not applied.")
+    managed = _managed_prices(link) if item is not None else {}
+    plans = {}
+    if item is not None:
+        try:  # decide every price before anything is written
+            for price_list, key in PRICE_LISTS:
+                plans[price_list] = plan_price(item.name, price_list, values[key], values["stock_uom"],
+                                               managed.get(price_list))
+        except PriceConflict as error:
+            return _conflict(link, source, f"{error} The newer HERO article was not applied.")
     masters.for_item(values)
     fields = {key: values[key] for key in OWNED}
     if item is None:
@@ -149,17 +179,22 @@ def upsert(row: dict, link, masters: _Masters) -> str:
             _set_barcode(item, values["barcode"])
         item.save(ignore_permissions=True)
         result = "updated"
-    _set_price(item.name, BUYING, values["buying"], item.stock_uom)
-    _set_price(item.name, SELLING, values["selling"], item.stock_uom)
+    prices = dict(managed)
+    for price_list, key in PRICE_LISTS:
+        plan = plans[price_list] if price_list in plans else plan_price(
+            item.name, price_list, values[key], item.stock_uom, None)
+        if plan is not None:
+            prices[price_list] = apply_price(item.name, price_list, plan)
     link_values = {"sync_status": "Synchronized", "target_name": item.name, "source_payload_hash": source,
                    "target_payload_hash": owned_digest(item), "conflict_detail": "",
-                   "last_synced_on": frappe.utils.now_datetime()}
+                   "target_field_hashes": json.dumps({"prices": prices}, sort_keys=True),
+                   "mapping_version": MAPPING_VERSION, "last_synced_on": frappe.utils.now_datetime()}
     if link:
         frappe.db.set_value("HERO Integration Link", link.name, link_values)
     else:
         frappe.get_doc({"doctype": "HERO Integration Link", "source_system": "HERO", "source_type": SOURCE_TYPE,
-                        "source_id": str(row["product_id"]), "source_instance": "default", "target_doctype": "Item",
-                        "mapping_version": MAPPING_VERSION, **link_values}).insert(ignore_permissions=True)
+                        "source_id": str(row["product_id"]), "source_instance": source_instance,
+                        "target_doctype": "Item", **link_values}).insert(ignore_permissions=True)
     return result
 
 
@@ -168,16 +203,51 @@ def _set_barcode(item, code: str | None) -> None:
         item.append("barcodes", {"barcode": code, "barcode_type": barcode_type(code)})
 
 
-def _set_price(item_code: str, price_list: str, rate: float | None, uom: str) -> None:
+# A price with any of these set belongs to a customer, supplier, batch,
+# packing unit or period; the import never touches such prices.
+_DIMENSIONS = ("customer", "supplier", "batch_no", "packing_unit", "valid_upto")
+
+
+def _rate(value) -> float | None:
+    try:
+        return round(float(value), 2)
+    except (TypeError, ValueError):
+        return None
+
+
+def plan_price(item_code: str, price_list: str, rate: float | None, uom: str, managed: dict | None) -> dict | None:
+    """Which Item Price the import may write: its own managed price, or the single
+    general price for this item, price list and unit. Read-only; raises PriceConflict."""
     if rate is None or not frappe.db.exists("Price List", price_list):
-        return
-    name = frappe.db.get_value("Item Price", {"item_code": item_code, "price_list": price_list}, "name")
-    if name:
-        if frappe.db.get_value("Item Price", name, "price_list_rate") != rate:
-            frappe.db.set_value("Item Price", name, "price_list_rate", rate)
-        return
-    frappe.get_doc({"doctype": "Item Price", "item_code": item_code, "price_list": price_list,
-                    "price_list_rate": rate, "uom": uom}).insert(ignore_permissions=True)
+        return None
+    name = (managed or {}).get("name")
+    if name and frappe.db.exists("Item Price", name):
+        current = frappe.db.get_value("Item Price", name, ["item_code", "price_list", "price_list_rate", "uom"],
+                                      as_dict=True)
+        if (current.item_code, current.price_list) != (item_code, price_list):
+            raise PriceConflict(f"The imported {price_list} price {name} now belongs to another item or list.")
+        if _rate(current.price_list_rate) != _rate(managed.get("rate")) or (current.uom or "") != (managed.get("uom") or ""):
+            raise PriceConflict(f"The {price_list} price {name} was changed in ERPNext.")
+        return {"name": name, "rate": rate, "uom": uom}
+    candidates = frappe.get_all("Item Price", filters={"item_code": item_code, "price_list": price_list, "uom": uom},
+                                fields=["name", *_DIMENSIONS], limit_page_length=0)
+    general = [row for row in candidates if not any(row.get(field) for field in _DIMENSIONS)]
+    if len(general) > 1:
+        raise PriceConflict(f"Several general {price_list} prices exist for {item_code} ({uom}); none was changed.")
+    return {"name": general[0].name if general else None, "rate": rate, "uom": uom}
+
+
+def apply_price(item_code: str, price_list: str, plan: dict) -> dict:
+    """Write a planned price; returns its baseline for the next comparison."""
+    if plan["name"]:
+        current = frappe.db.get_value("Item Price", plan["name"], ["price_list_rate", "uom"], as_dict=True)
+        if _rate(current.price_list_rate) != plan["rate"] or (current.uom or "") != plan["uom"]:
+            frappe.db.set_value("Item Price", plan["name"], {"price_list_rate": plan["rate"], "uom": plan["uom"]})
+        name = plan["name"]
+    else:
+        name = frappe.get_doc({"doctype": "Item Price", "item_code": item_code, "price_list": price_list,
+                               "price_list_rate": plan["rate"], "uom": plan["uom"]}).insert(ignore_permissions=True).name
+    return {"name": name, "rate": plan["rate"], "uom": plan["uom"]}
 
 
 # ---------------------------------------------------------------- run
@@ -203,7 +273,8 @@ def _client():
     from hero_integration.client.settings import get_configuration
 
     config = get_configuration()
-    return HeroGraphQLClient(config.endpoint, lambda: config.api_token, config.timeout_seconds, max_retries=2)
+    client = HeroGraphQLClient(config.endpoint, lambda: config.api_token, config.timeout_seconds, max_retries=2)
+    return client, config.source_instance
 
 
 def fetch_page(client, offset: int, size: int = PAGE_SIZE) -> list[dict]:
@@ -218,15 +289,26 @@ def fetch_page(client, offset: int, size: int = PAGE_SIZE) -> list[dict]:
         return fetch_page(client, offset, half) + fetch_page(client, offset + half, size - half)
 
 
-def sync_products(client=None, *, time_budget: int = TIME_BUDGET_SECONDS, should_stop=None, max_pages: int = 2000) -> dict:
-    """Process articles from the saved offset until done, stopped or the time budget ends."""
-    client = client or _client()
+def sync_products(client=None, *, source_instance: str | None = None, time_budget: int = TIME_BUDGET_SECONDS,
+                  should_stop=None, max_pages: int = 2000) -> dict:
+    """Process articles from the saved offset until done, stopped or the time budget ends.
+
+    ``source_instance`` is the HERO source ``client`` reads from; lookups, new
+    links and the saved offset belong to it."""
+    if client is None:
+        client, configured = _client()
+        if source_instance is not None and configured != source_instance:
+            raise RuntimeError("The configured HERO source instance changed; queue a new run.")
+        source_instance = configured
+    if not isinstance(source_instance, str) or not source_instance.strip():
+        raise RuntimeError("A HERO source instance is required.")
     state = _state()
-    if state.get("done"):
+    if state.get("done") or state.get("source_instance") != source_instance:
         state = {}
+    state["source_instance"] = source_instance
     counts = state.setdefault("counts", {})
     state.update(done=False, stopped=False, last_error=None)
-    links, masters = _links(), _Masters()
+    links, masters = _links(source_instance), _Masters()
     deadline = time.monotonic() + time_budget
     offset = int(state.get("offset") or 0)
     for _ in range(max_pages):
@@ -241,7 +323,7 @@ def sync_products(client=None, *, time_budget: int = TIME_BUDGET_SECONDS, should
                 counts["skipped_no_id"] = counts.get("skipped_no_id", 0) + 1
                 continue
             try:
-                result = upsert(row, links.get(key), masters)
+                result = upsert(row, links.get(key), masters, source_instance)
                 frappe.db.commit()
             except Exception as error:
                 frappe.db.rollback()

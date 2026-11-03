@@ -250,6 +250,34 @@ class TestGroupedNestedSend(_TransportFixture):
             'id': 42, 'remarks': 'Expected', 'address': {'id': 9, 'street': 'New Street'}}})
         self.assertEqual(self.statuses, ['Succeeded'])
 
+    def test_omitted_optional_address_does_not_block_an_independent_customer_field(self):
+        identity = '7d0c1f7e-58a4-4c0e-9a3f-2c4d8f0b6a11'
+        value = content()
+        value['additional_mappings'] = [{'id': identity, 'source': {'doctype': 'Address', 'field': 'address_line1'},
+            'target': {'operation': 'update_contact', 'argument': 'contact', 'input_type': 'CustomerInput',
+                       'field': 'address.street'}, 'transformation': 'Identity'}]
+        value['send_options']['assignments'][identity] = {
+            'resolver': 'FIELD', 'read_path': 'address.street', 'missing': 'OMIT', 'null': 'OMIT'}
+        value['send_options']['related_identities'] = {'contact.address.id': {
+            'doctype': 'Address', 'source_type': 'customer_address', 'read_path': 'address.id'}}
+        self.ctx.content = ms.normalise_send_mapping(value, SCHEMA)
+        self.ctx.document['customer_primary_address'] = None  # this Customer has no address
+        before = {'id': 42, 'remarks': 'Old', 'address': None}
+        after = {'id': 42, 'remarks': 'Expected', 'address': None}
+        with patch.object(ms, '_read_record', return_value=before):
+            fingerprint = self.preview()['fingerprint']
+        with patch.object(ms, '_read_record', side_effect=[before, after]):
+            result = self.send(fingerprint)
+        self.mutation.execute_once.assert_called_once_with(DOCUMENT, {'input': {'id': 42, 'remarks': 'Expected'}})
+        self.assertEqual((result['status'], self.statuses), ('SENT', ['Succeeded']))
+
+    def test_related_identity_is_selected_only_for_sent_nested_inputs(self):
+        self.ctx.content['send_options']['related_identities'] = {'contact.address.id': {
+            'doctype': 'Address', 'source_type': 'customer_address', 'read_path': 'address.id'}}
+        self.assertEqual(ms._selected_related_identities(self.ctx, [('contact', 'remarks'), ('contact', 'id')]), {})
+        self.assertEqual(list(ms._selected_related_identities(self.ctx, [('contact', 'address', 'street')])),
+                         ['contact.address.id'])
+
     def test_related_address_identity_must_be_proven_by_pre_read(self):
         self.ctx.content['send_options']['related_identities'] = {'contact.address.id': {
             'doctype': 'Address', 'source_type': 'customer_address', 'read_path': 'address.id'}}

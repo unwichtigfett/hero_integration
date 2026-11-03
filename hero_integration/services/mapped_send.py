@@ -388,7 +388,7 @@ def _load_context(doctype, name):
     if read.contract.target_operation != {'Customer': 'HeroCustomers', 'Project': 'HeroProjectMatches', 'Task': 'HeroTasks'}[doctype]:
         raise MappedSendError('The main Send readback does not belong to the native bound object type.')
     ctx = SimpleNamespace(document=document, mapping=mapping, content=content, snapshot=snapshot, link=link,
-        contract=contract, service=service, parsed=parsed, proof=proof, read=read, hero_id=hero_id, related={}, baseline_links={}, condition_values=[])
+        contract=contract, service=service, parsed=parsed, proof=proof, read=read, hero_id=hero_id, related={}, related_selection={}, baseline_links={}, condition_values=[])
     if mode == 'CREATE':
         _assert_create_available(ctx)
     return ctx
@@ -721,9 +721,24 @@ def _baseline_link(ctx, item):
     raise MappedSendError('The mapped relation has no unique synchronized baseline link.')
 
 
-def _related_identity_values(ctx, remote):
-    values = {}
+def _selected_related_identities(ctx, paths):
+    """Only related identities whose nested input is actually sent (after the
+    missing, null and condition rules) are resolved; an omitted optional
+    relation must not block an independent field."""
+    sent = [tuple(path) for path in paths]
+    selected = {}
     for path, config in ctx.content['send_options'].get('related_identities', {}).items():
+        prefix = tuple(path.split('.')[:-1])
+        if any(len(item) > len(prefix) and item[:len(prefix)] == prefix for item in sent):
+            selected[path] = config
+    return selected
+
+
+def _related_identity_values(ctx, remote, selected=None):
+    values = {}
+    if selected is None:
+        selected = ctx.content['send_options'].get('related_identities', {})
+    for path, config in selected.items():
         document = _source_document(ctx, config['doctype'])
         frappe.has_permission(document.doctype, 'write', doc=document, throw=True)
         if document.doctype == 'Address':
@@ -796,7 +811,8 @@ def _prepare(ctx, client, phase_id=None):
         identity_path = (options['identity_argument'], options['identity_field'])
         paths.append(identity_path)
         values['.'.join(identity_path)] = ctx.hero_id
-    for path, value in _related_identity_values(ctx, remote).items():
+    ctx.related_selection = _selected_related_identities(ctx, paths)
+    for path, value in _related_identity_values(ctx, remote, ctx.related_selection).items():
         paths.append(tuple(path.split('.')))
         values[path] = value
     validated = SnapshotAdapter().adapt(StoredSnapshot(ctx.snapshot.name, ctx.snapshot.snapshot_json,
@@ -947,7 +963,8 @@ def send(doctype, name, *, fingerprint='', confirmed=0, phase_id=None, client=No
         lifecycle = getattr(_query_plan(ctx), 'source_deleted', None)
         if callable(lifecycle) and lifecycle(after):
             raise MappedSendError('The approved Query marks the resulting HERO record as deleted.')
-        if _related_identity_values(ctx, after) != _related_identity_values(ctx, before):
+        selected = ctx.related_selection  # the same relations the prepared mutation sent
+        if _related_identity_values(ctx, after, selected) != _related_identity_values(ctx, before, selected):
             raise MappedSendError('HERO changed a mapped related record identity during Send.')
         for change in changes:
             setting = ctx.content['send_options']['assignments'][change['id']]
