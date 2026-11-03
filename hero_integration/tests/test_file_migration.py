@@ -65,7 +65,7 @@ class TestFullMigrationChain(unittest.TestCase):
         self.assertEqual(self.started, ["Project Migration"])
         fm.advance_full("FULL")  # child still queued: nothing new starts
         self.assertEqual(len(self.started), 1)
-        for _ in range(4):
+        for _ in range(len(fm.FULL_STEPS) - 1):
             self.finish_current()
         self.assertEqual(self.started, list(fm.FULL_STEPS))
         self.finish_current("Completed With Conflicts")
