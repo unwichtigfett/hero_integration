@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import frappe
 
+from hero_integration.integrations.field_labels import PROVENANCE_MODULE, display_label, strip_prefix
 from hero_integration.services import mapping_exchange
 from hero_integration.services.direct_mapping import MappingSpec, validate_spec
 from hero_integration.services.localized_error import LocalizedError
@@ -425,7 +426,7 @@ def _recheck_required_schema_current(definitions, required):
                 require_field(definition["name"], field["fieldname"],
                               {"fieldtype", "options"} | {flag for flag in ("reqd", "unique") if flag in field})
     for field in fields.values():
-        require_field(field["doctype"], field["fieldname"], {"fieldtype", "options", "label"}
+        require_field(field["doctype"], field["fieldname"], {"fieldtype", "options"}
                       | {flag for flag in ("reqd", "unique", "read_only") if flag in field})
     for relation in relations.values():
         require_field(relation["doctype"], relation["fieldname"], {"fieldtype", "options"})
@@ -482,7 +483,7 @@ def _recheck_required_schema_current(definitions, required):
         if docfields or len(rows) != 1:
             fail()
         row = rows[0]
-        if any((row.get(key) or "") != field[key] for key in ("fieldtype", "options", "label")):
+        if any((row.get(key) or "") != field[key] for key in ("fieldtype", "options")):
             fail()
         if any(int(row.get(flag) or 0) != field[flag] for flag in ("reqd", "unique", "read_only") if flag in field):
             fail()
@@ -619,6 +620,7 @@ def _lock_and_check_mappings(expected):
 def _create_custom_doctype(definition, selected_relation_fields):
     fields = [
         {key: field[key] for key in ("fieldname", "label", "fieldtype", "options", 'reqd', 'unique') if key in field}
+        | {"label": strip_prefix(field["label"])}
         for field in definition["fields"]
         if field["fieldtype"] not in {"Link", "Table"} or field["id"] in selected_relation_fields
     ]
@@ -632,7 +634,8 @@ def _create_custom_doctype(definition, selected_relation_fields):
 def _create_custom_field(definition):
     frappe.get_doc({
         "doctype": "Custom Field", "dt": definition["doctype"], "fieldname": definition["fieldname"],
-        "label": definition["label"], "fieldtype": definition["fieldtype"], "options": definition["options"],
+        "label": display_label(definition["doctype"], definition["fieldname"], definition["label"]),
+        "module": PROVENANCE_MODULE, "fieldtype": definition["fieldtype"], "options": definition["options"],
         "insert_after": definition["insert_after"],
         **{flag: definition[flag] for flag in ('reqd', 'unique', 'read_only') if flag in definition},
     }).insert()
@@ -644,7 +647,8 @@ def _provision_relation(relation, fields, created):
     field = fields[relation["field_id"]]
     frappe.get_doc({
         "doctype": "Custom Field", "dt": relation["doctype"], "fieldname": field["fieldname"],
-        "label": field["label"], "fieldtype": field["fieldtype"], "options": field["options"], "insert_after": "",
+        "label": display_label(relation["doctype"], field["fieldname"], field["label"]), "module": PROVENANCE_MODULE,
+        "fieldtype": field["fieldtype"], "options": field["options"], "insert_after": "",
     }).insert()
     created["custom_fields"].append(f"{relation['doctype']}.{field['fieldname']}")
 
@@ -698,7 +702,8 @@ def _custom_field_state(definition):
     row = rows[0]
     if any(int(row.get(flag) or 0) != definition[flag] for flag in ('reqd', 'unique', 'read_only') if flag in definition):
         return 'Conflict'
-    return "Unchanged" if all((row.get(key) or '') == definition[key] for key in ("fieldtype", "options", "label")) else "Conflict"
+    # The label is display only (field_labels sets the plain label).
+    return "Unchanged" if all((row.get(key) or '') == definition[key] for key in ("fieldtype", "options")) else "Conflict"
 
 
 def _relation_exists(relation):

@@ -60,6 +60,12 @@ class TestInstallContract(unittest.TestCase):
             },
         )
 
+        # A different label is not a conflict: the app gives its fields plain labels itself.
+        environment.custom_fields[("Customer", "custom_hero_customer_number")]["label"] = "HERO Customer Number"
+        environment.call(install.after_migrate)
+        self.assertEqual(len(environment.create_calls), 1)
+        self.assertEqual(environment.relabel_calls, 3)
+
         environment.custom_fields[("Customer", "custom_hero_customer_number")]["fieldtype"] = "Int"
         with self.assertRaisesRegex(RuntimeError, "conflicts with the HERO schema \\(fieldtype\\)"):
             environment.call(install.after_migrate)
@@ -109,6 +115,7 @@ class _InstallEnvironment:
                          if doctypes is None else doctypes)
         self.custom_fields: dict[tuple[str, str], dict[str, object]] = {}
         self.create_calls: list[tuple[dict[str, list[dict[str, object]]], bool]] = []
+        self.relabel_calls = 0
         self.project_notes = project_notes
         self.project_notes_read_only = project_notes_read_only
 
@@ -151,8 +158,11 @@ class _InstallEnvironment:
     def call(self, function):
         # Theme lifecycle has its own metadata tests; this fixture owns ERPNext fields.
         with mock.patch.dict(sys.modules, self.modules), \
-                mock.patch("hero_integration.services.desk_theme.ensure_navy_theme"):
-            return function()
+                mock.patch("hero_integration.services.desk_theme.ensure_navy_theme"), \
+                mock.patch("hero_integration.integrations.field_labels.relabel_fields") as relabel:
+            result = function()
+            self.relabel_calls += relabel.call_count
+            return result
 
     def exists(self, doctype, filters):
         if doctype == "DocType":
