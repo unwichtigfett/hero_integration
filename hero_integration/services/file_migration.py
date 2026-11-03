@@ -15,7 +15,7 @@ import json
 import frappe
 from frappe.utils import now_datetime
 
-from hero_integration.services.service_schema import ITEM_FIELDS as SERVICE_ITEM_FIELDS
+from hero_integration.services import direct_runtime
 
 FILE_ACTIONS = {"Document Migration": "documents", "Picture Migration": "images"}
 PRODUCT_ACTION = "Product Migration"
@@ -24,6 +24,8 @@ EMPLOYEE_ACTION = "Employee Migration"
 FULL_ACTION = "Full Migration"
 SLICE_ACTIONS = frozenset(FILE_ACTIONS) | {PRODUCT_ACTION, SERVICE_ACTION, EMPLOYEE_ACTION}
 RUN_ACTIONS = SLICE_ACTIONS | {FULL_ACTION}
+DIRECT_OPERATIONS = {EMPLOYEE_ACTION: "HeroEmployees", PRODUCT_ACTION: "HeroProducts", SERVICE_ACTION: "HeroServices",
+                     "Document Migration": "HeroDocuments", "Picture Migration": "HeroPictures"}
 # Project Migration processes the referenced contacts first in the same run.
 FULL_STEPS = ("Project Migration", "Schedule Migration", "Projection Migration", "Product Migration",
               "Document Migration", "Picture Migration")
@@ -66,11 +68,23 @@ def bound_configuration(run):
 
 # ---------------------------------------------------------------- starting
 
+def require_mappings(action: str, instance: str, *, steps=None) -> dict:
+    """Check all required direct readers before creating or resuming a run."""
+    operations = ([DIRECT_OPERATIONS.get(step) for step in steps] if steps is not None else DIRECT_OPERATIONS.values()) \
+        if action == FULL_ACTION else [DIRECT_OPERATIONS.get(action)]
+    reads = {}
+    for operation in operations:
+        if operation:
+            reads[operation] = direct_runtime.resolve_read(operation, instance)
+    return reads
+
+
 def start(action: str, parent: str = "") -> str:
     """Create and queue a file or full run; returns the run name."""
     if action not in RUN_ACTIONS:
         raise ValueError("Unknown file migration action.")
     config = confirmed_configuration()
+    require_mappings(action, config.source_instance)
     if action == EMPLOYEE_ACTION:
         from hero_integration.services.employee_migration import preflight
 
@@ -104,7 +118,9 @@ def start(action: str, parent: str = "") -> str:
 
 def resume(run) -> None:
     """Continue a failed, cancelled or blocked file/full run where it stopped."""
-    bound_configuration(run)
+    config = bound_configuration(run)
+    steps = _full(run.name).get("steps", list(FULL_STEPS)) if run.action == FULL_ACTION else None
+    require_mappings(run.action, config.source_instance, steps=steps)
     run.state, run.error_message, run.finished_on = "Queued", "", None
     run.save(ignore_permissions=True)
     if run.action == FULL_ACTION:
@@ -340,38 +356,29 @@ AREA_TEXT = {
              "Each step is its own run in the history. A stopped step blocks the chain; continue the run to retry it."),
 }
 AREA_KEYS = {key: text[2] for key, text in AREA_TEXT.items()}
-_FILE_FIELDS = ["file_name", "attached_to_doctype", "attached_to_name", "folder"]
-SCOPE = {
-    "employees": [{"doctype": "Employee", "fields": ["first_name", "last_name", "employee_name", "company_email",
-                  "cell_number", "status", "company", "date_of_joining", "user_id"]},
-                  {"doctype": "User", "fields": ["email", "phone", "language"]}],
-    "services": [{"doctype": "Item", "fields": ["item_code", "item_name", "description", "stock_uom", "brand",
-                  "taxes", "is_stock_item", "item_group", "barcodes", "disabled", *[field["fieldname"] for field in SERVICE_ITEM_FIELDS]]},
-                 {"doctype": "Item Price", "fields": ["price_list", "price_list_rate"]},
-                 {"doctype": "Activity Type", "fields": ["activity_type", "billing_rate"]},
-                 {"doctype": "File", "fields": ["file_name", "is_private", "attached_to_doctype", "attached_to_name"]}],
-    "products": [{"doctype": "Item", "fields": ["item_code", "item_name", "description", "item_group", "stock_uom",
-                                                "brand", "barcodes", "disabled"]},
-                 {"doctype": "Item Price", "fields": ["price_list", "price_list_rate"]}],
-    "documents": [{"doctype": "File", "fields": _FILE_FIELDS}],
-    "pictures": [{"doctype": "File", "fields": _FILE_FIELDS}],
-}
 
 
 def page_areas(active: list[dict], instance: str) -> list[dict]:
+    from hero_integration.services.sync_page import mapping_scope
+
     rows = []
     for key, (label, action_label, action, description, note) in AREA_TEXT.items():
         executed = {"action": action, "mode": "Execute", "source_instance": instance}
         last = frappe.get_all("HERO Integration Run", filters={**executed, "state": ["in", list(SUCCESS)]},
                               fields=["finished_on"], order_by="finished_on desc", limit_page_length=1)
         running = next((row for row in active if row.get("action") == action), None)
-        objects = SCOPE.get(key, [])
+        blocker, read = "", None
+        try:
+            read = require_mappings(action, instance).get(DIRECT_OPERATIONS.get(action))
+        except Exception as exc:
+            blocker = str(exc) or "The mapping and read service could not be validated."
         rows.append({
             "key": key, "label": label, "action_label": action_label, "description": description, "scope_note": note,
-            "scope": {"object_count": len(objects), "field_count": sum(len(o["fields"]) for o in objects), "objects": objects},
+            "scope": mapping_scope([spec.__dict__ for spec in read.plan.definitions] if read else []),
             "button": "Update" if frappe.db.exists("HERO Integration Run", executed) else "Start",
             "last_successful": last[0]["finished_on"] if last else None,
-            "running_run": running["name"] if running else "", "ready": True, "blocker": "", "service": None,
+            "running_run": running["name"] if running else "", "ready": not blocker, "blocker": blocker,
+            "service": {"service": read.origin, "mapping": read.mapping} if read else None,
             "sync_enabled": False, "polled": False, "kind": "full" if key == "full" else "direct",
             "confirm": f"{action_label}: {description}",
         })

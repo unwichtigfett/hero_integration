@@ -1,8 +1,8 @@
 """Runtime of the configurable direct migrations (Products, Documents, Pictures).
 
 ``resolve_read`` decides which mapping applies to a run: the approved own
-mapping of the source (its sealed read query and frozen rules) or, while none
-is approved, the built-in mapping with a query generated from its rules. The
+mapping of the source (its sealed read query and frozen rules). Missing or
+unapproved mappings block execution. Default rules only supply editable templates. The
 importers page through ``read_pages`` and turn each record into target values
 with ``record_values``/``price_values``; everything else they do (identity
 links, conflicts, masters, download, attachment) stays in their own code.
@@ -64,10 +64,18 @@ def selection(paths) -> str:
     return render(tree)
 
 
-def builtin_read(operation: str) -> DirectRead:
+def builtin_read(operation: str, *, records_path: str | None = None) -> DirectRead:
     contract = direct.OPERATIONS[operation]
     plan = builtin_plan(operation)
     fields = selection(selected_paths(plan))
+    if contract.get("unpaged"):
+        path = records_path or direct.records_path(operation)
+        if operation != "HeroEmployees" or path not in {"partners", "company.partners"}:
+            raise ValueError("Unsupported employee collection path.")
+        body = "partners { " + fields + " }"
+        if path == "company.partners":
+            body = "company { " + body + " }"
+        return DirectRead(operation, plan, f"query Direct{operation} {{ {body} }}", path, {}, contract["page_size"])
     if contract.get("record_prefix"):  # connection: records are the edges' nodes, ordered by id
         images = ', filters: { category: { equals: "images" } }' if operation == "HeroPictures" else ""
         body = (f"{contract['root']}(first: $first, offset: $offset, sortings: [{contract['order_by']}]{images}) "
@@ -103,10 +111,14 @@ def approved_read(operation: str, source_instance: str) -> DirectRead | None:
 
 
 def resolve_read(operation: str, source_instance: str) -> DirectRead:
-    """The own approved mapping when there is one, otherwise the built-in mapping."""
+    """Require a sealed, approved mapping; templates never authorize a migration."""
     if operation not in direct.OPERATIONS:
         raise ValueError("Unknown direct operation: " + str(operation))
-    return approved_read(operation, source_instance) or builtin_read(operation)
+    read = approved_read(operation, source_instance)
+    if read is None:
+        raise ValueError(f"{direct.OPERATIONS[operation]['area']}: create and approve a mapping and its read service "
+                         "before starting migration.")
+    return read
 
 
 # ---------------------------------------------------------------- paging (client injected)

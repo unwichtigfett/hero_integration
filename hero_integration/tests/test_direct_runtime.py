@@ -3,12 +3,36 @@ from __future__ import annotations
 
 from types import SimpleNamespace as NS
 import unittest
+from unittest.mock import patch
 
 from graphql import build_schema, introspection_from_schema
 
 from hero_integration.services import direct_runtime as rt
 from hero_integration.services import query_mapping as qm
 from hero_integration.services.graphql_graph import analyze_snapshot
+
+
+class TestRequiredApprovedRead(unittest.TestCase):
+    def test_missing_or_unapproved_mapping_never_uses_template(self):
+        for operation in rt.direct.OPERATIONS:
+            with self.subTest(operation=operation), patch.object(rt, "approved_read", return_value=None), \
+                    patch.object(rt, "builtin_read") as template:
+                with self.assertRaisesRegex(ValueError, "create and approve"):
+                    rt.resolve_read(operation, "source-a")
+                template.assert_not_called()
+
+    def test_sealed_mapping_errors_are_not_hidden_by_template(self):
+        with patch.object(rt, "approved_read", side_effect=ValueError("stale seal")), \
+                patch.object(rt, "builtin_read") as template:
+            with self.assertRaisesRegex(ValueError, "stale seal"):
+                rt.resolve_read("HeroProducts", "source-a")
+            template.assert_not_called()
+
+    def test_approved_read_is_used_unchanged(self):
+        read = object()
+        with patch.object(rt, "approved_read", return_value=read) as approved:
+            self.assertIs(rt.resolve_read("HeroPictures", "source-a"), read)
+        approved.assert_called_once_with("HeroPictures", "source-a")
 
 
 class _Client:

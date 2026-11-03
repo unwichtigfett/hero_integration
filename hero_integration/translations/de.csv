@@ -1030,6 +1030,8 @@ Mutation usage,Mutation-Verwendung
 Mutation variable type does not match its schema argument.,Der Mutation-Variablentyp stimmt nicht mit seinem Schema-Argument überein.
 Mutation variables must be a JSON object.,Mutation-Variablen müssen ein JSON-Objekt sein.
 My new personal drafts,Meine neuen persönlichen Entwürfe
+My personal drafts,Meine persönlichen Entwürfe
+Personal drafts are visible only to their owner. Deployment drafts belong to Administrator.,Persönliche Entwürfe sind nur für ihren Eigentümer sichtbar. Deployment-Entwürfe gehören Administrator.
 My saved revisions,Meine gespeicherten Revisionen
 My saved revisions — read only,Meine gespeicherten Revisionen — schreibgeschützt
 Name,Name
@@ -3078,3 +3080,9 @@ Role in Source System,Rolle im Quellsystem
 Last Login in Source System,Letzte Anmeldung im Quellsystem
 Created in Source System,Im Quellsystem erstellt
 Modified in Source System,Im Quellsystem geändert
+Company of your business,Unternehmen deines Betriebs
+Use the confirmed ERPNext Company. The HERO customer ID is not copied into Company.,Das bestätigte eigene ERPNext-Unternehmen verwenden. Die Kunden-ID aus HERO wird nicht als Unternehmen übernommen.
+One confirmed Company per Project,Ein bestätigtes Unternehmen je Projekt
+Employee Status,Mitarbeiterstatus
+Employee Language,Benutzersprache
+HeroEmployees,Mitarbeiter

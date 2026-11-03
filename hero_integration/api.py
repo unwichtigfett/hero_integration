@@ -1510,25 +1510,14 @@ def frontend_mapping_list(search: str = "", start: int | str = 0, page_size: int
             | {"revision": int(_row_value(row, "mapping_revision", 0) or 0)}
             for row in frappe_rows if _row_value(row, "status") == "Active"
         ],
-        "builtin_mappings": [] if direction == "FRAPPE_TO_MUTATION" or start else _builtin_mapping_rows(search),
+        # Editable templates are personal drafts, never synthetic active mappings.
+        "builtin_mappings": [],
         "pagination": {
             "start": start, "page_size": page_size,
             "graphql_total": _active_mapping_count("HERO GraphQL Mapping", graphql_search if search else None, graphql_filters),
             "frappe_total": 0 if direction == "FRAPPE_TO_MUTATION" else _active_mapping_count("HERO Frappe Mapping", frappe_search if search else None),
         },
     }
-
-
-def _builtin_mapping_rows(search: str = "") -> list[dict[str, object]]:
-    """Built-in mappings of Products/Documents/Pictures while no own mapping is active (read-only)."""
-    from hero_integration.services.direct_operations import default_rows
-
-    configured = {_row_value(row, "operation") for row in frappe.get_all(
-        "HERO Frappe Mapping", filters={"status": "Active"}, fields=["operation"], distinct=True, limit_page_length=0)}
-    needle = search.casefold()
-    return [row for row in default_rows() if row["operation"] not in configured
-            and (not needle or any(needle in str(row[key]).casefold() for key in ("operation", "source_path",
-                                                                                    "target_doctype", "target_field")))]
 
 
 def _mapping_request_fields(allowed):
@@ -1761,7 +1750,7 @@ def mapping_draft_read(definition_id: str):
 
 @frappe.whitelist(methods=["GET"])
 def mapping_draft_list(direction: str, start: int | str = 0, page_size: int | str = 50):
-    """List only the current administrator's open, parentless definitions."""
+    """List the current administrator's open drafts, including current-definition drafts."""
     frappe.only_for("System Manager")
     _mapping_request_fields({"direction", "start", "page_size"})
     if direction not in {"QUERY_TO_FRAPPE", "FRAPPE_TO_MUTATION"}:
@@ -1781,14 +1770,38 @@ def mapping_draft_list(direction: str, start: int | str = 0, page_size: int | st
             context = json.loads(doc.new_definition_json or "null")
         except (TypeError, ValueError):
             continue
+        active_mapping = None
+        if context is None and doc.base_active_mapping:
+            parent = frappe.get_doc("HERO GraphQL Mapping", doc.base_active_mapping)
+            parent.check_permission("read")
+            if parent.definition_id != doc.definition_id:
+                continue
+            active_mapping = parent.name
+            context = {"site_scope": doc.site_scope, "definition_id": doc.definition_id,
+                "source_instance": parent.source_instance, "snapshot_name": parent.schema_snapshot,
+                "schema_fingerprint": parent.schema_fingerprint, "direction": parent.direction,
+                "operation_kind": parent.operation_kind, "operation_name": parent.operation_name}
         if (not isinstance(context, dict) or context.get("direction") != direction
                 or context.get("site_scope") != frappe.local.site
                 or context.get("definition_id") != doc.definition_id
                 or (context.get("operation_kind"), direction) not in {
                     ("QUERY", "QUERY_TO_FRAPPE"), ("MUTATION", "FRAPPE_TO_MUTATION")}):
             continue
-        items.append({key: context.get(key) for key in ("definition_id", "source_instance", "snapshot_name",
-            "schema_fingerprint", "direction", "operation_kind", "operation_name")})
+        item = {key: context.get(key) for key in ("definition_id", "source_instance", "snapshot_name",
+            "schema_fingerprint", "direction", "operation_kind", "operation_name")}
+        if active_mapping:
+            item["active_mapping"] = active_mapping
+        try:
+            content = json.loads(doc.content_json)
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(content, dict):
+            continue
+        operation = content.get("target_operation")
+        if isinstance(operation, str):
+            item["target_operation"] = operation
+        item["draft_revision"] = int(doc.content_revision or 0)
+        items.append(item)
     return {"items": items, "start": start, "page_size": page_size, "has_more": len(rows) == page_size}
 
 

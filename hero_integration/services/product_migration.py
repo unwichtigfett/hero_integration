@@ -49,11 +49,12 @@ REQUIRED_FALLBACKS = {"item_group": direct.UNCATALOGUED_GROUP, "stock_uom": dire
 # ---------------------------------------------------------------- mapping (pure)
 
 def item_values(row: dict, read=None) -> dict:
-    """Item values of one HERO article under ``read``'s mapping (built-in when omitted).
+    """Item values of one HERO article under the explicitly supplied mapping.
 
     Keys: item_code, the mapped Item fields (``owned`` lists them), barcode,
     buying, selling."""
-    read = read or runtime.builtin_read(OPERATION)
+    if read is None:
+        raise ValueError("An explicit product mapping is required.")
     mapped = runtime.record_values(read.plan, row, "Item")
     barcode = mapped.pop("barcodes", None)
     supplier = mapped.pop("supplier_items", None)
@@ -177,7 +178,7 @@ def _conflict(link, source: str, detail: str) -> str:
 
 def upsert(row: dict, link, masters: _Masters, source_instance: str, read=None) -> str:
     """Create or update one Item; returns added, updated, unchanged or conflict."""
-    read = read or runtime.builtin_read(OPERATION)
+    read = read or runtime.resolve_read(OPERATION, source_instance)
     values = item_values(row, read)
     owned = values.pop("owned")
     source = digest({**values, "mapping": read.mapping_version})
@@ -359,8 +360,10 @@ def _client():
 
 
 def fetch_page(client, offset: int, size: int = PAGE_SIZE, read=None) -> list[dict]:
-    """One page under ``read``'s query (built-in when omitted); a rejected page is read in halves."""
-    return runtime.fetch_page(client, read or runtime.builtin_read(OPERATION), offset, size)
+    """One page under the explicit query; a rejected page is read in halves."""
+    if read is None:
+        raise ValueError("An explicit product mapping is required.")
+    return runtime.fetch_page(client, read, offset, size)
 
 
 def sync_products(client=None, *, source_instance: str | None = None, time_budget: int = TIME_BUDGET_SECONDS,

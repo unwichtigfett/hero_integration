@@ -7,9 +7,9 @@ This module is the single registry of what is configurable for them and what
 stays fixed in code (identity, deletion, download, storage, attachment to the
 Project/Customer, source binding, price conflict protection).
 
-``DEFAULT_RULES`` is the built-in mapping: it reproduces the coded behaviour
-and is used while no approved mapping exists. It is shown read-only under
-Mapping → Active Mappings.
+``DEFAULT_RULES`` supplies editable mapping templates. Runtime execution requires
+an explicitly saved and approved mapping and read service; these defaults never
+substitute for missing or unapproved configuration.
 """
 from __future__ import annotations
 
@@ -18,6 +18,13 @@ import math
 from hero_integration.services.service_schema import SCALARS as SERVICE_SCALARS
 
 OPERATIONS = {
+    "HeroEmployees": {
+        "root": "partners", "owner": "Employee", "area": "Employees", "unpaged": True,
+        "identity": ("id", "Positive Int To Text", "int"),
+        "required_paths": frozenset({"id", "user_id", "user.id"}),
+        "targets": frozenset({"Employee", "User", "HERO Integration Link"}),
+        "record_name": ("Employee", "employee_name"), "page_size": 100,
+    },
     "HeroServices": {
         "root": "supply_services", "owner": "Item", "area": "Services",
         "identity": ("id", "Positive Int To Text", "int"),
@@ -59,6 +66,10 @@ def records_path(name: str) -> str:
 
 # Configurable target fields per DocType (besides app-owned custom_hero_* fields of the owner).
 FIELDS = {
+    "Employee": frozenset({"first_name", "last_name", "employee_name", "company_email", "personal_email",
+                           "cell_number", "status", "gender", "date_of_birth"}),
+    "User": frozenset({"email", "phone", "mobile_no", "language", "custom_hero_role",
+                       "custom_hero_last_login", "custom_hero_created", "custom_hero_modified"}),
     "Item": frozenset({"item_code", "item_name", "description", "item_group", "stock_uom", "brand", "disabled", "barcodes",
                        "supplier_items", "min_order_qty", "lead_time_days"}),
     "Item Price": frozenset({"price_list_rate"}),
@@ -66,6 +77,8 @@ FIELDS = {
 }
 # Coded resolvers; each may only feed its one native field.
 TRANSFORM_TARGETS = {
+    "Employee Status": ("Employee", "status"),
+    "Employee Language": ("User", "language"),
     "Service Price": ("Item Price", "price_list_rate"),
     "HERO Item Group": ("Item", "item_group"),       # catalog name → Item Group below "HERO Artikel"
     "HERO Category Group": ("Item", "item_group"),   # category → Item Group; without category the catalog
@@ -118,7 +131,7 @@ def validate_spec(spec) -> None:
     expected = TRANSFORM_TARGETS.get(spec.transformation)
     if expected and expected != (spec.target_doctype, spec.target_field):
         raise ValueError("{0} may only feed {1}.{2}.".format(spec.transformation, *expected))
-    coded = {target for target in TRANSFORM_TARGETS.values()}
+    coded = {target for name, target in TRANSFORM_TARGETS.items() if not name.startswith("Employee ")}
     if (spec.target_doctype, spec.target_field) in coded and not expected:
         raise ValueError("{0}.{1} requires its coded HERO resolver.".format(spec.target_doctype, spec.target_field))
     if spec.target_doctype == "Item Price":
@@ -137,6 +150,10 @@ def validate_plan(plan) -> None:
     path, transformation, _ = contract["identity"]
     if len(identities) != 1 or (identities[0].source_path, identities[0].transformation) != (path, transformation):
         raise ValueError("The identity of this HERO object is fixed: {0}.".format(path))
+    if (plan.target_operation or plan.operation) == "HeroEmployees":
+        required = {("Employee", "first_name"), ("Employee", "status"), ("User", "email")}
+        if not required.issubset({(d.target_doctype, d.target_field) for d in plan.definitions}):
+            raise ValueError("Employee mappings require first name, status and user login email.")
     if len([d for d in plan.definitions if d.purpose == "Record Name"]) != 1:
         raise ValueError("Native intake requires a record-name binding.")
     prices = [d.relation for d in plan.definitions if d.target_doctype == "Item Price"]
@@ -166,6 +183,13 @@ def required_paths(plan) -> set[str]:
 
 def resolve(transformation: str, value, record: dict | None = None):
     """Value of a coded resolver; None means "no value" (nothing is written)."""
+    if transformation == "Employee Status":
+        states = {"active": "Active", "inactive": "Inactive", "suspended": "Suspended", "left": "Left"}
+        if value is not None and value not in states:
+            raise ValueError("Employee status requires an explicit mapping.")
+        return states.get(value)
+    if transformation == "Employee Language":
+        return value.strip() if isinstance(value, str) else None
     if transformation in {"HERO Item Group", "HERO Brand"}:
         text = value.strip()[:140] if isinstance(value, str) else ""
         if transformation == "HERO Item Group":
@@ -230,6 +254,22 @@ _FILE_RULES = lambda op: (  # noqa: E731 - same rules for Documents and Pictures
 )
 
 DEFAULT_RULES = {
+    "HeroEmployees": (
+        _rule("HeroEmployees", "id", "HERO Integration Link", "source_id", "int", "Source Identity", "Positive Int To Text"),
+        _rule("HeroEmployees", "first_name", "Employee", "first_name", "string|null"),
+        _rule("HeroEmployees", "last_name", "Employee", "last_name", "string|null"),
+        _rule("HeroEmployees", "full_name", "Employee", "employee_name", "string|null", "Record Name"),
+        _rule("HeroEmployees", "email", "Employee", "company_email", "string|null"),
+        _rule("HeroEmployees", "mobile", "Employee", "cell_number", "string|null"),
+        _rule("HeroEmployees", "role", "Employee", "custom_hero_partner_role", "string|null"),
+        _rule("HeroEmployees", "account_type", "Employee", "custom_hero_account_type", "string|null"),
+        _rule("HeroEmployees", "status", "Employee", "status", "string|null", "Field", "Employee Status"),
+        _rule("HeroEmployees", "user.email", "User", "email", "string|null"),
+        _rule("HeroEmployees", "phone", "User", "phone", "string|null"),
+        _rule("HeroEmployees", "user.locale", "User", "language", "string|null", "Field", "Employee Language"),
+        *(_rule("HeroEmployees", "user." + name, "User", "custom_hero_" + name, "string|null")
+          for name in ("role", "last_login", "created", "modified")),
+    ),
     "HeroServices": (
         _rule("HeroServices", "id", "HERO Integration Link", "source_id", "int", "Source Identity", "Positive Int To Text"),
         _rule("HeroServices", "nr", "Item", "item_code", "string|null"),

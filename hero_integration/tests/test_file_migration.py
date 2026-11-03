@@ -202,7 +202,8 @@ class TestSourceBinding(unittest.TestCase):
         fake = SimpleNamespace(get_doc=lambda values: _Run(name="RUN-1", **values),
                                db=SimpleNamespace(set_default=lambda *a: None, commit=lambda: None))
         with patch.object(fm, "frappe", fake), patch.object(fm, "_configuration", return_value=_config()), \
-                patch.object(fm, "_enqueue"), patch("hero_integration.services.file_transfer.reset_phase"):
+                patch.object(fm, "_enqueue"), patch.object(fm.direct_runtime, "resolve_read"), \
+                patch("hero_integration.services.file_transfer.reset_phase"):
             fm.start("Document Migration")
         self.assertEqual((created[0].source_instance, created[0].source_binding_revision), ("source-a", 3))
         with patch.object(fm, "frappe", fake), patch.object(fm, "_configuration", return_value=_config(confirmed=False)), \
@@ -229,6 +230,46 @@ class TestSourceBinding(unittest.TestCase):
         self.assertIn("another HERO source", db.runs["R"]["error_message"])
 
 
+class TestMappingReadiness(unittest.TestCase):
+    def test_missing_mapping_blocks_before_run_insert(self):
+        with patch.object(fm, "confirmed_configuration", return_value=_config()), \
+                patch.object(fm.direct_runtime, "resolve_read", side_effect=ValueError("approve mapping")), \
+                patch.object(fm.frappe, "get_doc") as insert:
+            for action in (*fm.DIRECT_OPERATIONS, fm.FULL_ACTION):
+                with self.subTest(action=action), self.assertRaisesRegex(ValueError, "approve mapping"):
+                    fm.start(action)
+            insert.assert_not_called()
+
+    def test_resume_preserves_blocked_run_when_mapping_is_unapproved(self):
+        run = SimpleNamespace(action="Picture Migration", state="Blocked")
+        with patch.object(fm, "bound_configuration", return_value=_config()), \
+                patch.object(fm.direct_runtime, "resolve_read", side_effect=ValueError("approve mapping")), \
+                self.assertRaisesRegex(ValueError, "approve mapping"):
+            fm.resume(run)
+        self.assertEqual(run.state, "Blocked")
+
+    def test_scope_and_service_come_from_the_selected_mapping(self):
+        from dataclasses import replace
+        template = fm.direct_runtime.builtin_read("HeroProducts")
+        read = replace(template, origin="approved-reader", mapping="current-mapping")
+        fake = SimpleNamespace(get_all=lambda *a, **kw: [], db=SimpleNamespace(exists=lambda *a: False))
+        with patch.object(fm, "frappe", fake), patch.object(fm.direct_runtime, "resolve_read", return_value=read):
+            products = next(row for row in fm.page_areas([], "source-a") if row["key"] == "products")
+        self.assertEqual(products["service"], {"service": "approved-reader", "mapping": "current-mapping"})
+        item = next(row for row in products["scope"]["objects"] if row["doctype"] == "Item")
+        self.assertIn("custom_hero_manufacturer_nr", item["fields"])
+        self.assertEqual(products["scope"]["field_count"], len(read.plan.definitions) - 1)  # two price lists, one field
+
+    def test_page_marks_direct_and_full_areas_blocked(self):
+        fake = SimpleNamespace(get_all=lambda *a, **kw: [], db=SimpleNamespace(exists=lambda *a: False))
+        with patch.object(fm, "frappe", fake), \
+                patch.object(fm.direct_runtime, "resolve_read", side_effect=ValueError("approve mapping")):
+            rows = {row["key"]: row for row in fm.page_areas([], "source-a")}
+        for key in ("employees", "products", "services", "documents", "pictures", "full"):
+            self.assertFalse(rows[key]["ready"])
+            self.assertEqual(rows[key]["blocker"], "approve mapping")
+
+
 class TestEveryStartPathIsSourceBound(unittest.TestCase):
     """The older file_transfer entry points share the bound run path."""
 
@@ -252,7 +293,7 @@ class TestEveryStartPathIsSourceBound(unittest.TestCase):
                                                        commit=lambda: None),
                                     log_error=lambda **kwargs: self.queued.append(("logged", kwargs)))
         for target in (patch.object(api, "frappe", self.fake), patch.object(ft, "frappe", self.fake),
-                       patch.object(fm, "frappe", self.fake),
+                       patch.object(fm, "frappe", self.fake), patch.object(fm.direct_runtime, "resolve_read"),
                        patch.object(fm, "_enqueue", side_effect=lambda name: self.queued.append(name)),
                        patch("hero_integration.services.file_transfer.reset_phase")):
             target.start()

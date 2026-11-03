@@ -1,7 +1,7 @@
 """Install the reviewed, site-scoped draft bundle during a code deployment.
 
-This is a migration hook, not a public import endpoint. It uses the personal
-draft service and never publishes mappings, approves services or contacts HERO.
+This migration hook installs reviewed drafts and runs the scoped one-time
+reader repair. It never contacts HERO or imports business records.
 """
 from __future__ import annotations
 
@@ -19,9 +19,12 @@ PACKAGE_PATH = Path(__file__).resolve().parents[1] / "deployment" / "consolidate
 
 
 def after_migrate():
-    result = install_package(json.loads(PACKAGE_PATH.read_text(encoding="utf-8")))
+    package = json.loads(PACKAGE_PATH.read_text(encoding="utf-8"))
+    result = install_package(package)
     if result["status"] != "OTHER_SITE":
         print("HERO draft deployment: " + json.dumps(result, sort_keys=True))
+        from hero_integration.services.mapping_deployment_repair import repair
+        print("HERO mapping repair: " + json.dumps(repair(package), sort_keys=True))
     return result
 
 
@@ -47,7 +50,10 @@ before draft writes; they can survive a later failure and are safe to retry.
 
 def _install(package):
     pending, retained = [], []
-    for item in package["mappings"]:
+    consolidating = bool(package.get("merge_inputs"))
+    # Consolidation writes directly onto current active parents. Recreating its
+    # historical inputs would manufacture drafts with different reviewed hashes.
+    for item in (() if consolidating else package["mappings"]):
         identity = item["definition_id"]
         key = draft_key(frappe.local.site, identity, frappe.session.user)
         # Never reopen a discarded draft or undo edits/publication on a later migrate.
@@ -57,7 +63,7 @@ def _install(package):
             retained.append({"definition_id": identity, "state": "ALREADY_DEFINED"})
         else:
             pending.append(item)
-    if not pending:
+    if not pending and not consolidating:
         return {"status": "UNCHANGED", "package": package["package_id"], "drafts": retained}
 
     # Match by semantic schema identity; document names differ between sites.
@@ -73,6 +79,8 @@ def _install(package):
     _validated_snapshot(snapshot_name, for_update=False)
 
     _ensure_fields(package["required_custom_fields"])
+    if consolidating:
+        return {"status": "PREPARED", "package": package["package_id"], "drafts": []}
     prepared = []
     for item in pending:
         definition = {

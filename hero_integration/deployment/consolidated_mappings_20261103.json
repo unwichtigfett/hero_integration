@@ -1062,5 +1062,628 @@
       },
       "query_proposal": "\nquery HeroProjectMatches($first: Int!, $offset: Int!, $orderBy: String!) {\n  project_matches(first: $first, offset: $offset, orderBy: $orderBy) {\n    id customer_id project_id project_title project_nr project_type partner_notes\n    customer { title full_name }\n    address { full_address }\n    display_id created modified\n    measure { short name }\n    volume\n    name partner_source partner_id\n    project_match_assignments { user_id }\n    current_project_match_status { id status_code name short_name created modified step_id }\n  }\n}\n"
     }
+  ],
+  "merge_inputs": [
+    {
+      "definition_id": "59e59954-8445-53b2-b43a-939b60955bc3",
+      "content_hash": "acea2d43b27d29ab9fe7bdd9920e777f090972ee1da5a00e16d880e32c352370",
+      "operation": "HeroProjectMatches"
+    },
+    {
+      "definition_id": "3ea6a6d7-0b11-579a-9b51-2c4d3de3aeaa",
+      "content_hash": "43ed8e9ea4b88a962d1c5e48c1d3028883da04a2c9e71addeea45706fb81ef62",
+      "operation": "HeroProducts"
+    },
+    {
+      "definition_id": "ed093486-13d6-508d-8df0-f1663a174d07",
+      "content_hash": "0746a12d758f89b08a93622974a098f4a0349003c5ac59963ce60dcc3cd32b9c",
+      "operation": "HeroCustomers"
+    },
+    {
+      "definition_id": "a243175f-11b7-5934-ab6a-0590abba5c48",
+      "content_hash": "5ee3a06430dd0e7315fcfb910c15b738207825142d19bf64aaae422244eb5ab8",
+      "operation": "HeroProjectMatches"
+    },
+    {
+      "definition_id": "193d6793-55dd-53e1-99b8-0d12d8b31cee",
+      "content_hash": "44dcc77b1beeeec1463ebbcd6016596d61cfca891ddf4a579c49b455a5f524d0",
+      "operation": "HeroCustomers"
+    },
+    {
+      "definition_id": "HERO-GQL-MAP-00069",
+      "content_hash": "fa343984de96c4ed956549d42593bf5b88075385cf94f28a236f5d9d8d29998c",
+      "operation": "HeroCustomers"
+    },
+    {
+      "definition_id": "HERO-GQL-MAP-00071",
+      "content_hash": "ae983891acfb964c3a5b1fa9888df152a1ade0f9675198dbba715a3ea5eeaa6c",
+      "operation": "HeroProjectMatches"
+    },
+    {
+      "definition_id": "a9558efa-5530-57c4-8d26-ba8f3b46fb27",
+      "content_hash": "5fece8c6c457d9c41d24b9d191f96cdc4191d9291f7beee78345d5b511aea7d6",
+      "operation": "HeroProducts"
+    }
+  ],
+  "configurable_templates": [
+    {
+      "definition_id": "3cb4f9cc-5a2f-5c9d-9329-7c5715208307",
+      "operation_name": "supply_services",
+      "content": {
+        "target_operation": "HeroServices",
+        "records_path": "supply_services",
+        "identity_path": "id",
+        "mapping_definition_ids": [
+          "2926d613-23fb-580f-98e8-149142aa6907",
+          "7ebf7796-f1e6-5121-ad77-09d9dca54fee",
+          "b0f22892-47f3-5833-8a0d-e93a4281b2c5",
+          "953af30b-d26c-5b28-b836-98fae98e8c1d",
+          "6cf038bd-2238-5182-87b7-a061083d38ec",
+          "4e6227dd-c86d-515e-86d8-6c9c28aaabc6",
+          "43f0ea6e-6085-537d-905e-997cd61034a7",
+          "54872585-0e69-5c39-839b-eddce3f07e8d",
+          "217c5e9e-5725-5e96-8e78-f26eb3ad0343",
+          "4453be23-ec7d-5254-bb44-9c9ff8207f14",
+          "6bb666f4-bfc8-548c-9b74-18c7c4b84890",
+          "752310e5-feaa-5145-81f1-8e25c4ab6633",
+          "8034a822-8154-5c42-9f52-1c092320cc43",
+          "18a9a183-5a44-5fdc-bb9f-f450d97b35da",
+          "1b33f7c2-f6fc-53f6-bc81-55827c9c7205",
+          "37d7106a-f433-543f-ab55-2dd6a282165a"
+        ],
+        "field_rules": {
+          "2926d613-23fb-580f-98e8-149142aa6907": {
+            "source_path": "id",
+            "target_doctype": "HERO Integration Link",
+            "target_field": "source_id",
+            "source_type": "int",
+            "purpose": "Source Identity",
+            "transformation": "Positive Int To Text",
+            "relation": "",
+            "priority": 5
+          },
+          "7ebf7796-f1e6-5121-ad77-09d9dca54fee": {
+            "source_path": "nr",
+            "target_doctype": "Item",
+            "target_field": "item_code",
+            "source_type": "string|null",
+            "purpose": "Field",
+            "transformation": "Trim",
+            "relation": "",
+            "priority": 5
+          },
+          "b0f22892-47f3-5833-8a0d-e93a4281b2c5": {
+            "source_path": "is_fixed_net_price",
+            "target_doctype": "Item",
+            "target_field": "custom_hero_service_is_fixed_net_price",
+            "source_type": "boolean|null",
+            "purpose": "Field",
+            "transformation": "Identity",
+            "relation": "",
+            "priority": 5
+          },
+          "953af30b-d26c-5b28-b836-98fae98e8c1d": {
+            "source_path": "quantity",
+            "target_doctype": "Item",
+            "target_field": "custom_hero_service_quantity",
+            "source_type": "float|null",
+            "purpose": "Field",
+            "transformation": "Identity",
+            "relation": "",
+            "priority": 5
+          },
+          "6cf038bd-2238-5182-87b7-a061083d38ec": {
+            "source_path": "time_minutes",
+            "target_doctype": "Item",
+            "target_field": "custom_hero_service_time_minutes",
+            "source_type": "float|null",
+            "purpose": "Field",
+            "transformation": "Identity",
+            "relation": "",
+            "priority": 5
+          },
+          "4e6227dd-c86d-515e-86d8-6c9c28aaabc6": {
+            "source_path": "vat_percent",
+            "target_doctype": "Item",
+            "target_field": "custom_hero_service_vat_percent",
+            "source_type": "float|null",
+            "purpose": "Field",
+            "transformation": "Identity",
+            "relation": "",
+            "priority": 5
+          },
+          "43f0ea6e-6085-537d-905e-997cd61034a7": {
+            "source_path": "created",
+            "target_doctype": "Item",
+            "target_field": "custom_hero_service_created",
+            "source_type": "string|null",
+            "purpose": "Field",
+            "transformation": "Identity",
+            "relation": "",
+            "priority": 5
+          },
+          "54872585-0e69-5c39-839b-eddce3f07e8d": {
+            "source_path": "modified",
+            "target_doctype": "Item",
+            "target_field": "custom_hero_service_modified",
+            "source_type": "string|null",
+            "purpose": "Field",
+            "transformation": "Identity",
+            "relation": "",
+            "priority": 5
+          },
+          "217c5e9e-5725-5e96-8e78-f26eb3ad0343": {
+            "source_path": "name",
+            "target_doctype": "Item",
+            "target_field": "item_name",
+            "source_type": "string|null",
+            "purpose": "Record Name",
+            "transformation": "Trim",
+            "relation": "",
+            "priority": 5
+          },
+          "4453be23-ec7d-5254-bb44-9c9ff8207f14": {
+            "source_path": "description",
+            "target_doctype": "Item",
+            "target_field": "description",
+            "source_type": "string|null",
+            "purpose": "Field",
+            "transformation": "Safe HTML",
+            "relation": "",
+            "priority": 5
+          },
+          "6bb666f4-bfc8-548c-9b74-18c7c4b84890": {
+            "source_path": "unit_type",
+            "target_doctype": "Item",
+            "target_field": "stock_uom",
+            "source_type": "string|null",
+            "purpose": "Field",
+            "transformation": "HERO UOM",
+            "relation": "",
+            "priority": 5
+          },
+          "752310e5-feaa-5145-81f1-8e25c4ab6633": {
+            "source_path": "manufacturer",
+            "target_doctype": "Item",
+            "target_field": "brand",
+            "source_type": "string|null",
+            "purpose": "Field",
+            "transformation": "HERO Brand",
+            "relation": "",
+            "priority": 5
+          },
+          "8034a822-8154-5c42-9f52-1c092320cc43": {
+            "source_path": "ean",
+            "target_doctype": "Item",
+            "target_field": "barcodes",
+            "source_type": "string|null",
+            "purpose": "Field",
+            "transformation": "HERO EAN Barcode",
+            "relation": "",
+            "priority": 5
+          },
+          "18a9a183-5a44-5fdc-bb9f-f450d97b35da": {
+            "source_path": "is_deleted",
+            "target_doctype": "Item",
+            "target_field": "disabled",
+            "source_type": "boolean|null",
+            "purpose": "Field",
+            "transformation": "Identity",
+            "relation": "",
+            "priority": 5
+          },
+          "1b33f7c2-f6fc-53f6-bc81-55827c9c7205": {
+            "source_path": "net_price_per_unit",
+            "target_doctype": "Item Price",
+            "target_field": "price_list_rate",
+            "source_type": "float|null",
+            "purpose": "Field",
+            "transformation": "Service Price",
+            "relation": "Standard Selling",
+            "priority": 5
+          },
+          "37d7106a-f433-543f-ab55-2dd6a282165a": {
+            "source_path": "internal_identifier",
+            "target_doctype": "Item",
+            "target_field": "custom_hero_service_internal_identifier",
+            "source_type": "string|null",
+            "purpose": "Field",
+            "transformation": "Identity",
+            "relation": "",
+            "priority": 5
+          }
+        },
+        "variables": {
+          "first": "$page_size",
+          "offset": "$offset"
+        },
+        "page_size": 100,
+        "query_adapter": {
+          "version": 2,
+          "transform_options": {
+            "2926d613-23fb-580f-98e8-149142aa6907": {
+              "target_type": "Data"
+            },
+            "7ebf7796-f1e6-5121-ad77-09d9dca54fee": {
+              "target_type": "Data"
+            },
+            "b0f22892-47f3-5833-8a0d-e93a4281b2c5": {
+              "target_type": "Check"
+            },
+            "953af30b-d26c-5b28-b836-98fae98e8c1d": {
+              "target_type": "Float"
+            },
+            "6cf038bd-2238-5182-87b7-a061083d38ec": {
+              "target_type": "Float"
+            },
+            "4e6227dd-c86d-515e-86d8-6c9c28aaabc6": {
+              "target_type": "Float"
+            },
+            "43f0ea6e-6085-537d-905e-997cd61034a7": {
+              "target_type": "Data"
+            },
+            "54872585-0e69-5c39-839b-eddce3f07e8d": {
+              "target_type": "Data"
+            },
+            "217c5e9e-5725-5e96-8e78-f26eb3ad0343": {
+              "target_type": "Data"
+            },
+            "4453be23-ec7d-5254-bb44-9c9ff8207f14": {
+              "target_type": "Text Editor"
+            },
+            "18a9a183-5a44-5fdc-bb9f-f450d97b35da": {
+              "target_type": "Check"
+            },
+            "37d7106a-f433-543f-ab55-2dd6a282165a": {
+              "target_type": "Data"
+            }
+          }
+        }
+      },
+      "query_proposal": "query DirectHeroServices($first: Int!, $offset: Int!) { supply_services(first: $first, offset: $offset, orderBy: \"id\") { company_id created description ean id internal_identifier is_deleted is_fixed_net_price manufacturer modified name net_price_per_unit nr quantity time_minutes unit_type vat_percent } }"
+    },
+    {
+      "definition_id": "5b651877-10f6-5b6e-886c-d8726665db65",
+      "operation_name": "FileUpload_FileUploads",
+      "content": {
+        "target_operation": "HeroDocuments",
+        "records_path": "FileUpload_FileUploads.edges.node",
+        "identity_path": "id",
+        "mapping_definition_ids": [
+          "eb6424fb-7718-5240-93db-aa11e5025bfb",
+          "ff0a10d9-7ffb-54f6-9851-f6314d18f00e"
+        ],
+        "field_rules": {
+          "eb6424fb-7718-5240-93db-aa11e5025bfb": {
+            "source_path": "id",
+            "target_doctype": "HERO Integration Link",
+            "target_field": "source_id",
+            "source_type": "int",
+            "purpose": "Source Identity",
+            "transformation": "Positive Int To Text",
+            "relation": "",
+            "priority": 5
+          },
+          "ff0a10d9-7ffb-54f6-9851-f6314d18f00e": {
+            "source_path": "filename",
+            "target_doctype": "File",
+            "target_field": "file_name",
+            "source_type": "string",
+            "purpose": "Record Name",
+            "transformation": "Trim",
+            "relation": "",
+            "priority": 5
+          }
+        },
+        "variables": {
+          "first": "$page_size",
+          "offset": "$offset"
+        },
+        "page_size": 200,
+        "query_adapter": {
+          "version": 2,
+          "transform_options": {
+            "eb6424fb-7718-5240-93db-aa11e5025bfb": {
+              "target_type": "Data"
+            },
+            "ff0a10d9-7ffb-54f6-9851-f6314d18f00e": {
+              "target_type": "Data"
+            }
+          }
+        }
+      },
+      "query_proposal": "query DirectHeroDocuments($first: Int!, $offset: Int!) { FileUpload_FileUploads(first: $first, offset: $offset, sortings: [ID_ASC]) { edges { node { category created downloadUrl filename id modified size uuid } } } }"
+    },
+    {
+      "definition_id": "1eab563b-ded8-5373-9e97-1484b4d90c9d",
+      "operation_name": "FileUpload_FileUploads",
+      "content": {
+        "target_operation": "HeroPictures",
+        "records_path": "FileUpload_FileUploads.edges.node",
+        "identity_path": "id",
+        "mapping_definition_ids": [
+          "ad54c5bc-ce15-5916-83a4-7a2450f4cfbf",
+          "8f4e52d8-525d-517e-ba9b-9252b08609d0"
+        ],
+        "field_rules": {
+          "ad54c5bc-ce15-5916-83a4-7a2450f4cfbf": {
+            "source_path": "id",
+            "target_doctype": "HERO Integration Link",
+            "target_field": "source_id",
+            "source_type": "int",
+            "purpose": "Source Identity",
+            "transformation": "Positive Int To Text",
+            "relation": "",
+            "priority": 5
+          },
+          "8f4e52d8-525d-517e-ba9b-9252b08609d0": {
+            "source_path": "filename",
+            "target_doctype": "File",
+            "target_field": "file_name",
+            "source_type": "string",
+            "purpose": "Record Name",
+            "transformation": "Trim",
+            "relation": "",
+            "priority": 5
+          }
+        },
+        "variables": {
+          "first": "$page_size",
+          "offset": "$offset"
+        },
+        "page_size": 200,
+        "query_adapter": {
+          "version": 2,
+          "transform_options": {
+            "ad54c5bc-ce15-5916-83a4-7a2450f4cfbf": {
+              "target_type": "Data"
+            },
+            "8f4e52d8-525d-517e-ba9b-9252b08609d0": {
+              "target_type": "Data"
+            }
+          }
+        }
+      },
+      "query_proposal": "query DirectHeroPictures($first: Int!, $offset: Int!) { FileUpload_FileUploads(first: $first, offset: $offset, sortings: [ID_ASC], filters: { category: { equals: \"images\" } }) { edges { node { category created downloadUrl filename id modified size uuid } } } }"
+    },
+    {
+      "definition_id": "f97aaa52-f13a-5a55-886c-20c120731f45",
+      "operation_name": "company",
+      "content": {
+        "target_operation": "HeroEmployees",
+        "records_path": "company.partners",
+        "identity_path": "id",
+        "mapping_definition_ids": [
+          "d42938f7-6448-5c3b-a932-a1b6b89f6254",
+          "cd882b80-15bf-54c1-a5de-f51045e97ca7",
+          "9fca4468-39eb-5c5e-9472-7677a0599362",
+          "9d8fe113-cfb1-537e-b9ef-6a82ba33d09d",
+          "b94a2512-fd38-5199-93c4-eacd2d826e81",
+          "43e7cb30-57ba-5d8c-89cc-576b19ca8207",
+          "9bf53748-0ec4-50ac-a619-15080d06e5a7",
+          "2584e9ed-4b50-5c87-80e6-3c844d14b009",
+          "594e4995-e0ec-57cf-a25c-85b25e788e37",
+          "eced4166-ecf6-56f8-9464-3a0a0fa279c4",
+          "7cda39bd-8309-5f5d-81dd-4980d3e73886",
+          "472358c8-5e5d-5355-bf0c-1ee92485980b",
+          "75bc36c7-901b-5ba8-abc2-109f32c5289b",
+          "37977130-dcac-5de7-9ee8-4fd311a5aa87",
+          "21bfebe4-fa0c-57e0-be3f-de27a1848d6d",
+          "e773ab96-72a8-566e-9576-006f7285de8a"
+        ],
+        "field_rules": {
+          "d42938f7-6448-5c3b-a932-a1b6b89f6254": {
+            "source_path": "id",
+            "target_doctype": "HERO Integration Link",
+            "target_field": "source_id",
+            "source_type": "int",
+            "purpose": "Source Identity",
+            "transformation": "Positive Int To Text",
+            "relation": "",
+            "priority": 5
+          },
+          "cd882b80-15bf-54c1-a5de-f51045e97ca7": {
+            "source_path": "first_name",
+            "target_doctype": "Employee",
+            "target_field": "first_name",
+            "source_type": "string|null",
+            "purpose": "Field",
+            "transformation": "Trim",
+            "relation": "",
+            "priority": 5
+          },
+          "9fca4468-39eb-5c5e-9472-7677a0599362": {
+            "source_path": "phone",
+            "target_doctype": "User",
+            "target_field": "phone",
+            "source_type": "string|null",
+            "purpose": "Field",
+            "transformation": "Trim",
+            "relation": "",
+            "priority": 5
+          },
+          "9d8fe113-cfb1-537e-b9ef-6a82ba33d09d": {
+            "source_path": "user.locale",
+            "target_doctype": "User",
+            "target_field": "language",
+            "source_type": "string|null",
+            "purpose": "Field",
+            "transformation": "Employee Language",
+            "relation": "",
+            "priority": 5
+          },
+          "b94a2512-fd38-5199-93c4-eacd2d826e81": {
+            "source_path": "user.role",
+            "target_doctype": "User",
+            "target_field": "custom_hero_role",
+            "source_type": "string|null",
+            "purpose": "Field",
+            "transformation": "Trim",
+            "relation": "",
+            "priority": 5
+          },
+          "43e7cb30-57ba-5d8c-89cc-576b19ca8207": {
+            "source_path": "user.last_login",
+            "target_doctype": "User",
+            "target_field": "custom_hero_last_login",
+            "source_type": "string|null",
+            "purpose": "Field",
+            "transformation": "Trim",
+            "relation": "",
+            "priority": 5
+          },
+          "9bf53748-0ec4-50ac-a619-15080d06e5a7": {
+            "source_path": "user.created",
+            "target_doctype": "User",
+            "target_field": "custom_hero_created",
+            "source_type": "string|null",
+            "purpose": "Field",
+            "transformation": "Trim",
+            "relation": "",
+            "priority": 5
+          },
+          "2584e9ed-4b50-5c87-80e6-3c844d14b009": {
+            "source_path": "user.modified",
+            "target_doctype": "User",
+            "target_field": "custom_hero_modified",
+            "source_type": "string|null",
+            "purpose": "Field",
+            "transformation": "Trim",
+            "relation": "",
+            "priority": 5
+          },
+          "594e4995-e0ec-57cf-a25c-85b25e788e37": {
+            "source_path": "last_name",
+            "target_doctype": "Employee",
+            "target_field": "last_name",
+            "source_type": "string|null",
+            "purpose": "Field",
+            "transformation": "Trim",
+            "relation": "",
+            "priority": 5
+          },
+          "eced4166-ecf6-56f8-9464-3a0a0fa279c4": {
+            "source_path": "full_name",
+            "target_doctype": "Employee",
+            "target_field": "employee_name",
+            "source_type": "string|null",
+            "purpose": "Record Name",
+            "transformation": "Trim",
+            "relation": "",
+            "priority": 5
+          },
+          "7cda39bd-8309-5f5d-81dd-4980d3e73886": {
+            "source_path": "email",
+            "target_doctype": "Employee",
+            "target_field": "company_email",
+            "source_type": "string|null",
+            "purpose": "Field",
+            "transformation": "Trim",
+            "relation": "",
+            "priority": 5
+          },
+          "472358c8-5e5d-5355-bf0c-1ee92485980b": {
+            "source_path": "mobile",
+            "target_doctype": "Employee",
+            "target_field": "cell_number",
+            "source_type": "string|null",
+            "purpose": "Field",
+            "transformation": "Trim",
+            "relation": "",
+            "priority": 5
+          },
+          "75bc36c7-901b-5ba8-abc2-109f32c5289b": {
+            "source_path": "role",
+            "target_doctype": "Employee",
+            "target_field": "custom_hero_partner_role",
+            "source_type": "string|null",
+            "purpose": "Field",
+            "transformation": "Trim",
+            "relation": "",
+            "priority": 5
+          },
+          "37977130-dcac-5de7-9ee8-4fd311a5aa87": {
+            "source_path": "account_type",
+            "target_doctype": "Employee",
+            "target_field": "custom_hero_account_type",
+            "source_type": "string|null",
+            "purpose": "Field",
+            "transformation": "Trim",
+            "relation": "",
+            "priority": 5
+          },
+          "21bfebe4-fa0c-57e0-be3f-de27a1848d6d": {
+            "source_path": "status",
+            "target_doctype": "Employee",
+            "target_field": "status",
+            "source_type": "string|null",
+            "purpose": "Field",
+            "transformation": "Employee Status",
+            "relation": "",
+            "priority": 5
+          },
+          "e773ab96-72a8-566e-9576-006f7285de8a": {
+            "source_path": "user.email",
+            "target_doctype": "User",
+            "target_field": "email",
+            "source_type": "string|null",
+            "purpose": "Field",
+            "transformation": "Trim",
+            "relation": "",
+            "priority": 5
+          }
+        },
+        "variables": {},
+        "page_size": 100,
+        "query_adapter": {
+          "version": 2,
+          "transform_options": {
+            "d42938f7-6448-5c3b-a932-a1b6b89f6254": {
+              "target_type": "Data"
+            },
+            "cd882b80-15bf-54c1-a5de-f51045e97ca7": {
+              "target_type": "Data"
+            },
+            "9fca4468-39eb-5c5e-9472-7677a0599362": {
+              "target_type": "Data"
+            },
+            "b94a2512-fd38-5199-93c4-eacd2d826e81": {
+              "target_type": "Data"
+            },
+            "43e7cb30-57ba-5d8c-89cc-576b19ca8207": {
+              "target_type": "Data"
+            },
+            "9bf53748-0ec4-50ac-a619-15080d06e5a7": {
+              "target_type": "Data"
+            },
+            "2584e9ed-4b50-5c87-80e6-3c844d14b009": {
+              "target_type": "Data"
+            },
+            "594e4995-e0ec-57cf-a25c-85b25e788e37": {
+              "target_type": "Data"
+            },
+            "eced4166-ecf6-56f8-9464-3a0a0fa279c4": {
+              "target_type": "Data"
+            },
+            "7cda39bd-8309-5f5d-81dd-4980d3e73886": {
+              "target_type": "Data"
+            },
+            "472358c8-5e5d-5355-bf0c-1ee92485980b": {
+              "target_type": "Data"
+            },
+            "75bc36c7-901b-5ba8-abc2-109f32c5289b": {
+              "target_type": "Data"
+            },
+            "37977130-dcac-5de7-9ee8-4fd311a5aa87": {
+              "target_type": "Data"
+            },
+            "e773ab96-72a8-566e-9576-006f7285de8a": {
+              "target_type": "Data"
+            }
+          }
+        }
+      },
+      "query_proposal": "query DirectHeroEmployees { company { partners { account_type email first_name full_name id last_name mobile phone role status user { created email id last_login locale modified role } user_id } } }"
+    }
   ]
 }

@@ -7,14 +7,14 @@ const source = readFileSync(new URL('../public/js/hero_mapping_editor.js', impor
 const registry = readFileSync(new URL('../services/direct_operations.py', import.meta.url), 'utf8');
 const window = {};
 vm.runInNewContext(source, {window});
-const {directRuleChoices, mappingMatchesContext, mappingRowCanOpen, DraftState} = window.hero_integration_mapping_editor;
+const {directRuleChoices, mappingMatchesContext, mappingRowCanOpen, operationLabel, DraftState} = window.hero_integration_mapping_editor;
 const content = {target_operation: 'HeroProducts', query_adapter: {version: 2}};
 const rule = {target_doctype: 'Item Price', target_field: 'price_list_rate'};
 const plain = (value) => JSON.parse(JSON.stringify(value));
 
-test('all three direct Query adapters offer exactly the registry HERO resolvers', () => {
+test('catalog and file Query adapters offer their registry HERO resolvers', () => {
     const block = registry.match(/TRANSFORM_TARGETS = \{([\s\S]*?)\n\}/)[1];
-    const expected = [...block.matchAll(/^    "([^"]+)":/gm)].map((match) => match[1]);
+    const expected = [...block.matchAll(/^    "([^"]+)":/gm)].map((match) => match[1]).filter((name) => !name.startsWith('Employee '));
     assert.equal(expected.length, 9);
     for (const target_operation of ['HeroProducts', 'HeroDocuments', 'HeroPictures', 'HeroServices']) {
         assert.deepEqual(plain(directRuleChoices({...content, target_operation}, rule).transformation), expected);
@@ -73,4 +73,10 @@ test('rendered rule controls wire choices to the stored rule and preserve free-f
     assert.match(source, /select\.val\(rule\[key\] \|\| ""\)\.on\("change", \(\) => \{ change\(select\.val\(\)\); updateDirty\(\); \}\)/);
     assert.match(source, /const input = field\(label, rule\[key\] \?\? "", change, destination\)/);
     assert.match(source, /input\.attr\("list", id\)/);
+});
+
+test('employee drafts have a clear operation label and employee resolvers', () => {
+    assert.equal(operationLabel('HeroEmployees'), 'Employees');
+    assert.deepEqual(plain(directRuleChoices({...content, target_operation: 'HeroEmployees'},
+        {target_doctype: 'Employee', target_field: 'status'})), {transformation: ['Employee Status', 'Employee Language']});
 });

@@ -13,12 +13,14 @@ import frappe
 
 from hero_integration.integrations.erpnext.company import project_company
 from hero_integration.integrations.hero_people import _existing_user, PARTNER_FIELD, USER_ID_FIELD
-from hero_integration.services.employee_mapping import mapping_contract, preview, OBSERVATIONS
+from hero_integration.services.employee_mapping import preview
+from hero_integration.services import direct_runtime as runtime
 from hero_integration.services.file_migration import SourceBindingError
 from hero_integration.services.graphql_graph import normalize_schema
 
 JOINING_DATE = "2026-01-01"
-VERSION = "employee-migration-v1"
+VERSION = "employee-migration-v2"
+OPERATION = "HeroEmployees"
 MAX_RECORDS = 10000
 STATE_KEY = "hero_employee_migration:{}"
 
@@ -56,22 +58,16 @@ def read_query(schema):
     return document, path
 
 
-def preflight(source_instance):
-    """Read-only checks; execution never creates fields or relaxes requirements."""
+def preflight(source_instance, read=None):
+    """Read-only checks against the approved mapping; never create fields."""
+    read = read or runtime.resolve_read(OPERATION, source_instance)
     company = project_company()
     if not company.is_valid:
         raise EmployeeMigrationBlocked(company.reason)
-    for doctype, observations in OBSERVATIONS.items():
-        meta = frappe.get_meta(doctype)
-        if any(not meta.has_field(field) for field, _ in observations):
-            raise EmployeeMigrationBlocked("Install the HERO employee schema before starting the migration.")
-    snapshots = frappe.get_all("HERO GraphQL Schema Snapshot", filters={"source_instance": source_instance,
-                              "analysis_status": "Validated"}, pluck="name", order_by="modified desc", limit_page_length=1)
-    if not snapshots:
-        raise EmployeeMigrationBlocked("A validated HERO schema snapshot is required for employee migration.")
-    snapshot = frappe.get_doc("HERO GraphQL Schema Snapshot", snapshots[0])
-    document, path = read_query(json.loads(snapshot.snapshot_json))
-    return company.name, snapshot.name, document, path
+    for rule in read.plan.definitions:
+        if rule.target_doctype in {"Employee", "User"} and not frappe.get_meta(rule.target_doctype).has_field(rule.target_field):
+            raise EmployeeMigrationBlocked("Install the selected employee mapping fields before starting migration.")
+    return company.name, read.mapping_version, read.document, read.records_path
 
 
 def _records(data, path):
@@ -119,12 +115,12 @@ def _assert_adoptable(doc, values):
         raise EmployeeMigrationBlocked("Existing ERPNext employee or user values differ; review before linking.")
 
 
-def _write_link(link, instance, source_type, source_id, doc, values, record):
+def _write_link(link, instance, source_type, source_id, doc, values, record, mapping_version):
     previous = json.loads(link.target_field_hashes or "{}") if link else {}
     baseline = _values(doc, set(values) | set(previous))
     changes = {"target_doctype": doc.doctype, "target_name": doc.name, "sync_status": "Synchronized",
                "source_payload_hash": _digest(record), "target_payload_hash": _digest(baseline),
-               "target_field_hashes": json.dumps(baseline, sort_keys=True), "mapping_version": VERSION,
+               "target_field_hashes": json.dumps(baseline, sort_keys=True), "mapping_version": mapping_version,
                "last_synced_on": frappe.utils.now_datetime(), "conflict_detail": ""}
     if link:
         link.update(changes)
@@ -134,9 +130,13 @@ def _write_link(link, instance, source_type, source_id, doc, values, record):
                         "source_type": source_type, "source_id": str(source_id), **changes}).insert(ignore_permissions=True)
 
 
-def upsert(record, instance, company, languages):
+def upsert(record, instance, company, languages, read=None):
     """All checks precede writes. Caller rolls back the entire record on failure."""
-    proposed = preview(record, languages=languages)
+    read = read or runtime.resolve_read(OPERATION, instance)
+    try:
+        proposed = preview(record, languages=languages, plan=read.plan)
+    except ValueError as error:
+        raise EmployeeMigrationBlocked(str(error)) from error
     if proposed["blockers"]:
         raise EmployeeMigrationBlocked(proposed["blockers"][0])
     user_id = record.get("user_id") or (record.get("user") or {}).get("id")
@@ -144,7 +144,8 @@ def upsert(record, instance, company, languages):
         raise EmployeeMigrationBlocked("The HERO employee has no user identity; review before importing.")
     employee_link = _link(instance, "partner", record["id"], "Employee")
     user_link = _link(instance, "User", user_id, "User")
-    login_email = ((record.get("user") or {}).get("email") or "").strip().lower()
+    mapped = {(field["target_doctype"], field["target_field"]): field["value"] for field in proposed["fields"]}
+    login_email = (mapped.get(("User", "email")) or "").strip().lower()
     # Exact login email identifies an existing account on first adoption only.
     # Future runs use the source link, never an edited email as a rename request.
     user_name = user_link.target_name if user_link else (_existing_user(login_email, str(record["id"])) or login_email)
@@ -155,7 +156,7 @@ def upsert(record, instance, company, languages):
         # Only the explicitly requested Employee role. HERO roles/account types
         # are observations and can never become local permission grants.
         user = frappe.get_doc({"doctype": "User", "email": login_email, "enabled": 1,
-                               "first_name": record.get("first_name"), "last_name": record.get("last_name"),
+                               "first_name": mapped.get(("Employee", "first_name")), "last_name": mapped.get(("Employee", "last_name")),
                                "user_type": "System User", "send_welcome_email": 0,
                                "roles": [{"role": "Employee"}]})
     else:
@@ -195,11 +196,13 @@ def upsert(record, instance, company, languages):
         _assert_unchanged(employee_link, employee)
         if not employee_link:
             _assert_adoptable(employee, employee_values)
-    if employee and record.get("full_name") and employee.get("middle_name"):
+    if employee and mapped.get(("Employee", "employee_name")) and employee.get("middle_name"):
         raise EmployeeMigrationBlocked("The ERPNext employee middle name requires review before importing the HERO name.")
     # Include every mapped field in the baseline even when the upstream record
     # stays unchanged, so a local edit is reported rather than silently skipped.
     if employee_link and user_link and employee_link.source_payload_hash == _digest(record) and user_link.source_payload_hash == _digest(record) and (
+            getattr(employee_link, "mapping_version", "") == read.mapping_version and
+            getattr(user_link, "mapping_version", "") == read.mapping_version and
             _values(employee, employee_values) == {key: str(value or "") for key, value in employee_values.items()} and
             _values(user, user_values) == {key: str(value or "") for key, value in user_values.items()}):
         return "unchanged"
@@ -218,21 +221,22 @@ def upsert(record, instance, company, languages):
         employee.insert(ignore_permissions=True)
     else:
         employee.save(ignore_permissions=True)
-    _write_link(user_link, instance, "User", user_id, user, user_values, record)
-    _write_link(employee_link, instance, "partner", record["id"], employee, employee_values, record)
+    _write_link(user_link, instance, "User", user_id, user, user_values, record, read.mapping_version)
+    _write_link(employee_link, instance, "partner", record["id"], employee, employee_values, record, read.mapping_version)
     return "added" if is_new else "updated"
 
 
 def sync_employees(client, *, source_instance, run_name, should_stop=None, progress=None, time_budget=1200, verify_source=None):
     frappe.only_for("System Manager")
-    company, snapshot, document, path = preflight(source_instance)
-    stamp = _digest([company, JOINING_DATE, snapshot, document, mapping_contract(), VERSION])
+    read = runtime.resolve_read(OPERATION, source_instance)
+    company, snapshot, document, path = preflight(source_instance, read=read)
+    stamp = _digest([company, JOINING_DATE, snapshot, document, read.mapping_version, VERSION])
     raw = frappe.db.get_default(STATE_KEY.format(run_name))
     state = json.loads(raw) if raw else {"counts": {}, "done_ids": []}
     if state.get("stamp") and state["stamp"] != stamp:
         raise EmployeeMigrationBlocked("Employee source schema, company or mapping changed; start a new run.")
     state.update(stamp=stamp, done=False, stopped=False)
-    rows = _records(client.query(document, {}), path)
+    rows = _records(client.query(document, runtime.page_variables(read, 0)), path)
     inventory = _digest([r["id"] for r in rows])
     if state.get("inventory") and state["inventory"] != inventory:
         raise EmployeeMigrationBlocked("The HERO employee list changed; start a new run to reconcile it.")
@@ -251,7 +255,7 @@ def sync_employees(client, *, source_instance, run_name, should_stop=None, progr
         if verify_source:
             verify_source()
         try:
-            result = upsert(record, source_instance, company, languages)
+            result = upsert(record, source_instance, company, languages, read=read)
         except Exception as error:
             frappe.db.rollback()
             result = "conflict" if isinstance(error, EmployeeMigrationBlocked) else "failed"

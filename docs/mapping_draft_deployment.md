@@ -1,41 +1,51 @@
-# Deploy the consolidated mapping drafts
+# Consolidated mapping deployment
 
 `pipe deploy` captures the committed app, builds the Docker image and runs
-`bench migrate` in the target container. The app's final `after_migrate` hook
-loads `hero_integration/deployment/consolidated_mappings_20261103.json`.
+`bench migrate`. The final app migration hook loads the site-scoped package in
+`hero_integration/deployment/consolidated_mappings_20261103.json`.
 
-The bundle contains the consolidated Customer, Project and Item drafts from
-3 November 2026: 57 source rules for 56 logical targets. The Customer name uses
-an ordered company-name/person-name fallback. Buying and selling prices have
-separate price-list targets. The redundant custom Item category is omitted.
+The package combines eight reviewed old/new draft inputs. It keeps all useful
+selected field mappings and transformation options; identical rules are combined.
+The sole explicitly replaced redundant field is the custom Item category, whose
+source is represented by the native Item Group. Company/person naming fallback
+and separate buying/selling price lists remain distinct rules.
 
-The hook applies only to the declared target site. It resolves the validated
-HERO schema by source instance and fingerprint, rather than copying local
-snapshot names. A missing matching schema or incompatible target field stops
-the import with a deployment error. No HERO request is made.
+Customer, Project and Item drafts are saved against the actual active target
+mapping revisions, with freshly captured field-rule provenance. Later changes
+to an input draft, extra active fields missing from the package, ambiguous
+parents, or incompatible metadata stop the transaction rather than losing work.
+Only after all replacement drafts are saved are superseded input generations
+archived through the owning draft service. Their revision history remains.
+No merged draft is automatically published.
 
-Missing declared app-owned Custom Fields are created through Frappe, using
-plain labels. Existing fields are checked, never overwritten. As with other
-Frappe schema migrations, field DDL can persist if a later draft import fails.
-Retrying is safe. All new draft writes share a savepoint; the outer migration
-owns the final commit.
+Missing app-owned fields are created through Frappe using plain labels. Existing
+fields are checked, never overwritten. Frappe DDL can persist if later draft
+writes fail; draft writes share a savepoint and remain retryable. The target
+schema is resolved by source instance and fingerprint, not copied document names.
 
-Three new-definition drafts are created through the personal draft storage
-service, owned by Administrator. Existing drafts with these identities are
-preserved, including user edits and discarded drafts. Already-published
-definitions are also left alone. Repeated migrations create no duplicates.
-Other users' drafts and all active mappings remain unchanged.
+The one-time reader repair validates the existing Customer, Project and Calendar
+plans and approves their exact current revisions. Calendar's broken scalar
+partner binding is removed and native color/status are used. A Patch Log receipt
+prevents later deployments from undoing a subsequent manual approval revocation.
+No HERO request or business-data import is started by deployment.
 
-Read-service references are resolved on the target only when unique within
-the selected source, snapshot and query operation. Otherwise the draft remains
-unbound for review. The bundled query proposals remain in the deployment JSON;
-the importer never modifies or approves existing read services.
+Services, Documents, Pictures and Employees receive ordinary editable mapping drafts and
+validated read-query definitions when no own mapping exists. These are not
+approved automatically. Direct migrations require an approved own mapping and
+cannot silently execute a built-in fallback.
 
-After deployment, the log includes `HERO draft deployment` and the three draft
-keys. In Desk, open **HERO Mapping Draft** as Administrator to inspect them.
-The operation deploys drafts only: activation, read approval and synchronization
-are separate review steps. No database restore or manual JSON import is needed.
+In Mapping, **My personal drafts** appears before the active mapping table and
+includes both new-definition drafts and drafts of existing active definitions.
+The deployed drafts belong to Administrator. Other System Managers cannot read
+these private drafts. Draft rows display their saved field rules and draft
+revision; active-rule caches cannot conceal a private edit. Company relations
+explain that the confirmed ERPNext Company is used, not the HERO customer ID.
 
-This deployment format is intentionally separate from the portable-v2 editor
-exchange, which does not yet cover all native v5 contract parameters. It carries
-no customer/employee records, credentials, tokens or schema response dump.
+Migration logs report `HERO draft deployment` and `HERO mapping repair`, including
+current baseline revisions and draft keys. Activation and execution approvals
+for newly configured mappings remain separate. No database restore or manual
+JSON import is needed.
+
+The bundle includes mapping configuration only: no customer/employee records,
+credentials, tokens, or schema response dump. It is a deployment format, not a
+portable-v2 editor-exchange file.
