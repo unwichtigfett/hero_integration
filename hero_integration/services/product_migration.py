@@ -308,7 +308,7 @@ def fetch_page(client, offset: int, size: int = PAGE_SIZE, read=None) -> list[di
 
 
 def sync_products(client=None, *, source_instance: str | None = None, time_budget: int = TIME_BUDGET_SECONDS,
-                  should_stop=None, max_pages: int = 2000, read=None) -> dict:
+                  should_stop=None, max_pages: int = 2000, read=None, progress=None) -> dict:
     """Process articles from the saved offset until done, stopped or the time budget ends.
 
     ``source_instance`` is the HERO source ``client`` reads from; lookups, new
@@ -358,6 +358,8 @@ def sync_products(client=None, *, source_instance: str | None = None, time_budge
             state.update(done=True, offset=0)
             break
         _save(state)
+        if progress:
+            progress(counts)
         if time.monotonic() > deadline:
             break
     _save(state)

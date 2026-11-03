@@ -361,7 +361,8 @@ def reset_phase(phase: str) -> None:
 
 
 def transfer(phase: str, *, source_instance: str | None = None, client=None, downloader=None, dry_run: bool = False,
-             time_budget: int = TIME_BUDGET_SECONDS, min_free: int = MIN_FREE_BYTES, should_stop=None) -> dict:
+             time_budget: int = TIME_BUDGET_SECONDS, min_free: int = MIN_FREE_BYTES, should_stop=None,
+             progress=None) -> dict:
     """Process one phase from its saved offset until done or the time budget ends.
 
     ``source_instance`` is the HERO source the client reads from; every lookup,
@@ -477,6 +478,8 @@ def transfer(phase: str, *, source_instance: str | None = None, client=None, dow
         state["offset"] += len(page)
         if not dry_run:
             _save_state(phase, state)
+            if progress:
+                progress(counts)
         if len(page) < read.page_size:
             break
         if time.monotonic() > deadline:

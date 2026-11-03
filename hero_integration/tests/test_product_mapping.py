@@ -154,5 +154,24 @@ class TestSyncFollowsTheMapping(unittest.TestCase):
         self.assertEqual((state["mapping"], state["mapping_origin"]), (read.mapping_version, "SERVICE-1"))
 
 
+class TestProgress(unittest.TestCase):
+    def test_progress_is_reported_after_every_page(self):
+        saved, reports = {}, []
+        db = SimpleNamespace(get_default=saved.get, set_default=lambda k, v: saved.__setitem__(k, v),
+                             commit=lambda: None, rollback=lambda: None)
+
+        class Client:
+            def query(self, document, variables):
+                start, size = variables["offset"], variables["first"]
+                return {"supply_product_versions": [{"product_id": f"P{i}"} for i in range(start, min(start + size, 1200))]}
+
+        with patch.object(pm, "frappe", SimpleNamespace(db=db, utils=SimpleNamespace(now_datetime=lambda: "now"),
+                                                        log_error=lambda **k: None)), \
+                patch.object(pm, "_links", return_value={}), patch.object(pm, "upsert", return_value="added"):
+            pm.sync_products(Client(), source_instance="default", read=BUILTIN,
+                             progress=lambda counts: reports.append(counts.get("added")))
+        self.assertEqual(reports, [500, 1000])  # the last, short page ends the pass and is reported by the run
+
+
 if __name__ == "__main__":
     unittest.main()

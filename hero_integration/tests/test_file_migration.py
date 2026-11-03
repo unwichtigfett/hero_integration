@@ -125,6 +125,27 @@ class TestFileSlice(unittest.TestCase):
         run, queued = self.run_slice({"done": True, "counts": {"added": 1, "failed": 2}})
         self.assertEqual((run["state"], queued), ("Completed With Conflicts", []))
 
+    def test_counts_are_written_after_every_page_while_the_slice_runs(self):
+        db = _DB()
+        db.runs["R"] = {"state": "Running"}
+        seen = []
+
+        def transfer(phase, **kwargs):
+            kwargs["progress"]({"added": 200})
+            seen.append(dict(db.runs["R"]))  # the run already shows the first page
+            kwargs["progress"]({"added": 300, "unchanged": 100})
+            seen.append(dict(db.runs["R"]))
+            return {"done": False, "counts": {"added": 300, "unchanged": 100}}
+
+        fake = SimpleNamespace(db=db, log_error=lambda **k: None)
+        lock = SimpleNamespace(filelock=lambda *a, **k: contextlib.nullcontext())
+        with patch.object(fm, "frappe", fake), patch.object(fm, "_enqueue"), patch.object(fm, "now_datetime", lambda: "now"), \
+                patch.dict("sys.modules", {"frappe.utils.synchronization": lock}), \
+                patch("hero_integration.services.file_transfer._client_and_downloader", return_value=("c", "d", "s")), \
+                patch("hero_integration.services.file_transfer.transfer", side_effect=transfer):
+            fm._file_slice(SimpleNamespace(name="R", action="Document Migration"), SimpleNamespace(source_instance="s"))
+        self.assertEqual([(row["created_records"], row["processed"]) for row in seen], [(200, 200), (300, 400)])
+
     def test_disk_pause_blocks_the_run(self):
         run, _ = self.run_slice({"done": False, "last_error": "Not enough free disk space; transfer paused.", "counts": {}})
         self.assertEqual(run["state"], "Blocked")

@@ -154,23 +154,24 @@ def _file_slice(run, config) -> None:
     def cancelled() -> bool:
         return frappe.db.get_value("HERO Integration Run", run.name, "state") == "Cancelled"
 
+    def progress(counts: dict) -> None:
+        # Called after every page, so the Synchronization page shows the counts while the slice runs.
+        frappe.db.set_value("HERO Integration Run", run.name, run_counts(counts))
+        frappe.db.commit()
+
     client, downloader, instance = _client_and_downloader(config)
     if run.action == PRODUCT_ACTION:
         from hero_integration.services.product_migration import sync_products
 
         with filelock("hero_product_migration", timeout=5):
-            state = sync_products(client, source_instance=instance, should_stop=cancelled)
+            state = sync_products(client, source_instance=instance, should_stop=cancelled, progress=progress)
     else:
         with filelock("hero_file_transfer", timeout=5):
             state = transfer(FILE_ACTIONS[run.action], source_instance=instance, client=client,
-                             downloader=downloader, should_stop=cancelled)
+                             downloader=downloader, should_stop=cancelled, progress=progress)
     counts = state.get("counts") or {}
-    skipped = counts.get("unchanged", 0) + sum(v for k, v in counts.items() if k.startswith("skipped_"))
     problems = counts.get("failed", 0) + counts.get("conflict", 0)
-    values = {"created_records": counts.get("added", 0) + counts.get("updated", 0), "skipped_records": skipped,
-              "conflict_records": problems, "error_message": summary(counts)}
-    values["processed"] = values["created_records"] + skipped + values["conflict_records"]
-    frappe.db.set_value("HERO Integration Run", run.name, values)
+    frappe.db.set_value("HERO Integration Run", run.name, run_counts(counts))
     frappe.db.commit()
     if state.get("stopped"):
         return  # cancelled by the user; the run keeps its Cancelled state
@@ -181,6 +182,16 @@ def _file_slice(run, config) -> None:
         frappe.db.commit()
     else:
         _finish(run.name, "Completed With Conflicts" if problems else "Completed", summary(counts))
+
+
+def run_counts(counts: dict) -> dict:
+    """Run fields for the counts of a product or file pass."""
+    skipped = counts.get("unchanged", 0) + sum(v for k, v in counts.items() if k.startswith("skipped_"))
+    problems = counts.get("failed", 0) + counts.get("conflict", 0)
+    values = {"created_records": counts.get("added", 0) + counts.get("updated", 0), "skipped_records": skipped,
+              "conflict_records": problems, "error_message": summary(counts)}
+    values["processed"] = values["created_records"] + skipped + values["conflict_records"]
+    return values
 
 
 def summary(counts: dict) -> str:
