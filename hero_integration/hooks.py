@@ -73,11 +73,13 @@ doc_events = {
     doctype: {"on_trash": "hero_integration.services.guards.assert_app_document_deletion_allowed"}
     for doctype in _HERO_OWNED_DOCTYPES
 }
+# Integration history must not prevent normal deletion of ERPNext records.
+# ERPNext permissions and references from business documents still apply.
+ignore_links_on_delete = ["HERO Integration Link"]
+
 # Observe only targets identified by Integration Links; no queueing or HERO I/O.
 doc_events["*"] = {
     "on_update": "hero_integration.services.change_detection.observe_frappe_target_change",
-    # A HERO-bound record is deleted only by the purge or a review rejection.
-    "on_trash": "hero_integration.services.guards.protect_hero_bound_target",
 }
 doc_events["ToDo"] = {
     "on_update": "hero_integration.services.task_assignment_state.observe_local_todo",

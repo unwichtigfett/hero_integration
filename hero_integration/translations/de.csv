@@ -2290,7 +2290,6 @@ value,Wert
 {0} results,{0} Treffer
 {0} usages,{0} Verwendungen
 {0} was changed in HERO since the last import and is not overwritten.,{0} wurde seit dem letzten Import in HERO geändert und wird nicht überschrieben.
-"{0} {1} is imported from HERO and cannot be deleted here. Change it in HERO, reject it in its HERO Integration Link while it awaits review, or use the HERO data purge.","{0} {1} wurde aus HERO importiert und kann hier nicht gelöscht werden. Ändern Sie den Datensatz in HERO, lehnen Sie ihn während der Prüfung in seiner HERO-Integrationsverknüpfung ab oder verwenden Sie die HERO-Datenbereinigung."
 {0} {1}? This migrates the object fields of the active mapping for {2} from HERO into Frappe.,{0}: {1}? Dies migriert die Objektfelder des aktiven Mappings für {2} von HERO nach Frappe.
 {0} · {1} ({2}),{0} · {1} ({2})
 {0} · {1} direct usages · list view for GraphQL base scalar,{0} · {1} direkte Verwendungen · Listenansicht für GraphQL-Basis-Skalar

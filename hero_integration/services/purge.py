@@ -97,12 +97,9 @@ def _delete_target(doctype: str, name: str) -> str:
         return "kept"
     frappe.db.savepoint("hero_purge")
     try:
-        # Only our own binding (and, for a Customer, its own Contacts and
-        # Addresses) still points here; Frappe's link check would refuse.
-        from hero_integration.services.guards import bound_target_deletion
-
-        with bound_target_deletion():
-            frappe.delete_doc(doctype, name, force=True)
+        # Non-owned references were checked above. Customer Contacts and
+        # Addresses may still point here and are handled by the purge.
+        frappe.delete_doc(doctype, name, force=True)
     except Exception as error:  # a validation hook refused; keep and report
         frappe.db.rollback(save_point="hero_purge")
         _last_reference = f"{type(error).__name__}: {error}"[:200]
