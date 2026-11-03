@@ -200,13 +200,15 @@ def source_hash(row: dict) -> str:
 
 # ---------------------------------------------------------------- Frappe side
 
-def _bindings(source_type: str, doctype: str) -> dict[str, str]:
+def _bindings(source_type: str, doctype: str, source_instance: str) -> dict[str, str]:
+    """HERO id → Frappe name, only for links of this HERO source (ids repeat across sources)."""
     return dict(frappe.db.sql("""SELECT source_id, target_name FROM `tabHERO Integration Link`
-        WHERE source_type=%s AND target_doctype=%s AND IFNULL(target_name, '') != ''""", (source_type, doctype)))
+        WHERE source_type=%s AND target_doctype=%s AND source_instance=%s AND IFNULL(target_name, '') != ''""",
+                              (source_type, doctype, source_instance)))
 
 
-def _known_files() -> dict[str, dict]:
-    rows = frappe.get_all("HERO Integration Link", filters={"source_type": SOURCE_TYPE},
+def _known_files(source_instance: str) -> dict[str, dict]:
+    rows = frappe.get_all("HERO Integration Link", filters={"source_type": SOURCE_TYPE, "source_instance": source_instance},
                           fields=["name", "source_id", "target_name", "source_payload_hash"], limit_page_length=0)
     return {row.source_id: row for row in rows}
 
@@ -233,25 +235,59 @@ def _disk_path(file_url: str) -> str:
     return frappe.get_site_path("private", "files", file_url.rsplit("/", 1)[-1])
 
 
-def store(row: dict, size: int, md5: str, temp: str, target: tuple, folder: str, existing: dict | None) -> str:
-    """Move the downloaded blob into place and create or update the File and its link."""
+@dataclass
+class StoredFile:
+    file_name: str
+    file_url: str
+    old_url: str | None = None
+
+
+def commit_file(row: dict, size: int, md5: str, temp: str, target: tuple, folder: str, existing,
+                source_instance: str) -> str:
+    """Store and commit one file. Blobs are only removed once the database agrees:
+    the replaced blob after a successful commit, the new blob after any failure."""
+    stored = store(row, size, md5, temp, target, folder, existing, source_instance)
+    try:
+        frappe.db.commit()
+    except Exception:
+        frappe.db.rollback()
+        _discard_unreferenced(stored.file_url)
+        raise
+    if stored.old_url and stored.old_url != stored.file_url:
+        _discard_unreferenced(stored.old_url)
+    return stored.file_name
+
+
+def store(row: dict, size: int, md5: str, temp: str, target: tuple, folder: str, existing, source_instance: str) -> StoredFile:
+    """Move the downloaded blob into place and create or update the File and its link (not committed)."""
     file_url = f"/private/files/hero-{row['id']}-{int(time.time())}-{safe_name(row.get('filename'))}"
     os.replace(temp, _disk_path(file_url))
     try:
-        return _record(row, size, md5, file_url, target, folder, existing)
+        return _record(row, size, md5, file_url, target, folder, existing, source_instance)
     except Exception:
-        _remove(_disk_path(file_url))  # no File points at the new blob
+        frappe.db.rollback()  # the File row goes back to the previous blob, which is still on disk
+        _remove(_disk_path(file_url))
         raise
 
 
-def _record(row, size, md5, file_url, target, folder, existing) -> str:
+def _discard_unreferenced(file_url: str) -> None:
+    if file_url and not frappe.db.exists("File", {"file_url": file_url}):
+        _remove(_disk_path(file_url))
+
+
+def _attachment(target: tuple, folder: str) -> dict:
     doctype, name = target
+    return {"attached_to_doctype": doctype, "attached_to_name": name, "folder": folder} if doctype else {}
+
+
+def _record(row, size, md5, file_url, target, folder, existing, source_instance) -> StoredFile:
+    doctype, name = target
+    old_url = None
     if existing and frappe.db.exists("File", existing.target_name):
         old_url = frappe.db.get_value("File", existing.target_name, "file_url")
+        # The old blob stays until the commit succeeded (see commit_file).
         frappe.db.set_value("File", existing.target_name, {"file_url": file_url, "file_size": size, "content_hash": md5,
-                                                           "file_name": row.get("filename")})
-        if old_url and old_url != file_url and not frappe.db.exists("File", {"file_url": old_url}):
-            _remove(_disk_path(old_url))
+                                                           "file_name": row.get("filename"), **_attachment(target, folder)})
         file_name = existing.target_name
     else:
         doc = frappe.get_doc({"doctype": "File", "file_name": row.get("filename") or safe_name(""), "file_url": file_url,
@@ -270,9 +306,21 @@ def _record(row, size, md5, file_url, target, folder, existing) -> str:
         frappe.db.set_value("HERO Integration Link", existing.name, values)
     else:
         frappe.get_doc({"doctype": "HERO Integration Link", "source_system": "HERO", "source_type": SOURCE_TYPE,
-                        "source_id": str(row["id"]), "source_instance": "default", "target_doctype": "File",
+                        "source_id": str(row["id"]), "source_instance": source_instance, "target_doctype": "File",
                         "mapping_version": MAPPING_VERSION, **values}).insert(ignore_permissions=True)
-    return file_name
+    return StoredFile(file_name, file_url, old_url)
+
+
+def relink(existing, target: tuple, folder: str) -> bool:
+    """Attach an unchanged file to its now resolvable target; never detaches. Not committed."""
+    wanted = _attachment(target, folder)
+    if not wanted or not existing or not frappe.db.exists("File", existing.target_name):
+        return False
+    current = frappe.db.get_value("File", existing.target_name, list(wanted), as_dict=True) or {}
+    if all((current.get(key) or "") == value for key, value in wanted.items()):
+        return False
+    frappe.db.set_value("File", existing.target_name, wanted)
+    return True
 
 
 def allow_unlimited_attachments(doctypes=("Project", "Customer")) -> None:
@@ -306,13 +354,13 @@ def _save_state(phase: str, state: dict) -> None:
     frappe.db.commit()
 
 
-def _client_and_downloader():
+def _client_and_downloader(config=None):
     from hero_integration.client.graphql import HeroGraphQLClient
     from hero_integration.client.settings import get_configuration
 
-    config = get_configuration()
+    config = config or get_configuration()
     client = HeroGraphQLClient(config.endpoint, lambda: config.api_token, config.timeout_seconds, max_retries=2)
-    return client, Downloader(config.endpoint.host, lambda: config.api_token)
+    return client, Downloader(config.endpoint.host, lambda: config.api_token), config.source_instance
 
 
 def reset_phase(phase: str) -> None:
@@ -321,17 +369,27 @@ def reset_phase(phase: str) -> None:
     frappe.db.commit()
 
 
-def transfer(phase: str, *, client=None, downloader=None, dry_run: bool = False,
+def transfer(phase: str, *, source_instance: str | None = None, client=None, downloader=None, dry_run: bool = False,
              time_budget: int = TIME_BUDGET_SECONDS, min_free: int = MIN_FREE_BYTES, should_stop=None) -> dict:
-    """Process one phase from its saved cursor until done or the time budget ends."""
+    """Process one phase from its saved cursor until done or the time budget ends.
+
+    ``source_instance`` is the HERO source the client reads from; every lookup,
+    new link and the saved cursor belong to it."""
     if client is None or downloader is None:
-        client, downloader = _client_and_downloader()
+        client, downloader, configured = _client_and_downloader()
+        if source_instance is not None and configured != source_instance:
+            raise TransferError("The configured HERO source instance changed; queue a new run.")
+        source_instance = configured
+    if not isinstance(source_instance, str) or not source_instance.strip():
+        raise TransferError("A HERO source instance is required.")
     state = {} if dry_run else _state(phase)
-    if state.get("done"):
-        state = {}  # a finished phase starts over; unchanged files are skipped by their link
+    if state.get("done") or state.get("source_instance") != source_instance:
+        state = {}  # new pass (or another source's cursor); unchanged files are skipped by their link
+    state["source_instance"] = source_instance
     counts = state.setdefault("counts", {})
-    projects, customers = _bindings("project", "Project"), _bindings("customer", "Customer")
-    known = _known_files()
+    projects = _bindings("project", "Project", source_instance)
+    customers = _bindings("customer", "Customer", source_instance)
+    known = _known_files(source_instance)
     if not dry_run:
         allow_unlimited_attachments()
     folders = {} if dry_run else {
@@ -346,26 +404,39 @@ def transfer(phase: str, *, client=None, downloader=None, dry_run: bool = False,
 
     for rows, cursor in list_pages(client, phase, state.get("cursor")):
         bump("requests")
-        todo = []
-        for row in rows:
-            link = known.get(str(row["id"]))
-            if link and link.source_payload_hash == source_hash(row):
-                bump("unchanged")
-            else:
-                todo.append((row, link))
-        found = details(client, [row for row, _ in todo]) if todo else {}
-        bump("requests", -(-len(todo) // DETAIL_BATCH))
+        # Unchanged content is not downloaded again, but its target may have
+        # become resolvable since (e.g. projects imported after the documents).
+        todo = [(row, known.get(str(row["id"]))) for row in rows]
+        found = details(client, rows) if rows else {}
+        bump("requests", -(-len(rows) // DETAIL_BATCH))
         for index, (row, link) in enumerate(todo):
             if should_stop and index % 25 == 0 and should_stop():
                 state["stopped"] = True
                 _save_state(phase, state)  # cursor still points at this page; its finished files are skipped later
                 return state
             detail = found.get(row["uuid"])
+            unchanged = bool(link) and link.source_payload_hash == source_hash(row)
             reason = skip_reason(row, detail)
             if reason:
-                bump(f"skipped_{reason}")
+                bump("unchanged" if unchanged else f"skipped_{reason}")
                 continue
             target = resolve_target(detail, projects, customers)
+            if unchanged:
+                if dry_run:
+                    bump("unchanged")
+                    continue
+                try:
+                    moved = relink(link, target, folders[bool(target[0])])
+                    frappe.db.commit()
+                    bump("relinked" if moved else "unchanged")
+                    if moved:
+                        bump("updated")
+                except Exception as error:
+                    frappe.db.rollback()
+                    bump("failed")
+                    frappe.log_error(title="HERO file transfer failed",
+                                     message=f"HERO file {row.get('id')} ({row.get('filename')}): {error}")
+                continue
             bump("bytes_planned", int(row.get("size") or 0))
             if dry_run:
                 bump("would_update" if link else "would_add")
@@ -378,8 +449,7 @@ def transfer(phase: str, *, client=None, downloader=None, dry_run: bool = False,
             temp = os.path.join(partial_dir, f"{row['id']}.part")
             try:
                 size, md5 = downloader.fetch(row["downloadUrl"], temp, row.get("size"))
-                store(row, size, md5, temp, target, folders[bool(target[0])], link)
-                frappe.db.commit()
+                commit_file(row, size, md5, temp, target, folders[bool(target[0])], link, source_instance)
                 bump("updated" if link else "added")
                 bump("bytes", size)
             except Exception as error:

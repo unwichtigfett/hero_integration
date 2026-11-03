@@ -101,11 +101,18 @@ class TestFileSlice(unittest.TestCase):
         queued = []
         fake = SimpleNamespace(db=db, log_error=lambda **k: None)
         lock = SimpleNamespace(filelock=lambda *a, **k: contextlib.nullcontext())
+        config = SimpleNamespace(source_instance="source-a")
         with patch.object(fm, "frappe", fake), patch.object(fm, "_enqueue", side_effect=queued.append), \
                 patch.object(fm, "now_datetime", lambda: "now"), \
                 patch.dict("sys.modules", {"frappe.utils.synchronization": lock}), \
-                patch("hero_integration.services.file_transfer.transfer", return_value=state):
-            fm._file_slice(SimpleNamespace(name="R", action="Document Migration"))
+                patch("hero_integration.services.file_transfer._client_and_downloader",
+                      return_value=("client", "downloader", "source-a")) as build, \
+                patch("hero_integration.services.file_transfer.transfer", return_value=state) as transfer:
+            fm._file_slice(SimpleNamespace(name="R", action="Document Migration"), config)
+        build.assert_called_once_with(config)
+        self.assertEqual(transfer.call_args.kwargs["source_instance"], "source-a")
+        self.assertEqual((transfer.call_args.kwargs["client"], transfer.call_args.kwargs["downloader"]),
+                         ("client", "downloader"))
         return db.runs["R"], queued
 
     def test_unfinished_phase_queues_the_next_slice(self):
@@ -122,6 +129,61 @@ class TestFileSlice(unittest.TestCase):
         run, _ = self.run_slice({"done": False, "last_error": "Not enough free disk space; transfer paused.", "counts": {}})
         self.assertEqual(run["state"], "Blocked")
         self.assertIn("disk", run["error_message"])
+
+
+def _config(instance="source-a", revision=3, confirmed=True):
+    return SimpleNamespace(source_instance=instance, source_binding_revision=revision, source_binding_confirmed=confirmed)
+
+
+class TestSourceBinding(unittest.TestCase):
+    def bound(self, run, config):
+        with patch.object(fm, "_configuration", return_value=config):
+            return fm.bound_configuration(run)
+
+    def test_run_uses_only_the_confirmed_binding_it_was_queued_under(self):
+        run = SimpleNamespace(source_instance="source-a", source_binding_revision=3)
+        self.assertEqual(self.bound(run, _config()).source_instance, "source-a")
+        for config in (_config(instance="source-b"), _config(revision=4), _config(confirmed=False)):
+            with self.subTest(config=config), self.assertRaises(fm.SourceBindingError):
+                self.bound(run, config)
+        with self.assertRaises(fm.SourceBindingError):  # legacy run without a recorded source
+            self.bound(SimpleNamespace(source_instance="", source_binding_revision=3), _config())
+
+    def test_start_records_source_and_binding_revision(self):
+        created = []
+
+        class _Run(SimpleNamespace):
+            def insert(self, **kwargs):
+                created.append(self)
+
+        fake = SimpleNamespace(get_doc=lambda values: _Run(name="RUN-1", **values),
+                               db=SimpleNamespace(set_default=lambda *a: None, commit=lambda: None))
+        with patch.object(fm, "frappe", fake), patch.object(fm, "_configuration", return_value=_config()), \
+                patch.object(fm, "_enqueue"), patch("hero_integration.services.file_transfer.reset_phase"):
+            fm.start("Document Migration")
+        self.assertEqual((created[0].source_instance, created[0].source_binding_revision), ("source-a", 3))
+        with patch.object(fm, "frappe", fake), patch.object(fm, "_configuration", return_value=_config(confirmed=False)), \
+                self.assertRaises(fm.SourceBindingError):
+            fm.start("Document Migration")
+
+    def test_source_change_before_execution_blocks_without_reading_hero(self):
+        db = _DB()
+        db.runs["R"] = {"state": "Running"}
+
+        class _Run(SimpleNamespace):
+            def save(self, **kwargs):
+                pass
+
+        run = _Run(name="R", state="Running", owner="admin", action="Document Migration",
+                   source_instance="source-a", source_binding_revision=3)
+        fake = SimpleNamespace(db=db, get_doc=lambda *a: run, set_user=lambda user: None, log_error=lambda **k: None)
+        with patch.object(fm, "frappe", fake), patch.object(fm, "now_datetime", lambda: "now"), \
+                patch.object(fm, "_configuration", return_value=_config(instance="source-b")), \
+                patch.object(fm, "on_run_finished"), patch.object(fm, "_file_slice") as file_slice:
+            fm.execute("R")
+        file_slice.assert_not_called()
+        self.assertEqual(db.runs["R"]["state"], "Blocked")
+        self.assertIn("another HERO source", db.runs["R"]["error_message"])
 
 
 if __name__ == "__main__":

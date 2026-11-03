@@ -430,10 +430,13 @@ def resume_run(run_name: str) -> dict[str, str]:
     run = frappe.get_doc("HERO Integration Run", run_name)
     if run.state not in {"Failed", "Cancelled", "Blocked"}:
         frappe.throw(frappe._("Only failed, cancelled, or blocked runs can resume."))
-    from hero_integration.services.file_migration import RUN_ACTIONS, resume as resume_file_run
+    from hero_integration.services.file_migration import RUN_ACTIONS, SourceBindingError, resume as resume_file_run
 
     if getattr(run, "action", "") in RUN_ACTIONS:
-        resume_file_run(run)
+        try:
+            resume_file_run(run)
+        except SourceBindingError as error:
+            frappe.throw(frappe._(str(error)))
         return {"status": "QUEUED", "run": run.name}
     if _as_bool(getattr(run, "testing_enabled", 0)):
         frappe.throw(frappe._("Testing previews cannot resume because their shared HERO request budget is run-bound."))
@@ -588,9 +591,12 @@ def sync_area_start(area: str) -> dict[str, object]:
     if key in AREA_KEYS:
         if frappe.db.exists("HERO Integration Run", {"state": ["in", list(ACTIVE_STATES)]}):
             frappe.throw(frappe._("Another HERO run is still queued or running. Start this area when it has finished."))
-        from hero_integration.services.file_migration import start
+        from hero_integration.services.file_migration import SourceBindingError, start
 
-        return {"status": "QUEUED", "run": start(AREA_KEYS[key]), "area": key}
+        try:
+            return {"status": "QUEUED", "run": start(AREA_KEYS[key]), "area": key}
+        except SourceBindingError as error:
+            frappe.throw(frappe._(str(error)))
     item = _sync_area(area)
     instance = _configured_source_instance()
     if frappe.db.exists("HERO Integration Run", {"state": ["in", list(ACTIVE_STATES)]}):

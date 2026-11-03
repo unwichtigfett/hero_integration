@@ -853,3 +853,44 @@ class TestTechnicalRoleConsumesDeclaredOptions(TestCase):
         for spec in cases:
             with self.subTest(purpose=spec.purpose), self.assertRaises(ValueError):
                 qm.validate_v2_spec(spec, None, {'version': 2})
+
+
+class TestV2CustomerLifecycle(TestCase):
+    """A v2 Customer plan needs no lifecycle rule; ``is_deleted`` still decides."""
+
+    def customer_plan(self):
+        rules = [rule('id', 'id', 'HERO Integration Link', 'source_id', operation='HeroCustomers',
+                      kind='int', purpose='Source Identity', transform='Positive Int To Text'),
+                 rule('title', 'company_name', 'Customer', 'customer_name', operation='HeroCustomers', purpose='Record Name'),
+                 rule('type', 'type', 'Customer', 'customer_type', operation='HeroCustomers', transform='Value Map')]
+        return plan(rules, {'version': 2, 'transform_options': {'type': {'map': {'commercial': 'Company'}}}},
+                    operation='HeroCustomers')
+
+    def migrate(self, **overrides):
+        from hero_integration.services import migration
+        record = {'id': 301, 'company_name': 'Synthetic GmbH', 'type': 'commercial', 'nr': None,
+                  'is_deleted': False, 'is_contact_person': False, '_hero_source_instance': 'source-a', **overrides}
+        link = NS(name='LINK-301')
+        with patch.object(migration, '_mapping_plan_for_run', return_value=self.customer_plan()), \
+                patch.object(migration, '_link', return_value=link) as find_link, \
+                patch.object(migration, '_mark_source_deleted') as mark, \
+                patch.object(migration, '_upsert', side_effect=AssertionError('upsert reached')) as upsert, \
+                patch.object(migration, '_business_number_drift', return_value=None), \
+                patch('hero_integration.services.query_mapping.address_values', return_value=None):
+            try:
+                result = migration._migrate_customer(record, NS(mode='Execute'))
+            except AssertionError as error:
+                result = NS(code=str(error))
+        return result, mark, upsert, find_link
+
+    def test_deleted_customer_is_never_upserted_and_its_link_is_marked(self):
+        result, mark, upsert, find_link = self.migrate(is_deleted=True)
+        self.assertEqual(result.code, 'SKIPPED_SOURCE_DELETED')
+        upsert.assert_not_called()
+        find_link.assert_called_once_with('customer', '301', 'source-a')
+        mark.assert_called_once_with(find_link.return_value)
+
+    def test_active_customer_still_reaches_upsert(self):
+        result, mark, upsert, _ = self.migrate(is_deleted=False)
+        self.assertEqual(result.code, 'upsert reached')
+        mark.assert_not_called()

@@ -29,14 +29,49 @@ FULL_KEY = "hero_full_migration:{}"
 CHILD_KEY = "hero_full_migration_child:{}"
 
 
+class SourceBindingError(RuntimeError):
+    """The HERO source of a run is unconfirmed or no longer the configured one."""
+
+
+# ---------------------------------------------------------------- source binding
+
+def _configuration():
+    from hero_integration.client.settings import get_configuration
+
+    return get_configuration()
+
+
+def confirmed_configuration():
+    config = _configuration()
+    if not config.source_binding_confirmed:
+        raise SourceBindingError("The HERO endpoint, token or source instance changed; "
+                                 "an administrator must confirm the source binding.")
+    return config
+
+
+def bound_configuration(run):
+    """The configuration a run may use: the confirmed binding it was queued under."""
+    config = confirmed_configuration()
+    recorded = str(getattr(run, "source_instance", "") or "")
+    if not recorded or recorded != config.source_instance:
+        raise SourceBindingError("The run belongs to another HERO source instance; queue a new run.")
+    if int(getattr(run, "source_binding_revision", 0) or 0) != int(config.source_binding_revision or 0):
+        raise SourceBindingError("The run was queued under an earlier HERO source binding; queue a new run.")
+    return config
+
+
 # ---------------------------------------------------------------- starting
 
 def start(action: str, parent: str = "") -> str:
     """Create and queue a file or full run; returns the run name."""
     if action not in RUN_ACTIONS:
         raise ValueError("Unknown file migration action.")
+    config = confirmed_configuration()
+    if parent:
+        bound_configuration(frappe.get_doc("HERO Integration Run", parent))  # a chain never switches sources
     run = frappe.get_doc({"doctype": "HERO Integration Run", "action": action, "mode": "Execute", "state": "Queued",
-                          "source_instance": _instance()})
+                          "source_instance": config.source_instance,
+                          "source_binding_revision": int(config.source_binding_revision or 0)})
     run.insert(ignore_permissions=True)
     if action in FILE_ACTIONS:
         from hero_integration.services.file_transfer import reset_phase
@@ -56,6 +91,7 @@ def start(action: str, parent: str = "") -> str:
 
 def resume(run) -> None:
     """Continue a failed, cancelled or blocked file/full run where it stopped."""
+    bound_configuration(run)
     run.state, run.error_message, run.finished_on = "Queued", "", None
     run.save(ignore_permissions=True)
     if run.action == FULL_ACTION:
@@ -95,32 +131,39 @@ def execute(run_name: str) -> None:
         run.save(ignore_permissions=True)
         frappe.db.commit()
     try:
+        config = bound_configuration(run)
         if run.action == FULL_ACTION:
             advance_full(run.name)
         else:
-            _file_slice(run)
+            _file_slice(run, config)
+    except SourceBindingError as error:
+        frappe.db.rollback()
+        _finish(run.name, "Blocked", str(error))
     except Exception as error:
         frappe.db.rollback()
         frappe.log_error(title=f"HERO {run.action} failed")
         _finish(run.name, "Failed", f"{type(error).__name__}: {str(error)[:300]}")
 
 
-def _file_slice(run) -> None:
+def _file_slice(run, config) -> None:
+    """One slice, reading from exactly the source the run is bound to."""
     from frappe.utils.synchronization import filelock
 
-    from hero_integration.services.file_transfer import transfer
+    from hero_integration.services.file_transfer import _client_and_downloader, transfer
 
     def cancelled() -> bool:
         return frappe.db.get_value("HERO Integration Run", run.name, "state") == "Cancelled"
 
+    client, downloader, instance = _client_and_downloader(config)
     if run.action == PRODUCT_ACTION:
         from hero_integration.services.product_migration import sync_products
 
         with filelock("hero_product_migration", timeout=5):
-            state = sync_products(should_stop=cancelled)
+            state = sync_products(client, source_instance=instance, should_stop=cancelled)
     else:
         with filelock("hero_file_transfer", timeout=5):
-            state = transfer(FILE_ACTIONS[run.action], should_stop=cancelled)
+            state = transfer(FILE_ACTIONS[run.action], source_instance=instance, client=client,
+                             downloader=downloader, should_stop=cancelled)
     counts = state.get("counts") or {}
     skipped = counts.get("unchanged", 0) + sum(v for k, v in counts.items() if k.startswith("skipped_"))
     problems = counts.get("failed", 0) + counts.get("conflict", 0)
@@ -209,7 +252,7 @@ def _start_step(action: str, parent: str) -> str:
     from hero_integration.services.sync_page import BY_RUN_ACTION
 
     item = BY_RUN_ACTION[action]
-    instance = _instance()
+    instance = bound_configuration(frappe.get_doc("HERO Integration Run", parent)).source_instance
     services = api._sync_area_read_services(instance).get(item.operation) or []
     if not services:
         return ""
@@ -233,11 +276,6 @@ def _save_full(run_name: str, state: dict) -> None:
 def active_child(run_name: str) -> str:
     child = _full(run_name).get("child") or ""
     return child if child and frappe.db.get_value("HERO Integration Run", child, "state") in ACTIVE else ""
-
-
-def _instance() -> str:
-    settings = frappe.get_single("HERO Integration Settings")
-    return str(getattr(settings, "hero_source_instance", "default") or "default").strip() or "default"
 
 
 # ---------------------------------------------------------------- Synchronization page
