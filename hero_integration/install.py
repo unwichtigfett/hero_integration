@@ -44,6 +44,14 @@ HERO_CUSTOM_FIELDS = {
             "read_only": 1,
             "no_copy": 1,
         },
+        {
+            "fieldname": "custom_hero_lead_source",
+            "fieldtype": "Data",
+            "label": "Source",
+            "insert_after": "custom_hero_customer_category",
+            "read_only": 1,
+            "no_copy": 1,
+        },
         # The HERO customer type sets the native Customer Type; no separate field.
     ],
     "Project": [
@@ -87,7 +95,34 @@ HERO_CUSTOM_FIELDS = {
             "insert_after": "custom_hero_source_created",
             "read_only": 1,
             "no_copy": 1,
-        }
+        },
+        {
+            "fieldname": "custom_hero_designation",
+            "fieldtype": "Data",
+            "label": "Project Designation",
+            "insert_after": "custom_hero_display_id",
+            "read_only": 1,
+            "no_copy": 1,
+        },
+        {
+            "fieldname": "custom_hero_lead_source",
+            "fieldtype": "Data",
+            "label": "Source",
+            "insert_after": "custom_hero_source_modified",
+            "read_only": 1,
+            "no_copy": 1,
+        },
+        {
+            # The responsible HERO partner, matched to an ERPNext user by e-mail.
+            "fieldname": "custom_hero_project_manager",
+            "fieldtype": "Link",
+            "options": "User",
+            "label": "Project Responsible",
+            "insert_after": "custom_hero_designation",
+            "read_only": 1,
+            "no_copy": 1,
+            "in_standard_filter": 1,
+        },
     ],
 }
 

@@ -133,6 +133,7 @@ def from_documents(service, mapping, snapshot) -> ReadContract:
             CUSTOMER_CONTRACT_V2,
             CUSTOMER_CONTRACT_V3,
             CUSTOMER_CONTRACT_V4,
+            CUSTOMER_CONTRACT_V5,
             PROJECT_CONTRACT_V1,
             customer_query,
             project_query,
@@ -148,7 +149,7 @@ def from_documents(service, mapping, snapshot) -> ReadContract:
             legal_form_definition = "customer-company-legal-form"
             salutation_definition = "customer-salutation"
             selected_literals = _customer_selected_literals(definition_ids, mapping)
-            if customer_contract_version == CUSTOMER_CONTRACT_V4:
+            if customer_contract_version in (CUSTOMER_CONTRACT_V4, CUSTOMER_CONTRACT_V5):
                 if line2_definition not in selected_literals or salutation_definition not in selected_literals:
                     raise ReadContractError("Customer V4 requires the selected line_2 and salutation bindings.")
                 if legal_form_definition in selected_literals:

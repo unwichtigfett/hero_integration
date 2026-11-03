@@ -38,6 +38,9 @@ CUSTOMER_CONTRACT_V3 = "v3"
 CUSTOMER_CONTRACT_V4 = "v4"
 # V4 adds salutation title to V2 without the legal form.
 CUSTOMER_QUERY_V4 = CUSTOMER_QUERY_V2.replace("id nr first_name last_name full_name ", "id nr title first_name last_name full_name ")
+CUSTOMER_CONTRACT_V5 = "v5"
+# V5 also reads the lead source (owner decision 2026-11-03).
+CUSTOMER_QUERY_V5 = CUSTOMER_QUERY_V4.replace(" category type ", " category type source ")
 PROJECT_QUERY_V1 = """
 query HeroProjectMatches($first: Int!, $offset: Int!, $orderBy: String!) {
   project_matches(first: $first, offset: $offset, orderBy: $orderBy) {
@@ -64,6 +67,7 @@ CUSTOMER_SELECTED_PATHS = (
 CUSTOMER_SELECTED_PATHS_V2 = (*CUSTOMER_SELECTED_PATHS, "address.line_2")
 CUSTOMER_SELECTED_PATHS_V3 = (*CUSTOMER_SELECTED_PATHS_V2, "company_legal_form")
 CUSTOMER_SELECTED_PATHS_V4 = (*CUSTOMER_SELECTED_PATHS_V2, "title")
+CUSTOMER_SELECTED_PATHS_V5 = (*CUSTOMER_SELECTED_PATHS_V4, "source")
 PROJECT_SELECTED_PATHS = (
     "id", "customer_id", "project_id", "project_title", "project_nr", "project_type", "partner_notes",
     "customer.title", "customer.full_name", "address.full_address", "display_id", "created", "modified",
@@ -77,6 +81,15 @@ PROJECT_CONTRACT_V3 = "v3"
 # V3 also reads the project volume in euros.
 PROJECT_QUERY_V3 = PROJECT_QUERY_V2.replace("    measure { short name }\n", "    measure { short name }\n    volume\n")
 PROJECT_SELECTED_PATHS_V3 = (*PROJECT_SELECTED_PATHS_V2, "volume")
+PROJECT_CONTRACT_V4 = "v4"
+# V4 also reads the designation, the lead source, the responsible partner and the assigned users
+# (owner decision 2026-11-03).
+PROJECT_QUERY_V4 = PROJECT_QUERY_V3.replace(
+    "    volume\n",
+    "    volume\n    name partner_source\n    partner { email }\n    project_match_assignments { user { email } }\n",
+)
+PROJECT_SELECTED_PATHS_V4 = (*PROJECT_SELECTED_PATHS_V3, "name", "partner_source", "partner.email",
+                             "project_match_assignments")
 
 
 def project_query(contract_version: str) -> str:
@@ -88,6 +101,8 @@ def project_query(contract_version: str) -> str:
         return PROJECT_QUERY_V2
     if contract_version == PROJECT_CONTRACT_V3:
         return PROJECT_QUERY_V3
+    if contract_version == PROJECT_CONTRACT_V4:
+        return PROJECT_QUERY_V4
     raise ValueError("Unsupported Project read-contract version.")
 
 
@@ -102,6 +117,8 @@ def customer_query(contract_version: str) -> str:
         return CUSTOMER_QUERY_V3
     if contract_version == CUSTOMER_CONTRACT_V4:
         return CUSTOMER_QUERY_V4
+    if contract_version == CUSTOMER_CONTRACT_V5:
+        return CUSTOMER_QUERY_V5
     raise ValueError("Unsupported Customer read-contract version.")
 
 

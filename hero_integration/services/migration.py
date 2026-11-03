@@ -1407,11 +1407,21 @@ def _task_lifecycle_source(record) -> dict:
     except Exception:  # offline runner without System Settings
         today = date.today()
     # Never guess an assignee without the Task field or without the HERO user list.
-    emails = _task_user_emails() if 'target_user_id' in record and _task_has_assignee_field() else None
-    values = task_lifecycle.source_values(record, _external_task_deadline, emails or {}, today)
-    if emails is None:
+    wants_assignee = 'target_user_id' in record and _task_has_assignee_field()
+    wants_author = 'author_user_id' in record and _task_has_field(task_lifecycle.AUTHOR)
+    emails = _task_user_emails() if wants_assignee or wants_author else None
+    user_for = (lambda email: task_lifecycle._user_for(email, frappe)) if wants_author and emails is not None else None
+    values = task_lifecycle.source_values(record, _external_task_deadline, emails or {}, today, user_for=user_for)
+    if emails is None or not wants_assignee:
         values.pop(task_lifecycle.ASSIGNEE, None)
     return values
+
+
+def _task_has_field(fieldname) -> bool:
+    try:
+        return bool(frappe.get_meta('Task').has_field(fieldname))
+    except Exception:
+        return False
 
 
 def _task_has_assignee_field() -> bool:
@@ -1651,6 +1661,14 @@ def _migrate_project(record: dict[str, object], run) -> Result:
         review_reason=" ".join(review) or None,
         creation_values=None if getattr(plan, 'adapter_options', None) else _project_creation_values(record, values.get("company")),
     )
+    if (run.mode != 'Preview' and result.target_name and 'project_match_assignments' in record
+            and result.code in {'CREATED', 'UPDATED', 'SKIPPED', 'CONVERGED'}):
+        from hero_integration.integrations.project_assignments import sync as sync_assignees
+        assignees = sync_assignees(result.target_name, record)
+        if assignees["unmatched"]:
+            from dataclasses import replace
+            result = replace(result, detail=(result.detail or "") + (
+                f" {assignees['unmatched']} assignee(s) have no ERPNext user with their e-mail."))
     if getattr(plan, 'adapter_options', None) and result.target_name and result.code in {'CREATED', 'UPDATED', 'SKIPPED', 'CONVERGED', 'OBSERVED'}:
         from hero_integration.services.project_logbook import sync_mapped_entries
         sync_mapped_entries(plan, record, result.target_name, preview=run.mode == 'Preview')
