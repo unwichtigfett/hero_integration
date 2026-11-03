@@ -2836,3 +2836,6 @@ Import all HERO articles (own articles and supplier catalogs) as ERPNext Items w
 The Item was changed in ERPNext; the newer HERO article was not applied.,Der Artikel wurde in ERPNext geändert; der neuere HERO-Artikel wurde nicht übernommen.
 "Reads HERO directly for the source instance ""{0}"" and writes nothing back to HERO. Unchanged records are skipped; a cancelled or stopped run continues where it stopped.","Liest HERO direkt für die Quellinstanz ""{0}"" und schreibt nichts nach HERO zurück. Unveränderte Datensätze werden übersprungen; ein abgebrochener oder angehaltener Lauf setzt dort fort, wo er stehen blieb."
 Manual start only,Nur manueller Start
+Area:HERO data area,Bereich
+Customers,Kunden
+Calendar,Kalender
