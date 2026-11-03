@@ -7,6 +7,15 @@ import frappe
 ERPNext_VERSION_CONSTRAINT = ">=16.0.0-dev,<17.0.0"
 
 HERO_CUSTOM_FIELDS = {
+    "Item": [
+        {
+            "fieldname": "custom_hero_manufacturer_nr",
+            "fieldtype": "Data",
+            "label": "HERO Manufacturer Part No",
+            "insert_after": "brand",
+            "read_only": 1,
+        },
+    ],
     "Customer": [
         {
             "fieldname": "custom_hero_source_id",

@@ -50,13 +50,16 @@ def records_path(name: str) -> str:
 
 # Configurable target fields per DocType (besides app-owned custom_hero_* fields of the owner).
 FIELDS = {
-    "Item": frozenset({"item_code", "item_name", "description", "item_group", "stock_uom", "brand", "disabled", "barcodes"}),
+    "Item": frozenset({"item_code", "item_name", "description", "item_group", "stock_uom", "brand", "disabled", "barcodes",
+                       "supplier_items"}),
     "Item Price": frozenset({"price_list_rate"}),
     "File": frozenset({"file_name"}),
 }
 # Coded resolvers; each may only feed its one native field.
 TRANSFORM_TARGETS = {
     "HERO Item Group": ("Item", "item_group"),       # catalog name → Item Group below "HERO Artikel"
+    "HERO Category Group": ("Item", "item_group"),   # category → Item Group; without category the catalog
+    "HERO Supplier": ("Item", "supplier_items"),     # supplier name (+ its article number) → Item Supplier row
     "HERO UOM": ("Item", "stock_uom"),               # unit text → UOM (created when missing)
     "HERO Brand": ("Item", "brand"),                 # manufacturer → Brand (created when missing)
     "HERO EAN Barcode": ("Item", "barcodes"),        # EAN → one Item Barcode row, only when unique
@@ -68,6 +71,8 @@ TRANSFORMS = frozenset(TRANSFORM_TARGETS)
 PRICE_LISTS = frozenset({"Standard Buying", "Standard Selling"})
 DEFAULT_UOM = "Stk"
 UNCATALOGUED_GROUP = "Ohne Katalog"
+CATALOG_PATH = "base_data.supply_catalog.name"
+SUPPLIER_PART_PATH = "base_data.supplier_id"
 
 
 def operation(name: str) -> dict | None:
@@ -135,6 +140,10 @@ def required_paths(plan) -> set[str]:
         if spec.transformation == "HERO Default Sales Price":
             paths |= {"sales_prices.net_price_per_unit", "sales_prices.supply_sales_price.is_default", "list_price"}
             paths.discard(spec.source_path)
+        if spec.transformation == "HERO Category Group":
+            paths.add(CATALOG_PATH)
+        if spec.transformation == "HERO Supplier":
+            paths.add(SUPPLIER_PART_PATH)
     return paths
 
 
@@ -147,6 +156,15 @@ def resolve(transformation: str, value, record: dict | None = None):
         if transformation == "HERO Item Group":
             return text or UNCATALOGUED_GROUP
         return text or None
+    if transformation == "HERO Category Group":
+        text = value.strip()[:140] if isinstance(value, str) else ""
+        return text or resolve("HERO Item Group", _path(record, CATALOG_PATH))
+    if transformation == "HERO Supplier":
+        name = value.strip()[:140] if isinstance(value, str) else ""
+        if not name:
+            return None
+        part = _path(record, SUPPLIER_PART_PATH)
+        return {"supplier": name, "supplier_part_no": part.strip()[:140] if isinstance(part, str) and part.strip() else None}
     if transformation == "HERO UOM":
         text = value.strip()[:140] if isinstance(value, str) else ""
         return text or DEFAULT_UOM
@@ -161,6 +179,13 @@ def resolve(transformation: str, value, record: dict | None = None):
                 return price(row.get("net_price_per_unit"))
         return price((record or {}).get("list_price"))
     raise ValueError("Unknown HERO resolver: " + transformation)
+
+
+def _path(record, path: str):
+    value = record or {}
+    for part in path.split("."):
+        value = value.get(part) if isinstance(value, dict) else None
+    return value
 
 
 def price(value) -> float | None:
@@ -193,12 +218,15 @@ DEFAULT_RULES = {
               "Nonempty String ID"),
         _rule("HeroProducts", "base_data.name", "Item", "item_name", "string|null", "Record Name", "Trim"),
         _rule("HeroProducts", "base_data.description", "Item", "description", "string|null", "Field", "Safe HTML"),
-        _rule("HeroProducts", "base_data.supply_catalog.name", "Item", "item_group", "string|null", "Field",
-              "HERO Item Group"),
+        _rule("HeroProducts", "base_data.category", "Item", "item_group", "string|null", "Field",
+              "HERO Category Group"),
         _rule("HeroProducts", "base_data.unit_type", "Item", "stock_uom", "string|null", "Field", "HERO UOM"),
         _rule("HeroProducts", "base_data.manufacturer", "Item", "brand", "string|null", "Field", "HERO Brand"),
         _rule("HeroProducts", "is_deleted", "Item", "disabled", "boolean|null", "Field", "Identity"),
         _rule("HeroProducts", "base_data.ean", "Item", "barcodes", "string|null", "Field", "HERO EAN Barcode"),
+        _rule("HeroProducts", "supply_operator.name", "Item", "supplier_items", "string|null", "Field", "HERO Supplier"),
+        _rule("HeroProducts", "base_data.manufacturer_nr", "Item", "custom_hero_manufacturer_nr", "string|null",
+              "Field", "Trim"),
         _rule("HeroProducts", "nr", "Item", "item_code", "string|null", "Field", "Trim"),
         _rule("HeroProducts", "base_price", "Item Price", "price_list_rate", "float|null", "Field", "HERO Price",
               "Standard Buying"),

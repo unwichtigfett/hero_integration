@@ -110,6 +110,10 @@ def _fields(link, problem: str, rules) -> tuple[str, list[dict]]:
         entry["previous_hero_value"] = _literal(match["old"])
         return "number", [entry]
     if link.source_type == "supply_product":
+        if problem.startswith("Item code ") and "is already used by an ERPNext Item" in problem:
+            entry = _field(link.source_type, doctype, name, "item_code", rules)
+            entry["hero_value"] = name
+            return "product", [entry]
         if match := _PRICE.match(problem):
             entry = _field(link.source_type, "Item Price", match["name"], "price_list_rate", rules)
             entry["hero_variable"] = dict(rules or ()).get(("Item Price", match["list"]))

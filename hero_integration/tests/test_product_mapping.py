@@ -24,7 +24,7 @@ def own_read(drop=(), add=()):
 
 
 MANUFACTURER_NR = replace(BUILTIN.plan.definitions[1], definition_id="mnr", purpose="Field",
-                          source_path="base_data.manufacturer_nr", target_field="custom_hero_manufacturer_nr")
+                          source_path="base_data.matchcode", target_field="custom_hero_matchcode")
 
 
 class _Item(dict):
@@ -74,7 +74,7 @@ class _Frappe:
         if values["doctype"] == "HERO Integration Link":
             return SimpleNamespace(insert=lambda **k: self.links.append(("insert", values)))
         self.masters.append(values)
-        return SimpleNamespace(insert=lambda **k: None)
+        return SimpleNamespace(insert=lambda **k: None, name=values.get("supplier_name") or values.get("doctype"))
 
 
 class TestOwnMapping(unittest.TestCase):
@@ -104,10 +104,10 @@ class TestOwnMapping(unittest.TestCase):
         self.assertEqual(pm.item_values({**ROW, "nr": ""})["item_code"], ROW["product_id"])
 
     def test_an_added_custom_field_is_imported(self):
-        row = {**ROW, "base_data": {**ROW["base_data"], "manufacturer_nr": " AC-415 "}}
+        row = {**ROW, "base_data": {**ROW["base_data"], "matchcode": " AC-415 "}}
         values = pm.item_values(row, own_read(add=[MANUFACTURER_NR]))
-        self.assertEqual(values["custom_hero_manufacturer_nr"], "AC-415")
-        self.assertIn("custom_hero_manufacturer_nr", values["owned"])
+        self.assertEqual(values["custom_hero_matchcode"], "AC-415")
+        self.assertIn("custom_hero_matchcode", values["owned"])
 
     def test_an_unmapped_field_is_left_alone_and_required_fields_get_their_fallback(self):
         values = pm.item_values(ROW, own_read(drop=("brand", "item_group")))
@@ -139,10 +139,10 @@ class TestOwnMapping(unittest.TestCase):
                                    {"prices": {}, "fields": pm.owned_field_digests(item)}))
         with patch.object(pm, "frappe", fake):
             self.assertEqual(pm.upsert(ROW, link, pm._Masters(), "default", read=BUILTIN), "unchanged")
-            row = {**ROW, "base_data": {**ROW["base_data"], "manufacturer_nr": "AC-415"}}
+            row = {**ROW, "base_data": {**ROW["base_data"], "matchcode": "AC-415"}}
             self.assertEqual(pm.upsert(row, link, pm._Masters(), "default", read=own_read(add=[MANUFACTURER_NR])),
                              "updated")
-        self.assertEqual(item["custom_hero_manufacturer_nr"], "AC-415")
+        self.assertEqual(item["custom_hero_matchcode"], "AC-415")
 
     def test_a_local_edit_of_a_previously_mapped_field_is_still_a_conflict(self):
         item = _Item({"item_code": "PV-1001", "item_name": "MODUL: AXIpremium", "description": "<p>Modul</p>",
@@ -196,6 +196,64 @@ class TestProgress(unittest.TestCase):
             pm.sync_products(Client(), source_instance="default", read=BUILTIN,
                              progress=lambda counts: reports.append(counts.get("added")))
         self.assertEqual(reports, [500, 1000])  # the last, short page ends the pass and is reported by the run
+
+
+SUPPLIER_ROW = {**ROW, "supply_operator": {"name": "Krannich Solar"},
+                "base_data": {**ROW["base_data"], "category": "Batteriespeicher", "supplier_id": "0151231",
+                              "description": "", "manufacturer_nr": "0151230"}}
+
+
+class TestProductDecisions(unittest.TestCase):
+    def test_category_is_the_group_and_the_catalog_its_fallback(self):
+        self.assertEqual(pm.item_values(SUPPLIER_ROW)["item_group"], "Batteriespeicher")
+        self.assertEqual(pm.item_values(ROW)["item_group"], "Eigene Artikel")  # no category: catalog
+
+    def test_description_stays_empty_and_the_manufacturer_part_number_is_kept(self):
+        values = pm.item_values(SUPPLIER_ROW)
+        self.assertIsNone(values["description"])
+        self.assertEqual(values["custom_hero_manufacturer_nr"], "0151230")
+
+    def test_supplier_is_created_once_and_its_row_carries_the_part_number(self):
+        fake = _Frappe()
+        with patch.object(pm, "frappe", fake):
+            self.assertEqual(pm.upsert(SUPPLIER_ROW, None, pm._Masters(), "default", read=BUILTIN), "added")
+        item = fake.items["PV-1001"]
+        self.assertEqual(item["supplier_items"], [{"supplier": "Krannich Solar", "supplier_part_no": "0151231"}])
+        self.assertEqual([m["supplier_name"] for m in fake.masters if m["doctype"] == "Supplier"], ["Krannich Solar"])
+        # a second import keeps one row and updates its part number, other suppliers stay
+        item["supplier_items"].append({"supplier": "Local", "supplier_part_no": "L-1"})
+        changed = {**SUPPLIER_ROW, "base_data": {**SUPPLIER_ROW["base_data"], "supplier_id": "0151299"}}
+        with patch.object(pm, "frappe", fake):
+            pm._set_supplier(item, pm.item_values(changed)["supplier"], pm._Masters())
+        self.assertEqual(item["supplier_items"], [{"supplier": "Krannich Solar", "supplier_part_no": "0151299"},
+                                                  {"supplier": "Local", "supplier_part_no": "L-1"}])
+
+    def test_a_taken_item_code_is_a_conflict_not_a_suffix(self):
+        foreign = _Item({"item_code": "PV-1001", "item_name": "Local article"})
+        fake = _Frappe({"PV-1001": foreign})
+        with patch.object(pm, "frappe", fake):
+            self.assertEqual(pm.upsert(ROW, None, pm._Masters(), "default", read=BUILTIN), "conflict")
+        self.assertEqual(set(fake.items), {"PV-1001"})              # nothing new, no PV-1001-<id>
+        self.assertNotIn("saved", foreign)                           # the foreign Item is untouched
+        link = next(entry[1] for entry in fake.links if entry[0] == "insert")
+        self.assertEqual((link["sync_status"], link["target_name"]), ("Conflict", "PV-1001"))
+        self.assertTrue(link["conflict_detail"].startswith("Item code PV-1001 is already used"))
+
+    def test_the_conflict_waits_approve_links_the_item_and_decline_skips(self):
+        foreign = _Item({"item_code": "PV-1001", "item_name": "Local article", "stock_uom": "Stk"})
+        foreign.name = "PV-1001"
+        fake = _Frappe({"PV-1001": foreign})
+        waiting = SimpleNamespace(name="L1", target_name="PV-1001", source_payload_hash="", target_payload_hash="",
+                                  target_field_hashes="", sync_status="Conflict",
+                                  conflict_detail=pm.CODE_TAKEN.format("PV-1001"))
+        with patch.object(pm, "frappe", fake):
+            self.assertEqual(pm.upsert(ROW, waiting, pm._Masters(), "default", read=BUILTIN), "conflict")
+            self.assertNotIn("saved", foreign)
+            approved = SimpleNamespace(**{**vars(waiting), "conflict_detail": "Recheck requested: " + waiting.conflict_detail})
+            self.assertEqual(pm.upsert(ROW, approved, pm._Masters(), "default", read=BUILTIN), "updated")
+            self.assertEqual(foreign["item_name"], "MODUL: AXIpremium")  # the existing Item now follows HERO
+            declined = SimpleNamespace(**{**vars(waiting), "sync_status": "Rejected"})
+            self.assertEqual(pm.upsert(ROW, declined, pm._Masters(), "default", read=BUILTIN), "skipped_rejected")
 
 
 if __name__ == "__main__":

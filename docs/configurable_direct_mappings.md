@@ -38,9 +38,18 @@ definition or become personal drafts.
 
 Until an own approved mapping is available for the operation and source, the
 runtime uses the built-in rules and a Query generated from them. Products use
-`base_data.name`, `base_data.description`, `base_data.supply_catalog.name`,
-`base_data.unit_type`, `base_data.manufacturer`, `base_data.ean`, `is_deleted`,
-`base_price` and `sales_prices` (with `list_price` as the sales fallback).
+`nr` (Item Code), `base_data.name`, `base_data.description`, `base_data.category`
+(Item Group, falling back to `base_data.supply_catalog.name`), `base_data.unit_type`,
+`base_data.manufacturer`, `base_data.manufacturer_nr` (`custom_hero_manufacturer_nr`),
+`base_data.ean`, `supply_operator.name` with `base_data.supplier_id` (Item Supplier),
+`is_deleted`, `base_price` and `sales_prices` (with `list_price` as the sales
+fallback). An article without HERO description keeps an empty description.
+
+The HERO article number is the Item's identity (Item Code = document name). When
+it is already used by an ERPNext Item without this article's link, nothing is
+written: the article appears under Synchronization → Conflicts. Approve links that
+existing Item to the HERO article; decline keeps them apart and the article is not
+imported. Declined articles are skipped by later runs.
 Documents and Pictures use `filename` for the File name. Both include their
 fixed identity rules. Publishing or activating a mapping without its read
 approval does not replace this fallback.
@@ -93,6 +102,8 @@ Example mapping settings (replace rule IDs and service name with saved ones):
 | Transformation | Required target | Behavior |
 | --- | --- | --- |
 | `HERO Item Group` | `Item.item_group` | Catalog name below `HERO Artikel`; empty names use `Ohne Katalog` |
+| `HERO Category Group` | `Item.item_group` | Category below `HERO Artikel`; without category the catalog, then `Ohne Katalog` |
+| `HERO Supplier` | `Item.supplier_items` | Resolve/create the Supplier; one Item Supplier row with `base_data.supplier_id` as supplier part number; other rows stay |
 | `HERO UOM` | `Item.stock_uom` | Resolve/create the UOM; empty units use `Stk` |
 | `HERO Brand` | `Item.brand` | Resolve/create the manufacturer Brand |
 | `HERO EAN Barcode` | `Item.barcodes` | Normalize an EAN and add one barcode row only when unique |
