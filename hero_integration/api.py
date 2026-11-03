@@ -1732,6 +1732,45 @@ def _personal_draft_errors():
         frappe.throw(frappe._("MAPPING_DRAFT_INVALID: Invalid content or unavailable active definition."))
 
 
+def _new_mapping_snapshot(snapshot_name):
+    frappe.only_for("System Manager")
+    snapshot, schema = _validated_snapshot(_mapping_text(snapshot_name, "snapshot_name"))
+    snapshot.check_permission("read")
+    if snapshot.source_instance != _configured_source_instance():
+        frappe.throw(frappe._("The schema snapshot belongs to another configured HERO source."))
+    return snapshot, schema
+
+
+@frappe.whitelist(methods=["GET"])
+def mapping_draft_new_seed(snapshot_name: str, direction: str, operation_name: str, target_operation: str = ""):
+    """Build an unsaved picker form from the configured source's stored schema."""
+    _mapping_request_fields({"snapshot_name", "direction", "operation_name", "target_operation"})
+    snapshot, schema = _new_mapping_snapshot(snapshot_name)
+    from hero_integration.services.mapping_draft_creation import seed
+    from hero_integration.services.mapping_draft_service import MappingDraftError
+    try:
+        prepared = seed(schema, _mapping_text(direction, "direction"), _mapping_text(operation_name, "operation_name"),
+                        _mapping_text(target_operation, "target_operation", allow_empty=True))
+    except (MappingDraftError, ValueError) as error:
+        frappe.throw(translate_error(error, frappe._))
+    return {**prepared, "snapshot_name": snapshot.name, "schema_fingerprint": snapshot.schema_fingerprint,
+            "source_instance": snapshot.source_instance, "direction": direction, "operation_name": operation_name}
+
+
+@frappe.whitelist(methods=["POST"])
+def mapping_draft_new(snapshot_name: str, direction: str, operation_name: str, content_json: str):
+    """Save the first complete picker assignment as this actor's personal draft."""
+    _mapping_request_fields({"snapshot_name", "direction", "operation_name", "content_json"})
+    snapshot, schema = _new_mapping_snapshot(snapshot_name)
+    content = _personal_draft_json_object(content_json, "new mapping content", 131072)
+    from hero_integration.services.frappe_mapping_draft_storage import FrappeMappingDraftStorage
+    from hero_integration.services.mapping_draft_creation import create
+    with _personal_draft_errors():
+        draft = create(snapshot, schema, _mapping_text(direction, "direction"), _mapping_text(operation_name, "operation_name"),
+                       content, actor=frappe.session.user, site_scope=frappe.local.site, storage=FrappeMappingDraftStorage())
+    return {"draft": _personal_draft_result(draft)}
+
+
 @frappe.whitelist(methods=["POST"])
 def mapping_draft_create(definition_id: str):
     _mapping_request_fields({"definition_id"})
@@ -1840,16 +1879,21 @@ def mapping_draft_enroll_portable_identity(definition_id: str, portable_id: str,
 
 @frappe.whitelist(methods=["GET"])
 def mapping_draft_exchange_export(source_instance: str, snapshot_name: str, direction: str,
-                                  format_version: str = "hero-personal-mapping-draft-exchange-v1") -> dict[str, str]:
-    """Export only the current administrator's OPEN drafts for one direction."""
+                                  format_version: str = "hero-personal-mapping-draft-exchange-v1",
+                                  drafts_only: int | bool | str = 0) -> dict[str, str]:
+    """Export mappings in one direction, optionally limiting portable files to own drafts."""
     frappe.only_for("System Manager")
-    _mapping_request_fields({"source_instance", "snapshot_name", "direction", "format_version"})
+    _mapping_request_fields({"source_instance", "snapshot_name", "direction", "format_version", "drafts_only"})
+    if type(drafts_only) not in (bool, int, str) or drafts_only not in (True, False, 0, 1, "0", "1", "true", "false"):
+        frappe.throw(frappe._("MAPPING_INPUT_INVALID: Invalid drafts_only."))
+    drafts_only = drafts_only in (True, 1, "1", "true")
     source_instance = _mapping_text(source_instance, "source_instance")
     snapshot_name = _mapping_text(snapshot_name, "snapshot_name")
     from hero_integration.services.mapping_draft_exchange import MappingDraftExchangeError, export_package
 
     try:
-        content = export_package(source_instance, snapshot_name, direction, format_version=format_version)
+        content = export_package(source_instance, snapshot_name, direction, format_version=format_version,
+                                 drafts_only=drafts_only)
     except MappingDraftExchangeError as error:
         frappe.throw(translate_error(error, frappe._))
     suffix = "query" if direction == "QUERY_TO_FRAPPE" else "mutation"

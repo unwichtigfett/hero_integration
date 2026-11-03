@@ -300,3 +300,10 @@
 @container hero-page (max-width: 559px) {
     .hero-integration-ui .hero-page-header { flex-direction: column; }
 }
+
+/* Mapping fields and primary actions stay together; technical controls share one disclosure. */
+.hero-mapping-core .hero-mapping-context > .hero-mapping-workbench-actions,
+.hero-mapping-core .hero-mapping-context > .hero-mapping-draft-status { grid-column:1 / -1; }
+.hero-mapping-core .hero-mapping-advanced { margin-block:16px; }
+.hero-mapping-core .hero-mapping-advanced > summary { cursor:pointer; padding-block:8px; }
+.hero-mapping-core .hero-mapping-advanced > section { margin-block:12px; }

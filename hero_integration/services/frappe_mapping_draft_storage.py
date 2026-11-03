@@ -708,6 +708,9 @@ class FrappeMappingDraftStorage:
                 raise DraftConflict('New-definition schema context changed.')
             snapshot.check_permission('read')
             value = _object(draft.content)
+            if context['direction'] == 'QUERY_TO_FRAPPE':
+                from hero_integration.services.mapping_draft_exchange import _validated_record_contexts
+                value = _validated_record_contexts(value, context['operation_name'], schema, strip=True)
             envelope = value.pop('_portable_exchange_schema', None)
             schema_values = {}
             if envelope is not None:
@@ -1033,6 +1036,9 @@ class FrappeMappingDraftStorage:
         if value.get('native_task_onboarding') is not None:
             raise MappingDraftError('Imported content cannot grant native Task onboarding authority.')
         if definition['direction'] == 'QUERY_TO_FRAPPE':
+            if 'field_contexts' in value:
+                from hero_integration.services.mapping_draft_exchange import _validated_record_contexts
+                _validated_record_contexts(value, definition['operation_name'], schema)
             if value.get('additional_mappings'):
                 raise MappingDraftError('Additional query assignments require an active mapping definition.')
             identities = references(value)
@@ -1578,6 +1584,9 @@ class FrappeMappingDraftStorage:
                 ({'object_type', 'schema_context'} & set(content['source'])) or
                 any('object_type' in item.get('source', {}) for item in additions)):
             raise MappingDraftError('Object-first Draft fields require an approved fetch and publication contract before activation.')
+        if content.get('query_adapter') and 'field_contexts' in content:
+            from hero_integration.services.mapping_draft_exchange import _validated_record_contexts
+            content = _validated_record_contexts(content, parent.operation_name, schema, strip=True)
         if content.get('field_contexts'):
             if not content.get('query_adapter') and not (self._approved_relationship_contexts(content, schema) or self._approved_task_contexts(content, schema)):
                 raise MappingDraftError('Object-first Draft fields require an approved fetch and publication contract before activation.')

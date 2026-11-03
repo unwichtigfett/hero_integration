@@ -66,3 +66,27 @@ Previously approved stored Query services keep their reviewed-document
 contracts. Each one changes only when migrated individually through those
 gates. This amendment does not make generated requests executable. It does not
 mean that all existing execution paths are migrated.
+
+## Creating and exchanging mappings
+
+Query and Mutation provide the same visible entry points for creating a mapping
+and importing JSON drafts. A new mapping starts with a saved, validated schema
+and an operation. Source and target fields are selected in the editor. Before
+the first save the configuration is local; saving creates the current user's
+draft without requiring an existing active definition. The field editor labels
+the assignment simply **Mapping**. Draft status is shown separately. Source,
+target, transformation and save/activation controls are visible in the main
+workspace. Technical controls are grouped in one flat **Advanced** section.
+
+For queries, HERO is the source and ERPNext is the target. For mutations, ERPNext
+is the source and an actual HERO mutation input is the target. Query fields
+cannot simply be reversed when inputs, transformations or identity semantics
+differ. Mutation publication and execution retain their existing independent
+contracts.
+
+Directional JSON import first previews the file for the selected source,
+snapshot and direction. Confirmation saves drafts using the preview fingerprint
+and expected revisions. It does not publish mappings or execute HERO operations.
+Export contains the current user's open drafts in that context. The complete
+nine-area configuration package remains a separate Settings import; that file
+is not a directional draft file.

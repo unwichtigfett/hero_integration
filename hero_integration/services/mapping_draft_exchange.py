@@ -189,6 +189,53 @@ def enroll_portable_rule_identity(definition_id, rule_id, portable_id, expected_
         return {'definition_id': rule_id, 'portable_definition_id': portable_id, 'unchanged': False}
 
 
+def _validated_record_contexts(content, operation, schema, *, strip=False):
+    """Prove picker provenance is relative to the configured record before discarding it."""
+    value = _object(content)
+    if 'field_contexts' not in value:
+        return value
+    from hero_integration.services.graphql_graph import normalize_schema
+    from hero_integration.services.object_mapping_catalog import field as schema_field
+    from hero_integration.services.query_mapping import source_type, validate_query_adapter
+    try:
+        validate_query_adapter(value.get('query_adapter'))
+        contexts, rules = value['field_contexts'], value.get('field_rules', {})
+        selected = references(value)
+        if not isinstance(contexts, dict) or len(contexts) > 100 or not isinstance(rules, dict):
+            raise ValueError('Invalid picker field contexts.')
+        path = value.get('records_path')
+        if not isinstance(path, str) or path.split('.')[0] != operation:
+            raise ValueError('Picker record path differs from its operation.')
+        normalized = normalize_schema(schema)
+        types = {item['name']: item for item in normalized['types']}
+        current = types[normalized['queryType']['name']]
+        for segment in path.split('.'):
+            members = [item for item in current.get('fields', []) if item.get('name') == segment]
+            if len(members) != 1:
+                raise ValueError('Picker record path is absent from its schema.')
+            ref = members[0]['type']
+            while ref.get('kind') in {'NON_NULL', 'LIST'}:
+                ref = ref['ofType']
+            if ref.get('kind') != 'OBJECT':
+                raise ValueError('Picker record path must resolve to an object.')
+            current = types[ref['name']]
+        prefix = path[len(operation) + 1:] + '.' if path != operation else ''
+        for identity, context in contexts.items():
+            if (identity not in selected or identity not in rules or not isinstance(context, dict)
+                    or set(context) != {'object_type', 'schema_context'}
+                    or context['object_type'] != current['name']):
+                raise ValueError('Picker field context is not relative to the selected record.')
+            rule = rules[identity]
+            schema_field(schema, context['object_type'], rule['source_path'], context['schema_context'])
+            if source_type(schema, operation, prefix + rule['source_path']) != rule['source_type']:
+                raise ValueError('Picker field type differs from its schema.')
+    except (KeyError, TypeError, ValueError, AttributeError) as error:
+        raise MappingDraftError('Object field context does not match the selected record and saved schema.') from error
+    if strip:
+        value.pop('field_contexts')
+    return value
+
+
 def _portable_content(content, direction):
     """Accept only understood configuration, never local provenance or authority."""
     value = bounded(_object(content))
@@ -257,8 +304,17 @@ def _validate_portable_query(content, operation, schema):
     if content.get('query_adapter'):
         from hero_integration.services.query_mapping import source_type, validate_query_adapter
         validate_query_adapter(content['query_adapter'])
+        # Rules are relative to the selected record, which may be nested under
+        # the query root (company.partners or FileUploads.edges.node).
+        record_path = content.get('records_path', operation)
+        if record_path == operation:
+            prefix = ''
+        elif isinstance(record_path, str) and record_path.startswith(operation + '.'):
+            prefix = record_path[len(operation) + 1:] + '.'
+        else:
+            raise MappingDraftExchangeError('Portable Query record path does not match its operation.')
         for rule in content.get('field_rules', {}).values():
-            if source_type(schema, operation, rule['source_path']) != rule['source_type']:
+            if source_type(schema, operation, prefix + rule['source_path']) != rule['source_type']:
                 raise MappingDraftExchangeError('Portable Query field type differs from the target schema.')
         return
     from hero_integration.services.graphql_graph import normalize_schema
@@ -304,7 +360,7 @@ def _validate_portable_query(content, operation, schema):
             raise MappingDraftExchangeError('Portable field-rule type or cardinality differs from the target schema.')
 
 
-def _export_portable(source_instance, snapshot_name, direction):
+def _export_portable(source_instance, snapshot_name, direction, *, drafts_only=False):
     FrappeMappingDraftStorage()._authorize(frappe.session.user)
     assert_portable_identity_schema(frappe)
     _lock_context(source_instance, snapshot_name, direction)
@@ -315,6 +371,8 @@ def _export_portable(source_instance, snapshot_name, direction):
     parents = frappe.get_all('HERO GraphQL Mapping', filters={'source_instance': source_instance,
         'schema_snapshot': snapshot_name, 'direction': direction, 'status': 'Active'}, fields=['definition_id', 'mapping_json'])
     owned = {_value(row, 'definition_id'): row for row in rows}
+    if drafts_only:
+        parents = [row for row in parents if _value(row, 'definition_id') in owned]
     selected = []
     for row in rows:
         raw = _value(row, 'new_definition_json')
@@ -390,6 +448,8 @@ def _export_portable(source_instance, snapshot_name, direction):
                     raise MappingDraftExchangeError('Stored portable schema context is invalid.')
                 manifests.append({'schema_manifest': _json(envelope['schema'])})
                 dependencies = envelope['dependencies']
+            if direction == 'QUERY_TO_FRAPPE':
+                content = _validated_record_contexts(content, definition['operation_name'], schema, strip=True)
             content = _portable_content(content, direction)
             storage.validate_new_definition(definition, draft.content)
             if direction == 'QUERY_TO_FRAPPE':
@@ -419,9 +479,13 @@ def _export_portable(source_instance, snapshot_name, direction):
                                                            storage.active(local_id).content_hash, snapshot.schema_fingerprint):
                     raise DraftConflict('Personal draft baseline changed before portable export.')
             else:
+                if drafts_only:
+                    raise DraftConflict('Personal draft changed during portable export.')
                 content = storage.initial_content(storage.active(local_id).content)
             content = _object(content)
             check_locked(content)
+            if direction == 'QUERY_TO_FRAPPE' and content.get('query_adapter'):
+                content = _validated_record_contexts(content, parent.operation_name, schema, strip=True)
             dependencies = []
             mapping_schema, own_dependencies = None, None
             manifest = parent.get('portable_schema_manifest') or ''
@@ -943,10 +1007,13 @@ def _save_portable(payload, source_instance, snapshot_name, direction, expected_
             'drafts': created, 'activation': False}
 
 
-def export_package(source_instance: str, snapshot_name: str, direction: str, *, format_version: str = FORMAT_VERSION) -> str:
-    """Export only the current actor's OPEN drafts in one exact direction."""
+def export_package(source_instance: str, snapshot_name: str, direction: str, *, format_version: str = FORMAT_VERSION,
+                   drafts_only: bool = False) -> str:
+    """Export directional drafts; portable exports optionally include active definitions."""
+    if type(drafts_only) is not bool:
+        raise MappingDraftExchangeError('Draft-only export must be an explicit Boolean.')
     if format_version == PORTABLE_FORMAT_VERSION:
-        return _export_portable(source_instance, snapshot_name, direction)
+        return _export_portable(source_instance, snapshot_name, direction, drafts_only=drafts_only)
     if format_version != FORMAT_VERSION:
         raise MappingDraftExchangeError('Unsupported draft exchange format.')
     active = _active_definitions(source_instance, snapshot_name, direction)

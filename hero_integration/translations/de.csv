@@ -110,7 +110,7 @@ Actor,Ausführender Benutzer
 Adapter configuration JSON,Adapterkonfiguration als JSON
 Adapter configuration must be an object.,Die Adapterkonfiguration muss ein Objekt sein.
 Add existing field rule,Vorhandene Feldregel hinzufügen
-Add field mapping,Feld-Mapping hinzufügen
+Add field mapping,Mapping hinzufügen
 Add mapping to draft,Mapping zum Entwurf hinzufügen
 Additional local changes are not saved.,Weitere lokale Änderungen sind nicht gespeichert.
 Additional source field is not approved.,Das zusätzliche Quellfeld ist nicht freigegeben.
@@ -3115,3 +3115,45 @@ Native Task replacement cannot introduce or change onboarding authority.,Beim Er
 A replacement reader points to another mapping area.,Ein Ersatzleseservice verweist auf einen anderen Mapping-Bereich.
 An approved mapping field rule is unavailable for export.,Eine freigegebene Mapping-Feldregel ist für den Export nicht verfügbar.
 Native replacement contains unsupported configuration fields.,Das native Ersatzmapping enthält nicht unterstützte Konfigurationsfelder.
+Mapping actions,Mapping-Aktionen
+Import mapping JSON,Mapping-JSON importieren
+Import JSON,JSON importieren
+Export drafts,Entwürfe exportieren
+JSON exchanges your saved drafts for this direction. Active mappings and execution permissions remain unchanged.,JSON überträgt Ihre gespeicherten Entwürfe für diese Richtung. Aktive Mappings und Ausführungsrechte bleiben unverändert.
+Exporting drafts…,Entwürfe werden exportiert…
+Invalid draft export response.,Die Antwort zum Entwurfsexport ist ungültig.
+Saved drafts exported. Unsaved edits are not included.,Gespeicherte Entwürfe exportiert. Ungespeicherte Änderungen sind nicht enthalten.
+Mapping JSON is too large. Configuration packages belong under Settings > Configuration package.,Die Mapping-JSON ist zu groß. Konfigurationspakete importieren Sie unter Einstellungen > Konfigurationspaket.
+The file is not valid JSON.,Die Datei enthält kein gültiges JSON.
+This is a configuration package. Import it under Settings > Configuration package.,Dies ist ein Konfigurationspaket. Importieren Sie es unter Einstellungen > Konfigurationspaket.
+Checking mapping JSON…,Mapping-JSON wird geprüft…
+"{0} drafts: {1} new, {2} replaced, {3} unchanged, {4} removed. Only your drafts are changed; nothing is activated.","{0}-Entwürfe: {1} neu, {2} ersetzt, {3} unverändert, {4} entfernt. Nur Ihre Entwürfe werden geändert; nichts wird aktiviert."
+Import mappings,Mappings importieren
+Import as drafts,Als Entwürfe importieren
+Importing mappings as drafts…,Mappings werden als Entwürfe importiert…
+Unexpected draft import result.,Unerwartetes Ergebnis des Entwurfsimports.
+Mappings imported as drafts. Nothing was activated.,Mappings als Entwürfe importiert. Nichts wurde aktiviert.
+"Choose an operation, then select source and target fields. Save keeps a draft; activation is a separate step.",Wählen Sie einen Vorgang und anschließend Quell- und Zielfeld. Speichern legt einen Entwurf an; die Aktivierung erfolgt separat.
+Loading mapping fields…,Mapping-Felder werden geladen…
+Choose a target operation for this query.,Wählen Sie einen Zielvorgang für diese Abfrage.
+Invalid new mapping draft response.,Die Antwort zum neuen Mapping-Entwurf ist ungültig.
+"New mapping. Choose source and target fields, then save the draft.",Neues Mapping. Wählen Sie Quell- und Zielfeld und speichern Sie den Entwurf.
+Unsaved mapping,Ungespeichertes Mapping
+Discard new mapping,Neues Mapping verwerfen
+Saving new mapping draft…,Neuer Mapping-Entwurf wird gespeichert…
+Mapping saved as a draft. Nothing was activated.,Mapping als Entwurf gespeichert. Nichts wurde aktiviert.
+Save status is uncertain. Reload the mapping list before creating another draft; your local inputs are kept.,"Der Speicherstatus ist unklar. Laden Sie die Mapping-Liste neu, bevor Sie einen weiteren Entwurf erstellen; Ihre lokalen Eingaben bleiben erhalten."
+The schema snapshot belongs to another configured HERO source.,Der Schema-Snapshot gehört zu einer anderen konfigurierten HERO-Quelle.
+Portable Query record path does not match its operation.,Der Datensatzpfad des Query-Mappings passt nicht zur Operation.
+Choose Query or Mutation mapping direction.,Wählen Sie die Mapping-Richtung Query oder Mutation.
+The selected operation is absent from this schema snapshot.,Der gewählte Vorgang ist in diesem Schema-Snapshot nicht vorhanden.
+Mutation mappings cannot select a Query adapter.,Mutation-Mappings können keinen Query-Adapter auswählen.
+This Query has no supported document mapping adapter.,Für diese Query ist kein unterstützter Dokument-Mapping-Adapter verfügbar.
+The selected mapping area does not match this Query.,Der gewählte Mapping-Bereich passt nicht zu dieser Query.
+Draft-only export must be an explicit Boolean.,Der Export ausschließlich von Entwürfen muss ausdrücklich als boolescher Wert angegeben werden.
+MAPPING_INPUT_INVALID: Invalid drafts_only.,MAPPING_INPUT_INVALID: Ungültiger Wert für drafts_only.
+Advanced,Erweitert
+Mapping settings,Mapping-Einstellungen
+Refresh saved nodes,Gespeicherte Knoten aktualisieren
+Object field context does not match the selected record and saved schema.,Der Objektfeld-Kontext passt nicht zum ausgewählten Datensatz und zum gespeicherten Schema.
+New query field rule is incomplete.,Die neue Query-Feldregel ist unvollständig.
