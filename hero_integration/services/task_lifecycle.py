@@ -28,12 +28,13 @@ def _day(value) -> str | None:
 def source_values(record: dict, local_instant, directory: dict[int, str], today: date, user_for=None) -> dict:
     """ERPNext-side values from a HERO task; a path HERO did not return stays omitted.
 
-    ``user_for`` (e-mail -> User or None) enables the Created By field."""
+    ``user_for`` ((HERO user id, e-mail) -> User or None) enables the Created By field."""
     values = {}
     if user_for is not None and "author_user_id" in record:
         author = record.get("author_user_id")
-        email = directory.get(author) if type(author) is int and author > 0 else None
-        values[AUTHOR] = user_for(email.strip().lower()) if email else None
+        author = author if type(author) is int and author > 0 else None
+        email = directory.get(author) if author else None
+        values[AUTHOR] = user_for(author, email.strip().lower() if email else None) if author else None
     created = local_instant(record.get("created")) if "created" in record else None
     due = local_instant(record.get("due_date")) if "due_date" in record else None
     if "due_date" in record:

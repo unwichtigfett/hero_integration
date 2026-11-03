@@ -21,10 +21,10 @@ class TestHeroPeople(unittest.TestCase):
         self.assertIsNone(people.person_email({"email": "", "user": {}}))
 
     def test_only_missing_active_people_are_created_without_mail_or_customer_role(self):
-        rows = [{"id": 1, "first_name": "Tim", "last_name": "K", "status": "active", "user": {"email": "tim@reba.de"}},
+        rows = [{"id": 1, "first_name": "Tim", "last_name": "K", "status": "active", "user": {"id": 11, "email": "tim@reba.de"}},
                 {"id": 2, "first_name": "Old", "status": "inactive", "user": {"email": "old@reba.de"}},
-                {"id": 3, "first_name": "Ana", "status": "active", "user": {"email": "ana@reba.de"}}]
-        inserted = []
+                {"id": 3, "first_name": "Ana", "status": "active", "user": {"id": 33, "email": "ana@reba.de"}}]
+        inserted, linked = [], []
 
         class User(dict):
             flags = SimpleNamespace()
@@ -39,12 +39,16 @@ class TestHeroPeople(unittest.TestCase):
                 self["removed"] = roles
 
         def sql(query, values=None):
+            if "custom_hero_partner_id" in query:
+                return []
             if "LOWER(email)=%s" in query:
                 return [("ana@reba.de",)] if values[0] == "ana@reba.de" else []
             return [("ana@reba.de",), ("gone@reba.de",)]
 
         fake = SimpleNamespace(get_doc=lambda values: User(values),
-                               db=SimpleNamespace(sql=sql, savepoint=lambda name: None, rollback=lambda **k: None))
+                               db=SimpleNamespace(sql=sql, savepoint=lambda name: None, rollback=lambda **k: None,
+                                                 has_column=lambda doctype, column: True,
+                                                 get_value=lambda *a, **k: {}, set_value=lambda *a, **k: linked.append(a)))
         with mock.patch.object(people, "frappe", fake):
             result = people.sync_users(_Client(rows))
         self.assertEqual(result["created"], ["tim@reba.de"])
@@ -55,3 +59,7 @@ class TestHeroPeople(unittest.TestCase):
         self.assertEqual((user["send_welcome_email"], user["user_type"], user["enabled"]), (0, "System User", 1))
         self.assertTrue(user.flags.no_welcome_mail)
         self.assertEqual(user["removed"], ("Customer",))
+        self.assertEqual((user["custom_hero_partner_id"], user["custom_hero_user_id"]), ("1", "11"))
+        # The existing user only gets its empty ID fields filled.
+        self.assertEqual(linked, [("User", "ana@reba.de", {"custom_hero_partner_id": "3", "custom_hero_user_id": "33"})])
+        self.assertEqual(result["ids_linked"], ["ana@reba.de"])

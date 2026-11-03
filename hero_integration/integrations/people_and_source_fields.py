@@ -108,3 +108,74 @@ def run() -> dict:
     finally:
         frappe.set_user(previous)
     return report
+
+
+# Contract v5: people by HERO ID (owner decision 2026-11-03). The responsible person comes from partner_id.
+RESPONSIBLE_BY_ID = {"definition_id": "project-responsible", "source_path": "partner_id", "source_type": "int|null",
+                     "target_doctype": "Project", "target_field": "custom_hero_project_manager",
+                     "transformation": "User By Partner ID"}
+RESPONSIBLE_BY_EMAIL = "project-manager"
+
+
+def upgrade_projects_to_ids() -> str:
+    """Switch the Project read mapping and service to contract v5 (partner_id, assignee user_id)."""
+    from hero_integration import api
+
+    rows = frappe.get_all("HERO GraphQL Mapping", filters={"status": "Active", "direction": "QUERY_TO_FRAPPE"},
+                          fields=["name", "mapping_json", "schema_snapshot", "operation_name", "mapping_revision"],
+                          limit_page_length=0)
+    mapping = next((row for row in rows
+                    if json.loads(row.mapping_json or "{}").get("target_operation") == "HeroProjectMatches"), None)
+    if mapping is None:
+        return "no active project read mapping"
+    config = json.loads(mapping.mapping_json)
+    context = {"operation": "HeroProjectMatches", "snapshot": mapping.schema_snapshot}
+    wanted = [_rule(context, spec) for spec in NEW_RULES["HeroProjectMatches"] if spec["definition_id"] != RESPONSIBLE_BY_EMAIL]
+    # One active rule per target: the e-mail rule of contract v4 makes way for the partner-ID rule.
+    for name in frappe.get_all("HERO Frappe Mapping", filters={"definition_id": RESPONSIBLE_BY_EMAIL, "status": "Active"},
+                               pluck="name"):
+        frappe.db.set_value("HERO Frappe Mapping", name, "status", "Disabled")
+    wanted.append(_rule(context, RESPONSIBLE_BY_ID))
+    ids = [rule for rule in config.get("mapping_definition_ids") or [] if rule != RESPONSIBLE_BY_EMAIL]
+    if config.get("project_contract_version") == "v5" and set(wanted) <= set(ids):
+        return "already on v5"
+    config["project_contract_version"] = "v5"
+    config["mapping_definition_ids"] = [*ids, *(rule for rule in wanted if rule not in ids)]
+    services = [row["service"] for row in api._sync_area_read_services("default").get("HeroProjectMatches") or []] \
+        or frappe.get_all("HERO GraphQL Service", filters={"read_mapping": mapping.name}, pluck="name", limit_page_length=0)
+    draft = api.graphql_mapping_save(mapping.schema_snapshot, "QUERY", mapping.operation_name, "QUERY_TO_FRAPPE",
+                                     json.dumps(config), mapping_name=mapping.name,
+                                     expected_revision=mapping.mapping_revision, activate=0)
+    saved = api.graphql_mapping_save(mapping.schema_snapshot, "QUERY", mapping.operation_name, "QUERY_TO_FRAPPE",
+                                     json.dumps(config), mapping_name=draft["name"],
+                                     expected_revision=draft["revision"], activate=1)
+    for name in services:
+        service = frappe.get_doc("HERO GraphQL Service", name)
+        service.query_document = _query("HeroProjectMatches", "v5")
+        service.read_mapping = saved["name"]
+        service.save()
+    return f"{saved['name']} project_contract_version=v5; services {', '.join(services) or '-'} need approval"
+
+
+def run_partner_ids() -> dict:
+    from hero_integration.install import ensure_hero_source_fields
+    from hero_integration.integrations.hero_people import _client, sync_users
+
+    previous = frappe.session.user
+    frappe.set_user("Administrator")
+    report = {}
+    try:
+        ensure_hero_source_fields()
+        try:
+            report["people"] = sync_users(_client())
+        except Exception as error:  # HERO unreachable: the daily job fills the IDs later
+            report["people"] = f"not synchronised: {error}"
+        frappe.db.savepoint("hero_partner_ids")
+        try:
+            report["projects"] = upgrade_projects_to_ids()
+        except Exception as error:
+            frappe.db.rollback(save_point="hero_partner_ids")
+            report["projects"] = f"not upgraded: {error}"
+    finally:
+        frappe.set_user(previous)
+    return report

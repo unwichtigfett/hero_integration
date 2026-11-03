@@ -9,6 +9,28 @@ ERPNext_VERSION_CONSTRAINT = ">=16.0.0-dev,<17.0.0"
 DISPLAY_PROPERTIES = frozenset({"label"})
 
 HERO_CUSTOM_FIELDS = {
+    # The HERO person behind an ERPNext user: projects, assignments and tasks link it by these IDs.
+    "User": [
+        {
+            "fieldname": "custom_hero_partner_id",
+            "fieldtype": "Data",
+            "label": "Partner ID",
+            "insert_after": "username",
+            "read_only": 1,
+            "no_copy": 1,
+            "unique": 1,
+        },
+        {
+            "fieldname": "custom_hero_user_id",
+            "fieldtype": "Data",
+            "label": "Source User ID",
+            "insert_after": "custom_hero_partner_id",
+            "read_only": 1,
+            "no_copy": 1,
+            "unique": 1,
+            "hidden": 1,
+        },
+    ],
     "Item": [
         {
             "fieldname": "custom_hero_manufacturer_nr",

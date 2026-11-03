@@ -35,6 +35,7 @@ SOURCE_CONTRACTS = {
             "address.full_address": "string|null", "display_id": "string|null", "created": "string|null",
             "modified": "string|null",
             "name": "string|null", "partner_source": "string|null", "partner.email": "string|null",
+            "partner_id": "int|null",
         },
     },
 }
@@ -69,7 +70,12 @@ TRANSFORM_HERO_CUSTOMER_TYPE = "Customer Type From HERO Type"
 HERO_CUSTOMER_TYPES = {"commercial": "Company", "private": "Individual"}
 # A HERO person (by e-mail) as the enabled ERPNext User with that e-mail; no match stays empty.
 TRANSFORM_USER_BY_EMAIL = "User By Email"
-USER_BINDINGS = {("HeroProjectMatches", "partner.email", "Project", "custom_hero_project_manager")}
+# A HERO partner (person) as the ERPNext User that carries its partner ID (set by the people sync).
+TRANSFORM_USER_BY_PARTNER = "User By Partner ID"
+USER_BINDINGS = {
+    ("HeroProjectMatches", "partner.email", "Project", "custom_hero_project_manager"): TRANSFORM_USER_BY_EMAIL,
+    ("HeroProjectMatches", "partner_id", "Project", "custom_hero_project_manager"): TRANSFORM_USER_BY_PARTNER,
+}
 # HERO plain text in a native Text Editor field (inverse: task_send.plain_text).
 TRANSFORM_PLAIN_TEXT_HTML = "Plain Text To HTML"
 NOTES_BINDING = ("partner_notes", "Project", "notes", TRANSFORM_PLAIN_TEXT_HTML)
@@ -80,7 +86,7 @@ TRANSFORM_CONFIRMED_COMPANY = "Confirmed ERPNext Company"
 TRANSFORMATIONS = {
     TRANSFORM_IDENTITY, TRANSFORM_TRIM, TRANSFORM_POSITIVE_INT_TO_TEXT,
     TRANSFORM_CUSTOMER_TYPE, TRANSFORM_HERO_CUSTOMER_TYPE, TRANSFORM_HERO_CUSTOMER_LINK, TRANSFORM_CONFIRMED_COMPANY,
-    TRANSFORM_PLAIN_TEXT_HTML, TRANSFORM_USER_BY_EMAIL,
+    TRANSFORM_PLAIN_TEXT_HTML, TRANSFORM_USER_BY_EMAIL, TRANSFORM_USER_BY_PARTNER,
 }
 TRANSFORMATIONS.update({'JSON Value', 'Scalar Text', 'HERO Project Link'})
 TRANSFORMATIONS.update({'Native Adapter', 'Nonempty String ID'})
@@ -209,6 +215,9 @@ def transformed_value(spec: MappingSpec, value: object) -> object | None:
         return plain_text_html(value)
     if spec.transformation == TRANSFORM_USER_BY_EMAIL:
         return user_by_email(value)
+    if spec.transformation == TRANSFORM_USER_BY_PARTNER:
+        from hero_integration.integrations.hero_people import user_by_partner
+        return user_by_partner(value)
     return value
 
 
@@ -335,11 +344,10 @@ def _validate_custom_field(spec: MappingSpec, metadata) -> None:
         if field is None or field.fieldtype != "Text Editor" or field.read_only or spec.relation:
             raise DirectMappingError("ERPNext Project.notes must be an editable Text Editor field.")
         return
-    if spec.transformation == TRANSFORM_USER_BY_EMAIL or (spec.operation, spec.source_path, spec.target_doctype,
-                                                          spec.target_field) in USER_BINDINGS:
-        if ((spec.operation, spec.source_path, spec.target_doctype, spec.target_field) not in USER_BINDINGS
-                or spec.transformation != TRANSFORM_USER_BY_EMAIL or spec.relation):
-            raise DirectMappingError("A HERO person maps only to its reviewed User field (User By Email).")
+    user_key = (spec.operation, spec.source_path, spec.target_doctype, spec.target_field)
+    if spec.transformation in (TRANSFORM_USER_BY_EMAIL, TRANSFORM_USER_BY_PARTNER) or user_key in USER_BINDINGS:
+        if USER_BINDINGS.get(user_key) != spec.transformation or spec.relation:
+            raise DirectMappingError("A HERO person maps only to its reviewed User field.")
         field = metadata.field(spec.target_doctype, spec.target_field)
         if field is None or field.fieldtype != "Link" or (field.options or "") != "User":
             raise DirectMappingError("The responsible person field must link to User.")
