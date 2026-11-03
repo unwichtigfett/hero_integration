@@ -315,8 +315,14 @@ def _client_and_downloader():
     return client, Downloader(config.endpoint.host, lambda: config.api_token)
 
 
+def reset_phase(phase: str) -> None:
+    """Forget cursor and counts so the next transfer starts a fresh pass."""
+    frappe.db.set_default(STATE_KEY.format(phase), "")
+    frappe.db.commit()
+
+
 def transfer(phase: str, *, client=None, downloader=None, dry_run: bool = False,
-             time_budget: int = TIME_BUDGET_SECONDS, min_free: int = MIN_FREE_BYTES) -> dict:
+             time_budget: int = TIME_BUDGET_SECONDS, min_free: int = MIN_FREE_BYTES, should_stop=None) -> dict:
     """Process one phase from its saved cursor until done or the time budget ends."""
     if client is None or downloader is None:
         client, downloader = _client_and_downloader()
@@ -333,7 +339,7 @@ def transfer(phase: str, *, client=None, downloader=None, dry_run: bool = False,
     partial_dir = frappe.get_site_path("private", "files", ".hero-partial")
     os.makedirs(partial_dir, exist_ok=True)
     deadline = time.monotonic() + time_budget
-    state.update(phase=phase, done=False, last_error=None)
+    state.update(phase=phase, done=False, last_error=None, stopped=False)
 
     def bump(key, amount=1):
         counts[key] = counts.get(key, 0) + amount
@@ -349,7 +355,11 @@ def transfer(phase: str, *, client=None, downloader=None, dry_run: bool = False,
                 todo.append((row, link))
         found = details(client, [row for row, _ in todo]) if todo else {}
         bump("requests", -(-len(todo) // DETAIL_BATCH))
-        for row, link in todo:
+        for index, (row, link) in enumerate(todo):
+            if should_stop and index % 25 == 0 and should_stop():
+                state["stopped"] = True
+                _save_state(phase, state)  # cursor still points at this page; its finished files are skipped later
+                return state
             detail = found.get(row["uuid"])
             reason = skip_reason(row, detail)
             if reason:
