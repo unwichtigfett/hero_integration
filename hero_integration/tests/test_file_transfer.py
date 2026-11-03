@@ -94,34 +94,11 @@ class TestDownloader(unittest.TestCase):
         self.assertEqual(len(opener.requests), 2)
 
 
-class _Client:
-    def __init__(self, pages):
-        self.pages, self.calls = pages, []
-
-    def query(self, document, variables):
-        self.calls.append(variables)
-        return {"FileUpload_FileUploads": self.pages[variables.get("after")]}
-
-
 def _page(nodes, end, more):
     return {"edges": [{"node": n} for n in nodes], "pageInfo": {"endCursor": end, "hasNextPage": more}}
 
 
 class TestListingAndTargets(unittest.TestCase):
-    def test_documents_phase_drops_images_and_follows_cursor(self):
-        client = _Client({None: _page([{"id": 1, "category": "invoice"}, {"id": 2, "category": "images"}], "c1", True),
-                          "c1": _page([{"id": 3, "category": None}], "c2", False)})
-        pages = list(ft.list_pages(client, "documents"))
-        self.assertEqual([[r["id"] for r in rows] for rows, _ in pages], [[1], [3]])
-        self.assertEqual(pages[-1][1], "c2")
-        self.assertIsNone(client.calls[0]["filters"])
-        self.assertNotIn("after", client.calls[0])
-
-    def test_images_phase_filters_on_hero_side_and_resumes(self):
-        client = _Client({"c5": _page([{"id": 9, "category": "images"}], "c6", False)})
-        list(ft.list_pages(client, "images", "c5"))
-        self.assertEqual(client.calls[0]["filters"], {"category": {"equals": "images"}})
-
     def test_target_prefers_project_then_customer(self):
         projects, customers = {"10": "PV-1-H"}, {"77": "KD-00001"}
         self.assertEqual(ft.resolve_target({"file_upload_matches": [{"project_match_id": 10}]}, projects, customers),

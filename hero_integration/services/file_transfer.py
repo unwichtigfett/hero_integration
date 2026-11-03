@@ -34,7 +34,6 @@ from hero_integration.services import direct_runtime
 PHASES = ("documents", "images")
 SOURCE_TYPE = "file_upload"
 OPERATION = {"documents": "HeroDocuments", "images": "HeroPictures"}
-LIST_PAGE = 1000  # HERO answers 1000 small file rows in well under a second
 DETAIL_BATCH = 50  # HERO rejects larger uuid lists ("Too many UUIDs given")
 CHUNK = 1024 * 1024
 MAX_FILE_BYTES = 512 * 1024 * 1024
@@ -46,12 +45,6 @@ PHASE_FOLDER = {"documents": "Dokumente", "images": "Bilder"}
 UNASSIGNED_FOLDER = "Ohne Zuordnung"
 DELETED_DOCUMENT_STATUS = 1000
 
-LIST_QUERY = (
-    "query HeroFileList($first: Int!, $after: String, $filters: FileUpload_FileUploadFiltersInput) { "
-    "FileUpload_FileUploads(first: $first, after: $after, filters: $filters, sortings: [ID_ASC]) { "
-    "edges { node { id uuid filename category imageCategory section type size downloadUrl created modified } } "
-    "pageInfo { endCursor hasNextPage } } }"
-)
 DETAIL_QUERY = (
     "query HeroFileDetails($uuids: [String!], $first: Int) { file_uploads(uuids: $uuids, first: $first) { "
     "id uuid is_deleted file_upload_matches { project_match_id } "
@@ -136,27 +129,6 @@ class Downloader:
 
 
 # ---------------------------------------------------------------- listing
-
-def list_pages(client, phase: str, after: str | None = None):
-    """Yield (rows, end_cursor) per HERO page; documents = every category except images."""
-    if phase not in PHASES:
-        raise TransferError(f"Unknown phase {phase!r}; use one of {PHASES}.")
-    filters = {"category": {"equals": "images"}} if phase == "images" else None
-    while True:
-        variables = {"first": LIST_PAGE, "filters": filters}
-        if after:
-            variables["after"] = after  # HERO answers an explicit null cursor with an internal error
-        data = client.query(LIST_QUERY, variables)
-        page = (data or {}).get("FileUpload_FileUploads") or {}
-        rows = [edge["node"] for edge in page.get("edges") or []]
-        if phase == "documents":
-            rows = [row for row in rows if row.get("category") != "images"]
-        info = page.get("pageInfo") or {}
-        after = info.get("endCursor") or after
-        yield rows, after
-        if not info.get("hasNextPage"):
-            return
-
 
 def details(client, rows: list[dict]) -> dict[str, dict]:
     """Project/customer/document data per uuid, fetched in batches."""
