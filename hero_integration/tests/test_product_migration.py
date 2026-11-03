@@ -8,6 +8,9 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from hero_integration.services import product_migration as pm
+from hero_integration.services import direct_runtime
+
+BUILTIN = direct_runtime.builtin_read("HeroProducts")
 
 ROW = {
     "product_id": "FSRmFpZSMAA", "nr": "PV-1001", "base_price": 145.55, "list_price": 199, "is_deleted": False,
@@ -67,8 +70,8 @@ class TestPaging(unittest.TestCase):
             utils=SimpleNamespace(now_datetime=lambda: "now"), log_error=lambda **k: None)
         client = _Client(1200)
         with patch.object(pm, "frappe", fake), patch.object(pm, "_links", return_value={}) as links, \
-                patch.object(pm, "upsert", side_effect=lambda row, link, m, instance: seen.append(row["product_id"]) or "added"):
-            state = pm.sync_products(client, source_instance="source-a")
+                patch.object(pm, "upsert", side_effect=lambda row, link, m, instance, **kw: seen.append(row["product_id"]) or "added"):
+            state = pm.sync_products(client, source_instance="source-a", read=BUILTIN)
         links.assert_called_once_with("source-a")
         self.assertEqual(len(seen), 1200)
         self.assertEqual([offset for _, offset in client.calls], [0, 500, 1000])
@@ -196,7 +199,7 @@ class TestManagedPrices(unittest.TestCase):
         client = _Client(10)
         with patch.object(pm, "frappe", SimpleNamespace(db=db, utils=SimpleNamespace(now_datetime=lambda: "now"))), \
                 patch.object(pm, "_links", return_value={}), patch.object(pm, "upsert", return_value="added"):
-            pm.sync_products(client, source_instance="source-a")
+            pm.sync_products(client, source_instance="source-a", read=BUILTIN)
         self.assertEqual(client.calls[0], (pm.PAGE_SIZE, 0))
 
 

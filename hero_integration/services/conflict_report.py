@@ -31,13 +31,6 @@ _REASON_FIELDS = (
     ("the Project has no customer", "customer"),
     ("The project address is missing or incomplete", "project_name"),
 )
-# Direct product migration (services.product_migration): Item field ← HERO path.
-_PRODUCT_PATHS = {
-    "item_name": "base_data.name", "description": "base_data.description",
-    "item_group": "base_data.supply_catalog.name", "stock_uom": "base_data.unit_type",
-    "brand": "base_data.manufacturer", "disabled": "is_deleted",
-}
-_PRICE_PATHS = {"Standard Buying": "base_price", "Standard Selling": "sales_prices.net_price_per_unit"}
 
 # What the two decisions do, per kind of report (English, translated in the page).
 _EXPLANATIONS = {
@@ -69,7 +62,8 @@ def report(link_name: str, source_instance: str) -> dict:
     detail = link.conflict_detail or ""
     recheck = detail.startswith(RECHECK_PREFIX)
     problem = detail[len(RECHECK_PREFIX):] if recheck else detail
-    rules = _run_rules(link.source_type, link.source_id, instance)
+    rules = (_product_rules(link, instance) if link.source_type == "supply_product"
+             else _run_rules(link.source_type, link.source_id, instance))
     kind, fields = _fields(link, problem, rules)
     approve, decline = _DECISIONS[link.sync_status]
     return {
@@ -118,7 +112,7 @@ def _fields(link, problem: str, rules) -> tuple[str, list[dict]]:
     if link.source_type == "supply_product":
         if match := _PRICE.match(problem):
             entry = _field(link.source_type, "Item Price", match["name"], "price_list_rate", rules)
-            entry["hero_variable"] = _PRICE_PATHS.get(match["list"], "")
+            entry["hero_variable"] = dict(rules or ()).get(("Item Price", match["list"]))
             return "product", [entry]
         return "product", [_field(link.source_type, doctype, name, field, rules) for field in _changed_item_fields(link)]
     for reason, field in _REASON_FIELDS:
@@ -146,14 +140,31 @@ def _field(source_type: str, doctype: str, name: str | None, field: str, rules) 
 
 def _hero_variable(source_type: str, doctype: str, field: str, rules) -> str | None:
     """HERO path of the rule that writes ``doctype.field``; None when it cannot be proven."""
-    if source_type == "supply_product":
-        return _PRODUCT_PATHS.get(field) or None
     if not rules:
         return None
     exact = [path for (rule_doctype, rule_field), path in rules if rule_field == field and rule_doctype == doctype]
     # Customer contact fields are written to the Contact of the Customer.
     paths = exact or [path for (rule_doctype, rule_field), path in rules if rule_field == field]
     return ", ".join(dict.fromkeys(paths)) or None
+
+
+def _product_rules(link, source_instance: str) -> tuple | None:
+    """(doctype, field) → HERO path of the HeroProducts mapping the article was last imported under.
+
+    Item Price rules are keyed by their price list. None when the mapping in
+    force today is not the one recorded on the link (rules changed since)."""
+    from hero_integration.services import direct_runtime
+
+    try:
+        read = direct_runtime.resolve_read("HeroProducts", source_instance)
+    except Exception:  # an unreadable mapping names no variable
+        return None
+    recorded = (getattr(link, "mapping_version", "") or "").split(":", 1)
+    if len(recorded) != 2 or recorded[1] != read.mapping_version[:len(recorded[1])]:
+        return None
+    return tuple((((spec.target_doctype, spec.relation) if spec.target_doctype == "Item Price"
+                   else (spec.target_doctype, spec.target_field)), spec.source_path)
+                 for spec in read.plan.definitions if spec.purpose != "Source Identity")
 
 
 def _run_rules(source_type: str, source_id: str, source_instance: str, run: str | None = None) -> tuple | None:
@@ -192,7 +203,7 @@ def _changed_item_fields(link) -> list[str]:
     """Item fields whose current value differs from the per-field import baseline."""
     import json
 
-    from hero_integration.services.product_migration import OWNED, owned_field_digests
+    from hero_integration.services.product_migration import owned_field_digests
 
     try:
         baseline = (json.loads(link.target_field_hashes or "{}") or {}).get("fields") or {}
@@ -200,8 +211,9 @@ def _changed_item_fields(link) -> list[str]:
         baseline = {}
     if not isinstance(baseline, dict) or not baseline or not frappe.db.exists("Item", link.target_name):
         return []  # imported before per-field baselines existed
-    current = owned_field_digests(frappe.get_doc("Item", link.target_name))
-    return [field for field in OWNED if field in baseline and baseline[field] != current[field]]
+    fields = tuple(baseline)  # the fields mapped when the baseline was taken
+    current = owned_field_digests(frappe.get_doc("Item", link.target_name), fields)
+    return [field for field in fields if baseline[field] != current[field]]
 
 
 def _display(value) -> str | None:

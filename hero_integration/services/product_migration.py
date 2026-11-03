@@ -6,11 +6,14 @@ fixed to ``product_id``. One HERO Integration Link per article (source type
 ``supply_product``) skips unchanged articles, updates changed ones and marks
 an Item that was edited in ERPNext as Conflict instead of overwriting it.
 
-Mapping: nr → Item Code (``nr-product_id`` when the code is taken), name,
-description, unit → UOM, catalog → Item Group under "HERO Artikel",
-manufacturer → Brand, EAN → barcode (only when unique), purchase price →
-Standard Buying, default sales price → Standard Selling, deleted → disabled.
-Items are non-stock items.
+The field mapping is configurable (operation ``HeroProducts``, see
+services.direct_operations): an approved own mapping of the source, otherwise
+the built-in mapping – name, description, unit → UOM, catalog → Item Group
+under "HERO Artikel", manufacturer → Brand, EAN → barcode (only when unique),
+purchase price → Standard Buying, default sales price → Standard Selling,
+deleted → disabled. Fixed in code: nr → Item Code (``nr-product_id`` when the
+code is taken), the name/group/unit fallbacks, master records, non-stock
+Items and the price conflict protection.
 """
 
 from __future__ import annotations
@@ -21,56 +24,53 @@ import time
 
 import frappe
 
+from hero_integration.services import direct_operations as direct
+from hero_integration.services import direct_runtime as runtime
+
 SOURCE_TYPE = "supply_product"
-MAPPING_VERSION = "product-migration-v2"  # v2: managed Item Price baseline in target_field_hashes
+OPERATION = "HeroProducts"
+MAPPING_VERSION = "product-migration-v3"  # v3: field values come from the HeroProducts mapping
 PAGE_SIZE = 500  # HERO returns at most 500 articles per request
 STATE_KEY = "hero_product_migration"
 ROOT_GROUP = "HERO Artikel"
 BUYING, SELLING = "Standard Buying", "Standard Selling"
 TIME_BUDGET_SECONDS = 50 * 60
-QUERY = (
-    "query HeroProducts($first: Int!, $offset: Int!) { supply_product_versions(first: $first, offset: $offset, "
-    "orderBy: \"product_id\") { product_id nr base_price list_price is_deleted modified "
-    "base_data { name description ean manufacturer unit_type supply_catalog { name } } "
-    "sales_prices { net_price_per_unit supply_sales_price { is_default } } } }"
-)
-# Item fields this migration owns; a local change to one of them is a conflict.
+# Item fields of the built-in mapping; a local change to a mapped field is a conflict.
 OWNED = ("item_name", "description", "item_group", "stock_uom", "brand", "disabled")
+# Item fields ERPNext requires on insert; filled from the fixed fallbacks when no rule maps them.
+REQUIRED_FALLBACKS = {"item_group": direct.UNCATALOGUED_GROUP, "stock_uom": direct.DEFAULT_UOM}
 
 
 # ---------------------------------------------------------------- mapping (pure)
 
-def item_values(row: dict) -> dict:
-    data = row.get("base_data") or {}
-    catalog = ((data.get("supply_catalog") or {}).get("name") or "Ohne Katalog").strip()
-    name = (data.get("name") or row.get("nr") or row.get("product_id") or "").strip()
-    return {
-        "item_code": (row.get("nr") or "").strip()[:140] or str(row["product_id"]),
-        "item_name": name[:140],
-        "description": (data.get("description") or "").strip() or name,
-        "item_group": catalog[:140],
-        "stock_uom": (data.get("unit_type") or "Stk").strip()[:140] or "Stk",
-        "brand": (data.get("manufacturer") or "").strip()[:140] or None,
-        "disabled": 1 if row.get("is_deleted") else 0,
-        "barcode": "".join((data.get("ean") or "").split())[:140] or None,
-        "buying": _price(row.get("base_price")),
-        "selling": selling_price(row),
-    }
+def item_values(row: dict, read=None) -> dict:
+    """Item values of one HERO article under ``read``'s mapping (built-in when omitted).
+
+    Keys: item_code, the mapped Item fields (``owned`` lists them), barcode,
+    buying, selling."""
+    read = read or runtime.builtin_read(OPERATION)
+    mapped = runtime.record_values(read.plan, row, "Item")
+    barcode = mapped.pop("barcodes", None)
+    if "disabled" in mapped:
+        mapped["disabled"] = 1 if mapped["disabled"] else 0
+    nr = (row.get("nr") or "").strip() if isinstance(row.get("nr"), str) else ""
+    name = (mapped.get("item_name") or nr or str(row.get("product_id") or "")).strip()[:140]
+    mapped["item_name"] = name
+    if not mapped.get("description") and any(spec.target_doctype == "Item" and spec.target_field == "description"
+                                             for spec in read.plan.definitions):
+        mapped["description"] = name  # as before: an article without description shows its name
+    prices = runtime.price_values(read.plan, row)
+    return {"item_code": nr[:140] or str(row["product_id"]), **mapped,
+            "owned": tuple(field for field in mapped),
+            "barcode": barcode, "buying": prices.get(BUYING), "selling": prices.get(SELLING)}
 
 
 def selling_price(row: dict) -> float | None:
-    for price in row.get("sales_prices") or []:
-        if (price.get("supply_sales_price") or {}).get("is_default"):
-            return _price(price.get("net_price_per_unit"))
-    return _price(row.get("list_price"))
+    return direct.resolve("HERO Default Sales Price", row.get("sales_prices"), row)
 
 
 def _price(value) -> float | None:
-    try:
-        number = round(float(value), 2)
-    except (TypeError, ValueError):
-        return None
-    return number if number > 0 else None
+    return direct.price(value)
 
 
 def barcode_type(code: str) -> str:
@@ -87,13 +87,13 @@ def digest(value) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, default=str).encode()).hexdigest()
 
 
-def owned_digest(doc) -> str:
-    return digest({field: doc.get(field) or None for field in OWNED})
+def owned_digest(doc, owned=OWNED) -> str:
+    return digest({field: doc.get(field) or None for field in owned})
 
 
-def owned_field_digests(doc) -> dict[str, str]:
+def owned_field_digests(doc, owned=OWNED) -> dict[str, str]:
     """Per-field baseline, so a conflict report can name the field changed in ERPNext."""
-    return {field: digest(doc.get(field) or None) for field in OWNED}
+    return {field: digest(doc.get(field) or None) for field in owned}
 
 
 # ---------------------------------------------------------------- Frappe side
@@ -114,9 +114,12 @@ class _Masters:
 
     def for_item(self, values: dict) -> None:
         self.ensure("Item Group", ROOT_GROUP, item_group_name=ROOT_GROUP, parent_item_group="All Item Groups", is_group=1)
-        self.ensure("Item Group", values["item_group"], item_group_name=values["item_group"], parent_item_group=ROOT_GROUP)
-        self.ensure("UOM", values["stock_uom"], uom_name=values["stock_uom"])
-        self.ensure("Brand", values["brand"], brand=values["brand"])
+        if values.get("item_group"):
+            self.ensure("Item Group", values["item_group"], item_group_name=values["item_group"], parent_item_group=ROOT_GROUP)
+        if values.get("stock_uom"):
+            self.ensure("UOM", values["stock_uom"], uom_name=values["stock_uom"])
+        if values.get("brand"):
+            self.ensure("Brand", values["brand"], brand=values["brand"])
 
 
 def _links(source_instance: str) -> dict:
@@ -134,12 +137,16 @@ class PriceConflict(Exception):
 PRICE_LISTS = ((BUYING, "buying"), (SELLING, "selling"))
 
 
-def _managed_prices(link) -> dict:
+def _link_baseline(link) -> dict:
     try:
         data = json.loads(getattr(link, "target_field_hashes", "") or "{}")
     except (TypeError, ValueError):
         return {}
-    prices = data.get("prices") if isinstance(data, dict) else None
+    return data if isinstance(data, dict) else {}
+
+
+def _managed_prices(link) -> dict:
+    prices = _link_baseline(link).get("prices")
     return prices if isinstance(prices, dict) else {}
 
 
@@ -150,14 +157,18 @@ def _conflict(link, source: str, detail: str) -> str:
     return "conflict"
 
 
-def upsert(row: dict, link, masters: _Masters, source_instance: str) -> str:
+def upsert(row: dict, link, masters: _Masters, source_instance: str, read=None) -> str:
     """Create or update one Item; returns added, updated, unchanged or conflict."""
-    values = item_values(row)
-    source = digest(values)
+    read = read or runtime.builtin_read(OPERATION)
+    values = item_values(row, read)
+    owned = values.pop("owned")
+    source = digest({**values, "mapping": read.mapping_version})
     if link and link.source_payload_hash == source:
         return "unchanged"
     item = frappe.get_doc("Item", link.target_name) if link and frappe.db.exists("Item", link.target_name) else None
-    if item is not None and link.target_payload_hash and owned_digest(item) != link.target_payload_hash:
+    # The baseline covers the fields mapped when it was taken; legacy links used the built-in set.
+    baseline_fields = tuple((_link_baseline(link).get("fields") or {}).keys()) or OWNED
+    if item is not None and link.target_payload_hash and owned_digest(item, baseline_fields) != link.target_payload_hash:
         return _conflict(link, source, "The Item was changed in ERPNext; the newer HERO article was not applied.")
     managed = _managed_prices(link) if item is not None else {}
     plans = {}
@@ -168,8 +179,11 @@ def upsert(row: dict, link, masters: _Masters, source_instance: str) -> str:
                                                managed.get(price_list))
         except PriceConflict as error:
             return _conflict(link, source, f"{error} The newer HERO article was not applied.")
-    masters.for_item(values)
-    fields = {key: values[key] for key in OWNED}
+    fields = {key: values[key] for key in owned}
+    if item is None:
+        fields = {**{key: value for key, value in REQUIRED_FALLBACKS.items() if not fields.get(key)}, **{
+            key: value for key, value in fields.items() if value is not None or key not in REQUIRED_FALLBACKS}}
+    masters.for_item(fields)
     if item is None:
         code = values["item_code"]
         if frappe.db.exists("Item", code):
@@ -179,7 +193,8 @@ def upsert(row: dict, link, masters: _Masters, source_instance: str) -> str:
         item.insert(ignore_permissions=True)
         result = "added"
     else:
-        item.update(fields)
+        item.update({key: value for key, value in fields.items()
+                     if value is not None or key not in REQUIRED_FALLBACKS})  # never blank a required field
         if not item.get("barcodes"):
             _set_barcode(item, values["barcode"])
         item.save(ignore_permissions=True)
@@ -191,9 +206,11 @@ def upsert(row: dict, link, masters: _Masters, source_instance: str) -> str:
         if plan is not None:
             prices[price_list] = apply_price(item.name, price_list, plan)
     link_values = {"sync_status": "Synchronized", "target_name": item.name, "source_payload_hash": source,
-                   "target_payload_hash": owned_digest(item), "conflict_detail": "",
-                   "target_field_hashes": json.dumps({"prices": prices, "fields": owned_field_digests(item)}, sort_keys=True),
-                   "mapping_version": MAPPING_VERSION, "last_synced_on": frappe.utils.now_datetime()}
+                   "target_payload_hash": owned_digest(item, owned), "conflict_detail": "",
+                   "target_field_hashes": json.dumps({"prices": prices, "fields": owned_field_digests(item, owned)},
+                                                     sort_keys=True),
+                   "mapping_version": f"{MAPPING_VERSION}:{read.mapping_version}"[:140],
+                   "last_synced_on": frappe.utils.now_datetime()}
     if link:
         frappe.db.set_value("HERO Integration Link", link.name, link_values)
     else:
@@ -285,20 +302,13 @@ def _client():
     return client, config.source_instance
 
 
-def fetch_page(client, offset: int, size: int = PAGE_SIZE) -> list[dict]:
-    """One page; a page HERO rejects is read again in smaller parts."""
-    try:
-        data = client.query(QUERY, {"first": size, "offset": offset})
-        return list((data or {}).get("supply_product_versions") or [])
-    except Exception:
-        if size <= 50:
-            raise
-        half = size // 2
-        return fetch_page(client, offset, half) + fetch_page(client, offset + half, size - half)
+def fetch_page(client, offset: int, size: int = PAGE_SIZE, read=None) -> list[dict]:
+    """One page under ``read``'s query (built-in when omitted); a rejected page is read in halves."""
+    return runtime.fetch_page(client, read or runtime.builtin_read(OPERATION), offset, size)
 
 
 def sync_products(client=None, *, source_instance: str | None = None, time_budget: int = TIME_BUDGET_SECONDS,
-                  should_stop=None, max_pages: int = 2000) -> dict:
+                  should_stop=None, max_pages: int = 2000, read=None) -> dict:
     """Process articles from the saved offset until done, stopped or the time budget ends.
 
     ``source_instance`` is the HERO source ``client`` reads from; lookups, new
@@ -310,10 +320,12 @@ def sync_products(client=None, *, source_instance: str | None = None, time_budge
         source_instance = configured
     if not isinstance(source_instance, str) or not source_instance.strip():
         raise RuntimeError("A HERO source instance is required.")
+    read = read or runtime.resolve_read(OPERATION, source_instance)
     state = _state()
-    if state.get("done") or state.get("source_instance") != source_instance:
+    # A finished pass, another source or a changed mapping starts over (unchanged articles are skipped).
+    if state.get("done") or state.get("source_instance") != source_instance or state.get("mapping") != read.mapping_version:
         state = {}
-    state["source_instance"] = source_instance
+    state.update(source_instance=source_instance, mapping=read.mapping_version, mapping_origin=read.origin)
     counts = state.setdefault("counts", {})
     state.update(done=False, stopped=False, last_error=None)
     links, masters = _links(source_instance), _Masters()
@@ -323,7 +335,7 @@ def sync_products(client=None, *, source_instance: str | None = None, time_budge
         if should_stop and should_stop():
             state["stopped"] = True
             break
-        rows = fetch_page(client, offset)
+        rows = fetch_page(client, offset, read.page_size, read)
         counts["requests"] = counts.get("requests", 0) + 1
         for row in rows:
             key = str(row.get("product_id") or "")
@@ -331,7 +343,7 @@ def sync_products(client=None, *, source_instance: str | None = None, time_budge
                 counts["skipped_no_id"] = counts.get("skipped_no_id", 0) + 1
                 continue
             try:
-                result = upsert(row, links.get(key), masters, source_instance)
+                result = upsert(row, links.get(key), masters, source_instance, read=read)
                 frappe.db.commit()
             except Exception as error:
                 frappe.db.rollback()
@@ -342,7 +354,7 @@ def sync_products(client=None, *, source_instance: str | None = None, time_budge
             counts[result] = counts.get(result, 0) + 1
         offset += len(rows)
         state["offset"] = offset
-        if len(rows) < PAGE_SIZE:
+        if len(rows) < read.page_size:
             state.update(done=True, offset=0)
             break
         _save(state)

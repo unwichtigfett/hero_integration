@@ -49,6 +49,15 @@ class _Frappe:
                 if all(rule.get(key) == value for key, value in filters.items() if key in rule)]
 
 
+def _product_version():
+    from hero_integration.services import direct_runtime, product_migration
+
+    return f"{product_migration.MAPPING_VERSION}:{direct_runtime.builtin_read('HeroProducts').mapping_version}"
+
+
+PRODUCT_VERSION = _product_version()
+
+
 def _link(**values):
     return {"name": "LINK-1", "source_instance": "default", "source_type": "Task", "source_id": "2293879",
             "target_doctype": "Task", "target_name": "TASK-1", "sync_status": "Conflict", **values}
@@ -61,7 +70,11 @@ def _run_rules(fake):
 
 class TestConflictReport(unittest.TestCase):
     def report(self, fake, name="LINK-1", instance="default"):
-        with patch.object(cr, "frappe", fake), patch.object(cr, "_run_rules", return_value=_run_rules(fake)):
+        from hero_integration.services import direct_runtime
+
+        builtin = direct_runtime.builtin_read("HeroProducts")
+        with patch.object(cr, "frappe", fake), patch.object(cr, "_run_rules", return_value=_run_rules(fake)), \
+                patch.object(direct_runtime, "resolve_read", return_value=builtin):
             return cr.report(name, instance)
 
     def test_field_conflict_names_hero_variable_doctype_field_and_erpnext_value(self):
@@ -111,7 +124,7 @@ class TestConflictReport(unittest.TestCase):
         item = {"item_name": "Modul", "description": "Neu in ERPNext", "item_group": "Eigene Artikel",
                 "stock_uom": "Stk", "brand": None, "disabled": 0}
         baseline = {field: digest(value or None) for field, value in {**item, "description": "Alt"}.items()}
-        fake = _Frappe(links={"LINK-1": _link(source_type="supply_product", target_doctype="Item", target_name="PV-1001",
+        fake = _Frappe(links={"LINK-1": _link(source_type="supply_product", target_doctype="Item", target_name="PV-1001", mapping_version=PRODUCT_VERSION,
                                               conflict_detail="The Item was changed in ERPNext; the newer HERO article was not applied.",
                                               target_field_hashes=json.dumps({"prices": {}, "fields": baseline}))},
                        docs={("Item", "PV-1001"): item}, labels={"Item": {"description": "Description"}})
@@ -121,14 +134,23 @@ class TestConflictReport(unittest.TestCase):
                          [("description", "base_data.description", "Neu in ERPNext")])
 
     def test_price_conflict_names_the_price(self):
-        fake = _Frappe(links={"LINK-1": _link(source_type="supply_product", target_doctype="Item", target_name="PV-1001",
+        fake = _Frappe(links={"LINK-1": _link(source_type="supply_product", target_doctype="Item", target_name="PV-1001", mapping_version=PRODUCT_VERSION,
                                               conflict_detail="The Standard Selling price PRICE-7 was changed in ERPNext. "
                                                               "The newer HERO article was not applied.")},
                        docs={("Item Price", "PRICE-7"): {"price_list_rate": 120}},
                        labels={"Item Price": {"price_list_rate": "Rate"}})
         field = self.report(fake)["fields"][0]
         self.assertEqual((field["doctype"], field["field"], field["hero_variable"], field["value"]),
-                         ("Item Price", "price_list_rate", "sales_prices.net_price_per_unit", "120"))
+                         ("Item Price", "price_list_rate", "sales_prices", "120"))
+
+    def test_product_variable_is_unknown_when_the_mapping_changed_since_the_import(self):
+        fake = _Frappe(links={"LINK-1": _link(source_type="supply_product", target_doctype="Item", target_name="PV-1001",
+                                              mapping_version="product-migration-v3:older-rules",
+                                              conflict_detail="The Standard Buying price PRICE-7 was changed in ERPNext. "
+                                                              "The newer HERO article was not applied.")},
+                       docs={("Item Price", "PRICE-7"): {"price_list_rate": 120}},
+                       labels={"Item Price": {"price_list_rate": "Rate"}})
+        self.assertIsNone(self.report(fake)["fields"][0]["hero_variable"])
 
     def test_other_source_and_closed_links_are_refused(self):
         fake = _Frappe(links={"LINK-1": _link(conflict_detail="x"), "LINK-2": _link(sync_status="Synchronized")})
