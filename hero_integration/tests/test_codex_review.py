@@ -91,6 +91,9 @@ class TestCodexReview(unittest.TestCase):
         self.assertEqual(len(codex.calls), 1)  # second run reuses the stored report
         self.assertEqual(self.main(codex, "--effort", "xhigh"), 0)
         self.assertEqual(len(codex.calls), 2)  # another effort is a new review
+        self.assertEqual(self.main(codex, "--effort", "xhigh", "--block", "P2"), 1)  # reused review, stricter threshold
+        self.assertEqual(len(codex.calls), 2)
+        self.assertIn("Sperre ab: P2", (self.reports / f"{self.head}.md").read_text())  # report is rewritten
         strict = _Codex({"summary": "s", "findings": [finding("P2")]})
         self.assertEqual(self.main(strict, "--block", "P2", "--force"), 1)
         self.assertEqual(self.main(_Codex({"summary": "s", "findings": [finding("P1")]}), "--block", "none", "--force"), 0)
