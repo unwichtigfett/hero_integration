@@ -1,0 +1,203 @@
+"""Readable report for one Synchronization conflict (read-only).
+
+A conflict link stores an English diagnostic and hash baselines, never the
+synchronized values. The report therefore names what the diagnostic proves:
+the HERO record, the affected Doctype fields with the HERO variables that
+feed them (from the active mapping rules), the current ERPNext value and, where
+the diagnostic carries them, the old and new HERO values. Texts stay English;
+the Synchronization page translates them at display time.
+"""
+
+from __future__ import annotations
+
+import ast
+import re
+
+import frappe
+
+RECHECK_PREFIX = "Recheck requested: "
+MAX_VALUE = 300
+MAX_FIELDS = 20
+
+_FIELD_LIST = re.compile(r"^(?:Field conflict requires review|Task fields require review): (?P<fields>[\w, ]+?)\.?$")
+_NUMBER_DRIFT = re.compile(
+    r"^HERO (?P<label>.+?) changed from (?P<old>'[^']*'|\"[^\"]*\") to (?P<new>'[^']*'|\"[^\"]*\")\. "
+    r".* set (?P<field>\w+) to ")
+_PRICE = re.compile(r"^The (?:imported )?(?P<list>Standard (?:Buying|Selling)) price (?P<name>\S+) ")
+
+# Review reasons without a field list: the field they concern.
+_REASON_FIELDS = (
+    ("the Project has no customer", "customer"),
+    ("The project address is missing or incomplete", "project_name"),
+)
+# Direct product migration (services.product_migration): Item field ← HERO path.
+_PRODUCT_PATHS = {
+    "item_name": "base_data.name", "description": "base_data.description",
+    "item_group": "base_data.supply_catalog.name", "stock_uom": "base_data.unit_type",
+    "brand": "base_data.manufacturer", "disabled": "is_deleted",
+}
+_PRICE_PATHS = {"Standard Buying": "base_price", "Standard Selling": "sales_prices.net_price_per_unit"}
+
+# What the two decisions do, per kind of report (English, translated in the page).
+_EXPLANATIONS = {
+    "field": "The field was changed in HERO and in ERPNext since the last synchronization, "
+             "so neither value was overwritten.",
+    "number": "HERO changed the business number. The ERPNext record keeps its name and number until you decide.",
+    "review": "HERO delivered this record with a value ERPNext cannot use as it is. "
+              "It was imported and waits for your confirmation.",
+    "product": "The ERPNext Item or price was changed after the last import, so the newer HERO article was not applied.",
+    "record": "HERO delivered this record, but it could not be imported. It has no ERPNext record yet.",
+    "other": "The synchronization stopped for this record and needs a decision.",
+}
+_DECISIONS = {
+    "Conflict": ("The next synchronization checks the record again and applies HERO changes that no longer conflict.",
+                 "ERPNext keeps its current values; later HERO changes to this record are not imported."),
+    "Pending Review": ("The record is released as it was imported.",
+                       "ERPNext keeps the record, but later HERO changes to it are not imported."),
+}
+
+
+def report(link_name: str, source_instance: str) -> dict:
+    """Report for one open conflict link of ``source_instance``."""
+    link = frappe.get_doc("HERO Integration Link", link_name)
+    if (link.source_instance or "default") != source_instance:
+        raise frappe.PermissionError("The conflict belongs to a different HERO source.")
+    if link.sync_status not in ("Conflict", "Pending Review"):
+        raise frappe.ValidationError("The record has no open conflict.")
+    detail = link.conflict_detail or ""
+    recheck = detail.startswith(RECHECK_PREFIX)
+    problem = detail[len(RECHECK_PREFIX):] if recheck else detail
+    kind, fields = _fields(link, problem)
+    approve, decline = _DECISIONS[link.sync_status]
+    return {
+        "name": link.name, "kind": kind, "hero_id": link.source_id, "source_type": link.source_type,
+        "area": _area_label(link.source_type), "doctype": link.target_doctype or "", "record": link.target_name or "",
+        "record_exists": bool(link.target_doctype and link.target_name
+                              and frappe.db.exists(link.target_doctype, link.target_name)),
+        "status": "Recheck requested" if recheck else
+                  ("Confirmation pending" if link.sync_status == "Pending Review" else "Conflict"),
+        "problem": problem or "Conflict requires review.", "explanation": _EXPLANATIONS[kind],
+        "fields": fields, "decidable": True, "approve_effect": approve, "decline_effect": decline,
+    }
+
+
+def record_report(record_name: str) -> dict:
+    """Report for a HERO record the latest run could not import (nothing to decide)."""
+    record = frappe.get_doc("HERO Integration Record", record_name)
+    detail = record.detail or record.result or ""
+    names = _FIELD_LIST.match(detail) or re.match(r"^HERO response omits the source of: (?P<fields>[\w, ]+)\.$", detail)
+    doctype = _target_doctype(record.source_type)
+    fields = [_field(record.source_type, doctype, None, name) for name in _split(names)] if names else []
+    return {
+        "name": record.name, "kind": "record", "hero_id": record.source_id, "source_type": record.source_type,
+        "area": _area_label(record.source_type), "doctype": doctype, "record": "", "record_exists": False,
+        "status": "Not imported", "problem": detail or "Conflict requires review.",
+        "explanation": _EXPLANATIONS["record"], "fields": fields, "decidable": False, "run": record.run,
+        "approve_effect": "", "decline_effect": "Fix the record in HERO; the next run imports it.",
+    }
+
+
+# ---------------------------------------------------------------- field resolution
+
+def _fields(link, problem: str) -> tuple[str, list[dict]]:
+    doctype, name = link.target_doctype, link.target_name
+    if match := _FIELD_LIST.match(problem):
+        return "field", [_field(link.source_type, doctype, name, field) for field in _split(match)]
+    if match := _NUMBER_DRIFT.match(problem):
+        entry = _field(link.source_type, doctype, name, match["field"])
+        entry["hero_value"] = _literal(match["new"])
+        entry["previous_hero_value"] = _literal(match["old"])
+        return "number", [entry]
+    if link.source_type == "supply_product":
+        if match := _PRICE.match(problem):
+            entry = _field(link.source_type, "Item Price", match["name"], "price_list_rate")
+            entry["hero_variable"] = _PRICE_PATHS.get(match["list"], "")
+            return "product", [entry]
+        return "product", [_field(link.source_type, doctype, name, field) for field in _changed_item_fields(link)]
+    for reason, field in _REASON_FIELDS:
+        if reason in problem:
+            return "review", [_field(link.source_type, doctype, name, field)]
+    return ("review" if link.sync_status == "Pending Review" else "other"), []
+
+
+def _split(match) -> list[str]:
+    return [item.strip() for item in match["fields"].split(",") if item.strip()][:MAX_FIELDS]
+
+
+def _field(source_type: str, doctype: str, name: str | None, field: str) -> dict:
+    entry = {"doctype": doctype or "", "field": field, "label": field, "hero_variable": _hero_variable(source_type, doctype, field),
+             "value": None}
+    if doctype and frappe.db.exists("DocType", doctype):
+        meta = frappe.get_meta(doctype)
+        docfield = meta.get_field(field)
+        if docfield is not None:
+            entry["label"] = docfield.label or field
+        if name and docfield is not None and frappe.db.exists(doctype, name):
+            entry["value"] = _display(frappe.db.get_value(doctype, name, field))
+    return entry
+
+
+def _hero_variable(source_type: str, doctype: str, field: str) -> str:
+    if source_type == "supply_product":
+        return _PRODUCT_PATHS.get(field, "")
+    operation = _operation(source_type)
+    if not operation:
+        return ""
+    rows = frappe.get_all("HERO Frappe Mapping", filters={"operation": operation, "status": "Active", "target_field": field},
+                          fields=["source_path", "target_doctype"], order_by="priority asc, creation asc", limit_page_length=20)
+    exact = [row.source_path for row in rows if row.target_doctype == doctype and row.source_path]
+    paths = exact or [row.source_path for row in rows if row.source_path]
+    return ", ".join(dict.fromkeys(paths))
+
+
+def _changed_item_fields(link) -> list[str]:
+    """Item fields whose current value differs from the per-field import baseline."""
+    import json
+
+    from hero_integration.services.product_migration import OWNED, owned_field_digests
+
+    try:
+        baseline = (json.loads(link.target_field_hashes or "{}") or {}).get("fields") or {}
+    except (TypeError, ValueError, AttributeError):
+        baseline = {}
+    if not isinstance(baseline, dict) or not baseline or not frappe.db.exists("Item", link.target_name):
+        return []  # imported before per-field baselines existed
+    current = owned_field_digests(frappe.get_doc("Item", link.target_name))
+    return [field for field in OWNED if field in baseline and baseline[field] != current[field]]
+
+
+def _display(value) -> str | None:
+    if value is None or value == "":
+        return None
+    text = frappe.utils.strip_html_tags(str(value)).strip() if isinstance(value, str) else str(value)
+    return text if len(text) <= MAX_VALUE else text[:MAX_VALUE - 1] + "…"
+
+
+def _literal(text: str) -> str:
+    try:
+        return str(ast.literal_eval(text))
+    except (ValueError, SyntaxError):
+        return text.strip("'\"")
+
+
+def _areas():
+    from hero_integration.services.sync_page import AREAS
+
+    return {item.source_type: item for item in AREAS}
+
+
+def _area_label(source_type: str) -> str:
+    item = _areas().get(source_type)
+    if item:
+        return item.label
+    return {"supply_product": "Products", "file_upload": "Documents", "customer_address": "Contacts"}.get(source_type, source_type)
+
+
+def _operation(source_type: str) -> str:
+    item = _areas().get(source_type)
+    return item.operation if item else ("HeroCustomers" if source_type == "customer_address" else "")
+
+
+def _target_doctype(source_type: str) -> str:
+    return {"customer": "Customer", "project": "Project", "Task": "Task", "CalendarEvent": "Event",
+            "supply_product": "Item", "customer_address": "Address"}.get(source_type, "")

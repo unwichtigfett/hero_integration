@@ -676,6 +676,20 @@ def sync_page_run_detail(run_name: str) -> dict[str, object]:
 
 
 @frappe.whitelist(methods=["GET"])
+def sync_page_conflict_report(name: str, kind: str = "link") -> dict[str, object]:
+    """Read-only report of one conflict row of the Synchronization page."""
+    frappe.only_for("System Manager")
+    from hero_integration.services.conflict_report import record_report, report
+
+    if kind == "record":
+        return record_report(name)
+    try:
+        return report(name, _configured_source_instance())
+    except (frappe.PermissionError, frappe.ValidationError) as error:
+        frappe.throw(frappe._(str(error)))
+
+
+@frappe.whitelist(methods=["GET"])
 def sync_page_conflicts(start: int | str = 0, page_size: int | str = 8) -> dict[str, object]:
     """Open conflicts and held records, then records the latest run of each area could not import.
 

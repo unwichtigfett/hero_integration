@@ -4,9 +4,11 @@
 
     if (window.hero_integration_migration) return;
 
-    const tr = (value) => value == null ? value : (window.hero_integration_i18n?.text(value) ?? value);
+    const tr = (value, context) => value == null ? value : (window.hero_integration_i18n?.text(value, context) ?? value);
     const format = (message, ...values) => tr(message).replace(/\{(\d+)\}/g, (_, index) => String(values[index] ?? ""));
     const diagnostic = (value) => window.hero_integration_diagnostics?.translate(value) ?? tr(value);
+    // Frappe/ERPNext translate a bare "Area" as "Fläche"; this page means a data area (Bereich).
+    const AREA_LABEL = Object.freeze(["Area", "HERO data area"]);
     const API = "hero_integration.api.";
     const PAGE_SIZE = 8;
     const REFRESH_MS = 5000;
@@ -128,7 +130,8 @@
         const work = el("section", {class: "hero-sync-panel hero-sync-work", "data-views": "runtime"});
         const root = el("section", {class: "hero-sync", "data-view": state.view}, viewSwitch, head, subscription, manual, service, states, work);
         // The frame is the size container: the layout follows the space the page really has.
-        host.append(el("div", {class: "hero-sync-frame"}, root));
+        const frame = el("div", {class: "hero-sync-frame"}, root);
+        host.append(frame);
 
         function renderView() {
             root.dataset.view = state.view;
@@ -419,7 +422,7 @@
                 el("button", {type: "button", text: tr("Approve selected"), disabled: state.busy || undefined, onclick: () => decideConflicts(chosen(), "approve")}),
                 el("button", {type: "button", text: tr("Decline selected"), disabled: state.busy || undefined, onclick: () => decideConflicts(chosen(), "reject")})),
                 el("div", {class: "hero-sync-table-wrap"}, el("table", {class: "hero-sync-table"},
-                    el("thead", {}, el("tr", {}, ["Select", "ID", "Conflict", "Entity Type", "Sync State", "Approve / Decline"].map((label) => el("th", {scope: "col", text: tr(label)})))),
+                    el("thead", {}, el("tr", {}, ["Select", "ID", "Conflict", "Entity Type", "Sync State", "Approve / Decline", "Report"].map((label) => el("th", {scope: "col", text: tr(label)})))),
                     el("tbody", {}, data.rows.map((row) => el("tr", {},
                         el("td", {}, decidable(row) ? el("input", {type: "checkbox", "aria-label": format("Select {0}", row.name), checked: state.selectedConflicts.has(row.name) || undefined,
                             onchange: (event) => event.target.checked ? state.selectedConflicts.add(row.name) : state.selectedConflicts.delete(row.name)}) : null),
@@ -429,9 +432,69 @@
                         el("td", {text: !decidable(row) ? format("Not imported ({0})", row.run) : tr(row.sync_status === "Pending Review" ? "Confirmation pending" : (row.conflict_detail || "").startsWith("Recheck requested: ") ? "Recheck requested" : "Conflict")}),
                         el("td", {}, decidable(row) ? [el("button", {type: "button", class: "hero-sync-small", text: tr("Approve"), disabled: state.busy || undefined, onclick: () => decideConflicts([row], "approve")}),
                             el("button", {type: "button", class: "hero-sync-small", text: tr("Decline"), disabled: state.busy || undefined, onclick: () => decideConflicts([row], "reject")})]
-                            : el("span", {class: "hero-sync-hint", text: tr("Fix in HERO; the next run imports it.")}))))))),
+                            : el("span", {class: "hero-sync-hint", text: tr("Fix in HERO; the next run imports it.")})),
+                        el("td", {}, el("button", {type: "button", class: "hero-sync-small", text: tr("Report"), "aria-haspopup": "dialog",
+                            "aria-label": format("Report for {0}", decidable(row) ? row.name : `HERO ${row.source_id}`), onclick: () => openConflictReport(row)}))))))),
                 pager(data.start, data.total, data.rows.length, (start) => { state.conflictsStart = Math.max(0, start); state.selectedConflicts.clear(); loadConflicts(); }));
             add(side, el("p", {class: "hero-sync-hint", text: tr("Approving a field conflict requests a recheck on the next synchronization. Declining keeps the existing record and stops further updates. Records that were not imported at all come from the latest run of each area and have nothing to approve.")}));
+        }
+
+        // --- Conflict report (modal) ---------------------------------------------------------
+        async function openConflictReport(row) {
+            if (state.busy) return;
+            let report;
+            try { report = await call("sync_page_conflict_report", {name: row.name, kind: row.kind === "record" ? "record" : "link"}); }
+            catch (error) { say(error.message, "error"); return; }
+            const dialog = el("dialog", {class: "hero-sync-report", "aria-labelledby": "hero-sync-report-title"});
+            const close = () => dialog.close();
+            dialog.addEventListener("close", () => dialog.remove());
+            // A click on the backdrop (outside the content box) closes the report.
+            dialog.addEventListener("click", (event) => { if (event.target === dialog) close(); });
+            const decide = (decision) => { close(); decideConflicts([row], decision); };
+            const empty = () => el("span", {class: "hero-sync-hint", text: tr("(empty)")});
+            const value = (text) => text == null || text === "" ? empty() : el("span", {class: "hero-sync-report-value", text: String(text)});
+            const recordLink = report.record_exists && frappe.utils?.get_form_link
+                ? el("a", {href: frappe.utils.get_form_link(report.doctype, report.record), target: "_blank", rel: "noopener", text: report.record})
+                : report.record ? el("span", {class: "hero-sync-mono", text: report.record}) : null;
+            const facts = [
+                ["ID", el("span", {class: "hero-sync-mono", text: report.name})],
+                ["HERO ID", el("span", {class: "hero-sync-mono", text: String(report.hero_id ?? "")})],
+                [tr(...AREA_LABEL), tr(report.area)],
+                ["Doctype", el("span", {}, report.doctype ? tr(report.doctype) : "—", recordLink ? [" · ", recordLink] : null)],
+                ["Status", tr(report.status)],
+            ];
+            const withHero = report.fields.some((field) => field.hero_value != null);
+            const fieldTable = report.fields.length ? el("div", {class: "hero-sync-table-wrap"}, el("table", {class: "hero-sync-table hero-sync-report-fields"},
+                el("thead", {}, el("tr", {}, ["HERO variable", "Doctype field", "Value in ERPNext", withHero ? "New HERO value" : null]
+                    .filter(Boolean).map((label) => el("th", {scope: "col", text: tr(label)})))),
+                el("tbody", {}, report.fields.map((field) => el("tr", {},
+                    el("td", {}, field.hero_variable ? el("span", {class: "hero-sync-mono", text: field.hero_variable}) : empty()),
+                    el("td", {}, el("span", {text: `${tr(field.doctype)} · ${tr(field.label)}`}), " ", el("span", {class: "hero-sync-mono hero-sync-hint", text: `(${field.field})`})),
+                    el("td", {}, value(field.value)),
+                    withHero ? el("td", {}, value(field.hero_value), field.previous_hero_value != null
+                        ? el("div", {class: "hero-sync-hint", text: format("Previously {0}", field.previous_hero_value)}) : null) : null)))))
+                : el("p", {class: "hero-sync-hint", text: tr("No single field can be named for this conflict.")});
+            const actions = report.decidable ? [
+                el("button", {type: "button", class: "hero-sync-small", text: tr("Decline"), disabled: state.busy || undefined, onclick: () => decide("reject")}),
+                el("button", {type: "button", class: "hero-sync-small is-primary", text: tr("Approve"), disabled: state.busy || undefined, onclick: () => decide("approve")}),
+            ] : [];
+            put(dialog,
+                el("header", {class: "hero-sync-report-head"},
+                    el("h3", {id: "hero-sync-report-title", text: tr("Conflict report")}),
+                    el("button", {type: "button", class: "hero-sync-report-x", "aria-label": tr("Close"), text: "×", onclick: close})),
+                el("div", {class: "hero-sync-report-body"},
+                    el("dl", {class: "hero-sync-report-facts"}, facts.map(([label, content]) => [el("dt", {text: tr(label)}), el("dd", {}, content)])),
+                    el("section", {}, el("h4", {text: tr("Problem")}), el("p", {text: diagnostic(report.problem)}),
+                        el("p", {class: "hero-sync-hint", text: tr(report.explanation)})),
+                    el("section", {}, el("h4", {text: tr("Affected fields")}), fieldTable),
+                    el("section", {class: "hero-sync-report-effects"},
+                        report.approve_effect ? el("p", {}, el("strong", {text: tr("If you approve") + ": "}), tr(report.approve_effect)) : null,
+                        report.decline_effect ? el("p", {}, el("strong", {text: tr(report.decidable ? "If you decline" : "Next step") + ": "}), tr(report.decline_effect)) : null)),
+                el("footer", {class: "hero-sync-report-actions"},
+                    el("button", {type: "button", class: "hero-sync-small", text: tr("Close"), onclick: close}), actions));
+            frame.append(dialog);
+            if (typeof dialog.showModal === "function") dialog.showModal(); else dialog.setAttribute("open", "");
+            dialog.querySelector(".hero-sync-report-actions button:last-child")?.focus();
         }
 
         // --- Loading -------------------------------------------------------------------------
