@@ -10,6 +10,17 @@ from hero_integration.services.schema_operations import type_reference, is_requi
 MAX_DEPTH = 4
 AREAS = {'Customers': 'HeroCustomers', 'Projects': 'HeroProjectMatches',
          'Tasks': 'HeroTasks', 'Calendar': 'HeroCalendarEvents'}
+# Direct migrations (services.product_migration, services.file_transfer): their
+# query roots and the nested paths they read.
+DIRECT_AREAS = {
+    'Products': {'supply_product_versions': ('base_data.supply_catalog', 'sales_prices.supply_sales_price'),
+                 'supply_products': ()},
+    'Documents': {'FileUpload_FileUploads': ('edges.node',),
+                  'file_uploads': ('file_upload_matches', 'file_upload_links', 'customer_document.document_type')},
+    'Pictures': {'FileUpload_FileUploads': ('edges.node',),
+                 'file_uploads': ('file_upload_matches', 'file_upload_links')},
+}
+AREA_NAMES = (*AREAS, *DIRECT_AREAS)
 
 
 def _named(ref):
@@ -52,13 +63,13 @@ def _object_areas(schema, types):
     root_fields = {field['name']: field for field in query.get('fields') or []
                    if isinstance(field, Mapping) and isinstance(field.get('name'), str)}
     result = {}
-    for area, operation in AREAS.items():
-        root = root_fields.get(OPERATION_ROOTS.get(operation), {})
-        start, kind = _named(root.get('type'))
+
+    def mark(area, root_name, paths):
+        start, kind = _named(root_fields.get(root_name, {}).get('type'))
         if kind not in {'OBJECT', 'INTERFACE', 'UNION'} or start not in types:
-            continue
+            return
         result.setdefault(start, set()).add(area)
-        for path in SOURCE_CONTRACTS.get(operation, {}).get('paths', {}):
+        for path in paths:
             current = start
             for segment in path.split('.'):
                 member = next((field for field in types[current].get('fields') or []
@@ -70,6 +81,12 @@ def _object_areas(schema, types):
                     break
                 result.setdefault(name, set()).add(area)
                 current = name
+
+    for area, operation in AREAS.items():
+        mark(area, OPERATION_ROOTS.get(operation), SOURCE_CONTRACTS.get(operation, {}).get('paths', {}))
+    for area, roots in DIRECT_AREAS.items():
+        for root_name, paths in roots.items():
+            mark(area, root_name, paths)
     return result
 
 
@@ -84,8 +101,8 @@ def catalog(snapshot, object_type='', search=''):
                      key=lambda name: (name.casefold(), name))
     memberships = _object_areas(schema, types)
     result = {'objects': [{'name': name, 'label': name,
-                           'areas': [area for area in AREAS if area in memberships.get(name, set())]}
-                          for name in objects], 'items': [], 'areas': list(AREAS)}
+                           'areas': [area for area in AREA_NAMES if area in memberships.get(name, set())]}
+                          for name in objects], 'items': [], 'areas': list(AREA_NAMES)}
     if not object_type:
         return result
     if object_type not in objects:

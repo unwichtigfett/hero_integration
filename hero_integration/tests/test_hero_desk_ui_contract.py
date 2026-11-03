@@ -289,7 +289,7 @@ class TestHeroDeskUiContract(unittest.TestCase):
         source = MAPPING_EDITOR_JS.read_text()
         for contract in ("mapping_target_catalog", "mapping_target_catalog_page", "schema_operation_catalog",
                          "hero-mapping-rule-details", "hero-mapping-row-detail", "hero-mapping-table",
-                         'format("Search {0}", text(label))', "My saved revisions — read only"):
+                         'format("Search {0}", shownLabel)', "My saved revisions — read only"):
             self.assertIn(contract, source)
         catalog_loader = source.split('const getFieldCatalog =', 1)[1].split('const page =', 1)[0]
         self.assertNotIn('"Customer"', catalog_loader)
@@ -422,7 +422,7 @@ class TestHeroDeskUiContract(unittest.TestCase):
         self.assertIn("Field mapping details", mapping)
 
     def test_hero_owned_ui_strings_use_frappe_translation(self):
-        self.assertIn('text: (value) => __(String(value))', WORKSPACE_JS.read_text())
+        self.assertIn('text: (value, context) => __(String(value), null, context || null)', WORKSPACE_JS.read_text())
         for source_path in (TOOLS_JS, SETTINGS_JS, MAPPING_EDITOR_JS, MIGRATION_JS):
             with self.subTest(source=source_path.name):
                 self.assertIn("hero_integration_i18n", source_path.read_text())

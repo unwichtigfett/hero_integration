@@ -156,7 +156,7 @@
     }
 
     // Use the language and translation dictionary supplied by Frappe Desk.
-    window.hero_integration_i18n = Object.freeze({text: (value) => __(String(value))});
+    window.hero_integration_i18n = Object.freeze({text: (value, context) => __(String(value), null, context || null)});
     window.hero_integration_shell = Object.freeze({
         href: (_page, params = {}) => routeUrl("api", {hero_tool: params.tool}),
         mapping: () => routeUrl("mapping"),

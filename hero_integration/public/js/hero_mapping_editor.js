@@ -1,7 +1,7 @@
 (() => {
     "use strict";
     if (window.hero_integration_mapping_editor) return;
-    const text = (value) => window.hero_integration_i18n?.text(value) ?? String(value);
+    const text = (value, context) => window.hero_integration_i18n?.text(value, context) ?? String(value);
     const format = (message, ...values) => text(message).replace(/\{(\d+)\}/g, (_, index) => String(values[index] ?? ""));
     // Scoped to mapping content: revive original integer tokens from the server's
     // canonical JSON text, never from a Number that HTTP JSON already rounded.
@@ -262,7 +262,9 @@
         const relations = (field.relations || []).map((rel) => `${rel.owner_type}.${rel.name} → ${rel.target_type}${rel.is_list ? " [list]" : ""}${rel.arguments?.length ? ` (${args(rel.arguments)})` : ""}`);
         return [field.fieldtype || field.type || "", ...relations, field.arguments?.length ? format("Arguments: {0}", args(field.arguments)) : "", text(field.reason || "")].filter(Boolean).join(" · ");
     };
-    const mappingAreas = Object.freeze(["All areas", "Customers", "Projects", "Tasks", "Calendar"]);
+    // Generic labels that Frappe or ERPNext translate differently elsewhere (Area → Fläche).
+    const choiceLabelContext = Object.freeze({Area: "HERO data area"});
+    const mappingAreas = Object.freeze(["All areas", "Customers", "Projects", "Tasks", "Calendar", "Products", "Documents", "Pictures"]);
     const objectsInArea = (objects, area) => (objects || []).filter((item) =>
         area === "All areas" || (mappingAreas.includes(area) && Array.isArray(item.areas) && item.areas.includes(area)));
     const relationshipDescription = (rule, operation, fieldContext) => {
@@ -1067,9 +1069,10 @@
         function choice(label, value, parent, loader, select) {
             const control = $("<details class='hero-mapping-select' data-field-picker></details>").attr("data-choice-label", label);
             const displayValue = value || text("Choose…");
-            const summary = $("<summary></summary>").append($("<span></span>").text(text(label)), $("<strong></strong>").text(displayValue).attr("title", displayValue));
+            const shownLabel = text(label, choiceLabelContext[label]);
+            const summary = $("<summary></summary>").append($("<span></span>").text(shownLabel), $("<strong></strong>").text(displayValue).attr("title", displayValue));
             const popup = $("<div class='hero-mapping-select-popup'></div>"), results = $("<div role='list'></div>");
-            const query = $("<input class='form-control' type='search'>").attr("aria-label", format("Search {0}", text(label)));
+            const query = $("<input class='form-control' type='search'>").attr("aria-label", format("Search {0}", shownLabel));
             let offset = 0, seq = 0, choiceEpoch = epoch, pending = false;
             const current = (n) => !disposed && choiceEpoch === epoch && n === seq && control[0].isConnected;
             const load = async () => {

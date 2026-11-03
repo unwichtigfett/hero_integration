@@ -42,6 +42,15 @@ test("workspace delegates its text to the current Frappe translation dictionary"
     assert.equal(sandbox.window.hero_integration_i18n.text("Settings"), "Settings");
 });
 
+test("a context picks the HERO wording over a generic Frappe translation", () => {
+    const messages = {"Area": "Fläche", "Area:HERO data area": "Bereich"};
+    const __ = (value, replace, context) => (context && messages[`${value}:${context}`]) || messages[value] || value;
+    const sandbox = {window: {}, frappe: {}, __};
+    vm.runInNewContext(source, sandbox, {filename: "hero_workspace.js"});
+    assert.equal(sandbox.window.hero_integration_i18n.text("Area", "HERO data area"), "Bereich");
+    assert.equal(sandbox.window.hero_integration_i18n.text("Area"), "Fläche");
+});
+
 test("a stylesheet failure reaches the HERO error boundary", async () => {
     await assert.rejects(
         workspaceUi({ styleFailure: true }).ensureStyles(),

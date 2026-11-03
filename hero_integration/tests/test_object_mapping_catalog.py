@@ -48,7 +48,27 @@ class ObjectMappingCatalogTest(unittest.TestCase):
         self.assertEqual(found['Address'], ['Customers'])
         self.assertEqual(found['ProjectMatch'], ['Projects'])
         self.assertNotIn('Calendar', found['Task'])
-        self.assertEqual(catalog(value)['areas'], ['Customers', 'Projects', 'Tasks', 'Calendar'])
+        self.assertEqual(catalog(value)['areas'], ['Customers', 'Projects', 'Tasks', 'Calendar', 'Products', 'Documents', 'Pictures'])
+
+    def test_product_and_file_objects_belong_to_their_direct_migration_areas(self):
+        value = schema()
+        query = next(t for t in value['__schema']['types'] if t['name'] == 'Query')
+        query['fields'] += [
+            {'name': 'supply_product_versions', 'type': ref('LIST', of=ref('OBJECT', 'SupplyProductVersion'))},
+            {'name': 'FileUpload_FileUploads', 'type': ref('OBJECT', 'FileUploadConnection')}]
+        value['__schema']['types'] += [
+            {'kind': 'OBJECT', 'name': 'SupplyProductVersion', 'fields': [{'name': 'base_data', 'type': ref('OBJECT', 'BaseData')}]},
+            {'kind': 'OBJECT', 'name': 'BaseData', 'fields': [{'name': 'supply_catalog', 'type': ref('OBJECT', 'Catalog')}]},
+            {'kind': 'OBJECT', 'name': 'Catalog', 'fields': [{'name': 'name', 'type': ref('SCALAR', 'String')}]},
+            {'kind': 'OBJECT', 'name': 'FileUploadConnection', 'fields': [{'name': 'edges', 'type': ref('LIST', of=ref('OBJECT', 'FileUploadEdge'))}]},
+            {'kind': 'OBJECT', 'name': 'FileUploadEdge', 'fields': [{'name': 'node', 'type': ref('OBJECT', 'FileUpload')}]},
+            {'kind': 'OBJECT', 'name': 'FileUpload', 'fields': [{'name': 'filename', 'type': ref('SCALAR', 'String')}]}]
+        found = {item['name']: item['areas'] for item in catalog(value)['objects']}
+        for name in ('SupplyProductVersion', 'BaseData', 'Catalog'):
+            self.assertEqual(found[name], ['Products'], name)
+        for name in ('FileUploadConnection', 'FileUploadEdge', 'FileUpload'):
+            self.assertEqual(found[name], ['Documents', 'Pictures'], name)
+        self.assertNotIn('Products', found['Customer'])
 
     def test_objects_are_schema_types_not_operations_or_definitions(self):
         names = [x['name'] for x in catalog(schema())['objects']]
