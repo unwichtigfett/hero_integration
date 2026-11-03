@@ -1,5 +1,7 @@
 # Object- and relationship-oriented mapping
 
+See [configurable Products, Documents and Pictures mappings](configurable_direct_mappings.md) for direct-operation rules and setup.
+
 > **Architecture decision, not deployment evidence.** This records how mapping ownership and generated GraphQL operations should work. The [Feature matrix](feature_matrix_1.0.md) describes the current source implementation, and [Synchronization handoff](sync_handoff_1.0.md) tracks execution gates. Schema-derived operations remain drafts until their exact mapping/read/action approvals are satisfied.
 
 ## Decision

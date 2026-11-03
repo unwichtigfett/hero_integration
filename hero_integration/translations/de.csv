@@ -2888,3 +2888,40 @@ Coded HERO resolvers take no transform options.,Fest eingebaute HERO-Umwandlunge
 HeroProducts,HeroProducts
 HeroDocuments,HeroDocuments
 HeroPictures,HeroPictures
+Price list,Preisliste
+Choose a price list,Preisliste auswählen
+HERO Item Group,HERO-Artikelgruppe
+HERO UOM,HERO-Mengeneinheit
+HERO Brand,HERO-Marke
+HERO EAN Barcode,HERO-EAN-Barcode
+HERO Price,HERO-Preis
+HERO Default Sales Price,HERO-Standardverkaufspreis
+Standard Buying,Standard-Einkauf
+Standard Selling,Standard-Verkauf
+The identity of this HERO object is fixed: {0} → HERO Integration Link.source_id.,Die Identität dieses HERO-Objekts ist festgelegt: {0} → HERO Integration Link.source_id.
+{0} may only feed {1}.{2}.,{0} darf nur {1}.{2} befüllen.
+{0}.{1} requires its coded HERO resolver.,{0}.{1} benötigt seine fest eingebaute HERO-Umwandlung.
+The identity of this HERO object is fixed: {0}.,Die Identität dieses HERO-Objekts ist festgelegt: {0}.
+Unknown HERO resolver:,Unbekannte HERO-Umwandlung:
+Unknown HERO resolver: {0},Unbekannte HERO-Umwandlung: {0}
+Unknown direct operation:,Unbekannter direkter Vorgang:
+Unknown direct operation: {0},Unbekannter direkter Vorgang: {0}
+HERO returned an invalid record list for {0}.,HERO hat eine ungültige Datensatzliste für {0} zurückgegeben.
+The identity of this HERO object is fixed: product_id.,Die Identität dieses HERO-Objekts ist festgelegt: product_id.
+The identity of this HERO object is fixed: product_id → HERO Integration Link.source_id.,Die Identität dieses HERO-Objekts ist festgelegt: product_id → HERO Integration Link.source_id.
+The identity of this HERO object is fixed: id.,Die Identität dieses HERO-Objekts ist festgelegt: id.
+The identity of this HERO object is fixed: id → HERO Integration Link.source_id.,Die Identität dieses HERO-Objekts ist festgelegt: id → HERO Integration Link.source_id.
+HERO Item Group may only feed Item.item_group.,HERO Item Group darf nur Item.item_group befüllen.
+Item.item_group requires its coded HERO resolver.,Item.item_group benötigt seine fest eingebaute HERO-Umwandlung.
+HERO UOM may only feed Item.stock_uom.,HERO UOM darf nur Item.stock_uom befüllen.
+Item.stock_uom requires its coded HERO resolver.,Item.stock_uom benötigt seine fest eingebaute HERO-Umwandlung.
+HERO Brand may only feed Item.brand.,HERO Brand darf nur Item.brand befüllen.
+Item.brand requires its coded HERO resolver.,Item.brand benötigt seine fest eingebaute HERO-Umwandlung.
+HERO EAN Barcode may only feed Item.barcodes.,HERO EAN Barcode darf nur Item.barcodes befüllen.
+Item.barcodes requires its coded HERO resolver.,Item.barcodes benötigt seine fest eingebaute HERO-Umwandlung.
+HERO Price may only feed Item Price.price_list_rate.,HERO Price darf nur Item Price.price_list_rate befüllen.
+Item Price.price_list_rate requires its coded HERO resolver.,Item Price.price_list_rate benötigt seine fest eingebaute HERO-Umwandlung.
+HERO Default Sales Price may only feed Item Price.price_list_rate.,HERO Default Sales Price darf nur Item Price.price_list_rate befüllen.
+HERO returned an invalid record list for HeroProducts.,HERO hat eine ungültige Datensatzliste für HeroProducts zurückgegeben.
+HERO returned an invalid record list for HeroDocuments.,HERO hat eine ungültige Datensatzliste für HeroDocuments zurückgegeben.
+HERO returned an invalid record list for HeroPictures.,HERO hat eine ungültige Datensatzliste für HeroPictures zurückgegeben.

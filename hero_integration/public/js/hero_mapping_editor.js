@@ -3,6 +3,19 @@
     if (window.hero_integration_mapping_editor) return;
     const text = (value, context) => window.hero_integration_i18n?.text(value, context) ?? String(value);
     const format = (message, ...values) => text(message).replace(/\{(\d+)\}/g, (_, index) => String(values[index] ?? ""));
+    // Suggestions preserve the free-form transformations supported by other adapters.
+    const directRuleChoices = (content, rule) => {
+        if (content?.query_adapter?.version !== 2 || content.direction === "FRAPPE_TO_MUTATION" ||
+            content.operation_kind === "MUTATION" ||
+            !["HeroProducts", "HeroDocuments", "HeroPictures"].includes(content.target_operation)) return {};
+        return {transformation: ["HERO Item Group", "HERO UOM", "HERO Brand", "HERO EAN Barcode",
+            "HERO Price", "HERO Default Sales Price"],
+            ...(rule.target_doctype === "Item Price" ? {relation: ["Standard Buying", "Standard Selling"]} : {})};
+    };
+    const mappingMatchesContext = (item, kind, snapshot, operation) =>
+        (kind === "builtin" || !snapshot || item.schema_snapshot === snapshot) &&
+        (!operation || (item.operation_name || item.operation) === operation);
+    const mappingRowCanOpen = (item, kind) => kind !== "builtin" && !item.builtin;
     // Scoped to mapping content: revive original integer tokens from the server's
     // canonical JSON text, never from a Number that HTTP JSON already rounded.
     const parseContent = (source) => JSON.parse(source, (_key, value, context) => {
@@ -1037,7 +1050,7 @@
             finally { if (!disposed && request === epoch) setBusy(false); }
         }
         async function open(item, kind, focus = true) {
-            if (locked()) return;
+            if (!mappingRowCanOpen(item, kind) || locked()) return;
             const request = ++epoch; pendingView = {kind: "detail", item, mappingType: kind, focus}; ruleCache.clear(); panel.prepend(toolbar.detach()); body.empty(); toolbar.empty(); say("Loading active definition…");
             toolbar.append(button("Back to mappings", () => leave(() => loadList(false))));
             try {
@@ -1184,7 +1197,7 @@
                     ...(tab === "Mutation" ? [] : (data.builtin_mappings || []).map((item) => ({item, kind: "builtin"})))];
                 if (mode === "draft" && model && active?.parentless && !entries.some(({item, kind}) => draftOpen(item, kind))) entries.unshift({item: active, kind: "graphql"});
                 const needle = fieldSearch.val().trim().toLowerCase();
-                entries.filter(({item, kind}) => draftOpen(item, kind) || ((!snapshotFilter || item.schema_snapshot === snapshotFilter) && (!operation.val() || (item.operation_name || item.operation) === operation.val()))).forEach(({item, kind}) => {
+                entries.filter(({item, kind}) => draftOpen(item, kind) || mappingMatchesContext(item, kind, snapshotFilter, operation.val())).forEach(({item, kind}) => {
                     const isDraft = draftOpen(item, kind);
                     const definition = isDraft ? model.content : item.definition || item;
                     const linked = new Map([...ruleCache, ...data.frappe_mappings.map((rule) => [rule.definition_id, rule])]);
@@ -1202,7 +1215,7 @@
                         if (needle && !`${row.source} ${row.target} ${row.app}`.toLowerCase().includes(needle)) return;
                         const isSelected = active?.name === item.name && active?.mapping_type === kind && selected === row.index;
                         const select = () => {
-                            if (kind === "builtin") { say(format("Built-in mapping: used until an own mapping for this operation is activated. Create one from a saved read query (API & Schema) with target operation {0}.", item.operation)); return; }
+                            if (!mappingRowCanOpen(item, kind)) { say(format("Built-in mapping: used until an own mapping for this operation is activated. Create one from a saved read query (API & Schema) with target operation {0}.", item.operation)); return; }
                             if (locked()) return;
                             if (active?.name === item.name && active?.mapping_type === kind) { selected = row.index; renderDetail(); }
                             else leave(async () => { await open(item, kind, false); if (active?.name === item.name) { selected = row.index; renderDetail(); } });
@@ -1577,7 +1590,24 @@
                     ["Target field", "target_field"], ["Transformation", "transformation"], ["Purpose", "purpose"], ["Relation", "relation"]]) {
                     if (key.startsWith("source_") || key.startsWith("target_")) continue;
                     const destination = panel;
-                    field(label, rule[key] ?? "", (next) => model.set(["field_rules", row.id, key], next), destination);
+                    const choices = directRuleChoices(model.content, rule)[key];
+                    const change = (next) => model.set(["field_rules", row.id, key], next);
+                    if (key === "relation" && choices) {
+                        const select = $("<select class='form-control'></select>").prop("disabled", busy);
+                        // Preserve invalid stored choices for review; the server validates on save.
+                        [...new Set(["", ...choices, rule[key] || ""])].forEach((choice) =>
+                            select.append($("<option></option>").val(choice).text(text(choice || "Choose a price list"))));
+                        select.val(rule[key] || "").on("change", () => { change(select.val()); updateDirty(); });
+                        $("<label class='hero-mapping-input'></label>").append($("<span></span>").text(text("Price list")), select).appendTo(destination);
+                    } else {
+                        const input = field(label, rule[key] ?? "", change, destination);
+                        if (choices) {
+                            const id = `hero-direct-transforms-${selectionRequest}`;
+                            const list = $("<datalist></datalist>").attr("id", id);
+                            choices.forEach((choice) => list.append($("<option></option>").val(choice).text(text(choice))));
+                            input.attr("list", id); destination.append(list);
+                        }
+                    }
                 }
                 if (model.content.query_adapter?.version === 2) panel.append(button("Configure transformation options", () => {
                     configurationDialog("Transformation options", model.content.query_adapter.transform_options?.[row.id] || {},
@@ -1984,5 +2014,5 @@
         const controller = {beforeLeave: leaveWorkspace, destroy() { shell.removeClass("hero-mapping-shell"); disposed = true; epoch++; window.removeEventListener("beforeunload", unload); if (router.route === guardedRoute) router.route = originalRoute; document.removeEventListener("click", links, true); document.removeEventListener("pointerdown", closeChoiceOutside, true); }};
         current = controller; loadList(); return controller;
     }
-    window.hero_integration_mapping_editor = Object.freeze({mount, DraftState, stable, readActiveRule, readSnapshotPages, exchangeExpectedStates, exchangeCounts, exchangeCanAdopt, reviewedTargetLabel, writebackContractLabel, activationDescription, legacyWritebackRows, legacyWritebackDetailMatches, sharedWritebackDraftAccess, reviewedWritebackEditable, buildReviewedWriteback, sharedWritebackRequest, sharedWritebackSaveAccepted, finishSharedWritebackSave, legacyWritebackCurrent, legacyPackageSelection, legacyPackageAdoptionArgs, legacyCandidateArgs, legacyCandidateMatches, legacyCandidateRawMessage, legacyCandidateRpc, legacyCandidatePreviewText, isOwnedExportLink, mappingTabs, mappingAreas, objectsInArea, relationshipDescription, directionForTab, definitionChoice, objectFieldContext, actionInputType, bindingAccess, selectedPickerApp, hasCurrentDraftBase, canSaveDraft, publicationResultName, publicationReadbackMatches, tabKeyTarget, MappingTabStates, resumePendingView});
+    window.hero_integration_mapping_editor = Object.freeze({mount, directRuleChoices, mappingMatchesContext, mappingRowCanOpen, DraftState, stable, readActiveRule, readSnapshotPages, exchangeExpectedStates, exchangeCounts, exchangeCanAdopt, reviewedTargetLabel, writebackContractLabel, activationDescription, legacyWritebackRows, legacyWritebackDetailMatches, sharedWritebackDraftAccess, reviewedWritebackEditable, buildReviewedWriteback, sharedWritebackRequest, sharedWritebackSaveAccepted, finishSharedWritebackSave, legacyWritebackCurrent, legacyPackageSelection, legacyPackageAdoptionArgs, legacyCandidateArgs, legacyCandidateMatches, legacyCandidateRawMessage, legacyCandidateRpc, legacyCandidatePreviewText, isOwnedExportLink, mappingTabs, mappingAreas, objectsInArea, relationshipDescription, directionForTab, definitionChoice, objectFieldContext, actionInputType, bindingAccess, selectedPickerApp, hasCurrentDraftBase, canSaveDraft, publicationResultName, publicationReadbackMatches, tabKeyTarget, MappingTabStates, resumePendingView});
 })();

@@ -1,5 +1,7 @@
 # Configurable Query and Mutation mappings
 
+See [configurable Products, Documents and Pictures mappings](configurable_direct_mappings.md) for direct-operation rules and setup.
+
 ## Execution boundary
 
 Configurable native adapters use the existing personal Mapping Draft, revision,
