@@ -33,6 +33,11 @@ MAPPING_VERSION = "product-migration-v3"  # v3: field values come from the HeroP
 PAGE_SIZE = 500  # HERO returns at most 500 articles per request
 STATE_KEY = "hero_product_migration"
 ROOT_GROUP = "HERO Artikel"
+SUPPLIER_GROUP = "All Supplier Groups"
+# A HERO article whose item code is used by an Item without its link waits for an administrator decision.
+CODE_TAKEN = ("Item code {0} is already used by an ERPNext Item without this HERO article's link. Approve to link that "
+              "Item to the HERO article; decline to keep them apart (the article is not imported).")
+CODE_TAKEN_PREFIX = "Item code "
 BUYING, SELLING = "Standard Buying", "Standard Selling"
 TIME_BUDGET_SECONDS = 50 * 60
 # Item fields of the built-in mapping; a local change to a mapped field is a conflict.
@@ -51,19 +56,17 @@ def item_values(row: dict, read=None) -> dict:
     read = read or runtime.builtin_read(OPERATION)
     mapped = runtime.record_values(read.plan, row, "Item")
     barcode = mapped.pop("barcodes", None)
+    supplier = mapped.pop("supplier_items", None)
     code = (mapped.pop("item_code", None) or "").strip()[:140]
     if "disabled" in mapped:
         mapped["disabled"] = 1 if mapped["disabled"] else 0
     nr = (row.get("nr") or "").strip() if isinstance(row.get("nr"), str) else ""
     name = (mapped.get("item_name") or nr or str(row.get("product_id") or "")).strip()[:140]
-    mapped["item_name"] = name
-    if not mapped.get("description") and any(spec.target_doctype == "Item" and spec.target_field == "description"
-                                             for spec in read.plan.definitions):
-        mapped["description"] = name  # as before: an article without description shows its name
+    mapped["item_name"] = name  # an article without description keeps an empty description
     prices = runtime.price_values(read.plan, row)
     return {"item_code": code or str(row["product_id"]), **mapped,
             "owned": tuple(field for field in mapped),
-            "barcode": barcode, "buying": prices.get(BUYING), "selling": prices.get(SELLING)}
+            "barcode": barcode, "supplier": supplier, "buying": prices.get(BUYING), "selling": prices.get(SELLING)}
 
 
 def selling_price(row: dict) -> float | None:
@@ -104,6 +107,7 @@ class _Masters:
 
     def __init__(self):
         self.seen = set()
+        self.names = {}
 
     def ensure(self, doctype: str, name: str | None, **values) -> None:
         if not name or (doctype, name) in self.seen:
@@ -122,11 +126,24 @@ class _Masters:
         if values.get("brand"):
             self.ensure("Brand", values["brand"], brand=values["brand"])
 
+    def supplier(self, name: str) -> str:
+        """The Supplier named ``name`` (created when missing); returns its document name."""
+        key = ("Supplier", name)
+        if key not in self.names:
+            existing = frappe.db.get_value("Supplier", {"supplier_name": name}, "name")
+            if not existing:
+                doc = frappe.get_doc({"doctype": "Supplier", "supplier_name": name, "supplier_type": "Company",
+                                      **({"supplier_group": SUPPLIER_GROUP} if frappe.db.exists("Supplier Group", SUPPLIER_GROUP) else {})})
+                doc.insert(ignore_permissions=True)
+                existing = doc.name
+            self.names[key] = existing
+        return self.names[key]
+
 
 def _links(source_instance: str) -> dict:
     rows = frappe.get_all("HERO Integration Link", filters={"source_type": SOURCE_TYPE, "source_instance": source_instance},
                           fields=["name", "source_id", "target_name", "source_payload_hash", "target_payload_hash",
-                                  "target_field_hashes"],
+                                  "target_field_hashes", "sync_status", "conflict_detail"],
                           limit_page_length=0)
     return {row.source_id: row for row in rows}
 
@@ -166,7 +183,15 @@ def upsert(row: dict, link, masters: _Masters, source_instance: str, read=None) 
     source = digest({**values, "mapping": read.mapping_version})
     if link and link.source_payload_hash == source:
         return "unchanged"
+    status, detail = (getattr(link, "sync_status", "") or "", getattr(link, "conflict_detail", "") or "") if link else ("", "")
+    if status == "Rejected":
+        return "skipped_rejected"  # declined: HERO changes to this article are not imported
+    if status == "Conflict" and detail.startswith(CODE_TAKEN_PREFIX):
+        return "conflict"  # the taken item code waits for approve (link that Item) or decline
     item = frappe.get_doc("Item", link.target_name) if link and frappe.db.exists("Item", link.target_name) else None
+    if item is None and frappe.db.exists("Item", values["item_code"]):
+        # The HERO article number is the Item's identity; it is never suffixed or reassigned.
+        return _code_taken(link, row, values["item_code"], source_instance, read)
     # The baseline covers the fields mapped when it was taken; legacy links used the built-in set.
     baseline_fields = tuple((_link_baseline(link).get("fields") or {}).keys()) or OWNED
     if item is not None and link.target_payload_hash and owned_digest(item, baseline_fields) != link.target_payload_hash:
@@ -186,11 +211,9 @@ def upsert(row: dict, link, masters: _Masters, source_instance: str, read=None) 
             key: value for key, value in fields.items() if value is not None or key not in REQUIRED_FALLBACKS}}
     masters.for_item(fields)
     if item is None:
-        code = values["item_code"]
-        if frappe.db.exists("Item", code):
-            code = f"{code}-{row['product_id']}"[:140]
-        item = frappe.get_doc({"doctype": "Item", "item_code": code, "is_stock_item": 0, **fields})
+        item = frappe.get_doc({"doctype": "Item", "item_code": values["item_code"], "is_stock_item": 0, **fields})
         _set_barcode(item, values["barcode"])
+        _set_supplier(item, values["supplier"], masters)
         item.insert(ignore_permissions=True)
         result = "added"
     else:
@@ -198,6 +221,7 @@ def upsert(row: dict, link, masters: _Masters, source_instance: str, read=None) 
                      if value is not None or key not in REQUIRED_FALLBACKS})  # never blank a required field
         if not item.get("barcodes"):
             _set_barcode(item, values["barcode"])
+        _set_supplier(item, values["supplier"], masters)
         item.save(ignore_permissions=True)
         result = "updated"
     prices = dict(managed)
@@ -219,6 +243,37 @@ def upsert(row: dict, link, masters: _Masters, source_instance: str, read=None) 
                         "source_id": str(row["product_id"]), "source_instance": source_instance,
                         "target_doctype": "Item", **link_values}).insert(ignore_permissions=True)
     return result
+
+
+def _code_taken(link, row: dict, code: str, source_instance: str, read) -> str:
+    """Record the taken item code as a conflict on this article's link (no Item is written)."""
+    values = {"sync_status": "Conflict", "target_doctype": "Item", "target_name": code, "source_payload_hash": "",
+              "target_payload_hash": "", "conflict_detail": CODE_TAKEN.format(code),
+              "mapping_version": f"{MAPPING_VERSION}:{read.mapping_version}"[:140],
+              "last_observed_on": frappe.utils.now_datetime()}
+    if link:
+        frappe.db.set_value("HERO Integration Link", link.name, values)
+    else:
+        frappe.get_doc({"doctype": "HERO Integration Link", "source_system": "HERO", "source_type": SOURCE_TYPE,
+                        "source_id": str(row["product_id"]), "source_instance": source_instance,
+                        **values}).insert(ignore_permissions=True)
+    return "conflict"
+
+
+def _set_supplier(item, supplier: dict | None, masters: _Masters) -> None:
+    """Keep one Item Supplier row for the HERO supplier; other rows stay as they are."""
+    if not supplier or not supplier.get("supplier"):
+        return
+    name, part = masters.supplier(supplier["supplier"]), supplier.get("supplier_part_no")
+    for row in item.get("supplier_items") or []:
+        if row.get("supplier") == name:
+            if part and row.get("supplier_part_no") != part:
+                if isinstance(row, dict):
+                    row["supplier_part_no"] = part
+                else:
+                    row.supplier_part_no = part
+            return
+    item.append("supplier_items", {"supplier": name, "supplier_part_no": part})
 
 
 def _set_barcode(item, code: str | None) -> None:

@@ -13,8 +13,8 @@
         if (content?.query_adapter?.version !== 2 || content.direction === "FRAPPE_TO_MUTATION" ||
             content.operation_kind === "MUTATION" ||
             !["HeroProducts", "HeroDocuments", "HeroPictures"].includes(content.target_operation)) return {};
-        return {transformation: ["HERO Item Group", "HERO UOM", "HERO Brand", "HERO EAN Barcode",
-            "HERO Price", "HERO Default Sales Price"],
+        return {transformation: ["HERO Item Group", "HERO Category Group", "HERO Supplier", "HERO UOM", "HERO Brand",
+            "HERO EAN Barcode", "HERO Price", "HERO Default Sales Price"],
             ...(rule.target_doctype === "Item Price" ? {relation: ["Standard Buying", "Standard Selling"]} : {})};
     };
     const mappingMatchesContext = (item, kind, snapshot, operation) =>

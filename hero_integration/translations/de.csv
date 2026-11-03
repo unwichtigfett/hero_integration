@@ -2927,3 +2927,7 @@ HERO returned an invalid record list for HeroDocuments.,HERO hat eine ungültige
 HERO returned an invalid record list for HeroPictures.,HERO hat eine ungültige Datensatzliste für HeroPictures zurückgegeben.
 Target operation,Zieloperation
 Lookup,Nachschlagen
+Item code {0} is already used by an ERPNext Item without this HERO article's link. Approve to link that Item to the HERO article; decline to keep them apart (the article is not imported).,Die Artikelnummer {0} ist schon von einem ERPNext-Artikel ohne Verknüpfung zu diesem HERO-Artikel belegt. Freigeben verknüpft diesen Artikel mit dem HERO-Artikel; Ablehnen hält sie getrennt (der HERO-Artikel wird nicht importiert).
+HERO Manufacturer Part No,HERO Hersteller-Artikelnummer
+HERO Category Group,HERO-Kategorie als Artikelgruppe
+HERO Supplier,HERO-Lieferant

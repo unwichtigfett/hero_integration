@@ -50,13 +50,13 @@ class TestInstallContract(unittest.TestCase):
         self.assertEqual(len(environment.create_calls), 1)
         fields, update = environment.create_calls[0]
         self.assertFalse(update)
-        self.assertEqual(sum(map(len, fields.values())), 9)
+        self.assertEqual(sum(map(len, fields.values())), 10)
         self.assertEqual(
             {row["fieldname"] for rows in fields.values() for row in rows},
             {
                 "custom_hero_source_id", "custom_hero_customer_number", "custom_hero_customer_category",
                 "custom_hero_customer_type", "custom_hero_related_project_id", "custom_hero_display_id",
-                "custom_hero_source_created", "custom_hero_source_modified",
+                "custom_hero_source_created", "custom_hero_source_modified", "custom_hero_manufacturer_nr",
             },
         )
 

@@ -106,6 +106,8 @@
                 "The {0} price {1} is now limited to a customer, supplier, batch, packing unit or period in ERPNext. The newer HERO article was not applied.", [0]],
             [/^Several general (Standard Buying|Standard Selling) prices exist for (.+) \((.+)\); none was changed\. The newer HERO article was not applied\.$/,
                 "Several general {0} prices exist for {1} ({2}); none was changed. The newer HERO article was not applied.", [0]],
+            [/^Item code (.+) is already used by an ERPNext Item without this HERO article's link\. Approve to link that Item to the HERO article; decline to keep them apart \(the article is not imported\)\.$/,
+                "Item code {0} is already used by an ERPNext Item without this HERO article's link. Approve to link that Item to the HERO article; decline to keep them apart (the article is not imported)."],
             [/^Field conflict requires review: (.+)\.$/, "Field conflict requires review: {0}."],
             [/^Task fields require review: (.+)$/, "Task fields require review: {0}"],
             [/^Another HERO run is active: (.+)\.$/, "Another HERO run is active: {0}."],
