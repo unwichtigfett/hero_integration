@@ -16,6 +16,7 @@
         projects: ["M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"],
         events: ["M4 6h16v14H4Z", "M4 10h16", "M8 3v5", "M16 3v5"],
         tasks: ["M4 4h16v16H4Z", "M8 12l3 3 5-6"],
+        products: ["M3 7l9-4 9 4-9 4Z", "M3 7v10l9 4 9-4V7", "M12 11v10"],
         documents: ["M6 3h9l4 4v14H6Z", "M14 3v5h5", "M9 13h7", "M9 17h7"],
         pictures: ["M3 5h18v14H3Z", "M3 16l5-5 4 4 3-3 6 6", "M15 9.5a1.5 1.5 0 1 0 0-.01"],
         full: ["M4 12a8 8 0 1 0 2.3-5.7", "M4 4v5h5"],
@@ -382,7 +383,7 @@
                     ? el("div", {class: "hero-sync-scope"}, area.scope.objects.map((object) => el("div", {class: "hero-sync-scope-object"},
                         el("strong", {text: `${object.doctype} · ${plural(object.fields.length, "field", "fields")}`}),
                         el("div", {class: "hero-sync-chips"}, object.fields.map((field) => el("span", {class: "hero-sync-chip", text: field}))))))
-                    : el("p", {class: "hero-sync-hint", text: tr(area.kind === "full" ? "Runs Project, Event, Task, Document and Picture Migration in this order." : "No active mapping rules exist for this area. Create and activate them under Mapping.")}));
+                    : el("p", {class: "hero-sync-hint", text: tr(area.kind === "full" ? "Runs Project, Event, Task, Product, Document and Picture Migration in this order." : "No active mapping rules exist for this area. Create and activate them under Mapping.")}));
             add(side, 
                 el("h4", {text: tr("Prerequisites")}),
                 el("dl", {class: "hero-sync-facts"},

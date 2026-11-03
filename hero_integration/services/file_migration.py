@@ -1,8 +1,9 @@
-"""Run actions for HERO files: Document Migration, Picture Migration and Full Migration.
+"""Direct run actions: Product, Document, Picture and Full Migration.
 
 Each action is an ordinary HERO Integration Run, so the Synchronization page
-lists, cancels and continues it like the mapping areas. A file run processes
-its phase in time-boxed background slices (services.file_transfer).
+lists, cancels and continues it like the mapping areas. Product and file runs
+work in time-boxed background slices (services.product_migration,
+services.file_transfer).
 Full Migration runs the mapping areas and both file areas one after another;
 every step is its own child run, and a finished child advances the chain.
 """
@@ -15,10 +16,13 @@ import frappe
 from frappe.utils import now_datetime
 
 FILE_ACTIONS = {"Document Migration": "documents", "Picture Migration": "images"}
+PRODUCT_ACTION = "Product Migration"
 FULL_ACTION = "Full Migration"
-RUN_ACTIONS = frozenset(FILE_ACTIONS) | {FULL_ACTION}
+SLICE_ACTIONS = frozenset(FILE_ACTIONS) | {PRODUCT_ACTION}
+RUN_ACTIONS = SLICE_ACTIONS | {FULL_ACTION}
 # Project Migration processes the referenced contacts first in the same run.
-FULL_STEPS = ("Project Migration", "Schedule Migration", "Projection Migration", "Document Migration", "Picture Migration")
+FULL_STEPS = ("Project Migration", "Schedule Migration", "Projection Migration", "Product Migration",
+              "Document Migration", "Picture Migration")
 ACTIVE = ("Queued", "Running")
 SUCCESS = ("Completed", "Completed With Conflicts")
 FULL_KEY = "hero_full_migration:{}"
@@ -38,6 +42,10 @@ def start(action: str, parent: str = "") -> str:
         from hero_integration.services.file_transfer import reset_phase
 
         reset_phase(FILE_ACTIONS[action])
+    elif action == PRODUCT_ACTION:
+        from hero_integration.services.product_migration import reset
+
+        reset()
     else:
         _save_full(run.name, {"step": 0, "child": "", "notes": []})
     if parent:
@@ -105,12 +113,19 @@ def _file_slice(run) -> None:
     def cancelled() -> bool:
         return frappe.db.get_value("HERO Integration Run", run.name, "state") == "Cancelled"
 
-    with filelock("hero_file_transfer", timeout=5):
-        state = transfer(FILE_ACTIONS[run.action], should_stop=cancelled)
+    if run.action == PRODUCT_ACTION:
+        from hero_integration.services.product_migration import sync_products
+
+        with filelock("hero_product_migration", timeout=5):
+            state = sync_products(should_stop=cancelled)
+    else:
+        with filelock("hero_file_transfer", timeout=5):
+            state = transfer(FILE_ACTIONS[run.action], should_stop=cancelled)
     counts = state.get("counts") or {}
     skipped = counts.get("unchanged", 0) + sum(v for k, v in counts.items() if k.startswith("skipped_"))
+    problems = counts.get("failed", 0) + counts.get("conflict", 0)
     values = {"created_records": counts.get("added", 0) + counts.get("updated", 0), "skipped_records": skipped,
-              "conflict_records": counts.get("failed", 0), "error_message": summary(counts)}
+              "conflict_records": problems, "error_message": summary(counts)}
     values["processed"] = values["created_records"] + skipped + values["conflict_records"]
     frappe.db.set_value("HERO Integration Run", run.name, values)
     frappe.db.commit()
@@ -122,14 +137,16 @@ def _file_slice(run) -> None:
         _enqueue(run.name)
         frappe.db.commit()
     else:
-        _finish(run.name, "Completed With Conflicts" if counts.get("failed") else "Completed", summary(counts))
+        _finish(run.name, "Completed With Conflicts" if problems else "Completed", summary(counts))
 
 
 def summary(counts: dict) -> str:
-    gigabytes = counts.get("bytes", 0) / 2**30
     skipped = sum(v for k, v in counts.items() if k.startswith("skipped_"))
-    return (f"{counts.get('added', 0)} added, {counts.get('updated', 0)} replaced, {counts.get('unchanged', 0)} unchanged, "
-            f"{skipped} skipped, {counts.get('failed', 0)} failed, {gigabytes:.2f} GB transferred.")
+    text = (f"{counts.get('added', 0)} added, {counts.get('updated', 0)} updated, {counts.get('unchanged', 0)} unchanged, "
+            f"{skipped} skipped, {counts.get('conflict', 0)} conflicts, {counts.get('failed', 0)} failed")
+    if "bytes" in counts or "bytes_planned" in counts:
+        text += f", {counts.get('bytes', 0) / 2**30:.2f} GB transferred"
+    return text + "."
 
 
 def _finish(run_name: str, state: str, message: str) -> None:
@@ -186,7 +203,7 @@ def advance_full(run_name: str) -> None:
 
 
 def _start_step(action: str, parent: str) -> str:
-    if action in FILE_ACTIONS:
+    if action in SLICE_ACTIONS:
         return start(action, parent=parent)
     from hero_integration import api
     from hero_integration.services.sync_page import BY_RUN_ACTION
@@ -226,6 +243,10 @@ def _instance() -> str:
 # ---------------------------------------------------------------- Synchronization page
 
 AREA_TEXT = {
+    "products": ("Products", "Product Migration", PRODUCT_ACTION,
+                 "Import all HERO articles (own articles and supplier catalogs) as ERPNext Items with prices.",
+                 "Item code, name, description, unit, catalog as Item Group, manufacturer as Brand, EAN, purchase "
+                 "and sales price. Items changed in ERPNext are reported as conflicts, not overwritten."),
     "documents": ("Documents", "Document Migration", "Document Migration",
                   "Transfer HERO documents (invoices, offers, confirmations, letters …) as private files.",
                   "Every HERO file except pictures, attached to its Project or Customer. Unchanged files are skipped."),
@@ -233,10 +254,18 @@ AREA_TEXT = {
                  "Transfer HERO project pictures as private files.",
                  "All HERO pictures, attached to their Project. Unchanged files are skipped."),
     "full": ("Everything", "Full Migration", FULL_ACTION,
-             "Run all migrations one after another: projects with contacts, events, tasks, documents, pictures.",
+             "Run all migrations one after another: projects with contacts, events, tasks, products, documents, pictures.",
              "Each step is its own run in the history. A stopped step blocks the chain; continue the run to retry it."),
 }
 AREA_KEYS = {key: text[2] for key, text in AREA_TEXT.items()}
+_FILE_FIELDS = ["file_name", "attached_to_doctype", "attached_to_name", "folder"]
+SCOPE = {
+    "products": [{"doctype": "Item", "fields": ["item_code", "item_name", "description", "item_group", "stock_uom",
+                                                "brand", "barcodes", "disabled"]},
+                 {"doctype": "Item Price", "fields": ["price_list", "price_list_rate"]}],
+    "documents": [{"doctype": "File", "fields": _FILE_FIELDS}],
+    "pictures": [{"doctype": "File", "fields": _FILE_FIELDS}],
+}
 
 
 def page_areas(active: list[dict], instance: str) -> list[dict]:
@@ -246,15 +275,14 @@ def page_areas(active: list[dict], instance: str) -> list[dict]:
         last = frappe.get_all("HERO Integration Run", filters={**executed, "state": ["in", list(SUCCESS)]},
                               fields=["finished_on"], order_by="finished_on desc", limit_page_length=1)
         running = next((row for row in active if row.get("action") == action), None)
-        fields = ["file_name", "attached_to_doctype", "attached_to_name", "folder"]
+        objects = SCOPE.get(key, [])
         rows.append({
             "key": key, "label": label, "action_label": action_label, "description": description, "scope_note": note,
-            "scope": {"object_count": 1, "field_count": len(fields), "objects": [{"doctype": "File", "fields": fields}]}
-            if key != "full" else {"object_count": 0, "field_count": 0, "objects": []},
+            "scope": {"object_count": len(objects), "field_count": sum(len(o["fields"]) for o in objects), "objects": objects},
             "button": "Update" if frappe.db.exists("HERO Integration Run", executed) else "Start",
             "last_successful": last[0]["finished_on"] if last else None,
             "running_run": running["name"] if running else "", "ready": True, "blocker": "", "service": None,
-            "sync_enabled": False, "polled": False, "kind": "file" if key != "full" else "full",
+            "sync_enabled": False, "polled": False, "kind": "full" if key == "full" else "direct",
             "confirm": f"{action_label}: {description}",
         })
     return rows

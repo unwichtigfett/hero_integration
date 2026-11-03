@@ -2825,7 +2825,12 @@ Full Migration,Komplettmigration
 "Every HERO file except pictures, attached to its Project or Customer. Unchanged files are skipped.","Alle HERO-Dateien außer Bildern, angehängt an Projekt oder Kunde. Unveränderte Dateien werden übersprungen."
 Transfer HERO project pictures as private files.,HERO-Projektbilder als private Dateien übertragen.
 "All HERO pictures, attached to their Project. Unchanged files are skipped.","Alle HERO-Bilder, angehängt an ihr Projekt. Unveränderte Dateien werden übersprungen."
-"Run all migrations one after another: projects with contacts, events, tasks, documents, pictures.","Alle Migrationen nacheinander ausführen: Projekte mit Kontakten, Termine, Aufgaben, Dokumente, Bilder."
+"Run all migrations one after another: projects with contacts, events, tasks, products, documents, pictures.","Alle Migrationen nacheinander ausführen: Projekte mit Kontakten, Termine, Aufgaben, Artikel, Dokumente, Bilder."
 Each step is its own run in the history. A stopped step blocks the chain; continue the run to retry it.,Jeder Schritt ist ein eigener Lauf im Verlauf. Ein abgebrochener Schritt hält die Kette an; Fortsetzen wiederholt ihn.
-"Runs Project, Event, Task, Document and Picture Migration in this order.","Führt Projekt-, Termin-, Aufgaben-, Dokumenten- und Bildmigration in dieser Reihenfolge aus."
+"Runs Project, Event, Task, Product, Document and Picture Migration in this order.","Führt Projekt-, Termin-, Aufgaben-, Artikel-, Dokumenten- und Bildmigration in dieser Reihenfolge aus."
 {0} {1}? {2},{0} {1}? {2}
+Products,Artikel
+Product Migration,Artikelmigration
+Import all HERO articles (own articles and supplier catalogs) as ERPNext Items with prices.,Alle HERO-Artikel (eigene Artikel und Lieferantenkataloge) als ERPNext-Artikel mit Preisen importieren.
+"Item code, name, description, unit, catalog as Item Group, manufacturer as Brand, EAN, purchase and sales price. Items changed in ERPNext are reported as conflicts, not overwritten.","Artikelnummer, Name, Beschreibung, Einheit, Katalog als Artikelgruppe, Hersteller als Marke, EAN, Einkaufs- und Verkaufspreis. In ERPNext geänderte Artikel werden als Konflikt gemeldet, nicht überschrieben."
+The Item was changed in ERPNext; the newer HERO article was not applied.,Der Artikel wurde in ERPNext geändert; der neuere HERO-Artikel wurde nicht übernommen.
