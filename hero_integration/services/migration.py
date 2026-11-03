@@ -1478,7 +1478,6 @@ def _migrate_projection(record, run, plan) -> Result:
                 from hero_integration.services.query_mapping import event_record
                 native_record = event_record(plan, record)
             native_values = native_resolve(contract, native_record, source_id, instance, options, lookup=_native_lookup,
-                                          item_link=lambda identity: _item_name_for_source(identity, instance),
                                           allow_partial=bool(existing), review=review)
             if contract.get('native_kind') == 'event' and options['target_timezone'] != frappe.db.get_single_value('System Settings', 'time_zone'):
                 raise MappingPlanError('Configured event target timezone differs from the native System Settings timezone.')
@@ -1513,13 +1512,6 @@ def _native_lookup(doctype, name):
     document = frappe.get_doc(doctype, name)
     frappe.has_permission(doctype, 'read', doc=document, throw=True)
     return document
-
-
-def _item_name_for_source(identity, instance):
-    link = _link('Documents_SupplyProduct', identity, instance)
-    if not link or link.target_doctype != 'Item':
-        raise MappingPlanError('Product version has no verified native Item binding.')
-    return _native_lookup('Item', link.target_name).name
 
 
 def _projection_target_values(target, values, contract):
