@@ -78,6 +78,31 @@ class _Frappe:
 
 
 class TestOwnMapping(unittest.TestCase):
+    def test_article_code_follows_the_selected_source_and_is_not_a_rename(self):
+        original = next(spec for spec in BUILTIN.plan.definitions if spec.target_field == "item_code")
+        alternative = replace(original, definition_id="code-alternative", source_path="internal_identifier")
+        row = {**ROW, "internal_identifier": " OTHER-42 "}
+        for read, expected in ((BUILTIN, "PV-1001"),
+                               (own_read(drop=("item_code",), add=(alternative,)), "OTHER-42")):
+            fake = _Frappe()
+            with patch.object(pm, "frappe", fake):
+                self.assertEqual(pm.upsert(row, None, pm._Masters(), "default", read=read), "added")
+            self.assertIn(expected, fake.items)
+            self.assertNotIn("item_code", pm.item_values(row, read)["owned"])
+        fake = _Frappe()
+        with patch.object(pm, "frappe", fake):
+            pm.upsert(row, None, pm._Masters(), "default", read=BUILTIN)
+            item = fake.items["PV-1001"]
+            link = SimpleNamespace(name="L1", target_name="PV-1001", source_payload_hash="old",
+                                   target_payload_hash=pm.owned_digest(item), target_field_hashes="{}")
+            pm.upsert(row, link, pm._Masters(), "default",
+                      read=own_read(drop=("item_code",), add=(alternative,)))
+        self.assertEqual(item["item_code"], "PV-1001")
+
+    def test_unmapped_or_empty_article_code_uses_technical_identity(self):
+        self.assertEqual(pm.item_values(ROW, own_read(drop=("item_code",)))["item_code"], ROW["product_id"])
+        self.assertEqual(pm.item_values({**ROW, "nr": ""})["item_code"], ROW["product_id"])
+
     def test_an_added_custom_field_is_imported(self):
         row = {**ROW, "base_data": {**ROW["base_data"], "manufacturer_nr": " AC-415 "}}
         values = pm.item_values(row, own_read(add=[MANUFACTURER_NR]))

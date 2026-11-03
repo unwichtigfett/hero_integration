@@ -733,7 +733,10 @@ class FrappeMappingDraftStorage:
                         plan_from_definitions(context['operation_name'], specs, target_operation=operation)
                 except (ValueError, TypeError, KeyError) as error:
                     raise MappingDraftError('The query mapping is incomplete or incompatible with its schema.') from error
-                targets = [(spec.target_doctype, spec.target_field) for spec in specs if spec.purpose != 'Record Name']
+                from hero_integration.services import direct_operations as direct
+                targets = [direct.target_key(spec) if spec.operation in direct.OPERATIONS
+                           else (spec.target_doctype, spec.target_field)
+                           for spec in specs if spec.purpose != 'Record Name']
                 if len(targets) != len(set(targets)):
                     raise MappingDraftError('The published mapping contains duplicate target fields.')
                 active_content = dict(value)
@@ -945,6 +948,8 @@ class FrappeMappingDraftStorage:
             raise DraftConflict('Definition identity is already used by a mutation assignment.')
 
     def _complete_query_target_types(self, content):
+        from hero_integration.services.direct_operations import TRANSFORMS
+
         options = content.get('query_adapter')
         if not options:
             return content
@@ -959,6 +964,8 @@ class FrappeMappingDraftStorage:
             rule = rules.get(identity)
             if rule is None:
                 continue  # Canonical rule snapshots are loaded by the normal provenance path.
+            if rule.get('transformation') in TRANSFORMS:
+                continue  # Coded resolvers own their target type and accept no transform options.
             doctype, name = rule['target_doctype'], rule['target_field']
             if (doctype, name) == ('Comment', 'creation'):
                 field = None
@@ -1671,7 +1678,10 @@ class FrappeMappingDraftStorage:
             else:
                 validate_spec(specification, _FrappeMetadata())
             specifications.append(specification)
-        targets = [(spec.target_doctype, spec.target_field) for spec in specifications if spec.purpose != 'Record Name']
+        from hero_integration.services import direct_operations as direct
+        targets = [direct.target_key(spec) if spec.operation in direct.OPERATIONS
+                   else (spec.target_doctype, spec.target_field)
+                   for spec in specifications if spec.purpose != 'Record Name']
         if len(set(targets)) != len(targets):
             raise MappingDraftError('The published mapping contains duplicate target fields.')
         native_task = content.get('native_task_onboarding') is not None

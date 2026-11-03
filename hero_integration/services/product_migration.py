@@ -11,8 +11,8 @@ services.direct_operations): an approved own mapping of the source, otherwise
 the built-in mapping – name, description, unit → UOM, catalog → Item Group
 under "HERO Artikel", manufacturer → Brand, EAN → barcode (only when unique),
 purchase price → Standard Buying, default sales price → Standard Selling,
-deleted → disabled. Fixed in code: nr → Item Code (``nr-product_id`` when the
-code is taken), the name/group/unit fallbacks, master records, non-stock
+deleted → disabled, configured article number → Item Code on insert. Fixed in code:
+collision protection (``code-product_id`` when the code is taken), the name/group/unit fallbacks, master records, non-stock
 Items and the price conflict protection.
 """
 
@@ -51,6 +51,7 @@ def item_values(row: dict, read=None) -> dict:
     read = read or runtime.builtin_read(OPERATION)
     mapped = runtime.record_values(read.plan, row, "Item")
     barcode = mapped.pop("barcodes", None)
+    code = (mapped.pop("item_code", None) or "").strip()[:140]
     if "disabled" in mapped:
         mapped["disabled"] = 1 if mapped["disabled"] else 0
     nr = (row.get("nr") or "").strip() if isinstance(row.get("nr"), str) else ""
@@ -60,7 +61,7 @@ def item_values(row: dict, read=None) -> dict:
                                              for spec in read.plan.definitions):
         mapped["description"] = name  # as before: an article without description shows its name
     prices = runtime.price_values(read.plan, row)
-    return {"item_code": nr[:140] or str(row["product_id"]), **mapped,
+    return {"item_code": code or str(row["product_id"]), **mapped,
             "owned": tuple(field for field in mapped),
             "barcode": barcode, "buying": prices.get(BUYING), "selling": prices.get(SELLING)}
 
