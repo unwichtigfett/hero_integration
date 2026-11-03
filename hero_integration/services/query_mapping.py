@@ -374,7 +374,9 @@ def seal_query(service, snapshot, config, plan):
         raise ValueError('Mapped service operation does not match its saved Query.')
     operation = plan.target_operation or plan.operation
     expected, _target = ROOTS[operation]
-    if root.name.value != expected or config.get('records_path') != (root.alias.value if root.alias else expected):
+    prefix = direct.OPERATIONS.get(operation, {}).get('record_prefix', '')
+    records = (root.alias.value if root.alias else expected) + ('.' + prefix if prefix else '')
+    if root.name.value != expected or config.get('records_path') != records:
         raise ValueError('Mapped read root differs from its native adapter.')
     variables = config.get('variables', {})
     args = {arg.name.value: arg.value for arg in root.arguments}
@@ -406,6 +408,13 @@ def seal_query(service, snapshot, config, plan):
                 selected.add(path)
                 leaf_types[path] = get_named_type(definition.type).name
     walk(root.selection_set, get_named_type(schema.query_type.fields[expected].type))
+    if prefix:
+        # Records are nested (connection edges); rule paths are relative to one record.
+        inner = prefix + '.'
+        selected = {path[len(inner):] for path in selected if path.startswith(inner)}
+        list_paths = {path[len(inner):] for path in list_paths if path.startswith(inner)}
+        nodes = {path[len(inner):]: node for path, node in nodes.items() if path.startswith(inner)}
+        leaf_types = {path[len(inner):]: kind for path, kind in leaf_types.items() if path.startswith(inner)}
     required = {d.source_path for d in plan.definitions if d.purpose != 'Confirmed Company'}
     for d in plan.definitions:
         if d.target_doctype == 'Address':

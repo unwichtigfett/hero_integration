@@ -24,22 +24,29 @@ OPERATIONS = {
         "targets": frozenset({"Item", "Item Price", "HERO Integration Link"}),
         "record_name": ("Item", "item_name"),
         "order_by": "product_id",
+        "page_size": 500,  # HERO returns at most 500 article versions per request
     },
     "HeroDocuments": {
-        "root": "file_uploads", "owner": "File", "area": "Documents",
+        # file_uploads answers only for given uuids; the list comes from the connection,
+        # records are its edges' nodes. Project/Customer attachment details are read by
+        # the importer's fixed detail query (file_uploads(uuids)).
+        "root": "FileUpload_FileUploads", "record_prefix": "edges.node", "owner": "File", "area": "Documents",
         "identity": ("id", "Positive Int To Text", "int"),
-        # Download, change detection, deletion, category split and attachment target.
-        "required_paths": frozenset({"id", "uuid", "category", "is_deleted", "url_download", "size", "modified",
-                                     "created", "project_id", "file_upload_matches.project_match_id",
-                                     "file_upload_links.target", "file_upload_links.customer_id",
-                                     "file_upload_links.project_match_id", "customer_document.status_code",
-                                     "customer_document.project_match_id", "customer_document.contact_id"}),
+        # Download, change detection, deletion check and the Documents/Pictures split.
+        "required_paths": frozenset({"id", "uuid", "category", "downloadUrl", "size", "modified", "created"}),
         "targets": frozenset({"File", "HERO Integration Link"}),
         "record_name": ("File", "file_name"),
-        "order_by": "id",
+        "order_by": "ID_ASC",
+        "page_size": 200,
     },
 }
 OPERATIONS["HeroPictures"] = {**OPERATIONS["HeroDocuments"], "area": "Pictures"}
+
+
+def records_path(name: str) -> str:
+    """Where the records of an operation sit in its response (root, or root plus record prefix)."""
+    contract = OPERATIONS[name]
+    return contract["root"] + ("." + contract["record_prefix"] if contract.get("record_prefix") else "")
 
 # Configurable target fields per DocType (besides app-owned custom_hero_* fields of the owner).
 FIELDS = {
@@ -177,7 +184,7 @@ def _rule(operation, source_path, target_doctype, target_field, source_type, pur
 
 _FILE_RULES = lambda op: (  # noqa: E731 - same rules for Documents and Pictures
     _rule(op, "id", "HERO Integration Link", "source_id", "int", "Source Identity", "Positive Int To Text"),
-    _rule(op, "filename", "File", "file_name", "string|null", "Record Name", "Trim"),
+    _rule(op, "filename", "File", "file_name", "string", "Record Name", "Trim"),
 )
 
 DEFAULT_RULES = {
