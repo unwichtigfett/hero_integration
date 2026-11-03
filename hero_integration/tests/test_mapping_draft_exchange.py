@@ -110,7 +110,7 @@ class TestCurrentExchangeLocks(unittest.TestCase):
         storage._validate_publication_read_contract(content)
         self.assertEqual(service.execution_status, 'Pending Approval')
         service.modified_by = 'other'
-        with self.assertRaisesRegex(MappingDraftError, 'approved read service'):
+        with self.assertRaisesRegex(MappingDraftError, 'matching validated read service'):
             storage._validate_publication_read_contract(content)
 
     def test_saved_personal_task_compiles_selected_rules_after_all_existing_guards(self):
