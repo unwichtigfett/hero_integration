@@ -20,12 +20,20 @@ QUERY = (
 )
 
 
-def sync_logbook(client, user_emails: dict[int, str] | None = None, max_pages: int = 200) -> dict:
-    """Read every page once and add the entries not yet in ERPNext; returns counts."""
+def sync_logbook(client, user_emails: dict[int, str] | None = None, max_pages: int = 200, *,
+                 source_instance: str) -> dict:
+    """Read every page once and add the entries not yet in ERPNext; returns counts.
+
+    ``source_instance`` is the HERO source ``client`` reads from. HERO ids repeat
+    across sources, so projects and known entries are looked up only within it."""
+    if not isinstance(source_instance, str) or not source_instance.strip():
+        raise ValueError("A HERO source instance is required.")
     projects = dict(frappe.db.sql("""SELECT source_id, target_name FROM `tabHERO Integration Link`
-        WHERE source_type='project' AND target_doctype='Project' AND IFNULL(target_name, '') != ''"""))
-    known = set(frappe.get_all("HERO Integration Link", filters={"source_type": SOURCE_TYPE}, pluck="source_id",
-                               limit_page_length=0))
+        WHERE source_type='project' AND target_doctype='Project' AND IFNULL(target_name, '') != ''
+          AND IFNULL(NULLIF(source_instance, ''), 'default')=%s""", (source_instance,)))
+    known = set(frappe.get_all("HERO Integration Link", filters={"source_type": SOURCE_TYPE,
+                                                                 "source_instance": source_instance},
+                               pluck="source_id", limit_page_length=0))
     counts = {"requests": 0, "added": 0, "known": 0, "without_project": 0}
     offset, size = 0, PAGE_SIZE
     for _ in range(max_pages):
@@ -53,7 +61,7 @@ def sync_logbook(client, user_emails: dict[int, str] | None = None, max_pages: i
                 elif not project:
                     counts["without_project"] += 1
                 else:
-                    add_entry(project, entry, user_emails or {})
+                    add_entry(project, entry, user_emails or {}, source_instance)
                     known.add(key)
                     counts["added"] += 1
         frappe.db.commit()
@@ -63,7 +71,7 @@ def sync_logbook(client, user_emails: dict[int, str] | None = None, max_pages: i
     return counts
 
 
-def add_entry(project: str, entry: dict, user_emails: dict[int, str]) -> str:
+def add_entry(project: str, entry: dict, user_emails: dict[int, str], source_instance: str) -> str:
     from frappe.utils.html_utils import sanitize_html
 
     title = (entry.get("custom_title") or "").strip()
@@ -79,7 +87,7 @@ def add_entry(project: str, entry: dict, user_emails: dict[int, str]) -> str:
     if created:
         frappe.db.set_value("Comment", comment.name, {"creation": created, "modified": created}, update_modified=False)
     frappe.get_doc({"doctype": "HERO Integration Link", "source_system": "HERO", "source_type": SOURCE_TYPE,
-                    "source_id": str(entry["id"]), "source_instance": "default", "sync_status": "Synchronized",
+                    "source_id": str(entry["id"]), "source_instance": source_instance, "sync_status": "Synchronized",
                     "target_doctype": "Comment", "target_name": comment.name, "mapping_version": "project-logbook-v1",
                     "source_payload_hash": _digest(entry), "target_payload_hash": _digest({"content": content}),
                     "last_synced_on": frappe.utils.now_datetime()}).insert(ignore_permissions=True)

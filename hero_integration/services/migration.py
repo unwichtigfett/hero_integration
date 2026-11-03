@@ -606,7 +606,7 @@ def _refresh_project_logbook(run, source) -> None:
 
     try:
         emails = source.user_emails() if hasattr(source, "user_emails") else {}
-        sync_logbook(client, emails)
+        sync_logbook(client, emails, source_instance=source.source_instance)
     except Exception:
         frappe.db.rollback()
         frappe.log_error(title="HERO project logbook refresh failed")
