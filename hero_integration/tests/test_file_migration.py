@@ -186,5 +186,59 @@ class TestSourceBinding(unittest.TestCase):
         self.assertIn("another HERO source", db.runs["R"]["error_message"])
 
 
+class TestEveryStartPathIsSourceBound(unittest.TestCase):
+    """The older file_transfer entry points share the bound run path."""
+
+    def setUp(self):
+        from hero_integration import api
+        from hero_integration.services import file_transfer as ft
+
+        self.api, self.ft = api, ft
+        self.inserted, self.queued = [], []
+
+        class _Run(SimpleNamespace):
+            def insert(inner, **kwargs):
+                self.inserted.append(inner)
+
+        def throw(message, *args, **kwargs):
+            raise RuntimeError(message)
+
+        self.fake = SimpleNamespace(only_for=lambda *a: None, throw=throw, _=lambda text: text,
+                                    get_doc=lambda values: _Run(name="RUN-1", **values),
+                                    db=SimpleNamespace(exists=lambda *a, **k: None, set_default=lambda *a: None,
+                                                       commit=lambda: None),
+                                    log_error=lambda **kwargs: self.queued.append(("logged", kwargs)))
+        for target in (patch.object(api, "frappe", self.fake), patch.object(ft, "frappe", self.fake),
+                       patch.object(fm, "frappe", self.fake),
+                       patch.object(fm, "_enqueue", side_effect=lambda name: self.queued.append(name)),
+                       patch("hero_integration.services.file_transfer.reset_phase")):
+            target.start()
+            self.addCleanup(target.stop)
+
+    def test_unconfirmed_binding_blocks_both_public_starts(self):
+        with patch.object(fm, "_configuration", return_value=_config(confirmed=False)):
+            for start in (lambda: self.ft.start("documents"), lambda: self.api.sync_area_start("documents")):
+                with self.subTest(start=start), self.assertRaisesRegex(RuntimeError, "confirm the source binding"):
+                    start()
+        self.assertEqual((self.inserted, self.queued), ([], []))
+
+    def test_legacy_start_creates_a_bound_run(self):
+        with patch.object(fm, "_configuration", return_value=_config()):
+            self.assertEqual(self.ft.start("images"), "RUN-1")
+        self.assertEqual((self.inserted[0].action, self.inserted[0].source_instance,
+                          self.inserted[0].source_binding_revision), ("Picture Migration", "source-a", 3))
+        self.assertEqual(self.queued, ["RUN-1"])
+
+    def test_already_queued_legacy_job_transfers_nothing(self):
+        with patch.object(self.ft, "transfer", side_effect=AssertionError("legacy job must not transfer")):
+            self.ft.run_job("documents")
+        self.assertEqual(self.queued[0][0], "logged")
+
+    def test_transfer_without_a_bound_client_requires_a_confirmed_binding(self):
+        with patch.object(fm, "_configuration", return_value=_config(confirmed=False)), \
+                self.assertRaises(fm.SourceBindingError):
+            self.ft.transfer("documents", dry_run=True)
+
+
 if __name__ == "__main__":
     unittest.main()

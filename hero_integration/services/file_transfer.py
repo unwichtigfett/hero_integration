@@ -6,7 +6,8 @@ One HERO Integration Link per HERO file makes reruns skip unchanged files
 and replace regenerated ones. A run stops on its time budget and continues
 from the saved cursor in a new background job.
 
-Usage (bench execute):
+Runs are started as Document or Picture Migration (services.file_migration),
+which binds them to the confirmed HERO source. Usage (bench execute):
     hero_integration.services.file_transfer.preview --kwargs "{'phase': 'documents'}"
     hero_integration.services.file_transfer.start --kwargs "{'phase': 'documents'}"
     hero_integration.services.file_transfer.status
@@ -38,7 +39,6 @@ MAX_FILE_BYTES = 512 * 1024 * 1024
 MIN_FREE_BYTES = 20 * 1024 * 1024 * 1024
 TIME_BUDGET_SECONDS = 50 * 60
 STATE_KEY = "hero_file_transfer:{}"
-LOCK_NAME = "hero_file_transfer"
 ROOT_FOLDER = "HERO"
 PHASE_FOLDER = {"documents": "Dokumente", "images": "Bilder"}
 UNASSIGNED_FOLDER = "Ohne Zuordnung"
@@ -355,10 +355,13 @@ def _save_state(phase: str, state: dict) -> None:
 
 
 def _client_and_downloader(config=None):
+    """Client and downloader for ``config``; without one only for the confirmed source binding."""
     from hero_integration.client.graphql import HeroGraphQLClient
-    from hero_integration.client.settings import get_configuration
 
-    config = config or get_configuration()
+    if config is None:
+        from hero_integration.services.file_migration import confirmed_configuration
+
+        config = confirmed_configuration()
     client = HeroGraphQLClient(config.endpoint, lambda: config.api_token, config.timeout_seconds, max_retries=2)
     return client, Downloader(config.endpoint.host, lambda: config.api_token), config.source_instance
 
@@ -478,17 +481,16 @@ def preview(phase: str = "documents") -> dict:
 
 @frappe.whitelist()
 def start(phase: str = "documents") -> str:
+    """Start a Document or Picture Migration run; returns the run name.
+
+    Delegates to the source-bound run path, so this entry point has no
+    separate queue and no check of its own."""
     frappe.only_for("System Manager")
     if phase not in PHASES:
         frappe.throw(f"Unknown phase {phase!r}.")
-    return _enqueue(phase)
+    from hero_integration import api
 
-
-def _enqueue(phase: str) -> str:
-    job_id = f"hero_file_transfer_{phase}_{int(time.time())}"
-    frappe.enqueue("hero_integration.services.file_transfer.run_job", queue="long",
-                   timeout=TIME_BUDGET_SECONDS + 600, phase=phase, job_id=job_id, enqueue_after_commit=True)
-    return job_id
+    return api.sync_area_start({"documents": "documents", "images": "pictures"}[phase])["run"]
 
 
 @frappe.whitelist()
@@ -498,10 +500,8 @@ def status() -> dict:
 
 
 def run_job(phase: str) -> None:
-    """Background job: one time-boxed slice, then queue the next slice."""
-    from frappe.utils.synchronization import filelock
-
-    with filelock(LOCK_NAME, timeout=5):
-        state = transfer(phase)
-    if not state.get("done") and not state.get("last_error"):
-        _enqueue(phase)
+    """Retired background job. Jobs queued by an earlier version carry no
+    source binding and therefore transfer nothing."""
+    frappe.log_error(title="HERO file transfer job blocked",
+                     message=f"A queued {phase!r} file transfer job has no recorded HERO source binding and was not run. "
+                             "Start Document or Picture Migration on the Synchronization page instead.")

@@ -151,6 +151,26 @@ class TestManagedPrices(unittest.TestCase):
         _, baseline = self.plan_and_apply({"GEN": GENERAL}, managed={"name": "GEN", "rate": 98, "uom": "Stk"})
         self.assertEqual(baseline, {"name": "GEN", "rate": 100, "uom": "Stk"})
 
+    def test_managed_price_later_bound_to_a_customer_is_a_conflict(self):
+        db = _PriceDB({"P1": {**GENERAL, "customer": "CUSTOMER-1"}})  # only the customer changed locally
+        with patch.object(pm, "frappe", _price_frappe(db)), self.assertRaises(pm.PriceConflict):
+            pm.plan_price("PV-1001", pm.SELLING, 100, "Stk", {"name": "P1", "rate": 98, "uom": "Stk"})
+        self.assertEqual((db.prices["P1"]["price_list_rate"], db.writes), (98, []))
+
+    def test_managed_price_with_a_new_customer_binding_blocks_the_whole_article(self):
+        db = _PriceDB({"P1": {**GENERAL, "customer": "CUSTOMER-1"}})
+        fake = _price_frappe(db)
+        item = SimpleNamespace(name="PV-1001", stock_uom="Stk", save=lambda **k: self.fail("Item must not be saved"))
+        fake.get_doc = lambda doctype, name: item
+        link = SimpleNamespace(name="L1", target_name="PV-1001", source_payload_hash="old", target_payload_hash="",
+                               target_field_hashes=json.dumps({"prices": {pm.SELLING: {"name": "P1", "rate": 98, "uom": "Stk"}}}))
+        with patch.object(pm, "frappe", fake), patch.object(pm, "owned_digest", return_value="x"):
+            result = pm.upsert({**ROW, "base_price": None, "sales_prices": [], "list_price": 100}, link,
+                               pm._Masters(), "source-a")
+        self.assertEqual(result, "conflict")
+        self.assertEqual(db.prices["P1"]["price_list_rate"], 98)
+        self.assertEqual([write[0] for write in db.writes], ["HERO Integration Link"])
+
     def test_price_conflict_marks_the_link_before_any_item_write(self):
         db = _PriceDB({"A": GENERAL, "B": dict(GENERAL)})
         fake = _price_frappe(db)
