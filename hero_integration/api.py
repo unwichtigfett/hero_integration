@@ -852,15 +852,13 @@ def _sync_metrics(instance: str) -> dict[str, object]:
         for item in AREAS
     }
     records.update(_direct_area_records())
+    from hero_integration.services.polling import execution_summary
+
     since = add_days(now_datetime(), -POLLING_PERIOD_DAYS)
-    polling = {
-        status.lower(): frappe.db.count("HERO Polling Event", {"status": status, "creation": [">=", since]})
-        for status in ("Succeeded", "Incomplete", "Failed", "Skipped")
-    }
+
     return {
         "records": records,
-        "polling": {"period_days": POLLING_PERIOD_DAYS, "runs": sum(polling.values()), "pass": polling["succeeded"],
-                    "fail": polling["failed"], "incomplete": polling["incomplete"], "skipped": polling["skipped"]},
+        "polling": {"period_days": POLLING_PERIOD_DAYS, **execution_summary(frappe, instance, since)},
     }
 
 

@@ -12,6 +12,7 @@
     const API = "hero_integration.api.";
     const PAGE_SIZE = 8;
     const REFRESH_MS = 5000;
+    const IDLE_REFRESH_MS = 30000;
     // Simple stroke icons (24×24 path data), drawn with the current text colour.
     const ICONS = {
         contacts: ["M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z", "M4 20c0-3.3 3.6-6 8-6s8 2.7 8 6"],
@@ -263,7 +264,10 @@
                 el("div", {class: "hero-sync-states-group"},
                     el("div", {class: "hero-sync-section-head"}, el("h3", {text: tr("Polling")}), el("span", {text: format("Last {0} days", polling.period_days)})),
                     el("div", {class: "hero-sync-metrics"}, metric("Runs", polling.runs), metric("Pass", polling.pass, "ok"), metric("Fail", polling.fail, polling.fail ? "error" : ""),
-                        metric("Incomplete", polling.incomplete), metric("Skipped", polling.skipped))));
+                        metric("Running", polling.running || 0), metric("Conflicts", polling.conflicts || 0),
+                        metric("Cancelled", polling.cancelled || 0), metric("Incomplete", polling.incomplete), metric("Skipped", polling.skipped)),
+                    readonly("Status", tr(polling.last_status || "Not started")),
+                    readonly("Last successful", formatDateTime(polling.last_successful))));
         }
 
         // --- Lower work area -----------------------------------------------------------
@@ -543,8 +547,14 @@
         }
         function schedule() {
             clearTimeout(state.timer);
-            // Refresh only while a run is queued or running, and only while the page is shown.
-            if (!state.destroyed && state.data?.active_run && root.isConnected) state.timer = setTimeout(refresh, REFRESH_MS);
+            // Idle refresh also discovers runs started by the scheduler or another user.
+            if (!state.destroyed && root.isConnected) {
+                state.timer = setTimeout(() => {
+                    if (state.destroyed || !root.isConnected) return;
+                    if (document.hidden || state.busy) schedule();
+                    else refresh();
+                }, state.data?.active_run ? REFRESH_MS : IDLE_REFRESH_MS);
+            }
         }
 
         renderView();
