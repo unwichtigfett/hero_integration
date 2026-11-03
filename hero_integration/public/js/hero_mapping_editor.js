@@ -5,17 +5,17 @@
     const format = (message, ...values) => text(message).replace(/\{(\d+)\}/g, (_, index) => String(values[index] ?? ""));
     // Operations are stored with their technical ids (HeroProducts …); people see the area name.
     const OPERATION_LABELS = Object.freeze({HeroCustomers: "Customers", HeroProjectMatches: "Projects", HeroTasks: "Tasks",
-        HeroCalendarEvents: "Calendar", HeroProducts: "Products", HeroDocuments: "Documents", HeroPictures: "Pictures",
+        HeroCalendarEvents: "Calendar", HeroProducts: "Products", HeroServices: "Services", HeroDocuments: "Documents", HeroPictures: "Pictures",
         HeroLookup: "Lookup"});
     const operationLabel = (name) => (Object.hasOwn(OPERATION_LABELS, name || "") ? text(OPERATION_LABELS[name]) : String(name || ""));
     // Suggestions preserve the free-form transformations supported by other adapters.
     const directRuleChoices = (content, rule) => {
         if (content?.query_adapter?.version !== 2 || content.direction === "FRAPPE_TO_MUTATION" ||
             content.operation_kind === "MUTATION" ||
-            !["HeroProducts", "HeroDocuments", "HeroPictures"].includes(content.target_operation)) return {};
-        return {transformation: ["HERO Item Group", "HERO Category Group", "HERO Supplier", "HERO UOM", "HERO Brand",
+            !["HeroProducts", "HeroDocuments", "HeroPictures", "HeroServices"].includes(content.target_operation)) return {};
+        return {transformation: ["Service Price", "HERO Item Group", "HERO Category Group", "HERO Supplier", "HERO UOM", "HERO Brand",
             "HERO EAN Barcode", "HERO Price", "HERO Default Sales Price"],
-            ...(rule.target_doctype === "Item Price" ? {relation: ["Standard Buying", "Standard Selling"]} : {})};
+            ...(rule.target_doctype === "Item Price" ? {relation: content.target_operation === "HeroServices" ? ["Standard Selling"] : ["Standard Buying", "Standard Selling"]} : {})};
     };
     const mappingMatchesContext = (item, kind, snapshot, operation) =>
         (kind === "builtin" || !snapshot || item.schema_snapshot === snapshot) &&
@@ -282,7 +282,7 @@
     };
     // Generic labels that Frappe or ERPNext translate differently elsewhere (Area → Fläche).
     const choiceLabelContext = Object.freeze({Area: "HERO data area"});
-    const mappingAreas = Object.freeze(["All areas", "Customers", "Projects", "Tasks", "Calendar", "Products", "Documents", "Pictures"]);
+    const mappingAreas = Object.freeze(["All areas", "Customers", "Projects", "Tasks", "Calendar", "Products", "Documents", "Pictures", "Services"]);
     const objectsInArea = (objects, area) => (objects || []).filter((item) =>
         area === "All areas" || (mappingAreas.includes(area) && Array.isArray(item.areas) && item.areas.includes(area)));
     const relationshipDescription = (rule, operation, fieldContext) => {

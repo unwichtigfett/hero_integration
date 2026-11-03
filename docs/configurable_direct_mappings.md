@@ -129,3 +129,5 @@ See [general configurable mappings](configurable_mappings_1.0.md) for the shared
 Query approval and transformation-options flow. Offline tests verify source
 contracts and synthetic behavior; they do not establish deployment or a live
 HERO import.
+
+See [service mapping and migration](service_mapping.md) for Services, calculation rows, tax handling and private attachments.

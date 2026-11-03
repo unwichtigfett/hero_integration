@@ -15,7 +15,16 @@ from __future__ import annotations
 
 import math
 
+from hero_integration.services.service_schema import SCALARS as SERVICE_SCALARS
+
 OPERATIONS = {
+    "HeroServices": {
+        "root": "supply_services", "owner": "Item", "area": "Services",
+        "identity": ("id", "Positive Int To Text", "int"),
+        "required_paths": frozenset({"id", "company_id", "is_deleted", "modified"}),
+        "targets": frozenset({"Item", "Item Price", "HERO Integration Link"}),
+        "record_name": ("Item", "item_name"), "order_by": "id", "page_size": 100,
+    },
     "HeroProducts": {
         "root": "supply_product_versions", "owner": "Item", "area": "Products",
         "identity": ("product_id", "Nonempty String ID", "string"),
@@ -57,6 +66,7 @@ FIELDS = {
 }
 # Coded resolvers; each may only feed its one native field.
 TRANSFORM_TARGETS = {
+    "Service Price": ("Item Price", "price_list_rate"),
     "HERO Item Group": ("Item", "item_group"),       # catalog name → Item Group below "HERO Artikel"
     "HERO Category Group": ("Item", "item_group"),   # category → Item Group; without category the catalog
     "HERO Supplier": ("Item", "supplier_items"),     # supplier name (+ its article number) → Item Supplier row
@@ -95,6 +105,9 @@ def validate_spec(spec) -> None:
             raise ValueError("The identity of this HERO object is fixed: {0} → HERO Integration Link.source_id.".format(
                 identity_path))
         return
+    if spec.operation == "HeroServices" and spec.target_doctype == "Item" and spec.target_field in {
+            "item_group", "supplier_items", "custom_hero_service_calculation"}:
+        raise ValueError("Query target is protected or outside the supported adapter fields.")
     if spec.purpose == "Source Identity":
         raise ValueError("Source identity may only bind its technical identity field.")
     if spec.target_field not in FIELDS[spec.target_doctype] and not (
@@ -109,6 +122,8 @@ def validate_spec(spec) -> None:
     if (spec.target_doctype, spec.target_field) in coded and not expected:
         raise ValueError("{0}.{1} requires its coded HERO resolver.".format(spec.target_doctype, spec.target_field))
     if spec.target_doctype == "Item Price":
+        if spec.operation == "HeroServices" and spec.relation != "Standard Selling":
+            raise ValueError("Service prices require Standard Selling.")
         if spec.relation not in PRICE_LISTS:
             raise ValueError("An Item Price rule must name its price list (Standard Buying or Standard Selling).")
     elif spec.relation:
@@ -171,6 +186,8 @@ def resolve(transformation: str, value, record: dict | None = None):
     if transformation == "HERO EAN Barcode":
         text = "".join(value.split())[:140] if isinstance(value, str) else ""
         return text or None
+    if transformation == "Service Price":
+        return price(value, allow_zero=True)
     if transformation == "HERO Price":
         return price(value)
     if transformation == "HERO Default Sales Price":
@@ -188,14 +205,14 @@ def _path(record, path: str):
     return value
 
 
-def price(value) -> float | None:
+def price(value, *, allow_zero=False) -> float | None:
     if isinstance(value, bool):
         return None
     try:
         number = round(float(value), 2)
     except (TypeError, ValueError):
         return None
-    return number if math.isfinite(number) and number > 0 else None
+    return number if math.isfinite(number) and (number >= 0 if allow_zero else number > 0) else None
 
 
 # ---------------------------------------------------------------- built-in default mapping
@@ -213,6 +230,20 @@ _FILE_RULES = lambda op: (  # noqa: E731 - same rules for Documents and Pictures
 )
 
 DEFAULT_RULES = {
+    "HeroServices": (
+        _rule("HeroServices", "id", "HERO Integration Link", "source_id", "int", "Source Identity", "Positive Int To Text"),
+        _rule("HeroServices", "nr", "Item", "item_code", "string|null"),
+        _rule("HeroServices", "name", "Item", "item_name", "string|null", "Record Name"),
+        _rule("HeroServices", "description", "Item", "description", "string|null", "Field", "Safe HTML"),
+        _rule("HeroServices", "unit_type", "Item", "stock_uom", "string|null", "Field", "HERO UOM"),
+        _rule("HeroServices", "manufacturer", "Item", "brand", "string|null", "Field", "HERO Brand"),
+        _rule("HeroServices", "ean", "Item", "barcodes", "string|null", "Field", "HERO EAN Barcode"),
+        _rule("HeroServices", "is_deleted", "Item", "disabled", "boolean|null", "Field", "Identity"),
+        _rule("HeroServices", "net_price_per_unit", "Item Price", "price_list_rate", "float|null", "Field", "Service Price", "Standard Selling"),
+        *(_rule("HeroServices", source, "Item", "custom_hero_service_" + source,
+                {"Data": "string|null", "Float": "float|null", "Check": "boolean|null"}[kind], "Field", "Identity")
+          for source, (kind, _label) in SERVICE_SCALARS.items()),
+    ),
     "HeroProducts": (
         _rule("HeroProducts", "product_id", "HERO Integration Link", "source_id", "string", "Source Identity",
               "Nonempty String ID"),

@@ -244,7 +244,7 @@ def _area_label(source_type: str) -> str:
     item = _areas().get(source_type)
     if item:
         return item.label
-    return {"supply_product": "Products", "file_upload": "Documents", "customer_address": "Contacts"}.get(source_type, source_type)
+    return {"supply_product": "Products", "supply_service": "Services", "WageGroup": "Services", "file_upload": "Documents", "customer_address": "Contacts"}.get(source_type, source_type)
 
 
 def _operation(source_type: str) -> str:
@@ -254,4 +254,4 @@ def _operation(source_type: str) -> str:
 
 def _target_doctype(source_type: str) -> str:
     return {"customer": "Customer", "project": "Project", "Task": "Task", "CalendarEvent": "Event",
-            "supply_product": "Item", "customer_address": "Address"}.get(source_type, "")
+            "supply_product": "Item", "supply_service": "Item", "WageGroup": "Activity Type", "customer_address": "Address"}.get(source_type, "")

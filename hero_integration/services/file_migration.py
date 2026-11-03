@@ -15,10 +15,13 @@ import json
 import frappe
 from frappe.utils import now_datetime
 
+from hero_integration.services.service_schema import ITEM_FIELDS as SERVICE_ITEM_FIELDS
+
 FILE_ACTIONS = {"Document Migration": "documents", "Picture Migration": "images"}
 PRODUCT_ACTION = "Product Migration"
+SERVICE_ACTION = "Service Migration"
 FULL_ACTION = "Full Migration"
-SLICE_ACTIONS = frozenset(FILE_ACTIONS) | {PRODUCT_ACTION}
+SLICE_ACTIONS = frozenset(FILE_ACTIONS) | {PRODUCT_ACTION, SERVICE_ACTION}
 RUN_ACTIONS = SLICE_ACTIONS | {FULL_ACTION}
 # Project Migration processes the referenced contacts first in the same run.
 FULL_STEPS = ("Project Migration", "Schedule Migration", "Projection Migration", "Product Migration",
@@ -67,6 +70,10 @@ def start(action: str, parent: str = "") -> str:
     if action not in RUN_ACTIONS:
         raise ValueError("Unknown file migration action.")
     config = confirmed_configuration()
+    if action == SERVICE_ACTION:
+        from hero_integration.services.service_migration import preflight
+
+        preflight(config.source_instance)
     if parent:
         bound_configuration(frappe.get_doc("HERO Integration Run", parent))  # a chain never switches sources
     run = frappe.get_doc({"doctype": "HERO Integration Run", "action": action, "mode": "Execute", "state": "Queued",
@@ -81,8 +88,9 @@ def start(action: str, parent: str = "") -> str:
         from hero_integration.services.product_migration import reset
 
         reset()
-    else:
-        _save_full(run.name, {"step": 0, "child": "", "notes": []})
+    elif action == FULL_ACTION:
+        _save_full(run.name, {"step": 0, "child": "", "notes": [],
+                              "steps": [*FULL_STEPS[:4], SERVICE_ACTION, *FULL_STEPS[4:]]})
     if parent:
         frappe.db.set_default(CHILD_KEY.format(run.name), parent)
     _enqueue(run.name)
@@ -160,7 +168,13 @@ def _file_slice(run, config) -> None:
         frappe.db.commit()
 
     client, downloader, instance = _client_and_downloader(config)
-    if run.action == PRODUCT_ACTION:
+    if run.action == SERVICE_ACTION:
+        from hero_integration.services.service_migration import sync_services
+
+        with filelock("hero_service_migration", timeout=5):
+            state = sync_services(client, source_instance=instance, run_name=run.name, downloader=downloader,
+                                  should_stop=cancelled, progress=progress, verify_source=lambda: bound_configuration(run))
+    elif run.action == PRODUCT_ACTION:
         from hero_integration.services.product_migration import sync_products
 
         with filelock("hero_product_migration", timeout=5):
@@ -176,7 +190,8 @@ def _file_slice(run, config) -> None:
     if state.get("stopped"):
         return  # cancelled by the user; the run keeps its Cancelled state
     if state.get("last_error"):
-        _finish(run.name, "Blocked", f"{state['last_error']} {summary(counts)}")
+        detail = (f"{state['blocked_source_id']}: " if state.get("blocked_source_id") else "") + state["last_error"]
+        _finish(run.name, "Blocked", f"{detail} {summary(counts)}")
     elif not state.get("done"):
         _enqueue(run.name)
         frappe.db.commit()
@@ -223,13 +238,14 @@ def on_run_finished(run_name: str) -> None:
 def advance_full(run_name: str) -> None:
     """Check the current child; start the next step or finish the Full Migration."""
     state = _full(run_name)
+    steps = state.get("steps") or FULL_STEPS  # preserve pre-upgrade run checkpoints
     while True:
         child = state.get("child")
         if child:
             child_state = frappe.db.get_value("HERO Integration Run", child, "state")
             if child_state in ACTIVE:
                 return  # the child advances the chain when it finishes
-            step = FULL_STEPS[state["step"]]
+            step = steps[state["step"]]
             if child_state not in SUCCESS:
                 _save_full(run_name, state)
                 _finish(run_name, "Blocked", f"{step} ({child}) ended as {child_state}. Continue this run to retry the step.")
@@ -237,12 +253,12 @@ def advance_full(run_name: str) -> None:
             if child_state == "Completed With Conflicts":
                 state["notes"].append(f"{step}: conflicts in {child}")
             state.update(step=state["step"] + 1, child="")
-        if state["step"] >= len(FULL_STEPS):
+        if state["step"] >= len(steps):
             _save_full(run_name, state)
             notes = "; ".join(state["notes"])
             _finish(run_name, "Completed With Conflicts" if notes else "Completed", notes or "All steps completed.")
             return
-        action = FULL_STEPS[state["step"]]
+        action = steps[state["step"]]
         child = _start_step(action, run_name)
         if not child:
             state["notes"].append(f"{action}: skipped, no approved read service")
@@ -251,7 +267,7 @@ def advance_full(run_name: str) -> None:
         state["child"] = child
         _save_full(run_name, state)
         frappe.db.set_value("HERO Integration Run", run_name, {
-            "resume_phase": action, "error_message": f"Step {state['step'] + 1}/{len(FULL_STEPS)}: {action} ({child})"})
+            "resume_phase": action, "error_message": f"Step {state['step'] + 1}/{len(steps)}: {action} ({child})"})
         frappe.db.commit()
         return
 
@@ -292,6 +308,9 @@ def active_child(run_name: str) -> str:
 # ---------------------------------------------------------------- Synchronization page
 
 AREA_TEXT = {
+    "services": ("Services", SERVICE_ACTION, SERVICE_ACTION,
+                 "Import services with selling prices and material/labor calculations.",
+                 "Non-stock articles. Local edits require review; unresolved material references remain visible."),
     "products": ("Products", "Product Migration", PRODUCT_ACTION,
                  "Import all HERO articles (own articles and supplier catalogs) as ERPNext Items with prices.",
                  "Item code, name, description, unit, catalog as Item Group, manufacturer as Brand, EAN, purchase "
@@ -303,12 +322,17 @@ AREA_TEXT = {
                  "Transfer HERO project pictures as private files.",
                  "All HERO pictures, attached to their Project. Unchanged files are skipped."),
     "full": ("Everything", "Full Migration", FULL_ACTION,
-             "Run all migrations one after another: projects with contacts, events, tasks, products, documents, pictures.",
+             "Run all migrations one after another: projects with contacts, events, tasks, products, services, documents, pictures.",
              "Each step is its own run in the history. A stopped step blocks the chain; continue the run to retry it."),
 }
 AREA_KEYS = {key: text[2] for key, text in AREA_TEXT.items()}
 _FILE_FIELDS = ["file_name", "attached_to_doctype", "attached_to_name", "folder"]
 SCOPE = {
+    "services": [{"doctype": "Item", "fields": ["item_code", "item_name", "description", "stock_uom", "brand",
+                  "taxes", "is_stock_item", "item_group", "barcodes", "disabled", *[field["fieldname"] for field in SERVICE_ITEM_FIELDS]]},
+                 {"doctype": "Item Price", "fields": ["price_list", "price_list_rate"]},
+                 {"doctype": "Activity Type", "fields": ["activity_type", "billing_rate"]},
+                 {"doctype": "File", "fields": ["file_name", "is_private", "attached_to_doctype", "attached_to_name"]}],
     "products": [{"doctype": "Item", "fields": ["item_code", "item_name", "description", "item_group", "stock_uom",
                                                 "brand", "barcodes", "disabled"]},
                  {"doctype": "Item Price", "fields": ["price_list", "price_list_rate"]}],
