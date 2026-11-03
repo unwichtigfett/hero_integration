@@ -22,8 +22,9 @@ def plan(rules, operation="HeroProducts"):
 class TestRegistry(unittest.TestCase):
     def test_the_three_operations_are_v2_roots(self):
         self.assertEqual(qm.ROOTS["HeroProducts"], ("supply_product_versions", "Item"))
-        self.assertEqual(qm.ROOTS["HeroDocuments"], ("file_uploads", "File"))
-        self.assertEqual(qm.ROOTS["HeroPictures"], ("file_uploads", "File"))
+        self.assertEqual(qm.ROOTS["HeroDocuments"], ("FileUpload_FileUploads", "File"))
+        self.assertEqual(qm.ROOTS["HeroPictures"], ("FileUpload_FileUploads", "File"))
+        self.assertEqual(direct.records_path("HeroDocuments"), "FileUpload_FileUploads.edges.node")
         self.assertTrue(direct.TRANSFORMS <= qm.TRANSFORMS)
 
     def test_the_built_in_mappings_are_valid_v2_plans(self):
@@ -91,7 +92,7 @@ class TestRuleValidation(unittest.TestCase):
 
     def test_documents_and_pictures_select_what_the_import_needs(self):
         required = direct.required_paths(plan(specs("HeroDocuments"), "HeroDocuments"))
-        self.assertTrue({"url_download", "category", "is_deleted", "file_upload_links.customer_id"} <= required)
+        self.assertTrue({"downloadUrl", "category", "uuid", "size", "modified"} <= required)
         product = direct.required_paths(plan(specs("HeroProducts")))
         self.assertTrue({"product_id", "is_deleted", "list_price", "sales_prices.net_price_per_unit"} <= product)
 
