@@ -23,7 +23,6 @@
       "type": "string|null",
       "localized_type": "string|null",
       "full_address": "string|null",
-      "partner_id": "int|null",
       "readonly": "boolean|null",
       "resources": "json|null",
       "partners": "json|null"
@@ -148,13 +147,6 @@
         "transformation": "Native Adapter",
         "purpose": "Native Binding"
       },
-      "partner_id": {
-        "field": "custom_hero_partner_id",
-        "fieldtype": "Data",
-        "options": "",
-        "transformation": "Scalar Text",
-        "purpose": "Field"
-      },
       "readonly": {
         "field": "custom_hero_readonly",
         "fieldtype": "Data",
@@ -220,7 +212,6 @@
       "type",
       "localized_type",
       "full_address",
-      "partner_id",
       "readonly",
       "resources { id name type type_id }",
       "partners { id full_name }"

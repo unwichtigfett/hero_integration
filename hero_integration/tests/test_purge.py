@@ -64,6 +64,17 @@ class TestPurge(unittest.TestCase):
                 patch.object(migration, "_references_besides_hero", side_effect=references):
             return purge.purge_hero_data(**kwargs)
 
+    def test_employee_and_existing_user_are_preserved_with_their_source_links(self):
+        personnel = [_link("LE", "Employee", "employee-1"), _link("LU", "User", "user@example.invalid")]
+        for dry_run in (1, 0):
+            fake = _Frappe(personnel)
+            report = self._run(fake, dry_run=dry_run, confirm=purge.CONFIRMATION)
+            self.assertEqual(report["kept"], {"Employee": 1, "User": 1})
+            self.assertEqual(fake.deleted, [])
+            self.assertEqual(len(fake.links), 2)
+            if dry_run:
+                self.assertEqual(report["would_delete"], {})
+
     def test_dry_run_only_counts(self):
         fake = _Frappe(LINKS)
         report = self._run(fake)

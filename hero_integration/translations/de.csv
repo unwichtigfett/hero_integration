@@ -3037,3 +3037,44 @@ Unit Price,Einzelpreis
 Labor group billing rates differ between service calculations; review the mapping.,Die Verrechnungsstundensätze der Lohngruppe weichen zwischen Leistungskalkulationen ab; das Mapping prüfen.
 Service selling price currency must match the ERPNext company currency.,Die Verkaufspreiswährung der Leistung muss der ERPNext-Unternehmenswährung entsprechen.
 "Run all migrations one after another: projects with contacts, events, tasks, products, services, documents, pictures.","Alle Migrationen nacheinander ausführen: Projekte mit Kontakten, Termine, Aufgaben, Artikel, Leistungen, Dokumente und Bilder."
+Employees,Mitarbeiter
+Employee Migration,Mitarbeitermigration
+"Run all migrations one after another: employees, projects with contacts, events, tasks, products, documents, pictures.","Alle Migrationen nacheinander ausführen: Mitarbeiter, Projekte mit Kontakten, Termine, Aufgaben, Artikel, Dokumente und Bilder."
+The HERO schema has no supported employee query.,Das HERO-Schema enthält keine unterstützte Mitarbeiterabfrage.
+The HERO employee query does not validate against its source schema.,Die HERO-Mitarbeiterabfrage ist für ihr Quellschema nicht gültig.
+Install the HERO employee schema before starting the migration.,Vor dem Start der Migration das HERO-Mitarbeiterschema installieren.
+A validated HERO schema snapshot is required for employee migration.,Die Mitarbeitermigration benötigt einen validierten HERO-Schema-Snapshot.
+HERO returned an invalid or oversized employee list.,HERO hat eine ungültige oder zu große Mitarbeiterliste zurückgegeben.
+HERO returned missing or duplicate employee identities.,HERO hat fehlende oder doppelte Mitarbeiteridentitäten zurückgegeben.
+HERO employee binding is ambiguous.,Die HERO-Mitarbeiterbindung ist mehrdeutig.
+The HERO employee binding target is unavailable.,Das Ziel der HERO-Mitarbeiterbindung ist nicht verfügbar.
+The HERO employee binding requires review.,Die HERO-Mitarbeiterbindung muss geprüft werden.
+The imported employee or user was changed in ERPNext; review the conflict.,Der importierte Mitarbeiter oder Benutzer wurde in ERPNext geändert; den Konflikt prüfen.
+Existing ERPNext employee or user values differ; review before linking.,Vorhandene ERPNext-Mitarbeiter- oder Benutzerwerte weichen ab; vor dem Verknüpfen prüfen.
+The HERO employee has no user identity; review before importing.,Der HERO-Mitarbeiter hat keine Benutzeridentität; vor dem Import prüfen.
+The ERPNext user login email differs from HERO.,Die Anmelde-E-Mail des ERPNext-Benutzers weicht von HERO ab.
+The ERPNext user is already bound to another HERO identity.,Der ERPNext-Benutzer ist bereits mit einer anderen HERO-Identität verknüpft.
+HERO employee first name and status are required.,Vorname und Status des HERO-Mitarbeiters sind erforderlich.
+HERO employee status would change ERPNext login access; review the user first.,Der HERO-Mitarbeiterstatus würde den ERPNext-Anmeldezugriff ändern; zuerst den Benutzer prüfen.
+The ERPNext employee user relation is ambiguous or changed.,Die ERPNext-Mitarbeiter-Benutzerbeziehung ist mehrdeutig oder wurde geändert.
+The ERPNext employee is already bound to another HERO identity.,Der ERPNext-Mitarbeiter ist bereits mit einer anderen HERO-Identität verknüpft.
+The ERPNext employee middle name requires review before importing the HERO name.,Der zweite Vorname des ERPNext-Mitarbeiters muss vor dem Import des HERO-Namens geprüft werden.
+"Employee source schema, company or mapping changed; start a new run.","Quellschema, Unternehmen oder Mitarbeitermapping wurde geändert; einen neuen Lauf starten."
+The HERO employee list changed; start a new run to reconcile it.,Die HERO-Mitarbeiterliste wurde geändert; zur Abstimmung einen neuen Lauf starten.
+Employee validation failed.,Die Mitarbeiterprüfung ist fehlgeschlagen.
+HERO employee identity must be a positive integer.,Die HERO-Mitarbeiteridentität muss eine positive ganze Zahl sein.
+HERO employee record must be an object.,Der HERO-Mitarbeiterdatensatz muss ein Objekt sein.
+HERO employee user_id differs from user.id.,user_id des HERO-Mitarbeiters weicht von user.id ab.
+HERO employee text fields must be strings or null.,HERO-Mitarbeitertextfelder müssen Zeichenketten oder null sein.
+HERO employee status requires an explicit mapping.,Der HERO-Mitarbeiterstatus benötigt ein ausdrückliches Mapping.
+HERO full_name differs from the computed Employee name.,HERO full_name weicht vom berechneten Mitarbeiternamen ab.
+HERO user locale requires an installed ERPNext language.,Das HERO-Benutzergebietsschema benötigt eine installierte ERPNext-Sprache.
+A valid employee login email is required.,Eine gültige Anmelde-E-Mail des Mitarbeiters ist erforderlich.
+Import employees from HERO into your ERPNext company.,Mitarbeiter aus HERO in dein ERPNext-Unternehmen importieren.
+Joining date 2026-01-01. New active users receive only the Employee role; local changes require review.,Eintritt am 01.01.2026. Neue aktive Benutzer erhalten nur die Rolle Mitarbeiter; lokale Änderungen erfordern eine Prüfung.
+Role,Rolle
+Account Type,Kontotyp
+Role in Source System,Rolle im Quellsystem
+Last Login in Source System,Letzte Anmeldung im Quellsystem
+Created in Source System,Im Quellsystem erstellt
+Modified in Source System,Im Quellsystem geändert

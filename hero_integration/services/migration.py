@@ -2297,6 +2297,9 @@ def _synchronize_customer_relations(customer, contact_values, home_phone, addres
     synchronize_home_phone(customer, home_phone)
     if address is not None:
         _synchronize_customer_address(customer, address, source_instance, mapping_version)
+        from hero_integration.services.primary_address import fill_primary_address
+
+        fill_primary_address(customer.name, source_instance)
 
 
 def _synchronize_customer_address(customer, address: dict[str, object], source_instance: str, mapping_version: str) -> None:

@@ -1,0 +1,126 @@
+{
+  "version": 1,
+  "records_path": "partners",
+  "execution": "manual_employee_migration",
+  "fields": [
+    {
+      "source_path": "id",
+      "target_doctype": "HERO Integration Link",
+      "target_field": "source_id",
+      "handling": "partner_identity"
+    },
+    {
+      "source_path": "user_id",
+      "target_doctype": "HERO Integration Link",
+      "target_field": "source_id",
+      "handling": "user_identity"
+    },
+    {
+      "source_path": "first_name",
+      "target_doctype": "Employee",
+      "target_field": "first_name",
+      "handling": "text"
+    },
+    {
+      "source_path": "last_name",
+      "target_doctype": "Employee",
+      "target_field": "last_name",
+      "handling": "text"
+    },
+    {
+      "source_path": "full_name",
+      "target_doctype": "Employee",
+      "target_field": "employee_name",
+      "handling": "computed_name"
+    },
+    {
+      "source_path": "email",
+      "target_doctype": "Employee",
+      "target_field": "company_email",
+      "handling": "text"
+    },
+    {
+      "source_path": "phone",
+      "target_doctype": "User",
+      "target_field": "phone",
+      "handling": "text"
+    },
+    {
+      "source_path": "mobile",
+      "target_doctype": "Employee",
+      "target_field": "cell_number",
+      "handling": "text"
+    },
+    {
+      "source_path": "role",
+      "target_doctype": "Employee",
+      "target_field": "custom_hero_partner_role",
+      "handling": "observation"
+    },
+    {
+      "source_path": "status",
+      "target_doctype": "Employee",
+      "target_field": "status",
+      "handling": "employee_status"
+    },
+    {
+      "source_path": "account_type",
+      "target_doctype": "Employee",
+      "target_field": "custom_hero_account_type",
+      "handling": "observation"
+    },
+    {
+      "source_path": "user.id",
+      "target_doctype": "HERO Integration Link",
+      "target_field": "source_id",
+      "handling": "user_identity_check"
+    },
+    {
+      "source_path": "user.email",
+      "target_doctype": "User",
+      "target_field": "email",
+      "handling": "user_login_identity"
+    },
+    {
+      "source_path": "user.role",
+      "target_doctype": "User",
+      "target_field": "custom_hero_role",
+      "handling": "observation"
+    },
+    {
+      "source_path": "user.locale",
+      "target_doctype": "User",
+      "target_field": "language",
+      "handling": "locale"
+    },
+    {
+      "source_path": "user.last_login",
+      "target_doctype": "User",
+      "target_field": "custom_hero_last_login",
+      "handling": "observation"
+    },
+    {
+      "source_path": "user.created",
+      "target_doctype": "User",
+      "target_field": "custom_hero_created",
+      "handling": "observation"
+    },
+    {
+      "source_path": "user.modified",
+      "target_doctype": "User",
+      "target_field": "custom_hero_modified",
+      "handling": "observation"
+    }
+  ],
+  "defaults": {
+    "company": "ERPNext Global Defaults.default_company or sole Company",
+    "date_of_joining": "2026-01-01"
+  },
+  "user_creation": {
+    "enabled": true,
+    "roles": [
+      "Employee"
+    ],
+    "send_welcome_email": false
+  }
+}
