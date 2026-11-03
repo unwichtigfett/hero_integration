@@ -176,6 +176,8 @@ def record_values(plan, record: dict, target_doctype: str) -> dict:
             continue
         raw = lookup(record, spec.source_path)
         if raw is MISSING:
+            if spec.transformation in direct.TRANSFORMS:  # coded resolvers keep their fallback (e.g. "Stk")
+                values[spec.target_field] = direct.resolve(spec.transformation, None, record)
             continue
         _check_value(spec, raw)
         if spec.transformation in direct.TRANSFORMS:
