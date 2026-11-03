@@ -222,7 +222,7 @@ class TestHeroDeskUiContract(unittest.TestCase):
 
     def test_schema_explorer_is_admin_only_and_reads_saved_schema(self):
         source = MAPPING_EDITOR_JS.read_text()
-        explorer = source.split("function renderSchemaExplorer()", 1)[1].split("function renderList()", 1)[0]
+        explorer = source.split("function renderSchemaExplorer(", 1)[1].split("function renderList()", 1)[0]
         for contract in ("if (!admin) return", "analysis_status === 'Validated'", "schema_snapshot_list",
                          "schema_operation_catalog", "leaveWorkspace", "hero_tool: 'graph'",
                          "epoch === viewEpoch", "section[0].isConnected", "tab === viewTab",
@@ -235,14 +235,20 @@ class TestHeroDeskUiContract(unittest.TestCase):
             self.assertNotIn(forbidden, explorer)
         self.assertIn("explorer.append(snapshot, operations, info, limitNotice, details)", explorer)
 
-    def test_mapping_page_offers_no_import_or_export(self):
-        # Import/export lives on the Settings page (Configuration package) only.
+    def test_mapping_page_offers_directional_draft_exchange_separate_from_configuration(self):
+        # The mapping workspace exchanges drafts; full configuration stays in Settings.
         source = MAPPING_EDITOR_JS.read_text()
         listing = source.split("function renderList()", 1)[1].split("function renderPersonalDraftList()", 1)[0]
         self.assertNotIn("function renderListExchange()", source)
         for removed in ("Load / Save mappings", "Saved field mapping package", "portable v2", "adopt_mapping_package",
-                        "mapping_draft_exchange", "export_mapping_json"):
+                        "export_mapping_json"):
             self.assertNotIn(removed, source)
+        for endpoint in ("mapping_draft_exchange_export", "mapping_draft_exchange_preview", "mapping_draft_exchange_save"):
+            self.assertIn(endpoint, source)
+        self.assertIn("renderMappingActions(body)", source)
+        export = source.split("async function exportMappingDrafts()", 1)[1].split("async function previewMappingImport", 1)[0]
+        self.assertIn('format_version: "hero-personal-mapping-portable-v2", drafts_only: 1', export)
+        self.assertIn('button("Export drafts", exportMappingDrafts)', source)
         detail = source.split("function renderDetail()", 1)[1].split("function renderContext(", 1)[0]
         for view in (listing, detail):
             self.assertIn("renderMappingsTable(body)", view)
@@ -252,7 +258,7 @@ class TestHeroDeskUiContract(unittest.TestCase):
 
     def test_shared_writeback_save_is_scoped_and_conflict_guarded(self):
         source = MAPPING_EDITOR_JS.read_text()
-        explorer = source.split("function renderSchemaExplorer()", 1)[1].split("function renderList()", 1)[0]
+        explorer = source.split("function renderSchemaExplorer(", 1)[1].split("function renderList()", 1)[0]
         for contract in ("if (!admin) return", "sharedWritebackDraftAccess(doc, row, name, frappe.session?.user)",
                          "reviewedWritebackEditable(doc.mapping_json, catalog)", "showSharedEditor", "if (consumed || locked() || !currentLegacy(serial, name)) return",
                          "sharedWritebackRequest({doc, row, actor:frappe.session?.user", "rpc('graphql_mapping_save', args, true)",
@@ -266,10 +272,10 @@ class TestHeroDeskUiContract(unittest.TestCase):
 
     def test_schema_explorer_shows_no_package_import_or_export(self):
         source = MAPPING_EDITOR_JS.read_text()
-        explorer = source.split("function renderSchemaExplorer()", 1)[1].split("function renderList()", 1)[0]
+        explorer = source.split("function renderSchemaExplorer(", 1)[1].split("function renderList()", 1)[0]
         for removed in ("text('Saved field mapping package')", "fileInput, exportPackage", "text('Complete configuration')"):
             self.assertNotIn(removed, explorer)
-        self.assertIn("Import/export lives on the Settings page (Configuration package)", explorer)
+        self.assertIn("Configuration package import/export lives on Settings", explorer)
         settings = (PACKAGE_ROOT / "public" / "js" / "hero_settings.js").read_text()
         for contract in ('section("Configuration package"', 'platform.api("config_export"', 'platform.api("config_import_preview"',
                          'platform.api("config_import", {payload_json: payload, confirmed: 1})', "frappe.confirm("):
@@ -419,7 +425,7 @@ class TestHeroDeskUiContract(unittest.TestCase):
                 self.assertIn(contract, settings)
         self.assertIn("hero-sync-panel", migration)
         self.assertIn("hero-sync-cards", migration)
-        self.assertIn("Field mapping details", mapping)
+        self.assertIn('text("Mapping")', mapping)
 
     def test_hero_owned_ui_strings_use_frappe_translation(self):
         self.assertIn('text: (value, context) => __(String(value), null, context || null)', WORKSPACE_JS.read_text())

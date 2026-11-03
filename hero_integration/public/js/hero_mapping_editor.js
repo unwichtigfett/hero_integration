@@ -263,6 +263,7 @@
     const snapshotLabels = new Map();
     // Parent links (previous snapshot of the same HERO source); used for mapping inheritance.
     const snapshotParents = new Map();
+    const snapshotSources = new Map(), snapshotFingerprints = new Map();
     const snapshotLabel = (name) => (name && snapshotLabels.get(name)) || name;
     const snapshotTime = (row) => String(row?.creation || row?.captured_at || row?.modified || "");
     const newestOf = (rows) => rows.reduce((best, row) => !best || snapshotTime(row) > snapshotTime(best) || (snapshotTime(row) === snapshotTime(best) && row.name > best.name) ? row : best, null);
@@ -283,6 +284,8 @@
             }
             result.push(...page);
             page.forEach((item) => {
+                snapshotSources.set(item.name, item.source_instance || "default");
+                snapshotFingerprints.set(item.name, item.schema_fingerprint);
                 snapshotLabels.set(item.name, typeof item.display_name === "string" && item.display_name ? item.display_name : item.name);
                 if (typeof item.parent_snapshot === "string" && item.parent_snapshot) snapshotParents.set(item.name, item.parent_snapshot);
                 else snapshotParents.delete(item.name);
@@ -391,11 +394,34 @@
     }
     class DraftState {
         constructor(draft) { this.accept(draft); }
-        accept(draft) { this.saved = draftValue(draft); this.verifiedActiveRevision = verifiedActiveRevision(this.saved); this.content = clone(this.saved.content); this.referenceOrder = [...(this.content.mapping_definition_ids || [])]; this.undo = []; this.reconciliation = null; this.blocked = false; this.creation = null; }
-        get dirty() { return Boolean(this.creation) || stable(this.content) !== stable(this.saved.content); }
-        createAdditional() {
+        accept(draft) { this.unsavedNew = false; this.saved = draftValue(draft); this.verifiedActiveRevision = verifiedActiveRevision(this.saved); this.content = clone(this.saved.content); this.referenceOrder = [...(this.content.mapping_definition_ids || [])]; this.undo = []; this.reconciliation = null; this.blocked = false; this.creation = null; }
+        get dirty() { return Boolean(this.unsavedNew || this.creation) || stable(this.content) !== stable(this.saved.content); }
+        createAdditional({reference = false} = {}) {
             const value = this.creation;
             if (!value?.source?.field || !value?.target?.field) throw new Error('Choose both source and target fields first.');
+            if (reference) {
+                const existing = Object.values(this.content.field_rules || {});
+                if (existing.some(rule => rule.target_doctype === value.target.doctype && rule.target_field === value.target.field)) {
+                    throw new Error('This field mapping already exists in your draft.');
+                }
+                const id = window.crypto.randomUUID();
+                this.invalidateReconciliation();
+                this.content.mapping_definition_ids ||= [];
+                this.content.field_rules ||= {};
+                this.content.mapping_definition_ids.push(id);
+                this.content.field_rules[id] = {source_path: value.source.field, source_type: value.source.source_type,
+                    target_doctype: value.target.doctype, target_field: value.target.field,
+                    purpose: "Field", transformation: "Identity", relation: null, priority: 0};
+                if (value.source.object_type && value.source.schema_context) {
+                    this.content.field_contexts ||= {};
+                    this.content.field_contexts[id] = {object_type: value.source.object_type, schema_context: value.source.schema_context};
+                }
+                if (typeof value.target_type === "string" && value.target_type) {
+                    this.content.query_adapter.transform_options ||= {};
+                    this.content.query_adapter.transform_options[id] = {target_type: value.target_type};
+                }
+                this.referenceOrder.push(id); this.creation = null; return;
+            }
             const items = this.content.additional_mappings || [];
             if (items.some((item) => stable(item.source) === stable(value.source) && stable(item.target) === stable(value.target))) throw new Error('This field mapping already exists in your draft.');
             this.invalidateReconciliation();
@@ -568,6 +594,7 @@
         } catch (_) { /* Keep the safe generic message for malformed responses. */ }
         return errorText(error);
     };
+    const mappingActionError = (error) => error instanceof Error ? text(error.message) : exchangeFailureText(error);
     let current;
     function mount(page, context = {}) {
         current?.destroy();
@@ -579,6 +606,7 @@
         let search = String(context.mapping_search || ""), start = Number(context.mapping_start || 0), listing, snapshotFilter = "";
         let revisionsStart = 0, returnFocus = null, fieldFilter = "", detailRequest = 0, exchangeSequence = 0, snapshotDefaultApplied = false;
         const exchanges = new Map();
+        const advancedStates = new Map();
         const exchangeSelections = new Map();
         const browsePaths = new Map();
         const browseObjects = new Map();
@@ -639,7 +667,7 @@
             if (state) {
                 ({active, model, mode, selected, search, start, listing, revisionsStart, returnFocus, fieldFilter, snapshotFilter, rowChangeHandler} = state);
                 toolbar.empty().append(state.toolbar); body.empty().append(state.body);
-                const anchor = body.find(".hero-mapping-active").first();
+                const anchor = body.find(".hero-mapping-row-detail").first();
                 if (anchor.length) anchor.after(toolbar); else panel.prepend(toolbar);
                 say(state.status);
                 if (rowChangeHandler) root.on("hero-mapping-content-change", rowChangeHandler);
@@ -751,7 +779,7 @@
             return leave(action, cancel);
         }
         function updateDirty() {
-            root.find("[data-draft-state]").text(text(model?.dirty ? "Local changes — not saved" : "Saved personal draft"));
+            root.find("[data-draft-state]").text(text(active?.unsavedNew ? "Unsaved mapping" : model?.dirty ? "Local changes — not saved" : "Saved personal draft"));
             root.find('[data-activate-draft]').prop('disabled', !model || model.dirty || Boolean(model.reconciliation)
                 || !model.saved.content_revision || !canSaveDraft(model, active) || busy);
             root.trigger("hero-mapping-content-change");
@@ -781,10 +809,10 @@
             } catch (error) { if (request === epoch && !disposed) { say(errorText(error)); body.append(button("Retry", () => loadList(selectFirst))); } }
             finally { if (request === epoch) pendingView = null; }
         }
-        function renderSchemaExplorer() {
+        function renderSchemaExplorer(parent = body) {
             if (!admin) return;
             let viewEpoch = epoch, request = 0;
-            const viewTab = tab, section = $("<section data-field-picker></section>"), explorer = $("<details class='hero-mapping-schema-explorer'></details>").append($('<summary></summary>').text(text('Inspect saved schema')));
+            const viewTab = tab, section = $("<section data-field-picker></section>"), explorer = $("<section class='hero-mapping-schema-explorer'></section>").append($('<h4></h4>').text(text('Inspect saved schema')));
             section.append(explorer);
             const snapshot = $("<select class='form-control'></select>").attr("aria-label", text("Saved schema snapshot"));
             const operations = $("<select class='form-control'></select>").attr("aria-label", text("Schema operation"));
@@ -947,7 +975,7 @@
                         } catch (error) { if (currentLegacy(serial, name)) legacyState.text(errorText(error)); }
                     }));
             }
-            // Import/export lives on the Settings page (Configuration package); the mapping page shows none.
+            // Configuration package import/export lives on Settings; draft JSON actions are above the workspace.
             explorer.append(button('Retry saved schema', () => { loadSnapshots(snapshot.val(), operations.val()); }));
             section.append(button('Open Graph Viewer', () => {
                 const name = snapshot.val(); if (!name || snapshot.prop('disabled')) return info.text(text('Choose a validated snapshot.'));
@@ -959,14 +987,14 @@
             });
             renderSavedNodes(section, {viewTab, snapshot, operations, explorer, info, loadSnapshots, current: () => !disposed && epoch === viewEpoch && tab === viewTab && section[0].isConnected});
             // Preselect the workspace snapshot (the newest validated one by default).
-            body.append(section); loadSnapshots(snapshotFilter);
+            parent.append(section); loadSnapshots(snapshotFilter);
         }
         function renderSavedNodes(section, view) {
             // Personal bookmarks only preselect explorer inputs; selection
             // never changes mappings or revisions, synchronizes or calls HERO.
             const store = window.hero_integration_bookmarks;
             if (!store) return;
-            const box = $("<details class='hero-mapping-saved-nodes'></details>").append($('<summary></summary>').text(text('Saved HERO Nodes')));
+            const box = $("<section class='hero-mapping-saved-nodes'></section>").append($('<h4></h4>').text(text('Saved HERO Nodes')));
             const search = $("<input class='form-control'>").attr('aria-label', text('Search saved HERO nodes')).attr('placeholder', text('Search alias or original name'));
             const list = $("<div class='hero-mapping-saved-node-list' role='list'></div>"), state = $("<p role='status'></p>");
             let request = 0;
@@ -987,7 +1015,7 @@
                     view.info.text(format('This node belongs to the {0} view. Open that mapping tab to use it.', context.operation_kind === 'QUERY' ? 'Query' : 'Mutation'));
                     return;
                 }
-                view.explorer.prop('open', true);
+                section.closest("[data-mapping-advanced]").prop("open", true);
                 view.loadSnapshots(snapshotName, context.operation).then(() => {
                     if (!view.current()) return;
                     view.info.text(context.path
@@ -1026,16 +1054,26 @@
             }
             let timer = null;
             search.on('input', () => { clearTimeout(timer); timer = setTimeout(refresh, 250); });
-            box.on('toggle', () => { if (box.prop('open')) refresh(); });
+            box.append(button("Refresh saved nodes", refresh));
             box.append(search, state, list);
-            section.append(box);
+            section.append(box); refresh();
+        }
+        function advancedSection() {
+            const existing = body.find("[data-mapping-advanced]").first();
+            if (existing.length) return existing;
+            const viewTab = tab;
+            const section = $("<details class='hero-mapping-advanced' data-mapping-advanced></details>")
+                .append($("<summary></summary>").text(text("Advanced")))
+                .prop("open", Boolean(advancedStates.get(viewTab)));
+            section.on("toggle", () => advancedStates.set(viewTab, section.prop("open")));
+            return section.appendTo(body);
         }
         function renderList() {
-            toolbar.detach().empty(); body.empty(); renderWorkspaceContext(); renderContext({});
+            toolbar.detach().empty(); body.empty(); renderWorkspaceContext();
             if (admin) renderPersonalDraftList();
             renderMappingsTable(body);
             body.append($("<p class='text-muted'></p>").text(text("Choose an active mapping row or definition to inspect it. Reading and selection do not create a draft.")));
-            renderSchemaExplorer();
+            const advanced = advancedSection(); renderSchemaExplorer(advanced); body.append(advanced);
         }
         function renderPersonalDraftList() {
             const viewEpoch = epoch, viewTab = tab, section = $("<section data-personal-drafts></section>");
@@ -1048,7 +1086,7 @@
                 const request = ++serial;
                 message.text(text("Loading personal drafts…"));
                 try {
-                    const result = await rpc("mapping_draft_list", {direction: directionForTab(viewTab), start: offset, page_size: 50});
+                    const result = await rpc("mapping_draft_list", {direction: directionForTab(viewTab), start: offset, page_size: 10});
                     if (disposed || epoch !== viewEpoch || tab !== viewTab || request !== serial || !section[0].isConnected) return;
                     if (!Array.isArray(result.items)) throw new Error("Invalid personal draft list.");
                     list.empty(); message.text(result.items.length ? "" : text("No personal drafts on this page."));
@@ -1060,8 +1098,8 @@
                                 if (active?.name === item.active_mapping) await openDraft();
                             } else await openParentlessDraft(item);
                         })))));
-                    pager.empty().append(button("Previous drafts", () => load(Math.max(0, offset - 50))).prop("disabled", !offset),
-                        button("Next drafts", () => load(offset + 50)).prop("disabled", !result.has_more));
+                    pager.empty().append(button("Previous drafts", () => load(Math.max(0, offset - 10))).prop("disabled", !offset),
+                        button("Next drafts", () => load(offset + 10)).prop("disabled", !result.has_more));
                 } catch (error) { if (!disposed && epoch === viewEpoch && request === serial) message.text(errorText(error)); }
             }
             load(0);
@@ -1180,8 +1218,172 @@
                     else open(item, item.kind);
                 }));
         }
+        async function mappingActionContext() {
+            const request = epoch, direction = directionForTab(tab);
+            const snapshot = active?.schema_snapshot || snapshotFilter;
+            if (!admin || !snapshot) throw new Error("Choose a validated schema snapshot first.");
+            let source = active?.source_instance || snapshotSources.get(snapshot);
+            if (!source) {
+                await readSnapshotPages((args) => rpc("schema_snapshot_list", args), () => !disposed && epoch === request);
+                source = snapshotSources.get(snapshot);
+            }
+            if (disposed || request !== epoch) return null;
+            if (!source) throw new Error("Choose a validated schema snapshot first.");
+            const context = {source_instance: source, snapshot_name: snapshot, direction};
+            exchangeSelections.set(direction, context);
+            return {...context, key: `${source}\u0000${snapshot}\u0000${direction}`};
+        }
+        function renderMappingActions(parent) {
+            if (!admin || tab === "Binding") return;
+            const actions = $("<section class='hero-mapping-actions' data-mapping-entry-actions></section>")
+                .attr("aria-label", text("Mapping actions"));
+            const input = $("<input type='file' accept='.json,application/json' hidden>")
+                .attr("aria-label", text("Import mapping JSON"));
+            input.on("change", () => {
+                const file = input[0].files?.[0]; input.val("");
+                if (file) leave(() => previewMappingImport(file));
+            });
+            actions.append(button("Create Mapping", () => leave(createMappingDialog), true),
+                button("Import JSON", () => { if (!locked()) input.trigger("click"); }),
+                button("Export drafts", exportMappingDrafts), input,
+                $("<p class='text-muted'></p>").text(text("JSON exchanges your saved drafts for this direction. Active mappings and execution permissions remain unchanged.")));
+            parent.append(actions);
+        }
+        async function exportMappingDrafts() {
+            if (locked()) return;
+            const request = epoch;
+            try {
+                const context = await mappingActionContext(); if (!context || request !== epoch) return;
+                setBusy(true); say("Exporting drafts…");
+                const {key, ...args} = context;
+                const result = await rpc("mapping_draft_exchange_export", {...args, format_version: "hero-personal-mapping-portable-v2", drafts_only: 1});
+                if (disposed || request !== epoch) return;
+                if (typeof result.content !== "string" || typeof result.filename !== "string") throw new Error("Invalid draft export response.");
+                const url = URL.createObjectURL(new Blob([result.content], {type: "application/json"}));
+                const link = document.createElement("a");
+                link.href = url; link.download = result.filename; ownedDownload = link;
+                document.body.append(link); link.click(); link.remove(); ownedDownload = null;
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
+                say("Saved drafts exported. Unsaved edits are not included.");
+            } catch (error) { if (!disposed && request === epoch) say(mappingActionError(error)); }
+            finally { if (!disposed && request === epoch) setBusy(false); }
+        }
+        async function previewMappingImport(file) {
+            if (locked()) return;
+            const request = epoch, serial = ++exchangeSequence;
+            try {
+                const context = await mappingActionContext(); if (!context || request !== epoch) return;
+                if (file.size > 5000000) throw new Error("Mapping JSON is too large. Configuration packages belong under Settings > Configuration package.");
+                const payload = await file.text();
+                if (disposed || request !== epoch || serial !== exchangeSequence) return;
+                let parsed;
+                try { parsed = JSON.parse(payload); } catch (_) { throw new Error("The file is not valid JSON."); }
+                if (["hero-integration-config-v1", "hero-integration-config-v2"].includes(parsed?.format_version)) {
+                    say("This is a configuration package. Import it under Settings > Configuration package."); return;
+                }
+                if (file.size > 1000000) throw new Error("Draft import exceeds the permitted size.");
+                setBusy(true); say("Checking mapping JSON…");
+                const {key, ...args} = context;
+                const preview = await rpc("mapping_draft_exchange_preview", {...args, payload_json: payload}, true);
+                if (disposed || request !== epoch || serial !== exchangeSequence) return;
+                const entry = {context, payload, preview};
+                exchangeExpectedStates(preview); exchanges.set(key, entry);
+                setBusy(false);
+                const counts = exchangeCounts(preview);
+                const conflicts = (preview.items || []).flatMap(item => item.conflicts || []).map(value =>
+                    typeof value === "string" ? text(value) : JSON.stringify(value));
+                const summary = format("{0} drafts: {1} new, {2} replaced, {3} unchanged, {4} removed. Only your drafts are changed; nothing is activated.",
+                    exchangeLabel(context), counts.NEW, counts.REPLACE, counts.UNCHANGED, counts.REMOVE) +
+                    (conflicts.length ? " " + conflicts.join(" · ") : "");
+                modal("Import mappings", summary, [
+                    ...(preview.can_save ? [["Import as drafts", () => saveMappingImport(entry), true]] : []),
+                    ["Cancel", () => {}],
+                ]);
+            } catch (error) { if (!disposed && request === epoch) say(mappingActionError(error)); }
+            finally { if (!disposed && request === epoch) setBusy(false); }
+        }
+        async function saveMappingImport(entry) {
+            if (!exchangeCanAdopt(entry, exchanges.get(entry.context.key), exchangeContext()?.key, locked())) return;
+            const request = epoch;
+            try {
+                setBusy(true); say("Importing mappings as drafts…");
+                const {key, ...context} = entry.context;
+                const result = await rpc("mapping_draft_exchange_save", {...context, payload_json: entry.payload,
+                    expected_states_json: JSON.stringify(exchangeExpectedStates(entry.preview)),
+                    preview_fingerprint: entry.preview.preview_fingerprint, confirmed: true}, true);
+                if (disposed || request !== epoch) return;
+                if (result.status !== "SAVED_DRAFTS_ONLY" || result.activation !== false) throw new Error("Unexpected draft import result.");
+                exchanges.delete(key); setBusy(false);
+                active = null; model = null; mode = "active"; await loadList(false);
+                say("Mappings imported as drafts. Nothing was activated.");
+            } catch (error) { if (!disposed && request === epoch) say(mappingActionError(error)); }
+            finally { if (!disposed && request === epoch) setBusy(false); }
+        }
+        async function createMappingDialog() {
+            if (locked() || root.find("dialog").length) return;
+            const request = epoch;
+            let context;
+            try { context = await mappingActionContext(); }
+            catch (error) { say(mappingActionError(error)); return; }
+            if (!context || disposed || request !== epoch) return;
+            const opener = document.activeElement;
+            const dialog = $("<dialog class='hero-mapping-dialog'></dialog>").attr("aria-label", text("Create Mapping"));
+            const state = $("<p role='status'></p>"), targets = $("<div></div>");
+            dialog.append($("<h3></h3>").text(text("Create Mapping")),
+                $("<p></p>").text(text("Choose an operation, then select source and target fields. Save keeps a draft; activation is a separate step.")));
+            let selectedOperation = "", seed = null, sequence = 0;
+            const close = () => { closeChoice(false); dialog[0].close(); dialog.remove(); if (opener?.isConnected) opener.focus(); };
+            const openLocal = button("Continue", () => {
+                if (!seed?.content || !selectedOperation) return;
+                close(); beginNewMapping(context, selectedOperation, seed);
+            }, true).prop("disabled", true);
+            const selectOperation = async (operation, target = "") => {
+                const serial = ++sequence; selectedOperation = operation;
+                seed = null; openLocal.prop("disabled", true); targets.empty(); state.text(text("Loading mapping fields…"));
+                try {
+                    const result = await rpc("mapping_draft_new_seed", {snapshot_name: context.snapshot_name,
+                        direction: context.direction, operation_name: operation, target_operation: target});
+                    if (disposed || request !== epoch || serial !== sequence || !dialog[0].isConnected) return;
+                    seed = result;
+                    if (!result.content && result.query_targets?.length) {
+                        choice("Target operation", "", targets, async (search, offset) => {
+                            const items = result.query_targets.map(name => ({name, label: operationLabel(name)}))
+                                .filter(item => item.label.toLowerCase().includes(search.toLowerCase()));
+                            return {items: items.slice(offset, offset + 20), total: items.length};
+                        }, item => selectOperation(operation, item.name));
+                        state.text(text("Choose a target operation for this query."));
+                    } else {
+                        if (!object(result.content)) throw new Error("Invalid new mapping draft response.");
+                        state.text(""); openLocal.prop("disabled", false);
+                    }
+                } catch (error) { if (serial === sequence && dialog[0].isConnected) state.text(mappingActionError(error)); }
+            };
+            const operationChoice = choice("Operation", "", dialog, async (search, offset) => {
+                const catalog = await rpc("schema_operation_catalog", {snapshot_name: context.snapshot_name,
+                    operation_kind: context.direction === "FRAPPE_TO_MUTATION" ? "MUTATION" : "QUERY"});
+                const items = catalog.filter(item => item.operation_name.toLowerCase().includes(search.toLowerCase()))
+                    .map(item => ({name: item.operation_name, label: item.operation_name}));
+                return {items: items.slice(offset, offset + 20), total: items.length};
+            }, item => { operationChoice.find("summary strong").text(item.label).attr("title", item.label); selectOperation(item.name); });
+            dialog.append(targets, state, openLocal, button("Cancel", close));
+            dialog.on("cancel", (event) => { event.preventDefault(); close(); });
+            root.append(dialog); dialog[0].showModal();
+        }
+        function beginNewMapping(context, operation, seed) {
+            epoch++; ruleCache.clear();
+            active = {name: "", definition_id: "", source_instance: context.source_instance,
+                schema_snapshot: context.snapshot_name, schema_fingerprint: seed.schema_fingerprint || snapshotFingerprints.get(context.snapshot_name),
+                direction: context.direction, operation_kind: context.direction === "FRAPPE_TO_MUTATION" ? "MUTATION" : "QUERY",
+                operation_name: operation, revision: 0, status: "Draft", mapping_type: "graphql", parentless: true, unsavedNew: true};
+            model = new DraftState({definition_id: "", base_active_revision: 0, content_revision: 0, generation: 0, content: seed.content});
+            model.unsavedNew = true;
+            if (context.direction === "QUERY_TO_FRAPPE") model.creation = {};
+            mode = "draft"; selected = 0; fieldFilter = "";
+            renderDetail(); say("New mapping. Choose source and target fields, then save the draft.");
+        }
+
         function renderWorkspaceContext() {
-            const header = $("<div class='hero-mapping-workspace-context'></div>").appendTo(body);
+            const header = $("<div class='hero-mapping-workspace-context'></div>").appendTo(advancedSection());
             choice("GraphQL schema snapshot", snapshotFilter ? snapshotLabel(snapshotFilter) : text("All readable snapshots"), header, async (search, offset) => {
                 const currentEpoch = epoch;
                 const snapshots = admin ? await readSnapshotPages((args) => rpc("schema_snapshot_list", args), () => !disposed && epoch === currentEpoch) : [];
@@ -1193,7 +1395,8 @@
             const parent = admin && snapshotFilter ? snapshotParents.get(snapshotFilter) : "";
             if (parent) header.append(button(format("Inherit mappings from parent {0}", snapshotLabel(parent)), () => inheritFromParent(snapshotFilter, parent))
                 .attr("data-inherit-parent", "").attr("title", text("Creates your personal drafts on this snapshot from the parent's active mappings. Nothing is activated.")));
-            if (active) header.append($("<span class='text-muted'></span>").text(`${snapshotLabel(active.schema_snapshot) || text("Snapshot not provided")} · ${text("Revision")}: ${active.revision} · ${mode === "draft" ? text("Personal draft") : text(active.status || "Active")}`));
+            if (active) header.append($("<span class='text-muted'></span>").text(`${snapshotLabel(active.schema_snapshot) || text("Snapshot not provided")} · ${active.unsavedNew ? text("Unsaved mapping") : `${text("Revision")}: ${active.revision} · ${mode === "draft" ? text("Personal draft") : text(active.status || "Active")}`}`));
+            renderMappingActions(body);
         }
         function inheritFromParent(snapshotName, parent) {
             if (locked()) return;
@@ -1317,23 +1520,30 @@
             toolbar.detach().empty().append(button("Browse mappings", () => leave(() => loadList(false))));
             body.empty();
             const draftStatus = $("<div class='hero-mapping-draft-status'></div>");
+            const advancedTools = $("<section class='hero-mapping-maintenance'></section>");
             if (admin && active.mapping_type === "graphql") {
-                if (!active.parentless) toolbar.append(button("Active version", () => leave(() => { epoch++; ruleCache.clear(); model = null; mode = "active"; renderDetail(); })),
-                    button("Open my draft", openDraft));
-                toolbar.append(button("My saved revisions", () => leave(() => showRevisions(0))));
+                if (!active.parentless) {
+                    advancedTools.append(button("Active version", () => leave(() => { epoch++; ruleCache.clear(); model = null; mode = "active"; renderDetail(); })));
+                    if (mode !== "draft") toolbar.append(button("Open my draft", openDraft));
+                }
+                if (!active.unsavedNew) advancedTools.append(button("My saved revisions", () => leave(() => showRevisions(0))));
                 if (mode === "draft") {
-                    if (!active.parentless) toolbar.append(button("Compare active changes", compareActiveChanges).prop("disabled", Boolean(model.detailStale)));
-                    toolbar.append(button("Save draft", save, true).attr("data-save-draft", ""), button("Discard saved draft", discard));
-                    toolbar.append(button("Preview saved operation plan", previewDraftPlan).prop("disabled", model.dirty || model.blocked));
+                    if (!active.parentless) advancedTools.append(button("Compare active changes", compareActiveChanges).prop("disabled", Boolean(model.detailStale)));
+                    toolbar.append(button("Save draft", save, true).attr("data-save-draft", ""));
+                    advancedTools.append(button(active.unsavedNew ? "Discard new mapping" : "Discard saved draft", active.unsavedNew ? () => leave(() => loadList(false)) : discard));
+                    advancedTools.append(button("Preview saved operation plan", previewDraftPlan).prop("disabled", model.dirty || model.blocked || active.unsavedNew));
                     const reconciliationState = model.reconciliation ? "Local reconciliation changes — not saved"
                         : model.saved.reconciliation_json ? "Saved reconciliation evidence is current only for its recorded draft content."
                             : "No saved reconciliation evidence.";
-                    draftStatus.append($("<p data-draft-state></p>"), $("<p class='text-muted'></p>").text(`${text("Personal draft revision")}: ${model.saved.content_revision} · ${text("Generation")}: ${model.saved.generation}`),
+                    if (active.unsavedNew) draftStatus.append($("<p data-draft-state></p>").text(text("Unsaved mapping")));
+                    else draftStatus.append($("<p data-draft-state></p>"), $("<p class='text-muted'></p>").text(`${text("Personal draft revision")}: ${model.saved.content_revision} · ${text("Generation")}: ${model.saved.generation}`),
                         $("<p class='text-muted' data-reconciliation-state></p>").text(text(reconciliationState)));
-                    if (model.blocked) toolbar.append(button("Check saved draft", reconcile), button("Reload saved draft", reloadDraft));
+                    if (model.blocked) advancedTools.append(button("Check saved draft", reconcile), button("Reload saved draft", reloadDraft));
                 }
             }
             renderWorkspaceContext();
+            const advanced = advancedSection();
+            advanced.append(advancedTools); draftStatus.children(".text-muted").appendTo(advancedTools);
             const value = content();
             renderContext(value);
             const editable = mode === "draft";
@@ -1350,31 +1560,31 @@
             if (editable && model) {
                 const actions = $("<div class='hero-mapping-draft-actions' role='group'></div>").attr("aria-label", text("Personal draft actions"));
                 if (!model.creation) {
-                    actions.append(button("Create Mapping", () => { model.creation = {}; renderDetail(); }).attr("data-create-mapping", ""));
+                    actions.append(button("Add field mapping", () => { model.creation = {}; renderDetail(); }).attr("data-create-mapping", ""));
                 } else {
                     actions.append($("<p class='hero-mapping-draft-hint'></p>").text(text("Choose source and target for the new mapping; existing mappings remain unchanged.")),
                         button("Add mapping to draft", () => {
-                            try { model.createAdditional(); selected = rows(model.content).length - 1; renderDetail(); say("New mapping added locally. Save the draft to keep it."); }
+                            try { model.createAdditional({reference: active.parentless && active.direction === "QUERY_TO_FRAPPE"}); selected = rows(model.content).length - 1; renderDetail(); say("New mapping added locally. Save the draft to keep it."); }
                             catch (error) { contextSection.find("[role='status']").first().text(text(error.message)); }
                         }, true).attr("data-create-mapping", ""),
                         button("Cancel new mapping", () => { model.creation = null; renderDetail(); }));
                 }
                 actions.append(button("Delete Mapping", () => removeRow(list[selected])).attr("data-delete-mapping", "").prop("disabled", !list[selected] || Boolean(model.creation)));
                 if (model.undo.length) actions.append(button(format("Undo removal ({0})", model.undo.length), () => { model.restore(); renderDetail(); }));
-                if (Array.isArray(value.mapping_definition_ids)) actions.append(button("Add existing field rule", addReference));
+                if (Array.isArray(value.mapping_definition_ids)) advancedTools.append(button("Add existing field rule", addReference));
                 else if (!value.source && !value.target && active.direction === "FRAPPE_TO_MUTATION") actions.append(button("Add field mapping", () => { model.set(["source"], {}); model.set(["target"], {}); renderDetail(); }).prop("disabled", model.undo.length > 0));
-                actions.append(button("Activate Mapping", activateDraft).attr("data-activate-draft", ""));
+                actions.append(button("Activate Mapping", activateDraft).attr("data-activate-draft", "").prop("disabled", Boolean(active.unsavedNew)));
                 actions.append($("<p class='text-muted hero-mapping-contract-note'></p>").text(text("Delete changes the personal draft only. Saving keeps a personal draft; Activate publishes a saved valid draft and does not start synchronization.")));
                 contextSection.append(actions);
             }
-            // Transformation, rule parameters and definition settings stay available as collapsible details under Map Fields.
-            const parameters = $("<details class='hero-mapping-parameters hero-mapping-rule-details'></details>")
-                .append($("<summary></summary>").text(text("Rule details (transformation and parameters)")));
+            // The selected transformation stays with the two fields; technical settings share one Advanced section.
+            const parameters = $("<section class='hero-mapping-parameters'></section>")
+                .append($("<h4></h4>").text(text("Mapping settings"))).appendTo(advanced);
             if (editable && active.mapping_type === "graphql") {
                 parameters.append(button(active.direction === "QUERY_TO_FRAPPE" ? "Configure Query adapter" : "Configure Mutation usage",
                     () => configureMappingAdapter(value)));
             }
-            const detail = $("<section class='hero-mapping-row-detail'></section>").attr("aria-label", text("Selected field mapping")).attr("data-editable", String(editable)).appendTo(parameters);
+            const detail = $("<section class='hero-mapping-row-detail hero-mapping-rule-details'></section>").attr("aria-label", text("Selected field mapping")).attr("data-editable", String(editable)).appendTo(contextSection);
             for (const key of ["records_path", "record_path", "identity_path", "target_operation"]) {
                 if (!(key in value)) continue;
                 if (editable && key === "target_operation" && typeof value[key] === "string") {
@@ -1387,13 +1597,13 @@
                 } else if (editable && typeof value[key] === "string") field(key.replaceAll("_", " "), value[key], (v) => model.set([key], v), parameters);
                 else parameters.append($("<p></p>").text(`${key}: ${JSON.stringify(value[key])}`));
             }
-            parameters.append($("<details></details>").append($("<summary></summary>").text(text("Configured structure and additional rules")), safeJson(value)));
-            contextSection.append(parameters);
-            if (list[selected]) renderRow(list[selected], detail);
+            parameters.append($("<h4></h4>").text(text("Configured structure and additional rules")), safeJson(value));
+            if (list[selected]) renderRow(list[selected], detail, parameters);
             else detail.append($("<p></p>").text(text(list.length ? "Choose a field mapping row." : "No field mappings in this definition.")));
-            renderMappingsTable(body);
-            body.append(toolbar, draftStatus);
+            contextSection.append(toolbar, draftStatus, contextSection.find(".hero-mapping-draft-actions"));
             toolbar.addClass("hero-mapping-workbench-actions");
+            renderMappingsTable(body);
+            renderSchemaExplorer(advanced); body.append(advanced);
             const tableEpoch = epoch;
             list.filter((row) => row.reference && !ownRule(value, row.id) && !ruleCache.has(row.id)).forEach(async (row) => {
                 try {
@@ -1468,10 +1678,12 @@
                     if (isFrappe) {
                         model.creation[frappeSide] = {doctype: f.target_doctype || browseDoctype, field: f.path};
                         model.creation.app = browseApp;
+                        if (active.parentless && !mutation) model.creation.target_type = f.fieldtype;
                     } else if (mutation) {
                         if (selectedAction() !== active.operation_name) { fieldNotice.text(text("Choose the matching saved definition before editing this action.")); return; }
                         model.creation.target = {operation: selectedAction(), argument: f.argument, input_type: f.argument_input_type, field: f.path, graphql_type: f.type};
-                    } else model.creation.source = {field: f.path, object_type: f.object_type, schema_context: f.schema_context};
+                    } else model.creation.source = {field: f.path, object_type: f.object_type, schema_context: f.schema_context,
+                        ...(active.parentless ? {source_type: f.mapping_type || f.fieldtype} : {})};
                     renderDetail(); return;
                 }
                 if (row.additional) { fieldNotice.text(text('Use New mapping to add another assignment.')); return; }
@@ -1580,10 +1792,12 @@
             }, (item) => setField(item, true));
             if (!admin) [areaChoice, objectOrAction, path, heroField, app, doctype, frappeField].forEach((control) => control?.prop("hidden", true));
             const metadata = (pane) => {
-                const dl = $("<dl class='hero-mapping-metadata'></dl>").appendTo(pane), fields = {};
+                const section = $("<section class='hero-mapping-technical-metadata'></section>")
+                    .append($("<h4></h4>").text(pane.find("h4").first().text())).appendTo(advancedSection());
+                const dl = $("<dl class='hero-mapping-metadata'></dl>").appendTo(section), fields = {};
                 for (const label of ["Name", "Type", "Node", "Revision", "Status"]) { fields[label] = $("<dd></dd>").text(text("Not provided")); dl.append($("<dt></dt>").text(text(label)), fields[label]); }
                 fields.ID = $("<dd></dd>").text(text("Not provided"));
-                pane.append($("<details></details>").append($("<summary></summary>").text(text("Technical details")), $("<dl></dl>").append($("<dt></dt>").text(text("ID")), fields.ID)));
+                dl.append($("<dt></dt>").text(text("ID")), fields.ID);
                 return fields;
             };
             const heroMeta = metadata(heroPane), frappeMeta = metadata(frappePane);
@@ -1629,18 +1843,18 @@
             }).catch(() => {}); }
             if (!active) context.append($("<p class='text-muted hero-mapping-context-note'></p>").text(text("Choose a definition or mapping row. Unavailable metadata is marked Not provided.")));
         }
-        async function renderRow(row, panel) {
+        async function renderRow(row, panel, technical = panel) {
             const selectionRequest = ++detailRequest;
             panel.empty(); panel.attr("data-row-id", row.id);
 
             if (row.reference && mode === "draft" && ownRule(model.content, row.id)) {
                 const rule = model.content.field_rules[row.id];
-                panel.append($("<h4></h4>").text(text("Personal field rule")));
+                panel.append($("<h4></h4>").text(text("Mapping")));
                 for (const [label, key] of [["Source path", "source_path"], ["Source type", "source_type"], ["Target DocType", "target_doctype"],
                     ["Target field", "target_field"], ["Transformation", "transformation"], ["Purpose", "purpose"], ["Relation", "relation"]]) {
                     if (key.startsWith("source_") || key.startsWith("target_")) continue;
-                    const destination = panel;
                     const choices = directRuleChoices(model.content, rule)[key];
+                    const destination = key === "transformation" || (key === "relation" && choices) ? panel : technical;
                     const change = (next) => model.set(["field_rules", row.id, key], next);
                     if (key === "relation" && choices) {
                         const select = $("<select class='form-control'></select>").prop("disabled", busy);
@@ -1659,40 +1873,44 @@
                         }
                     }
                 }
-                if (model.content.query_adapter?.version === 2) panel.append(button("Configure transformation options", () => {
+                if (model.content.query_adapter?.version === 2) technical.append(button("Configure transformation options", () => {
                     configurationDialog("Transformation options", model.content.query_adapter.transform_options?.[row.id] || {},
                         (options) => model.set(["query_adapter", "transform_options", row.id], options));
                 }));
-                const priority = field("Priority", rule.priority ?? "", (next) => model.set(["field_rules", row.id, "priority"], next === "" ? null : Number(next)), panel);
+                const priority = field("Priority", rule.priority ?? "", (next) => model.set(["field_rules", row.id, "priority"], next === "" ? null : Number(next)), technical);
                 priority.attr({type: "number", step: "1", min: "-1000000", max: "1000000"});
-                panel.append($("<p class='text-muted'></p>").text(text("Changes belong to your personal draft. The active field rule stays unchanged.")));
+                technical.append($("<p class='text-muted'></p>").text(text("Changes belong to your personal draft. The active field rule stays unchanged.")));
                 return;
             }
             if (row.reference) {
-                panel.append($("<h4></h4>").text(row.id), $("<p></p>").text(text("This definition references a separately maintained field rule.")));
+                technical.append($("<h4></h4>").text(row.id), $("<p></p>").text(text("This definition references a separately maintained field rule.")));
                 const request = epoch;
                 try {
                     // Definition IDs of field rules are not document names. Resolve using the active list contract.
                     const match = await readActiveRule(row.id);
                     if (disposed || request !== epoch || selectionRequest !== detailRequest || !panel[0].isConnected || panel.attr("data-row-id") !== row.id) return;
-                    if (match) { ruleCache.set(row.id, match); root.trigger("hero-mapping-content-change"); panel.append(safeJson(match)); }
+                    if (match) { ruleCache.set(row.id, match); root.trigger("hero-mapping-content-change");
+                        panel.append($("<p></p>").text(`${text("Transformation")}: ${text(match.transformation || "Identity")}`)); technical.append(safeJson(match)); }
                     else panel.append($("<p></p>").text(text("The referenced rule is not visible in these active search results.")));
                 } catch (error) { if (!disposed && request === epoch && selectionRequest === detailRequest && panel[0].isConnected && panel.attr("data-row-id") === row.id) panel.append($("<p></p>").text(errorText(error))); }
                 return;
             }
             const value = row.value;
-            panel.append($("<h4></h4>").text(text("Field mapping details")));
+            panel.append($("<h4></h4>").text(text("Mapping")));
             if (row.additional) {
                 if (mode === "draft" && model?.content.query_adapter?.version === 2) {
                     field("Transformation", value.transformation, (next) => { model.invalidateReconciliation(); value.transformation = next; }, panel);
-                    panel.append(button("Configure transformation options", () => {
+                    technical.append(button("Configure transformation options", () => {
                         configurationDialog("Transformation options", model.content.query_adapter.transform_options?.[row.id] || {},
                             (options) => model.set(["query_adapter", "transform_options", row.id], options));
                     }));
                 }
-                panel.append(safeJson(value)); return;
+                technical.append(safeJson(value)); return;
             }
-            if (mode !== "draft" || panel.attr("data-editable") !== "true") { panel.append(safeJson(value)); return; }
+            if (mode !== "draft" || panel.attr("data-editable") !== "true") {
+                panel.append($("<p></p>").text(`${text("Transformation")}: ${text(value.transformation || "Identity")}`));
+                technical.append(safeJson(value)); return;
+            }
             const mutation = mutationMapping(value);
             const descriptors = mutation ? [
                 ["Source Frappe DocType", ["source", "doctype"]], ["Source Frappe field", ["source", "field"]],
@@ -1708,10 +1926,10 @@
                 const v = path.reduce((a, key) => a?.[key], value);
                 if (v !== undefined && typeof v !== "string") { panel.append($("<p></p>").text(`${label}: ${text("Configured special rule; preserved unchanged")}`)); continue; }
                 if (!advanced) continue;
-                const destination = panel;
+                const destination = label === "Transformation" ? panel : technical;
                 field(label, v || "", (next) => { model.set(path, next); if (path[0] === "target" && path[1] === "field_path" && Object.hasOwn(value.target, "field")) model.set(["target", "field"], next); }, destination).prop("readOnly", !advanced && ["doctype", "argument"].includes(path[1]));
             }
-            panel.append($("<details></details>").append($("<summary></summary>").text(text("All configured rule parameters")), safeJson(value)));
+            technical.append($("<h4></h4>").text(text("All configured rule parameters")), safeJson(value));
         }
         async function refreshDraftActive(state, request) {
             const selected = active;
@@ -1770,8 +1988,40 @@
             } catch (error) { if (!disposed && request === epoch) say(errorText(error)); }
             finally { if (!disposed && request === epoch) setBusy(false); }
         }
+        async function saveNewMapping() {
+            const state = model, selectedDefinition = active;
+            const hasFields = selectedDefinition.direction === "QUERY_TO_FRAPPE"
+                ? state.content.mapping_definition_ids?.length > 0
+                : state.content.source?.doctype && state.content.source?.field && state.content.target?.argument && state.content.target?.field;
+            if (!hasFields) { say("Choose both source and target fields first."); return false; }
+            const request = ++epoch; setBusy(true); say("Saving new mapping draft…");
+            try {
+                const result = await rpc("mapping_draft_new", {snapshot_name: selectedDefinition.schema_snapshot,
+                    direction: selectedDefinition.direction, operation_name: selectedDefinition.operation_name,
+                    content_json: JSON.stringify(state.content)}, true);
+                if (disposed || request !== epoch || state !== model) return false;
+                const draft = draftValue(result.draft), definition = draft?.new_definition;
+                if (!draft?.definition_id || draft.state !== "OPEN" || draft.base_active_revision !== 0 || !definition ||
+                    definition.direction !== selectedDefinition.direction || definition.source_instance !== selectedDefinition.source_instance ||
+                    definition.schema_fingerprint !== selectedDefinition.schema_fingerprint ||
+                    definition.snapshot_name !== selectedDefinition.schema_snapshot || definition.operation_name !== selectedDefinition.operation_name) {
+                    throw new Error("Invalid new mapping draft response.");
+                }
+                active = {...selectedDefinition, definition_id: draft.definition_id, unsavedNew: false};
+                state.accept(draft); say("Mapping saved as a draft. Nothing was activated."); return true;
+            } catch (error) {
+                if (!disposed && request === epoch) {
+                    const knownFailure = error?.exc_type || error?.responseJSON?.exc_type || (error?.status >= 400 && error?.status < 500);
+                    state.blocked = !knownFailure;
+                    say(knownFailure ? mappingActionError(error) : "Save status is uncertain. Reload the mapping list before creating another draft; your local inputs are kept.");
+                }
+                return false;
+            }
+            finally { if (!disposed && request === epoch) { setBusy(false); renderDetail(); } }
+        }
         async function save() {
             if (locked() || !canSaveDraft(model, active)) return false;
+            if (active.unsavedNew) return saveNewMapping();
             const invalid = root.find("input").filter((_, el) => !el.checkValidity())[0];
             if (invalid) { invalid.reportValidity(); invalid.focus(); return false; }
             const state = model, submitted = clone(state.content), request = ++epoch; setBusy(true); say("Saving personal draft…");

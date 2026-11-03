@@ -24,20 +24,34 @@ class TestMappingEditorDraftLayout(unittest.TestCase):
         detail = function("renderDetail")
         self.assertIn('const contextSection = body.find(".hero-mapping-context").last();', detail)
         actions = detail.split("hero-mapping-draft-actions", 1)[1].split("contextSection.append(actions);", 1)[0]
-        for label in ('"Create Mapping"', '"Delete Mapping"', '"Activate Mapping"', '"Cancel new mapping"', "model.createAdditional()",
+        for label in ('"Add field mapping"', '"Delete Mapping"', '"Activate Mapping"', '"Cancel new mapping"', "model.createAdditional({reference:",
                       "activateDraft", "model.restore()", "Undo removal"):
             self.assertIn(label, actions)
         self.assertLess(detail.index("contextSection.append(actions);"), detail.index("renderMappingsTable(body);"))
         # Save, discard and activation keep their existing guarded functions.
-        for contract in ('button("Save draft", save, true)', 'button("Discard saved draft", discard)', "function activateDraft()"):
+        for contract in ('button("Save draft", save, true)', '"Discard saved draft", active.unsavedNew', "function activateDraft()"):
             self.assertIn(contract, EDITOR)
 
-    def test_rule_details_keep_transformation_and_definition_settings(self):
+    def test_transformation_is_visible_and_technical_settings_share_one_advanced_area(self):
         detail = function("renderDetail")
-        rules = detail.split("hero-mapping-rule-details", 1)[1].split("contextSection.append(parameters);", 1)[0]
-        for contract in ("hero-mapping-row-detail", "records_path", "identity_path", "Configured structure and additional rules", "data-editable"):
-            self.assertIn(contract, rules)
-        self.assertIn("renderRow(list[selected], detail)", detail)
+        self.assertIn('class=\'hero-mapping-row-detail hero-mapping-rule-details\'', detail)
+        self.assertIn('.appendTo(contextSection);', detail)
+        self.assertIn('renderRow(list[selected], detail, parameters)', detail)
+        self.assertIn('const parameters = $("<section', detail)
+        self.assertIn('.appendTo(advanced);', detail)
+        self.assertIn('contextSection.append(toolbar, draftStatus', detail)
+        row = EDITOR.split('async function renderRow(', 1)[1].split('async function refreshDraftActive', 1)[0]
+        self.assertIn('label === "Transformation" ? panel : technical', row)
+        for contract in ("records_path", "identity_path", "Configured structure and additional rules"):
+            self.assertIn(contract, detail)
+        for nested in ('<details', '<summary'):
+            self.assertNotIn(nested, detail)
+            self.assertNotIn(nested, row)
+        listing = function("renderList")
+        self.assertNotIn('renderContext({})', listing)
+        self.assertIn('renderPersonalDraftList()', listing)
+        self.assertIn('renderSchemaExplorer(advanced)', listing)
+        self.assertIn('data-mapping-advanced', function("advancedSection"))
 
     def test_active_mappings_table_shows_the_open_draft_rows(self):
         table = function("renderMappingsTable")
