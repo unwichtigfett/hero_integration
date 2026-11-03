@@ -143,6 +143,10 @@ def validate_edits(prior, submitted):
             continue
         if key in {'field_rules', 'field_rule_bases', 'mapping_definition_ids'}:
             continue
+        if key in {'customer_contract_version', 'project_contract_version'}:
+            if submitted.get(key) not in {'v1', 'v2', 'v3', 'v4', 'v5'}:
+                raise MappingDraftError('Unsupported native read contract version.')
+            continue
         if key in TEXT_FIELDS:
             if key in submitted and not isinstance(submitted[key], str):
                 if key not in prior or not same_value(submitted[key], prior[key]):

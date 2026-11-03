@@ -69,6 +69,8 @@ def preview(record, *, languages=()):
             if value != name:
                 blockers.append("HERO full_name differs from the computed Employee name.")
         elif handling == "locale" and value is not None:
+            if not value.strip():
+                continue
             choices = (value, value.replace("_", "-"), value.split("_")[0].split("-")[0])
             found = next((code for code in choices if code in languages), None)
             if found is None:

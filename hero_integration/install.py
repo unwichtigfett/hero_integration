@@ -177,10 +177,9 @@ for _doctype, _fields in OBSERVATIONS.items():
 
 def ensure_employee_optional_fields() -> None:
     """Represent the owner's optional birth date/gender policy in metadata."""
-    from frappe.custom.doctype.property_setter.property_setter import make_property_setter
-
     if not frappe.db.exists("DocType", "Employee"):
         return
+    from frappe.custom.doctype.property_setter.property_setter import make_property_setter
     for field in ("gender", "date_of_birth"):
         if frappe.get_meta("Employee").get_field(field).reqd:
             make_property_setter("Employee", field, "reqd", 0, "Check", validate_fields_for_doctype=False)

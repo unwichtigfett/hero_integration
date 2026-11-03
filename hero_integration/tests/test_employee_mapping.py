@@ -16,6 +16,12 @@ class TestEmployeeMapping(unittest.TestCase):
                      'created': '2020-01-01T10:00:00+00:00', 'modified': '2026-01-02T10:00:00+00:00'},
         }
 
+    def test_empty_locale_preserves_local_language(self):
+        self.record['user']['locale'] = ''
+        result = preview(self.record, languages={'de'})
+        self.assertFalse(result['blockers'])
+        self.assertFalse(any(field['target_field'] == 'language' for field in result['fields']))
+
     def test_visible_field_labels_have_no_integration_prefix(self):
         for fields in OBSERVATIONS.values():
             for fieldname, label in fields:
@@ -64,3 +70,11 @@ class TestEmployeeMapping(unittest.TestCase):
                 preview({'id': invalid})
         with self.assertRaises(ValueError):
             preview({'id': 1, 'email': []})
+
+class TestNativeContractDraftVersions(unittest.TestCase):
+    def test_known_contract_upgrade_is_editable_but_unknown_version_is_rejected(self):
+        from hero_integration.services.personal_mapping_content import validate_edits
+        from hero_integration.services.mapping_draft_service import MappingDraftError
+        self.assertEqual(validate_edits({'project_contract_version':'v3'}, {'project_contract_version':'v5'})['project_contract_version'],'v5')
+        with self.assertRaises(MappingDraftError):
+            validate_edits({'project_contract_version':'v3'}, {'project_contract_version':'v99'})

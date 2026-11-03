@@ -179,6 +179,12 @@ def _file_slice(run, config) -> None:
         with filelock("hero_service_migration", timeout=5):
             state = sync_services(client, source_instance=instance, run_name=run.name, downloader=downloader,
                                   should_stop=cancelled, progress=progress, verify_source=lambda: bound_configuration(run))
+    elif run.action == EMPLOYEE_ACTION:
+        from hero_integration.services.employee_migration import sync_employees
+
+        with filelock("hero_employee_migration", timeout=5):
+            state = sync_employees(client, source_instance=instance, run_name=run.name,
+                                   should_stop=cancelled, progress=progress, verify_source=lambda: bound_configuration(run))
     elif run.action == PRODUCT_ACTION:
         from hero_integration.services.product_migration import sync_products
 
