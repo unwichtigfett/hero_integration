@@ -1180,14 +1180,16 @@
                 table.find("tbody").empty();
                 // In draft mode the open definition shows the personal draft rows, so field mappings are chosen here, not in a separate draft table.
                 const draftOpen = (item, kind) => mode === "draft" && Boolean(model) && kind === "graphql" && active?.mapping_type === "graphql" && active?.name === item.name;
-                const entries = [...data.graphql_mappings.map((item) => ({item, kind: "graphql"})), ...data.frappe_mappings.map((item) => ({item, kind: "frappe"}))];
+                const entries = [...data.graphql_mappings.map((item) => ({item, kind: "graphql"})), ...data.frappe_mappings.map((item) => ({item, kind: "frappe"})),
+                    ...(tab === "Mutation" ? [] : (data.builtin_mappings || []).map((item) => ({item, kind: "builtin"})))];
                 if (mode === "draft" && model && active?.parentless && !entries.some(({item, kind}) => draftOpen(item, kind))) entries.unshift({item: active, kind: "graphql"});
                 const needle = fieldSearch.val().trim().toLowerCase();
                 entries.filter(({item, kind}) => draftOpen(item, kind) || ((!snapshotFilter || item.schema_snapshot === snapshotFilter) && (!operation.val() || (item.operation_name || item.operation) === operation.val()))).forEach(({item, kind}) => {
                     const isDraft = draftOpen(item, kind);
                     const definition = isDraft ? model.content : item.definition || item;
                     const linked = new Map([...ruleCache, ...data.frappe_mappings.map((rule) => [rule.definition_id, rule])]);
-                    const projected = kind === "frappe" ? [{source: item.source_path, target: `${item.target_doctype}.${item.target_field}`, app: "Not provided", index: 0}]
+                    const projected = kind === "frappe" || kind === "builtin" ? [{source: item.source_path,
+                        target: `${item.target_doctype}.${item.target_field}${item.relation ? ` (${text(item.relation)})` : ""}`, app: "Not provided", index: 0}]
                         : rows(definition).map((row, index) => {
                             const rule = row.reference ? linked.get(row.id) || ruleCache.get(row.id) : null, value = row.value;
                             return row.reference ? {source: rule?.source_path || "Referenced field (details required)", target: rule ? `${rule.target_doctype}.${rule.target_field}` : "Not provided", app: "Not provided", index}
@@ -1200,13 +1202,15 @@
                         if (needle && !`${row.source} ${row.target} ${row.app}`.toLowerCase().includes(needle)) return;
                         const isSelected = active?.name === item.name && active?.mapping_type === kind && selected === row.index;
                         const select = () => {
+                            if (kind === "builtin") { say(format("Built-in mapping: used until an own mapping for this operation is activated. Create one from a saved read query (API & Schema) with target operation {0}.", item.operation)); return; }
                             if (locked()) return;
                             if (active?.name === item.name && active?.mapping_type === kind) { selected = row.index; renderDetail(); }
                             else leave(async () => { await open(item, kind, false); if (active?.name === item.name) { selected = row.index; renderDetail(); } });
                         };
                         const tr = $("<tr tabindex='0'></tr>").toggleClass("is-selected", isSelected).toggleClass("is-draft", isDraft).attr({"aria-selected": String(isSelected), "aria-label": format("{0}: {1} to {2}", item.operation_name || item.operation, row.source, row.target), "data-mapping-name": item.name});
                         tr.on("click", select).on("keydown", (event) => { if (["Enter", " "].includes(event.key)) { event.preventDefault(); select(); } });
-                for (const value of [isDraft ? text("Personal draft") : text(item.status || "Active"), item.operation_name || item.operation, row.source, row.app, row.target, item.revision]) tr.append($("<td></td>").text(String(value ?? text("Not provided"))));
+                        if (kind === "builtin") tr.addClass("is-builtin");
+                for (const value of [isDraft ? text("Personal draft") : text(item.status || "Active"), item.operation_name || item.operation, row.source, row.app, row.target, kind === "builtin" ? "—" : item.revision]) tr.append($("<td></td>").text(String(value ?? text("Not provided"))));
                         table.find("tbody").append(tr);
                     });
                 });
@@ -1236,7 +1240,8 @@
                         catch (_) { /* Missing app metadata is explicitly marked, never invented. */ }
                     }
                     const chosen = operation.val(); operation.find("option:not(:first)").remove();
-                    [...new Set([...data.graphql_mappings.map((item) => item.operation_name), ...data.frappe_mappings.map((item) => item.operation)])].forEach((name) => operation.append($("<option></option>").val(name).text(name)));
+                    [...new Set([...data.graphql_mappings.map((item) => item.operation_name), ...data.frappe_mappings.map((item) => item.operation),
+                        ...(tab === "Mutation" ? [] : (data.builtin_mappings || []).map((item) => item.operation))])].forEach((name) => operation.append($("<option></option>").val(name).text(name)));
                     operation.val(chosen || ""); if (operation.val() === null) operation.val(""); draw();
                     const total = Math.max(data.pagination.graphql_total, data.pagination.frappe_total);
                     pager.empty().append(button("Previous mappings", () => { offset = Math.max(0, offset - 20); load(); }).prop("disabled", !offset),

@@ -1510,12 +1510,25 @@ def frontend_mapping_list(search: str = "", start: int | str = 0, page_size: int
             | {"revision": int(_row_value(row, "mapping_revision", 0) or 0)}
             for row in frappe_rows if _row_value(row, "status") == "Active"
         ],
+        "builtin_mappings": [] if direction == "FRAPPE_TO_MUTATION" or start else _builtin_mapping_rows(search),
         "pagination": {
             "start": start, "page_size": page_size,
             "graphql_total": _active_mapping_count("HERO GraphQL Mapping", graphql_search if search else None, graphql_filters),
             "frappe_total": 0 if direction == "FRAPPE_TO_MUTATION" else _active_mapping_count("HERO Frappe Mapping", frappe_search if search else None),
         },
     }
+
+
+def _builtin_mapping_rows(search: str = "") -> list[dict[str, object]]:
+    """Built-in mappings of Products/Documents/Pictures while no own mapping is active (read-only)."""
+    from hero_integration.services.direct_operations import default_rows
+
+    configured = {_row_value(row, "operation") for row in frappe.get_all(
+        "HERO Frappe Mapping", filters={"status": "Active"}, fields=["operation"], distinct=True, limit_page_length=0)}
+    needle = search.casefold()
+    return [row for row in default_rows() if row["operation"] not in configured
+            and (not needle or any(needle in str(row[key]).casefold() for key in ("operation", "source_path",
+                                                                                    "target_doctype", "target_field")))]
 
 
 def _mapping_request_fields(allowed):

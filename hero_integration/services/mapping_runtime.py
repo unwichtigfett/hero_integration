@@ -300,8 +300,11 @@ class MappingPlan:
 
 def plan_from_definitions(operation: str, definitions: list[MappingSpec] | tuple[MappingSpec, ...], *, target_operation: str = "", native_task: bool = False, adapter_options=None) -> MappingPlan:
     target_operation = target_operation or operation
-    if target_operation not in {"HeroCustomers", "HeroProjectMatches", *PROJECTIONS}:
+    from hero_integration.services.direct_operations import OPERATIONS as DIRECT_OPERATIONS
+    if target_operation not in {"HeroCustomers", "HeroProjectMatches", *PROJECTIONS, *DIRECT_OPERATIONS}:
         raise MappingPlanError("The selected target adapter is not supported.")
+    if target_operation in DIRECT_OPERATIONS and not adapter_options:
+        raise MappingPlanError("Products, Documents and Pictures are mapped only through a versioned Query adapter.")
     selected = tuple(sorted((item for item in definitions if item.operation == target_operation), key=lambda item: (item.priority, item.definition_id, item.source_path)))
     if not selected:
         raise MappingPlanError("No active mapping definitions exist for this operation.")

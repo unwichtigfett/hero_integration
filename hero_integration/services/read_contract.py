@@ -260,8 +260,11 @@ def _common_contract(service, mapping, snapshot) -> tuple[ReadContract, Mapping[
     target = config.get("target_operation")
     records_path, identity_path = config.get("records_path"), config.get("identity_path")
     definition_ids, variables, page_size = config.get("mapping_definition_ids"), config.get("variables", {}), config.get("page_size", 100)
-    if target not in {"HeroCustomers", "HeroProjectMatches", "HeroLookup", *PROJECTIONS}:
+    from hero_integration.services.direct_operations import OPERATIONS as DIRECT_OPERATIONS
+    if target not in {"HeroCustomers", "HeroProjectMatches", "HeroLookup", *PROJECTIONS, *DIRECT_OPERATIONS}:
         raise ReadContractError("The selected target adapter is not supported.")
+    if target in DIRECT_OPERATIONS and not (config.get("query_adapter") or {}).get("version") == 2:
+        raise ReadContractError("Products, Documents and Pictures require a versioned Query adapter.")
     if not isinstance(records_path, str) or not records_path or not isinstance(identity_path, str) or not identity_path:
         raise ReadContractError("The selected read mapping requires record and external identity paths.")
     if (not isinstance(definition_ids, list) or (not definition_ids and target != "HeroLookup")
