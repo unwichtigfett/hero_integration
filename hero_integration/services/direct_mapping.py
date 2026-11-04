@@ -101,6 +101,8 @@ ALLOWED_TARGET_TYPES = {"Data", "Small Text", "Int", "Float", "Currency", "Perce
 TRANSFORM_EXISTING_RECORD = "Existing Record"
 TRANSFORM_SAFE_HTML = "Safe HTML"
 TRANSFORMATIONS.update({TRANSFORM_EXISTING_RECORD, TRANSFORM_SAFE_HTML})
+# Longer plain-text and choice fields (the picker offers them too).
+PLAIN_TEXT_TYPES = frozenset({"Text", "Long Text", "Code", "Select"})
 # Read-only HERO observation fields that are not text: (operation, path, field, transform) -> fieldtype.
 NATIVE_TYPED_OBSERVATIONS = {
     ("HeroProjectMatches", "volume", "custom_hero_volume", "Identity"): "Currency",  # euros
@@ -403,7 +405,7 @@ def _validate_custom_field(spec: MappingSpec, metadata) -> None:
     # The app's own fields are read-only for users but written by the import.
     app_field = spec.target_field.startswith("custom_hero_") and bool(getattr(field, "is_custom_field", False))
     text_editor = field is not None and field.fieldtype == "Text Editor"
-    if (field is None or (field.fieldtype not in ALLOWED_TARGET_TYPES and not text_editor)
+    if (field is None or (field.fieldtype not in ALLOWED_TARGET_TYPES | PLAIN_TEXT_TYPES and not text_editor)
             or (field.read_only and not (is_native or app_field))):
         raise DirectMappingError("Target field is not a writable supported Frappe field.")
     if spec.relation or any(getattr(field, key, None) for key in ("fetch_from", "is_virtual")) or (

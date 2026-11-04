@@ -3173,3 +3173,55 @@ HTML transformations only target formatted text fields.,HTML-Umwandlungen sind n
 A Link target needs the Existing Record transformation.,Ein Verknüpfungsfeld braucht die Umwandlung „Vorhandener Datensatz“.
 Existing Record only targets Link fields.,„Vorhandener Datensatz“ ist nur für Verknüpfungsfelder.
 The transformation does not accept this HERO source type.,Die Umwandlung akzeptiert diesen HERO-Quelltyp nicht.
+choose snapshot,Snapshot wählen
+enter operation,Operation wählen
+fixed,fest
+enter object,Objekt wählen
+Main record,Hauptdatensatz
+enter field,Feld wählen
+Source,Quelle
+Mapped to,Gemappt auf
+Not mapped,Nicht gemappt
+No area with configurable field rules.,Kein Bereich mit konfigurierbaren Feldregeln.
+enter app,App wählen
+enter DocType,DocType wählen
+Create,Erstellen
+Already written by,Bereits beschrieben von
+Creating mapping …,Mapping wird erstellt …
+Mapping is active.,Mapping ist aktiv.
+Select inactive mappings to activate.,Wähle inaktive Mappings zum Aktivieren.
+Select active mappings to delete.,Wähle aktive Mappings zum Löschen.
+"Identity, name and relation rules cannot be removed here.","Identitäts-, Namens- und Verknüpfungsregeln können hier nicht entfernt werden."
+Activating …,Wird aktiviert …
+Deleting …,Wird gelöscht …
+Mappings activated.,Mappings aktiviert.
+Mappings deleted.,Mappings gelöscht.
+All,Alle
+search mapping,Mapping suchen
+type,Typ
+Activate,Aktivieren
+No mappings.,Keine Mappings.
+Active Send Mappings,Aktive Sende-Mappings
+Filter,Filter
+Send mappings (ERPNext → HERO) are created under Advanced.,Sende-Mappings (ERPNext → HERO) werden unter „Erweitert“ angelegt.
+Configuration imported.,Konfiguration importiert.
+Mapping Import,Mapping-Import
+Choose File,Datei wählen
+Object,Objekt
+Inactive,Inaktiv
+The request failed.,Die Anfrage ist fehlgeschlagen.
+Node,Knoten
+Query,Query
+Mutation,Mutation
+GraphQL Schema Snapshot,GraphQL-Schema-Snapshot
+DocType,DocType
+Type,Typ
+HERO,HERO
+Rules of this area are fixed; use the advanced editor.,Die Regeln dieses Bereichs sind fest; nutze den erweiterten Editor.
+This area has no active read mapping.,Dieser Bereich hat kein aktives Lese-Mapping.
+The HERO field is not read by this area's approved query.,Das HERO-Feld wird von der freigegebenen Abfrage dieses Bereichs nicht gelesen.
+The ERPNext field does not exist.,Das ERPNext-Feld existiert nicht.
+An active rule already writes this ERPNext field; remove it first.,Eine aktive Regel beschreibt dieses ERPNext-Feld bereits; entferne sie zuerst.
+Only inactive field rules of this area can be activated.,Nur inaktive Feldregeln dieses Bereichs können aktiviert werden.
+You have an unpublished draft of this mapping; publish or discard it under Advanced first.,Du hast einen unveröffentlichten Entwurf dieses Mappings; veröffentliche oder verwirf ihn zuerst unter „Erweitert“.
+Select at least one mapping.,Wähle mindestens ein Mapping.

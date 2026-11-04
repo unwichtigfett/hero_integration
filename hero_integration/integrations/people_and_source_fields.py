@@ -40,41 +40,27 @@ def _query(operation: str, version: str) -> str:
 
 
 def _rule(mapping, spec: dict) -> str:
-    """The active rule of ``spec`` (created once in the mapping's schema context); returns its definition_id."""
-    if not frappe.db.exists("HERO Frappe Mapping", {"definition_id": spec["definition_id"], "status": "Active"}):
-        frappe.get_doc({"doctype": "HERO Frappe Mapping", "operation": mapping["operation"], "source_type": "string|null",
-                        "purpose": "Field", "priority": 5, "status": "Active", "schema_snapshot": mapping["snapshot"],
-                        **spec}).insert()
+    """The active rule of ``spec`` (created once in the mapping's schema context); returns its definition_id.
+
+    An active shared rule for the same target (e.g. from a configuration import) is reused."""
+    if frappe.db.exists("HERO Frappe Mapping", {"definition_id": spec["definition_id"], "status": "Active"}):
+        return spec["definition_id"]
+    # One active shared rule per target: reuse the one that already writes this field.
+    same = frappe.get_all("HERO Frappe Mapping", filters={
+        "operation": mapping["operation"], "status": "Active",
+        "target_doctype": spec["target_doctype"], "target_field": spec["target_field"]},
+        fields=["definition_id", "personal_graphql_mapping"], limit_page_length=0)
+    shared = [row.definition_id for row in same if not row.personal_graphql_mapping]
+    if shared:
+        return shared[0]
+    frappe.get_doc({"doctype": "HERO Frappe Mapping", "operation": mapping["operation"], "source_type": "string|null",
+                    "purpose": "Field", "priority": 5, "status": "Active", "schema_snapshot": mapping["snapshot"],
+                    **spec}).insert()
     return spec["definition_id"]
-
-
-def _save_mapping(mapping, config):
-    """Use the owning personal-draft publisher for existing mapping revisions."""
-    from hero_integration.services.frappe_mapping_draft_storage import FrappeMappingDraftStorage
-
-    parent = frappe.get_doc('HERO GraphQL Mapping', mapping.name)
-    storage = FrappeMappingDraftStorage()
-    draft = storage.service().open_draft(parent.definition_id, frappe.session.user)
-    if draft.content != draft.base_content:
-        raise ValueError('An edited personal mapping draft requires review before this upgrade.')
-    if draft.base_active_revision != parent.mapping_revision:
-        storage.service().discard(parent.definition_id, frappe.session.user, draft.generation,
-                                  draft.content_revision, confirmed=True)
-        draft = storage.service().open_draft(parent.definition_id, frappe.session.user)
-    content = dict(draft.content)
-    content.update(config)
-    draft = storage.service().save(parent.definition_id, frappe.session.user, draft.content_revision,
-        parent.mapping_revision, content, expected_generation=draft.generation,
-        expected_reconciliation_revision=draft.reconciliation_revision).draft
-    return storage.publish(parent.definition_id, frappe.session.user, draft.generation,
-        draft.content_revision, parent.mapping_revision, draft.reconciliation_revision, confirmed=True)
 
 
 def extend_mapping(operation: str) -> str:
     """Add the new rules and contract version to the area's active read mapping and service."""
-    from hero_integration import api
-
-    services = api._sync_area_read_services("default").get(operation) or []
     rows = frappe.get_all("HERO GraphQL Mapping", filters={"status": "Active", "direction": "QUERY_TO_FRAPPE"},
                           fields=["name", "mapping_json", "schema_snapshot", "operation_name", "mapping_revision"],
                           limit_page_length=0)
@@ -88,17 +74,11 @@ def extend_mapping(operation: str) -> str:
     wanted = [_rule(context, spec) for spec in NEW_RULES[operation]]
     if config.get(key) == version and set(wanted) <= set(ids):
         return "already extended"
-    config[key] = version
-    config["mapping_definition_ids"] = [*ids, *(rule for rule in wanted if rule not in ids)]
-    saved = _save_mapping(mapping, config)
-    service_names = [row["service"] for row in services] or frappe.get_all(
-        "HERO GraphQL Service", filters={"read_mapping": mapping.name}, pluck="name", limit_page_length=0)
-    for name in service_names:
-        service = frappe.get_doc("HERO GraphQL Service", name)
-        service.query_document = _query(operation, version)
-        service.read_mapping = saved["name"]
-        service.save()
-    return f"{saved['name']} {key}={version}; services {', '.join(service_names) or '-'} need approval"
+    from hero_integration.services.simple_mapping import publish_revision
+
+    result = publish_revision(operation, [*ids, *(rule for rule in wanted if rule not in ids)], {key: version},
+                              query_document=_query(operation, version))
+    return f"{result['mapping']} {key}={version}; services {', '.join(result['approved']) or '-'} approved"
 
 
 def run() -> dict:
@@ -136,8 +116,6 @@ RESPONSIBLE_BY_EMAIL = "project-manager"
 
 def upgrade_projects_to_ids() -> str:
     """Switch the Project read mapping and service to contract v5 (partner_id, assignee user_id)."""
-    from hero_integration import api
-
     rows = frappe.get_all("HERO GraphQL Mapping", filters={"status": "Active", "direction": "QUERY_TO_FRAPPE"},
                           fields=["name", "mapping_json", "schema_snapshot", "operation_name", "mapping_revision"],
                           limit_page_length=0)
@@ -153,20 +131,16 @@ def upgrade_projects_to_ids() -> str:
                                pluck="name"):
         frappe.db.set_value("HERO Frappe Mapping", name, "status", "Disabled")
     wanted.append(_rule(context, RESPONSIBLE_BY_ID))
-    ids = [rule for rule in config.get("mapping_definition_ids") or [] if rule != RESPONSIBLE_BY_EMAIL]
+    by_email = set(frappe.get_all("HERO Frappe Mapping", filters={"operation": "HeroProjectMatches",
+        "target_field": "custom_hero_project_manager", "source_path": "partner.email"}, pluck="definition_id"))
+    ids = [rule for rule in config.get("mapping_definition_ids") or [] if rule != RESPONSIBLE_BY_EMAIL and rule not in by_email]
     if config.get("project_contract_version") == "v5" and set(wanted) <= set(ids):
         return "already on v5"
-    config["project_contract_version"] = "v5"
-    config["mapping_definition_ids"] = [*ids, *(rule for rule in wanted if rule not in ids)]
-    services = [row["service"] for row in api._sync_area_read_services("default").get("HeroProjectMatches") or []] \
-        or frappe.get_all("HERO GraphQL Service", filters={"read_mapping": mapping.name}, pluck="name", limit_page_length=0)
-    saved = _save_mapping(mapping, config)
-    for name in services:
-        service = frappe.get_doc("HERO GraphQL Service", name)
-        service.query_document = _query("HeroProjectMatches", "v5")
-        service.read_mapping = saved["name"]
-        service.save()
-    return f"{saved['name']} project_contract_version=v5; services {', '.join(services) or '-'} need approval"
+    from hero_integration.services.simple_mapping import publish_revision
+
+    result = publish_revision("HeroProjectMatches", [*ids, *(rule for rule in wanted if rule not in ids)],
+                              {"project_contract_version": "v5"}, query_document=_query("HeroProjectMatches", "v5"))
+    return f"{result['mapping']} project_contract_version=v5; services {', '.join(result['approved']) or '-'} approved"
 
 
 def run_partner_ids() -> dict:

@@ -23,7 +23,7 @@
     const LEGACY_SECTION_TO_TOOL = Object.freeze({analyzer: "analyzer", graph: "graph", services: "services"});
     // Dynamically inserted styles need a release token. Keep frappe.require()
     // JavaScript URLs query-free so Frappe can select its loader and version.
-    const ASSET_RELEASE = "20261102.7";
+    const ASSET_RELEASE = "20261104.1";
     const ASSETS = [
         "/assets/hero_integration/css/hero_tools.css",
         "/assets/hero_integration/css/hero_adapter.css",
@@ -32,11 +32,13 @@
         "/assets/hero_integration/css/hero_settings.css",
         "/assets/hero_integration/css/hero_api_summary.css",
         "/assets/hero_integration/css/hero_sync.css",
+        "/assets/hero_integration/css/hero_mapping_simple.css",
         "/assets/hero_integration/js/hero_tools.js",
         "/assets/hero_integration/js/hero_overview.js",
         "/assets/hero_integration/js/hero_settings.js",
         "/assets/hero_integration/js/hero_api_summary.js",
         "/assets/hero_integration/js/hero_mapping_editor.js",
+        "/assets/hero_integration/js/hero_mapping_simple.js",
         "/assets/hero_integration/js/hero_diagnostics.js",
         "/assets/hero_integration/js/hero_migration.js",
     ];
@@ -46,6 +48,7 @@
         ["hero_settings.js", "hero_integration_settings_ui"],
         ["hero_api_summary.js", "hero_integration_api_summary"],
         ["hero_mapping_editor.js", "hero_integration_mapping_editor"],
+        ["hero_mapping_simple.js", "hero_integration_mapping_simple"],
         ["hero_diagnostics.js", "hero_integration_diagnostics"],
         ["hero_migration.js", "hero_integration_migration"],
     ]);
@@ -281,7 +284,15 @@
             await ensureAssets();
             if (section === "overview") await window.hero_integration_overview.mount(content);
             else if (section === "settings") await window.hero_integration_settings_ui.mount(content);
-            else if (section === "mapping") controller.workspace = window.hero_integration_mapping_editor.mount(sectionPage, context);
+            else if (section === "mapping") {
+                // The simple editor (owner sketch) first; the full editor stays available under "Advanced".
+                const advanced = () => {
+                    controller.workspace?.destroy?.();
+                    controller.workspace = window.hero_integration_mapping_editor.mount(sectionPage, context);
+                };
+                controller.workspace = context.mapping_advanced ? (advanced(), controller.workspace)
+                    : window.hero_integration_mapping_simple.mount(sectionPage, context, advanced);
+            }
             else if (section === "synchronization") controller.workspace = window.hero_integration_migration.mount(sectionPage);
             else {
                 const tool = routeTarget(section, context.hero_tool).tool;
