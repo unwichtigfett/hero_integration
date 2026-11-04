@@ -48,8 +48,10 @@ class TestMappingOnlyFormat(unittest.TestCase):
 class TestMappingOnlyWorkflow(unittest.TestCase):
     def setUp(self):
         self.snapshot=NS(name='snapshot',schema_fingerprint=FP,snapshot_json=json.dumps({'__schema':{}}))
-        self.fake=NS(only_for=Mock())
-        for p in [patch.object(mapping,'frappe',self.fake),patch.object(mapping,'_snapshot',return_value=self.snapshot),
+        self.fake=NS(only_for=Mock(),db=NS(savepoint=Mock(),rollback=Mock()))
+        from contextlib import nullcontext
+        for p in [patch('hero_integration.services.mapping_snapshot_rebase.preview_target', side_effect=lambda *a:nullcontext()),
+                  patch('hero_integration.services.mapping_snapshot_rebase.prepare', return_value={'needs_rebase':False}),patch.object(mapping,'frappe',self.fake),patch.object(mapping,'_snapshot',return_value=self.snapshot),
                   patch.object(config,'_parse'),patch.object(config,'preview_config',return_value={'settings':[], 'read_services':[], 'replace_mappings':True}),
                   patch.object(mapping,'_target_state',return_value='state'),
                   patch('hero_integration.services.mapping_draft_exchange._preview_binding',return_value='proof')]:
@@ -126,3 +128,23 @@ class TestMappingConfirmationConcurrency(TestMappingOnlyWorkflow):
         self.assertIn('FOR UPDATE',query)
         self.assertNotIn("source'probe",query)
         self.assertEqual(values,["source'probe"])
+
+
+class TestSnapshotRebaseAfterDDL(TestMappingOnlyWorkflow):
+    def test_rebase_is_atomic_with_mapping_writes_after_provisioning_ddl(self):
+        events=[]
+        def prepare(*a,**kw):
+            events.append('rebase' if kw.get('apply') else 'plan')
+            return {'needs_rebase':True,'fingerprint':'plan-proof'}
+        def import_config(_snapshot,_body,_source,*,before_mapping_write):
+            events.append('ddl')
+            self.fake.db.savepoint.side_effect=lambda name:events.append('post-ddl-savepoint')
+            before_mapping_write(self.snapshot)
+            events.append('mapping-write')
+            raise ValueError('publication failed')
+        with patch.object(config,'import_config',side_effect=import_config), \
+             patch('hero_integration.services.mapping_snapshot_rebase.prepare',side_effect=prepare):
+            with self.assertRaisesRegex(ValueError,'publication failed'):
+                mapping.apply(json.dumps(package()),'snapshot','source','proof',confirmed=True)
+        self.assertEqual(events,['ddl','post-ddl-savepoint','plan','rebase','mapping-write'])
+        self.fake.db.rollback.assert_called_once_with(save_point=self.fake.db.savepoint.call_args.args[0])

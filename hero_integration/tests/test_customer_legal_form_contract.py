@@ -76,7 +76,8 @@ class TestCustomerLegalFormContract(unittest.TestCase):
             with self.subTest(source_path=source_path), self.assertRaises(ValueError):
                 customer_legacy_literals(['custom-rule'], mapping, lambda _: [row], lambda _: [])
 
-    def test_scoped_lineage_preserves_literal_selection_and_rejects_ambiguity(self):
+    @patch('hero_integration.services.mapping_snapshot_rebase.snapshots_equivalent', return_value=False)
+    def test_scoped_lineage_preserves_literal_selection_and_rejects_ambiguity(self, snapshot_proof):
         from hero_integration.services.mapping_rule_lineage import next_lineage
         from hero_integration.services.personal_mapping_content import RULE_FIELDS
         root_id = 'a16b15fa-7ca8-4722-b63c-ac60cc46629a'

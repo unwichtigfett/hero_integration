@@ -3613,3 +3613,22 @@ The approved logbook readback returned missing or repeated activity identities.,
 Choose an activity,Aktivität auswählen
 Added,Hinzugefügt
 Removed,Entfernt
+Snapshot rebinding requires intact validated schemas of the same HERO source.,Der Snapshot-Wechsel benötigt unveränderte validierte Schemata derselben HERO-Quelle.
+Mapping snapshot bindings changed; preview the import again.,Die Snapshot-Zuordnungen der Mappings wurden geändert. Prüfe den Import erneut.
+Unselected active field rules require reconciliation before snapshot rebinding.,Nicht ausgewählte aktive Feldregeln müssen vor dem Snapshot-Wechsel abgeglichen werden.
+Unsupported snapshot binding document.,Nicht unterstütztes Dokument für eine Snapshot-Zuordnung.
+Snapshot rebinding found a reader outside the selected mapping graph.,Beim Snapshot-Wechsel wurde ein Leseservice außerhalb der ausgewählten Mapping-Abhängigkeiten gefunden.
+Snapshot rebinding found ambiguous active mapping or service scopes.,Beim Snapshot-Wechsel wurden mehrdeutige aktive Mapping- oder Service-Zuordnungen gefunden.
+Snapshot rebinding found a mutation outside its approved readback graph.,Beim Snapshot-Wechsel wurde eine Mutation außerhalb ihrer freigegebenen Rücklese-Abhängigkeiten gefunden.
+Snapshot rebinding requires one existing active contract per mutation operation.,Der Snapshot-Wechsel benötigt genau einen vorhandenen aktiven Vertrag je Mutationsoperation.
+Snapshot rebinding found an invalid mutation service or contract.,Beim Snapshot-Wechsel wurde ein ungültiger Mutations-Service oder Vertrag gefunden.
+Snapshot rebinding found a changed mutation contract fingerprint.,Beim Snapshot-Wechsel wurde ein geänderter Fingerabdruck eines Mutationsvertrags gefunden.
+Snapshot rebinding cannot cross different HERO endpoints.,Ein Snapshot-Wechsel zwischen unterschiedlichen HERO-Endpunkten ist nicht zulässig.
+The saved HERO schemas differ. Review the schema changes before importing mappings.,Die gespeicherten HERO-Schemata unterscheiden sich. Prüfe die Schemaänderungen vor dem Mapping-Import.
+Open Query drafts contain snapshot-bound rule baselines. Reconcile these drafts before rebinding snapshots.,Offene Query-Entwürfe enthalten an Snapshots gebundene Regelbaselines. Gleiche diese Entwürfe vor dem Snapshot-Wechsel ab.
+Snapshot rebinding changed since preview; preview the import again.,Die Snapshot-Zuordnungen haben sich seit der Vorschau geändert. Prüfe den Import erneut.
+Snapshot rebinding requires exactly one approved reader per active Query mapping.,Der Snapshot-Wechsel benötigt genau einen freigegebenen Leseservice je aktivem Query-Mapping.
+Snapshot rebinding found an incompatible Project logbook contract scope.,Beim Snapshot-Wechsel wurde ein unvereinbarer Geltungsbereich des Projektlogbuch-Vertrags gefunden.
+A private parentless draft must be rebound by its owner before switching snapshots.,Ein persönlicher Entwurf ohne aktive Definition muss vor dem Snapshot-Wechsel durch seinen Eigentümer abgeglichen werden.
+An open draft has an incompatible snapshot context.,Ein offener Entwurf besitzt einen unvereinbaren Snapshot-Kontext.
+The confirmed HERO source changed during snapshot rebinding.,Die bestätigte HERO-Quelle wurde während des Snapshot-Wechsels geändert.
