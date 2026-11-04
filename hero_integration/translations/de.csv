@@ -3157,3 +3157,19 @@ Mapping settings,Mapping-Einstellungen
 Refresh saved nodes,Gespeicherte Knoten aktualisieren
 Object field context does not match the selected record and saved schema.,Der Objektfeld-Kontext passt nicht zum ausgewählten Datensatz und zum gespeicherten Schema.
 New query field rule is incomplete.,Die neue Query-Feldregel ist unvollständig.
+Existing Record,Vorhandener Datensatz
+"System field: the import sets it through its fixed purpose (name, identity, relation).","Systemfeld: Der Import setzt es über seinen festen Zweck (Name, Identität, Verknüpfung)."
+Filled automatically from a linked record; map the linked record instead.,Wird automatisch aus einem verknüpften Datensatz gefüllt; mappe stattdessen den verknüpften Datensatz.
+Hidden field: it cannot be a mapping target.,Ausgeblendetes Feld: Es kann kein Mapping-Ziel sein.
+Read-only field: ERPNext calculates it.,Schreibgeschütztes Feld: ERPNext berechnet es.
+Unsupported field type.,Nicht unterstützter Feldtyp.
+Link field: use the 'Existing Record' transformation (the value must name an existing linked record).,Verknüpfungsfeld: Umwandlung „Vorhandener Datensatz“ verwenden (der Wert muss einen bestehenden verknüpften Datensatz benennen).
+Formatted text: use 'Plain Text To HTML' or 'Safe HTML'.,Formatierter Text: „Klartext zu HTML“ oder „Sicheres HTML“ verwenden.
+"App field: written by the import, read-only for users.","App-Feld: vom Import geschrieben, für Benutzer schreibgeschützt."
+Direct adapter target; activation requires the registry and mapping validation.,Ziel des direkten Adapters; die Aktivierung erfordert Registrierung und Mapping-Prüfung.
+Target field is filled automatically or hidden; map its source record instead.,Das Zielfeld wird automatisch gefüllt oder ist ausgeblendet; mappe stattdessen den Quelldatensatz.
+Formatted text needs the Plain Text To HTML or Safe HTML transformation.,Formatierter Text braucht die Umwandlung „Klartext zu HTML“ oder „Sicheres HTML“.
+HTML transformations only target formatted text fields.,HTML-Umwandlungen sind nur für formatierte Textfelder.
+A Link target needs the Existing Record transformation.,Ein Verknüpfungsfeld braucht die Umwandlung „Vorhandener Datensatz“.
+Existing Record only targets Link fields.,„Vorhandener Datensatz“ ist nur für Verknüpfungsfelder.
+The transformation does not accept this HERO source type.,Die Umwandlung akzeptiert diesen HERO-Quelltyp nicht.

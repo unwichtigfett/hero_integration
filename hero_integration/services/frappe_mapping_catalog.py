@@ -40,6 +40,9 @@ class CatalogField:
 
 
 CANONICAL_TARGETS = frozenset({"Customer", "Project"})
+# Layout elements hold no data; they are not listed as targets at all.
+LAYOUT_TYPES = frozenset({"Section Break", "Column Break", "Tab Break", "HTML", "Button", "Heading", "Fold", "Image"})
+TEXT_EDITOR_TYPES = frozenset({"Text Editor"})
 
 
 class FrappePickerMetadata:
@@ -136,7 +139,8 @@ def fields(metadata, app_name: str = "", doctype: str = "", search: str = "", *,
             label = str(getattr(field, "label", "") or fieldname)
             fieldtype = str(getattr(field, "fieldtype", "") or "")
             description = str(getattr(field, "description", "") or "")
-            if not fieldname or (needle and needle not in f"{fieldname} {label} {fieldtype} {description}".lower()):
+            if not fieldname or fieldtype in LAYOUT_TYPES or (
+                    needle and needle not in f"{fieldname} {label} {fieldtype} {description}".lower()):
                 continue
             result.append(_field(target, field, metadata))
     return sorted(result, key=lambda item: (item.app_name.lower(), item.doctype.lower(), item.path.lower()))
@@ -229,7 +233,8 @@ def query_standard_target(doctype, fieldname, enabled=False):
 def query_target_catalog(metadata, app_name='', search=''):
     """Discover v2 adapter targets; activation still validates each native binding."""
     result = catalog(metadata, app_name, search)
-    allowed = {'Customer', 'Project', 'Task', 'Event', 'Contact', 'Address', 'Comment', 'ToDo'}
+    from hero_integration.services.direct_operations import FIELDS as DIRECT_FIELDS
+    allowed = {'Customer', 'Project', 'Task', 'Event', 'Contact', 'Address', 'Comment', 'ToDo', *DIRECT_FIELDS}
     targets = []
     for item in doctypes(metadata, app_name, search):
         if item.doctype == 'Comment' and metadata.can_write('Project'):
@@ -243,6 +248,12 @@ def query_target_catalog(metadata, app_name='', search=''):
         fields = activity_fields() if target.doctype == 'Comment' and activity_fields else metadata.fields(target.doctype)
         for field in fields:
             item = _field(target, field, metadata)
+            if target.doctype in DIRECT_FIELDS:
+                # Products/Documents/Pictures: the registry's native fields and the app's own fields.
+                if item.path in DIRECT_FIELDS[target.doctype] or item.path.startswith('custom_hero_'):
+                    selected.append(replace(item, selectable=True, activation_allowed=False,
+                        reason='Direct adapter target; activation requires the registry and mapping validation.'))
+                continue
             contact_proxy = target.doctype in {'Customer', 'Contact'} and item.path in {'first_name', 'last_name', 'email_id', 'mobile_no', 'salutation'}
             if ((item.path in SYSTEM_FIELDS and (target.doctype, item.path) != ('Comment', 'creation'))
                     or getattr(field, 'hidden', 0) or getattr(field, 'is_virtual', 0)
@@ -339,16 +350,25 @@ def _field(target: CatalogDocType, field, metadata) -> CatalogField:
     options = tuple(option for option in str(getattr(field, "options", "") or "").splitlines() if option) if fieldtype == "Select" else ()
     selectable = target.selectable
     reason = target.reason
+    app_field = fieldname.startswith("custom_hero_") and bool(getattr(field, "is_custom_field", False))
     if fieldname in SYSTEM_FIELDS | PROTECTED_FIELDS.get(target.doctype, set()):
-        selectable, reason = False, "System field: it cannot be a mapping target."
-    elif getattr(field, "read_only", 0):
-        selectable, reason = False, "Read-only field: it cannot be a mapping target."
+        selectable, reason = False, "System field: the import sets it through its fixed purpose (name, identity, relation)."
+    elif fieldtype == "Read Only" or getattr(field, "fetch_from", None):
+        selectable, reason = False, "Filled automatically from a linked record; map the linked record instead."
+    elif getattr(field, "hidden", 0) and not app_field:
+        selectable, reason = False, "Hidden field: it cannot be a mapping target."
+    elif getattr(field, "read_only", 0) and not app_field:
+        selectable, reason = False, "Read-only field: ERPNext calculates it."
     elif fieldtype == "Table":
         selectable, reason = False, "Child Table field: an app-owned child-row resolver is required."
+    elif fieldtype not in ALLOWED_TARGET_TYPES | {"Long Text", "Text", "Code", "Select"} | TEXT_EDITOR_TYPES:
+        selectable, reason = False, "Unsupported field type."
     elif fieldtype == "Link":
-        selectable, reason = False, "Link field: an approved entity resolver is required."
-    elif fieldtype not in ALLOWED_TARGET_TYPES | {"Long Text", "Text", "Code", "Select"}:
-        selectable, reason = False, "Unsupported field type for a direct Draft proposal."
+        reason = "Link field: use the 'Existing Record' transformation (the value must name an existing linked record)."
+    elif fieldtype in TEXT_EDITOR_TYPES:
+        reason = "Formatted text: use 'Plain Text To HTML' or 'Safe HTML'."
+    elif app_field:
+        reason = "App field: written by the import, read-only for users."
     elif selectable and target.doctype not in CANONICAL_TARGETS:
         reason = "Draft proposal only; activation requires an app-owned integration."
     return CatalogField(
