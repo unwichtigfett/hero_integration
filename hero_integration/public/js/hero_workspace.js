@@ -284,15 +284,7 @@
             await ensureAssets();
             if (section === "overview") await window.hero_integration_overview.mount(content);
             else if (section === "settings") await window.hero_integration_settings_ui.mount(content);
-            else if (section === "mapping") {
-                // The simple editor (owner sketch) first; the full editor stays available under "Advanced".
-                const advanced = () => {
-                    controller.workspace?.destroy?.();
-                    controller.workspace = window.hero_integration_mapping_editor.mount(sectionPage, context);
-                };
-                controller.workspace = context.mapping_advanced ? (advanced(), controller.workspace)
-                    : window.hero_integration_mapping_simple.mount(sectionPage, context, advanced);
-            }
+            else if (section === "mapping") controller.workspace = window.hero_integration_mapping_simple.mount(sectionPage, context);
             else if (section === "synchronization") controller.workspace = window.hero_integration_migration.mount(sectionPage);
             else {
                 const tool = routeTarget(section, context.hero_tool).tool;

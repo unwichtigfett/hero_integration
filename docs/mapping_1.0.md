@@ -102,4 +102,4 @@ is not a directional draft file.
 
 Each change publishes a new revision of the area's read mapping through the personal-draft publisher. It then approves the area's read service again. The editor chooses the transformation from the field types: Link → Existing Record, formatted text → Plain Text To HTML, text from text → Trim, numbers to text → Positive Int To Text / Scalar Text, otherwise Identity. The server validates each rule as usual.
 
-Field rules of Customers and Projects can be edited here. Events, Tasks, Products, Documents and Pictures have fixed or code-owned bindings; they are listed but not editable. Identity, name and relation rules cannot be removed. Mutation (send) mappings are listed; you create them under **Advanced**, which opens the previous full editor.
+Field rules of Customers and Projects can be edited here. Events, Tasks, Products, Documents and Pictures have fixed or code-owned bindings; they are listed but not editable. Identity, name and relation rules cannot be removed. Mutation (send) mappings are listed; creating them in this layout follows. The previous editor is no longer reachable.

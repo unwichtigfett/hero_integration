@@ -1,6 +1,6 @@
 // Simple Mapping editor (layout of the owner's "Mapping Editor" sketch, 2026-11-04):
 // Query/Mutation, schema snapshot, Map Fields (Source → Target, Create), Active Mappings
-// (Activate, Delete, filters) and Mapping Import. The previous editor stays under "Advanced".
+// (Activate, Delete, filters) and Mapping Import. It is the only Mapping editor.
 (function () {
     "use strict";
     const t = (value) => window.hero_integration_i18n?.text(value) ?? (typeof __ === "function" ? __(value) : String(value));
@@ -37,7 +37,7 @@
     const labelled = (label, control) => el("label", {class: "hms-control"}, el("span", {text: t(label)}), control);
     const info = (rows) => el("dl", {class: "hms-info"}, ...rows.flatMap(([key, value]) => [el("dt", {text: t(key)}), el("dd", {text: value || "—"})]));
 
-    function mount(page, context = {}, advanced = null) {
+    function mount(page, context = {}) {
         const host = page.main.empty().addClass("hero-integration-ui")[0];
         const state = {data: null, tab: "Query", operation: "", object: null, sourcePath: "", app: "", doctype: "", field: "",
                        targetFields: [], selected: new Set(), filterOperation: "", search: "", filterType: "", filterValue: ""};
@@ -59,10 +59,8 @@
                 onclick: () => { state.tab = name; render(); }}));
             const snapshots = (state.data?.snapshots || []).map((name) => ({value: name, label: name}));
             const snapshot = select(t("choose snapshot"), snapshots, snapshots[0]?.value || "");
-            const more = advanced ? el("button", {type: "button", class: "btn btn-link btn-sm hms-advanced", text: t("Advanced"),
-                onclick: () => advanced()}) : null;
             return el("header", {class: "hms-header"},
-                el("div", {class: "hms-title"}, el("h2", {text: t("HERO Mapping Editor")}), el("div", {class: "hms-tabs"}, tabs), more),
+                el("div", {class: "hms-title"}, el("h2", {text: t("HERO Mapping Editor")}), el("div", {class: "hms-tabs"}, tabs)),
                 labelled("GraphQL Schema Snapshot", snapshot));
         }
 
@@ -213,7 +211,7 @@
                 el("div", {class: "hms-filters"}, labelled("Operation", operation), labelled("Search", search),
                    el("div", {class: "hms-control"}, el("span", {text: t("Filter")}), el("div", {class: "hms-pair"}, type, value))),
                 el("div", {class: "hms-table-wrap"}, table),
-                query ? null : el("p", {class: "text-muted", text: t("Send mappings (ERPNext → HERO) are created under Advanced.")}));
+                query ? null : el("p", {class: "text-muted", text: t("Creating send mappings (ERPNext → HERO) follows; sending to HERO is switched off.")}));
         }
 
         function importCard() {
