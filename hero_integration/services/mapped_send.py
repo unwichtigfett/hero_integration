@@ -100,6 +100,9 @@ def normalise_send_mapping(content, schema):
                 or not isinstance(target, dict) or set(target) - {'operation', 'argument', 'input_type', 'field', 'field_path', 'graphql_type'}
                 or not _path(target.get('field'))):
             raise MappedSendError('Send requires exact Frappe sources and scalar mutation input paths.')
+        from hero_integration.services.project_naming import is_local_project_name
+        if is_local_project_name(source, target['field']):
+            raise MappedSendError('Project naming is local to ERPNext and cannot be sent to HERO.')
         try:
             normalized = normalise_draft_mapping({k: item[k] for k in ('source', 'target', 'transformation') if k in item}, schema, temporal=True)
         except (ValueError, TypeError, KeyError) as error:
@@ -441,6 +444,11 @@ def _read_rows(ctx, plan, client):
 
 
 def _read_record(ctx, client):
+    if ctx.document.doctype == 'Project':
+        from hero_integration.services.mapped_update_v2 import _read_record as read_project
+        reader = SimpleNamespace(**{**vars(ctx), 'raw_schema': json.loads(ctx.snapshot.snapshot_json),
+            'content': {**ctx.content, 'area': 'HeroProjectMatches', 'identity': {'read_path': ctx.content['send_options']['read_identity_path']}}})
+        return read_project(reader, client)
     rows = _read_rows(ctx, ctx.read, client)
     path = ctx.content['send_options']['read_identity_path']
     if path != ctx.read.contract.identity_path:
@@ -785,6 +793,9 @@ def _prepare(ctx, client, phase_id=None):
     options = ctx.content['send_options']
     phases = []
     for identity, item in assignments(ctx.content):
+        from hero_integration.services.project_naming import is_local_project_name
+        if is_local_project_name(item['source'], item['target']['field']):
+            raise MappedSendError('Project naming is local to ERPNext and cannot be sent to HERO.')
         setting = options['assignments'][identity]
         value = _resolve(ctx, item, setting, remote, client, phase_id)
         if setting['resolver'] == 'PHASE':
@@ -903,6 +914,7 @@ def _apply_phase_source(ctx, changes, after):
         current.set(item['source']['field'], _baseline_remote(ctx, item, setting, _at(after, setting['read_path']), record=after))
     with managed_target_update(current.doctype, current.name, ctx.link.name):
         current.save()
+    ctx.project_stamp_receipt = {'before': str(ctx.document.modified), 'after': str(current.modified)}
     for change, item in phases:
         change['local'] = current.get(item['source']['field'])
 
@@ -1014,7 +1026,8 @@ def send(doctype, name, *, fingerprint='', confirmed=0, phase_id=None, client=No
         raise MappedSendError('Sending to HERO could not be confirmed; no automatic retry was performed.') from None
     _finalize_mutation(audit, 'Succeeded', 'Mapped fields were sent once and verified by approved Query readback.')
     return {'status': 'SENT', 'hero_id': ctx.hero_id, 'changes': [c['label'] for c in changes],
-        'correlation_id': audit.correlation_id}
+        'correlation_id': audit.correlation_id,
+        **({'project_stamp_receipt': ctx.project_stamp_receipt} if hasattr(ctx, 'project_stamp_receipt') else {})}
 
 
 def _acknowledge_updated_fields(ctx, changes, after):

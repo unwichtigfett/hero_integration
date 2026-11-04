@@ -3634,3 +3634,15 @@ An open draft has an incompatible snapshot context.,Ein offener Entwurf besitzt 
 The confirmed HERO source changed during snapshot rebinding.,Die bestätigte HERO-Quelle wurde während des Snapshot-Wechsels geändert.
 Used mapping schema dependencies changed: {0},Verwendete Schema-Abhängigkeiten des Mappings wurden geändert: {0}
 Multiple approved schema contexts require separate mapping imports.,Mehrere freigegebene Schema-Kontexte benötigen getrennte Mapping-Importe.
+Project naming is local to ERPNext and cannot be sent to HERO.,Die Projektbenennung bleibt lokal in ERPNext und darf nicht an HERO gesendet werden.
+Project naming stays in ERPNext and is not sent to HERO.,Die Projektbenennung bleibt in ERPNext und wird nicht an HERO gesendet.
+The Project send preview changed; open it again.,Die Projektvorschau hat sich geändert. Öffne sie erneut.
+The approved Project reader cannot be narrowed to its bound identity.,Die freigegebene Projektabfrage lässt sich nicht sicher auf das verknüpfte Projekt begrenzen.
+Loading Project changes and logbook activities …,Projektänderungen und Logbucheinträge werden geladen …
+Sending Project changes and logbook activities …,Projektänderungen und Logbucheinträge werden gesendet …
+Project changes and activities sent to HERO.,Projektänderungen und Logbucheinträge wurden an HERO gesendet.
+Sending stopped. Confirmed changes remain sent; review the result before sending again.,Versand gestoppt. Bestätigte Änderungen wurden übertragen. Prüfe das Ergebnis vor einem erneuten Versand.
+Sending could not be confirmed. Review the result before sending again.,Der Versand konnte nicht bestätigt werden. Prüfe das Ergebnis vor einem erneuten Versand.
+The project changed. Save it and reopen the preview.,Das Projekt hat sich geändert. Speichere es und öffne die Vorschau erneut.
+The request failed. Reopen the preview to try again.,Die Anfrage ist fehlgeschlagen. Öffne die Vorschau für einen neuen Versuch erneut.
+Invalid Project send preview.,Ungültige Projektvorschau.

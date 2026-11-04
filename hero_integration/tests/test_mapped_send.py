@@ -179,8 +179,9 @@ class TestMappedSendTransport(_TransportFixture):
         from hero_integration.services import customer_send, project_send, task_send
         for module, name in ((customer_send, 'Customer'), (project_send, 'Project'), (task_send, 'Task')):
             with patch.object(ms, 'preview', side_effect=ms.MappedSendError('No active profile')), \
-                    patch.object(module, 'legacy_preview') as legacy, self.assertRaises(ValueError):
-                module.preview('TEST-1')
+                    patch.object(module, 'legacy_preview') as legacy, \
+                    patch('hero_integration.services.project_delivery._access'), self.assertRaises(ValueError):
+                module.preview('TEST-1', client=Mock())
             legacy.assert_not_called()
 
 
@@ -188,7 +189,7 @@ class TestNativeSendWrappers(TestCase):
     def test_public_preview_and_send_delegate_to_the_grouped_configured_runtime(self):
         from hero_integration.services import customer_send, project_send, task_send
         client, mutation = object(), object()
-        for module, doctype in ((customer_send, 'Customer'), (project_send, 'Project'), (task_send, 'Task')):
+        for module, doctype in ((customer_send, 'Customer'), (task_send, 'Task')):
             with patch.object(ms, 'preview', return_value={'configured': True}) as preview, \
                     patch.object(ms, 'send', return_value={'status': 'SENT'}) as send, \
                     patch.object(module, 'legacy_preview') as legacy_preview, \

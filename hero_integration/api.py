@@ -3869,12 +3869,12 @@ def project_send_preview(project: str, phase_id: str | int | None = None) -> dic
 
 
 @frappe.whitelist(methods=["POST"])
-def project_send(project: str, fingerprint: str, confirmed: int | str = 0, phase_id: str | int | None = None) -> dict:
-    """Send the previewed Project Notes/Phase to HERO once and verify them."""
+def project_send(project: str, fingerprint: str, confirmed: int | str = 0, phase_id: str | int | None = None, delivery=None) -> dict:
+    """Send the confirmed Project fields and activities once through native safeguards."""
     from hero_integration.services.project_send import ProjectSendError, send
 
     try:
-        return send(project, phase_id, fingerprint, confirmed)
+        return send(project, phase_id, fingerprint, confirmed, delivery=delivery)
     except ProjectSendError as error:
         frappe.throw(translate_error(error, frappe._))
 

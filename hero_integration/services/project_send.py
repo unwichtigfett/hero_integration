@@ -260,17 +260,17 @@ def _mutation_client():
 
 
 def preview(project: str, phase_id=None, client=None) -> dict:
-    from hero_integration.services.mapped_send import preview as mapped_preview
+    from hero_integration.services.project_delivery import preview as delivery_preview
     try:
-        return mapped_preview('Project', project, phase_id=phase_id, client=client)
+        return delivery_preview(project, phase_id=phase_id, client=client)
     except ValueError as error:
         raise ProjectSendError.from_error(error) from error
 
 
-def send(project: str, phase_id=None, fingerprint: str = '', confirmed=0, client=None, mutation_client=None) -> dict:
-    from hero_integration.services.mapped_send import send as mapped_send
+def send(project: str, phase_id=None, fingerprint: str = '', confirmed=0, client=None, mutation_client=None, delivery=None) -> dict:
+    from hero_integration.services.project_delivery import send as delivery_send
     try:
-        return mapped_send('Project', project, phase_id=phase_id, fingerprint=fingerprint,
-                           confirmed=confirmed, client=client, mutation_client=mutation_client)
+        return delivery_send(project, phase_id=phase_id, fingerprint=fingerprint, delivery=delivery,
+                             confirmed=confirmed, client=client, mutation_client=mutation_client)
     except ValueError as error:
         raise ProjectSendError.from_error(error) from error

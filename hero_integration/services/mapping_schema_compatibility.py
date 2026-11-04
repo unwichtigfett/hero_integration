@@ -227,6 +227,20 @@ def check_compatibility(old_raw, new_raw, *, read_queries, mutation_profiles, mu
     if len(read_queries) + len(mutation_queries) > 200 or len(mutation_profiles) > 100:
         _fail('mapping dependencies: too many documents or profiles')
     schemas = [_schema(old_raw, 'old'), _schema(new_raw, 'new')]
+    # Project sends use this exact selection through the identity-scoped root.
+    # Its schema-proven operation and argument are therefore used dependencies too.
+    from hero_integration.services.project_identity_read import ProjectIdentityReader
+    narrowed = []
+    for document in read_queries:
+        try:
+            tree = parse(document)
+            roots = [field for operation in tree.definitions if isinstance(operation, OperationDefinitionNode)
+                     for field in operation.selection_set.selections if getattr(field, 'name', None)]
+            if len(roots) == 1 and roots[0].name.value == 'project_matches' and 'project_match' in schemas[0].query_type.fields:
+                narrowed.append(ProjectIdentityReader(None, old_raw, '1').request(document, {})[0])
+        except (ValueError, GraphQLError, TypeError) as error:
+            raise MappingSchemaCompatibilityError(['query: invalid identity-scoped Project reader']) from error
+    read_queries = read_queries + narrowed
     profiles = _profiles(mutation_profiles)
     operations = {operation for operation, _ in profiles}
     proofs = []

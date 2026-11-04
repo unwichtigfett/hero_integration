@@ -191,6 +191,8 @@ def _version_text(document):
     for change in value.get('changed', []):
         if not isinstance(change, list) or len(change) != 3: continue
         name, before, after = change
+        from hero_integration.services.project_naming import LOCAL_PROJECT_NAME_FIELDS
+        if isinstance(name, str) and name in LOCAL_PROJECT_NAME_FIELDS: continue
         field = metadata.get_field(name) if isinstance(name, str) else None
         if field is None or field.fieldtype == 'Password' or getattr(field, 'hidden', False): continue
         if isinstance(before, (dict, list)) or isinstance(after, (dict, list)): continue
@@ -218,6 +220,8 @@ def _activity_text(document, content):
         return _version_text(document)
     if document.comment_type not in content.get('comment_types', ['Comment']):
         _fail('This automatic activity type is not selected by the logbook mapping.')
+    # Frappe emits Edit comments for document renames, including the local -H ID.
+    if document.comment_type == 'Edit': return ''
     text = plain_text(document.content)
     if not text and document.comment_type != 'Comment': text = str(frappe._(document.comment_type))
     return text
@@ -364,24 +368,37 @@ def _prepare(ctx, client):
         history_ids={str(value_at(entry, options['identity_path'])) for entry in histories})
 
 
-def _fingerprint(ctx, *, text=None):
+def _fingerprint(ctx, *, text=None, delivery=False, project_modified=None):
+    link = dict(ctx.link)
+    if delivery:
+        # A preceding verified Project update advances exactly these baselines.
+        # All source/target identities, approvals and activity/project stamps stay bound.
+        link.pop('source_field_hashes', None)
+        link.pop('target_field_hashes', None)
     return _hash([ctx.document.name, getattr(ctx.document, 'doctype', 'Comment'), ctx.document.modified, _activity_raw(ctx.document),
-        _activity_parent(ctx.document, getattr(ctx.document, 'doctype', 'Comment')), ctx.project.modified,
+        _activity_parent(ctx.document, getattr(ctx.document, 'doctype', 'Comment')),
+        ctx.project.modified if project_modified is None else project_modified,
         _activity_text(ctx.document, ctx.content) if text is None else text,
         ctx.mapping.name, ctx.mapping.mapping_revision, ctx.content, ctx.proof.fingerprint,
-        dict(ctx.link), ctx.contract.name, ctx.contract.contract_revision, ctx.contract.contract_fingerprint,
+        link, ctx.contract.name, ctx.contract.contract_revision, ctx.contract.contract_fingerprint,
         ctx.service.query_document, vars(ctx.read.contract), ctx.read.service.query_document])
 
 
-def preview(comment, *, activity_doctype='Comment', client=None):
+def preview(comment, *, activity_doctype='Comment', client=None, delivery_project_stamp=None):
     from hero_integration.api import _mutation_execution_state
     from hero_integration.client.graphql import HeroGraphQLClient
     from hero_integration.services.writeback_source import validate_source
     ctx = _load_context(comment, activity_doctype=activity_doctype); config = validate_source(ctx.proof)
     client = client or HeroGraphQLClient(config.endpoint, lambda: config.api_token, config.timeout_seconds, max_retries=0)
     prepared = _prepare(ctx, client)
+    previous_stamp = None
+    if delivery_project_stamp is not None:
+        if str(ctx.project.modified) != delivery_project_stamp['after']:
+            _fail('The activity preview changed; review and confirm it again.')
+        previous_stamp = delivery_project_stamp['before']
     enabled = bool(_mutation_execution_state()['mutation_execution_enabled'])
     return {'comment': comment, 'activity_doctype': activity_doctype, 'project': ctx.project.name, 'mapping': ctx.mapping.name, 'fingerprint': prepared.fingerprint,
+        'delivery_fingerprint': _fingerprint(ctx, text=prepared.text, delivery=True, project_modified=previous_stamp),
         'sending_enabled': enabled, 'can_send': enabled, 'changes': [{'label': 'Activity', 'hero': None, 'new': prepared.text}],
         'blocked_reason': '' if enabled else 'Global HERO mutation execution is currently OFF.'}
 
@@ -406,8 +423,11 @@ def candidates(project):
     for doctype, filters, fields in kinds:
         if doctype == 'Version' and not frappe.has_permission('Version', 'read'):
             continue
-        rows = frappe.get_list(doctype, filters=filters, fields=fields, order_by='creation desc', limit_page_length=100)
+        rows = frappe.get_list(doctype, filters=filters, fields=fields, order_by='creation asc, name asc', limit_page_length=0)
         for row in rows:
+            native = frappe.get_doc(doctype, row.name)
+            if not frappe.has_permission(doctype, 'read', doc=native): continue
+            if doctype == 'Comment' and not frappe.has_permission('Comment', 'write', doc=native): continue
             if frappe.get_all('HERO Integration Link', filters={'source_system': 'HERO', 'source_type': 'project_history',
                     'target_doctype': doctype, 'target_name': row.name}, pluck='name', limit_page_length=1): continue
             if frappe.get_all('HERO Mutation Audit', filters={'request_fingerprint': _comment_scope(source, row.name, doctype)},

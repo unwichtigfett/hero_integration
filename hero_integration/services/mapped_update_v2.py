@@ -154,6 +154,9 @@ def normalise_mapping(content,raw_schema):
                 or item['resolver'] not in RESOLVERS or not isinstance(opts,dict)
                 or set(opts)-{'map','price_list','timezone','when','query_path','missing','null'}):
             raise MappedUpdateError('Invalid mapped update source, path or resolver.')
+        from hero_integration.services.project_naming import is_local_project_name
+        if is_local_project_name(source, path):
+            raise MappedUpdateError('Project naming is local to ERPNext and cannot be sent to HERO.')
         allowed={owner}|({'Contact','Address'} if owner=='Customer' else {'Item Price'} if owner=='Item' else {'User'} if owner=='Employee' else {'ToDo'} if owner=='Task' else set())
         if source['doctype'] not in allowed: raise MappedUpdateError('Source is outside the verified native relations.')
         if path in seen_inputs or any(path.startswith(p+'.') or p.startswith(path+'.') for p in seen_inputs):
@@ -333,6 +336,9 @@ def _read_record(ctx,client):
         if contract!=ctx.read.contract or service.query_document!=ctx.read.service.query_document:
             raise MappedUpdateError('The approved readback query changed.')
         return contract
+    if ctx.content['area'] == 'HeroProjectMatches':
+        from hero_integration.services.project_identity_read import ProjectIdentityReader
+        client = ProjectIdentityReader(client, ctx.raw_schema, ctx.hero_id)
     source=GraphQLServiceSource(client,ctx.read.service,ctx.read.contract,ctx.proof.source_instance,revalidate=revalidate)
     found=None;offset=0
     for _ in range(2000):
@@ -343,7 +349,7 @@ def _read_record(ctx,client):
             if str(identity)==ctx.hero_id:
                 if found is not None: raise MappedUpdateError('Readback identity is ambiguous.')
                 found=row
-        if page.next_offset is None:
+        if page.next_offset is None or ctx.content['area'] == 'HeroProjectMatches':
             if found is None: raise MappedUpdateError('The bound HERO record was not found in the approved readback.')
             _guard_record(ctx,found);return found
         if not page.records or page.next_offset<=offset: raise MappedUpdateError('Readback pagination did not advance.')
@@ -634,6 +640,9 @@ def _prepare(ctx,client):
         copied.append(copy)
     changes=[];conflicts=[];checks=[];states=[];assigned={}
     for item in ctx.content['assignments']:
+        from hero_integration.services.project_naming import is_local_project_name
+        if is_local_project_name(item['source'], item['input_path']):
+            raise MappedUpdateError('Project naming is local to ERPNext and cannot be sent to HERO.')
         try: doc,local=_source(ctx,item,remote)
         except send_helpers._SourceRelationMissing:
             if item['options'].get('missing')=='OMIT': continue
