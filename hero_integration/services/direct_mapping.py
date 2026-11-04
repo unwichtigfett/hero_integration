@@ -95,7 +95,12 @@ TRANSFORMATIONS.add(TRANSFORM_SALUTATION)
 # Map HERO titles to Frappe Salutations; unknown values preserve the Contact value.
 SALUTATION_TABLE = {"herr": "Herr", "frau": "Frau", "familie": "Familie", "eheleute": "Eheleute", "dr.": "Dr", "dr": "Dr"}
 
-ALLOWED_TARGET_TYPES = {"Data", "Small Text", "Int", "Float", "Currency", "Check", "Date", "Datetime", "Link"}
+ALLOWED_TARGET_TYPES = {"Data", "Small Text", "Int", "Float", "Currency", "Percent", "Check", "Date", "Datetime", "Time",
+                        "Link"}
+# A value that names an existing record of the Link's DocType; anything else stays empty.
+TRANSFORM_EXISTING_RECORD = "Existing Record"
+TRANSFORM_SAFE_HTML = "Safe HTML"
+TRANSFORMATIONS.update({TRANSFORM_EXISTING_RECORD, TRANSFORM_SAFE_HTML})
 # Read-only HERO observation fields that are not text: (operation, path, field, transform) -> fieldtype.
 NATIVE_TYPED_OBSERVATIONS = {
     ("HeroProjectMatches", "volume", "custom_hero_volume", "Identity"): "Currency",  # euros
@@ -213,12 +218,31 @@ def transformed_value(spec: MappingSpec, value: object) -> object | None:
         return hero_customer_type(value)
     if spec.transformation == TRANSFORM_PLAIN_TEXT_HTML:
         return plain_text_html(value)
+    if spec.transformation == TRANSFORM_SAFE_HTML:
+        if not isinstance(value, str) or not value.strip():
+            return None
+        from frappe.utils.html_utils import sanitize_html
+        return sanitize_html(value)
+    if spec.transformation == TRANSFORM_EXISTING_RECORD:
+        return existing_record(spec.target_doctype, spec.target_field, value)
     if spec.transformation == TRANSFORM_USER_BY_EMAIL:
         return user_by_email(value)
     if spec.transformation == TRANSFORM_USER_BY_PARTNER:
         from hero_integration.integrations.hero_people import user_by_partner
         return user_by_partner(value)
     return value
+
+
+def existing_record(doctype: str, fieldname: str, value: object) -> str | None:
+    """``value`` when it names an existing record of the Link field's DocType, else None."""
+    if not isinstance(value, (str, int)) or isinstance(value, bool) or not str(value).strip():
+        return None
+    import frappe
+
+    field = frappe.get_meta(doctype).get_field(fieldname)
+    target = getattr(field, "options", None) if field else None
+    name = str(value).strip()
+    return name if target and frappe.db.exists(target, name) else None
 
 
 def user_by_email(value: object) -> str | None:
@@ -375,20 +399,39 @@ def _validate_custom_field(spec: MappingSpec, metadata) -> None:
     allowed_types = (allowed_types,) if isinstance(allowed_types, str) else allowed_types
     if is_native and (field is None or field.fieldtype not in allowed_types):
         raise DirectMappingError('Native HERO observation field has an incompatible type.')
-    if field is None or field.fieldtype not in ALLOWED_TARGET_TYPES or (field.read_only and not is_native):
+    _require_compatible_source(spec)
+    # The app's own fields are read-only for users but written by the import.
+    app_field = spec.target_field.startswith("custom_hero_") and bool(getattr(field, "is_custom_field", False))
+    text_editor = field is not None and field.fieldtype == "Text Editor"
+    if (field is None or (field.fieldtype not in ALLOWED_TARGET_TYPES and not text_editor)
+            or (field.read_only and not (is_native or app_field))):
         raise DirectMappingError("Target field is not a writable supported Frappe field.")
-    if not getattr(field, "is_custom_field", False):
-        binding = (spec.source_path, spec.source_type, spec.target_doctype,
-                   spec.target_field, field.fieldtype, spec.transformation)
-        allowed_native = (
-            binding in contract.get("native_field_bindings", frozenset())
-            and not spec.relation
-            and not any(getattr(field, key, None) for key in ("hidden", "fetch_from", "is_virtual"))
-        )
-        if not allowed_native:
-            raise DirectMappingError("A site-specific mapping requires an approved native field or a Custom Field.")
-    if field.fieldtype == "Link":
-        raise DirectMappingError("Link targets require an approved entity resolver.")
+    if spec.relation or any(getattr(field, key, None) for key in ("fetch_from", "is_virtual")) or (
+            getattr(field, "hidden", 0) and not app_field):
+        raise DirectMappingError("Target field is filled automatically or hidden; map its source record instead.")
+    if text_editor and spec.transformation not in {TRANSFORM_PLAIN_TEXT_HTML, TRANSFORM_SAFE_HTML}:
+        raise DirectMappingError("Formatted text needs the Plain Text To HTML or Safe HTML transformation.")
+    if spec.transformation in {TRANSFORM_PLAIN_TEXT_HTML, TRANSFORM_SAFE_HTML} and not text_editor:
+        raise DirectMappingError("HTML transformations only target formatted text fields.")
+    if field.fieldtype == "Link" and (spec.transformation != TRANSFORM_EXISTING_RECORD or not (field.options or "")):
+        raise DirectMappingError("A Link target needs the Existing Record transformation.")
+    if spec.transformation == TRANSFORM_EXISTING_RECORD and field.fieldtype != "Link":
+        raise DirectMappingError("Existing Record only targets Link fields.")
+
+
+# Source kinds a transformation accepts (others are rejected before anything is written).
+_SOURCE_KINDS = {
+    TRANSFORM_TRIM: {"string"}, TRANSFORM_PLAIN_TEXT_HTML: {"string"}, TRANSFORM_SAFE_HTML: {"string"},
+    TRANSFORM_EXISTING_RECORD: {"string", "int"}, TRANSFORM_USER_BY_EMAIL: {"string"},
+    TRANSFORM_USER_BY_PARTNER: {"int"}, TRANSFORM_POSITIVE_INT_TO_TEXT: {"int"},
+    "Scalar Text": {"int", "float", "boolean"},
+}
+
+
+def _require_compatible_source(spec: MappingSpec) -> None:
+    kinds = _SOURCE_KINDS.get(spec.transformation)
+    if kinds and (spec.source_type or "").split("|")[0] not in kinds:
+        raise DirectMappingError("The transformation does not accept this HERO source type.")
 
 
 def _require(
