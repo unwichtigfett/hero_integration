@@ -299,3 +299,20 @@ class TestAutomaticActivityGuards(TestCase):
         self.assertEqual(result['comments'][0]['activity_doctype'],'Comment')
         self.assertEqual(query.call_count,1)
         self.assertEqual(query.call_args.args[0],'Comment')
+
+
+class TestProjectNotesAreNotLogbookActivities(TestCase):
+    def test_notes_only_version_is_not_an_outbound_activity(self):
+        fields={'notes':NS(label='Notes',fieldtype='Text Editor',hidden=0,read_only=0)}
+        version=NS(doctype='Version',data=json.dumps({'changed':[['notes','Old','Old<br>Test 04.11.2026']]}))
+        with patch.object(wb,'frappe',NS(get_meta=lambda _:NS(get_field=fields.get),_=lambda text:text)):
+            self.assertEqual(wb._version_text(version),'')
+        # A genuine timeline comment keeps exactly the comment text.
+        comment=NS(doctype='Comment',comment_type='Comment',content='<p>Test 04.11.2026</p>')
+        self.assertEqual(wb._activity_text(comment,{'comment_types':['Comment']}),'Test 04.11.2026')
+
+    def test_mixed_version_retains_status_but_omits_notes(self):
+        fields={name:NS(label=name,fieldtype='Data',hidden=0,read_only=0) for name in ('notes','status')}
+        version=NS(data=json.dumps({'changed':[['notes','Old','New'],['status','Open','Completed']]}))
+        with patch.object(wb,'frappe',NS(get_meta=lambda _:NS(get_field=fields.get),_=lambda text:text)):
+            self.assertEqual(wb._version_text(version),'status: Open → Completed')

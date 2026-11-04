@@ -193,7 +193,8 @@ def _version_text(document):
         if not isinstance(change, list) or len(change) != 3: continue
         name, before, after = change
         from hero_integration.services.project_naming import LOCAL_PROJECT_NAME_FIELDS
-        if isinstance(name, str) and name in LOCAL_PROJECT_NAME_FIELDS: continue
+        # Notes are sent as Project data, never duplicated as logbook changes.
+        if isinstance(name, str) and (name in LOCAL_PROJECT_NAME_FIELDS or name == 'notes'): continue
         field = metadata.get_field(name) if isinstance(name, str) else None
         if (field is None or field.fieldtype == 'Password' or getattr(field, 'hidden', False)
                 or getattr(field, 'read_only', False) or getattr(field, 'is_virtual', False)
@@ -257,7 +258,9 @@ def _load_context(comment, *, activity_doctype='Comment', lock=False, audit=None
     raw_schema = json.loads(snapshot.snapshot_json)
     content = normalise_mapping(json.loads(mapping.mapping_json, object_pairs_hook=unique_json_object), raw_schema)
     validate_sources(content)
-    if not _activity_text(document, content):
+    # Existing receipts are verified against their original payload hashes; a
+    # later exclusion from new sends must not prevent that local reconciliation.
+    if receipt is None and not _activity_text(document, content):
         _fail('The activity must contain nonempty text within the permitted length.')
     proof = capture_source(snapshot, config.source_instance, config)
     filters = {'source_system': 'HERO', 'source_type': 'project',

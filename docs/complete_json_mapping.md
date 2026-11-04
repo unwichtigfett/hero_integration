@@ -230,3 +230,10 @@ acknowledged text hash are proven again. This operation updates local metadata i
 the caller's transaction and cannot create another HERO entry. An in-flight audit
 or a genuine mismatch remains blocked. The Project dialog closes and reports
 successful delivery only after every confirmed step succeeds.
+
+
+Changes to `Project.notes` are excluded from automatic logbook summaries: Notes
+travel through the Project data mapping only. A Notes-only Version is not an
+outbound activity; mixed Versions retain other eligible changes such as status.
+Native manual Comments still transfer their own text unchanged. Existing native
+Versions and previously created HERO entries are retained.
