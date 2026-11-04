@@ -6,6 +6,7 @@ server-owned. JSON transfers configuration only; no import executes a mutation.
 from copy import deepcopy
 from hashlib import sha256
 import json
+import re
 from types import SimpleNamespace
 from uuid import UUID
 
@@ -475,14 +476,26 @@ def _record_response(ctx, prepared, history_id):
     return link.name
 
 
+
+def readback_texts(value):
+    """Accept HERO's nl2br representation without interpreting plain text twice.
+
+    HERO inserts <br /> before existing newline characters. Removing the
+    inserted tag preserves deliberate empty lines and literal tags/entities.
+    """
+    if not isinstance(value, str): return ()
+    restored = re.sub(r'(?i)<br\s*/?>(\r?\n)', r'\1', value)
+    from hero_integration.services.task_send import plain_text
+    return tuple(dict.fromkeys(text for text in (value, restored, plain_text(restored)) if isinstance(text, str)))
+
+
 def _verify_response(ctx, prepared, history_id, client):
     from hero_integration.services.read_contract import value_at
-    from hero_integration.services.task_send import plain_text
     remote = _read_project(ctx, client)
     logbook = ctx.read.contract.adapter_options['logbook']
     histories = value_at(remote, logbook['path'])
     matches = [entry for entry in histories if str(value_at(entry, logbook['identity_path'])) == str(history_id)]
-    if len(matches) != 1 or plain_text(matches[0].get('custom_text')) != prepared.text:
+    if len(matches) != 1 or prepared.text not in readback_texts(matches[0].get('custom_text')):
         _fail('HERO did not confirm the created logbook activity through the approved Project reader.')
     entry = matches[0]
     if (entry.get('target') != 'project_match' or str(entry.get('target_id')) != ctx.hero_id):
@@ -550,6 +563,57 @@ def send(comment, *, activity_doctype='Comment', fingerprint='', confirmed=False
         _fail('The logbook activity could not be confirmed; no automatic retry was performed. Reconcile the Project logbook reservation.')
     _finalize_mutation(audit, 'Succeeded', 'Project activity created once; native Comment preserved and approved logbook readback verified.')
     return {'status': 'SENT', 'comment': comment, 'activity_doctype': activity_doctype, 'project': ctx.project.name, 'hero_id': identity}
+
+
+
+def reconcile_receipt(receipt_name, *, client=None):
+    """Confirm an existing durable create receipt; never execute a mutation."""
+    frappe.only_for('System Manager')
+    from hero_integration.client.graphql import HeroGraphQLClient
+    from hero_integration.services.project_logbook import _digest
+    from hero_integration.services.writeback_source import validate_source
+    receipt = frappe.get_doc('HERO Integration Link', receipt_name, for_update=True)
+    if (receipt.source_system != 'HERO' or receipt.source_type != 'project_history'
+            or receipt.mapping_version != OUTBOUND_VERSION or receipt.sync_status != 'Pending Review'
+            or receipt.target_doctype not in {'Comment', 'Version'}):
+        _fail('The saved logbook receipt cannot be reconciled automatically.')
+    scope = _comment_scope(receipt.source_instance, receipt.target_name, receipt.target_doctype)
+    names = frappe.get_all('HERO Mutation Audit', filters={'operation_name': OPERATION, 'request_fingerprint': scope},
+                           pluck='name', limit_page_length=2)
+    if len(names) != 1: _fail('The saved logbook receipt cannot be reconciled automatically.')
+    audit = frappe.get_doc('HERO Mutation Audit', names[0], for_update=True)
+    if audit.status != 'Failed' or audit.operation_name != OPERATION or audit.request_fingerprint != scope:
+        _fail('The saved logbook receipt cannot be reconciled automatically.')
+    ctx = _load_context(receipt.target_name, activity_doctype=receipt.target_doctype, lock=True,
+                        audit=audit, receipt=receipt.name)
+    if (receipt.source_instance != ctx.proof.source_instance or ctx.marker is None
+            or ctx.marker.sync_status != 'Pending Review' or ctx.marker.conflict_detail != audit.correlation_id
+            or _hash(_activity_raw(ctx.document)) != receipt.target_payload_hash):
+        _fail('The saved logbook receipt cannot be reconciled automatically.')
+    config = validate_source(ctx.proof)
+    client = client or HeroGraphQLClient(config.endpoint, lambda: config.api_token, config.timeout_seconds, max_retries=0)
+    remote = _read_project(ctx, client)
+    from hero_integration.services.read_contract import value_at
+    options = ctx.read.contract.adapter_options['logbook']
+    rows = value_at(remote, options['path'])
+    if not isinstance(rows, list): _fail('The saved logbook receipt cannot be reconciled automatically.')
+    matches = [row for row in rows if isinstance(row, dict) and
+               _digest([ctx.proof.source_instance, ctx.hero_id, str(value_at(row, options['identity_path']))]) == receipt.source_id]
+    if len(matches) != 1: _fail('The saved logbook receipt cannot be reconciled automatically.')
+    entry = matches[0]
+    if (entry.get('target') != 'project_match' or str(entry.get('target_id')) != ctx.hero_id
+            or not any(_hash(text) == receipt.source_payload_hash for text in readback_texts(entry.get('custom_text')))):
+        _fail('The saved logbook receipt cannot be reconciled automatically.')
+    validate_source(ctx.proof)
+    # No commits here: caller owns one atomic transaction for both links and audit.
+    now = frappe.utils.now_datetime()
+    frappe.db.set_value('HERO Integration Link', receipt.name,
+        {'sync_status': 'Synchronized', 'last_synced_on': now}, update_modified=False)
+    frappe.db.set_value('HERO Integration Link', ctx.marker.name,
+        {'sync_status': 'Synchronized', 'conflict_detail': ''}, update_modified=False)
+    frappe.db.set_value('HERO Mutation Audit', audit.name, {'status': 'Succeeded',
+        'detail': 'Existing durable logbook receipt verified by approved readback. Initial verification failed; no external retry performed.'})
+    return {'status': 'RECONCILED', 'project': ctx.project.name, 'receipt': receipt.name, 'hero_mutations': 0}
 
 
 def capture_project_activity(document, method=None):

@@ -216,3 +216,17 @@ acknowledgement retires the replaced legacy hash keys. Customer payload changes
 alone do not block an unchanged Project.customer relation when the synchronized
 same-source identity exactly matches the freshly read HERO customer_id. This
 exception never authorizes changing that relation or writing to the Customer.
+
+HERO logbook readback accepts the exact sent plain text and HERO's `nl2br`
+representation, which inserts `<br />` before an existing newline. Verification
+removes only that added representation before comparing; deliberate blank lines,
+literal tags and entities stay significant. Inbound echoes compare the original
+HERO `custom_text`, independently of generated display headings. Identity, Project
+parent and native activity checks still apply.
+
+System Managers may reconcile an existing pending outbound receipt only after its
+unique failed audit, original local payload, exact remote identity, Project and
+acknowledged text hash are proven again. This operation updates local metadata in
+the caller's transaction and cannot create another HERO entry. An in-flight audit
+or a genuine mismatch remains blocked. The Project dialog closes and reports
+successful delivery only after every confirmed step succeeds.

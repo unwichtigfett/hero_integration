@@ -327,7 +327,7 @@ def sync_mapped_entries(plan, record, project, *, preview=False, conflicts=None)
             context = {path[len(config['path']) + 1:]: _context_value(entry, path[len(config['path']) + 1:].split('.'))
                        for path in config['context_paths']}
             values['custom_hero_logbook_context'] = json.dumps(context, sort_keys=True, ensure_ascii=False)
-        planned.append((key, values, str(identity), restricted))
+        planned.append((key, values, str(identity), restricted, entry.get('custom_text')))
     if preview:
         return len(planned)
     project_doc = frappe.get_doc('Project', project, for_update=True)
@@ -335,7 +335,7 @@ def sync_mapped_entries(plan, record, project, *, preview=False, conflicts=None)
     from hero_integration.services.project_logbook_writeback import assert_project_import_clear, OUTBOUND_VERSION
     assert_project_import_clear(instance, project, frappe_api=frappe)
     added = 0
-    for key, values, identity, restricted in planned:
+    for key, values, identity, restricted, outbound_text in planned:
         existing = frappe.db.sql('SELECT name, target_doctype, target_name, mapping_version, sync_status, '
             'source_payload_hash, target_payload_hash FROM `tabHERO Integration Link` '
             'WHERE source_system=%s AND source_type=%s AND source_instance=%s AND source_id=%s FOR UPDATE',
@@ -350,7 +350,7 @@ def sync_mapped_entries(plan, record, project, *, preview=False, conflicts=None)
                 version = frappe.get_doc('Version', link.target_name)
                 if version.ref_doctype != 'Project' or version.docname != project:
                     raise ValueError('Mapped logbook comment belongs to another parent.')
-                _observe_outbound_activity(link, version, values, conflicts)
+                _observe_outbound_activity(link, version, values, conflicts, outbound_text=outbound_text)
                 continue
             if link.target_doctype != 'Comment' or not frappe.db.exists('Comment', link.target_name):
                 raise ValueError('Mapped logbook link has an incompatible or missing target.')
@@ -372,7 +372,7 @@ def sync_mapped_entries(plan, record, project, *, preview=False, conflicts=None)
             if link.mapping_version == OUTBOUND_VERSION:
                 # This is the original ERPNext activity, not a Comment created
                 # by import. Preserve its content, author and native timestamps.
-                _observe_outbound_activity(link, comment, values, conflicts)
+                _observe_outbound_activity(link, comment, values, conflicts, outbound_text=outbound_text)
                 continue
             if config.get('context_paths') and link.mapping_version == 'project-logbook-v1':
                 _enrich_legacy_mapped_comment(comment, values)
@@ -428,10 +428,13 @@ def sync_mapped_entries(plan, record, project, *, preview=False, conflicts=None)
     return added
 
 
-def _observe_outbound_activity(link, activity, values, conflicts):
+def _observe_outbound_activity(link, activity, values, conflicts, *, outbound_text=None):
     from hero_integration.services.project_logbook_writeback import _hash, _activity_raw
     from hero_integration.services.task_send import plain_text
-    observed_source = _hash(plain_text(values.get('content')))
+    from hero_integration.services.project_logbook_writeback import readback_texts
+    candidates = readback_texts(outbound_text)
+    observed_source = next((_hash(text) for text in candidates if _hash(text) == link.source_payload_hash),
+                           _hash(plain_text(outbound_text)))
     observed_target = _hash(_activity_raw(activity))
     changed = observed_source != link.source_payload_hash or observed_target != link.target_payload_hash
     frappe.db.set_value('HERO Integration Link', link.name, {

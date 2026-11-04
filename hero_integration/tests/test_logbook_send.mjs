@@ -68,6 +68,7 @@ test('confirmation submits complete plan once and reloads after success',async()
     assert.equal(sends[0].type,'POST');assert.equal(sends[0].args.confirmed,1);
     assert.equal(sends[0].args.fingerprint,'fp-project');
     assert.deepEqual(JSON.parse(sends[0].args.delivery),preview().delivery);assert.equal(app.reloads(),1);
+    assert.equal(app.alerts[0].message,'Delivery successful');assert.equal(dialog.shown,false);
 });
 test('cancel sends nothing and ignores late preview',async()=>{
     const waiting=deferred();const app=await setup({project_send_preview:()=>waiting.promise});
