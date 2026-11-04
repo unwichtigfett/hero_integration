@@ -25,7 +25,8 @@ class TestSimpleMappingExchange(unittest.TestCase):
         self.storage.publish.return_value = {'name': 'ACTIVE', 'revision': 1, 'unchanged': False}
         from contextlib import nullcontext
         patches = [patch('hero_integration.services.mapping_snapshot_rebase.preview_target', side_effect=lambda *a:nullcontext()),
-            patch('hero_integration.services.mapping_snapshot_rebase.prepare', return_value={'needs_rebase':False}),patch.object(simple, 'frappe', self.fake),
+            patch('hero_integration.services.mapping_snapshot_rebase.prepare', return_value={'needs_rebase':False}),
+            patch('hero_integration.services.mapping_import_context.resolve', side_effect=lambda name,source,payload=None: {'snapshot_name':name,'payload':payload,'validated_against_snapshot':name}),patch.object(simple, 'frappe', self.fake),
             patch.object(simple, '_context', return_value=(SimpleNamespace(source_instance='configured'), {})),
             patch.object(simple.exchange, '_parse_portable', return_value=self.package),
             patch.object(simple.exchange, 'preview_import', side_effect=lambda *args: deepcopy(self.raw)),

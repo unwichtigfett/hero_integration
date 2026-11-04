@@ -46,7 +46,9 @@ def parse_file(payload):
 
 
 def export(snapshot_name, source_instance):
-    return config.export_config(snapshot_name, source_instance, mappings_only=True)
+    from hero_integration.services.mapping_import_context import resolve
+    context = resolve(snapshot_name, source_instance)
+    return config.export_config(context['snapshot_name'], source_instance, mappings_only=True)
 
 
 def _snapshot(snapshot_name, source_instance):
@@ -130,7 +132,7 @@ def _preview_current(payload, snapshot_name, source_instance):
     return checked
 
 
-def _apply_current(payload, snapshot_name, source_instance, fingerprint, *, confirmed=False):
+def _apply_current(payload, snapshot_name, source_instance, fingerprint, *, confirmed=False, compatibility_check=None):
     if confirmed is not True:
         raise MappingOnlyError('Explicit mapping import confirmation is required.')
     checked = preview(payload, snapshot_name, source_instance)
@@ -149,6 +151,8 @@ def _apply_current(payload, snapshot_name, source_instance, fingerprint, *, conf
         # transition only here, after all schema DDL has completed.
         rebase_savepoint = 'hero_snapshot_query_import_' + uuid4().hex
         frappe.db.savepoint(rebase_savepoint)
+        if compatibility_check is not None:
+            compatibility_check()
         plan = prepare(snapshot_name, source_instance)
         if plan['needs_rebase']:
             prepare(snapshot_name, source_instance, apply=True, expected_fingerprint=plan['fingerprint'])
@@ -168,9 +172,22 @@ def _apply_current(payload, snapshot_name, source_instance, fingerprint, *, conf
 
 def preview(payload, snapshot_name, source_instance):
     from hero_integration.services.mapping_snapshot_rebase import preview_target
-    with preview_target(snapshot_name, source_instance):
-        return _preview_current(payload, snapshot_name, source_instance)
+    from hero_integration.services.mapping_import_context import resolve
+    context = resolve(snapshot_name, source_instance, payload)
+    with preview_target(context['snapshot_name'], source_instance):
+        result = _preview_current(context['payload'], context['snapshot_name'], source_instance)
+    return {**result, 'validated_against_snapshot': snapshot_name}
 
 
 def apply(payload, snapshot_name, source_instance, fingerprint, *, confirmed=False):
-    return _apply_current(payload, snapshot_name, source_instance, fingerprint, confirmed=confirmed)
+    if confirmed is not True:
+        raise MappingOnlyError('Explicit mapping import confirmation is required.')
+    from hero_integration.services.mapping_import_context import resolve
+    context = resolve(snapshot_name, source_instance, payload)
+    def recheck():
+        current = resolve(snapshot_name, source_instance, payload)
+        if current['snapshot_name'] != context['snapshot_name'] or current['payload'] != context['payload']:
+            raise MappingOnlyError('The mapping import preview changed; preview the file again.')
+    result = _apply_current(context['payload'], context['snapshot_name'], source_instance, fingerprint,
+        confirmed=True, compatibility_check=recheck)
+    return {**result, 'snapshot_name': context['snapshot_name'], 'validated_against_snapshot': snapshot_name}

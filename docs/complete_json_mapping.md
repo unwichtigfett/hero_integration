@@ -155,3 +155,22 @@ rechecks it under locks. Query imports perform this DML after schema-provisionin
 DDL, so a later failure can roll back the complete metadata transition. Unchanged
 active Mutation mappings are retained without attempting to publish their unsaved
 baseline drafts; only real changes need a saved publication revision.
+
+## Compatibility with newer HERO schemas
+
+The Mapping import/export paths also accept a newer snapshot whose unrelated
+schema members changed. They compare the actual saved and incoming Query
+selections, argument contracts/defaults, configured mutation input paths,
+server-owned identities, required readback and response IDs against both schemas.
+Required inputs, used enum domains, wrappers and relevant omitted defaults remain
+part of the contract. Unused optional additions, descriptions and ordering alone
+do not block existing mappings. A changed used dependency reports its path.
+
+For a different global schema fingerprint, compatible mappings retain their
+existing approved snapshot and fingerprint. The selected newer snapshot is the
+compatibility-validation target; no unrelated new schema capabilities or approval
+are granted. Incoming file fingerprints must match one of the two verified
+snapshots before the importer selects the approved context. Query imports repeat
+this proof after schema DDL and before mapping DML. The earlier reference-only
+transition still applies to truly identical complete schemas. Multiple different
+active approval contexts require separate imports.

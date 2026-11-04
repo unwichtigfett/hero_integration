@@ -3931,9 +3931,11 @@ def config_export(snapshot_name: str = "") -> dict[str, str]:
     """
     frappe.only_for("System Manager")
     from hero_integration.services.config_exchange import export_config
-
-    return {"filename": "hero-integration-config.json",
-            "content": export_config(snapshot_name or _config_snapshot(), _configured_source_instance())}
+    from hero_integration.services.mapping_import_context import resolve
+    with _simple_mapping_import_errors():
+        context = resolve(snapshot_name or _config_snapshot(), _configured_source_instance())
+        return {"filename": "hero-integration-config.json",
+                "content": export_config(context['snapshot_name'], _configured_source_instance())}
 
 
 @frappe.whitelist(methods=["POST"])
@@ -4030,11 +4032,12 @@ def _simple_mapping_import_errors():
     from hero_integration.services.schema_provisioning import SchemaProvisioningError
     from hero_integration.services.mapping_only_exchange import MappingOnlyError
     from hero_integration.services.mapping_snapshot_rebase import SnapshotRebaseError
+    from hero_integration.services.mapping_schema_compatibility import MappingSchemaCompatibilityError
     from hero_integration.services.config_exchange import ConfigExchangeError
     try:
         with _personal_draft_errors():
             yield
-    except (MappingDraftExchangeError, SchemaProvisioningError, MappingOnlyError, ConfigExchangeError, SnapshotRebaseError) as error:
+    except (MappingDraftExchangeError, SchemaProvisioningError, MappingOnlyError, ConfigExchangeError, SnapshotRebaseError, MappingSchemaCompatibilityError) as error:
         frappe.throw(translate_error(error, frappe._))
 
 
@@ -4051,8 +4054,10 @@ def simple_mapping_export(snapshot_name: str = '', direction: str = 'QUERY_TO_FR
             return {'filename': 'hero-query-mappings.json', 'content': export(snapshot_name, _configured_source_instance())}
         if direction == 'FRAPPE_TO_MUTATION':
             from hero_integration.services.mapping_draft_exchange import export_package, PORTABLE_FORMAT_VERSION
+            from hero_integration.services.mapping_import_context import resolve
+            context = resolve(snapshot_name, _configured_source_instance())
             return {'filename': 'hero-mutation-mappings.json', 'content': export_package(_configured_source_instance(),
-                snapshot_name, direction, format_version=PORTABLE_FORMAT_VERSION)}
+                context['snapshot_name'], direction, format_version=PORTABLE_FORMAT_VERSION)}
         frappe.throw(frappe._('MAPPING_INPUT_INVALID: Invalid direction.'))
 
 
