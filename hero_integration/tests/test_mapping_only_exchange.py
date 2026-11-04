@@ -51,7 +51,8 @@ class TestMappingOnlyWorkflow(unittest.TestCase):
         self.fake=NS(only_for=Mock(),db=NS(savepoint=Mock(),rollback=Mock()))
         from contextlib import nullcontext
         for p in [patch('hero_integration.services.mapping_snapshot_rebase.preview_target', side_effect=lambda *a:nullcontext()),
-                  patch('hero_integration.services.mapping_snapshot_rebase.prepare', return_value={'needs_rebase':False}),patch.object(mapping,'frappe',self.fake),patch.object(mapping,'_snapshot',return_value=self.snapshot),
+                  patch('hero_integration.services.mapping_snapshot_rebase.prepare', return_value={'needs_rebase':False}),
+            patch('hero_integration.services.mapping_import_context.resolve', side_effect=lambda name,source,payload=None: {'snapshot_name':name,'payload':payload,'validated_against_snapshot':name}),patch.object(mapping,'frappe',self.fake),patch.object(mapping,'_snapshot',return_value=self.snapshot),
                   patch.object(config,'_parse'),patch.object(config,'preview_config',return_value={'settings':[], 'read_services':[], 'replace_mappings':True}),
                   patch.object(mapping,'_target_state',return_value='state'),
                   patch('hero_integration.services.mapping_draft_exchange._preview_binding',return_value='proof')]:

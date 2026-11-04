@@ -131,8 +131,11 @@ def _apply_current(payload, snapshot_name, direction, expected_states, preview_f
 def preview(payload, snapshot_name, direction):
     from hero_integration.services.mapping_snapshot_rebase import preview_target
     snapshot, _schema = _context(snapshot_name, direction)
-    with preview_target(snapshot_name, snapshot.source_instance):
-        return _preview_current(payload, snapshot_name, direction)
+    from hero_integration.services.mapping_import_context import resolve
+    context = resolve(snapshot_name, snapshot.source_instance, payload)
+    with preview_target(context['snapshot_name'], snapshot.source_instance):
+        result = _preview_current(context['payload'], context['snapshot_name'], direction)
+    return {**result, 'validated_against_snapshot': snapshot_name}
 
 
 def apply(payload, snapshot_name, direction, expected_states, preview_fingerprint, *, confirmed=False):
@@ -148,10 +151,14 @@ def apply(payload, snapshot_name, direction, expected_states, preview_fingerprin
     savepoint = 'hero_snapshot_mapping_import_' + uuid4().hex
     frappe.db.savepoint(savepoint)
     try:
-        plan = prepare(snapshot_name, snapshot.source_instance)
+        from hero_integration.services.mapping_import_context import resolve
+        context = resolve(snapshot_name, snapshot.source_instance, payload)
+        actual = context['snapshot_name']
+        plan = prepare(actual, snapshot.source_instance)
         if plan['needs_rebase']:
-            prepare(snapshot_name, snapshot.source_instance, apply=True, expected_fingerprint=plan['fingerprint'])
-        return _apply_current(payload, snapshot_name, direction, expected_states, preview_fingerprint, confirmed=True)
+            prepare(actual, snapshot.source_instance, apply=True, expected_fingerprint=plan['fingerprint'])
+        result = _apply_current(context['payload'], actual, direction, expected_states, preview_fingerprint, confirmed=True)
+        return {**result, 'snapshot_name': actual, 'validated_against_snapshot': snapshot_name}
     except Exception:
         frappe.db.rollback(save_point=savepoint)
         raise

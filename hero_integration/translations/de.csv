@@ -3632,3 +3632,5 @@ Snapshot rebinding found an incompatible Project logbook contract scope.,Beim Sn
 A private parentless draft must be rebound by its owner before switching snapshots.,Ein persönlicher Entwurf ohne aktive Definition muss vor dem Snapshot-Wechsel durch seinen Eigentümer abgeglichen werden.
 An open draft has an incompatible snapshot context.,Ein offener Entwurf besitzt einen unvereinbaren Snapshot-Kontext.
 The confirmed HERO source changed during snapshot rebinding.,Die bestätigte HERO-Quelle wurde während des Snapshot-Wechsels geändert.
+Used mapping schema dependencies changed: {0},Verwendete Schema-Abhängigkeiten des Mappings wurden geändert: {0}
+Multiple approved schema contexts require separate mapping imports.,Mehrere freigegebene Schema-Kontexte benötigen getrennte Mapping-Importe.
