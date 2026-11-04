@@ -118,7 +118,7 @@
                         + ` (${result?.changes?.length || 0} / ${result?.activities?.length || 0})`, true);
                     return;
                 }
-                dialog.hide(); frappe.show_alert({message: t("Project changes and activities sent to HERO."), indicator: "green"});
+                dialog.hide(); frappe.show_alert({message: t("Delivery successful"), indicator: "green"});
                 if (forms.get(frm) === owner && frm.doc.name === project && !frm.is_dirty()) await frm.reload_doc();
             } catch (error) {
                 if (!flow.closed) message(t("Sending could not be confirmed. Review the result before sending again.") + " " + errorText(error), true);
