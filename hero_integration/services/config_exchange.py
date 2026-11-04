@@ -44,7 +44,7 @@ class ConfigExchangeError(LocalizedError):
     pass
 
 
-def export_config(snapshot_name: str, source_instance: str = "default") -> str:
+def export_config(snapshot_name: str, source_instance: str = "default", *, mappings_only: bool = False) -> str:
     from hero_integration import api
     from hero_integration.services import mapping_exchange
     from hero_integration.services.schema_provisioning import _definitions, _target_dependency
@@ -93,13 +93,38 @@ def export_config(snapshot_name: str, source_instance: str = "default") -> str:
         rules.append(rule)
     package = {"format_version": mapping_exchange.FORMAT_VERSION, "schema_fingerprint": snapshot.schema_fingerprint,
                "schema": schema, "mappings": rules}
+    if mappings_only:
+        from hero_integration.services.mapping_only_exchange import FORMAT_VERSION as MAPPING_FORMAT
+        for item in exported:
+            item['mapping'].pop('field_rules', None)
+            item['mapping'].pop('field_rule_bases', None)
+        return json.dumps({'format_version': MAPPING_FORMAT, 'schema_fingerprint': snapshot.schema_fingerprint,
+            'replace_mappings': True, 'mapping_package': package, 'read_services': exported},
+            ensure_ascii=False, sort_keys=True, indent=1)
     settings = frappe.get_single("HERO Integration Settings")
     from hero_integration.services.config_mutation_drafts import export as export_mutations
     mutations = export_mutations(source_instance, snapshot_name)
+    contracts = []
+    if mutations:
+        from hero_integration.services.config_mutation_contracts import export as export_contracts
+        contracts = export_contracts(source_instance, snapshot_name, mutation_mappings=mutations)
     return json.dumps({"format_version": FORMAT_VERSION, "replace_mappings": True,
         "schema_snapshot": {"schema_fingerprint": snapshot.schema_fingerprint, "schema": json.loads(snapshot.snapshot_json)},
-        "settings": {key: settings.get(key) for key in SETTINGS_KEYS}, "mapping_package": package,
-        "read_services": exported, **({'mutation_mappings': mutations} if mutations else {})}, ensure_ascii=False, sort_keys=True, indent=1)
+        "settings": _export_settings(settings), "mapping_package": package,
+        "read_services": exported, **({'mutation_mappings': mutations} if mutations else {}),
+        **({'mutation_contracts': contracts} if contracts else {})}, ensure_ascii=False, sort_keys=True, indent=1)
+
+
+def _export_settings(settings):
+    """Transfer the allowlist, excluding fields classified as passwords locally."""
+    meta = getattr(settings, 'meta', None)
+    result = {}
+    for key in SETTINGS_KEYS:
+        field = meta.get_field(key) if meta else None
+        if field and field.fieldtype == 'Password':
+            continue
+        result[key] = settings.get(key)
+    return result
 
 
 def _package_snapshot(payload: dict, *, create: bool) -> tuple[str | None, str]:
@@ -136,6 +161,13 @@ def _resolve_snapshot(snapshot_name: str, payload: dict, *, create: bool) -> tup
 def _settings_changes(payload: dict) -> dict:
     wanted = payload.get("settings") or {}
     settings = frappe.get_single("HERO Integration Settings")
+    meta = getattr(settings, 'meta', None)
+    if meta and any(meta.get_field(key) and meta.get_field(key).fieldtype == 'Password' for key in wanted):
+        raise ConfigExchangeError('Password fields cannot be transferred in configuration packages.')
+    requested_source = wanted.get('hero_source_instance')
+    current_source = settings.get('hero_source_instance') or 'default'
+    if requested_source not in (None, '', current_source):
+        raise ConfigExchangeError('Configuration import cannot change the locally confirmed HERO source.')
     return {key: value for key, value in wanted.items()
             if key in SETTINGS_KEYS and settings.get(key) != value
             and not (settings.get(key) in (None, "", 0) and value in (None, "", 0))}
@@ -201,7 +233,7 @@ def _query_problem(snapshot_name: str, item: dict) -> str | None:
     return None
 
 
-def import_config(snapshot_name: str, payload_json: str, source_instance: str = "default") -> dict:
+def import_config(snapshot_name: str, payload_json: str, source_instance: str = "default", *, before_mapping_write=None) -> dict:
     """Adopt the mapping package, then create, validate and approve each changed read service."""
     from hero_integration.services import adoption
     from hero_integration.services.schema_provisioning import preview_package
@@ -209,7 +241,7 @@ def import_config(snapshot_name: str, payload_json: str, source_instance: str = 
     frappe.only_for("System Manager")
     payload = _parse(payload_json)
     if payload.get("replace_mappings"):
-        return _replace_config(snapshot_name, payload, source_instance)
+        return _replace_config(snapshot_name, payload, source_instance, before_mapping_write=before_mapping_write)
     snapshot_name, snapshot_state = _resolve_snapshot(snapshot_name, payload, create=True)
     package_json, _ = _rebased_package(snapshot_name, payload)
     package = preview_package(snapshot_name, package_json)
@@ -248,7 +280,7 @@ def _parse(payload_json: str) -> dict:
     keys = {FORMAT_V1: {"format_version", "mapping_package", "read_services"},
             FORMAT_VERSION: {"format_version", "schema_snapshot", "settings", "mapping_package", "read_services"}}
     if (not isinstance(payload, dict) or payload.get("format_version") not in keys
-            or set(payload) - ({"replace_mappings", "mutation_mappings"} if payload.get("format_version") == FORMAT_VERSION else set()) != keys[payload["format_version"]]
+            or set(payload) - ({"replace_mappings", "mutation_mappings", "mutation_contracts"} if payload.get("format_version") == FORMAT_VERSION else set()) != keys[payload["format_version"]]
             or not isinstance(payload["read_services"], list)):
         raise ConfigExchangeError("This is not a HERO integration configuration file ({0}).", FORMAT_VERSION)
     if "replace_mappings" in payload and type(payload["replace_mappings"]) is not bool:
@@ -273,6 +305,15 @@ def _parse(payload_json: str) -> dict:
         from hero_integration.services.config_mutation_drafts import validate
         try:
             validate(payload)
+        except ValueError as error:
+            raise ConfigExchangeError.from_error(error) from error
+    if 'mutation_contracts' in payload:
+        if not payload.get('replace_mappings'):
+            raise ConfigExchangeError('Mutation contracts require a replacement configuration package.')
+        from hero_integration.services.config_mutation_contracts import validate as validate_contracts
+        try:
+            payload['mutation_contracts'] = validate_contracts(payload['mutation_contracts'],
+                payload['schema_snapshot']['schema'], payload.get('mutation_mappings', []))
         except ValueError as error:
             raise ConfigExchangeError.from_error(error) from error
     return payload
@@ -514,6 +555,20 @@ def _replacement_check(snapshot, payload, rules):
                 validate_sources(mutation['content'], field_provider=metadata.field)
         except ValueError as error:
             raise ConfigExchangeError.from_error(error) from error
+    if payload.get('mutation_contracts'):
+        from hero_integration.services.config_mutation_contracts import preview as preview_contracts, planned_preview
+        try:
+            if snapshot.name == 'package-preview':
+                contract_preview = planned_preview(payload['mutation_contracts'], json.loads(snapshot.snapshot_json),
+                    mutation_mappings=payload.get('mutation_mappings', []))
+            else:
+                contract_preview = preview_contracts(snapshot, payload['mutation_contracts'], snapshot.source_instance,
+                    mutation_mappings=payload.get('mutation_mappings', []))
+        except ValueError as error:
+            raise ConfigExchangeError.from_error(error) from error
+        if not contract_preview['can_apply']:
+            raise ConfigExchangeError('Mutation contract configuration has conflicts.')
+        schema_preview['mutation_contracts'] = contract_preview
     return schema_preview
 
 
@@ -573,7 +628,8 @@ def _replacement_preview(snapshot_name, payload, source_instance):
             "mapping_package": {**schema["counts"], "New": schema["counts"].get("New", 0) + new_rules},
             "rebased_from": None, "adopt": new_rules, "replace_mappings": True,
             "replacement": {"operations": operations, "field_mappings": sum(row.definition_id not in protected for row in fields),
-                            "graphql_mappings": len(retired)}, "read_services": services}
+                            "graphql_mappings": len(retired)}, "read_services": services,
+            **({'mutation_contracts': schema['mutation_contracts']} if 'mutation_contracts' in schema else {})}
 
 
 def _save_replacement_reader(snapshot, item, existing=None):
@@ -692,11 +748,12 @@ def _retire_replaced(source_instance, operations, keep, keep_services):
     return {"operations": list(operations), "field_mappings": retired, "graphql_mappings": len(old)}
 
 
-def _replace_config(snapshot_name, payload, source_instance):
+def _replace_config(snapshot_name, payload, source_instance, *, before_mapping_write=None):
     from hero_integration import api
     from hero_integration.services.schema_provisioning import provision_schema
     from hero_integration.hero_integration.doctype.hero_graphql_mapping.hero_graphql_mapping import lock_exchange_context
     rules = _replacement_rules(payload)
+    _settings_changes(payload)  # reject credentials/source-binding changes before any schema DDL
     snapshot, state = _source_snapshot(snapshot_name, payload, source_instance)
     _replacement_check(snapshot, payload, rules)
     operations = [operation for operation in AREA_ORDER if any(item["target_operation"] == operation for item in payload["read_services"])]
@@ -707,6 +764,8 @@ def _replace_config(snapshot_name, payload, source_instance):
     if state == "New":
         snapshot, state = _source_snapshot(snapshot_name, payload, source_instance, create=True)
     lock_exchange_context(source_instance, snapshot.name, "QUERY_TO_FRAPPE")
+    if before_mapping_write is not None:
+        before_mapping_write(snapshot)
     operations = [operation for operation in AREA_ORDER if any(item["target_operation"] == operation for item in payload["read_services"])]
     candidates = _source_mappings(source_instance, operations)
     package_key = "hero-config:" + source_instance + ":" + snapshot.schema_fingerprint + ":" + sha256(
@@ -748,6 +807,14 @@ def _replace_config(snapshot_name, payload, source_instance):
         _archive_replaced_drafts(source_instance, operations)
         replacement = _retire_replaced(source_instance, operations, kept, set(created.values()))
         _verify_replacement_readers(snapshot, created)
+        contract_result = {}
+        if payload.get('mutation_contracts'):
+            from hero_integration.services.config_mutation_contracts import apply as import_contracts
+            try:
+                contract_result['mutation_contracts'] = import_contracts(snapshot, payload['mutation_contracts'], source_instance,
+                    confirmed=True, mutation_mappings=payload.get('mutation_mappings', []))
+            except ValueError as error:
+                raise ConfigExchangeError.from_error(error) from error
         from hero_integration.services.config_mutation_drafts import save as save_mutation_drafts
         try:
             mutation_result = save_mutation_drafts(payload, source_instance, snapshot.name)
@@ -760,7 +827,7 @@ def _replace_config(snapshot_name, payload, source_instance):
         raise
     return {"snapshot": state, "snapshot_name": snapshot.name, "settings": sorted(changes), "adopted": len(rules),
             "adoption": None, "read_services": results, "replace_mappings": True, "replacement": replacement,
-            **mutation_result}
+            **mutation_result, **contract_result}
 
 
 def _archive_replaced_drafts(source_instance, operations):

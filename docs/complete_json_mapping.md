@@ -1,24 +1,44 @@
 # Complete JSON mapping packages
 
-The Mapping page remains a list with JSON import and export. A configuration file
+The Mapping page remains a list with JSON import and export. A mapping file
 can include all nine migration areas: customers, projects, calendar events, tasks,
 products, documents, pictures, services and employees. Project histories belong to
 the project reader and project migration; they do not require a tenth migration.
 
 ## Import contract
 
-`hero-integration-config-v2` retains its existing schema, settings, mapping package,
-read services and `replace_mappings` members. The optional `mutation_mappings`
-member contains portable `MAPPED_UPDATE_V2` definitions for the same areas. Install
-this application revision before importing a file that uses these extensions.
+The Mapping page exchanges definitions only. Its Query tab accepts
+`hero-integration-mappings-v1`: the schema fingerprint, field mappings, required
+custom fields/DocTypes and read queries. Select a matching validated snapshot.
+Its Mutation tab accepts `hero-personal-mapping-portable-v2` with direction
+`FRAPPE_TO_MUTATION`. Both imports preview changes and require confirmation before
+activating mappings. Mapping files contain no settings, full GraphQL snapshot or
+mutation contracts. Configuration packages are rejected with a Settings hint.
+
+Settings exchanges `hero-integration-config-v2`: the complete schema snapshot,
+allowlisted operational settings, Query mappings and readers, optional
+`mutation_mappings` and optional `mutation_contracts`. The latter carry the eight
+registered update operations covering nine areas; documents and pictures share
+one file-update contract. Contracts identify their exact mapping UUIDs, areas,
+variable-only query and requested Draft/Active status. An explicitly confirmed
+import creates missing contracts and approves requested Active contracts locally.
+Existing differences block the import for reconciliation; identical contracts
+are retained. No remote operation is executed during validation or approval.
+
+Credentials, Password fields, URLs/hosts, notification recipients, execution and
+deletion switches, runtime history and business data are excluded. The locally
+confirmed source binding cannot be changed by an import. Install this application
+revision before importing files using these extensions.
 
 An explicitly confirmed replacement import provisions declared integration fields,
 publishes the read mappings through their normal revision history, approves each
 reader, and retires superseded read mappings. It saves mutation definitions as
-personal drafts. It does not activate mutation contracts, enable execution, start
-migrations, download files or issue HERO mutations. Prepared mutation assignments
-appear in the existing Mutation list with Draft status. Query export includes the
-current user's prepared mapped updates as well as active mapped updates.
+personal drafts when imported through Settings. It does not enable execution,
+start migrations, download files or issue HERO mutations. Prepared mutation
+assignments appear in the existing Mutation list with Draft status; activate them
+through the Mutation mapping JSON import after reviewing the required contracts.
+Full configuration export includes the current user's prepared mapped updates as
+well as active mapped updates. Query mapping export includes Query definitions only.
 
 Before writeback activation, the target must have a separately reviewed, active
 mutation contract and validated service. Sending then requires native permissions,

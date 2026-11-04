@@ -255,6 +255,31 @@ def _link(doctype,name,source,kind):
     return link
 
 
+
+def _validate_contract_scope(mapping, content, contract):
+    """An active operation contract only authorizes its explicit portable scope."""
+    from hero_integration.services.config_mutation_contracts import _scope
+    from hero_integration.services.personal_mapping_content import unique_json_object
+    try:
+        scope = _scope(json.loads(contract.mapping_json, object_pairs_hook=unique_json_object),
+                       mapping.operation_name)
+        portable = getattr(mapping, 'portable_definition_id', None)
+        if portable not in (None, ''):
+            if not isinstance(portable, str) or str(UUID(portable)) != portable:
+                raise ValueError
+            identity = portable
+        else:
+            raw = getattr(mapping, 'definition_id', None)
+            if not isinstance(raw, str) or not (re.fullmatch(r'[0-9a-f]{32}', raw)
+                                               or str(UUID(raw)) == raw):
+                raise ValueError
+            identity = str(UUID(raw))
+        if content['area'] not in scope['areas'] or identity not in scope['mapping_definition_ids']:
+            raise ValueError
+    except (ValueError, TypeError, AttributeError, KeyError) as error:
+        raise MappedUpdateError('The active mutation contract does not authorize this mapping identity and area.') from error
+
+
 def _load_context(mapping_name,doctype,name):
     from hero_integration.client.settings import get_configuration
     from hero_integration.services.writeback_source import capture_source
@@ -279,7 +304,9 @@ def _load_context(mapping_name,doctype,name):
     contracts=frappe.get_all('HERO Mutation Contract',filters={'schema_snapshot':snapshot.name,
         'operation_name':mapping.operation_name,'status':'Active'},pluck='name')
     if len(contracts)!=1: raise MappedUpdateError('Exactly one active schema-bound mutation contract is required.')
-    contract=frappe.get_doc('HERO Mutation Contract',contracts[0]);service=frappe.get_doc('HERO GraphQL Service',contract.graphql_service)
+    contract=frappe.get_doc('HERO Mutation Contract',contracts[0])
+    _validate_contract_scope(mapping,content,contract)
+    service=frappe.get_doc('HERO GraphQL Service',contract.graphql_service)
     parsed=parse_mutation(service.query_document)
     if (service.status!='Validated' or service.schema_snapshot!=snapshot.name or service.schema_fingerprint!=snapshot.schema_fingerprint
             or contract.schema_fingerprint!=snapshot.schema_fingerprint or contract.contract_fingerprint!=parsed.fingerprint
