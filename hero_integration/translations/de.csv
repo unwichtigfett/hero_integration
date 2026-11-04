@@ -3226,3 +3226,43 @@ Only inactive field rules of this area can be activated.,Nur inaktive Feldregeln
 You have an unpublished draft of this mapping; publish or discard it under Advanced first.,Du hast einen unveröffentlichten Entwurf dieses Mappings; veröffentliche oder verwirf ihn zuerst unter „Erweitert“.
 Select at least one mapping.,Wähle mindestens ein Mapping.
 "Creating send mappings (ERPNext → HERO) follows; sending to HERO is switched off.",Das Anlegen von Sende-Mappings (ERPNext → HERO) folgt; das Senden an HERO ist ausgeschaltet.
+Areas in the file,Bereiche in der Datei
+The file contains no mapping areas.,Die Datei enthält keine Mapping-Bereiche.
+Existing mappings in these areas will be replaced.,Bestehende Mappings in diesen Bereichen werden ersetzt.
+field mappings,Feldmappings
+GraphQL mappings,GraphQL-Mappings
+Mutation mappings,Mutation-Mappings
+Replace,Ersetzen
+No HERO operation will be executed.,Es wird kein HERO-Vorgang ausgeführt.
+Checking mapping file …,Mapping-Datei wird geprüft …
+The mapping file exceeds the permitted size.,Die Mapping-Datei überschreitet die zulässige Größe.
+Import a Mutation mapping JSON file in this tab. Configuration packages belong in Query.,Importieren Sie hier eine JSON-Datei mit Mutation-Mappings. Konfigurationspakete gehören in den Tab Query.
+Import a configuration package in Query. Mutation mapping files belong in Mutation.,Importieren Sie unter Query ein Konfigurationspaket. Dateien mit Mutation-Mappings gehören in den Tab Mutation.
+The Mutation mappings cannot be activated.,Die Mutation-Mappings können nicht aktiviert werden.
+Import and activate these Mutation mappings? No HERO operation will be executed.,Diese Mutation-Mappings importieren und aktivieren? Es wird kein HERO-Vorgang ausgeführt.
+Loading mappings …,Mappings werden geladen …
+Unexpected mapping import result.,Unerwartetes Ergebnis des Mapping-Imports.
+Mutation mappings imported and activated. No HERO operation was executed.,Mutation-Mappings importiert und aktiviert. Es wurde kein HERO-Vorgang ausgeführt.
+Mappings loaded and active.,Mappings geladen und aktiv.
+Import failed.,Import fehlgeschlagen.
+Import cancelled.,Import abgebrochen.
+The file cannot be loaded.,Die Datei kann nicht geladen werden.
+Exporting mapping JSON…,Mapping-JSON wird exportiert…
+Invalid mapping export response.,Ungültige Antwort beim Mapping-Export.
+Mapping JSON exported.,Mapping-JSON exportiert.
+mappings,Mappings
+Export JSON,JSON exportieren
+HERO Mappings,HERO-Mappings
+Source App,Quell-App
+Query JSON imports and exports the full configuration package. Edit mappings in the JSON file.,Query-JSON importiert und exportiert das vollständige Konfigurationspaket. Bearbeiten Sie Mappings in der JSON-Datei.
+Mutation JSON contains mappings for the selected snapshot. Import validates and activates mappings; it does not execute HERO operations.,Mutation-JSON enthält Mappings für den ausgewählten Snapshot. Der Import prüft und aktiviert Mappings; er führt keine HERO-Vorgänge aus.
+MAPPING_CONFIRMATION_REQUIRED: Explicit import confirmation is required.,MAPPING_CONFIRMATION_REQUIRED: Bestätigen Sie den Import ausdrücklich.
+MAPPING_INPUT_INVALID: Invalid expected states.,MAPPING_INPUT_INVALID: Ungültige erwartete Mapping-Stände.
+A readable name for the mapping list. It never replaces the technical node identity.,Ein lesbarer Name für die Mapping-Liste. Die technische Knotenidentität bleibt erhalten.
+This historic action is intentionally unavailable in the native workspace. Use JSON mapping import or saved read-only service definitions.,Diese frühere Aktion ist im Workspace nicht verfügbar. Verwenden Sie den JSON-Mapping-Import oder gespeicherte Lese-Services.
+Query mappings must be imported as a configuration package.,Query-Mappings müssen als Konfigurationspaket importiert werden.
+Current draft warnings require separate review before import.,Die Warnungen des aktuellen Entwurfs müssen vor dem Import geprüft werden.
+Mutation mapping imports cannot provision document fields.,Der Import von Mutation-Mappings darf keine Dokumentfelder anlegen.
+Explicit import and publication confirmation is required.,Bestätigen Sie den Import und die Veröffentlichung ausdrücklich.
+Mutation import has unresolved publication blockers.,Der Mutation-Import enthält noch ungeklärte Veröffentlichungshindernisse.
+Mutation import preview changed; preview again before importing.,Die Vorschau des Mutation-Imports hat sich geändert. Erstellen Sie vor dem Import eine neue Vorschau.
