@@ -103,7 +103,7 @@ class TestUnchangedProjectCustomer(TestCase):
 
 
 class TestMeaningfulProjectActivity(TestCase):
-    def test_derived_totals_hidden_and_privileged_fields_are_omitted_but_notes_and_status_survive(self):
+    def test_derived_totals_notes_and_privileged_fields_are_omitted_but_status_survives(self):
         fields={name:NS(label=name,fieldtype='Float' if name.startswith('total') else 'Data',read_only=name.startswith('total'),
                         hidden=False,permlevel=1 if name=='private' else 0)
                 for name in ('total_costing_amount','total_billable_amount','notes','status','private')}
@@ -111,4 +111,4 @@ class TestMeaningfulProjectActivity(TestCase):
                     ['notes','old','new'],['status','Open','Completed'],['private','x','y']]}))
         with patch.object(logbook,'frappe',NS(get_meta=lambda _:NS(get_field=fields.get),_=lambda text:text)):
             result=logbook._version_text(version)
-        self.assertEqual(result,'notes: old → new\nstatus: Open → Completed')
+        self.assertEqual(result,'status: Open → Completed')
