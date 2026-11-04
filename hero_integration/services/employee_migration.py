@@ -213,20 +213,27 @@ def upsert(record, instance, company, languages, read=None):
     else:
         employee.update(employee_values)
     user.update({**user_values, **ids})
-    if new_user:
-        user.insert(ignore_permissions=True)
-    else:
-        user.save(ignore_permissions=True)
-    if is_new:
-        employee.insert(ignore_permissions=True)
-    else:
-        employee.save(ignore_permissions=True)
+    from hero_integration.services.change_detection import managed_target_update
+    # Employee.on_update also saves its User. Both owned links must stay managed
+    # across that nested native save, after the baseline checks above succeeded.
+    with managed_target_update('User', user.name or user_name, user_link.name if user_link else None), \
+         managed_target_update('Employee', employee.name, employee_link.name if employee_link else None):
+        if new_user:
+            user.insert(ignore_permissions=True)
+        else:
+            user.save(ignore_permissions=True)
+        if is_new:
+            employee.insert(ignore_permissions=True)
+        else:
+            employee.save(ignore_permissions=True)
     _write_link(user_link, instance, "User", user_id, user, user_values, record, read.mapping_version)
     _write_link(employee_link, instance, "partner", record["id"], employee, employee_values, record, read.mapping_version)
     return "added" if is_new else "updated"
 
 
-def sync_employees(client, *, source_instance, run_name, should_stop=None, progress=None, time_budget=1200, verify_source=None):
+def sync_employees(client, *, source_instance, run_name, should_stop=None, progress=None, time_budget=1200, verify_source=None, record_limit=None, continue_on_conflict=False):
+    from hero_integration.services.migration_testing import validate_limit
+    validate_limit(record_limit)
     frappe.only_for("System Manager")
     read = runtime.resolve_read(OPERATION, source_instance)
     company, snapshot, document, path = preflight(source_instance, read=read)
@@ -237,6 +244,20 @@ def sync_employees(client, *, source_instance, run_name, should_stop=None, progr
         raise EmployeeMigrationBlocked("Employee source schema, company or mapping changed; start a new run.")
     state.update(stamp=stamp, done=False, stopped=False)
     rows = _records(client.query(document, runtime.page_variables(read, 0)), path)
+    if record_limit is not None:
+        if state.get('testing_record_limit') not in (None, record_limit):
+            raise EmployeeMigrationBlocked('The frozen testing record limit changed; start a new run.')
+        state['testing_record_limit'] = record_limit
+        state['testing_records_received'] = len(rows)
+        selected = state.get('testing_selected_ids')
+        if selected is None:
+            selected = [row['id'] for row in rows[:record_limit]]
+            state['testing_selected_ids'] = selected
+        by_id = {row['id']: row for row in rows}
+        if any(identity not in by_id for identity in selected):
+            raise EmployeeMigrationBlocked('The HERO employee list changed; start a new run to reconcile it.')
+        rows = [by_id[identity] for identity in selected]
+        state['testing_limit_reached'] = len(rows) >= record_limit
     inventory = _digest([r["id"] for r in rows])
     if state.get("inventory") and state["inventory"] != inventory:
         raise EmployeeMigrationBlocked("The HERO employee list changed; start a new run to reconcile it.")
@@ -264,6 +285,8 @@ def sync_employees(client, *, source_instance, run_name, should_stop=None, progr
         else:
             state["done_ids"].append(record["id"])
             state.setdefault("errors", {}).pop(str(record["id"]), None)
+        if continue_on_conflict and record['id'] not in state['done_ids']:
+            state['done_ids'].append(record['id'])
         previous = state.setdefault("outcomes", {}).get(str(record["id"]))
         if previous:
             state["counts"][previous] -= 1
@@ -275,7 +298,7 @@ def sync_employees(client, *, source_instance, run_name, should_stop=None, progr
             progress(state["counts"])
     completed = set(state["done_ids"])
     state["done"] = all(r["id"] in completed for r in rows)
-    if not state["done"] and state.get("errors"):
+    if not continue_on_conflict and not state["done"] and state.get("errors"):
         state["last_error"] = next(iter(state["errors"].values()))
     else:
         state.pop("last_error", None)

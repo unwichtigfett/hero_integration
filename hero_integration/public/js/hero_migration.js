@@ -93,9 +93,32 @@
     };
     const plural = (count, singular, pluralText) => `${number(count)} ${tr(count === 1 ? singular : pluralText)}`;
     const phaseSummary = (state, count) => format('{0} · {1} processed', tr(state), number(count));
-    const testingSummary = (run) => format('{0} · {1}/{2} HERO requests · {3} records',
-        tr(run.testing_status || 'PENDING'), number(run.testing_executed_actions),
-        number(run.testing_max_actions), number(run.testing_records_received));
+    function testingResults(run) {
+        try {
+            const value = JSON.parse(run.testing_results_json || "{}");
+            return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+        } catch (_) { return null; }
+    }
+    function testingSummary(run) {
+        const result = testingResults(run);
+        if (Number.isInteger(result?.record_limit) && result.record_limit > 0) {
+            return format('{0} · up to {1} records per area',
+                tr(run.testing_status || 'PENDING'), number(result.record_limit));
+        }
+        return format('{0} · {1}/{2} HERO requests · {3} records',
+            tr(run.testing_status || 'PENDING'), number(run.testing_executed_actions),
+            number(run.testing_max_actions), number(run.testing_records_received));
+    }
+    function testingAreaSummaries(run) {
+        const result = testingResults(run);
+        if (!result) return [["Testing results", tr("Results unavailable")]];
+        if (Number.isInteger(result.record_limit) && result.record_limit > 0) {
+            return Object.entries(result.areas || {}).map(([name, area]) => [name,
+                format('{0} · {1}/{2} processed · {3} received', tr(area?.status || 'PENDING'),
+                    number(area?.processed), number(result.record_limit), number(area?.received))]);
+        }
+        return Object.entries(result).map(([name, area]) => [name, tr(area?.status || 'PENDING')]);
+    }
 
     function icon(name) {
         const ns = "http://www.w3.org/2000/svg";
@@ -346,7 +369,7 @@
             if (run.project_phase_state && run.action === "Project Migration") facts.push(["Projects phase", phaseSummary(run.project_phase_state, run.project_phase_processed)]);
             if (Number(run.testing_enabled)) {
                 facts.push(["Testing", testingSummary(run)]);
-                try { Object.entries(JSON.parse(run.testing_results_json || "{}")).forEach(([name, result]) => facts.push([name, tr(result.status)])); } catch (_) { facts.push(["Testing results", tr("Results unavailable")]); }
+                facts.push(...testingAreaSummaries(run));
             }
             const actions = el("div", {class: "hero-sync-detail-actions"},
                 run.can_cancel ? el("button", {type: "button", class: "hero-sync-small", text: tr("Cancel"), onclick: () => runAction("cancel_run", run, tr("Cancel this run at the next safe point? Records already written stay in place."))}) : null,
@@ -563,5 +586,5 @@
         return {destroy() { state.destroyed = true; clearTimeout(state.timer); }};
     }
 
-    window.hero_integration_migration = Object.freeze({mount, diagnostic, formatDateTime, phaseSummary, testingSummary});
+    window.hero_integration_migration = Object.freeze({mount, diagnostic, formatDateTime, phaseSummary, testingSummary, testingAreaSummaries});
 })();

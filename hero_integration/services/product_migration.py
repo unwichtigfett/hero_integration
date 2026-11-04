@@ -381,7 +381,7 @@ def fetch_page(client, offset: int, size: int = PAGE_SIZE, read=None) -> list[di
 
 
 def sync_products(client=None, *, source_instance: str | None = None, time_budget: int = TIME_BUDGET_SECONDS,
-                  should_stop=None, max_pages: int = 2000, read=None, progress=None) -> dict:
+                  should_stop=None, max_pages: int = 2000, read=None, progress=None, record_limit=None, run_name=None) -> dict:
     """Process articles from the saved offset until done, stopped or the time budget ends.
 
     ``source_instance`` is the HERO source ``client`` reads from; lookups, new
@@ -394,7 +394,13 @@ def sync_products(client=None, *, source_instance: str | None = None, time_budge
     if not isinstance(source_instance, str) or not source_instance.strip():
         raise RuntimeError("A HERO source instance is required.")
     read = read or runtime.resolve_read(OPERATION, source_instance)
-    state = _state()
+    from hero_integration.services.migration_testing import bounded_rows, processed, test_state, save_test_state, validate_checkpoint
+    state = test_state(run_name, OPERATION) if record_limit is not None else _state()
+    save = (lambda value: save_test_state(run_name, OPERATION, value)) if record_limit is not None else _save
+    if record_limit is not None:
+        validate_checkpoint(state, record_limit, source_instance=source_instance, mapping=read.mapping_version)
+        if state.get('done'):
+            return state
     # A finished pass, another source or a changed mapping starts over (unchanged articles are skipped).
     if state.get("done") or state.get("source_instance") != source_instance or state.get("mapping") != read.mapping_version:
         state = {}
@@ -405,10 +411,14 @@ def sync_products(client=None, *, source_instance: str | None = None, time_budge
     deadline = time.monotonic() + time_budget
     offset = int(state.get("offset") or 0)
     for _ in range(max_pages):
+        if record_limit is not None and processed(counts) >= record_limit:
+            state.update(done=True, testing_limit_reached=True)
+            break
         if should_stop and should_stop():
             state["stopped"] = True
             break
-        rows = fetch_page(client, offset, read.page_size, read)
+        received = fetch_page(client, offset, read.page_size, read)
+        rows = bounded_rows(state, received, record_limit)
         counts["requests"] = counts.get("requests", 0) + 1
         for row in rows:
             key = str(row.get("product_id") or "")
@@ -427,13 +437,16 @@ def sync_products(client=None, *, source_instance: str | None = None, time_budge
             counts[result] = counts.get(result, 0) + 1
         offset += len(rows)
         state["offset"] = offset
-        if len(rows) < read.page_size:
+        if record_limit is not None and processed(counts) >= record_limit:
+            state.update(done=True, testing_limit_reached=True)
+            break
+        if len(received) < read.page_size:
             state.update(done=True, offset=0)
             break
-        _save(state)
+        save(state)
         if progress:
             progress(counts)
         if time.monotonic() > deadline:
             break
-    _save(state)
+    save(state)
     return state

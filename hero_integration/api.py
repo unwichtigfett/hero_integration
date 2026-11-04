@@ -263,7 +263,7 @@ class _SyncHeroTransport:
 
 
 def _start_migration(
-    action: str, dry_run: int | bool, scheduled: bool, graphql_service: str, source_instance: str = ""
+    action: str, dry_run: int | bool, scheduled: bool, graphql_service: str, source_instance: str = "", testing_configuration=None
 ) -> dict[str, str]:
     if action not in ACTIONS:
         frappe.throw(frappe._("Unsupported HERO migration action."))
@@ -273,7 +273,9 @@ def _start_migration(
         frappe.throw(frappe._("Run checkpoint schema is not installed; apply the reviewed app schema before queueing a run."))
     service, mapping = _approved_read_service(graphql_service)
     is_preview = bool(int(dry_run))
-    testing = _testing_preview_configuration() if is_preview else {"enabled": False, "max_actions": 0}
+    from hero_integration.services.migration_testing import configuration, run_metadata
+    frozen_testing = testing_configuration if testing_configuration is not None else configuration(frappe_module=frappe)
+    testing = {'enabled': bool(frozen_testing['testing_enabled']), 'max_actions': frozen_testing['testing_max_actions']}
     from hero_integration.services.migration import customer_dependency
 
     dependencies = (
@@ -297,6 +299,7 @@ def _start_migration(
             "mapping_revision": mapping.mapping_revision,
             "testing_enabled": int(testing["enabled"]),
             "testing_max_actions": testing["max_actions"],
+            **run_metadata(frozen_testing),
             # Bound at acceptance so Start/Update and history are scoped to the source from the first moment.
             **({"source_instance": source_instance} if source_instance else {}),
             **dependencies,
@@ -432,6 +435,8 @@ def resume_run(run_name: str) -> dict[str, str]:
         frappe.throw(frappe._("Only failed, cancelled, or blocked runs can resume."))
     from hero_integration.services.file_migration import RUN_ACTIONS, SourceBindingError, resume as resume_file_run
 
+    if _as_bool(getattr(run, "testing_enabled", 0)):
+        frappe.throw(frappe._("Testing imports cannot resume; start a new bounded run."))
     if getattr(run, "action", "") in RUN_ACTIONS:
         try:
             resume_file_run(run)

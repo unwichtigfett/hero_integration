@@ -9,13 +9,13 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Mapping
 
-_managed_target = ContextVar("hero_integration_managed_target", default=None)
+_managed_target = ContextVar("hero_integration_managed_target", default=())
 
 
 @contextmanager
 def managed_target_update(doctype: str, name: str, link_name: str):
     """Assign one inbound writer ownership of one link for one target save."""
-    token = _managed_target.set((doctype, name, link_name))
+    token = _managed_target.set((*_managed_target.get(), (doctype, name, link_name)))
     try:
         yield
     finally:
@@ -23,8 +23,7 @@ def managed_target_update(doctype: str, name: str, link_name: str):
 
 
 def managed_target_update_active(doctype: str, name: str | None) -> bool:
-    current = _managed_target.get()
-    return bool(current and current[0] == doctype and current[1] in (None, name))
+    return any(current[0] == doctype and current[1] in (None, name) for current in _managed_target.get())
 
 
 def protect_external_task_deadline(doc, method=None) -> None:
@@ -188,7 +187,7 @@ def observe_frappe_target_change(doc, method=None) -> None:
     for row in links:
         # The inbound writer owns this link's baseline in the same transaction.
         # Other links on the document still observe the change normally.
-        if _managed_target.get() == (doc.doctype, doc.name, row.name):
+        if (doc.doctype, doc.name, row.name) in _managed_target.get():
             continue
         baseline = decode(row.get("target_field_hashes"))
         if not baseline:

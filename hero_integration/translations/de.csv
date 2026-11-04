@@ -3650,3 +3650,16 @@ Change history,Änderungsverlauf
 Comment,Kommentar
 Delivery successful,Sendung erfolgreich
 The saved logbook receipt cannot be reconciled automatically.,Die gespeicherte Logbuchbestätigung konnte nicht automatisch abgeglichen werden.
+Max. records per area,Max. Datensätze je Bereich
+Testing Max. Records per Area,Testlimit: Datensätze je Bereich
+Limits manually started previews and imports to this many records in each area. Imports write ERPNext data. Full Migration applies the limit separately to each area. The setting is fixed when the run starts; changing it affects new runs only.,Begrenzt manuell gestartete Vorschauen und Importe auf diese Anzahl Datensätze je Bereich. Importe schreiben ERPNext-Daten. Bei der Gesamtmigration gilt das Limit für jeden Bereich einzeln. Die Einstellung wird beim Start festgelegt; Änderungen gelten nur für neue Läufe.
+Limits manually started previews and imports per area. Imports write ERPNext data. It never starts work by itself.,Begrenzt manuell gestartete Vorschauen und Importe je Bereich. Importe schreiben ERPNext-Daten. Startet selbst keine Verarbeitung.
+"1 through 100 records per area, fixed when the run starts. Full Migration applies this limit separately to each area.",1 bis 100 Datensätze je Bereich; wird beim Start festgelegt. Bei der Gesamtmigration gilt dieses Limit für jeden Bereich einzeln.
+Frozen record limit per area for this run. Legacy testing previews used this field as a HERO request limit.,Beim Start festgelegtes Datensatzlimit je Bereich für diesen Lauf. Ältere Testvorschauen verwendeten dieses Feld als Limit für HERO-Anfragen.
+{0} · up to {1} records per area,{0} · bis zu {1} Datensätze je Bereich
+{0} · {1}/{2} processed · {3} received,{0} · {1}/{2} verarbeitet · {3} empfangen
+Testing record limit must be between 1 and 100.,Das Testlimit muss zwischen 1 und 100 Datensätzen liegen.
+The frozen testing record limit changed; start a new run.,Das beim Start festgelegte Testlimit wurde geändert; starten Sie einen neuen Lauf.
+Testing migration requires a run-bound checkpoint.,Die Testmigration benötigt einen an den Lauf gebundenen Prüfpunkt.
+Testing imports cannot resume; start a new bounded run.,Testimporte können nicht fortgesetzt werden; starten Sie einen neuen begrenzten Lauf.
+The frozen testing context changed; start a new run.,Der beim Start festgelegte Testkontext wurde geändert; starten Sie einen neuen Lauf.

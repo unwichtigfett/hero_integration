@@ -218,8 +218,9 @@ def execute_run(run_name: str) -> None:
         validate_run_mappings(run)
         config = get_configuration()
         source = _source_for_run(run, config)
-        if _testing_preview_enabled(run):
-            testing_source = TestingPreviewSource(source, int(run.testing_max_actions or 0))
+        if bool(int(getattr(run, 'testing_enabled', 0) or 0)):
+            from hero_integration.services.migration_testing import RecordLimitedSource, record_limit
+            testing_source = RecordLimitedSource(source, record_limit(run))
             source = testing_source
         _process_requested_phases(run, source, checkpoint=lambda: _checkpoint_transaction(run, claim_started_on))
         run.reload()
@@ -342,7 +343,7 @@ def _source_for_run(run, config):
         return current
     source = GraphQLServiceSource(HeroGraphQLClient(
         config.endpoint, lambda: config.api_token, config.timeout_seconds,
-        max_retries=0 if _testing_preview_enabled(run) else 2,
+        max_retries=0 if bool(int(getattr(run, 'testing_enabled', 0) or 0)) else 2,
         requests_per_minute=_request_rate(),
     ), service, contract, getattr(snapshot, "source_instance", "") or config.source_instance,
        revalidate=revalidate_generated)
@@ -761,7 +762,9 @@ def _persist_testing_result(run, source: TestingPreviewSource) -> None:
         run.testing_executed_actions = source.executed_actions
         run.testing_records_received = source.records_received
         run.testing_status = status
-        run.testing_results_json = json.dumps(source.results, ensure_ascii=False, sort_keys=True)
+        from hero_integration.services.migration_testing import RecordLimitedSource
+        results = {'record_limit': source.maximum, 'areas': source.results} if isinstance(source, RecordLimitedSource) else source.results
+        run.testing_results_json = json.dumps(results, ensure_ascii=False, sort_keys=True)
         run.save()
     except Exception:
         frappe.log_error(title="HERO testing preview metadata could not be recorded")

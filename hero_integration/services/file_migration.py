@@ -84,6 +84,8 @@ def start(action: str, parent: str = "") -> str:
     if action not in RUN_ACTIONS:
         raise ValueError("Unknown file migration action.")
     config = confirmed_configuration()
+    from hero_integration.services.migration_testing import configuration, run_metadata
+    parent_run = frappe.get_doc('HERO Integration Run', parent) if parent else None
     require_mappings(action, config.source_instance)
     if action == EMPLOYEE_ACTION:
         from hero_integration.services.employee_migration import preflight
@@ -95,15 +97,16 @@ def start(action: str, parent: str = "") -> str:
         preflight(config.source_instance)
     if parent:
         bound_configuration(frappe.get_doc("HERO Integration Run", parent))  # a chain never switches sources
+    testing = configuration(parent_run, frappe_module=frappe)
     run = frappe.get_doc({"doctype": "HERO Integration Run", "action": action, "mode": "Execute", "state": "Queued",
                           "source_instance": config.source_instance,
-                          "source_binding_revision": int(config.source_binding_revision or 0)})
+                          "source_binding_revision": int(config.source_binding_revision or 0), **testing, **run_metadata(testing)})
     run.insert(ignore_permissions=True)
-    if action in FILE_ACTIONS:
+    if action in FILE_ACTIONS and not testing["testing_enabled"]:
         from hero_integration.services.file_transfer import reset_phase
 
         reset_phase(FILE_ACTIONS[action])
-    elif action == PRODUCT_ACTION:
+    elif action == PRODUCT_ACTION and not testing["testing_enabled"]:
         from hero_integration.services.product_migration import reset
 
         reset()
@@ -118,6 +121,9 @@ def start(action: str, parent: str = "") -> str:
 
 def resume(run) -> None:
     """Continue a failed, cancelled or blocked file/full run where it stopped."""
+    from hero_integration.services.migration_testing import record_limit
+    if record_limit(run) is not None:
+        raise SourceBindingError('Testing imports cannot resume; start a new bounded run.')
     config = bound_configuration(run)
     steps = _full(run.name).get("steps", list(FULL_STEPS)) if run.action == FULL_ACTION else None
     require_mappings(run.action, config.source_instance, steps=steps)
@@ -188,29 +194,37 @@ def _file_slice(run, config) -> None:
         frappe.db.set_value("HERO Integration Run", run.name, run_counts(counts))
         frappe.db.commit()
 
+    from hero_integration.services.migration_testing import record_limit, persist
+    maximum = record_limit(run)
     client, downloader, instance = _client_and_downloader(config)
     if run.action == SERVICE_ACTION:
         from hero_integration.services.service_migration import sync_services
 
         with filelock("hero_service_migration", timeout=5):
             state = sync_services(client, source_instance=instance, run_name=run.name, downloader=downloader,
-                                  should_stop=cancelled, progress=progress, verify_source=lambda: bound_configuration(run))
+                                  should_stop=cancelled, progress=progress, verify_source=lambda: bound_configuration(run),
+                                  record_limit=maximum, continue_on_conflict=True)
     elif run.action == EMPLOYEE_ACTION:
         from hero_integration.services.employee_migration import sync_employees
 
         with filelock("hero_employee_migration", timeout=5):
             state = sync_employees(client, source_instance=instance, run_name=run.name,
-                                   should_stop=cancelled, progress=progress, verify_source=lambda: bound_configuration(run))
+                                   should_stop=cancelled, progress=progress, verify_source=lambda: bound_configuration(run),
+                                   record_limit=maximum, continue_on_conflict=True)
     elif run.action == PRODUCT_ACTION:
         from hero_integration.services.product_migration import sync_products
 
         with filelock("hero_product_migration", timeout=5):
-            state = sync_products(client, source_instance=instance, should_stop=cancelled, progress=progress)
+            state = sync_products(client, source_instance=instance, should_stop=cancelled, progress=progress,
+                                  record_limit=maximum, run_name=run.name)
     else:
         with filelock("hero_file_transfer", timeout=5):
             state = transfer(FILE_ACTIONS[run.action], source_instance=instance, client=client,
-                             downloader=downloader, should_stop=cancelled, progress=progress)
+                             downloader=downloader, should_stop=cancelled, progress=progress,
+                             record_limit=maximum, run_name=run.name)
     counts = state.get("counts") or {}
+    if maximum is not None:
+        persist(run.name, DIRECT_OPERATIONS[run.action], state)
     problems = counts.get("failed", 0) + counts.get("conflict", 0)
     frappe.db.set_value("HERO Integration Run", run.name, run_counts(counts))
     frappe.db.commit()
@@ -230,9 +244,9 @@ def run_counts(counts: dict) -> dict:
     """Run fields for the counts of a product or file pass."""
     skipped = counts.get("unchanged", 0) + sum(v for k, v in counts.items() if k.startswith("skipped_"))
     problems = counts.get("failed", 0) + counts.get("conflict", 0)
-    values = {"created_records": counts.get("added", 0) + counts.get("updated", 0), "skipped_records": skipped,
+    values = {"created_records": counts.get("added", 0), "skipped_records": skipped,
               "conflict_records": problems, "error_message": summary(counts)}
-    values["processed"] = values["created_records"] + skipped + values["conflict_records"]
+    values["processed"] = values["created_records"] + counts.get("updated", 0) + skipped + values["conflict_records"]
     return values
 
 
@@ -264,6 +278,18 @@ def on_run_finished(run_name: str) -> None:
 
 def advance_full(run_name: str) -> None:
     """Check the current child; start the next step or finish the Full Migration."""
+    from frappe.utils.synchronization import filelock
+
+    with filelock('hero_full_migration_' + run_name, timeout=30):
+        # Refresh after acquiring the lock: another worker may have advanced or
+        # finished the chain while this worker was waiting.
+        frappe.db.rollback()
+        if frappe.db.get_value('HERO Integration Run', run_name, 'state') not in ACTIVE:
+            return
+        _advance_full_locked(run_name)
+
+
+def _advance_full_locked(run_name: str) -> None:
     state = _full(run_name)
     steps = state.get("steps") or FULL_STEPS  # preserve pre-upgrade run checkpoints
     while True:
@@ -304,6 +330,7 @@ def _start_step(action: str, parent: str) -> str:
         return start(action, parent=parent)
     from hero_integration import api
     from hero_integration.services.sync_page import BY_RUN_ACTION
+    from hero_integration.services.migration_testing import configuration
 
     item = BY_RUN_ACTION[action]
     instance = bound_configuration(frappe.get_doc("HERO Integration Run", parent)).source_instance
@@ -311,7 +338,9 @@ def _start_step(action: str, parent: str) -> str:
     if not services:
         return ""
     result = api._start_migration(action=action, dry_run=0, scheduled=False,
-                                  graphql_service=services[0]["service"], source_instance=instance)
+                                  graphql_service=services[0]["service"], source_instance=instance,
+                                  testing_configuration=configuration(
+                                      frappe.get_doc('HERO Integration Run', parent)))
     frappe.db.set_default(CHILD_KEY.format(result["run"]), parent)
     return result["run"]
 
