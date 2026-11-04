@@ -80,8 +80,10 @@ source binding supplies `target_id`, and the schema-proven target is
 or arbitrary mutation input. HERO assigns the remote author and timestamps;
 these members are not writable in `LogbookEntryInput`.
 
-The Project form offers one activity-selection dialog with a server-built preview
-and explicit confirmation. `comment_types` explicitly selects manual comments and
+The Project form offers one **Send to HERO** button. Its server-built preview shows
+all configured data changes and all eligible unsent native activities together,
+with confirm or cancel. Field-level Project send buttons and the separate activity
+selector are no longer mounted. Opening, cancelling or saving never sends a mutation. `comment_types` explicitly selects manual comments and
 native automatic timeline events such as assignments and workflow changes.
 The optional, closed `version_source` maps native `Version.data` to a change
 summary, including status changes and child-row change counts. Hidden and Password
@@ -174,3 +176,31 @@ snapshots before the importer selects the approved context. Query imports repeat
 this proof after schema DDL and before mapping DML. The earlier reference-only
 transition still applies to truly identical complete schemas. Multiple different
 active approval contexts require separate imports.
+
+
+## Combined Project delivery
+
+Project identifiers and generated titles (`name`, `project_name`, naming series and
+imported project number) remain local. Both update mapping validators and runtime
+preparation reject naming writebacks. Version summaries omit these fields; native
+Edit/rename comments cannot become outbound logbook entries. Other configured
+Project data and eligible activities use the single confirmation.
+
+Preview reads narrow the approved Project selection to the schema-proven singular
+`project_match(project_match_id: ...)` root with the same object type and fields.
+Only paging and ordering arguments can be replaced; business filters are never
+silently dropped. Child logbook pages still complete and revalidate their source.
+The outer Project list is not scanned. Singular-root dependencies also participate
+in saved-schema compatibility checks. Identical transport reads are shared only
+inside one preview, never across sends.
+
+The actor-bound confirmation signs the ordered activity list and the native data
+preview token. Data sends first. Each activity is then freshly authorized and sent
+with its own native token. A separate activity delivery token tolerates only the
+baseline hashes advanced by the preceding verified data send; content, Project
+stamp, mapping, contract, source and target identities remain bound. A native legacy
+phase save may provide an exact before/after stamp receipt: only that proven save
+can advance the activity delivery context; a concurrent Project edit still blocks.
+The ordinary activity confirmation always uses the current full fingerprint. No new activity
+is added after confirmation. A failed or uncertain step stops delivery and reports
+confirmed partial results; native durable receipts prevent duplicate logbook sends.

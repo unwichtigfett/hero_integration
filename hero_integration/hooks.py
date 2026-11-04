@@ -35,7 +35,7 @@ scheduler_events = {
 # on every form refresh and never observes or sends values by itself.
 doctype_js = {
     "Customer": ["public/js/hero_writeback.js", "public/js/hero_customer_send.js"],
-    "Project": ["public/js/hero_writeback.js", "public/js/hero_project_send.js", "public/js/hero_logbook_send.js"],
+    "Project": ["public/js/hero_project_send.js"],
     "Task": ["public/js/hero_task_send.js"],
     "HERO Integration Link": ["public/js/hero_diagnostics.js"],
     "HERO Integration Record": ["public/js/hero_diagnostics.js"],

@@ -14,7 +14,7 @@ scalar DateTime
 scalar Date
 input ContactInput {id:Int name:String address:AddressInput}
 input AddressInput {id:Int line_2:String full_address:String}
-input ProjectInput {id:Int name:String customer_id:Int}
+input ProjectInput {id:Int partner_notes:String name:String customer_id:Int}
 input EventInput {id:Int name:String start:DateTime end:DateTime all_day:Boolean}
 input TaskInput {id:Int name:String}
 input BaseInput {id:Int product_id:String name:String}
@@ -23,7 +23,7 @@ input ServiceInput {id:Int name:String}
 input PartnerInput {id:Int first_name:String! last_name:String! email:String! name:String birth_date:Date signature:String address:AddressInput}
 type Address {id:Int line_2:String full_address:String}
 type Base {id:Int product_id:String name:String}
-type Record {id:Int product_id:String name:String filename:String first_name:String last_name:String email:String birth_date:Date signature:String address:Address base_data:Base}
+type Record { partner_notes:String id:Int product_id:String name:String filename:String first_name:String last_name:String email:String birth_date:Date signature:String address:Address base_data:Base}
 type Edge {node:Record} type FilePage {edges:[Edge]}
 type Query {contacts:[Record] project_matches:[Record] calendar_events:[Record] tasks:[Record] supply_product_versions:[Record] supply_services:[Record] FileUpload_FileUploads:FilePage partners:[Record]}
 type Mutation {update_contact(contact:ContactInput):Record update_project_match(project_match:ProjectInput):Record update_calendar_event(calendar_event:EventInput):Record update_task(task:TaskInput):Record update_supply_product_version(supply_product_version:VersionInput):Record update_supply_service(supply_service:ServiceInput):Record update_file_upload(id:Int filename:String):Record update_partner(partner:PartnerInput):Record}
@@ -40,6 +40,8 @@ def mapping(area='HeroTasks'):
        'source':{'doctype':dt,'field':'file_name' if dt=='File' else 'subject'},
        'input_path':argument+'.name' if argument else 'filename','read_path':'filename' if dt=='File' else 'name','query_rule_id':'',
        'resolver':'FIELD','options':{}}],'required_readback':[]}
+    if area=='HeroProjectMatches':
+        data['assignments'][0].update(input_path='project_match.partner_notes', read_path='partner_notes')
     if area=='HeroProducts': data['required_readback']=[{'input_path':argument+'.'+p,'read_path':p} for p in ('base_data.id','base_data.product_id','product_id')]
     if area=='HeroEmployees':data['required_readback']=[{'input_path':'partner.'+p,'read_path':p} for p in ('first_name','last_name','email')]
     return data
