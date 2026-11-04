@@ -20,23 +20,43 @@ TRANSFORMS = {'Identity', 'Trim', 'Positive Int To Text', 'Nonempty String ID', 
               'Confirmed ERPNext Company', 'HERO Project Link', 'Native Adapter', 'Value Map', 'Link Map',
               'Local Date', 'Local Datetime', 'Safe HTML', 'Table Rows', 'Number', 'Integer'} | direct.TRANSFORMS
 FIELDS = {
-    'Customer': {'customer_name', 'customer_type', 'first_name', 'last_name', 'email_id', 'mobile_no', 'salutation'},
-    'Contact': {'first_name', 'last_name', 'email_id', 'mobile_no', 'salutation'},
-    'Project': {'project_name', 'customer', 'company', 'project_type', 'department'},
+    'Customer': {'customer_name', 'customer_type', 'first_name', 'last_name', 'email_id', 'mobile_no', 'salutation',
+                 'disabled', 'website', 'customer_details', 'tax_id'},
+    'Contact': {'first_name', 'last_name', 'email_id', 'mobile_no', 'salutation', 'phone', 'designation'},
+    'Project': {'project_name', 'customer', 'company', 'project_type', 'department', 'notes'},
     'Task': {'subject', 'description', 'project', 'exp_start_date', 'exp_end_date', 'completed_on'},
-    'Event': {'subject', 'description', 'location', 'starts_on', 'ends_on', 'all_day'},
-    'Address': {'address_line1', 'address_line2', 'pincode', 'city', 'country', 'address_title', 'address_type'},
-    'ToDo': {'allocated_to'}, 'Comment': {'content', 'creation'}, 'HERO Integration Link': {'source_id'},
+    'Event': {'subject', 'description', 'location', 'starts_on', 'ends_on', 'all_day', 'color', 'status'},
+    'Address': {'address_line1', 'address_line2', 'pincode', 'city', 'country', 'address_title', 'address_type', 'fax'},
+    'ToDo': {'allocated_to'}, 'Comment': {'content', 'creation', 'modified', 'subject', 'comment_by', 'comment_email'}, 'HERO Integration Link': {'source_id'},
     **{doctype: set(fields) for doctype, fields in direct.FIELDS.items()},
 }
+TRANSFORMS |= {'Customer Display Name', 'Coalesce', 'Country Code', 'HERO User Link', 'User By Partner ID'}
 PATH = re.compile(r'^[_A-Za-z][_0-9A-Za-z]*(?:\.[_A-Za-z][_0-9A-Za-z]*)*$')
 
-TEXT_TYPES = {'Data', 'Small Text', 'Text', 'Long Text', 'Text Editor', 'Select', 'Link'}
+TEXT_TYPES = {'Data', 'Small Text', 'Text', 'Long Text', 'Text Editor', 'HTML Editor', 'Select', 'Link', 'Color'}
 FLOAT_TYPES = {'Float', 'Currency', 'Percent'}
 INT_TYPES = {'Int', 'Long Int'}
-TARGET_TYPES = TEXT_TYPES | FLOAT_TYPES | INT_TYPES | {'Check', 'Date', 'Datetime', 'Time', 'Table'}
-CHILD_TYPES = {'Data', 'Small Text', 'Int', 'Float', 'Currency', 'Percent', 'Check'}
-CHILD_TRANSFORMS = {'Identity', 'Trim', 'Scalar Text', 'Number', 'Integer'}
+TARGET_TYPES = TEXT_TYPES | FLOAT_TYPES | INT_TYPES | {'Check', 'Date', 'Datetime', 'Time', 'Table', 'JSON'}
+CHILD_TYPES = {'Data', 'Small Text', 'Long Text', 'Int', 'Float', 'Currency', 'Percent', 'Check'}
+CHILD_TRANSFORMS = {'Identity', 'Trim', 'Scalar Text', 'Number', 'Integer', 'JSON Value'}
+# Existing adapter observations are hidden from forms, but retain their exact
+# canonical source binding. No arbitrary hidden target becomes selectable.
+TECHNICAL_BINDINGS = {
+    ('HeroCustomers', 'is_contact_person', 'Customer', 'custom_hero_is_contact_person'),
+    ('HeroProjectMatches', 'project_nr', 'Project', 'custom_hero_project_number'),
+    ('HeroProjectMatches', 'project_type', 'Project', 'custom_hero_project_type'),
+    ('HeroProjectMatches', 'id', 'Project', 'custom_hero_source_id'),
+    ('HeroTasks', 'due_date', 'Task', 'custom_hero_due_date'),
+    *{('HeroProjectMatches', 'current_project_match_status.' + key, 'Project', 'custom_hero_observed_status_' + key)
+      for key in ('created', 'id', 'modified', 'name', 'short_name', 'status_code', 'step_id')},
+    *{('HeroCalendarEvents', key, 'Event', 'custom_hero_' + key)
+      for key in ('category_id', 'deleted', 'readonly', 'type')},
+    ('HeroCalendarEvents', 'id', 'Event', 'custom_hero_source_id'),
+}
+
+
+class IncompleteMappedAddress(ValueError):
+    """An optional source address lacks the native fields needed to create it."""
 
 
 def _hash(value):
@@ -46,7 +66,7 @@ def _hash(value):
 def validate_query_adapter(value, definitions=()):
     if not isinstance(value, Mapping) or value.get('version') != 2 or type(value['version']) is not int:
         raise ValueError('Query adapter configuration requires version 2.')
-    if set(value) - {'version', 'transform_options', 'logbook', 'read_service', 'role', 'max_records'}:
+    if set(value) - {'version', 'transform_options', 'logbook', 'native_relations', 'read_service', 'role', 'max_records'}:
         raise ValueError('Query adapter configuration has unsupported parameters.')
     if 'read_service' in value and (not isinstance(value['read_service'], str) or not value['read_service'].strip()):
         raise ValueError('Query adapter read service must be an explicit document name.')
@@ -61,8 +81,11 @@ def validate_query_adapter(value, definitions=()):
     for identity, settings in options.items():
         if not isinstance(identity, str) or not identity or (ids and identity not in ids):
             raise ValueError('Query transform options refer to an unselected field rule.')
-        if not isinstance(settings, dict) or set(settings) - {'map', 'default', 'casefold', 'link_doctype', 'timezone', 'child_fields', 'target_type', 'child_types', 'child_transforms'}:
+        if not isinstance(settings, dict) or set(settings) - {'map', 'default', 'casefold', 'link_doctype', 'timezone', 'child_fields', 'target_type', 'child_types', 'child_transforms', 'source_paths'}:
             raise ValueError('Query field transformation has unsupported options.')
+        if 'source_paths' in settings:
+            from hero_integration.services.query_mapping_extensions import validate_options
+            validate_options('Coalesce', settings)
         if 'target_type' in settings and settings['target_type'] not in TARGET_TYPES:
             raise ValueError('Mapped target type is unsupported.')
         if 'map' in settings:
@@ -98,11 +121,14 @@ def validate_query_adapter(value, definitions=()):
             if not isinstance(child_transforms, dict) or set(child_transforms) - set(children.values()) or any(
                     value not in CHILD_TRANSFORMS for value in child_transforms.values()):
                 raise ValueError('Table child transformations are unsupported.')
-    if value.get('role') == 'LOOKUP' and (options or value.get('logbook')):
+    if 'native_relations' in value:
+        from hero_integration.services.mapped_relations import validate_config
+        validate_config(value['native_relations'])
+    if value.get('role') == 'LOOKUP' and (options or value.get('logbook') or value.get('native_relations')):
         raise ValueError('Lookup services cannot contain unused target transformations or logbook configuration.')
     logbook = value.get('logbook')
     if logbook is not None:
-        if (not isinstance(logbook, dict) or set(logbook) - {'path', 'identity_path', 'limit', 'heading_paths'}
+        if (not isinstance(logbook, dict) or set(logbook) - {'path', 'identity_path', 'limit', 'heading_paths', 'context_paths', 'visibility_path', 'offset_variable', 'max_pages'}
                 or not PATH.fullmatch(logbook.get('path', '')) or not PATH.fullmatch(logbook.get('identity_path', ''))
                 or type(logbook.get('limit')) is not int or not 1 <= logbook['limit'] <= 500):
             raise ValueError('Logbook requires explicit collection, identity and bounded first limit.')
@@ -110,6 +136,22 @@ def validate_query_adapter(value, definitions=()):
         if not isinstance(headings, list) or len(headings) > 5 or any(
                 not isinstance(path, str) or not PATH.fullmatch(path) or not path.startswith(logbook['path'] + '.') for path in headings):
             raise ValueError('Logbook headings must be selected child paths.')
+        paths = logbook.get('context_paths', [])
+        if (not isinstance(paths, list) or len(paths) > 100 or len(set(paths)) != len(paths)
+                or any(not isinstance(path, str) or not PATH.fullmatch(path)
+                       or not path.startswith(logbook['path'] + '.') for path in paths)):
+            raise ValueError('Logbook context must contain unique selected child paths.')
+        visibility = logbook.get('visibility_path')
+        if visibility is not None and (not isinstance(visibility, str) or not PATH.fullmatch(visibility)
+                                      or not visibility.startswith(logbook['path'] + '.')):
+            raise ValueError('Logbook visibility must be an explicit child path.')
+        if 'offset_variable' in logbook:
+            variable = logbook['offset_variable']
+            if (not isinstance(variable, str) or not re.fullmatch(r'[_A-Za-z][_0-9A-Za-z]*', variable)
+                    or type(logbook.get('max_pages')) is not int or not 1 <= logbook['max_pages'] <= 1000):
+                raise ValueError('Logbook pagination requires an explicit offset variable and page bound.')
+        elif 'max_pages' in logbook:
+            raise ValueError('Logbook page bound requires an offset variable.')
     canonical = json.loads(json.dumps(value, sort_keys=True, allow_nan=False))
     if len(json.dumps(canonical).encode()) > 65536:
         raise ValueError('Query adapter configuration exceeds its size limit.')
@@ -134,34 +176,37 @@ def validate_v2_spec(spec, metadata, adapter_options=None):
         _validate_native_spec(spec, adapter_options)
     if not isinstance(spec.source_type, str) or spec.source_type.split('|')[0] not in {'string', 'int', 'float', 'boolean', 'json'}:
         raise ValueError('Query source type is unsupported.')
+    if spec.transformation == 'Customer Display Name' and (spec.operation,spec.target_doctype,spec.target_field,spec.purpose) != ('HeroCustomers','Customer','customer_name','Record Name'):
+        raise ValueError('Customer Display Name may only bind the native customer name.')
     _validate_option_keys(spec, (adapter_options or {}).get('transform_options', {}).get(spec.definition_id, {}))
     if metadata is None:
         return
     if (spec.target_doctype, spec.target_field) == ('HERO Integration Link', 'source_id'):
         return  # the technical identity is written by the integration itself, never through a form
     metadata.ensure_write('Project' if spec.target_doctype == 'Comment' else spec.target_doctype)
-    if (spec.target_doctype, spec.target_field) == ('Comment', 'creation'):
+    if spec.target_doctype == 'Comment' and spec.target_field in {'creation', 'modified'}:
         _validate_output_compatibility(spec, (adapter_options or {}).get('transform_options', {}).get(spec.definition_id, {}), 'Datetime')
         return  # Frappe's standard Datetime column is absent from Meta.fields.
     contact_proxy = (spec.purpose == 'Customer Primary Contact'
         and spec.target_doctype in {'Customer', 'Contact'}
-        and spec.target_field in {'first_name', 'last_name', 'email_id', 'mobile_no', 'salutation'})
+        and spec.target_field in FIELDS['Contact'])
     field = metadata.field(spec.target_doctype, spec.target_field)
+    technical = (spec.operation, spec.source_path, spec.target_doctype, spec.target_field) in TECHNICAL_BINDINGS
     if (field is None or getattr(field, 'is_virtual', False) or (getattr(field, 'fetch_from', None) and not contact_proxy)
-            or getattr(field, 'hidden', False) or getattr(field, 'permlevel', 0)):
+            or (getattr(field, 'hidden', False) and not technical) or getattr(field, 'permlevel', 0)):
         raise ValueError('Mapped native field is absent or computed.')
     if (getattr(field, 'read_only', 0) and not spec.target_field.startswith('custom_hero_') and not contact_proxy
             and spec.target_doctype not in {'Customer', 'Comment'}
             and spec.target_field not in direct.FIELDS.get(spec.target_doctype, ())):
         # Explicitly listed direct-migration fields (e.g. File.file_name) are set by their importer.
         raise ValueError('Mapped native field is read-only.')
-    if field.fieldtype == 'Text Editor' and spec.transformation not in {'Safe HTML', 'Native Adapter'}:
+    if field.fieldtype in {'Text Editor', 'HTML Editor'} and spec.transformation not in {'Safe HTML', 'Native Adapter'}:
         raise ValueError('Rich text fields require the HTML safety adapter.')
     if field.fieldtype in {'Password', 'Attach', 'Attach Image', 'Code', 'Signature', 'Button', 'HTML'}:
         raise ValueError('Mapped native field type is unsupported.')
     opts = (adapter_options or {}).get('transform_options', {}).get(spec.definition_id, {})
     _validate_output_compatibility(spec, opts, field.fieldtype)
-    if spec.transformation in direct.TRANSFORMS:
+    if spec.transformation in direct.TRANSFORMS or spec.transformation == 'Native Adapter':
         return  # a coded HERO resolver writes exactly its registered field
     if spec.transformation in {'Local Date', 'Local Datetime'} and field.fieldtype != {'Local Date': 'Date', 'Local Datetime': 'Datetime'}[spec.transformation]:
         raise ValueError('Mapped date transformation differs from the native target type.')
@@ -172,7 +217,7 @@ def validate_v2_spec(spec, metadata, adapter_options=None):
         mapped = list(opts.get('map', {}).values()) + ([opts['default']] if 'default' in opts else [])
         if any(value is not None and value not in choices for value in mapped):
             raise ValueError('Value Map contains an unsupported native Select value.')
-    if field.fieldtype == 'Link' and spec.transformation not in {'Link Map', 'HERO Customer Link', 'HERO Project Link', 'Confirmed ERPNext Company', 'Salutation Table'}:
+    if field.fieldtype == 'Link' and spec.transformation not in {'Link Map', 'HERO Customer Link', 'HERO Project Link', 'Confirmed ERPNext Company', 'Salutation Table', 'Country Code', 'HERO User Link', 'User By Partner ID'}:
         raise ValueError('Native links require an explicit approved resolver.')
     if field.fieldtype == 'Table':
         if spec.transformation != 'Table Rows' or not opts.get('child_fields'):
@@ -230,6 +275,11 @@ def validate_plan(plan):
     if operation == 'HeroProjectMatches':
         if not {'Customer Relation', 'Confirmed Company'} <= {d.purpose for d in plan.definitions}:
             raise ValueError('Project intake requires customer and confirmed company bindings.')
+    for relation in options.get('native_relations', []):
+        expected = {'customer_bank_account': 'HeroCustomers', 'customer_addresses': 'HeroCustomers', 'customer_contacts': 'HeroCustomers',
+                    'project_address': 'HeroProjectMatches', 'sales_prices': 'HeroProducts'}[relation['kind']]
+        if operation != expected:
+            raise ValueError('Native relation does not belong to the selected migration area.')
     if operation == 'HeroCalendarEvents':
         names = {d.target_field for d in plan.definitions if d.target_doctype == 'Event'}
         if not {'subject', 'starts_on', 'all_day'} <= names:
@@ -241,6 +291,14 @@ def _transform(spec, value, options):
     opts = options.get('transform_options', {}).get(spec.definition_id, {})
     if value is MISSING:
         return MISSING
+    if spec.transformation in {'Customer Display Name','Coalesce'}:
+        return value
+    if spec.transformation == 'Country Code':
+        from hero_integration.services.query_mapping_extensions import country_name
+        return country_name(value)
+    if spec.transformation == 'User By Partner ID':
+        from hero_integration.integrations.hero_people import user_by_partner
+        return user_by_partner(value)
     if spec.transformation in {'Number', 'Integer'}:
         return _number(value) if spec.transformation == 'Number' else _integer(value)
     if spec.transformation in {'Value Map', 'Link Map'}:
@@ -311,14 +369,15 @@ def _validate_native_spec(spec, adapter_options):
 
     if spec.target_doctype == 'Contact' and spec.purpose != 'Customer Primary Contact':
         raise ValueError('Contact fields require the exclusive primary-contact adapter.')
-    if spec.target_doctype == 'Address' and (spec.relation != 'Customer Primary Address' or not spec.source_path.startswith('address.')):
+    if spec.target_doctype == 'Address' and (spec.relation != 'Customer Primary Address' or not (
+            spec.source_path.startswith('address.') or (spec.source_path, spec.target_field) == ('phone_fax', 'fax'))):
         raise ValueError('Address fields require the direct Customer.address primary relationship.')
     if spec.target_doctype == 'Comment':
         options = validate_query_adapter(adapter_options or {'version': 2})
         collection = options.get('logbook')
         if not collection or not spec.source_path.startswith(collection['path'] + '.'):
             raise ValueError('Comment fields require the configured logbook collection.')
-        if spec.target_field == 'creation' and spec.transformation != 'Local Datetime':
+        if spec.target_field in {'creation', 'modified'} and spec.transformation != 'Local Datetime':
             raise ValueError('Logbook dates require an explicit timezone conversion.')
     if spec.target_field == 'company' and (spec.purpose != 'Confirmed Company' or spec.transformation != 'Confirmed ERPNext Company'):
         raise ValueError('Company requires the independently confirmed company resolver.')
@@ -338,12 +397,20 @@ def _validate_native_spec(spec, adapter_options):
         raise ValueError('Project identity resolution must bind an approved native Project link.')
     if spec.transformation == 'Native Adapter' and spec.target_doctype != 'Event':
         raise ValueError('Native Adapter is reserved for mapped Event value groups.')
+    if spec.transformation == 'Country Code' and (spec.target_doctype, spec.target_field) != ('Address', 'country'):
+        raise ValueError('Country Code may only bind the native Address country.')
+    if spec.transformation == 'User By Partner ID' and (spec.operation, spec.source_path, spec.target_doctype, spec.target_field) != ('HeroProjectMatches', 'partner_id', 'Project', 'custom_hero_project_manager'):
+        raise ValueError('Partner identity may only bind the Project manager.')
+    if spec.transformation == 'HERO User Link' and (spec.operation, spec.source_path, spec.target_doctype, spec.target_field) != ('HeroTasks', 'target_user_id', 'ToDo', 'allocated_to'):
+        raise ValueError('User identity may only bind the native Task assignee.')
     if spec.transformation == 'Salutation Table' and (spec.target_doctype not in {'Customer', 'Contact'} or spec.target_field != 'salutation'):
         raise ValueError('Salutation conversion requires a primary Contact salutation binding.')
     if spec.transformation in {'Customer Type From Company Name', 'Customer Type From HERO Type'} and (spec.target_doctype, spec.target_field) != ('Customer', 'customer_type'):
         raise ValueError('Customer classification may only bind the native Customer type.')
-    if spec.target_doctype == 'ToDo' and spec.transformation not in {'Value Map', 'Link Map'}:
+    if spec.target_doctype == 'ToDo' and spec.transformation not in {'Value Map', 'Link Map', 'HERO User Link'}:
         raise ValueError('Assignment requires an explicit source-user mapping.')
+    if spec.target_doctype == 'Event' and spec.target_field == 'status' and spec.transformation != 'Native Adapter':
+        raise ValueError('Event status requires its native lifecycle adapter.')
 
 
 def seal_query(service, snapshot, config, plan):
@@ -395,20 +462,38 @@ def seal_query(service, snapshot, config, plan):
     supplied = {key: (config.get('page_size', 100) if value == '$page_size' else 0 if value == '$offset' else value) for key, value in variables.items()}
     coerced = get_variable_values(schema, definitions[0].variable_definitions or (), supplied)
     if isinstance(coerced, list): raise ValueError('Mapped query variables are incompatible with their schema.')
-    selected, list_paths, nodes, leaf_types = set(), set(), {}, {}
+    selected, list_paths, nodes, leaf_types, structured_types = set(), set(), {}, {}, set()
     def walk(selection_set, current, prefix=''):
-        from graphql import GraphQLList, GraphQLNonNull
+        from graphql import GraphQLList, GraphQLNonNull, GraphQLUnionType, GraphQLInterfaceType
+        from graphql.language.ast import InlineFragmentNode
         for field in selection_set.selections:
+            if isinstance(field, InlineFragmentNode):
+                if field.directives or not field.type_condition:
+                    raise ValueError('Mapped inline fragments require an unconditional explicit type.')
+                name = field.type_condition.name.value
+                allowed = {item.name for item in schema.get_possible_types(current)} if isinstance(current,(GraphQLUnionType,GraphQLInterfaceType)) else {current.name}
+                if name not in allowed:
+                    raise ValueError('Mapped inline fragment does not belong to its source type.')
+                walk(field.selection_set,schema.get_type(name),prefix)
+                continue
             if not isinstance(field, FieldNode) or field.alias or field.directives:
-                raise ValueError('Mapped child selections cannot contain fragments, aliases or directives.')
+                raise ValueError('Mapped child selections cannot contain named fragments, aliases or directives.')
             path = prefix + field.name.value
-            definition = current.fields.get(field.name.value)
+            if field.name.value == '__typename':
+                if field.arguments or field.selection_set:
+                    raise ValueError('Mapped typename must be a plain scalar selection.')
+                selected.add(path);leaf_types[path]='String';continue
+            definition = getattr(current,'fields',{}).get(field.name.value)
             if definition is None: raise ValueError('Mapped query field is absent from its schema.')
             nodes[path] = field
             kind = definition.type
             while isinstance(kind, GraphQLNonNull): kind = kind.of_type
             if isinstance(kind, GraphQLList): list_paths.add(path)
-            if field.selection_set: walk(field.selection_set, get_named_type(definition.type), path + '.')
+            if field.selection_set:
+                selected.add(path)
+                structured_types.add(get_named_type(definition.type).name)
+                leaf_types[path]=get_named_type(definition.type).name
+                walk(field.selection_set, get_named_type(definition.type), path + '.')
             else:
                 selected.add(path)
                 leaf_types[path] = get_named_type(definition.type).name
@@ -423,9 +508,12 @@ def seal_query(service, snapshot, config, plan):
         nodes = {path[len(inner):]: node for path, node in nodes.items() if path.startswith(inner)}
         leaf_types = {path[len(inner):]: kind for path, kind in leaf_types.items() if path.startswith(inner)}
     required = {d.source_path for d in plan.definitions if d.purpose != 'Confirmed Company'}
+    from hero_integration.services.mapped_relations import required_paths
+    required.update(required_paths(options.get('native_relations', [])))
     for d in plan.definitions:
+        required.update(options.get('transform_options',{}).get(d.definition_id,{}).get('source_paths',[]))
         if d.target_doctype == 'Address':
-            required.add(d.source_path.split('.', 1)[0] + '.id')
+            required.add('address.id')
         if d.transformation == 'Table Rows':
             required.discard(d.source_path)
             required |= {d.source_path + '.' + child for child in options.get('transform_options', {}).get(d.definition_id, {}).get('child_fields', {})}
@@ -447,12 +535,32 @@ def seal_query(service, snapshot, config, plan):
         path = logbook['path']
         required.add(path + '.' + logbook['identity_path'])
         required.update(logbook.get('heading_paths', []))
+        required.update(logbook.get('context_paths', []))
+        if logbook.get('visibility_path'):
+            required.add(logbook['visibility_path'])
         node = nodes.get(path)
         first = next((a.value for a in node.arguments if a.name.value == 'first'), None) if node else None
         amount = int(first.value) if isinstance(first, IntValueNode) else variables.get(first.name.value) if isinstance(first, VariableNode) else None
         if path not in list_paths or type(amount) is not int or amount != logbook['limit']:
             raise ValueError('Logbook collection first must match its explicitly approved limit.')
-    families = {'int': {'Int'}, 'string': {'String', 'ID', 'Date', 'DateTime'}, 'float': {'Float', 'Int'}, 'boolean': {'Boolean'}}
+        if logbook.get('offset_variable'):
+            offset = next((a.value for a in node.arguments if a.name.value == 'offset'), None)
+            variable = logbook['offset_variable']
+            if (operation != 'HeroProjectMatches' or config.get('page_size', 100) != 1
+                    or not isinstance(offset, VariableNode) or offset.name.value != variable
+                    or type(variables.get(variable)) is not int or variables[variable] != 0):
+                raise ValueError('Logbook pagination requires one Project and its approved zero-based child offset.')
+            from graphql import visit, Visitor
+            class Uses(Visitor):
+                count = 0
+                def enter_variable(self, node, key, parent, path, ancestors):
+                    if node.name.value == variable: self.count += 1
+            uses = Uses()
+            visit(document, uses)
+            if uses.count != 2:
+                raise ValueError('Logbook cursor variable must be exclusive to its child collection.')
+
+    families = {'int': {'Int'}, 'string': {'String', 'ID', 'Date', 'DateTime'}, 'float': {'Float', 'Int'}, 'boolean': {'Boolean'}, 'json': {'JSON','Mixed','JSONObject'}}
     for spec in plan.definitions:
         if spec.purpose == 'Confirmed Company': continue
         if spec.transformation == 'Table Rows':
@@ -468,7 +576,7 @@ def seal_query(service, snapshot, config, plan):
         kind = spec.source_type.split('|')[0]
         if actual and actual not in families.get(kind, set()):
             from graphql import GraphQLEnumType
-            if not (kind == 'string' and isinstance(schema.get_type(actual), GraphQLEnumType)):
+            if not (kind == 'string' and isinstance(schema.get_type(actual), GraphQLEnumType)) and not (kind=='json' and actual in structured_types):
                 raise ValueError('Mapped source type differs from its saved schema.')
     if not required <= selected:
         raise ValueError('Mapped query omits selected field or title dependencies: ' + ', '.join(sorted(required - selected)))
@@ -491,9 +599,14 @@ def _check_value(spec, value):
     kind = spec.source_type.split('|')[0]
     valid = {'string': isinstance(value, str), 'int': type(value) is int,
              'float': type(value) in {int, float} and math.isfinite(value),
-             'boolean': type(value) is bool, 'json': isinstance(value, (list, dict))}.get(kind, False)
+             'boolean': type(value) is bool, 'json': isinstance(value, (list, dict, str, bool, int, float))}.get(kind, False)
     if not valid:
         raise ValueError('Mapped source field has an incompatible value: ' + spec.source_path)
+    if kind == 'json':
+        try:
+            json.dumps(value, allow_nan=False)
+        except (TypeError, ValueError) as error:
+            raise ValueError('Mapped JSON source must contain finite JSON values.') from error
 
 
 def _reference(doctype, name):
@@ -521,6 +634,9 @@ def mapped_values(plan, record, *, customer_link=None, confirmed_company=None, p
             values[spec.target_field] = confirmed_company()
             continue
         raw = lookup(record, spec.source_path)
+        if spec.transformation in {'Customer Display Name','Coalesce'}:
+            from hero_integration.services.query_mapping_extensions import source_value
+            raw = source_value(spec,record,plan.adapter_options.get('transform_options',{}).get(spec.definition_id,{}))
         _check_value(spec, raw)
         if raw is MISSING:
             values.missing.add(spec.target_field)
@@ -539,6 +655,9 @@ def mapped_values(plan, record, *, customer_link=None, confirmed_company=None, p
                     values.missing.add(spec.target_field)
                     continue
                 raise ValueError('Selected native field could not be resolved.') from None
+        elif spec.transformation == 'HERO User Link':
+            from hero_integration.services.query_mapping_extensions import bound_user
+            value = bound_user(raw, record.get('_hero_source_instance', 'default'))
         else:
             value = transform(spec, raw, plan.adapter_options)
         opts = plan.adapter_options.get('transform_options', {}).get(spec.definition_id, {})
@@ -559,9 +678,9 @@ def address_values(plan, record):
     selected = [d for d in plan.definitions if d.target_doctype == 'Address']
     if not selected:
         return None
-    if any(not spec.source_path.startswith('address.') for spec in selected):
+    if any(not spec.source_path.startswith('address.') and (spec.source_path, spec.target_field) != ('phone_fax', 'fax') for spec in selected):
         raise ValueError('Primary Address values must belong to the direct Customer.address relation.')
-    root = {spec.source_path.split('.', 1)[0] for spec in selected}
+    root = {spec.source_path.split('.', 1)[0] for spec in selected if spec.source_path.startswith('address.')}
     if len(root) != 1:
         raise ValueError('Primary address bindings require one explicit source relation.')
     parent = lookup(record, next(iter(root)))
@@ -571,7 +690,7 @@ def address_values(plan, record):
         raise ValueError('Mapped primary address requires a stable source identity.')
     values = mapped_values(plan, record, target_doctype='Address')
     if not {'address_line1', 'pincode', 'city', 'country'} <= set(values):
-        raise ValueError('Mapped primary address is incomplete; no country is assumed.')
+        raise IncompleteMappedAddress('Mapped primary address is incomplete; no country is assumed.')
     # The existing Address writer owns linking, exclusive ownership and baselines.
     return {'id': str(parent['id']), 'street': values['address_line1'], 'zipcode': values['pincode'],
             'city': values['city'], 'country_name': values['country'],
@@ -677,6 +796,8 @@ def source_type(schema, operation_name, path):
         if index == len(segments) - 1 and has_list:
             return 'json' + ('|null' if nullable else '')
         current = types.get(ref.get('name'), {})
+    if named.get('kind') in {'OBJECT','UNION','INTERFACE'} or named.get('name') in {'JSON','Mixed','JSONObject'}:
+        return 'json' + ('|null' if nullable else '')
     kind = {'Int': 'int', 'Float': 'float', 'Boolean': 'boolean'}.get(named.get('name'))
     if kind is None and named.get('kind') in {'SCALAR', 'ENUM'}: kind = 'string'
     if kind is None: raise ValueError('Selected source path must identify a scalar or an explicit collection.')
@@ -733,6 +854,11 @@ def _canonical(value, target_type):
         except ValueError as error: raise ValueError('Mapped Time target requires an ISO time.') from error
         if parsed.tzinfo is not None: raise ValueError('Mapped Time cannot discard a timezone offset.')
         return parsed.isoformat()
+    if target_type == 'JSON':
+        if not isinstance(value,str):
+            raise ValueError('Mapped JSON output requires an explicit JSON serialization.')
+        json.loads(value,parse_constant=lambda _v: (_ for _ in ()).throw(ValueError('Non-finite JSON')))
+        return value
     if target_type == 'Table':
         if not isinstance(value, list) or not all(isinstance(row, dict) for row in value):
             raise ValueError('Mapped Table target requires explicitly typed rows.')
@@ -774,6 +900,8 @@ def transform(spec, value, options):
 
 def _child_transform(value, name):
     if value is None: return None
+    if name == 'JSON Value':
+        return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':'), allow_nan=False)
     if name == 'Number': return _number(value)
     if name == 'Integer': return _integer(value)
     if name == 'Scalar Text':
@@ -789,7 +917,8 @@ def _child_transform(value, name):
 
 def _output_family(source_type, transformation):
     kind = source_type.split('|')[0]
-    if transformation in {'Identity', 'Native Adapter'}: return kind
+    if transformation in {'Identity', 'Native Adapter', 'Coalesce'}: return kind
+    if transformation == 'Customer Display Name': return 'string'
     if transformation in {'Trim', 'Nonempty String ID', 'Salutation Table', 'Customer Type From Company Name', 'Customer Type From HERO Type'}:
         if kind != 'string': raise ValueError('Selected text transformation requires a string source.')
         return 'string'
@@ -812,7 +941,7 @@ def _output_family(source_type, transformation):
     if transformation in {'Local Date', 'Local Datetime'}:
         if kind != 'string': raise ValueError('Date conversion requires a string source.')
         return 'string'
-    if transformation in {'Link Map', 'HERO Customer Link', 'HERO Project Link', 'Confirmed ERPNext Company'}: return 'string'
+    if transformation in {'Link Map', 'HERO Customer Link', 'HERO Project Link', 'Confirmed ERPNext Company', 'Country Code', 'HERO User Link', 'User By Partner ID'}: return 'string'
     if transformation == 'Table Rows':
         if kind != 'json': raise ValueError('Table Rows requires a collection source.')
         return 'json'
@@ -832,8 +961,11 @@ def _validate_output_compatibility(spec, options, fieldtype):
         return
     if fieldtype not in TARGET_TYPES:
         raise ValueError('Mapped native field type is unsupported.')
+    if fieldtype == 'JSON' and spec.transformation != 'JSON Value':
+        raise ValueError('JSON fields require an explicit JSON Value transformation.')
     declared = options.get('target_type')
-    if declared and declared != fieldtype:
+    rich_text_alias = {declared, fieldtype} == {'Text Editor', 'HTML Editor'}
+    if declared and declared != fieldtype and not rich_text_alias:
         raise ValueError('Configured mapped target type differs from native metadata.')
     inferred = _inferred_target(spec)
     if 'default' in options:
@@ -870,6 +1002,10 @@ def _validate_option_keys(spec, options):
         if spec.transformation == 'Link Map': allowed.add('link_doctype')
     elif spec.transformation in {'Local Date', 'Local Datetime'}:
         allowed |= {'timezone', 'default'}
+    elif spec.transformation in {'Customer Display Name','Coalesce'}:
+        allowed |= {'source_paths'}
+        from hero_integration.services.query_mapping_extensions import validate_options
+        validate_options(spec.transformation,options)
     elif spec.transformation == 'Table Rows':
         allowed |= {'child_fields', 'child_types', 'child_transforms'}
     elif spec.transformation not in {'Confirmed ERPNext Company', 'HERO Customer Link', 'HERO Project Link', 'Native Adapter'}:

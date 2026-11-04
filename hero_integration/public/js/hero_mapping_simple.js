@@ -45,7 +45,8 @@
         const summary = areas.length ? `${t("Areas in the file")}: ${areas.join(", ")}` : t("The file contains no mapping areas.");
         return summary + (preview.replace_mappings
             ? ` ${t("Existing mappings in these areas will be replaced.")} ${preview.replacement?.field_mappings ?? 0} ${t("field mappings")}, ${preview.replacement?.graphql_mappings ?? 0} ${t("GraphQL mappings")}.` : "")
-            + ` ${t("Changed settings")}: ${(preview.settings || []).length}.`;
+            + ` ${t("Changed settings")}: ${(preview.settings || []).length}.`
+            + (preview.mutation_mappings?.count ? ` ${t("Prepared Mutation mappings")}: ${preview.mutation_mappings.count}. ${t("Mutation drafts require separate contract approval before activation.")}` : "");
     }
 
     function jsonFormat(payload) {
@@ -163,7 +164,9 @@
                         if (disposed) return;
                         if (mutation && (result.activation !== true || result.execution !== false)) throw new Error(t("Unexpected mapping import result."));
                         await load();
-                        say(mutation ? t("Mutation mappings imported and activated. No HERO operation was executed.") : t("Mappings loaded and active."), "success");
+                        say(mutation ? t("Mutation mappings imported and activated. No HERO operation was executed.")
+                            : result.mutation_mappings?.count ? t("Query mappings active. Mutation mappings prepared for separate contract approval.")
+                            : t("Mappings loaded and active."), "success");
                     } catch (error) { if (!disposed) say(`${t("Import failed.")} ${failure(error)}`, "error"); }
                     finally { if (!disposed) setBusy(false); }
                 }, () => { consumed = true; if (!disposed) { setBusy(false); say(t("Import cancelled.")); } });

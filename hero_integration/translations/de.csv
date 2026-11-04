@@ -3266,3 +3266,246 @@ Mutation mapping imports cannot provision document fields.,Der Import von Mutati
 Explicit import and publication confirmation is required.,Bestätigen Sie den Import und die Veröffentlichung ausdrücklich.
 Mutation import has unresolved publication blockers.,Der Mutation-Import enthält noch ungeklärte Veröffentlichungshindernisse.
 Mutation import preview changed; preview again before importing.,Die Vorschau des Mutation-Imports hat sich geändert. Erstellen Sie vor dem Import eine neue Vorschau.
+Approved readback exceeded the bounded page limit.,Die freigegebene Rückabfrage hat die festgelegte Seitengrenze überschritten.
+Mutation input paths overlap.,Eingabepfade der Mutation überschneiden sich.
+Mutation input path is absent from the saved schema.,Der Eingabepfad der Mutation fehlt im gespeicherten Schema.
+Invalid mapped update configuration.,Ungültige Konfiguration der gemappten Aktualisierung.
+Unsupported mapped update area.,Dieser Bereich wird für gemappte Aktualisierungen nicht unterstützt.
+Mapped update source and operation namespaces differ.,Quelle und Operation der gemappten Aktualisierung gehören zu unterschiedlichen Bereichen.
+Mapped update requires an explicit approved read service.,Die gemappte Aktualisierung benötigt einen ausdrücklich freigegebenen Lesedienst.
+Mutation identity must remain server-owned and distinct from source identity.,Die Mutationsidentität muss serververwaltet und von der Quellidentität getrennt bleiben.
+Read identity is outside this native namespace.,Die Leseidentität liegt außerhalb dieses nativen Bereichs.
+Mutation identity must use its verified Int or ID input.,Die Mutationsidentität muss den nachgewiesenen Eingabetyp Int oder ID verwenden.
+Mapped updates require a bounded list of explicit assignments.,Gemappte Aktualisierungen benötigen eine begrenzte Liste ausdrücklicher Zuordnungen.
+Required unchanged input members must have proven readback bindings.,Erforderliche unveränderte Eingabefelder benötigen nachgewiesene Rückabfragebindungen.
+Address changes require a server-owned related address identity.,Adressänderungen benötigen eine serververwaltete Identität der verknüpften Adresse.
+Exactly one native source binding is required.,Genau eine native Quellbindung ist erforderlich.
+The native binding requires synchronization or conflict review.,Die native Bindung muss synchronisiert oder auf Konflikte geprüft werden.
+"The active mapping, snapshot and confirmed source no longer agree.","Aktives Mapping, Schema-Snapshot und bestätigte Quelle stimmen nicht mehr überein."
+The selected document is outside this mapping namespace.,Das ausgewählte Dokument liegt außerhalb des Mappingbereichs.
+Approved readback and native source identity differ.,Freigegebene Rückabfrage und native Quellidentität unterscheiden sich.
+Exactly one active schema-bound mutation contract is required.,"Genau ein aktiver, an das Schema gebundener Mutationsvertrag ist erforderlich."
+The approved mutation contract or service changed.,Der freigegebene Mutationsvertrag oder Dienst wurde geändert.
+A deleted HERO record cannot be updated.,Ein gelöschter HERO-Datensatz kann nicht aktualisiert werden.
+Readonly or recurring HERO events require their separate provider/recurrence workflow.,Schreibgeschützte oder wiederkehrende HERO-Termine benötigen den eigenen Anbieter- oder Wiederholungsablauf.
+The source file category differs from the mapped native area.,Die Kategorie der Quelldatei unterscheidet sich vom gemappten Bereich.
+Product version and base-data identities were not proven by the readback.,Die Rückabfrage hat die Identitäten der Artikelversion und ihrer Basisdaten nicht nachgewiesen.
+Partner and User identities do not match in the saved readback.,Mitarbeiter- und Benutzeridentitäten stimmen in der gespeicherten Rückabfrage nicht überein.
+Managed sales-price collection binding is ambiguous.,Die Bindung der verwalteten Verkaufspreissammlung ist nicht eindeutig.
+Approved readback omitted its managed sales-price collection.,Die freigegebene Rückabfrage enthält die verwaltete Verkaufspreissammlung nicht.
+Managed sales-price row identity is not unique in approved readback.,Die Zeilenidentität des verwalteten Verkaufspreises ist in der freigegebenen Rückabfrage nicht eindeutig.
+Only the proven default HERO sales-price list can use the scalar default-price update.,Nur die nachgewiesene Standard-Verkaufspreisliste in HERO kann über das einzelne Standardpreisfeld aktualisiert werden.
+The managed remote sales price is not a nonnegative number.,Der verwaltete entfernte Verkaufspreis ist keine nichtnegative Zahl.
+Each outgoing field requires one matching approved Query binding.,Jedes ausgehende Feld benötigt genau eine passende freigegebene Query-Bindung.
+The approved readback omitted a canonical field.,Die freigegebene Rückabfrage enthält ein erforderliches Vergleichsfeld nicht.
+This native projection lacks a reversible baseline.,Für diese native Projektion fehlt eine umkehrbare Vergleichsbasis.
+Approved readback did not prove the mutation record identity.,Die freigegebene Rückabfrage hat die Identität des Mutationsdatensatzes nicht nachgewiesen.
+The mapped update preview changed; review and confirm it again.,Die Vorschau der gemappten Aktualisierung wurde geändert; bitte erneut prüfen und bestätigen.
+Mutation input path is not a scalar object member.,Der Eingabepfad der Mutation bezeichnet kein skalares Objektfeld.
+A configured value is incompatible with its HERO input type.,Ein konfigurierter Wert passt nicht zu seinem HERO-Eingabetyp.
+Invalid mapped update assignment.,Ungültige Feldzuordnung für die gemappte Aktualisierung.
+"Invalid mapped update source, path or resolver.","Ungültige Quelle, ungültiger Pfad oder ungültige Auflösung für die gemappte Aktualisierung."
+Source is outside the verified native relations.,Die Quelle liegt außerhalb der nachgewiesenen nativen Beziehungen.
+A source field must have one unambiguous mutation target.,Ein Quellfeld muss genau ein eindeutiges Mutationsziel haben.
+"Identity, account, lifecycle and observed system fields cannot be reversed.","Identitäts-, Konto-, Lebenszyklus- und beobachtete Systemfelder können nicht umgekehrt werden."
+Relationship inputs require an explicit verified Link resolver.,Beziehungseingaben benötigen eine ausdrücklich geprüfte Link-Auflösung.
+The relationship resolver is outside its reviewed identity namespace.,Die Beziehungsauflösung liegt außerhalb ihres geprüften Identitätsbereichs.
+Price updates require an explicit managed native price list.,Preisaktualisierungen benötigen eine ausdrücklich verwaltete native Preisliste.
+Item Price requires the managed-price resolver.,Artikelpreise benötigen die Auflösung für verwaltete Preise.
+Barcode selection requires the native Item barcode table.,Die Barcodeauswahl benötigt die native Barcode-Tabelle des Artikels.
+Event time conversion requires a native Event time field.,Die Umrechnung von Terminzeiten benötigt ein natives Terminzeitfeld.
+Updates require scalar inputs; relationship lists need a separate reviewed adapter.,Aktualisierungen benötigen skalare Eingaben; Beziehungslisten benötigen einen gesondert geprüften Adapter.
+Temporal mutation inputs require an explicit timezone resolver.,Zeitbezogene Mutationseingaben benötigen eine ausdrückliche Zeitzonenauflösung.
+Datetime updates require an explicit IANA timezone.,Datums- und Zeitaktualisierungen benötigen eine ausdrückliche IANA-Zeitzone.
+A source condition must be an explicit local-field equality.,Eine Quellbedingung muss ein ausdrücklicher Gleichheitsvergleich mit einem lokalen Feld sein.
+Missing and null value policies must be explicit.,Der Umgang mit fehlenden und leeren Werten muss ausdrücklich festgelegt sein.
+Required readback fields cannot grant arbitrary mutation inputs.,Erforderliche Rückabfragefelder dürfen keine beliebigen Mutationseingaben freigeben.
+"The mapped native source is protected, absent or not editable.","Die gemappte native Quelle ist geschützt, fehlt oder ist nicht bearbeitbar."
+A native Link source requires a reviewed identity or explicit value resolver.,Eine native Link-Quelle benötigt eine geprüfte Identitätsauflösung oder ausdrückliche Wertzuordnung.
+Only reviewed Item master names may map to textual HERO master fields.,Nur geprüfte Artikelstammdatennamen dürfen textuellen HERO-Stammdatenfeldern zugeordnet werden.
+The approved readback query changed.,Die freigegebene Rückabfrage wurde geändert.
+Readback pagination did not advance.,Die Rückabfrage ist bei der Seitennavigation nicht vorangekommen.
+The remote relation has no unique native identity.,Die entfernte Beziehung hat keine eindeutige native Identität.
+Employee canonical values require review.,Die Vergleichswerte des Mitarbeiters müssen geprüft werden.
+The local value has no explicit reverse mapping.,Für den lokalen Wert fehlt eine ausdrückliche Rückzuordnung. (Mapping)
+A single native barcode must be selected unambiguously.,Ein einzelner nativer Barcode muss eindeutig ausgewählt werden.
+The related HERO identity is invalid.,Die verknüpfte HERO-Identität ist ungültig.
+A required unchanged input member is missing from approved readback.,Ein erforderliches unverändertes Eingabefeld fehlt in der freigegebenen Rückabfrage.
+"Event time updates require start, end and all-day bindings together.","Terminzeitänderungen benötigen gemeinsam die Zuordnungen für Beginn, Ende und Ganztägigkeit."
+The native document changed during Send; reconcile the remote result.,Das native Dokument wurde während des Sendens geändert; bitte das entfernte Ergebnis abgleichen.
+The native identity or baseline changed during Send; reconcile the remote result.,Die native Identität oder Vergleichsbasis wurde während des Sendens geändert; bitte das entfernte Ergebnis abgleichen.
+The mapped update authority or payload changed after reservation.,Die Berechtigung oder Nutzlast der gemappten Aktualisierung wurde nach der Reservierung geändert.
+HERO did not confirm the separately proven mutation identity.,HERO hat die gesondert nachgewiesene Mutationsidentität nicht bestätigt.
+The mutation identity changed during readback.,Die Mutationsidentität wurde während der Rückabfrage geändert.
+Assignment identities must be unique canonical UUIDs.,Zuordnungsidentitäten müssen eindeutige UUIDs in kanonischer Schreibweise sein.
+Value Map requires explicit scalar pairs.,Eine Wertzuordnung benötigt ausdrückliche skalare Wertepaare.
+Only Value Map accepts a conversion table.,Nur eine Wertzuordnung akzeptiert eine Umwandlungstabelle.
+The approved readback omitted its identity.,Die freigegebene Rückabfrage enthält ihre Identität nicht.
+The bound HERO record was not found in the approved readback.,Der gebundene HERO-Datensatz wurde in der freigegebenen Rückabfrage nicht gefunden.
+HERO did not retain the configured mapped field value.,HERO hat den konfigurierten gemappten Feldwert nicht beibehalten.
+Readback identity is ambiguous.,Die Rückabfrageidentität ist nicht eindeutig.
+The related Address identity differs from HERO.,Die Identität der verknüpften Adresse unterscheidet sich von HERO.
+The employee has no safe native User relation.,Der Mitarbeiter hat keine sichere native Benutzerbeziehung.
+The native User does not match the partner user identity.,Der native Benutzer stimmt nicht mit der Benutzeridentität des Mitarbeiters überein.
+The employee User relation is not unique.,Die Benutzerbeziehung des Mitarbeiters ist nicht eindeutig.
+Unsupported native source relation.,Diese native Quellbeziehung wird nicht unterstützt.
+A protected related identity changed during Send.,Eine geschützte verknüpfte Identität wurde während des Sendens geändert.
+The imported price has no managed baseline identity.,Der importierte Preis hat keine verwaltete Vergleichsidentität.
+"The managed price dimensions, currency or unit changed.","Die Dimensionen, Währung oder Einheit des verwalteten Preises wurden geändert."
+The managed sales price requires conflict review.,Der verwaltete Verkaufspreis muss auf Konflikte geprüft werden.
+Native relations require a bounded explicit list.,"Native Beziehungen benötigen eine begrenzte, ausdrückliche Liste."
+An approved native relation source field is absent.,Ein freigegebenes Quellfeld einer nativen Beziehung fehlt.
+A native relation text field has an incompatible source value.,Ein Textfeld der nativen Beziehung hat einen inkompatiblen Quellwert.
+Native relations require the approved source instance.,Native Beziehungen benötigen die freigegebene Quellinstanz.
+Native relations require the imported parent record before writes.,Native Beziehungen benötigen vor Schreibzugriffen den importierten übergeordneten Datensatz.
+Native relation has ambiguous source bindings.,Die Quellbindungen der nativen Beziehung sind nicht eindeutig.
+Bank name and BIC do not prove one existing institution.,Bankname und BIC weisen nicht genau ein bestehendes Institut nach.
+Native relation must be an object.,Eine native Beziehung muss ein Objekt sein.
+Native relation kinds must be supported and unique.,Native Beziehungstypen müssen unterstützt und eindeutig sein.
+Native relation identity or options are invalid.,Identität oder Optionen der nativen Beziehung sind ungültig.
+Native relation fields must explicitly select supported source paths.,Die Felder der nativen Beziehung müssen unterstützte Quellpfade ausdrücklich auswählen.
+"Bank account relations require explicit IBAN, bank name and BIC paths.","Bankkontobeziehungen benötigen ausdrückliche Pfade für IBAN, Bankname und BIC."
+"Project address requires native address fields, country code and an explicit Project link.","Projektadressen benötigen native Adressfelder, einen Ländercode und eine ausdrückliche Projektverknüpfung."
+Native relation crosses its approved parent type.,Die native Beziehung überschreitet ihren freigegebenen übergeordneten Typ.
+An approved native relation identity is absent.,Eine freigegebene Identität einer nativen Beziehung fehlt.
+A populated native relation needs a stable source identity.,Eine befüllte native Beziehung benötigt eine stabile Quellidentität.
+Native relation binding has a missing or incompatible target.,Das Ziel der nativen Beziehungsbindung fehlt oder ist inkompatibel.
+Bank account ownership differs from the mapped Customer.,Das Bankkonto gehört nicht zum gemappten Kunden.
+An existing IBAN requires explicit account reconciliation; no account was adopted.,Eine bestehende IBAN benötigt einen ausdrücklichen Kontenabgleich; es wurde kein Konto übernommen.
+Address country code must resolve to exactly one ERPNext Country.,Der Ländercode der Adresse muss genau einem ERPNext-Land entsprechen.
+Bank account requires a valid IBAN and an explicit bank name.,Das Bankkonto benötigt eine gültige IBAN und einen ausdrücklichen Banknamen.
+Bank BIC has an invalid format.,Die BIC der Bank hat ein ungültiges Format.
+"Project address requires street, city and an explicit country code.","Die Projektadresse benötigt Straße, Stadt und einen ausdrücklichen Ländercode."
+Configured Project address field must be a native Address link.,Das konfigurierte Projektadressfeld muss eine native Adressverknüpfung sein.
+Existing Project address is locally owned and requires reconciliation.,Die bestehende Projektadresse wird lokal verwaltet und muss abgeglichen werden.
+Native collection rows require a stable source identity.,Zeilen nativer Sammlungen benötigen eine stabile Quellidentität.
+Native collection paths or options are invalid.,Pfade oder Optionen der nativen Sammlung sind ungültig.
+Native collection fields must explicitly select supported source paths.,Die Felder der nativen Sammlung müssen unterstützte Quellpfade ausdrücklich auswählen.
+An approved native collection source field is absent.,Ein freigegebenes Quellfeld einer nativen Sammlung fehlt.
+Native collection crosses its approved parent type.,Die native Sammlung überschreitet ihren freigegebenen übergeordneten Typ.
+Native collections require the approved source instance.,Native Sammlungen benötigen die freigegebene Quellinstanz.
+Native collection must be a bounded list of records.,Eine native Sammlung muss eine begrenzte Liste von Datensätzen sein.
+Native collection has ambiguous source bindings.,Die Quellbindungen der nativen Sammlung sind nicht eindeutig.
+Source price-list binding differs from the configured ERPNext list.,Die Quellpreislistenbindung unterscheidet sich von der konfigurierten ERPNext-Preisliste.
+The explicitly bound ERPNext price list does not exist.,Die ausdrücklich gebundene ERPNext-Preisliste existiert nicht.
+The approved price-list currency is absent from ERPNext.,Die freigegebene Preislistenwährung fehlt in ERPNext.
+"Managed price lookup requires item, price list and source instance.","Die Suche nach verwalteten Preisen benötigt Artikel, Preisliste und Quellinstanz."
+Managed price rate-change policy must be an explicit Boolean.,Die Zulässigkeit von Preisänderungen muss ausdrücklich als boolescher Wert festgelegt sein.
+Managed price lookup must resolve to exactly one source-bound price.,Die Suche nach verwalteten Preisen muss genau einen quellgebundenen Preis ergeben.
+Native collection kind is unsupported.,Dieser native Sammlungstyp wird nicht unterstützt.
+"Customer addresses require explicit identity, deletion, country and primary-address paths.","Kundenadressen benötigen ausdrückliche Pfade für Identität, Löschstatus, Land und Hauptadresse."
+Sales prices require explicit source price-list bindings.,Verkaufspreise benötigen ausdrückliche Bindungen der Quellpreislisten.
+One product contains multiple prices for the same bound price list.,Ein Artikel enthält mehrere Preise für dieselbe gebundene Preisliste.
+"Configured price list must be enabled, selling-only and use the approved currency.","Die konfigurierte Preisliste muss aktiviert sein, ausschließlich für den Verkauf gelten und die freigegebene Währung verwenden."
+Native collection binding has a missing or incompatible target.,Das Ziel der nativen Sammlungsbindung fehlt oder ist inkompatibel.
+Bound customer address does not belong to the mapped Customer.,Die gebundene Kundenadresse gehört nicht zum gemappten Kunden.
+Sales prices require the mapped Item stock unit.,Verkaufspreise benötigen die gemappte Lagereinheit des Artikels.
+Bound Item Price belongs to another item or price list.,Der gebundene Artikelpreis gehört zu einem anderen Artikel oder einer anderen Preisliste.
+An existing ERPNext item price requires explicit source reconciliation.,Ein bestehender ERPNext-Artikelpreis benötigt einen ausdrücklichen Quellenabgleich.
+Created price-list identity differs from the explicit binding.,Die Identität der erstellten Preisliste unterscheidet sich von der ausdrücklichen Bindung.
+Managed sales price changed locally or has additional dimensions.,Der verwaltete Verkaufspreis wurde lokal geändert oder hat zusätzliche Dimensionen.
+"Price-list bindings require an explicit name, currency and creation decision.","Preislistenbindungen benötigen einen ausdrücklichen Namen, eine Währung und eine Entscheidung zur Neuanlage."
+Two source price lists cannot write the same ERPNext price list.,Zwei Quellpreislisten dürfen nicht dieselbe ERPNext-Preisliste beschreiben.
+Customer address deletion state must be an explicit Boolean.,Der Löschstatus einer Kundenadresse muss ein ausdrücklicher boolescher Wert sein.
+Customer address fields must contain text or null.,Kundenadressfelder müssen Text oder null enthalten.
+Customer addresses require an explicit country code.,Kundenadressen benötigen einen ausdrücklichen Ländercode.
+Customer addresses require street and city.,Kundenadressen benötigen Straße und Stadt.
+A source sales price list has no explicit ERPNext binding.,Eine Quellverkaufspreisliste hat keine ausdrückliche ERPNext-Bindung.
+Sales price must be a finite nonnegative number.,"Ein Verkaufspreis muss eine endliche, nichtnegative Zahl sein."
+Duplicate native collection identities contain conflicting values.,Doppelte Identitäten in der nativen Sammlung enthalten widersprüchliche Werte.
+Sales-price preview requires the mapped Item and its native unit.,Die Verkaufspreisvorschau benötigt den gemappten Artikel und seine native Einheit.
+An existing customer address requires explicit source reconciliation.,Eine bestehende Kundenadresse benötigt einen ausdrücklichen Quellenabgleich.
+Multi-source mappings require explicit unique source paths.,"Mappings aus mehreren Quellen benötigen ausdrückliche, eindeutige Quellpfade."
+"Customer Display Name requires company, full, first and last name paths.","Der Kundenanzeigename benötigt Pfade für Firma, vollständigen Namen, Vor- und Nachnamen."
+Country Code requires an explicit two-letter country code.,Der Ländercode muss ausdrücklich aus zwei Buchstaben bestehen.
+Country code must resolve to exactly one native Country.,Der Ländercode muss genau einem nativen Land entsprechen.
+User identity must be a positive integer.,Die Benutzeridentität muss eine positive ganze Zahl sein.
+Mapped customer name components must be text.,Die gemappten Bestandteile des Kundennamens müssen Text sein.
+Mapped update readback source does not match the target snapshot.,Die Rückabfragequelle der gemappten Aktualisierung passt nicht zum Ziel-Snapshot.
+Mapped updates require the Mutation direction.,Gemappte Aktualisierungen benötigen die Richtung Mutation.
+Mapped update requires exactly one approved target read service for its area.,Die gemappte Aktualisierung benötigt genau einen freigegebenen Lesedienst auf dem Zielsystem für ihren Bereich.
+Mapped update identity differs from its approved target read service.,Die Identität der gemappten Aktualisierung unterscheidet sich vom freigegebenen Lesedienst auf dem Zielsystem.
+An explicit Query rule identity is not selected by the target read service.,Eine ausdrückliche Query-Regelidentität ist im Lesedienst des Zielsystems nicht ausgewählt.
+Combined mutation mappings require a replacement configuration package.,Zusammengefasste Mutationsmappings benötigen ein Konfigurationspaket zum Ersetzen.
+An active mapped update already owns this area and HERO source.,Für diesen Bereich und diese HERO-Quelle besteht bereits eine aktive gemappte Aktualisierung.
+Mapped update differs from the selected mutation operation.,Die gemappte Aktualisierung unterscheidet sich von der ausgewählten Mutationsoperation.
+Native relation changed locally; review before replacing mapped fields.,Die native Beziehung wurde lokal geändert; vor dem Ersetzen gemappter Felder bitte prüfen.
+Logbook comment changed locally; review mapped values.,Der Logbuchkommentar wurde lokal geändert; bitte die gemappten Werte prüfen.
+Native collection changed locally; review before replacing mapped fields.,Die native Sammlung wurde lokal geändert; vor dem Ersetzen gemappter Felder bitte prüfen.
+HERO project page bound reached; logbook import is incomplete.,Die Seitengrenze für HERO-Projekte wurde erreicht; der Logbuchimport ist unvollständig.
+HERO returned an invalid logbook response.,HERO hat eine ungültige Logbuchantwort geliefert.
+HERO returned an invalid project/history collection.,HERO hat eine ungültige Projekt- oder Verlaufssammlung geliefert.
+HERO returned missing or repeated logbook identities.,HERO hat fehlende oder wiederholte Logbuchidentitäten geliefert.
+A HERO source instance is required.,Eine HERO-Quellinstanz ist erforderlich.
+Logbook metadata requires one proven Comment binding.,Logbuchmetadaten benötigen genau eine nachgewiesene Kommentarbindung.
+Paginated logbook requires one Project and source revalidation.,Ein seitenweises Logbuch benötigt genau ein Projekt und eine erneute Quellenprüfung.
+Logbook page bound reached; Project import is incomplete.,Die Seitengrenze des Logbuchs wurde erreicht; der Projektimport ist unvollständig.
+Mapped logbook context field is absent from its source response.,Ein gemapptes Logbuch-Kontextfeld fehlt in der Quellantwort.
+HERO history page bound reached; logbook import is incomplete.,Die Seitengrenze des HERO-Verlaufs wurde erreicht; der Logbuchimport ist unvollständig.
+Logbook page is not a collection.,Die Logbuchseite ist keine Sammlung.
+Read approval changed before logbook transport.,Die Lesefreigabe wurde vor der Logbuchübertragung geändert.
+Read approval changed during logbook transport.,Die Lesefreigabe wurde während der Logbuchübertragung geändert.
+Logbook pagination lost its parent Project.,Bei der Seitennavigation des Logbuchs ging das übergeordnete Projekt verloren.
+Existing logbook context is not an object; review before enrichment.,Der bestehende Logbuchkontext ist kein Objekt; vor der Ergänzung bitte prüfen.
+HERO history pagination repeated an identity; completion cannot be confirmed.,Die Seitennavigation des HERO-Verlaufs hat eine Identität wiederholt; der Abschluss kann nicht bestätigt werden.
+HERO project pagination repeated an identity.,Die Seitennavigation der HERO-Projekte hat eine Identität wiederholt.
+Mapped logbook visibility is absent or invalid.,Die gemappte Sichtbarkeit des Logbuchs fehlt oder ist ungültig.
+Logbook pagination repeated or omitted an identity.,Die Seitennavigation des Logbuchs hat eine Identität wiederholt oder ausgelassen.
+HERO history pagination lost its parent Project.,Bei der Seitennavigation des HERO-Verlaufs ging das übergeordnete Projekt verloren.
+An existing logbook binding has a missing or different Project target.,Das Projektziel einer bestehenden Logbuchbindung fehlt oder weicht ab.
+Mapped update was not verified; no automatic retry. Check HERO before another submission.,Die gemappte Aktualisierung wurde nicht bestätigt; es erfolgt keine automatische Wiederholung. Vor erneutem Senden bitte HERO prüfen.
+Mapped update was sent once and verified by approved Query readback.,Die gemappte Aktualisierung wurde einmal gesendet und durch die freigegebene Query-Rückabfrage bestätigt.
+Mapping field {0}.{1}: {2},Mapping-Feld {0}.{1}: {2}
+Target metadata has ambiguous property overrides.,Die Zielmetadaten enthalten mehrdeutige Eigenschaftsanpassungen.
+Target metadata override has an invalid numeric value.,Eine Anpassung der Zielmetadaten enthält einen ungültigen Zahlenwert.
+Mutation input and verified readback must refer to the same HERO field.,Mutationseingabe und geprüfte Rückabfrage müssen dasselbe HERO-Feld betreffen.
+Prepared Mutation mappings,Vorbereitete Mutation-Mappings
+Mutation drafts require separate contract approval before activation.,Mutation-Entwürfe benötigen vor der Aktivierung eine gesonderte Vertragsfreigabe.
+Query mappings active. Mutation mappings prepared for separate contract approval.,Query-Mappings sind aktiv. Mutation-Mappings sind für die gesonderte Vertragsfreigabe vorbereitet.
+Project logbook changes require review.,Änderungen im Projektlogbuch müssen geprüft werden.
+Mapped item prices changed locally; review before updating.,Gemappte Artikelpreise wurden lokal geändert; vor der Aktualisierung ist eine Prüfung erforderlich.
+Configuration mutation mappings must contain at most nine update areas.,Die Mutation-Mappings der Konfiguration dürfen höchstens neun Aktualisierungsbereiche enthalten.
+Every mutation area requires its unique Query mapping in the same file.,Jeder Mutation-Bereich benötigt sein eindeutiges Query-Mapping in derselben Datei.
+Prepared mutation mappings have unresolved draft import conflicts.,Vorbereitete Mutation-Mappings enthalten ungelöste Konflikte beim Entwurfsimport.
+The filtered portable export requires mapped Mutation updates.,Der gefilterte portable Export benötigt gemappte Mutation-Aktualisierungen.
+Project customer dependency requires a service name.,Die Kundenabhängigkeit eines Projekts benötigt einen Service-Namen.
+Native Task onboarding requires an explicit Task source scope.,Die Einrichtung nativer Aufgaben benötigt einen ausdrücklich festgelegten Aufgaben-Quellbereich.
+Unsupported native read contract version.,Nicht unterstützte Version des nativen Lesevertrags.
+Customer Display Name,Kunden-Anzeigename
+Coalesce,Ersten vorhandenen Wert verwenden
+Country Code,Ländercode
+HERO User Link,Benutzerverknüpfung
+A customer Contact has ambiguous primary communication rows.,Ein Kundenkontakt besitzt mehrdeutige primäre Kommunikationszeilen.
+A nested customer contact must explicitly be a contact person.,Ein zugeordneter Kundenkontakt muss ausdrücklich ein Ansprechpartner sein.
+An existing customer contact requires explicit source reconciliation.,Ein vorhandener Kundenkontakt benötigt einen ausdrücklichen Abgleich mit der Quelle.
+Bound contact is shared or does not belong to the mapped Customer.,Der verknüpfte Kontakt wird gemeinsam verwendet oder gehört nicht zum gemappten Kunden.
+Contact salutations require an explicit text-to-Salutation table.,Kontaktanreden benötigen eine ausdrückliche Zuordnungstabelle von Text zu Anrede.
+Customer contact fields must contain text or null.,Felder eines Kundenkontakts müssen Text oder null enthalten.
+Customer contacts require at least one native name component.,Kundenkontakte benötigen mindestens einen nativen Namensbestandteil.
+"Customer contacts require explicit parent identity, person and deletion paths.","Kundenkontakte benötigen ausdrücklich festgelegte Pfade für Kundenidentität, Personenkennzeichen und Löschstatus."
+Existing primary contact differs from the verified source person.,Der vorhandene primäre Kontakt weicht vom geprüften Ansprechpartner der Quelle ab.
+Nested contact parent identity differs from the mapped Customer.,Die Kundenidentität des zugeordneten Kontakts weicht vom gemappten Kunden ab.
+Primary contact reuse requires the exact imported Customer identity.,Die Wiederverwendung des primären Kontakts benötigt die genaue Identität des importierten Kunden.
+Source contact salutation has no explicit native binding.,Für die Anrede des Quellkontakts besteht keine ausdrückliche native Zuordnung.
+The explicitly bound native Salutation does not exist.,Die ausdrücklich zugeordnete native Anrede existiert nicht.
+Portable export usage changed while locks were acquired.,Der Verwendungszweck des portablen Exports hat sich während der Sperrung geändert.
+Portable schema provenance cannot be edited.,Der Herkunftsnachweis des portablen Schemas kann nicht bearbeitet werden.
+Country Code may only bind the native Address country.,Ländercodes dürfen nur dem nativen Länderfeld einer Adresse zugeordnet werden.
+Customer Display Name may only bind the native customer name.,Der Kunden-Anzeigename darf nur dem nativen Kundennamen zugeordnet werden.
+Event status requires its native lifecycle adapter.,Der Terminstatus benötigt seinen nativen Lebenszyklusadapter.
+JSON fields require an explicit JSON Value transformation.,JSON-Felder benötigen eine ausdrücklich festgelegte JSON-Value-Transformation.
+Logbook context must contain unique selected child paths.,Der Logbuchkontext muss eindeutige ausgewählte Unterpfade enthalten.
+Logbook cursor variable must be exclusive to its child collection.,Die Logbuch-Cursorvariable darf ausschließlich ihre untergeordnete Sammlung steuern.
+Logbook page bound requires an offset variable.,Die Seitengrenze des Logbuchs benötigt eine Offsetvariable.
+Logbook pagination requires an explicit offset variable and page bound.,Die Logbuch-Paginierung benötigt eine ausdrücklich festgelegte Offsetvariable und Seitengrenze.
+Logbook pagination requires one Project and its approved zero-based child offset.,"Die Logbuch-Paginierung benötigt ein einzelnes Projekt und den freigegebenen, bei null beginnenden Unterseitenoffset."
+Logbook visibility must be an explicit child path.,Die Logbuchsichtbarkeit muss über einen ausdrücklich festgelegten Unterpfad ausgewählt werden.
+Mapped JSON output requires an explicit JSON serialization.,Die gemappte JSON-Ausgabe benötigt eine ausdrückliche JSON-Serialisierung.
+Mapped JSON source must contain finite JSON values.,Die gemappte JSON-Quelle darf nur endliche JSON-Werte enthalten.
+"Mapped child selections cannot contain named fragments, aliases or directives.","Gemappte Unterauswahlen dürfen keine benannten Fragmente, Aliasse oder Direktiven enthalten."
+Mapped inline fragment does not belong to its source type.,Das gemappte Inline-Fragment gehört nicht zu seinem Quelltyp.
+Mapped inline fragments require an unconditional explicit type.,Gemappte Inline-Fragmente benötigen einen bedingungslosen ausdrücklichen Typ.
+Mapped typename must be a plain scalar selection.,Der gemappte Typname muss als einfacher Skalar ausgewählt werden.
+Native relation does not belong to the selected migration area.,Die native Beziehung gehört nicht zum ausgewählten Migrationsbereich.
+Partner identity may only bind the Project manager.,Die Partneridentität darf nur dem Projektleiter zugeordnet werden.
+User identity may only bind the native Task assignee.,Die Benutzeridentität darf nur dem nativen Aufgabenempfänger zugeordnet werden.

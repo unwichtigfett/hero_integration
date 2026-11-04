@@ -345,6 +345,9 @@ class GraphQLServiceSource:
             raise ReadContractError('Response exceeds the approved lookup bound.' if lookup else 'Response exceeds the approved page size.')
         for row in records:
             value_at(row, self.contract.identity_path)
+        if operation == 'HeroProjectMatches' and self.query_adapter.get('logbook', {}).get('offset_variable'):
+            from hero_integration.services.project_logbook import complete_mapped_histories
+            records = complete_mapped_histories(self, records, variables)
         annotated = tuple({**row, "_hero_source_instance": self.source_instance} for row in records)
         if one_shot_lookup:
             return SourcePage(annotated, None)

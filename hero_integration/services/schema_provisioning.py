@@ -17,7 +17,7 @@ from hero_integration.services.localized_error import LocalizedError
 
 OWNED_DOCTYPE_PREFIX = "HERO "
 OWNED_FIELD_PREFIX = "custom_hero_"
-FIELD_TYPES = {"Data", "Small Text", "Int", "Float", "Currency", "Check", "Date", "Datetime", "Link", "Table"}
+FIELD_TYPES = {"Data", "Small Text", "Int", "Float", "Currency", "Text", "Long Text", "Text Editor", "Check", "Date", "Datetime", "Link", "Table"}
 FIELD_TYPES.add('JSON')
 SCHEMA_STATES = ("New", "Unchanged", "Changed", "Conflict", "Invalid")
 
@@ -431,11 +431,14 @@ def _recheck_required_schema_current(definitions, required):
     for relation in relations.values():
         require_field(relation["doctype"], relation["fieldname"], {"fieldtype", "options"})
 
-    # Relevant overlays need reconciliation rather than guessing Frappe
-    # metadata precedence from a possibly stale transaction snapshot.
+    # A matching read-only overlay can be proven exactly. Other relevant
+    # overlays still require reconciliation; metadata precedence is not guessed.
+    readonly_overrides = set()
+    declared_readonly = {(field['doctype'], field['fieldname']) for field in fields.values()
+                         if field.get('read_only') == 1}
     for doctype in sorted(targets):
         setters = current_query(
-            "SELECT doctype_or_field, field_name, property FROM `tabProperty Setter` "
+            "SELECT doctype_or_field, field_name, property, value FROM `tabProperty Setter` "
             "WHERE doc_type = %s FOR UPDATE", (doctype,),
         )
         for setter in setters:
@@ -444,6 +447,12 @@ def _recheck_required_schema_current(definitions, required):
                 setter.doctype_or_field == "DocField"
                 and setter.property in targets[doctype].get(setter.field_name, set())
             ):
+                key = (doctype, setter.field_name)
+                if (setter.doctype_or_field == 'DocField' and setter.property == 'read_only'
+                        and key in declared_readonly and key not in readonly_overrides
+                        and str(setter.get('value')) == '1'):
+                    readonly_overrides.add(key)
+                    continue
                 fail()
 
     def current_fields(doctype, fieldname):
@@ -456,6 +465,9 @@ def _recheck_required_schema_current(definitions, required):
             "SELECT fieldtype, options, label, reqd, `unique`, read_only FROM `tabCustom Field` "
             "WHERE dt = %s AND fieldname = %s FOR UPDATE", (doctype, fieldname),
         )
+        if (doctype, fieldname) in readonly_overrides:
+            for row in docfields + custom:
+                row['read_only'] = 1
         return docfields, custom
 
     for definition in sorted(doctypes.values(), key=lambda d: d["name"]):

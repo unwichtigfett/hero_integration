@@ -239,11 +239,20 @@ def _validated_record_contexts(content, operation, schema, *, strip=False):
 def _portable_content(content, direction):
     """Accept only understood configuration, never local provenance or authority."""
     value = bounded(_object(content))
+    if value.get('usage') == 'MAPPED_UPDATE_V2':
+        if direction != 'FRAPPE_TO_MUTATION':
+            raise MappingDraftExchangeError('Mapped updates require the Mutation direction.')
+        from hero_integration.services.personal_mapping_content import validate_mapped_update_shape
+        validate_mapped_update_shape(value)
+        return value
     common = {'source', 'target', 'transformation'}
     query = {'records_path', 'record_path', 'identity_path', 'target_operation',
              'mapping_definition_ids', 'field_rules', 'query_adapter'}
     if value.get('query_adapter'):
         query |= {'variables', 'page_size', 'native_options'}
+        if isinstance(value['query_adapter'], dict) and value['query_adapter'].get('version') == 2:
+            query |= {'customer_service', 'native_task_onboarding',
+                      'customer_contract_version', 'project_contract_version'}
     mutation = {'version', 'additional_mappings', 'usage', 'send_options'}
     # Approval seals are derived locally from the selected fetch and rules.
     value.pop('query_adapter_seal', None)
@@ -252,6 +261,27 @@ def _portable_content(content, direction):
     if value.get('query_adapter'):
         from hero_integration.services.query_mapping import validate_query_adapter
         validate_query_adapter(value['query_adapter'])
+    if 'customer_service' in value:
+        dependency = value['customer_service']
+        if (value.get('target_operation') != 'HeroProjectMatches' or not isinstance(dependency, str)
+                or not dependency.strip() or dependency != dependency.strip() or len(dependency) > 140):
+            raise MappingDraftExchangeError('Project customer dependency requires a service name.')
+    if 'native_task_onboarding' in value:
+        scope = value['native_task_onboarding']
+        if (value.get('target_operation') != 'HeroTasks' or not isinstance(scope, dict)
+                or set(scope) != {'source_instance', 'source_type', 'confirmed'}
+                or scope.get('confirmed') is not True or scope.get('source_type') != 'Task'
+                or not isinstance(scope.get('source_instance'), str) or not scope['source_instance'].strip()
+                or scope['source_instance'] != scope['source_instance'].strip()
+                or len(scope['source_instance']) > 140):
+            raise MappingDraftExchangeError('Native Task onboarding requires an explicit Task source scope.')
+        # This only parses a local configuration envelope. New-definition import
+        # rejects this authority, and existing drafts must retain their local scope.
+    for key, area in (('customer_contract_version', 'HeroCustomers'),
+                      ('project_contract_version', 'HeroProjectMatches')):
+        if key in value and (value.get('target_operation') != area or not isinstance(value[key], str)
+                             or value[key] not in {'v1', 'v2', 'v3', 'v4', 'v5'}):
+            raise MappingDraftExchangeError('Unsupported native read contract version.')
     if value.get('usage') is not None and value['usage'] != 'SEND_TO_HERO':
         raise MappingDraftExchangeError('Unsupported mutation mapping usage.')
     if 'send_options' in value and (value.get('usage') != 'SEND_TO_HERO' or not isinstance(value['send_options'], dict)):
@@ -360,7 +390,9 @@ def _validate_portable_query(content, operation, schema):
             raise MappingDraftExchangeError('Portable field-rule type or cardinality differs from the target schema.')
 
 
-def _export_portable(source_instance, snapshot_name, direction, *, drafts_only=False):
+def _export_portable(source_instance, snapshot_name, direction, *, drafts_only=False, usage=None):
+    if usage is not None and (usage != 'MAPPED_UPDATE_V2' or direction != 'FRAPPE_TO_MUTATION'):
+        raise MappingDraftExchangeError('The filtered portable export requires mapped Mutation updates.')
     FrappeMappingDraftStorage()._authorize(frappe.session.user)
     assert_portable_identity_schema(frappe)
     _lock_context(source_instance, snapshot_name, direction)
@@ -373,6 +405,26 @@ def _export_portable(source_instance, snapshot_name, direction, *, drafts_only=F
     owned = {_value(row, 'definition_id'): row for row in rows}
     if drafts_only:
         parents = [row for row in parents if _value(row, 'definition_id') in owned]
+    if usage is not None:
+        def matches(raw):
+            try: return _content(raw).get('usage') == usage
+            except ValueError: return False
+        parents = [row for row in parents if matches(_value(owned[_value(row, 'definition_id')], 'content_json')
+                   if _value(row, 'definition_id') in owned else _value(row, 'mapping_json'))]
+        parent_ids = {_value(row, 'definition_id') for row in parents}
+        selected_rows = []
+        for row in rows:
+            raw = _value(row, 'new_definition_json')
+            if raw:
+                try: context = _content(raw)
+                except ValueError: continue
+                if (context.get('source_instance'), context.get('snapshot_name'), context.get('direction')) != (
+                        source_instance, snapshot_name, direction): continue
+            elif _value(row, 'definition_id') not in parent_ids:
+                continue
+            if matches(_value(row, 'content_json')): selected_rows.append(row)
+        rows = selected_rows
+        owned = {_value(row, 'definition_id'): row for row in rows}
     selected = []
     for row in rows:
         raw = _value(row, 'new_definition_json')
@@ -385,6 +437,11 @@ def _export_portable(source_instance, snapshot_name, direction, *, drafts_only=F
         identity = _value(row, 'definition_id')
         draft = owned.get(identity)
         selected.append((identity, _content(_value(draft, 'content_json') if draft else _value(row, 'mapping_json'))))
+
+    if usage is not None and not selected:
+        return _json({'format_version': PORTABLE_FORMAT_VERSION, 'schema_fingerprint': snapshot.schema_fingerprint,
+                      'direction': direction, 'schema': {'custom_doctypes': [], 'custom_fields': [], 'relations': []},
+                      'mappings': []})
 
     def collect(content):
         from hero_integration.services.personal_mapping_content import identity_sets
@@ -419,6 +476,8 @@ def _export_portable(source_instance, snapshot_name, direction, *, drafts_only=F
     lock_identity_drafts(frappe, rule_locks, 'rule')
 
     def check_locked(content):
+        if usage is not None and content.get('usage') != usage:
+            raise DraftConflict('Portable export usage changed while locks were acquired.')
         children, rules = collect(content)
         if not children <= definition_locks or not rules <= rule_locks:
             raise DraftConflict('Portable export identities changed while locks were acquired.')
@@ -709,13 +768,26 @@ def _portable_existing_candidate(item, local_id, source_instance, snapshot_name,
         return candidate, row, draft, remapping
 
 
+def _query_hidden_target(content, doctype, field):
+    """Only exact reviewed inbound observations can name a hidden target."""
+    options = content.get('query_adapter') or {}
+    if type(options.get('version')) is not int or options.get('version') != 2:
+        return False
+    from hero_integration.services.query_mapping import TECHNICAL_BINDINGS
+    rules = [rule for rule in content.get('field_rules', {}).values()
+             if (rule.get('target_doctype'), rule.get('target_field')) == (doctype, field)]
+    return bool(rules) and all((content.get('target_operation'), rule.get('source_path'), doctype, field)
+                               in TECHNICAL_BINDINGS for rule in rules)
+
+
 def _portable_target_metadata(content, direction):
     """Lock and bind the actual target-side metadata used by parentless drafts."""
     if direction == 'QUERY_TO_FRAPPE':
         probe = content
     else:
         source = content.get('source', {})
-        sources = [source] + [item.get('source', {}) for item in content.get('additional_mappings', [])]
+        sources = ([item['source'] for item in content['assignments']] if content.get('usage') == 'MAPPED_UPDATE_V2'
+                   else [source] + [item.get('source', {}) for item in content.get('additional_mappings', [])])
         probe = {'mapping_definition_ids': [str(i) for i in range(len(sources))], 'field_rules': {
             str(i): {'target_doctype': item.get('doctype'), 'target_field': item.get('field')}
             for i, item in enumerate(sources)}}
@@ -728,7 +800,9 @@ def _portable_target_metadata(content, direction):
         rows = metadata.get(doctype, {}).get('fields', [])
         for field in fields:
             matches = [row for row in rows if row['fieldname'] == field]
-            if len(matches) != 1 or any(int(matches[0].get(flag) or 0) for flag in ('hidden', 'permlevel', 'is_virtual')):
+            if (len(matches) != 1 or any(int(matches[0].get(flag) or 0) for flag in ('permlevel', 'is_virtual'))
+                    or (int(matches[0].get('hidden') or 0)
+                        and not (direction == 'QUERY_TO_FRAPPE' and _query_hidden_target(content, doctype, field)))):
                 raise MappingDraftExchangeError('Portable target metadata is missing, ambiguous or restricted.')
     return metadata
 
@@ -764,6 +838,49 @@ def _portable_storage_content(item, package):
     if any(package['schema'].values()):
         content['_portable_exchange_schema'] = {'schema': package['schema'], 'dependencies': item['dependencies']}
     return content
+
+
+def _bind_mapped_update_readbacks(package, source_instance, snapshot_name):
+    """Resolve imported read names by their unique approved target area and source."""
+    mutations = [item for item in package['mappings'] if item['content'].get('usage') == 'MAPPED_UPDATE_V2']
+    if not mutations:
+        return {}
+    from hero_integration.services.read_contract import from_documents
+    snapshot = frappe.get_doc('HERO GraphQL Schema Snapshot', snapshot_name)
+    if snapshot.source_instance != source_instance or snapshot.analysis_status != 'Validated':
+        raise MappingDraftExchangeError('Mapped update readback source does not match the target snapshot.')
+    names = frappe.get_all('HERO GraphQL Service', filters={'schema_snapshot': snapshot_name,
+        'status': 'Validated', 'execution_status': 'Approved'}, pluck='name')
+    candidates = {}
+    for name in sorted(names):
+        frappe.db.sql('select name from `tabHERO GraphQL Service` where name=%s for update', (name,))
+        service = frappe.get_doc('HERO GraphQL Service', name)
+        if not service.read_mapping:
+            continue
+        frappe.db.sql('select name from `tabHERO GraphQL Mapping` where name=%s for update', (service.read_mapping,))
+        mapping = frappe.get_doc('HERO GraphQL Mapping', service.read_mapping)
+        try:
+            contract = from_documents(service, mapping, snapshot)
+        except ValueError:
+            continue  # A stale approval is never a candidate or an imported grant.
+        candidates.setdefault(contract.target_operation, []).append((service, mapping, contract))
+    bindings = {}
+    for item in mutations:
+        content = item['content']
+        matches = candidates.get(content['area'], [])
+        if len(matches) != 1:
+            raise MappingDraftExchangeError('Mapped update requires exactly one approved target read service for its area.')
+        service, mapping, contract = matches[0]
+        if contract.identity_path != content['identity']['read_path']:
+            raise MappingDraftExchangeError('Mapped update identity differs from its approved target read service.')
+        selected_ids = set(getattr(contract, 'definition_ids', ()))
+        if any(item.get('query_rule_id') and item['query_rule_id'] not in selected_ids for item in content['assignments']):
+            raise MappingDraftExchangeError('An explicit Query rule identity is not selected by the target read service.')
+        content['read_service'] = service.name
+        bindings[item['definition_id']] = {'service': service.name, 'service_revision': contract.service_revision,
+            'mapping': mapping.name, 'mapping_revision': contract.mapping_revision,
+            'content_hash': getattr(mapping, 'content_hash', ''), 'schema_fingerprint': snapshot.schema_fingerprint}
+    return bindings
 
 
 def _preview_portable(payload, source_instance, snapshot_name, direction):
@@ -829,6 +946,7 @@ def _preview_portable(payload, source_instance, snapshot_name, direction):
     snapshot, schema = _portable_snapshot(source_instance, snapshot_name, direction)
     if snapshot.schema_fingerprint != package['schema_fingerprint']:
         raise MappingDraftExchangeError('Portable package does not match the target schema fingerprint.')
+    readback_bindings = _bind_mapped_update_readbacks(package, source_instance, snapshot_name)
     schema_preview = preview_schema(package['schema']) if any(package['schema'].values()) else {'items': [], 'counts': {}}
     blocked_schema = [item for item in schema_preview['items'] if item['state'] != 'Unchanged']
     if blocked_schema:
@@ -944,7 +1062,8 @@ def _preview_portable(payload, source_instance, snapshot_name, direction):
     result = {'format_version': PORTABLE_FORMAT_VERSION, 'direction': direction, 'source_instance': source_instance,
               'snapshot_name': snapshot_name, 'schema_fingerprint': snapshot.schema_fingerprint,
               'context_definitions': [], 'items': items, 'schema': schema_preview,
-              'persisted': False, 'can_save': not any(item.get('conflicts') for item in items)}
+              'persisted': False, 'can_save': not any(item.get('conflicts') for item in items),
+              'readback_bindings': readback_bindings}
     result['preview_fingerprint'] = _preview_binding(package, result)
     return result
 
@@ -954,6 +1073,7 @@ def _save_portable(payload, source_instance, snapshot_name, direction, expected_
         raise MappingDraftExchangeError('Explicit import save confirmation is required.')
     package = _parse_portable(payload, direction)
     preview = _preview_portable(payload, source_instance, snapshot_name, direction)
+    _bind_mapped_update_readbacks(package, source_instance, snapshot_name)
     if not isinstance(preview_fingerprint, str) or not hmac.compare_digest(preview_fingerprint, preview['preview_fingerprint']):
         raise MappingDraftExchangeError('Portable preview changed; preview again before saving.')
     if not preview['can_save']:
@@ -1228,12 +1348,12 @@ def _prepare_item(item, row, local_content, schema, *, portable=False):
             if assignments:
                 prepared.setdefault('metadata', {})['assignments'] = _assignment_metadata(storage, assignments, content=prepared['content'])
             if storage._definition.direction == 'FRAPPE_TO_MUTATION':
-                if prepared['content'].get('usage') == 'SEND_TO_HERO':
+                if prepared['content'].get('usage') in {'SEND_TO_HERO', 'MAPPED_UPDATE_V2'}:
                     action = prepared['content']
                     normalized = storage._validate_configured_send(action, storage._publication_snapshot[1])
                     if normalized['target']['operation'] != storage._definition.operation_name:
                         raise MappingDraftError('Imported Send mapping has a different mutation operation.')
-                    prepared.setdefault('metadata', {})['primary_action'] = {'mapping': normalized, 'graphql_type': normalized['target']['graphql_type']}
+                    prepared.setdefault('metadata', {})['primary_action'] = {'mapping': normalized, 'graphql_type': normalized['target'].get('graphql_type')}
                 elif portable:
                     from hero_integration.api import _mapping_values_preserved
                     from hero_integration.services.frappe_writeback import normalise_draft_mapping, draft_source_type_compatible
@@ -1260,6 +1380,36 @@ def _prepare_item(item, row, local_content, schema, *, portable=False):
             return prepared
     except (MappingDraftError, ValueError) as error:
         raise MappingDraftExchangeError.from_error(error) from error
+
+
+def _project_locked_metadata(document, fields, setters):
+    """Apply only locked, unique target-owned metadata overrides to the comparison snapshot."""
+    document = dict(document)
+    fields = [dict(field) for field in fields]
+    by_name = {field['fieldname']: field for field in fields}
+    doctype_flags = {'custom', 'istable', 'issingle', 'is_virtual'}
+    field_flags = {'reqd', 'read_only', 'hidden', 'permlevel', 'is_virtual'}
+    seen = set()
+    for setter in setters:
+        kind, name, prop = setter.get('doctype_or_field'), setter.get('field_name'), setter.get('property')
+        if kind == 'DocType' and prop in doctype_flags | {'module'}:
+            target, flags, key = document, doctype_flags, ('DocType', '', prop)
+        elif kind == 'DocField' and name in by_name and prop in field_flags | {'fieldtype', 'options'}:
+            target, flags, key = by_name[name], field_flags, ('DocField', name, prop)
+        else:
+            continue
+        if key in seen:
+            raise MappingDraftExchangeError('Target metadata has ambiguous property overrides.')
+        seen.add(key)
+        value = setter.get('value')
+        if prop in flags:
+            try: value = int(value or 0)
+            except (TypeError, ValueError):
+                raise MappingDraftExchangeError('Target metadata override has an invalid numeric value.') from None
+        else:
+            value = str(value or '')
+        target[prop] = value
+    return document, fields
 
 
 def _rule_target_metadata(content, schema):
@@ -1304,18 +1454,21 @@ def _rule_target_metadata(content, schema):
                 if ((row['fieldtype'] or '') != (definition.get('fieldtype') or '')
                         or (row['options'] or '') != (definition.get('options') or '')
                         or any(int(row[key] or 0) != int(definition.get(key) or 0) for key in ('reqd', 'read_only'))
-                        or any(int(row[key] or 0) for key in ('hidden', 'permlevel', 'is_virtual'))):
+                        or any(int(row[key] or 0) for key in ('permlevel', 'is_virtual'))
+                        or (int(row['hidden'] or 0) and not _query_hidden_target(content, doctype, fieldname))):
                     raise MappingDraftExchangeError('Declared rule target metadata differs from the schema contract.')
         selected = [dict(row) for row in list(fields) + list(custom)
                     if row['fieldname'] in targets[doctype] and (doctype, row['fieldname']) not in planned]
-        if 'creation' in targets[doctype] and not any(row['fieldname'] == 'creation' for row in selected):
-            from hero_integration.services.frappe_mapping_catalog import query_standard_target
-            standard = query_standard_target(doctype, 'creation', bool(content.get('query_adapter')))
-            if standard:
-                selected.append(dict(standard))
+        for timestamp in ('creation', 'modified'):
+            if timestamp in targets[doctype] and not any(row['fieldname'] == timestamp for row in selected):
+                from hero_integration.services.frappe_mapping_catalog import query_standard_target
+                standard = query_standard_target(doctype, timestamp, bool(content.get('query_adapter')))
+                if standard:
+                    selected.append(dict(standard))
         overlays = [dict(row) for row in setters if row['doctype_or_field'] == 'DocType'
                     or (row['field_name'] in targets[doctype] and (doctype, row['field_name']) not in planned)]
-        result[doctype] = {'doctype': dict(docs[0]), 'fields': sorted(selected, key=lambda x: x['name']),
+        projected_doc, projected_fields = _project_locked_metadata(docs[0], selected, overlays)
+        result[doctype] = {'doctype': projected_doc, 'fields': sorted(projected_fields, key=lambda x: x['name']),
                            'setters': sorted(overlays, key=lambda x: x['name'])}
     return result
 
@@ -1354,6 +1507,8 @@ def _initial_locked_content(content, storage):
 
 
 def _assignment_metadata(storage, mappings, content=None):
+    if (content or {}).get('usage') == 'MAPPED_UPDATE_V2':
+        mappings = content['assignments']
     from hero_integration.api import _validated_snapshot
     snapshot, schema = _validated_snapshot(storage._definition.schema_snapshot, for_update=True)
     storage._publication_snapshot = (snapshot, schema)
@@ -1379,11 +1534,12 @@ def _assignment_metadata(storage, mappings, content=None):
         if len(doc) != 1:
             raise MappingDraftExchangeError('Assigned Frappe DocType no longer exists.')
         selected = [dict(row) for row in list(docfields) + list(custom) if row['fieldname'] in targets[doctype]]
-        if 'creation' in targets[doctype] and not any(row['fieldname'] == 'creation' for row in selected):
-            from hero_integration.services.frappe_mapping_catalog import query_standard_target
-            standard = query_standard_target(doctype, 'creation', bool((content or {}).get('query_adapter')))
-            if standard:
-                selected.append(dict(standard))
+        for timestamp in ('creation', 'modified'):
+            if timestamp in targets[doctype] and not any(row['fieldname'] == timestamp for row in selected):
+                from hero_integration.services.frappe_mapping_catalog import query_standard_target
+                standard = query_standard_target(doctype, timestamp, bool((content or {}).get('query_adapter')))
+                if standard:
+                    selected.append(dict(standard))
         doctype_properties = {'module', 'custom', 'istable', 'issingle', 'is_virtual'}
         field_properties = {'fieldtype', 'options', 'reqd', 'read_only', 'hidden', 'permlevel', 'is_virtual'}
         overlays = [dict(row) for row in setters if
@@ -1391,9 +1547,8 @@ def _assignment_metadata(storage, mappings, content=None):
                     or (row['field_name'] in targets[doctype] and row['property'] in field_properties)]
         # A property override changes effective metadata. Do not infer its
         # precedence from a possibly old transaction snapshot or cache.
-        if overlays:
-            raise MappingDraftExchangeError('Assigned field has metadata overrides requiring reconciliation.')
-        locked[doctype] = {'doctype': dict(doc[0]), 'fields': sorted(selected, key=lambda row: row['name']),
+        projected_doc, projected_fields = _project_locked_metadata(doc[0], selected, overlays)
+        locked[doctype] = {'doctype': projected_doc, 'fields': sorted(projected_fields, key=lambda row: row['name']),
                            'setters': sorted(overlays, key=lambda row: row['name'])}
     fields = []
     for item in mappings:

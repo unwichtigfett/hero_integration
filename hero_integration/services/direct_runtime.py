@@ -187,6 +187,9 @@ def record_values(plan, record: dict, target_doctype: str) -> dict:
         if spec.target_doctype != target_doctype or spec.purpose == "Source Identity":
             continue
         raw = lookup(record, spec.source_path)
+        if spec.transformation in {'Customer Display Name', 'Coalesce'}:
+            from hero_integration.services.query_mapping_extensions import source_value
+            raw = source_value(spec, record, plan.adapter_options.get('transform_options', {}).get(spec.definition_id, {}))
         if raw is MISSING:
             if spec.transformation in direct.TRANSFORMS:  # coded resolvers keep their fallback (e.g. "Stk")
                 values[spec.target_field] = direct.resolve(spec.transformation, None, record)
