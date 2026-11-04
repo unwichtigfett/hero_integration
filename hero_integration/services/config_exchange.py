@@ -549,9 +549,10 @@ def _replacement_check(snapshot, payload, rules):
             service = SimpleNamespace(name="replacement-preview", operation_name=item["operation_name"], query_document=item["query"])
             seal_query(service, snapshot, config, plan)
     if payload.get('mutation_mappings'):
-        from hero_integration.services.mapped_update_v2 import validate_sources
+        from hero_integration.services.personal_mapping_content import configured_mutation_helpers
         try:
             for mutation in payload['mutation_mappings']:
+                _, validate_sources = configured_mutation_helpers(mutation['content']['usage'])
                 validate_sources(mutation['content'], field_provider=metadata.field)
         except ValueError as error:
             raise ConfigExchangeError.from_error(error) from error

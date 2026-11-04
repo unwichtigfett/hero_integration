@@ -90,7 +90,7 @@ class TestCompleteMappedLogbook(TestCase):
             'additional_file_uploads': [{'id': 42}], 'weather_attachment': {'temp': 18},
         }]}
         self.docs = {}; self.links = []; self.writes = []
-        def get_doc(*args):
+        def get_doc(*args, **kwargs):
             if isinstance(args[0], dict):
                 values = dict(args[0]); doc = NS(name='doc-' + str(len(self.docs)), **values)
                 def insert(**kw):
@@ -104,10 +104,16 @@ class TestCompleteMappedLogbook(TestCase):
         def set_value(dt, name, values, **kw):
             self.writes.append((dt, name, values))
             for field, value in values.items(): setattr(self.docs[name], field, value)
+        def locked_links(query, values, **kwargs):
+            if 'target_doctype=%s' in query:
+                keys = ['source_system', 'source_instance', 'source_type', 'target_doctype', 'target_name']
+            else:
+                keys = ['source_system', 'source_type', 'source_instance', 'source_id']
+            return [x for x in self.links if all(getattr(x, key, None) == value for key, value in zip(keys, values))]
         self.fake = NS(get_doc=get_doc, get_all=lambda dt, filters, **kw: [x for x in self.links
                 if all(getattr(x, key, None) == value for key, value in filters.items())],
             has_permission=lambda *a, **kw: True,
-            db=NS(exists=lambda dt, name: name in self.docs, set_value=set_value),
+            db=NS(exists=lambda dt, name: name in self.docs, set_value=set_value, sql=locked_links),
             utils=NS(escape_html=escape, now_datetime=lambda: '2026-02-01 00:00:00'))
 
     def sync(self, **options):
@@ -216,3 +222,48 @@ class TestCommentTimestampPublication(TestCase):
                    'field_rules': {'modified': {'target_doctype': 'Comment', 'target_field': 'modified', 'transformation': 'Local Datetime'}}}
         updated = storage._complete_query_target_types(content)
         self.assertEqual(updated['query_adapter']['transform_options']['modified']['target_type'], 'Datetime')
+
+
+class TestOutboundLogbookEcho(TestCase):
+    setUp = TestCompleteMappedLogbook.setUp
+    sync = TestCompleteMappedLogbook.sync
+
+    def test_outbound_echo_retains_native_content_author_and_timestamps_without_duplicate(self):
+        from hero_integration.services.project_logbook_writeback import OUTBOUND_VERSION, _hash
+        from hero_integration.services.task_send import plain_text
+        self.sync()
+        link = self.links[0];comment = self.docs[link.target_name]
+        comment.content = '<p>Text</p>';comment.comment_by = 'Local author';comment.comment_email = 'local@example.invalid'
+        comment.creation = '2025-03-04 05:06:07';comment.modified = '2025-03-04 05:06:08'
+        link.mapping_version = OUTBOUND_VERSION
+        link.source_payload_hash = _hash(plain_text(self.record['histories'][0]['custom_text']))
+        link.target_payload_hash = _hash(comment.content)
+        before = {key:getattr(comment,key) for key in ('content','comment_by','comment_email','creation','modified')}
+        self.assertEqual(self.sync(),0)
+        self.assertEqual({key:getattr(comment,key) for key in before},before)
+        self.assertEqual(len(self.links),1)
+        comment.content = 'Edited locally'
+        conflicts=[];self.sync(conflicts=conflicts)
+        self.assertEqual(comment.content,'Edited locally')
+        self.assertEqual(conflicts,[link.name])
+
+    def test_uncertain_project_result_blocks_import_before_comment_creation(self):
+        from hero_integration.services.project_logbook_writeback import PENDING_TYPE
+        self.links.append(NS(name='pending',source_system='HERO',source_instance='source-a',
+            source_type=PENDING_TYPE,target_doctype='Project',target_name='P1',sync_status='Pending Review'))
+        with self.assertRaisesRegex(ValueError,'unconfirmed outbound'):self.sync()
+        self.assertEqual(self.docs,{})
+
+    def test_version_echo_retains_original_change_record_without_comment_copy(self):
+        from hero_integration.services.project_logbook_writeback import OUTBOUND_VERSION, _hash
+        from hero_integration.services.task_send import plain_text
+        self.sync();link=self.links[0]
+        version=NS(name='V1',doctype='Version',ref_doctype='Project',docname='P1',data='{"changed":[["status","Open","Completed"]]}')
+        self.docs['V1']=version;link.target_doctype='Version';link.target_name='V1';link.mapping_version=OUTBOUND_VERSION
+        link.source_payload_hash=_hash(plain_text(self.record['histories'][0]['custom_text']))
+        link.target_payload_hash=_hash(version.data)
+        original=version.data;count=len(self.docs);self.writes.clear()
+        self.assertEqual(self.sync(),0)
+        self.assertEqual(version.data,original)
+        self.assertEqual(len(self.docs),count)
+        self.assertTrue(all(dt=='HERO Integration Link' for dt,_,_ in self.writes))

@@ -264,5 +264,7 @@ def _apply(plan, item, prepared, parent_doctype, parent_name, parent):
             'target_doctype': target, 'target_name': document.name, **evidence}).insert(ignore_permissions=True)
     if target == 'Address' and parent.get(item['config']['parent_field']) != document.name:
         parent.set(item['config']['parent_field'], document.name)
-        parent.save()
+        from hero_integration.services.change_detection import managed_target_update
+        with managed_target_update(parent_doctype, parent_name, None):
+            parent.save()
     return 'updated' if link else 'created'

@@ -1,6 +1,6 @@
 """Portable, locally approved update contracts; never execution authority.
 
-Only the registered MAPPED_UPDATE_V2 operations and their mapping identities
+Only the registered update and Project-logbook profiles and their mapping identities
 travel with configuration. Endpoints, credentials, gates, audit records and
 runtime variables cannot occur in this closed format. Callers own the enclosing
 configuration transaction; this module never commits or contacts HERO.
@@ -19,14 +19,16 @@ from graphql.language.ast import FieldNode, OperationDefinitionNode, VariableNod
 from hero_integration.services.graphql_contract import parse_mutation
 from hero_integration.services.graphql_graph import analyze_snapshot, normalize_schema
 from hero_integration.services.localized_error import LocalizedError
-from hero_integration.services.mapped_update_v2 import AREAS, normalise_mapping
+from hero_integration.services.mapped_update_v2 import AREAS
+from hero_integration.services.personal_mapping_content import configured_mutation_helpers
 
 
 class MutationContractExchangeError(LocalizedError):
     pass
 
 
-OPERATIONS = frozenset(spec[3] for spec in AREAS.values())
+LOGBOOK_OPERATION = 'add_logbook_entry'
+OPERATIONS = frozenset(spec[3] for spec in AREAS.values()) | {LOGBOOK_OPERATION}
 KEYS = {'operation_name', 'service_name', 'query', 'mapping', 'status'}
 SCOPE_KEYS = {'mode', 'resolver', 'areas', 'mapping_definition_ids'}
 
@@ -45,18 +47,20 @@ def _uuid(value):
 
 
 def _scope(value, operation):
+    logbook = operation == LOGBOOK_OPERATION
+    resolver = 'PROJECT_LOGBOOK_V1' if logbook else 'MAPPED_UPDATE_V2'
     if (not isinstance(value, dict) or set(value) != SCOPE_KEYS
-            or value.get('mode') != 'VALIDATED_RESOLVER' or value.get('resolver') != 'MAPPED_UPDATE_V2'):
-        _fail('Mutation contract scope must explicitly select the mapped-update resolver.')
+            or value.get('mode') != 'VALIDATED_RESOLVER' or value.get('resolver') != resolver):
+        _fail('Mutation contract scope must explicitly select its registered resolver.')
     areas, ids = value.get('areas'), value.get('mapping_definition_ids')
     if (not isinstance(areas, list) or not areas or len(areas) > 9
-            or any(not isinstance(area, str) or area not in AREAS or AREAS[area][3] != operation for area in areas)
+            or any(not isinstance(area, str) or area not in AREAS or (area != 'HeroProjectMatches' if logbook else AREAS[area][3] != operation) for area in areas)
             or len(set(areas)) != len(areas) or not isinstance(ids, list) or len(ids) != len(areas)):
-        _fail('Mutation contract areas do not match their registered update operation.')
+        _fail('Mutation contract areas do not match their registered operation.')
     identities = [_uuid(identity) for identity in ids]
     if len(set(identities)) != len(identities):
         _fail('Mutation contract mapping identities must be unique.')
-    return {'mode': 'VALIDATED_RESOLVER', 'resolver': 'MAPPED_UPDATE_V2',
+    return {'mode': 'VALIDATED_RESOLVER', 'resolver': resolver,
             'areas': sorted(areas), 'mapping_definition_ids': sorted(identities)}
 
 
@@ -97,7 +101,7 @@ def _query(raw, operation, schema):
 def _mapping_scopes(mappings, raw_schema):
     if isinstance(mappings, dict):
         mappings = mappings.get('mappings', mappings.get('mutation_mappings'))
-    if not isinstance(mappings, list) or len(mappings) > 9:
+    if not isinstance(mappings, list) or len(mappings) > 10:
         _fail('Mutation contract validation requires the accompanying update mappings.')
     result = {}
     seen = set()
@@ -105,19 +109,24 @@ def _mapping_scopes(mappings, raw_schema):
     for group in mappings:
         if not isinstance(group, dict):
             _fail('Mutation contract validation requires the accompanying update mappings.')
-        content = normalise_mapping(group.get('content'), raw_schema)
+        original = group.get('content')
+        if not isinstance(original, dict):
+            _fail('Mutation contract validation requires the accompanying update mappings.')
+        normalise_mapping, _ = configured_mutation_helpers(original.get('usage'))
+        content = normalise_mapping(original, raw_schema)
         operation, area = content['target']['operation'], content['area']
         identity = _uuid(group.get('definition_id'))
-        if (area in seen or identity in seen_ids or group.get('operation_name') != operation
+        profile = (area, content['usage'])
+        if (profile in seen or identity in seen_ids or group.get('operation_name') != operation
                 or group.get('direction') != 'FRAPPE_TO_MUTATION' or group.get('operation_kind') != 'MUTATION'):
             _fail('Mutation contract mappings have duplicate areas or incompatible operation scopes.')
-        seen.add(area)
+        seen.add(profile)
         seen_ids.add(identity)
         scope = result.setdefault(operation, {'areas': [], 'mapping_definition_ids': [], 'arguments': set()})
         scope['areas'].append(area)
         scope['mapping_definition_ids'].append(identity)
-        paths = [content['identity']['input_path']]
-        paths += [item['input_path'] for item in content['assignments'] + content['required_readback']]
+        paths = ([content['identity']['input_path']] if content['usage'] == 'MAPPED_UPDATE_V2' else [])
+        paths += [item['input_path'] for item in content['assignments'] + content.get('required_readback', [])]
         scope['arguments'].update(path.split('.')[0] for path in paths)
     return result
 
@@ -125,7 +134,7 @@ def _mapping_scopes(mappings, raw_schema):
 def validate(items, raw_schema, mutation_mappings=None):
     """Pure validation before DDL; optionally prove the complete mapping scope."""
     if not isinstance(items, list) or len(items) > len(OPERATIONS):
-        _fail('Configuration mutation contracts must be a list of at most eight registered updates.')
+        _fail('Configuration mutation contracts must be a list of at most nine registered operations.')
     schema = build_client_schema({'__schema': normalize_schema(raw_schema)})
     scopes = _mapping_scopes(mutation_mappings, raw_schema) if mutation_mappings is not None else None
     result, seen = [], set()

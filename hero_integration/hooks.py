@@ -35,7 +35,7 @@ scheduler_events = {
 # on every form refresh and never observes or sends values by itself.
 doctype_js = {
     "Customer": ["public/js/hero_writeback.js", "public/js/hero_customer_send.js"],
-    "Project": ["public/js/hero_writeback.js", "public/js/hero_project_send.js"],
+    "Project": ["public/js/hero_writeback.js", "public/js/hero_project_send.js", "public/js/hero_logbook_send.js"],
     "Task": ["public/js/hero_task_send.js"],
     "HERO Integration Link": ["public/js/hero_diagnostics.js"],
     "HERO Integration Record": ["public/js/hero_diagnostics.js"],
@@ -94,8 +94,10 @@ for _doctype in ("ERPNext HD Settings", "ERPNext CRM Settings"):
 doc_events["Project"] = {
     "validate": "hero_integration.services.guards.protect_hero_project_ids",
     "before_rename": "hero_integration.services.guards.protect_hero_project_rename",
+    "on_update": "hero_integration.services.project_logbook_writeback.capture_project_activity",
 }
 doc_events["Task"] = {"validate": "hero_integration.services.change_detection.protect_external_task_deadline"}
+doc_events["Version"] = {"before_insert": "hero_integration.services.project_logbook_writeback.mark_imported_project_version"}
 
 # Requires the separately distributed Frappe assignment-intent v2 patch.
 assignment_intent_before = ["hero_integration.services.task_assignment_state.before_native_assignment"]

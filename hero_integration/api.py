@@ -4114,3 +4114,31 @@ def mapped_update_send(mapping_name: str, doctype: str, name: str,
         return send(mapping_name, doctype, name, fingerprint=fingerprint, confirmed=confirmed)
     except ValueError as error:
         frappe.throw(translate_error(error, frappe._))
+
+
+@frappe.whitelist(methods=['GET'])
+def project_logbook_candidates(project: str) -> dict:
+    from hero_integration.services.project_logbook_writeback import candidates
+    try:
+        return candidates(_mapping_text(project, 'project'))
+    except ValueError as error:
+        frappe.throw(translate_error(error, frappe._))
+
+
+@frappe.whitelist(methods=['GET'])
+def project_logbook_preview(comment: str, activity_doctype: str = 'Comment') -> dict:
+    from hero_integration.services.project_logbook_writeback import preview
+    try:
+        return preview(_mapping_text(comment, 'comment'), activity_doctype=_mapping_text(activity_doctype, 'activity_doctype'))
+    except ValueError as error:
+        frappe.throw(translate_error(error, frappe._))
+
+
+@frappe.whitelist(methods=['POST'])
+def project_logbook_send(comment: str, fingerprint: str, confirmed=False, activity_doctype: str = 'Comment') -> dict:
+    from hero_integration.services.project_logbook_writeback import send
+    try:
+        return send(_mapping_text(comment, 'comment'), activity_doctype=_mapping_text(activity_doctype, 'activity_doctype'),
+            fingerprint=_mapping_text(fingerprint, 'fingerprint'), confirmed=confirmed)
+    except ValueError as error:
+        frappe.throw(translate_error(error, frappe._))

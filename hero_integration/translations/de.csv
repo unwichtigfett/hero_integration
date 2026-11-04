@@ -3552,3 +3552,64 @@ Mutation mappings imported as drafts: {0}.,Als Entwürfe importierte Mutations-M
 The existing mutation service differs from the imported definition.,Der bestehende Mutations-Service weicht von der importierten Definition ab.
 The existing mutation contract differs from the imported definition.,Der bestehende Mutationsvertrag weicht von der importierten Definition ab.
 Import cannot silently downgrade an approved mutation contract.,Der Import darf einen freigegebenen Mutationsvertrag nicht ohne ausdrückliche Entscheidung zurückstufen.
+Invalid Project logbook mutation configuration.,Ungültige Konfiguration der Projektlogbuch-Mutation.
+Project logbook mapping requires the native activity content and an explicit plain-text conversion.,Das Projektlogbuch-Mapping benötigt den nativen Aktivitätstext und eine ausdrückliche Umwandlung in Klartext.
+Activity assignment identity must be a canonical UUID.,Die Identität der Aktivitätszuordnung muss eine kanonische UUID sein.
+The saved HERO schema does not support the approved Project logbook inputs and response.,Das gespeicherte HERO-Schema unterstützt die freigegebenen Projektlogbuch-Eingaben und die Antwort nicht.
+The native Project activity fields are missing or incompatible.,Die nativen Felder der Projektaktivität fehlen oder sind nicht kompatibel.
+This activity was already submitted or has an uncertain logbook result; reconcile it before continuing.,Diese Aktivität wurde bereits übermittelt oder ihr Logbuchergebnis ist unklar. Kläre das Ergebnis vor dem Fortfahren.
+The Project logbook reservation is ambiguous; reconciliation is required.,Die Reservierung für das Projektlogbuch ist mehrdeutig und muss abgeglichen werden.
+The Project has an unconfirmed outbound logbook activity; reconcile it before importing its logbook.,Für das Projekt gibt es eine ausgehende Logbuchaktivität mit unbestätigtem Ergebnis. Kläre sie vor dem Logbuchimport.
+Only a nonempty local comment on a Project can be sent to the HERO logbook.,Nur ein nicht leerer lokaler Kommentar zu einem Projekt kann ins HERO-Logbuch übertragen werden.
+The activity changed its Project or content; review it again.,Projekt oder Inhalt der Aktivität wurden geändert. Prüfe sie erneut.
+Imported or already linked logbook activities cannot be submitted again.,Importierte oder bereits verknüpfte Logbuchaktivitäten können nicht erneut übermittelt werden.
+Exactly one active Project logbook mutation mapping is required.,Genau ein aktives Mutations-Mapping für das Projektlogbuch ist erforderlich.
+"The active logbook mapping, snapshot and confirmed HERO source no longer agree.","Aktives Logbuch-Mapping, Snapshot und bestätigte HERO-Quelle stimmen nicht mehr überein."
+Logbook sending requires one synchronized Project binding without source conflicts.,Die Logbuchübertragung benötigt eine eindeutige synchronisierte Projektverknüpfung ohne Quellkonflikte.
+The Project binding has an invalid HERO identity.,Die Projektverknüpfung enthält eine ungültige HERO-Identität.
+Logbook sending requires the approved Project reader including its logbook.,Die Logbuchübertragung benötigt den freigegebenen Projekt-Leseservice einschließlich Logbuch.
+The logbook mapping has no valid portable identity.,Das Logbuch-Mapping besitzt keine gültige portable Identität.
+The approved Project readback omitted its logbook.,In der freigegebenen Projekt-Rückleseantwort fehlt das Logbuch.
+The activity must contain nonempty text within the permitted length.,Die Aktivität muss nicht leeren Text innerhalb der zulässigen Länge enthalten.
+The approved Project query must explicitly select the logbook readback fields.,Die freigegebene Projektabfrage muss die zum Rücklesen benötigten Logbuchfelder ausdrücklich auswählen.
+The activity preview changed; review and confirm it again.,Die Aktivitätsvorschau wurde geändert. Prüfe und bestätige sie erneut.
+The returned HERO logbook identity is already bound; reconcile the activity.,Die zurückgegebene HERO-Logbuchidentität ist bereits verknüpft. Gleiche die Aktivität ab.
+HERO did not confirm the created logbook activity through the approved Project reader.,HERO hat die angelegte Logbuchaktivität über den freigegebenen Projekt-Leseservice nicht bestätigt.
+The created logbook entry belongs to another HERO Project.,Der angelegte Logbucheintrag gehört zu einem anderen HERO-Projekt.
+HERO did not confirm a new logbook identity.,HERO hat keine neue Logbuchidentität bestätigt.
+The local activity changed during sending; reconcile the created logbook entry.,Die lokale Aktivität wurde während der Übertragung geändert. Gleiche den angelegten Logbucheintrag ab.
+The logbook activity could not be confirmed; no automatic retry was performed. Reconcile the Project logbook reservation.,Die Logbuchaktivität konnte nicht bestätigt werden. Es erfolgte kein automatischer Neuversuch. Kläre die Reservierung für das Projektlogbuch.
+Projects with outbound logbook activities require the approved mapped Project logbook importer.,Projekte mit ausgehenden Logbuchaktivitäten benötigen den freigegebenen Projektlogbuch-Import über das Mapping.
+Invalid project logbook mapping scope.,Ungültiger Geltungsbereich des Projektlogbuch-Mappings.
+Invalid project logbook assignment.,Ungültige Zuordnung für das Projektlogbuch.
+Configuration mutation mappings must contain at most ten supported profiles.,Die Mutations-Mappings der Konfiguration dürfen höchstens zehn unterstützte Profile enthalten.
+Configuration mutation contracts must be a list of at most nine registered operations.,Die Mutationsverträge der Konfiguration müssen eine Liste mit höchstens neun registrierten Operationen sein.
+Mutation contract scope must explicitly select its registered resolver.,Der Geltungsbereich des Mutationsvertrags muss ausdrücklich den registrierten Resolver auswählen.
+Mutation contract areas do not match their registered operation.,Die Bereiche des Mutationsvertrags passen nicht zu seiner registrierten Operation.
+An active Project logbook mapping already owns this HERO source.,Für diese HERO-Quelle gibt es bereits ein aktives Projektlogbuch-Mapping.
+Project logbook,Projektlogbuch
+Send activity to HERO,Aktivität ins HERO-Logbuch übertragen
+Activity,Aktivität
+The project changed. Save it and reopen the activity preview.,Das Projekt wurde geändert. Speichere es und öffne die Aktivitätsvorschau erneut.
+This adds one entry to the HERO project logbook.,Hiermit wird ein Eintrag im HERO-Projektlogbuch angelegt.
+Choose an activity to preview.,Wähle eine Aktivität für die Vorschau aus.
+Loading activity preview …,Aktivitätsvorschau wird geladen …
+Invalid activity preview.,Ungültige Aktivitätsvorschau.
+Sending activity to HERO …,Aktivität wird ins HERO-Logbuch übertragen …
+Unexpected activity send result.,Unerwartetes Ergebnis der Aktivitätsübertragung.
+Activity sent to HERO.,Aktivität wurde ins HERO-Logbuch übertragen.
+The activity could not be confirmed as sent. Reopen the activity list before trying again.,Die Übertragung der Aktivität konnte nicht bestätigt werden. Öffne die Aktivitätsliste vor einem erneuten Versuch neu.
+Loading project activities …,Projektaktivitäten werden geladen …
+Invalid activity list.,Ungültige Aktivitätsliste.
+No eligible project activities are available.,Es sind keine geeigneten Projektaktivitäten vorhanden.
+Choose an activity.,Wähle eine Aktivität aus.
+Invalid automatic Project activity source configuration.,Ungültige Quellkonfiguration für automatische Projektaktivitäten.
+Unsupported Project activity document type.,Nicht unterstützter Dokumenttyp für Projektaktivitäten.
+Only a native activity on a Project can be sent to the HERO logbook.,Nur eine native Aktivität zu einem Projekt kann ins HERO-Logbuch übertragen werden.
+The automatic Project activity contains invalid change data.,Die automatische Projektaktivität enthält ungültige Änderungsdaten.
+The mapping does not include automatic Project change activities.,Das Mapping enthält keine automatischen Projektänderungsaktivitäten.
+This automatic activity type is not selected by the logbook mapping.,Dieser automatische Aktivitätstyp ist im Logbuch-Mapping nicht ausgewählt.
+The approved logbook readback returned missing or repeated activity identities.,Die freigegebene Logbuch-Rückleseantwort enthält fehlende oder wiederholte Aktivitätsidentitäten.
+Choose an activity,Aktivität auswählen
+Added,Hinzugefügt
+Removed,Entfernt
