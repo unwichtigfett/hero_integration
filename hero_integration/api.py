@@ -3997,3 +3997,42 @@ def snapshot_import_file(path: str) -> dict[str, object]:
     result = capture_from_file(path, "Administrator")
     frappe.db.commit()
     return {key: result.get(key) for key in ("status", "snapshot_name", "schema_fingerprint", "type_count")}
+
+
+# ---------------------------------------------------------------- simple Mapping editor
+
+def _simple_ids(value) -> list[str]:
+    ids = json.loads(value) if isinstance(value, str) else value
+    if not isinstance(ids, list) or not ids or len(ids) > 200 or any(not isinstance(item, str) or not item for item in ids):
+        frappe.throw(frappe._("Select at least one mapping."))
+    return ids
+
+
+@frappe.whitelist(methods=["GET"])
+def simple_mapping_state() -> dict[str, object]:
+    """Areas, their HERO fields and all field rules for the simple Mapping editor."""
+    frappe.only_for("System Manager")
+    from hero_integration.services.simple_mapping import state
+    return state()
+
+
+@frappe.whitelist(methods=["POST"])
+def simple_mapping_create(operation: str, source_path: str, target_doctype: str, target_field: str) -> dict[str, object]:
+    """Create one field rule and apply it immediately (new mapping revision, read service approved again)."""
+    frappe.only_for("System Manager")
+    from hero_integration.services.simple_mapping import create
+    return create(operation, source_path, target_doctype, target_field)
+
+
+@frappe.whitelist(methods=["POST"])
+def simple_mapping_remove(operation: str, definition_ids) -> dict[str, object]:
+    frappe.only_for("System Manager")
+    from hero_integration.services.simple_mapping import remove
+    return remove(operation, _simple_ids(definition_ids))
+
+
+@frappe.whitelist(methods=["POST"])
+def simple_mapping_activate(operation: str, definition_ids) -> dict[str, object]:
+    frappe.only_for("System Manager")
+    from hero_integration.services.simple_mapping import activate
+    return activate(operation, _simple_ids(definition_ids))

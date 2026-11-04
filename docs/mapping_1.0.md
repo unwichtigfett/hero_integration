@@ -90,3 +90,16 @@ and expected revisions. It does not publish mappings or execute HERO operations.
 Export contains the current user's open drafts in that context. The complete
 nine-area configuration package remains a separate Settings import; that file
 is not a directional draft file.
+
+## Simple Mapping editor (2026-11-04)
+
+**Mapping** opens the simple editor, laid out after the owner's sketch:
+- **Query / Mutation** tabs and the schema snapshot at the top.
+- **Map Fields**: Source (Operation, Object, Field) and Target (App, DocType, Field). Each box shows ID, Name, Type, Node, Revision and Status of the selection.
+- **Create** adds the rule and applies it immediately.
+- **Active Mappings** lists every rule with Status, Operation, HERO path, Target App, Target and Revision. You can filter by operation, search text and a type/value pair. **Activate** re-links inactive field rules; **Delete** unlinks field rules.
+- **Mapping Import** takes a configuration file (`config_import`).
+
+Each change publishes a new revision of the area's read mapping through the personal-draft publisher. It then approves the area's read service again. The editor chooses the transformation from the field types: Link → Existing Record, formatted text → Plain Text To HTML, text from text → Trim, numbers to text → Positive Int To Text / Scalar Text, otherwise Identity. The server validates each rule as usual.
+
+Field rules of Customers and Projects can be edited here. Events, Tasks, Products, Documents and Pictures have fixed or code-owned bindings; they are listed but not editable. Identity, name and relation rules cannot be removed. Mutation (send) mappings are listed; you create them under **Advanced**, which opens the previous full editor.
