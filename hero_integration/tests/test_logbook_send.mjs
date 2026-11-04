@@ -139,3 +139,13 @@ test('related binding conflicts show their actual reason and block confirmation'
     assert.match(dialog.fields_dict.summary.$wrapper[0].textContent,/Customer/);
     assert.equal(dialog.button.disabled,true);
 });
+test('logbook entries are separated by native activity kind and timestamp',async()=>{
+    const value=preview();value.activities=[
+        {activity_doctype:'Version',creation:'2026-11-04 16:00:00',changes:[{new:'Notes: old to new'}]},
+        {activity_doctype:'Comment',creation:'2026-11-04 16:01:00',changes:[{new:'1'}]}];
+    const app=await setup({project_send_preview:()=>value});const dialog=await app.open();
+    const text=dialog.fields_dict.summary.$wrapper[0].textContent;
+    assert.match(text,/Change history · 2026-11-04 16:00:00/);
+    assert.match(text,/Comment · 2026-11-04 16:01:00/);
+    assert.match(text,/Notes: old to new/);
+});

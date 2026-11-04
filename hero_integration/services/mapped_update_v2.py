@@ -504,6 +504,62 @@ def _canonical(ctx,item,remote):
     return value
 
 
+
+def _unchanged_project_customer(ctx, item, value, remote):
+    """A payload change on a Customer does not change an existing Project relation.
+
+    This exception never authorizes a changed relationship or a Customer write.
+    The strict root/source lookup remains the default everywhere else.
+    """
+    if (ctx.content.get('area') != 'HeroProjectMatches'
+            or item['source'] != {'doctype': 'Project', 'field': 'customer'}
+            or item['input_path'] != 'project_match.customer_id' or item['read_path'] != 'customer_id'
+            or item['resolver'] != 'LINK'):
+        return None
+    rows = frappe.get_all('HERO Integration Link', filters={'source_system': 'HERO',
+        'source_instance': ctx.proof.source_instance, 'target_doctype': 'Customer',
+        'target_name': value, 'source_type': 'customer'}, pluck='name', limit_page_length=2)
+    if len(rows) != 1: return None
+    link = frappe.get_doc('HERO Integration Link', rows[0])
+    identity = _at(remote, 'customer_id')
+    if (link.sync_status != 'Synchronized' or type(identity) is not int or identity <= 0
+            or str(link.source_id) != str(identity)):
+        return None
+    return link
+
+
+def _native_project_notes(ctx, item):
+    if (ctx.content.get('area') != 'HeroProjectMatches'
+            or item['source'] != {'doctype': 'Project', 'field': 'notes'}
+            or item['input_path'] != 'project_match.partner_notes' or item['read_path'] != 'partner_notes'
+            or item['resolver'] != 'PLAIN_TEXT'):
+        return False
+    from hero_integration.services.direct_mapping import NOTES_BINDING, LEGACY_NOTES_BINDING
+    rule = _rule(ctx, item)
+    if ((rule.source_path, rule.target_doctype, rule.target_field) != NOTES_BINDING[:3]
+            or rule.transformation not in {NOTES_BINDING[3], 'Safe HTML'}):
+        return False
+    # An active separate legacy rule still owns its own baseline.
+    return not any(rule.target_doctype == 'Project' and rule.target_field == LEGACY_NOTES_BINDING[2]
+                   for rule in ctx.query_plan.definitions)
+
+
+def _project_notes_baseline(ctx, item, remote, canonical, source, target):
+    """Compare each acknowledged representation with its historical transform."""
+    from hero_integration.services.direct_mapping import LEGACY_NOTES_BINDING
+    legacy = LEGACY_NOTES_BINDING[2]
+    present = False
+    for key, value in (('notes', canonical), (legacy, remote.get('partner_notes'))):
+        if key not in source and key not in target: continue
+        present = True
+        if key == legacy:
+            if value is not None and not isinstance(value, str): return False
+            value = value.strip() if isinstance(value, str) and value.strip() else None
+        if key not in source or key not in target or source[key] != send_helpers._hash(value):
+            return False
+    return present
+
+
 def _wire(ctx,item,doc,value,remote):
     resolver=item['resolver'];opts=item['options']
     if value is None or value=='':
@@ -546,7 +602,11 @@ def _wire(ctx,item,doc,value,remote):
     if resolver=='LINK':
         field=frappe.get_meta(doc.doctype).get_field(item['source']['field']);target=field.options
         linked=frappe.get_doc(target,value);frappe.has_permission(target,'read',doc=linked,throw=True)
-        link=_link(target,value,ctx.proof.source_instance,'customer' if target=='Customer' else 'project')
+        try:
+            link=_link(target,value,ctx.proof.source_instance,'customer' if target=='Customer' else 'project')
+        except MappedUpdateBindingError:
+            link=_unchanged_project_customer(ctx,item,value,remote) if target=='Customer' else None
+            if link is None: raise
         if not str(link.source_id).isdigit() or int(link.source_id)<=0: raise MappedUpdateError('The related HERO identity is invalid.')
         return int(link.source_id)
     if resolver in {'DATETIME','EVENT_TIME'}:
@@ -599,6 +659,8 @@ def _baseline_matches(ctx,item,remote,canonical):
         return state==json.loads(field_hashes(mapped_values(SimpleNamespace(plan=ctx.query_plan),remote)))
     source_base=decode(link.source_field_hashes) or {}
     key=_baseline_key(ctx,item)
+    if _native_project_notes(ctx,item):
+        return _project_notes_baseline(ctx,item,remote,canonical,source_base,decode(link.target_field_hashes) or {})
     return key in source_base and key in (decode(link.target_field_hashes) or {}) and source_base[key]==send_helpers._hash(canonical)
 
 
@@ -773,6 +835,10 @@ def _acknowledge(ctx,prepared,after):
             key=_baseline_key(ctx,item)
             data['source_field_hashes'][key]=send_helpers._hash(canonical)
             state[key]=send_helpers._hash(change['local'])
+            if _native_project_notes(ctx,item):
+                from hero_integration.services.direct_mapping import LEGACY_NOTES_BINDING
+                data['source_field_hashes'].pop(LEGACY_NOTES_BINDING[2],None)
+                state.pop(LEGACY_NOTES_BINDING[2],None)
     for name,data in updates.items():
         area=ctx.content['area'];state=data['target_field_hashes']
         if data.pop('_collection',False):
