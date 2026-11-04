@@ -42,6 +42,10 @@ class MappedUpdateError(LocalizedError):
     pass
 
 
+class MappedUpdateBindingError(MappedUpdateError):
+    """A native relationship needs review; no identity may be guessed."""
+
+
 def _json(value):
     return json.dumps(value,sort_keys=True,ensure_ascii=False,separators=(',',':'),default=str,allow_nan=False)
 
@@ -251,10 +255,10 @@ def validate_sources(content, *, field_provider=None):
 def _link(doctype,name,source,kind):
     rows=frappe.get_all('HERO Integration Link',filters={'source_system':'HERO','source_instance':source,
         'target_doctype':doctype,'target_name':name,'source_type':kind},pluck='name',limit_page_length=2)
-    if len(rows)!=1: raise MappedUpdateError('Exactly one native source binding is required.')
+    if len(rows)!=1: raise MappedUpdateBindingError('Exactly one native source binding is required.')
     link=frappe.get_doc('HERO Integration Link',rows[0])
     if link.sync_status!='Synchronized' or getattr(link,'observed_source_hash',None) and link.observed_source_hash!=link.source_payload_hash:
-        raise MappedUpdateError('The native binding requires synchronization or conflict review.')
+        raise MappedUpdateBindingError('The native binding requires synchronization or conflict review.')
     return link
 
 
@@ -619,7 +623,7 @@ def _binding_state(link):
     return {field:getattr(link,field,None) for field in fields}
 
 
-def _prepare(ctx,client):
+def _prepare(ctx,client,*,preview_only=False):
     from graphql import get_named_type
     from hero_integration.services.graphql_contract import validate_mutation
     remote=_read_record(ctx,client);schema=_schema(ctx.raw_schema);operation=ctx.mapping.operation_name
@@ -652,7 +656,16 @@ def _prepare(ctx,client):
             'value':local,'condition':doc.get(condition['field']) if condition else None,
             'binding':_binding_state(ctx.source_links[item['id']])})
         if condition and doc.get(condition['field'])!=condition['equals']: continue
-        wire=_wire(ctx,item,doc,local,remote)
+        try:
+            wire=_wire(ctx,item,doc,local,remote)
+        except MappedUpdateBindingError as error:
+            if not preview_only or ctx.content['area'] != 'HeroProjectMatches': raise
+            conflicts.append({'id':item['id'],'field':item['input_path'],'source_doctype':doc.doctype,
+                'source_field':item['source']['field'],
+                'label':frappe.get_meta(doc.doctype).get_field(item['source']['field']).label,
+                'hero':_at(remote,item['read_path'],None),'new':local,
+                'blocked_reason':error.message_template})
+            continue
         if wire is MISSING: continue
         canonical=_canonical(ctx,item,remote)
         kind=_input_type(schema,operation,item['input_path'])
@@ -707,7 +720,8 @@ def preview(mapping_name,doctype,name,*,client=None):
     from hero_integration.services.writeback_source import validate_source
     ctx=_load_context(mapping_name,doctype,name);config=validate_source(ctx.proof)
     client=client or HeroGraphQLClient(config.endpoint,lambda:config.api_token,config.timeout_seconds,max_retries=0)
-    prepared=_prepare(ctx,client);enabled=bool(_mutation_execution_state()['mutation_execution_enabled'])
+    prepared=_prepare(ctx,client,preview_only=True) if ctx.content['area']=='HeroProjectMatches' else _prepare(ctx,client)
+    enabled=bool(_mutation_execution_state()['mutation_execution_enabled'])
     return {'mapping':mapping_name,'doctype':doctype,'name':name,'area':ctx.content['area'],
         'hero_id':ctx.hero_id,'mutation_id':prepared.mutation_id,'create':False,'changes':prepared.changes,
         'conflicts':prepared.conflicts,'fingerprint':prepared.fingerprint,'sending_enabled':enabled,

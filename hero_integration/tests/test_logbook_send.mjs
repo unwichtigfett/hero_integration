@@ -29,7 +29,7 @@ async function setup(overrides={},options={}){
             for(const df of config.fields){
                 const element=new Element('div');const wrapper={0:element,empty(){element.children=[];element.value='';return this;}};
                 const input={disabled:false,prop(key,value){this[key]=value;return this;}};
-                this.fields_dict[df.fieldname]={df,value:'',$wrapper:wrapper,$input:input,refresh(){},get_value(){return this.value;},
+                this.fields_dict[df.fieldname]={df,value:'',$wrapper:wrapper,$input:df.hidden?undefined:input,refresh(){if(!this.df.hidden)this.$input ||= input;},get_value(){return this.value;},
                     set_value(value){this.value=value;return df.onchange?.();}};
             }
             dialogs.push(this);
@@ -114,4 +114,28 @@ test('Customer script cannot register a second Project field action after visiti
     const registered=[];
     vm.runInNewContext(source,{frappe:{ui:{form:{on:(doctype)=>registered.push(doctype)}}}});
     assert.deepEqual(registered,['Customer']);
+});
+test('Frappe hidden phase has no input and still previews and sends',async()=>{
+    const app=await setup();const dialog=await app.open();
+    assert.equal(dialog.fields_dict.phase.df.hidden,true);
+    assert.equal(dialog.fields_dict.phase.$input,undefined);
+    assert.equal(app.calls[0].key,'project_send_preview');
+    assert.equal(dialog.button.disabled,false);
+    await dialog.config.primary_action();assert.equal(app.calls[1].key,'project_send');
+});
+test('revealing a supported phase creates its input and allows a fresh preview',async()=>{
+    const app=await setup({project_send_preview:()=>({...preview(),phases:[{id:7,name:'Installation'}]})});
+    const dialog=await app.open();assert.equal(dialog.fields_dict.phase.df.hidden,false);
+    assert.ok(dialog.fields_dict.phase.$input);
+    await dialog.fields_dict.phase.set_value('7');await app.flush();
+    assert.equal(app.calls[1].key,'project_send_preview');assert.equal(app.calls[1].args.phase_id,'7');
+    assert.equal(dialog.button.disabled,false);
+});
+test('related binding conflicts show their actual reason and block confirmation',async()=>{
+    const app=await setup({project_send_preview:()=>({...preview(),can_send:false,
+        conflicts:[{label:'Customer',blocked_reason:'The native binding requires synchronization or conflict review.'}]})});
+    const dialog=await app.open();
+    assert.match(dialog.fields_dict.summary.$wrapper[0].textContent,/synchronization or conflict review/);
+    assert.match(dialog.fields_dict.summary.$wrapper[0].textContent,/Customer/);
+    assert.equal(dialog.button.disabled,true);
 });

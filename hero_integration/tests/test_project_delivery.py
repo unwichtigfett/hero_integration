@@ -242,3 +242,24 @@ class TestConfirmedPhaseStamp(TestCase):
             ctx.project.modified='concurrent-change'
             with self.assertRaises(ValueError):
                 logbook.preview('C1',client=Mock(),delivery_project_stamp={'before':before,'after':'own-verified-phase-save'})
+
+class TestProjectRelationshipPreview(TestCase):
+    def test_unresolved_related_binding_is_visible_in_preview_and_still_blocks_actual_send(self):
+        from hero_integration.tests.test_mapped_update_v2 import TestMappedUpdatePrepare
+        ctx=TestMappedUpdatePrepare().context('HeroTasks')
+        # Same native update machinery, a Project relationship assignment.
+        ctx.content['area']='HeroProjectMatches'
+        remote={'id':7,'name':'old'}
+        def source(_ctx,item,_remote):
+            ctx.source_documents[item['id']]=ctx.document;ctx.source_links[item['id']]=ctx.link
+            return ctx.document,'new'
+        with patch.object(mapped_update_v2,'_read_record',return_value=remote), \
+             patch.object(mapped_update_v2,'_source',side_effect=source), \
+             patch.object(mapped_update_v2,'_wire',side_effect=mapped_update_v2.MappedUpdateBindingError('The native binding requires synchronization or conflict review.')), \
+             patch.object(mapped_update_v2.frappe,'get_meta',return_value=NS(get_field=lambda _:NS(label='Customer'))):
+            prepared=mapped_update_v2._prepare(ctx,Mock(),preview_only=True)
+            self.assertEqual(prepared.changes,[]);self.assertEqual(len(prepared.conflicts),1)
+            self.assertEqual(prepared.conflicts[0]['label'],'Customer')
+            self.assertIn('synchronization',prepared.conflicts[0]['blocked_reason'])
+            self.assertNotIn('name',prepared.variables['input'])
+            with self.assertRaises(mapped_update_v2.MappedUpdateBindingError):mapped_update_v2._prepare(ctx,Mock())
