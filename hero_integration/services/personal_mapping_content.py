@@ -97,7 +97,7 @@ def same_value(left, right):
 
 def validate_edits(prior, submitted):
     """Validate edits and retain exact stored values at immutable paths."""
-    if submitted.get('usage') == 'MAPPED_UPDATE_V2':
+    if submitted.get('usage') in {'MAPPED_UPDATE_V2', 'PROJECT_LOGBOOK_V1'}:
         validate_mapped_update_shape(submitted, allow_local=True)
         if not same_value(prior.get('_portable_exchange_schema'), submitted.get('_portable_exchange_schema')):
             raise MappingDraftError('Portable schema provenance cannot be edited.')
@@ -230,16 +230,52 @@ def remap_query_options(content, identities):
     if isinstance(options, dict):
         content['query_adapter']['transform_options'] = {identities.get(key, key): value for key, value in options.items()}
 
+def configured_mutation_helpers(usage):
+    """Dispatch only the two explicitly supported portable mutation profiles."""
+    if usage == 'PROJECT_LOGBOOK_V1':
+        from hero_integration.services.project_logbook_writeback import normalise_mapping, validate_sources
+    elif usage == 'MAPPED_UPDATE_V2':
+        from hero_integration.services.mapped_update_v2 import normalise_mapping, validate_sources
+    else:
+        raise MappingDraftError('Unsupported mutation mapping usage.')
+    return normalise_mapping, validate_sources
+
+
+def configured_mutation_sources(content):
+    sources = [item['source'] for item in content['assignments']]
+    if content.get('usage') == 'PROJECT_LOGBOOK_V1':
+        sources += [{'doctype': 'Comment', 'field': content['parent'][key]}
+                    for key in ('reference_doctype_field', 'reference_name_field')]
+        sources.append({'doctype': 'Comment', 'field': 'comment_type'})
+        if content.get('version_source'):
+            version = content['version_source']
+            sources += [{'doctype': version['doctype'], 'field': version[key]}
+                        for key in ('field', 'reference_doctype_field', 'reference_name_field')]
+    return sources
+
+
 def validate_mapped_update_shape(content, *, allow_local=False):
-    required = {'usage', 'version', 'area', 'read_service', 'source', 'target', 'identity', 'assignments', 'required_readback'}
+    logbook = content.get('usage') == 'PROJECT_LOGBOOK_V1'
+    required = {'usage', 'version', 'area', 'read_service', 'source', 'target', 'assignments'}
+    required |= {'parent'} if logbook else {'identity', 'required_readback'}
+    optional = {'comment_types', 'version_source'} if logbook else set()
     keys = set(content) - ({'_portable_exchange_schema'} if allow_local else set())
-    if (keys != required or content.get('usage') != 'MAPPED_UPDATE_V2'
-            or type(content.get('version')) is not int or content['version'] != 2
+    if (not required <= keys or keys - required - optional or content.get('usage') not in {'MAPPED_UPDATE_V2', 'PROJECT_LOGBOOK_V1'}
+            or type(content.get('version')) is not int or content['version'] != (1 if logbook else 2)
             or not isinstance(content.get('source'), dict) or set(content['source']) != {'doctype'}
             or not isinstance(content.get('target'), dict) or set(content['target']) != {'operation'}
             or not isinstance(content.get('assignments'), list) or not content['assignments']
-            or not isinstance(content.get('required_readback'), list)):
+            or (not logbook and not isinstance(content.get('required_readback'), list))):
         raise MappingDraftError('Invalid mapped update configuration.')
+    if logbook:
+        if (content.get('parent') != {'doctype': 'Project', 'reference_doctype_field': 'reference_doctype',
+                'reference_name_field': 'reference_name', 'source_type': 'project', 'target': 'project_match'}
+                or content['source'] != {'doctype': 'Comment'} or content['area'] != 'HeroProjectMatches'
+                or content['target'] != {'operation': 'add_logbook_entry'}):
+            raise MappingDraftError('Invalid project logbook mapping scope.')
+        for item in content['assignments']:
+            if not isinstance(item, dict) or set(item) != {'id', 'source', 'input_path', 'resolver', 'options'}:
+                raise MappingDraftError('Invalid project logbook assignment.')
     return bounded(content)
 
 
@@ -252,8 +288,8 @@ def validate_exchange_action(content, schema, operation_name):
     from hero_integration.services.frappe_writeback import (
         WritebackContractError, normalise_mapping, reviewed_input_target,
     )
-    if isinstance(content, dict) and content.get('usage') == 'MAPPED_UPDATE_V2':
-        from hero_integration.services.mapped_update_v2 import normalise_mapping as normalise_update
+    if isinstance(content, dict) and content.get('usage') in {'MAPPED_UPDATE_V2', 'PROJECT_LOGBOOK_V1'}:
+        normalise_update, _ = configured_mutation_helpers(content['usage'])
         action = normalise_update(content, schema)
         if action['target']['operation'] != operation_name:
             raise MappingDraftError('Mapped update differs from the selected mutation operation.')

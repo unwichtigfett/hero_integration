@@ -18,8 +18,9 @@ mutation contracts. Configuration packages are rejected with a Settings hint.
 Settings exchanges `hero-integration-config-v2`: the complete schema snapshot,
 allowlisted operational settings, Query mappings and readers, optional
 `mutation_mappings` and optional `mutation_contracts`. The latter carry the eight
-registered update operations covering nine areas; documents and pictures share
-one file-update contract. Contracts identify their exact mapping UUIDs, areas,
+registered update operations and Project logbook creation, covering nine areas;
+documents and pictures share one file-update contract. Ten mutation profiles use
+nine operation contracts. Contracts identify their exact mapping UUIDs, areas,
 variable-only query and requested Draft/Active status. An explicitly confirmed
 import creates missing contracts and approves requested Active contracts locally.
 Existing differences block the import for reconciliation; identical contracts
@@ -43,9 +44,9 @@ well as active mapped updates. Query mapping export includes Query definitions o
 Before writeback activation, the target must have a separately reviewed, active
 mutation contract and validated service. Sending then requires native permissions,
 a unique source binding, the approved Query mapping, unchanged source and local
-baselines, a fresh preview fingerprint and explicit confirmation. Only updates
-are supported by these definitions; creating and deleting remote entities remain
-separate workflows.
+baselines, a fresh preview fingerprint and explicit confirmation. The update
+profiles cannot create or delete entities. The separate Project logbook profile
+permits only the explicit creation described below.
 
 ## Native data and relationships
 
@@ -69,6 +70,43 @@ email. HERO roles, account types and permissions do not grant ERPNext privileges
 Birth date and gender remain optional.
 
 ## Project logbook
+
+The `PROJECT_LOGBOOK_V1` mutation profile maps native `Comment.content` through
+`PLAIN_TEXT` to `add_logbook_entry.logbook_entry.custom_text`. It belongs to
+`HeroProjectMatches`, alongside the separate Project update profile. Native
+`reference_doctype`/`reference_name` prove the Project parent; the synchronized
+source binding supplies `target_id`, and the schema-proven target is
+`project_match`. JSON cannot supply remote IDs, author credentials, permissions
+or arbitrary mutation input. HERO assigns the remote author and timestamps;
+these members are not writable in `LogbookEntryInput`.
+
+The Project form offers one activity-selection dialog with a server-built preview
+and explicit confirmation. `comment_types` explicitly selects manual comments and
+native automatic timeline events such as assignments and workflow changes.
+The optional, closed `version_source` maps native `Version.data` to a change
+summary, including status changes and child-row change counts. Hidden and Password
+fields are omitted from that summary. The Project hook records native Versions
+for opted-in, source-bound Projects when native change tracking is off; it defers
+to Frappe when tracking is on. Managed HERO imports never create outbound change
+activities. No new custom fields or duplicate timeline comments are needed.
+Imported histories and private entries outside the Project timeline cannot become
+new outbound activities.
+Global execution, native Comment/Project permissions, source binding, snapshot,
+contract scope and the approved Project/history readback are independently checked.
+
+Each local activity (Comment or Version) has a stable audit reservation across mapping revisions and
+edits. Confirmation never permits an automatic retry after an uncertain create.
+A durable Project marker blocks its logbook import until the result is verified;
+the returned history identity is persisted against the original Comment before
+the subsequent readback. The inbound mapped importer retains the original activity's
+content, author and native timestamps, preventing an import echo. Remote or local
+changes raise a conflict. An unknown response leaves the Project logbook blocked
+for manual reconciliation. Legacy raw-ID history import rejects Projects with an
+outbound marker; these require the approved mapped Project reader.
+
+Configuration import prepares all ten profiles as drafts and can import their
+nine reviewed operation contracts. Mutation mapping import then activates the
+profiles after confirmation. Neither import executes HERO operations.
 
 The approved project query explicitly selects the history fields, collection
 identity, visibility and context paths. One project per page allows its independent

@@ -747,12 +747,12 @@ class FrappeMappingDraftStorage:
             else:
                 from hero_integration.services.frappe_writeback import normalise_mapping
                 from hero_integration.api import _mapping_values_preserved
-                if value.get('additional_mappings') and value.get('usage') not in {'SEND_TO_HERO', 'MAPPED_UPDATE_V2'}:
+                if value.get('additional_mappings') and value.get('usage') not in {'SEND_TO_HERO', 'MAPPED_UPDATE_V2', 'PROJECT_LOGBOOK_V1'}:
                     raise MappingDraftError('First publication of multiple mutation assignments is not supported.')
-                if value.get('usage') not in {'SEND_TO_HERO', 'MAPPED_UPDATE_V2'}:
+                if value.get('usage') not in {'SEND_TO_HERO', 'MAPPED_UPDATE_V2', 'PROJECT_LOGBOOK_V1'}:
                     value.pop('additional_mappings', None)
                 try:
-                    active_content = (self._validate_configured_send(value, schema) if value.get('usage') in {'SEND_TO_HERO', 'MAPPED_UPDATE_V2'}
+                    active_content = (self._validate_configured_send(value, schema) if value.get('usage') in {'SEND_TO_HERO', 'MAPPED_UPDATE_V2', 'PROJECT_LOGBOOK_V1'}
                                       else normalise_mapping(value, schema))
                 except ValueError as error:
                     raise MappingDraftError('Mutation mapping is not approved for activation.') from error
@@ -991,8 +991,9 @@ class FrappeMappingDraftStorage:
         return content
 
     def _validate_configured_send(self, content, schema):
-        if content.get('usage') == 'MAPPED_UPDATE_V2':
-            from hero_integration.services.mapped_update_v2 import normalise_mapping, validate_sources
+        if content.get('usage') in {'MAPPED_UPDATE_V2', 'PROJECT_LOGBOOK_V1'}:
+            from hero_integration.services.personal_mapping_content import configured_mutation_helpers
+            normalise_mapping, validate_sources = configured_mutation_helpers(content['usage'])
             normalized = normalise_mapping(content, schema)
             validate_sources(normalized)
             return normalized
@@ -1073,7 +1074,7 @@ class FrappeMappingDraftStorage:
                 except (TypeError, ValueError) as error:
                     raise MappingDraftError('New query field rule is incompatible with target metadata.') from error
         else:
-            if value.get('usage') in {'SEND_TO_HERO', 'MAPPED_UPDATE_V2'}:
+            if value.get('usage') in {'SEND_TO_HERO', 'MAPPED_UPDATE_V2', 'PROJECT_LOGBOOK_V1'}:
                 candidate = dict(value)
                 candidate.pop('_portable_exchange_schema', None)
                 normalized = self._validate_configured_send(candidate, schema)
@@ -1306,7 +1307,7 @@ class FrappeMappingDraftStorage:
                 or self._definition.operation_name != 'tasks'
                 or scope['source_instance'] != self._definition.source_instance):
             raise MappingDraftError('Native Task onboarding is outside the current source and mapping.')
-        if value.get('usage') in {'SEND_TO_HERO', 'MAPPED_UPDATE_V2'}:
+        if value.get('usage') in {'SEND_TO_HERO', 'MAPPED_UPDATE_V2', 'PROJECT_LOGBOOK_V1'}:
             if self._definition.direction != 'FRAPPE_TO_MUTATION':
                 raise MappingDraftError('Send to HERO configuration requires a Mutation mapping.')
             from hero_integration.api import _validated_snapshot
@@ -1394,7 +1395,7 @@ class FrappeMappingDraftStorage:
             raise DraftConflict('Mapping schema changed.')
         metadata = FrappePickerMetadata()
         existing = content if content is not None else json.loads(parent.mapping_json)
-        if existing.get('usage') in {'SEND_TO_HERO', 'MAPPED_UPDATE_V2'}:
+        if existing.get('usage') in {'SEND_TO_HERO', 'MAPPED_UPDATE_V2', 'PROJECT_LOGBOOK_V1'}:
             self._validate_configured_send(existing, schema)
             return
         operation = existing.get('target_operation') or parent.operation_name
@@ -1560,7 +1561,7 @@ class FrappeMappingDraftStorage:
         holder = _query_adapter_publication.get()
         if holder is not None:
             holder['options'] = content.get('query_adapter')
-        if parent.direction == 'FRAPPE_TO_MUTATION' and content.get('usage') in {'SEND_TO_HERO', 'MAPPED_UPDATE_V2'}:
+        if parent.direction == 'FRAPPE_TO_MUTATION' and content.get('usage') in {'SEND_TO_HERO', 'MAPPED_UPDATE_V2', 'PROJECT_LOGBOOK_V1'}:
             if 'field_rules' in content or 'field_rule_bases' in content:
                 raise MappingDraftError('Mutation mapping has unexpected Query field rules.')
             return self._validate_configured_send(content, schema), []

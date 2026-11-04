@@ -45,7 +45,7 @@ def _activation_blockers(package, preview, schema):
         content = deepcopy(item['content'])
         try:
             additions = content.get('additional_mappings') or []
-            if content.get('usage') in {'SEND_TO_HERO', 'MAPPED_UPDATE_V2'}:
+            if content.get('usage') in {'SEND_TO_HERO', 'MAPPED_UPDATE_V2', 'PROJECT_LOGBOOK_V1'}:
                 normalized = FrappeMappingDraftStorage()._validate_configured_send(content, schema)
                 if not _mapping_values_preserved(content, normalized):
                     raise MappingDraftError('Active writeback normalization would lose draft parameters.')

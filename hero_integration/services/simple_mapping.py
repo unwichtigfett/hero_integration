@@ -140,9 +140,13 @@ def state() -> dict:
 
 def _send_rows(config, name, revision, operation, status):
     if not isinstance(config, dict): return []
-    mapped = config.get('usage') == 'MAPPED_UPDATE_V2'
+    mapped = config.get('usage') in {'MAPPED_UPDATE_V2', 'PROJECT_LOGBOOK_V1'}
     items = config.get('assignments', []) if mapped else [config, *(config.get('additional_mappings') or [])]
     if not isinstance(items, list): return []
+    version = config.get('version_source')
+    if config.get('usage') == 'PROJECT_LOGBOOK_V1' and isinstance(version, dict):
+        items = [*items, {'source': {'doctype': version.get('doctype'), 'field': version.get('field')},
+                         'input_path': 'logbook_entry.custom_text', 'resolver': version.get('resolver')}]
     result = []
     for item in items:
         if not isinstance(item, dict): continue
@@ -152,7 +156,7 @@ def _send_rows(config, name, revision, operation, status):
         if not source.get('doctype') or not source.get('field') or not hero: continue
         area = config.get('area') if mapped else None
         result.append({'status': status, 'operation': operation or target.get('operation') or '',
-            'operation_label': LABELS.get(area, operation or target.get('operation') or ''),
+            'operation_label': 'Project logbook' if config.get('usage') == 'PROJECT_LOGBOOK_V1' else LABELS.get(area, operation or target.get('operation') or ''),
             'hero': hero, 'app': source.get('app') or _app(source['doctype']),
             'target': f"{source['doctype']}.{source['field']}", 'target_doctype': source['doctype'],
             'target_field': source['field'], 'transformation': item.get('resolver') if mapped else item.get('transformation'),
@@ -176,7 +180,7 @@ def _mutation_drafts(active, source_instance):
             config = json.loads(row.content_json or '{}')
             context = json.loads(row.new_definition_json or 'null')
         except (TypeError, ValueError): continue
-        if not isinstance(config, dict) or config.get('usage') != 'MAPPED_UPDATE_V2': continue
+        if not isinstance(config, dict) or config.get('usage') not in {'MAPPED_UPDATE_V2', 'PROJECT_LOGBOOK_V1'}: continue
         parent = by_name.get(row.base_active_mapping)
         if isinstance(context, dict):
             if (context.get('source_instance') != source_instance or context.get('site_scope') != site

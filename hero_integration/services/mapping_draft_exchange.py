@@ -239,7 +239,7 @@ def _validated_record_contexts(content, operation, schema, *, strip=False):
 def _portable_content(content, direction):
     """Accept only understood configuration, never local provenance or authority."""
     value = bounded(_object(content))
-    if value.get('usage') == 'MAPPED_UPDATE_V2':
+    if value.get('usage') in {'MAPPED_UPDATE_V2', 'PROJECT_LOGBOOK_V1'}:
         if direction != 'FRAPPE_TO_MUTATION':
             raise MappingDraftExchangeError('Mapped updates require the Mutation direction.')
         from hero_integration.services.personal_mapping_content import validate_mapped_update_shape
@@ -391,7 +391,7 @@ def _validate_portable_query(content, operation, schema):
 
 
 def _export_portable(source_instance, snapshot_name, direction, *, drafts_only=False, usage=None):
-    if usage is not None and (usage != 'MAPPED_UPDATE_V2' or direction != 'FRAPPE_TO_MUTATION'):
+    if usage is not None and (usage not in {'MAPPED_UPDATE_V2', 'PROJECT_LOGBOOK_V1', 'CONFIGURED_MUTATIONS'} or direction != 'FRAPPE_TO_MUTATION'):
         raise MappingDraftExchangeError('The filtered portable export requires mapped Mutation updates.')
     FrappeMappingDraftStorage()._authorize(frappe.session.user)
     assert_portable_identity_schema(frappe)
@@ -406,8 +406,9 @@ def _export_portable(source_instance, snapshot_name, direction, *, drafts_only=F
     if drafts_only:
         parents = [row for row in parents if _value(row, 'definition_id') in owned]
     if usage is not None:
+        allowed_usages = {'MAPPED_UPDATE_V2', 'PROJECT_LOGBOOK_V1'} if usage == 'CONFIGURED_MUTATIONS' else {usage}
         def matches(raw):
-            try: return _content(raw).get('usage') == usage
+            try: return _content(raw).get('usage') in allowed_usages
             except ValueError: return False
         parents = [row for row in parents if matches(_value(owned[_value(row, 'definition_id')], 'content_json')
                    if _value(row, 'definition_id') in owned else _value(row, 'mapping_json'))]
@@ -476,7 +477,7 @@ def _export_portable(source_instance, snapshot_name, direction, *, drafts_only=F
     lock_identity_drafts(frappe, rule_locks, 'rule')
 
     def check_locked(content):
-        if usage is not None and content.get('usage') != usage:
+        if usage is not None and content.get('usage') not in allowed_usages:
             raise DraftConflict('Portable export usage changed while locks were acquired.')
         children, rules = collect(content)
         if not children <= definition_locks or not rules <= rule_locks:
@@ -662,6 +663,13 @@ def _portable_schema_graph(schema):
     for entry in schema['relations']:
         edges[entry['id']].extend(entry['dependencies'])
         edges[entry['id']].append(entry.get('field_id'))
+        # Selecting a Link/Table field also selects its relation contract.
+        # Nested fields travel with their whole custom DocType, so the owner
+        # must retain every nested relation when publication slices the schema.
+        owner = nested_field_owner.get(entry.get('field_id'), entry.get('field_id'))
+        if owner not in edges:
+            raise MappingDraftExchangeError('Portable schema dependency is missing.')
+        edges[owner].append(entry['id'])
         if entry.get('target_doctype') in doctype_ids:
             edges[entry['id']].append(doctype_ids[entry['target_doctype']])
     def closure(identities):
@@ -786,7 +794,8 @@ def _portable_target_metadata(content, direction):
         probe = content
     else:
         source = content.get('source', {})
-        sources = ([item['source'] for item in content['assignments']] if content.get('usage') == 'MAPPED_UPDATE_V2'
+        from hero_integration.services.personal_mapping_content import configured_mutation_sources
+        sources = (configured_mutation_sources(content) if content.get('usage') in {'MAPPED_UPDATE_V2', 'PROJECT_LOGBOOK_V1'}
                    else [source] + [item.get('source', {}) for item in content.get('additional_mappings', [])])
         probe = {'mapping_definition_ids': [str(i) for i in range(len(sources))], 'field_rules': {
             str(i): {'target_doctype': item.get('doctype'), 'target_field': item.get('field')}
@@ -800,9 +809,15 @@ def _portable_target_metadata(content, direction):
         rows = metadata.get(doctype, {}).get('fields', [])
         for field in fields:
             matches = [row for row in rows if row['fieldname'] == field]
+            hidden_source = False
+            if direction == 'FRAPPE_TO_MUTATION' and content.get('usage') == 'PROJECT_LOGBOOK_V1':
+                from hero_integration.services.project_logbook_writeback import VERSION_SOURCE
+                # Frappe deliberately hides its native change JSON. Only the
+                # explicit, reviewed change-summary source can read that field.
+                hidden_source = (doctype, field) == ('Version', 'data') and content.get('version_source') == VERSION_SOURCE
             if (len(matches) != 1 or any(int(matches[0].get(flag) or 0) for flag in ('permlevel', 'is_virtual'))
                     or (int(matches[0].get('hidden') or 0)
-                        and not (direction == 'QUERY_TO_FRAPPE' and _query_hidden_target(content, doctype, field)))):
+                        and not (hidden_source or direction == 'QUERY_TO_FRAPPE' and _query_hidden_target(content, doctype, field)))):
                 raise MappingDraftExchangeError('Portable target metadata is missing, ambiguous or restricted.')
     return metadata
 
@@ -842,7 +857,7 @@ def _portable_storage_content(item, package):
 
 def _bind_mapped_update_readbacks(package, source_instance, snapshot_name):
     """Resolve imported read names by their unique approved target area and source."""
-    mutations = [item for item in package['mappings'] if item['content'].get('usage') == 'MAPPED_UPDATE_V2']
+    mutations = [item for item in package['mappings'] if item['content'].get('usage') in {'MAPPED_UPDATE_V2', 'PROJECT_LOGBOOK_V1'}]
     if not mutations:
         return {}
     from hero_integration.services.read_contract import from_documents
@@ -871,10 +886,11 @@ def _bind_mapped_update_readbacks(package, source_instance, snapshot_name):
         if len(matches) != 1:
             raise MappingDraftExchangeError('Mapped update requires exactly one approved target read service for its area.')
         service, mapping, contract = matches[0]
-        if contract.identity_path != content['identity']['read_path']:
+        expected_identity = 'id' if content['usage'] == 'PROJECT_LOGBOOK_V1' else content['identity']['read_path']
+        if contract.identity_path != expected_identity:
             raise MappingDraftExchangeError('Mapped update identity differs from its approved target read service.')
         selected_ids = set(getattr(contract, 'definition_ids', ()))
-        if any(item.get('query_rule_id') and item['query_rule_id'] not in selected_ids for item in content['assignments']):
+        if content['usage'] == 'MAPPED_UPDATE_V2' and any(item.get('query_rule_id') and item['query_rule_id'] not in selected_ids for item in content['assignments']):
             raise MappingDraftExchangeError('An explicit Query rule identity is not selected by the target read service.')
         content['read_service'] = service.name
         bindings[item['definition_id']] = {'service': service.name, 'service_revision': contract.service_revision,
@@ -1348,7 +1364,7 @@ def _prepare_item(item, row, local_content, schema, *, portable=False):
             if assignments:
                 prepared.setdefault('metadata', {})['assignments'] = _assignment_metadata(storage, assignments, content=prepared['content'])
             if storage._definition.direction == 'FRAPPE_TO_MUTATION':
-                if prepared['content'].get('usage') in {'SEND_TO_HERO', 'MAPPED_UPDATE_V2'}:
+                if prepared['content'].get('usage') in {'SEND_TO_HERO', 'MAPPED_UPDATE_V2', 'PROJECT_LOGBOOK_V1'}:
                     action = prepared['content']
                     normalized = storage._validate_configured_send(action, storage._publication_snapshot[1])
                     if normalized['target']['operation'] != storage._definition.operation_name:
@@ -1507,8 +1523,9 @@ def _initial_locked_content(content, storage):
 
 
 def _assignment_metadata(storage, mappings, content=None):
-    if (content or {}).get('usage') == 'MAPPED_UPDATE_V2':
-        mappings = content['assignments']
+    if (content or {}).get('usage') in {'MAPPED_UPDATE_V2', 'PROJECT_LOGBOOK_V1'}:
+        from hero_integration.services.personal_mapping_content import configured_mutation_sources
+        mappings = [{'source': source} for source in configured_mutation_sources(content)]
     from hero_integration.api import _validated_snapshot
     snapshot, schema = _validated_snapshot(storage._definition.schema_snapshot, for_update=True)
     storage._publication_snapshot = (snapshot, schema)

@@ -1,4 +1,4 @@
-"""Portable update definitions accompanying read mappings; import never authorizes execution."""
+"""Portable mutation profiles accompanying read mappings; import never authorizes execution."""
 import json
 
 DIRECTION = 'FRAPPE_TO_MUTATION'
@@ -15,21 +15,23 @@ def portable(payload):
 
 def validate(payload):
     from hero_integration.services import mapping_draft_exchange as exchange
-    from hero_integration.services.mapped_update_v2 import normalise_mapping
+    from hero_integration.services.personal_mapping_content import configured_mutation_helpers
     mappings = payload.get('mutation_mappings', [])
-    if not isinstance(mappings, list) or len(mappings) > 9:
-        raise ValueError('Configuration mutation mappings must contain at most nine update areas.')
+    if not isinstance(mappings, list) or len(mappings) > 10:
+        raise ValueError('Configuration mutation mappings must contain at most ten supported profiles.')
     if not mappings:
         return
     exchange._parse_portable(json.dumps(portable(payload)), DIRECTION)
     readers = {row['target_operation'] for row in payload['read_services']}
     seen = set()
     for item in mappings:
+        normalise_mapping, _ = configured_mutation_helpers(item['content'].get('usage'))
         content = normalise_mapping(item['content'], payload['schema_snapshot']['schema'])
         area = content['area']
-        if area not in readers or area in seen or item['operation_name'] != content['target']['operation']:
+        profile = (area, content['usage'])
+        if area not in readers or profile in seen or item['operation_name'] != content['target']['operation']:
             raise ValueError('Every mutation area requires its unique Query mapping in the same file.')
-        seen.add(area)
+        seen.add(profile)
 
 
 def summary(payload):
@@ -57,5 +59,5 @@ def save(payload, source_instance, snapshot_name):
 def export(source_instance, snapshot_name):
     """Reuse the directional exporter so own prepared revisions round-trip too."""
     from hero_integration.services import mapping_draft_exchange as exchange
-    result = json.loads(exchange._export_portable(source_instance, snapshot_name, DIRECTION, usage='MAPPED_UPDATE_V2'))
-    return [item for item in result['mappings'] if item['content'].get('usage') == 'MAPPED_UPDATE_V2']
+    result = json.loads(exchange._export_portable(source_instance, snapshot_name, DIRECTION, usage='CONFIGURED_MUTATIONS'))
+    return [item for item in result['mappings'] if item['content'].get('usage') in {'MAPPED_UPDATE_V2', 'PROJECT_LOGBOOK_V1'}]
