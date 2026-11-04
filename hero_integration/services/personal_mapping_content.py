@@ -97,6 +97,11 @@ def same_value(left, right):
 
 def validate_edits(prior, submitted):
     """Validate edits and retain exact stored values at immutable paths."""
+    if submitted.get('usage') == 'MAPPED_UPDATE_V2':
+        validate_mapped_update_shape(submitted, allow_local=True)
+        if not same_value(prior.get('_portable_exchange_schema'), submitted.get('_portable_exchange_schema')):
+            raise MappingDraftError('Portable schema provenance cannot be edited.')
+        return deepcopy(bounded(submitted))
     result = deepcopy(submitted)
     for key in set(prior) | set(submitted):
         if key == 'usage':
@@ -225,6 +230,19 @@ def remap_query_options(content, identities):
     if isinstance(options, dict):
         content['query_adapter']['transform_options'] = {identities.get(key, key): value for key, value in options.items()}
 
+def validate_mapped_update_shape(content, *, allow_local=False):
+    required = {'usage', 'version', 'area', 'read_service', 'source', 'target', 'identity', 'assignments', 'required_readback'}
+    keys = set(content) - ({'_portable_exchange_schema'} if allow_local else set())
+    if (keys != required or content.get('usage') != 'MAPPED_UPDATE_V2'
+            or type(content.get('version')) is not int or content['version'] != 2
+            or not isinstance(content.get('source'), dict) or set(content['source']) != {'doctype'}
+            or not isinstance(content.get('target'), dict) or set(content['target']) != {'operation'}
+            or not isinstance(content.get('assignments'), list) or not content['assignments']
+            or not isinstance(content.get('required_readback'), list)):
+        raise MappingDraftError('Invalid mapped update configuration.')
+    return bounded(content)
+
+
 def validate_exchange_action(content, schema, operation_name):
     """Project a primary mutation Draft onto the existing reviewed action contract.
 
@@ -234,6 +252,12 @@ def validate_exchange_action(content, schema, operation_name):
     from hero_integration.services.frappe_writeback import (
         WritebackContractError, normalise_mapping, reviewed_input_target,
     )
+    if isinstance(content, dict) and content.get('usage') == 'MAPPED_UPDATE_V2':
+        from hero_integration.services.mapped_update_v2 import normalise_mapping as normalise_update
+        action = normalise_update(content, schema)
+        if action['target']['operation'] != operation_name:
+            raise MappingDraftError('Mapped update differs from the selected mutation operation.')
+        return {'mapping': action, 'graphql_type': None}
     if isinstance(content, dict) and content.get('usage') == 'SEND_TO_HERO':
         from hero_integration.services.mapped_send import normalise_send_mapping
         action = normalise_send_mapping(content, schema)

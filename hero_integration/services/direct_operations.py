@@ -67,13 +67,13 @@ def records_path(name: str) -> str:
 # Configurable target fields per DocType (besides app-owned custom_hero_* fields of the owner).
 FIELDS = {
     "Employee": frozenset({"first_name", "last_name", "employee_name", "company_email", "personal_email",
-                           "cell_number", "status", "gender", "date_of_birth"}),
-    "User": frozenset({"email", "phone", "mobile_no", "language", "custom_hero_role",
+                           "cell_number", "status", "gender", "date_of_birth", "current_address"}),
+    "User": frozenset({"email", "phone", "mobile_no", "language", "email_signature", "custom_hero_role",
                        "custom_hero_last_login", "custom_hero_created", "custom_hero_modified"}),
     "Item": frozenset({"item_code", "item_name", "description", "item_group", "stock_uom", "brand", "disabled", "barcodes",
                        "supplier_items", "min_order_qty", "lead_time_days"}),
     "Item Price": frozenset({"price_list_rate"}),
-    "File": frozenset({"file_name"}),
+    "File": frozenset({"file_name", "file_type"}),
 }
 # Coded resolvers; each may only feed its one native field.
 TRANSFORM_TARGETS = {

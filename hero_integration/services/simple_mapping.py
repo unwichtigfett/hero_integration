@@ -63,6 +63,43 @@ def _row(operation: str, row, mapping: dict) -> dict:
             "revision": int(row.mapping_revision or 0), "definition_id": row.definition_id, "mapping": mapping["name"]}
 
 
+def _configured_relation_rows(operation, mapping, existing=()):
+    """Project declared adapter fields into the same read-only list, without new rule records."""
+    options = mapping['config'].get('query_adapter') or {}
+    result = []
+    seen = {(row.get('hero'), row.get('target_doctype'), row.get('target_field')) for row in existing}
+    def add(path, doctype, field, transformation, suffix=''):
+        key = (path, doctype, field)
+        if not isinstance(path, str) or not path or key in seen: return
+        seen.add(key)
+        result.append({'status': 'Active', 'operation': operation, 'operation_label': LABELS.get(operation, operation),
+            'hero': path, 'app': _app(doctype), 'target': f'{doctype}.{field}' + suffix,
+            'target_doctype': doctype, 'target_field': field, 'transformation': transformation,
+            'revision': mapping['revision'], 'definition_id': '', 'mapping': mapping['name']})
+    for relation in options.get('native_relations', []):
+        kind = relation.get('kind')
+        if kind not in {'customer_bank_account', 'project_address', 'customer_addresses', 'customer_contacts', 'sales_prices'}:
+            continue
+        prefix = (relation.get('collection_path') + '.') if relation.get('collection_path') else ''
+        for field, path in (relation.get('fields') or {}).items():
+            doctype = ('Bank' if field in {'bank_name', 'swift_number'} else 'Bank Account') if kind == 'customer_bank_account' else (
+                'Item Price' if kind == 'sales_prices' else 'Contact' if kind == 'customer_contacts' else 'Address')
+            suffix = ''
+            if kind == 'sales_prices':
+                names = [binding['name'] for binding in relation.get('price_lists', {}).values()]
+                suffix = ' (' + ', '.join(names) + ')' if names else ''
+            add(prefix + path, doctype, field, kind, suffix)
+        if relation.get('country_code_path'):
+            add(prefix + relation['country_code_path'], 'Address', 'country', 'Country Code')
+        if relation.get('parent_field') and relation.get('identity_path'):
+            add(relation['identity_path'], 'Project', relation['parent_field'], 'Address Link')
+    logbook = options.get('logbook') or {}
+    for path in logbook.get('context_paths', []):
+        key = path[len(logbook.get('path', '')) + 1:]
+        add(path, 'Comment', 'custom_hero_logbook_context', 'JSON Value', ' (' + key + ')')
+    return result
+
+
 def _app(doctype: str) -> str:
     from frappe.modules.utils import get_module_app
 
@@ -78,28 +115,85 @@ def state() -> dict:
     mappings = _read_mappings()
     operations, rules = [], []
     for operation, mapping in sorted(mappings.items(), key=lambda item: LABELS.get(item[0], item[0])):
-        rules.extend(_rule_rows(operation, mapping))
+        area_rows = _rule_rows(operation, mapping)
+        rules.extend(area_rows)
+        rules.extend(_configured_relation_rows(operation, mapping, area_rows))
         operations.append({"operation": operation, "label": LABELS.get(operation, operation),
                            "mapping": mapping["name"], "snapshot": mapping["snapshot"], "revision": mapping["revision"]})
     sends = []
-    for row in frappe.get_all("HERO GraphQL Mapping", filters={"status": "Active", "direction": "FRAPPE_TO_MUTATION", "source_instance": _configured_source_instance()},
-                              fields=["name", "mapping_json", "mapping_revision", "operation_name"], limit_page_length=0):
+    active = frappe.get_all("HERO GraphQL Mapping", filters={"status": "Active", "direction": "FRAPPE_TO_MUTATION", "source_instance": _configured_source_instance()},
+                            fields=["name", "definition_id", "mapping_json", "mapping_revision", "operation_name"], limit_page_length=0)
+    drafts, replaced = _mutation_drafts(active, _configured_source_instance())
+    for row in active:
+        if row.name in replaced:
+            continue
         try:
             config = json.loads(row.mapping_json or "{}")
         except (TypeError, ValueError):
             continue
-        items = [config, *(config.get("additional_mappings") or [])] if isinstance(config, dict) else []
-        for item in items:
-            source, target = item.get("source") or {}, item.get("target") or {}
-            if source or target:
-                sends.append({"status": "Active", "operation": row.operation_name or target.get("operation") or "",
-                              "hero": f"{target.get('argument') or ''}.{target.get('field_path') or target.get('field') or ''}".strip("."),
-                              "app": source.get("app") or _app(source.get("doctype") or ""),
-                              "target": f"{source.get('doctype') or ''}.{source.get('field') or ''}",
-                              "revision": int(row.mapping_revision or 0), "mapping": row.name})
+        sends.extend(_send_rows(config, row.name, row.mapping_revision, row.operation_name, "Active"))
+    sends.extend(drafts)
     snapshots = frappe.get_all("HERO GraphQL Schema Snapshot", filters={"analysis_status": "Validated", "source_instance": _configured_source_instance()},
                                fields=["name", "creation"], order_by="creation desc", limit_page_length=20)
     return {"operations": operations, "rules": rules, "sends": sends, "snapshots": [row.name for row in snapshots]}
+
+
+def _send_rows(config, name, revision, operation, status):
+    if not isinstance(config, dict): return []
+    mapped = config.get('usage') == 'MAPPED_UPDATE_V2'
+    items = config.get('assignments', []) if mapped else [config, *(config.get('additional_mappings') or [])]
+    if not isinstance(items, list): return []
+    result = []
+    for item in items:
+        if not isinstance(item, dict): continue
+        source, target = item.get('source') or {}, item.get('target') or {}
+        if not isinstance(source, dict) or not isinstance(target, dict): continue
+        hero = item.get('input_path') if mapped else f"{target.get('argument') or ''}.{target.get('field_path') or target.get('field') or ''}".strip('.')
+        if not source.get('doctype') or not source.get('field') or not hero: continue
+        area = config.get('area') if mapped else None
+        result.append({'status': status, 'operation': operation or target.get('operation') or '',
+            'operation_label': LABELS.get(area, operation or target.get('operation') or ''),
+            'hero': hero, 'app': source.get('app') or _app(source['doctype']),
+            'target': f"{source['doctype']}.{source['field']}", 'target_doctype': source['doctype'],
+            'target_field': source['field'], 'transformation': item.get('resolver') if mapped else item.get('transformation'),
+            'revision': int(revision or 0), 'mapping': name, 'definition_id': item.get('id', '')})
+    return result
+
+
+def _mutation_drafts(active, source_instance):
+    """Show only this actor's open, source-scoped updates; drafts never grant execution."""
+    owner = getattr(getattr(frappe, 'session', None), 'user', None)
+    site = getattr(getattr(frappe, 'local', None), 'site', None)
+    if not owner or not site: return [], set()
+    by_name = {row.name: row for row in active}
+    rows = frappe.get_all('HERO Mapping Draft', filters={'owner_user': owner, 'site_scope': site, 'state': 'OPEN'},
+        fields=['name', 'definition_id', 'owner_user', 'site_scope', 'new_definition_json', 'content_json',
+                'base_active_mapping', 'content_revision'], order_by='modified desc', limit_page_length=0)
+    result, replaced, seen = [], set(), set()
+    for row in rows:
+        if row.owner_user != owner or row.site_scope != site or row.definition_id in seen: continue
+        try:
+            config = json.loads(row.content_json or '{}')
+            context = json.loads(row.new_definition_json or 'null')
+        except (TypeError, ValueError): continue
+        if not isinstance(config, dict) or config.get('usage') != 'MAPPED_UPDATE_V2': continue
+        parent = by_name.get(row.base_active_mapping)
+        if isinstance(context, dict):
+            if (context.get('source_instance') != source_instance or context.get('site_scope') != site
+                    or context.get('direction') != 'FRAPPE_TO_MUTATION'
+                    or context.get('operation_kind') != 'MUTATION'
+                    or context.get('definition_id') != row.definition_id): continue
+            operation = context.get('operation_name')
+        elif parent:
+            operation = parent.operation_name
+        else: continue
+        target = config.get('target')
+        if not isinstance(target, dict) or target.get('operation') != operation: continue
+        entries = _send_rows(config, row.name, row.content_revision, operation, 'Draft')
+        if entries:
+            result.extend(entries); seen.add(row.definition_id)
+            if parent: replaced.add(parent.name)
+    return result, replaced
 
 
 # ---------------------------------------------------------------- revision publication for installation patches

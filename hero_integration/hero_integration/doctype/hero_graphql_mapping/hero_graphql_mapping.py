@@ -61,7 +61,11 @@ class HEROGraphQLMapping(Document):
                 schema = json.loads(snapshot.snapshot_json)
                 from hero_integration.api import _mapping_values_preserved
                 original = mapping
-                if original.get('usage') == 'SEND_TO_HERO':
+                if original.get('usage') == 'MAPPED_UPDATE_V2':
+                    from hero_integration.services.mapped_update_v2 import normalise_mapping as normalise_update, validate_sources
+                    mapping = normalise_update(original, schema)
+                    validate_sources(mapping)
+                elif original.get('usage') == 'SEND_TO_HERO':
                     from hero_integration.services.mapped_send import normalise_send_mapping
                     from hero_integration.services.frappe_mapping_catalog import validate_send_mapping_sources
                     mapping = normalise_send_mapping(original, schema)
@@ -80,7 +84,7 @@ class HEROGraphQLMapping(Document):
                             frappe.throw(frappe._("The selected Frappe source and HERO scalar or enum input types are incompatible."))
                 lossy_writeback = not _mapping_values_preserved(original, mapping)
                 source = mapping["source"]
-                if not frappe.get_meta(source["doctype"]).get_field(source["field"]):
+                if mapping.get("usage") != "MAPPED_UPDATE_V2" and not frappe.get_meta(source["doctype"]).get_field(source["field"]):
                     frappe.throw(frappe._("The configured Frappe writeback field no longer exists."))
                 if self.operation_kind != "MUTATION" or self.operation_name != mapping["target"]["operation"]:
                     frappe.throw(frappe._("Writeback direction, operation kind and reviewed HERO target must agree."))
@@ -105,7 +109,9 @@ class HEROGraphQLMapping(Document):
             if len(contracts) != 1:
                 frappe.throw(frappe._("Exactly one active schema-bound HERO Mutation Contract is required for writeback activation."))
             if context_changed:
-                if mapping.get('usage') == 'SEND_TO_HERO':
+                if mapping.get('usage') == 'MAPPED_UPDATE_V2':
+                    _check_active_mapped_update_conflicts(snapshot.source_instance, snapshot.name, mapping, self.name or '')
+                elif mapping.get('usage') == 'SEND_TO_HERO':
                     _check_active_send_conflicts(snapshot.source_instance, mapping['source']['doctype'], self.name or '',
                                                  mapping['send_options']['mode'])
                 else:
@@ -200,7 +206,7 @@ def _unique_json_object(pairs):
     return result
 
 
-def _check_active_writeback_conflicts(snapshot_name, source, name):
+def _check_active_writeback_conflicts(snapshot_name, source, name, *, area=None):
     from hero_integration.hero_integration.doctype.hero_frappe_mapping.hero_frappe_mapping import _lock_active_target
 
     direction = "FRAPPE_TO_MUTATION"
@@ -216,6 +222,12 @@ def _check_active_writeback_conflicts(snapshot_name, source, name):
         try:
             value = json.loads(other.mapping_json, object_pairs_hook=_unique_json_object)
             if isinstance(value, dict) and value.get('usage') == 'SEND_TO_HERO':
+                continue
+            if isinstance(value, dict) and value.get('usage') == 'MAPPED_UPDATE_V2':
+                if area and value.get('area') != area:
+                    continue
+                if any(item.get('source') == source for item in value.get('assignments', [])):
+                    frappe.throw(frappe._("An active writeback mapping already owns this Frappe field."))
                 continue
             other_source = value.get("source") if isinstance(value, dict) else None
         except (TypeError, ValueError):
@@ -241,3 +253,18 @@ def _check_active_send_conflicts(source_instance, doctype, name, mode='UPDATE'):
         if (value.get('usage') == 'SEND_TO_HERO' and value.get('source', {}).get('doctype') == doctype
                 and value.get('send_options', {}).get('mode') == mode):
             frappe.throw(frappe._('An active Send to HERO mapping already owns this document type, source and mode.'))
+
+
+def _check_active_mapped_update_conflicts(source_instance, snapshot_name, mapping, name):
+    from hero_integration.hero_integration.doctype.hero_frappe_mapping.hero_frappe_mapping import _lock_active_target
+    _lock_active_target('mapped-update:' + source_instance, mapping['area'], 'MAPPED_UPDATE_V2')
+    for item in sorted(mapping['assignments'], key=lambda row: (row['source']['doctype'], row['source']['field'])):
+        _check_active_writeback_conflicts(snapshot_name, item['source'], name, area=mapping['area'])
+    rows = frappe.db.sql(
+        'SELECT name, mapping_json FROM `tabHERO GraphQL Mapping` '
+        'WHERE direction=%s AND status=%s AND source_instance=%s AND name!=%s FOR UPDATE',
+        ('FRAPPE_TO_MUTATION', 'Active', source_instance, name), as_dict=True)
+    for row in rows:
+        value = json.loads(row.mapping_json, object_pairs_hook=_unique_json_object)
+        if value.get('usage') == 'MAPPED_UPDATE_V2' and value.get('area') == mapping['area']:
+            frappe.throw(frappe._('An active mapped update already owns this area and HERO source.'))

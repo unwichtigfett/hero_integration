@@ -768,6 +768,7 @@ def _persist_testing_result(run, source: TestingPreviewSource) -> None:
 
 
 def _migrate_customer(record: dict[str, object], run) -> Result:
+    from hero_integration.services.query_mapping import IncompleteMappedAddress
     try:
         plan = _mapping_plan_for_run(run, "HeroCustomers")
         source_id = plan.source_identity(record)
@@ -785,7 +786,7 @@ def _migrate_customer(record: dict[str, object], run) -> Result:
                 address = address_values(plan, record)
             else:
                 address = _customer_primary_address(record, plan.customer_primary_address_line2(record))
-        except IncompleteAddress as error:
+        except (IncompleteAddress, IncompleteMappedAddress) as error:
             # The Customer is still imported; an incomplete address is skipped, as if HERO had none.
             address, address_note = None, f" {error} It was not imported."
         if not getattr(plan, 'adapter_options', None) and address is not None and not address.get("country_code"):
@@ -795,7 +796,7 @@ def _migrate_customer(record: dict[str, object], run) -> Result:
         document_name, name_note = _document_name(
             customer_document_name, record, "customer number", internal_prefix="HERO-CUSTOMER",
         )
-    except MappingPlanError as error:
+    except (MappingPlanError, ValueError) as error:
         return Result("BLOCKED_RECORD", str(error))
     # A v2 query plan needs no lifecycle rule; its validated canonical
     # ``is_deleted`` flag decides on its own.
@@ -846,6 +847,7 @@ def _migrate_customer(record: dict[str, object], run) -> Result:
         required_on_create=("customer_type",),
         document_name=document_name,
     )
+    result = _sync_mapped_relations(plan, record, result, run)
     note = email_note + phone_note + address_note + (name_note if _creates(result) else "")
     if note and result.code != "BLOCKED_RECORD":
         from dataclasses import replace
@@ -871,7 +873,7 @@ def _drop_invalid_email(values) -> str:
 
 
 _PHONE_NUMBER = re.compile(r"\+?\d[\d \-().]*\d")
-_PHONE_LABELS = {"mobile_no": "mobile phone", "hero_phone_home": "home phone"}
+_PHONE_LABELS = {"mobile_no": "mobile phone", "hero_phone_home": "home phone", "phone": "phone"}
 
 
 def _phone_number(value):
@@ -901,6 +903,16 @@ def _clean_customer_phones(values, home_phone):
             missing = getattr(values, "missing", None)
             if missing is not None:
                 missing.add("mobile_no")
+    if "phone" in values:
+        main_phone, original = _phone_number(values["phone"])
+        if original:
+            originals["phone"] = original
+            if main_phone:
+                values["phone"] = main_phone
+            else:
+                values.pop("phone", None)
+                if hasattr(values, "missing"):
+                    values.missing.add("phone")
     home, original = _phone_number(home_phone)
     if original:
         originals["hero_phone_home"] = original
@@ -1673,12 +1685,36 @@ def _migrate_project(record: dict[str, object], run) -> Result:
             from dataclasses import replace
             result = replace(result, detail=(result.detail or "") + (
                 f" {assignees['unmatched']} assignee(s) have no ERPNext user with their e-mail."))
-    if getattr(plan, 'adapter_options', None) and result.target_name and result.code in {'CREATED', 'UPDATED', 'SKIPPED', 'CONVERGED', 'OBSERVED'}:
+    if (getattr(plan, 'adapter_options', None)
+            and (result.target_name or run.mode == 'Preview')
+            and result.code in {'CREATED', 'UPDATED', 'SKIPPED', 'CONVERGED', 'OBSERVED', 'PREVIEW_OK'}):
         from hero_integration.services.project_logbook import sync_mapped_entries
-        sync_mapped_entries(plan, record, result.target_name, preview=run.mode == 'Preview')
+        logbook_conflicts = []
+        sync_mapped_entries(plan, record, result.target_name or '', preview=run.mode == 'Preview', conflicts=logbook_conflicts)
+        if logbook_conflicts:
+            from dataclasses import replace
+            result = replace(result, code='CONFLICT', detail=(result.detail or '') + ' Project logbook changes require review.')
+    result = _sync_mapped_relations(plan, record, result, run)
     if name_note and _creates(result):
         from dataclasses import replace
         result = replace(result, detail=(result.detail or "") + name_note)
+    return result
+
+
+def _sync_mapped_relations(plan, record, result, run):
+    """Run declared native relationships inside the record transaction."""
+    if not getattr(plan, 'adapter_options', None) or not plan.adapter_options.get('native_relations'):
+        return result
+    if result.code not in {'CREATED', 'UPDATED', 'SKIPPED', 'CONVERGED', 'OBSERVED', 'PREVIEW_OK'}:
+        return result
+    from dataclasses import replace
+    from hero_integration.services.mapped_relations import sync
+    try:
+        counts = sync(plan, record, plan.target_doctype, result.target_name or '', preview=run.mode == 'Preview')
+    except ValueError as error:
+        return replace(result, code='CONFLICT', detail=(result.detail or '') + ' ' + str(error))
+    if counts.get('conflicts'):
+        return replace(result, code='CONFLICT', detail=(result.detail or '') + ' Native relationship changes require review.')
     return result
 
 

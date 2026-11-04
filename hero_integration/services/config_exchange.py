@@ -94,10 +94,12 @@ def export_config(snapshot_name: str, source_instance: str = "default") -> str:
     package = {"format_version": mapping_exchange.FORMAT_VERSION, "schema_fingerprint": snapshot.schema_fingerprint,
                "schema": schema, "mappings": rules}
     settings = frappe.get_single("HERO Integration Settings")
+    from hero_integration.services.config_mutation_drafts import export as export_mutations
+    mutations = export_mutations(source_instance, snapshot_name)
     return json.dumps({"format_version": FORMAT_VERSION, "replace_mappings": True,
         "schema_snapshot": {"schema_fingerprint": snapshot.schema_fingerprint, "schema": json.loads(snapshot.snapshot_json)},
         "settings": {key: settings.get(key) for key in SETTINGS_KEYS}, "mapping_package": package,
-        "read_services": exported}, ensure_ascii=False, sort_keys=True, indent=1)
+        "read_services": exported, **({'mutation_mappings': mutations} if mutations else {})}, ensure_ascii=False, sort_keys=True, indent=1)
 
 
 def _package_snapshot(payload: dict, *, create: bool) -> tuple[str | None, str]:
@@ -155,7 +157,8 @@ def preview_config(snapshot_name: str, payload_json: str, source_instance: str =
 
     payload = _parse(payload_json)
     if payload.get("replace_mappings"):
-        return _replacement_preview(snapshot_name, payload, source_instance)
+        from hero_integration.services.config_mutation_drafts import summary
+        return {**_replacement_preview(snapshot_name, payload, source_instance), **summary(payload)}
     snapshot_name, snapshot_state = _resolve_snapshot(snapshot_name, payload, create=False)
     result = {"format_version": payload["format_version"], "snapshot": snapshot_state,
               "settings": sorted(_settings_changes(payload))}
@@ -245,7 +248,7 @@ def _parse(payload_json: str) -> dict:
     keys = {FORMAT_V1: {"format_version", "mapping_package", "read_services"},
             FORMAT_VERSION: {"format_version", "schema_snapshot", "settings", "mapping_package", "read_services"}}
     if (not isinstance(payload, dict) or payload.get("format_version") not in keys
-            or set(payload) - ({"replace_mappings"} if payload.get("format_version") == FORMAT_VERSION else set()) != keys[payload["format_version"]]
+            or set(payload) - ({"replace_mappings", "mutation_mappings"} if payload.get("format_version") == FORMAT_VERSION else set()) != keys[payload["format_version"]]
             or not isinstance(payload["read_services"], list)):
         raise ConfigExchangeError("This is not a HERO integration configuration file ({0}).", FORMAT_VERSION)
     if "replace_mappings" in payload and type(payload["replace_mappings"]) is not bool:
@@ -264,6 +267,14 @@ def _parse(payload_json: str) -> dict:
                 or not isinstance(item["query"], str) or not item["query"].strip()):
             raise ConfigExchangeError("A read service entry is incomplete or duplicated.")
         seen.add(item["target_operation"])
+    if 'mutation_mappings' in payload:
+        if not payload.get('replace_mappings'):
+            raise ConfigExchangeError('Combined mutation mappings require a replacement configuration package.')
+        from hero_integration.services.config_mutation_drafts import validate
+        try:
+            validate(payload)
+        except ValueError as error:
+            raise ConfigExchangeError.from_error(error) from error
     return payload
 
 
@@ -478,10 +489,13 @@ def _replacement_check(snapshot, payload, rules):
                  for identity in config["mapping_definition_ids"]]
         options = config.get("query_adapter")
         for spec in specs:
-            if options:
-                validate_v2_spec(spec, metadata, options)
-            else:
-                validate_spec(spec, metadata)
+            try:
+                if options:
+                    validate_v2_spec(spec, metadata, options)
+                else:
+                    validate_spec(spec, metadata)
+            except ValueError as error:
+                raise ConfigExchangeError('Mapping field {0}.{1}: {2}', spec.target_doctype, spec.target_field, str(error)) from error
         from hero_integration.services import direct_operations as direct
         targets = [direct.target_key(spec) if item["target_operation"] in direct.OPERATIONS
                    else (spec.target_doctype, spec.target_field) for spec in specs if spec.purpose != "Record Name"]
@@ -493,6 +507,13 @@ def _replacement_check(snapshot, payload, rules):
             options["read_service"] = "replacement-preview"
             service = SimpleNamespace(name="replacement-preview", operation_name=item["operation_name"], query_document=item["query"])
             seal_query(service, snapshot, config, plan)
+    if payload.get('mutation_mappings'):
+        from hero_integration.services.mapped_update_v2 import validate_sources
+        try:
+            for mutation in payload['mutation_mappings']:
+                validate_sources(mutation['content'], field_provider=metadata.field)
+        except ValueError as error:
+            raise ConfigExchangeError.from_error(error) from error
     return schema_preview
 
 
@@ -587,6 +608,15 @@ def _new_replacement_mapping(snapshot, item, rules, source_instance, created, se
         config["query_adapter"]["transform_options"] = {remapped[key]: value for key, value in
             config["query_adapter"].get("transform_options", {}).items()}
     dependencies = sorted({value for key in remapped for value in rules[key].get("schema_dependencies", [])})
+    adapter = config.get('query_adapter') or {}
+    owned_targets = {('Project', relation['parent_field']) for relation in adapter.get('native_relations', [])
+                     if relation.get('parent_field')}
+    if adapter.get('logbook'):
+        owned_targets.add(('Comment', 'custom_hero_project'))
+    relation_fields = {field['id'] for field in schema.get('custom_fields', [])
+                       if (field['doctype'], field['fieldname']) in owned_targets}
+    dependencies = sorted(set(dependencies) | relation_fields | {
+        relation['id'] for relation in schema.get('relations', []) if relation['field_id'] in relation_fields})
     if dependencies:
         config["_portable_exchange_schema"] = {"schema": deepcopy(schema), "dependencies": dependencies}
     definition = {"site_scope": frappe.local.site, "definition_id": identity, "source_instance": source_instance,
@@ -594,6 +624,9 @@ def _new_replacement_mapping(snapshot, item, rules, source_instance, created, se
                   "direction": "QUERY_TO_FRAPPE", "operation_kind": "QUERY", "operation_name": item["mapping_operation_name"]}
     storage = FrappeMappingDraftStorage()
     draft = storage.service().open_new_draft(definition, frappe.session.user, config)
+    draft = storage.service().save(identity, frappe.session.user, draft.content_revision, 0, config,
+        expected_generation=draft.generation,
+        expected_reconciliation_revision=draft.reconciliation_revision).draft
     saved = storage.publish(identity, frappe.session.user, draft.generation, draft.content_revision, 0,
                             draft.reconciliation_revision, confirmed=True)
     return frappe.get_doc("HERO GraphQL Mapping", saved["name"])
@@ -715,13 +748,19 @@ def _replace_config(snapshot_name, payload, source_instance):
         _archive_replaced_drafts(source_instance, operations)
         replacement = _retire_replaced(source_instance, operations, kept, set(created.values()))
         _verify_replacement_readers(snapshot, created)
+        from hero_integration.services.config_mutation_drafts import save as save_mutation_drafts
+        try:
+            mutation_result = save_mutation_drafts(payload, source_instance, snapshot.name)
+        except ValueError as error:
+            raise ConfigExchangeError.from_error(error) from error
         changes = _settings_changes(payload)
         _apply_settings(changes)
     except Exception:
         frappe.db.rollback(save_point="hero_configuration_replace")
         raise
     return {"snapshot": state, "snapshot_name": snapshot.name, "settings": sorted(changes), "adopted": len(rules),
-            "adoption": None, "read_services": results, "replace_mappings": True, "replacement": replacement}
+            "adoption": None, "read_services": results, "replace_mappings": True, "replacement": replacement,
+            **mutation_result}
 
 
 def _archive_replaced_drafts(source_instance, operations):

@@ -4050,3 +4050,24 @@ def simple_mapping_import_apply(payload_json: str, snapshot_name: str, direction
         return apply(payload_json, _mapping_text(snapshot_name, "snapshot_name"),
                      _mapping_text(direction, "direction"), states,
                      _mapping_text(preview_fingerprint, "preview_fingerprint"), confirmed=True)
+
+
+@frappe.whitelist(methods=["POST"])
+def mapped_update_preview(mapping_name: str, doctype: str, name: str) -> dict:
+    """Preview configured update fields using approved HERO readback only."""
+    from hero_integration.services.mapped_update_v2 import MappedUpdateError, preview
+    try:
+        return preview(mapping_name, doctype, name)
+    except ValueError as error:
+        frappe.throw(translate_error(error, frappe._))
+
+
+@frappe.whitelist(methods=["POST"])
+def mapped_update_send(mapping_name: str, doctype: str, name: str,
+                       fingerprint: str, confirmed: int | str = 0) -> dict:
+    """Send a confirmed mapped update once; all existing execution gates apply."""
+    from hero_integration.services.mapped_update_v2 import MappedUpdateError, send
+    try:
+        return send(mapping_name, doctype, name, fingerprint=fingerprint, confirmed=confirmed)
+    except ValueError as error:
+        frappe.throw(translate_error(error, frappe._))

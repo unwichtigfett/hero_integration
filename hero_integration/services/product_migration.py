@@ -182,7 +182,8 @@ def upsert(row: dict, link, masters: _Masters, source_instance: str, read=None) 
     values = item_values(row, read)
     owned = values.pop("owned")
     source = digest({**values, "mapping": read.mapping_version})
-    if link and link.source_payload_hash == source:
+    relations = (getattr(read.plan, 'adapter_options', None) or {}).get('native_relations')
+    if link and link.source_payload_hash == source and not relations:
         return "unchanged"
     status, detail = (getattr(link, "sync_status", "") or "", getattr(link, "conflict_detail", "") or "") if link else ("", "")
     if status == "Rejected":
@@ -206,6 +207,14 @@ def upsert(row: dict, link, masters: _Masters, source_instance: str, read=None) 
                                                managed.get(price_list))
         except PriceConflict as error:
             return _conflict(link, source, f"{error} The newer HERO article was not applied.")
+        if relations:
+            from hero_integration.services.mapped_relations import sync
+            try:
+                checks = sync(read.plan, {**row, '_hero_source_instance': source_instance}, 'Item', item.name, preview=True)
+            except ValueError as error:
+                return _conflict(link, source, str(error))
+            if checks.get('conflicts'):
+                return _conflict(link, source, 'Mapped item prices changed locally; review before updating.')
     fields = {key: values[key] for key in owned}
     if item is None:
         fields = {**{key: value for key, value in REQUIRED_FALLBACKS.items() if not fields.get(key)}, **{
@@ -231,6 +240,11 @@ def upsert(row: dict, link, masters: _Masters, source_instance: str, read=None) 
             item.name, price_list, values[key], item.stock_uom, None)
         if plan is not None:
             prices[price_list] = apply_price(item.name, price_list, plan)
+    if relations:
+        from hero_integration.services.mapped_relations import sync
+        counts = sync(read.plan, {**row, '_hero_source_instance': source_instance}, 'Item', item.name)
+        if counts.get('conflicts'):
+            return _conflict(link, source, 'Mapped item prices changed locally; review before updating.') if link else 'conflict'
     link_values = {"sync_status": "Synchronized", "target_name": item.name, "source_payload_hash": source,
                    "target_payload_hash": owned_digest(item, owned), "conflict_detail": "",
                    "target_field_hashes": json.dumps({"prices": prices, "fields": owned_field_digests(item, owned)},

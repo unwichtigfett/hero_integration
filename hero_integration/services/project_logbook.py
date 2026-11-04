@@ -254,7 +254,7 @@ def _local(value):
     return _external_task_deadline(value)
 
 
-def sync_mapped_entries(plan, record, project, *, preview=False):
+def sync_mapped_entries(plan, record, project, *, preview=False, conflicts=None):
     """Import only child values selected by the approved parent Query mapping."""
     from hero_integration.services.direct_mapping import MISSING, lookup
     from hero_integration.services.query_mapping import transform, _check_value
@@ -269,7 +269,7 @@ def sync_mapped_entries(plan, record, project, *, preview=False):
         return 0
     if not isinstance(entries, list) or not all(isinstance(entry, dict) for entry in entries):
         raise ValueError('Mapped logbook response is not a collection of entries.')
-    if len(entries) >= config['limit']:
+    if len(entries) >= config['limit'] and not (config.get('offset_variable') and record.get('_hero_logbook_complete') is True):
         raise ValueError('Logbook reached its approved collection bound; review pagination before importing.')
     parent = plan.source_identity(record)
     instance = str(record.get('_hero_source_instance') or '').strip()
@@ -306,15 +306,25 @@ def sync_mapped_entries(plan, record, project, *, preview=False):
             raise ValueError('Mapped logbook content and configured headings are empty.')
         # Stable provenance includes source instance, parent identity and child identity.
         key = _digest([instance, parent, str(identity)])
-        planned.append((key, values, str(identity)))
+        restricted = False
+        if config.get('visibility_path'):
+            visibility = lookup(entry, config['visibility_path'][len(config['path']) + 1:])
+            if visibility is MISSING or (visibility is not None and not isinstance(visibility, str)):
+                raise ValueError('Mapped logbook visibility is absent or invalid.')
+            restricted = bool((visibility or '').strip())
+        if config.get('context_paths'):
+            context = {path[len(config['path']) + 1:]: _context_value(entry, path[len(config['path']) + 1:].split('.'))
+                       for path in config['context_paths']}
+            values['custom_hero_logbook_context'] = json.dumps(context, sort_keys=True, ensure_ascii=False)
+        planned.append((key, values, str(identity), restricted))
     if preview:
         return len(planned)
     project_doc = frappe.get_doc('Project', project)
     frappe.has_permission('Project', 'write', doc=project_doc, throw=True)
     added = 0
-    for key, values, identity in planned:
+    for key, values, identity, restricted in planned:
         existing = frappe.get_all('HERO Integration Link', filters={'source_system': 'HERO', 'source_type': SOURCE_TYPE,
-            'source_instance': instance, 'source_id': key}, fields=['name', 'target_doctype', 'target_name'])
+            'source_instance': instance, 'source_id': key}, fields=['name', 'target_doctype', 'target_name', 'mapping_version', 'source_payload_hash', 'target_payload_hash'])
         if len(existing) > 1:
             raise ValueError('Mapped logbook identity is ambiguous.')
         if existing:
@@ -322,11 +332,47 @@ def sync_mapped_entries(plan, record, project, *, preview=False):
             if link.target_doctype != 'Comment' or not frappe.db.exists('Comment', link.target_name):
                 raise ValueError('Mapped logbook link has an incompatible or missing target.')
             comment = frappe.get_doc('Comment', link.target_name)
-            if comment.reference_doctype != 'Project' or comment.reference_name != project:
+            public = comment.reference_doctype == 'Project' and comment.reference_name == project
+            private = (comment.reference_doctype == 'HERO Integration Link'
+                       and comment.reference_name == link.name and getattr(comment, 'custom_hero_project', None) == project)
+            if (not public and not private and link.mapping_version == 'project-logbook-v1'
+                    and comment.reference_doctype == 'HERO Integration Link'
+                    and getattr(comment, 'custom_hero_project', None) == project):
+                original = _legacy_identity_alias(project, parent, instance, identity)
+                private = original is not None and original.name == comment.reference_name
+            if not public and not private:
                 raise ValueError('Mapped logbook comment belongs to another parent.')
+            if restricted and public:
+                # Tightening visibility never waits on content-conflict resolution.
+                frappe.db.set_value('Comment', comment.name, {'reference_doctype': 'HERO Integration Link',
+                    'reference_name': link.name, 'custom_hero_project': project}, update_modified=False)
+            if config.get('context_paths') and link.mapping_version == 'project-logbook-v1':
+                _enrich_legacy_mapped_comment(comment, values)
+            if config.get('context_paths') and link.mapping_version != 'project-logbook-v1':
+                observed = {field: getattr(comment, field, None) for field in values}
+                for field in ('creation', 'modified'):
+                    if observed.get(field) is not None: observed[field] = str(observed[field])
+                if _digest(observed) != link.target_payload_hash:
+                    # A local edit is retained, while a stricter visibility above still takes effect.
+                    if conflicts is not None: conflicts.append(link.name)
+                    frappe.db.set_value('HERO Integration Link', link.name, {
+                        'sync_status': 'Conflict', 'conflict_detail': 'Logbook comment changed locally; review mapped values.',
+                        'observed_source_hash': _digest(values), 'observed_target_hash': _digest(observed),
+                        'last_observed_on': frappe.utils.now_datetime()}, update_modified=False)
+                    continue
+                frappe.db.set_value('Comment', comment.name, values, update_modified=False)
+                frappe.db.set_value('HERO Integration Link', link.name, {
+                    'sync_status': 'Synchronized', 'conflict_detail': '',
+                    'mapping_version': plan.mapping_version, 'source_payload_hash': _digest(values),
+                    'target_payload_hash': _digest(values), 'last_synced_on': frappe.utils.now_datetime()}, update_modified=False)
             continue
         legacy = _legacy_identity_alias(project, parent, instance, identity)
         if legacy is not None:
+            if config.get('context_paths'):
+                _enrich_legacy_mapped_comment(frappe.get_doc('Comment', legacy.target_name), values)
+            if restricted:
+                frappe.db.set_value('Comment', legacy.target_name, {'reference_doctype': 'HERO Integration Link',
+                    'reference_name': legacy.name, 'custom_hero_project': project}, update_modified=False)
             # Retain the original link and Comment. The alias records identity only,
             # never a new content/date acknowledgement under the current mapping.
             frappe.get_doc({'doctype': 'HERO Integration Link', 'source_system': 'HERO', 'source_type': SOURCE_TYPE,
@@ -335,26 +381,33 @@ def sync_mapped_entries(plan, record, project, *, preview=False):
                 'source_payload_hash': legacy.source_payload_hash, 'target_payload_hash': legacy.target_payload_hash,
                 'last_synced_on': legacy.last_synced_on}).insert(ignore_permissions=True)
             continue
-        comment = frappe.get_doc({'doctype': 'Comment', 'comment_type': 'Info', 'reference_doctype': 'Project',
-                                  'reference_name': project, 'content': values['content']})
+        comment = frappe.get_doc({'doctype': 'Comment', 'comment_type': 'Info', 'reference_doctype': None if restricted else 'Project',
+                                  'reference_name': None if restricted else project, 'custom_hero_project': project, **{k: v for k, v in values.items() if k not in {'creation', 'modified'}}})
         comment.insert(ignore_permissions=True)
-        if values.get('creation'):
-            frappe.db.set_value('Comment', comment.name, {'creation': values['creation'], 'modified': values['creation']}, update_modified=False)
-        frappe.get_doc({'doctype': 'HERO Integration Link', 'source_system': 'HERO', 'source_type': SOURCE_TYPE,
+        dates = {key: values[key] for key in ('creation', 'modified') if values.get(key)}
+        if dates:
+            if 'creation' in dates and 'modified' not in dates: dates['modified'] = dates['creation']
+            frappe.db.set_value('Comment', comment.name, dates, update_modified=False)
+        link = frappe.get_doc({'doctype': 'HERO Integration Link', 'source_system': 'HERO', 'source_type': SOURCE_TYPE,
             'source_id': key, 'source_instance': instance, 'sync_status': 'Synchronized', 'target_doctype': 'Comment',
             'target_name': comment.name, 'mapping_version': plan.mapping_version,
             'source_payload_hash': _digest(values), 'target_payload_hash': _digest(values),
             'last_synced_on': frappe.utils.now_datetime()}).insert(ignore_permissions=True)
+        if restricted:
+            frappe.db.set_value('Comment', comment.name, {'reference_doctype': 'HERO Integration Link',
+                'reference_name': link.name}, update_modified=False)
         added += 1
     return added
 
 
 def _legacy_identity_alias(project, parent, instance, identity):
     """Bridge a legacy history ID only under a uniquely proven Project binding."""
-    legacy = frappe.get_all('HERO Integration Link', filters={
-        'source_system': 'HERO', 'source_type': SOURCE_TYPE, 'source_instance': 'default', 'source_id': identity},
-        fields=['name', 'target_doctype', 'target_name', 'mapping_version', 'source_payload_hash',
-                'target_payload_hash', 'last_synced_on'], limit_page_length=2)
+    legacy = []
+    for candidate in dict.fromkeys((instance, 'default')):
+        legacy.extend(frappe.get_all('HERO Integration Link', filters={
+            'source_system': 'HERO', 'source_type': SOURCE_TYPE, 'source_instance': candidate, 'source_id': identity},
+            fields=['name', 'target_doctype', 'target_name', 'mapping_version', 'source_payload_hash',
+                    'target_payload_hash', 'last_synced_on'], limit_page_length=2))
     if not legacy:
         return None
     if len(legacy) != 1:
@@ -363,7 +416,10 @@ def _legacy_identity_alias(project, parent, instance, identity):
     if link.target_doctype != 'Comment' or not frappe.db.exists('Comment', link.target_name):
         raise ValueError('Legacy logbook target is missing or incompatible.')
     comment = frappe.get_doc('Comment', link.target_name)
-    if comment.reference_doctype != 'Project' or comment.reference_name != project:
+    public = comment.reference_doctype == 'Project' and comment.reference_name == project
+    private = (comment.reference_doctype == 'HERO Integration Link' and comment.reference_name == link.name
+               and getattr(comment, 'custom_hero_project', None) == project)
+    if not public and not private:
         raise ValueError('Legacy logbook entry belongs to another Project; no identity was adopted.')
     bindings = frappe.get_all('HERO Integration Link', filters={
         'source_system': 'HERO', 'source_type': 'project', 'target_doctype': 'Project', 'target_name': project},
@@ -372,3 +428,87 @@ def _legacy_identity_alias(project, parent, instance, identity):
             or (bindings[0].source_instance or 'default') != instance):
         raise ValueError('Legacy logbook source and Project identity are not uniquely proven.')
     return link
+
+
+def complete_mapped_histories(source, records, variables):
+    """Exhaust the explicitly approved child cursor before any Project is written."""
+    from hero_integration.services.read_contract import value_at, ReadContractError
+    config = (source.contract.adapter_options or {}).get('logbook', {})
+    variable = config.get('offset_variable')
+    if not variable or not records:
+        return records
+    if source.contract.page_size != 1 or len(records) != 1 or not callable(source.revalidate):
+        raise ReadContractError('Paginated logbook requires one Project and source revalidation.')
+    row = dict(records[0])
+    parent = value_at(row, source.contract.identity_path)
+    path = config['path']
+    entries = list(value_at(row, path) or [])
+    seen = set()
+    def check(page):
+        if not isinstance(page, list) or not all(isinstance(entry, dict) for entry in page):
+            raise ReadContractError('Logbook page is not a collection.')
+        for entry in page:
+            identity = value_at(entry, config['identity_path'])
+            if type(identity) not in {int, str} or not str(identity).strip() or str(identity) in seen:
+                raise ReadContractError('Logbook pagination repeated or omitted an identity.')
+            seen.add(str(identity))
+    check(entries)
+    page = entries
+    for _ in range(config['max_pages']):
+        if not page:
+            result = dict(row)
+            current = result
+            parts = path.split('.')
+            for part in parts[:-1]:
+                current[part] = dict(current[part]); current = current[part]
+            current[parts[-1]] = entries
+            result['_hero_logbook_complete'] = True
+            return [result]
+        if source.revalidate() != source.contract:
+            raise ReadContractError('Read approval changed before logbook transport.')
+        params = {**variables, variable: len(entries)}
+        data = source.client.query(source.service.query_document, params)
+        if source.revalidate() != source.contract:
+            raise ReadContractError('Read approval changed during logbook transport.')
+        parents = value_at(data, source.contract.records_path)
+        if (not isinstance(parents, list) or len(parents) != 1
+                or value_at(parents[0], source.contract.identity_path) != parent):
+            raise ReadContractError('Logbook pagination lost its parent Project.')
+        page = value_at(parents[0], path)
+        if page is None: page = []
+        check(page)
+        entries.extend(page)
+    if page:
+        raise ReadContractError('Logbook page bound reached; Project import is incomplete.')
+    result = dict(row)
+    current = result
+    parts = path.split('.')
+    for part in parts[:-1]:
+        current[part] = dict(current[part]); current = current[part]
+    current[parts[-1]] = entries
+    result['_hero_logbook_complete'] = True
+    return [result]
+
+
+def _context_value(value, parts):
+    if value is None: return None
+    if not parts: return value
+    if isinstance(value, list): return [_context_value(item, parts) for item in value]
+    if not isinstance(value, dict) or parts[0] not in value:
+        raise ValueError('Mapped logbook context field is absent from its source response.')
+    return _context_value(value[parts[0]], parts[1:])
+
+
+def _enrich_legacy_mapped_comment(comment, values):
+    """Add approved metadata while preserving historical text, author and dates."""
+    fields = {name: values[name] for name in ('subject', 'comment_by', 'comment_email')
+              if values.get(name) and not getattr(comment, name, None)}
+    if values.get('custom_hero_logbook_context'):
+        current = getattr(comment, 'custom_hero_logbook_context', None)
+        old = json.loads(current) if current else {}
+        if not isinstance(old, dict):
+            raise ValueError('Existing logbook context is not an object; review before enrichment.')
+        old.update(json.loads(values['custom_hero_logbook_context']))
+        fields['custom_hero_logbook_context'] = json.dumps(old, sort_keys=True, ensure_ascii=False)
+    if fields:
+        frappe.db.set_value('Comment', comment.name, fields, update_modified=False)

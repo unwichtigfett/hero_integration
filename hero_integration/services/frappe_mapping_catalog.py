@@ -219,14 +219,14 @@ def writeback_fields(metadata, doctype: str = '', *, targets=None) -> list[Catal
 
 
 def query_standard_target(doctype, fieldname, enabled=False):
-    """Describe the one registered activity timestamp slot, never a custom DocField."""
-    if not enabled or (doctype, fieldname) != ('Comment', 'creation'):
+    """Describe registered activity timestamp slots, never arbitrary system columns."""
+    if not enabled or doctype != 'Comment' or fieldname not in {'creation', 'modified'}:
         return None
     import frappe
     from frappe.model import default_fields
-    if 'creation' not in default_fields or not frappe.db.has_column('Comment', 'creation'):
+    if fieldname not in default_fields or not frappe.db.has_column('Comment', fieldname):
         raise ValueError('The registered Comment timestamp column is unavailable.')
-    return frappe._dict(name='standard:Comment:creation', fieldname='creation', fieldtype='Datetime',
+    return frappe._dict(name=f'standard:Comment:{fieldname}', fieldname=fieldname, fieldtype='Datetime',
                         options='', reqd=0, read_only=1, hidden=0, permlevel=0, is_virtual=0)
 
 
@@ -255,19 +255,21 @@ def query_target_catalog(metadata, app_name='', search=''):
                         reason='Direct adapter target; activation requires the registry and mapping validation.'))
                 continue
             contact_proxy = target.doctype in {'Customer', 'Contact'} and item.path in {'first_name', 'last_name', 'email_id', 'mobile_no', 'salutation'}
-            if ((item.path in SYSTEM_FIELDS and (target.doctype, item.path) != ('Comment', 'creation'))
+            if ((item.path in SYSTEM_FIELDS and not (target.doctype == 'Comment' and item.path in {'creation', 'modified'}))
                     or getattr(field, 'hidden', 0) or getattr(field, 'is_virtual', 0)
                     or (getattr(field, 'fetch_from', None) and not contact_proxy)
                     or int(getattr(field, 'permlevel', 0) or 0)
                     or item.fieldtype not in ALLOWED_TARGET_TYPES | {'Long Text', 'Text', 'Text Editor', 'Select', 'Table'}
                     or (getattr(field, 'read_only', 0) and not contact_proxy and not item.path.startswith('custom_hero_')
-                        and (target.doctype, item.path) != ('Comment', 'creation'))):
+                        and not (target.doctype == 'Comment' and item.path in {'creation', 'modified'}))):
                 continue
             selected.append(replace(item, selectable=True, activation_allowed=False,
                 reason='Query adapter target; activation requires schema, relation and mapping validation.'))
-        if target.doctype == 'Comment' and not any(item.doctype == 'Comment' and item.path == 'creation' for item in selected):
-            selected.append(CatalogField(target.app_name, 'Comment', 'creation', 'Creation', 'Datetime', True, '', True,
-                'Logbook date adapter; an explicit timezone transformation is required.', False, False, (), False))
+        if target.doctype == 'Comment':
+            for fieldname in ('creation', 'modified'):
+                if not any(item.doctype == 'Comment' and item.path == fieldname for item in selected):
+                    selected.append(CatalogField(target.app_name, 'Comment', fieldname, fieldname.title(), 'Datetime', True, '', True,
+                        'Logbook date adapter; an explicit timezone transformation is required.', False, False, (), False))
     result['fields'] = [item.__dict__ for item in selected]
     return result
 
