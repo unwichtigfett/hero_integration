@@ -3509,3 +3509,46 @@ Mapped typename must be a plain scalar selection.,Der gemappte Typname muss als 
 Native relation does not belong to the selected migration area.,Die native Beziehung gehört nicht zum ausgewählten Migrationsbereich.
 Partner identity may only bind the Project manager.,Die Partneridentität darf nur dem Projektleiter zugeordnet werden.
 User identity may only bind the native Task assignee.,Die Benutzeridentität darf nur dem nativen Aufgabenempfänger zugeordnet werden.
+Import mapping files here. Configuration packages belong in Settings.,Hier werden Mapping-Dateien importiert. Konfigurationspakete gehören in die Einstellungen.
+The Query mapping package is incomplete or has a different schema identity.,Das Query-Mapping-Paket ist unvollständig oder gehört zu einem anderen Schema.
+The selected mapping schema belongs to another HERO source.,Das ausgewählte Mapping-Schema gehört zu einer anderen HERO-Quelle.
+Select a validated snapshot matching the mapping file schema.,"Wähle einen validierten Snapshot, der zum Schema der Mapping-Datei passt."
+Explicit mapping import confirmation is required.,Der Mapping-Import muss ausdrücklich bestätigt werden.
+The mapping import preview changed; preview the file again.,Die Mapping-Importvorschau hat sich geändert. Prüfe die Datei erneut.
+The mapping file is not valid JSON.,Die Mapping-Datei enthält kein gültiges JSON.
+"Mapping files cannot contain settings, credentials or contract configuration.","Mapping-Dateien dürfen keine Einstellungen, Zugangsdaten oder Vertragskonfiguration enthalten."
+Mutation contract scope must explicitly select the mapped-update resolver.,Der Geltungsbereich des Mutationsvertrags muss ausdrücklich den Resolver für gemappte Aktualisierungen auswählen.
+Mutation contract areas do not match their registered update operation.,Die Bereiche des Mutationsvertrags passen nicht zur registrierten Aktualisierungsoperation.
+Mutation contract mapping identities must be unique.,Die Mapping-Identitäten des Mutationsvertrags müssen eindeutig sein.
+Mutation contract query must be bounded GraphQL text.,Die Abfrage des Mutationsvertrags muss GraphQL-Text innerhalb der zulässigen Länge sein.
+Mutation contract validation requires the accompanying update mappings.,Die Prüfung des Mutationsvertrags benötigt die zugehörigen Aktualisierungs-Mappings.
+Configuration mutation contracts must be a list of at most eight registered updates.,Die Mutationsverträge der Konfiguration müssen eine Liste mit höchstens acht registrierten Aktualisierungen sein.
+Mutation contract snapshot must match the validated target source and schema.,Der Snapshot des Mutationsvertrags muss zur validierten Zielquelle und zum Zielschema passen.
+Mutation service or saved contract changed before explicit local approval.,Der Mutations-Service oder der gespeicherte Vertrag wurde vor der ausdrücklichen lokalen Freigabe geändert.
+Explicit local mutation contract import confirmation is required.,Der lokale Import des Mutationsvertrags muss ausdrücklich bestätigt werden.
+Mutation contract import has unresolved conflicts; no contract was written.,Der Import des Mutationsvertrags enthält ungelöste Konflikte. Es wurde kein Vertrag geschrieben.
+Existing mutation contracts cannot be exported without reconciliation.,Bestehende Mutationsverträge müssen vor dem Export abgeglichen werden.
+Mutation contract mapping identities must be canonical UUIDs.,Die Mapping-Identitäten des Mutationsvertrags müssen kanonische UUIDs sein.
+Mutation contract must be one schema-valid variable-only update selecting its id.,"Der Mutationsvertrag muss eine einzelne schemagültige Aktualisierung mit Variablen sein, die ausschließlich ihre ID auswählt."
+Mutation contract mappings have duplicate areas or incompatible operation scopes.,Die Mappings des Mutationsvertrags enthalten doppelte Bereiche oder unvereinbare Operationsbereiche.
+Invalid or duplicate portable mutation contract.,Ungültiger oder doppelter portabler Mutationsvertrag.
+Several mutation services or contracts require explicit reconciliation.,Mehrere Mutations-Services oder Verträge müssen ausdrücklich abgeglichen werden.
+An existing mutation contract has no matching service.,Für einen bestehenden Mutationsvertrag fehlt der passende Service.
+Mutation contract does not exactly cover its accompanying mapping identities and arguments.,Der Mutationsvertrag deckt die zugehörigen Mapping-Identitäten und Argumente nicht exakt ab.
+Password fields cannot be transferred in configuration packages.,Passwortfelder dürfen nicht in Konfigurationspaketen übertragen werden.
+Configuration import cannot change the locally confirmed HERO source.,Der Konfigurationsimport darf die lokal bestätigte HERO-Quelle nicht ändern.
+Mutation contracts require a replacement configuration package.,Mutationsverträge benötigen ein Konfigurationspaket zum Ersetzen der vorhandenen Konfiguration.
+Mutation contract configuration has conflicts.,Die Konfiguration der Mutationsverträge enthält Konflikte.
+The active mutation contract does not authorize this mapping identity and area.,Der aktive Mutationsvertrag gibt diese Mapping-Identität und diesen Bereich nicht frei.
+Configuration packages belong in Settings. Import a mapping JSON file here.,Konfigurationspakete gehören in die Einstellungen. Importiere hier eine Mapping-JSON-Datei.
+Import a Mutation mapping JSON file in this tab. Query mapping files belong in Query.,Importiere in diesem Reiter eine Mutations-Mapping-JSON-Datei. Query-Mapping-Dateien gehören in den Reiter Query.
+Import a Query mapping JSON file in this tab. Mutation mapping files belong in Mutation.,Importiere in diesem Reiter eine Query-Mapping-JSON-Datei. Mutations-Mapping-Dateien gehören in den Reiter Mutation.
+Import and activate these Query mappings? No HERO operation will be executed.,Diese Query-Mappings importieren und aktivieren? Es wird keine HERO-Operation ausgeführt.
+Query mappings imported and activated. No HERO operation was executed.,Query-Mappings wurden importiert und aktiviert. Es wurde keine HERO-Operation ausgeführt.
+Mutation contracts: {0}; requested active status: {1}.,Mutationsverträge: {0}; gewünschter Status Aktiv: {1}.
+Mutation contracts imported: {0}; active: {1}.,Mutationsverträge importiert: {0}; aktiv: {1}.
+Mutation mappings to import as drafts: {0}.,Als Entwürfe zu importierende Mutations-Mappings: {0}.
+Mutation mappings imported as drafts: {0}.,Als Entwürfe importierte Mutations-Mappings: {0}.
+The existing mutation service differs from the imported definition.,Der bestehende Mutations-Service weicht von der importierten Definition ab.
+The existing mutation contract differs from the imported definition.,Der bestehende Mutationsvertrag weicht von der importierten Definition ab.
+Import cannot silently downgrade an approved mutation contract.,Der Import darf einen freigegebenen Mutationsvertrag nicht ohne ausdrückliche Entscheidung zurückstufen.

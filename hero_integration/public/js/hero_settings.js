@@ -80,10 +80,27 @@
             : "Existing mappings in these areas will be replaced: {0} field mappings and {1} GraphQL mappings. Previous versions remain in history.";
         return " " + format(message, replacement.field_mappings ?? 0, replacement.graphql_mappings ?? 0);
     }
+    function packageMutationSummary(value, imported = false) {
+        const contracts = Array.isArray(value.mutation_contracts?.contracts) ? value.mutation_contracts.contracts : [];
+        const messages = [];
+        if (contracts.length) {
+            const active = contracts.filter(contract => contract.status === "Active").length;
+            messages.push(format(imported
+                ? "Mutation contracts imported: {0}; active: {1}."
+                : "Mutation contracts: {0}; requested active status: {1}.", contracts.length, active));
+        }
+        const drafts = value.mutation_mappings?.count;
+        if (Number.isInteger(drafts) && drafts > 0) {
+            messages.push(format(imported ? "Mutation mappings imported as drafts: {0}." : "Mutation mappings to import as drafts: {0}.", drafts));
+        }
+        if (!messages.length) return "";
+        messages.push(uiText(imported ? "No HERO operation was executed." : "No HERO operation will be executed."));
+        return " " + messages.join(" ");
+    }
     function packageImportSummary(result) {
         const approved = result.read_services.filter((row) => row.state !== "Unchanged").length;
         return `${uiText("Imported")}: ${uiText("snapshot")} ${result.snapshot}, ${result.adopted} ${uiText("mapping entries")}, ` +
-            `${result.settings.length} ${uiText("settings")}, ${approved} ${uiText("read services approved")}. ` + packageAreaSummary(result) + packageReplacementSummary(result, true);
+            `${result.settings.length} ${uiText("settings")}, ${approved} ${uiText("read services approved")}. ` + packageAreaSummary(result) + packageReplacementSummary(result, true) + packageMutationSummary(result, true);
     }
 
     function packagePreviewSummary(preview) {
@@ -93,7 +110,7 @@
         const services = preview.read_services.map((row) => `${row.target_operation}: ${packageState(row.state)}`).join(', ');
         const settings = preview.settings.length ? preview.settings.map((key) => Object.hasOwn(packageSettingLabels, key) ? `${uiText(packageSettingLabels[key])} (${key})` : key).join(', ') : uiText('none');
         return `${uiText('Schema snapshot')}: ${packageState(preview.snapshot)}. ${uiText('Mappings')}: ${counts}. ` +
-            `${uiText('Read services')}: ${services}. ${uiText('Changed settings')}: ${settings}. ` + packageAreaSummary(preview) + packageReplacementSummary(preview);
+            `${uiText('Read services')}: ${services}. ${uiText('Changed settings')}: ${settings}. ` + packageAreaSummary(preview) + packageReplacementSummary(preview) + packageMutationSummary(preview);
     }
 
     function node(tag, cls, text) {

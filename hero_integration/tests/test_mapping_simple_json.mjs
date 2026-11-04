@@ -23,6 +23,7 @@ class Element {
 }
 const snapshot = {name:'snapshot', display_name:'Schema', source_instance:'source', analysis_status:'Validated', configured_source:true, creation:'2026'};
 const item = {definition_id:'definition', state:'NEW', expected:{generation:0,draft_revision:0,active_revision:0,reconciliation_revision:0}};
+const queryFile = JSON.stringify({format_version:'hero-integration-mappings-v1',schema_fingerprint:'schema-fingerprint',replace_mappings:true,mapping_package:{},read_services:[]});
 const mutationFile = JSON.stringify({format_version:'hero-personal-mapping-portable-v2', direction:'FRAPPE_TO_MUTATION'});
 async function setup(overrides = {}, manager = true) {
     const calls = [], confirmations = [], downloads = [];
@@ -30,11 +31,10 @@ async function setup(overrides = {}, manager = true) {
     const methods = {
         simple_mapping_state: () => ({rules:[], sends:[{operation:'updateCustomer', hero:'customer.name', target:'Customer.customer_name', app:'erpnext', status:'Active',revision:1}], operations:[]}),
         schema_snapshot_list: () => [snapshot],
-        config_export: () => ({filename:'configuration.json',content:'{}'}),
-        mapping_draft_exchange_export: () => ({filename:'mutation.json',content:'{}'}),
-        config_import_preview: () => ({read_services:[{target_operation:'HeroCustomers',state:'Changed'}],replace_mappings:true,replacement:{field_mappings:17,graphql_mappings:1}}),
-        config_import: () => ({}),
-        simple_mapping_import_preview: () => ({can_apply:true,can_save:true,items:[item],preview_fingerprint:'fingerprint',activation:true,execution:false}),
+        simple_mapping_export: ({direction}) => ({filename:direction==='QUERY_TO_FRAPPE'?'query-mappings.json':'mutation-mappings.json',content:direction==='QUERY_TO_FRAPPE'?queryFile:mutationFile}),
+        simple_mapping_import_preview: ({direction}) => direction==='QUERY_TO_FRAPPE'
+            ? {can_apply:true,read_services:[{target_operation:'HeroCustomers',state:'Changed'}],replace_mappings:true,replacement:{field_mappings:17,graphql_mappings:1},preview_fingerprint:'fingerprint',activation:true,execution:false}
+            : {can_apply:true,can_save:true,items:[item],preview_fingerprint:'fingerprint',activation:true,execution:false},
         simple_mapping_import_apply: () => ({activation:true,execution:false,status:'IMPORTED_MAPPINGS'}),
         ...overrides,
     };
@@ -55,13 +55,18 @@ async function setup(overrides = {}, manager = true) {
     return {window,host,calls,confirmations,downloads,controller,flush,click,upload,button};
 }
 
-test('list has no visual editor and exports full Query configuration via GET', async () => {
+test('list has no visual editor and exports only Query mappings via GET', async () => {
     const app=await setup();
     assert.equal(app.host.querySelectorAll('textarea,details').length,0);
     assert.equal(app.button('Create Mapping'),undefined);
     await app.click('Export JSON');
-    const request=app.calls.find(call=>call.method==='config_export');
+    const request=app.calls.find(call=>call.method==='simple_mapping_export');
     assert.equal(request.type,'GET');
+    assert.equal(request.args.direction,'QUERY_TO_FRAPPE');
+    assert.equal(request.args.snapshot_name,'snapshot');
+    assert.equal(app.host.querySelectorAll('[data-mapping-snapshot]').length,1);
+    assert.equal(JSON.parse(app.downloads[0].values[0]).format_version,'hero-integration-mappings-v1');
+    assert.equal(app.calls.some(call=>call.method.startsWith('config_')),false);
     assert.equal(app.downloads.length,1);
     assert.equal(app.calls.some(call=>call.type==='POST'),false);
 });
@@ -69,26 +74,35 @@ test('list has no visual editor and exports full Query configuration via GET', a
 test('Mutation export includes active mappings and uses only configured source snapshots', async () => {
     const app=await setup({schema_snapshot_list:()=>[{...snapshot,name:'foreign',configured_source:false,creation:'9999'},snapshot]});
     await app.click('Mutation'); await app.click('Export JSON');
-    const request=app.calls.find(call=>call.method==='mapping_draft_exchange_export');
+    const request=app.calls.find(call=>call.method==='simple_mapping_export');
     assert.equal(request.type,'GET');
-    assert.equal(request.args.drafts_only,0);
+    assert.equal(request.args.drafts_only,undefined);
     assert.equal(request.args.direction,'FRAPPE_TO_MUTATION');
     assert.equal(request.args.snapshot_name,'snapshot');
-    assert.equal(request.args.source_instance,'source');
+    assert.equal(request.args.source_instance,undefined);
+    assert.equal(app.host.querySelectorAll('[data-mapping-snapshot]').length,1);
     assert.match(app.host.textContent,/Source Frappe/);
     assert.equal(app.host.querySelectorAll('option').some(node=>node.value==='HeroCustomers'),false);
 });
 
 test('Query import previews replacement counts, confirms once and prevents duplicate apply', async () => {
-    const app=await setup(); const payload=JSON.stringify({format_version:'hero-integration-config-v2'});
+    const app=await setup(); const payload=queryFile;
     await app.upload(payload);
-    assert.equal(app.calls.some(call=>call.method==='config_import'),false);
+    assert.equal(app.calls.some(call=>call.method==='simple_mapping_import_apply'),false);
     assert.match(app.confirmations[0].message,/17 field mappings, 1 GraphQL mappings/);
     assert.equal(app.button('Mutation').disabled,true);
     await app.confirmations[0].accept(); await app.confirmations[0].accept();
-    assert.equal(app.calls.filter(call=>call.method==='config_import').length,1);
-    assert.equal(app.calls.find(call=>call.method==='config_import').args.payload_json,payload);
+    assert.equal(app.calls.filter(call=>call.method==='simple_mapping_import_apply').length,1);
+    assert.equal(app.calls.find(call=>call.method==='simple_mapping_import_apply').args.payload_json,payload);
     assert.equal(app.button('Mutation').disabled,false);
+    const applied=app.calls.find(call=>call.method==='simple_mapping_import_apply');
+    assert.equal(applied.args.direction,'QUERY_TO_FRAPPE');
+    assert.equal(applied.args.snapshot_name,'snapshot');
+    assert.equal(applied.args.preview_fingerprint,'fingerprint');
+    assert.equal(applied.args.expected_states_json,'[]');
+    assert.equal(applied.args.confirmed,1);
+    assert.doesNotMatch(app.confirmations[0].message,/settings|configuration|contract/i);
+    assert.equal(app.calls.some(call=>call.method.startsWith('config_')),false);
 });
 
 test('Mutation import publishes only after confirmation with exact fingerprint and expected states', async () => {
@@ -120,9 +134,9 @@ test('wrong file direction and cancellation cause no import writes', async () =>
 });
 
 test('destroying the page invalidates pending confirmation', async () => {
-    const app=await setup(); await app.upload(JSON.stringify({format_version:'hero-integration-config-v2'}));
+    const app=await setup(); await app.upload(queryFile);
     app.controller.destroy(); await app.confirmations[0].accept();
-    assert.equal(app.calls.some(call=>call.method==='config_import'),false);
+    assert.equal(app.calls.some(call=>call.method==='simple_mapping_import_apply'),false);
 });
 
 test('read-only users see the list without import/export controls', async () => {
@@ -136,4 +150,79 @@ test('legacy draft files are rejected before requesting Mutation publication', a
     await app.upload(JSON.stringify({format_version:'hero-personal-mapping-draft-exchange-v1',direction:'FRAPPE_TO_MUTATION'}));
     assert.equal(app.calls.some(call=>call.method==='simple_mapping_import_preview'),false);
     assert.equal(app.confirmations.length,0);
+});
+
+
+test('configuration packages are rejected in both tabs with a Settings pointer and no preview RPC', async () => {
+    for (const tab of ['Query','Mutation']) {
+        const app=await setup(); if(tab==='Mutation') await app.click(tab);
+        for(const format_version of ['hero-integration-config-v1','hero-integration-config-v2']) {
+            await app.upload(JSON.stringify({format_version,settings:{any:'value'},contracts:[{}]}));
+            assert.match(app.host.textContent,/Configuration packages belong in Settings/);
+        }
+        assert.equal(app.confirmations.length,0);
+        assert.equal(app.calls.some(call=>call.type==='POST'),false);
+    }
+});
+
+test('Query format cannot smuggle configuration sections through the mapping UI', async () => {
+    const app=await setup();
+    for(const key of ['settings','schema_snapshot','mutation_mappings','mutation_contracts','contracts']) {
+        await app.upload(JSON.stringify({...JSON.parse(queryFile),[key]:{}}));
+        assert.match(app.host.textContent,/belong in Settings/);
+    }
+    assert.equal(app.calls.some(call=>call.method==='simple_mapping_import_preview'),false);
+});
+
+test('both directions require a configured validated snapshot before import or export', async () => {
+    const app=await setup({schema_snapshot_list:()=>[{...snapshot,configured_source:false},{...snapshot,name:'pending',analysis_status:'Pending'}]});
+    for(const [tab,payload] of [['Query',queryFile],['Mutation',mutationFile]]) {
+        if(tab==='Mutation') await app.click(tab);
+        await app.upload(payload); await app.click('Export JSON');
+        assert.match(app.host.textContent,/Choose a validated schema snapshot first/);
+    }
+    assert.equal(app.confirmations.length,0);
+    assert.equal(app.calls.some(call=>['simple_mapping_import_preview','simple_mapping_export'].includes(call.method)),false);
+});
+
+test('Query preview blockers or missing fingerprint cannot open activation confirmation', async () => {
+    for(const preview of [{can_apply:false,blockers:[{reason:'Reviewed source required'}]},{can_apply:true,read_services:[]}]) {
+        const app=await setup({simple_mapping_import_preview:()=>preview}); await app.upload(queryFile);
+        assert.equal(app.confirmations.length,0);
+        assert.equal(app.calls.some(call=>call.method==='simple_mapping_import_apply'),false);
+        assert.equal(app.button('Mutation').disabled,false);
+    }
+});
+
+test('Query preview omits settings and contract summaries even if a server adds them', async () => {
+    const app=await setup();
+    const text=app.window.hero_integration_mapping_simple.previewText({read_services:[{target_operation:'HeroTasks',state:'Replace'}],
+        settings:['private_setting'],contracts:[{}],mutation_mappings:{count:12}});
+    assert.match(text,/Tasks/);
+    assert.doesNotMatch(text,/settings|private_setting|contract|Mutation|12/i);
+});
+
+test('snapshot selection is preserved across tabs and sent to preview/apply', async () => {
+    const app=await setup({schema_snapshot_list:()=>[snapshot,{...snapshot,name:'older',creation:'2025'}]});
+    const picker=app.host.querySelectorAll('[data-mapping-snapshot]')[0];picker.value='older';picker.handlers.change();
+    await app.click('Mutation'); await app.click('Query');
+    assert.equal(app.host.querySelectorAll('[data-mapping-snapshot]')[0].value,'older');
+    await app.upload(queryFile);await app.confirmations[0].accept();
+    assert.equal(app.calls.find(call=>call.method==='simple_mapping_import_preview').args.snapshot_name,'older');
+    assert.equal(app.calls.find(call=>call.method==='simple_mapping_import_apply').args.snapshot_name,'older');
+});
+
+test('destroying the page while a file is read cannot request a preview', async () => {
+    const app=await setup();let resolve;
+    const input=app.host.querySelectorAll('input').find(node=>node.attributes.type==='file');
+    input.files=[{text:()=>new Promise(done=>{resolve=done;}),size:queryFile.length}];input.handlers.change();
+    app.controller.destroy();resolve(queryFile);await app.flush();
+    assert.equal(app.calls.some(call=>call.method==='simple_mapping_import_preview'),false);
+});
+
+test('a configuration export response is rejected instead of downloading settings from Mapping', async () => {
+    const app=await setup({simple_mapping_export:()=>({filename:'configuration.json',content:JSON.stringify({format_version:'hero-integration-config-v2',settings:{}})})});
+    await app.click('Export JSON');
+    assert.equal(app.downloads.length,0);
+    assert.match(app.host.textContent,/Invalid mapping export response/);
 });

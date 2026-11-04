@@ -4014,26 +4014,49 @@ def simple_mapping_state() -> dict[str, object]:
 def _simple_mapping_import_errors():
     from hero_integration.services.mapping_draft_exchange import MappingDraftExchangeError
     from hero_integration.services.schema_provisioning import SchemaProvisioningError
+    from hero_integration.services.mapping_only_exchange import MappingOnlyError
+    from hero_integration.services.config_exchange import ConfigExchangeError
     try:
         with _personal_draft_errors():
             yield
-    except (MappingDraftExchangeError, SchemaProvisioningError) as error:
+    except (MappingDraftExchangeError, SchemaProvisioningError, MappingOnlyError, ConfigExchangeError) as error:
         frappe.throw(translate_error(error, frappe._))
+
+
+@frappe.whitelist(methods=['GET'])
+def simple_mapping_export(snapshot_name: str = '', direction: str = 'QUERY_TO_FRAPPE'):
+    """Export only mapping definitions and their required field/query dependencies."""
+    frappe.only_for('System Manager')
+    _mapping_request_fields({'snapshot_name', 'direction'})
+    snapshot_name = _mapping_text(snapshot_name, 'snapshot_name', allow_empty=True) or _config_snapshot()
+    direction = _mapping_text(direction, 'direction')
+    with _simple_mapping_import_errors():
+        if direction == 'QUERY_TO_FRAPPE':
+            from hero_integration.services.mapping_only_exchange import export
+            return {'filename': 'hero-query-mappings.json', 'content': export(snapshot_name, _configured_source_instance())}
+        if direction == 'FRAPPE_TO_MUTATION':
+            from hero_integration.services.mapping_draft_exchange import export_package, PORTABLE_FORMAT_VERSION
+            return {'filename': 'hero-mutation-mappings.json', 'content': export_package(_configured_source_instance(),
+                snapshot_name, direction, format_version=PORTABLE_FORMAT_VERSION)}
+        frappe.throw(frappe._('MAPPING_INPUT_INVALID: Invalid direction.'))
 
 
 @frappe.whitelist(methods=["POST"])
 def simple_mapping_import_preview(payload_json: str, snapshot_name: str, direction: str):
-    """Validate a Mutation JSON import and publication without executing HERO calls."""
+    """Validate a direction-specific mapping import without loading settings."""
     _mapping_request_fields({"payload_json", "snapshot_name", "direction"})
     from hero_integration.services.simple_mapping_exchange import preview
     with _simple_mapping_import_errors():
+        if direction == 'QUERY_TO_FRAPPE':
+            from hero_integration.services.mapping_only_exchange import preview as query_preview
+            return query_preview(payload_json, _mapping_text(snapshot_name, 'snapshot_name'), _configured_source_instance())
         return preview(payload_json, _mapping_text(snapshot_name, "snapshot_name"),
                        _mapping_text(direction, "direction"))
 
 
 @frappe.whitelist(methods=["POST"])
 def simple_mapping_import_apply(payload_json: str, snapshot_name: str, direction: str,
-                                expected_states_json: str, preview_fingerprint: str, confirmed=False):
+                                expected_states_json: str = '[]', preview_fingerprint: str = '', confirmed=False):
     """Import and publish the previewed mappings atomically; execution rights stay separate."""
     _mapping_request_fields({"payload_json", "snapshot_name", "direction", "expected_states_json",
                              "preview_fingerprint", "confirmed"})
@@ -4047,6 +4070,12 @@ def simple_mapping_import_apply(payload_json: str, snapshot_name: str, direction
         frappe.throw(frappe._("MAPPING_INPUT_INVALID: expected draft states must be JSON."))
     from hero_integration.services.simple_mapping_exchange import apply
     with _simple_mapping_import_errors():
+        if direction == 'QUERY_TO_FRAPPE':
+            if states != []:
+                frappe.throw(frappe._('MAPPING_INPUT_INVALID: Invalid expected states.'))
+            from hero_integration.services.mapping_only_exchange import apply as query_apply
+            return query_apply(payload_json, _mapping_text(snapshot_name, 'snapshot_name'), _configured_source_instance(),
+                _mapping_text(preview_fingerprint, 'preview_fingerprint'), confirmed=True)
         return apply(payload_json, _mapping_text(snapshot_name, "snapshot_name"),
                      _mapping_text(direction, "direction"), states,
                      _mapping_text(preview_fingerprint, "preview_fingerprint"), confirmed=True)

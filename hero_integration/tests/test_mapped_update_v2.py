@@ -321,3 +321,95 @@ class TestExistingSendDispatcher(TestCase):
         with patch.object(mapped_send,'_load_context',return_value=self.context('Project')),patch.object(update,'preview') as preview:
             with self.assertRaisesRegex(ValueError,'phase identity'):mapped_send.preview('Project','DOC',phase_id=7)
             preview.assert_not_called()
+
+
+class TestMappedUpdateContractScope(TestCase):
+    def fixture(self, area='HeroTasks'):
+        identity = str(uuid4())
+        document = SimpleNamespace(operation_name=update.AREAS[area][3], portable_definition_id=identity,
+                                   definition_id=uuid4().hex)
+        content = {'area': area}
+        scope = {'mode': 'VALIDATED_RESOLVER', 'resolver': update.USAGE,
+                 'areas': [area], 'mapping_definition_ids': [identity]}
+        return document, content, scope
+
+    def check(self, document, content, scope):
+        return update._validate_contract_scope(document, content, SimpleNamespace(mapping_json=json.dumps(scope)))
+
+    def test_portable_identity_is_preferred_and_native_hex_fallback_is_canonical(self):
+        document, content, scope = self.fixture()
+        self.check(document, content, scope)
+        document.definition_id = document.portable_definition_id.replace('-', '')
+        document.portable_definition_id = ''
+        self.check(document, content, scope)
+        document.definition_id = scope['mapping_definition_ids'][0]
+        self.check(document, content, scope)
+
+    def test_invalid_explicit_portable_identity_never_falls_back(self):
+        document, content, scope = self.fixture()
+        document.definition_id = scope['mapping_definition_ids'][0].replace('-', '')
+        for invalid in ('invalid', str(uuid4()), scope['mapping_definition_ids'][0].replace('-', ''), 0):
+            document.portable_definition_id = invalid
+            with self.subTest(identity=invalid), self.assertRaisesRegex(ValueError, 'does not authorize'):
+                self.check(document, content, scope)
+
+    def test_legacy_admin_input_unknown_keys_and_foreign_identity_are_denied(self):
+        document, content, scope = self.fixture()
+        for change in ('admin', 'resolver', 'foreign', 'extra', 'invalid_uuid', 'area'):
+            candidate = deepcopy(scope)
+            if change == 'admin': candidate['mode'] = 'ADMIN_INPUT'
+            elif change == 'resolver': candidate['resolver'] = 'UNREVIEWED'
+            elif change == 'foreign': candidate['mapping_definition_ids'] = [str(uuid4())]
+            elif change == 'extra': candidate['all_mappings'] = True
+            elif change == 'invalid_uuid': candidate['mapping_definition_ids'] = ['not-an-identity']
+            else: candidate['areas'] = ['HeroCustomers']
+            with self.subTest(change=change), self.assertRaisesRegex(ValueError, 'does not authorize'):
+                self.check(document, content, candidate)
+
+    def test_shared_file_operation_does_not_grant_the_other_area_implicitly(self):
+        document, content, scope = self.fixture('HeroDocuments')
+        picture_id = str(uuid4())
+        scope['areas'] = ['HeroPictures']
+        with self.assertRaisesRegex(ValueError, 'does not authorize'):
+            self.check(document, content, scope)
+        scope['areas'] = ['HeroDocuments', 'HeroPictures']
+        scope['mapping_definition_ids'].append(picture_id)
+        self.check(document, content, scope)
+        document.portable_definition_id = picture_id
+        self.check(document, {'area': 'HeroPictures'}, scope)
+        document.portable_definition_id = str(uuid4())
+        with self.assertRaisesRegex(ValueError, 'does not authorize'):
+            self.check(document, content, scope)
+
+    def test_duplicate_json_scope_keys_are_not_silently_accepted(self):
+        document, content, scope = self.fixture()
+        raw = json.dumps(scope)[:-1] + ',"mode":"ADMIN_INPUT"}'
+        with self.assertRaisesRegex(ValueError, 'does not authorize'):
+            update._validate_contract_scope(document, content, SimpleNamespace(mapping_json=raw))
+
+    def test_scope_rejection_in_load_precedes_service_plan_and_remote_access(self):
+        content = mapping();document, _, scope = self.fixture()
+        document.name = 'map';document.schema_snapshot = 'snapshot';document.schema_fingerprint = 'fingerprint'
+        document.source_instance = 'source';document.status = 'Active';document.direction = 'FRAPPE_TO_MUTATION'
+        document.operation_kind = 'MUTATION';document.mapping_json = json.dumps(content);document.check_permission = Mock()
+        snapshot = SimpleNamespace(name='snapshot', schema_fingerprint='fingerprint', snapshot_json=json.dumps(SCHEMA),
+                                   analysis_status='Validated', execution_contract_status='', check_permission=Mock())
+        scope['mapping_definition_ids'] = [str(uuid4())]
+        contract = SimpleNamespace(mapping_json=json.dumps(scope), graphql_service='must-not-load')
+        native = SimpleNamespace(doctype='Task', name='task')
+        docs = {('HERO GraphQL Mapping', 'map'): document, ('HERO GraphQL Schema Snapshot', 'snapshot'): snapshot,
+                ('Task', 'task'): native, ('HERO Mutation Contract', 'contract'): contract}
+        read = SimpleNamespace(contract=SimpleNamespace(target_operation='HeroTasks', identity_path='id'))
+        with patch.object(update.frappe, 'get_doc', side_effect=lambda dt, name: docs[(dt, name)]) as get_doc, \
+             patch.object(update.frappe, 'get_all', return_value=['contract']), patch.object(update.frappe, 'has_permission'), \
+             patch.object(update.send_helpers, '_roles', return_value=True), patch.object(update, 'validate_sources'), \
+             patch('hero_integration.client.settings.get_configuration', return_value=SimpleNamespace(source_instance='source')), \
+             patch('hero_integration.services.writeback_source.capture_source', return_value=SimpleNamespace(source_instance='source')), \
+             patch.object(update, '_link', return_value=SimpleNamespace(source_id='1')), \
+             patch.object(update.send_helpers, '_load_read', return_value=read), \
+             patch('hero_integration.services.migration._mapping_plan_for_run') as plan, \
+             patch.object(update, '_read_record') as remote:
+            with self.assertRaisesRegex(ValueError, 'does not authorize'):
+                update._load_context('map', 'Task', 'task')
+            plan.assert_not_called();remote.assert_not_called()
+            self.assertNotIn(('HERO GraphQL Service', 'must-not-load'), [call.args for call in get_doc.call_args_list])

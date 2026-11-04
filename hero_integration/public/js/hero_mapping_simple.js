@@ -1,4 +1,4 @@
-// Mapping page (owner decision 2026-11-04): mappings are written as a JSON configuration file
+// Mapping page: mappings are written as a JSON file
 // and loaded here; the page only shows them. Nothing is edited on the website.
 (function () {
     "use strict";
@@ -45,14 +45,17 @@
         const summary = areas.length ? `${t("Areas in the file")}: ${areas.join(", ")}` : t("The file contains no mapping areas.");
         return summary + (preview.replace_mappings
             ? ` ${t("Existing mappings in these areas will be replaced.")} ${preview.replacement?.field_mappings ?? 0} ${t("field mappings")}, ${preview.replacement?.graphql_mappings ?? 0} ${t("GraphQL mappings")}.` : "")
-            + ` ${t("Changed settings")}: ${(preview.settings || []).length}.`
-            + (preview.mutation_mappings?.count ? ` ${t("Prepared Mutation mappings")}: ${preview.mutation_mappings.count}. ${t("Mutation drafts require separate contract approval before activation.")}` : "");
+            + ` ${t("No HERO operation will be executed.")}`;
     }
 
     function jsonFormat(payload) {
         let value;
         try { value = JSON.parse(payload); } catch (_) { throw new Error(t("The file is not valid JSON.")); }
         if (["hero-integration-config-v1", "hero-integration-config-v2"].includes(value?.format_version)) return "configuration";
+        if (value?.format_version === "hero-integration-mappings-v1") {
+            if (["settings", "schema_snapshot", "mutation_mappings", "mutation_contracts", "contracts"].some(key => Object.hasOwn(value, key))) return "configuration";
+            return "query";
+        }
         if (value?.format_version === "hero-personal-mapping-portable-v2"
             && value.direction === "FRAPPE_TO_MUTATION") return "mutation";
         return "unsupported";
@@ -102,10 +105,10 @@
             busy = value; root.setAttribute("aria-busy", String(value));
             root.querySelectorAll("button,input,select").forEach(node => { node.disabled = value; });
         }
-        function context() {
+        function context(tab = state.tab) {
             const snapshot = snapshots.find(row => row.name === snapshotName);
             if (!snapshot?.source_instance) throw new Error(t("Choose a validated schema snapshot first."));
-            return {source_instance: snapshot.source_instance, snapshot_name: snapshot.name, direction: "FRAPPE_TO_MUTATION"};
+            return {snapshot_name: snapshot.name, direction: tab === "Mutation" ? "FRAPPE_TO_MUTATION" : "QUERY_TO_FRAPPE"};
         }
         async function loadSnapshots() {
             const request = ++snapshotRequest;
@@ -138,35 +141,35 @@
                 if (disposed) return;
                 const format = jsonFormat(payload);
                 const mutation = tab === "Mutation";
-                if (mutation && format !== "mutation") throw new Error(t("Import a Mutation mapping JSON file in this tab. Configuration packages belong in Query."));
-                if (!mutation && format !== "configuration") throw new Error(t("Import a configuration package in Query. Mutation mapping files belong in Mutation."));
-                const selected = mutation ? context() : {};
-                const args = mutation ? {payload_json: payload, snapshot_name: selected.snapshot_name, direction: selected.direction} : {payload_json: payload};
-                const preview = await rpc(mutation ? "simple_mapping_import_preview" : "config_import_preview", args, true);
+                if (format === "configuration") throw new Error(t("Configuration packages belong in Settings. Import a mapping JSON file here."));
+                if (mutation && format !== "mutation") throw new Error(t("Import a Mutation mapping JSON file in this tab. Query mapping files belong in Query."));
+                if (!mutation && format !== "query") throw new Error(t("Import a Query mapping JSON file in this tab. Mutation mapping files belong in Mutation."));
+                const args = {payload_json: payload, ...context(tab)};
+                const preview = await rpc("simple_mapping_import_preview", args, true);
                 if (disposed) return;
-                if (mutation && preview.can_apply !== true) {
+                if (preview.can_apply !== true) {
                     const blockers = (preview.blockers || []).map(item => typeof item === "string" ? t(item) : String(item.message || item.reason || JSON.stringify(item)));
-                    say([t("The Mutation mappings cannot be activated."), ...blockers].join(" "), "error"); setBusy(false); return;
+                    say([t(mutation ? "The Mutation mappings cannot be activated." : "The Query mappings cannot be activated."), ...blockers].join(" "), "error"); setBusy(false); return;
                 }
+                if (typeof preview.preview_fingerprint !== "string" || !preview.preview_fingerprint) throw new Error(t("Invalid directional import preview."));
+                const expected = mutation ? expectedStates(preview) : [];
                 const summary = mutation ? mutationPreviewText(preview) : previewText(preview);
                 say(summary);
                 const confirmation = mutation ? t("Import and activate these Mutation mappings? No HERO operation will be executed.")
-                    : t("Import and activate this configuration now?");
+                    : t("Import and activate these Query mappings? No HERO operation will be executed.");
                 let consumed = false;
                 frappe.confirm(`${frappe.utils.escape_html(summary)}<br><br>${frappe.utils.escape_html(confirmation)}`, async () => {
                     if (disposed || consumed) return;
                     consumed = true;
                     say(t("Loading mappings …"));
                     try {
-                        const result = await rpc(mutation ? "simple_mapping_import_apply" : "config_import", mutation
-                            ? {...args, expected_states_json: JSON.stringify(expectedStates(preview)), preview_fingerprint: preview.preview_fingerprint, confirmed: 1}
-                            : {...args, confirmed: 1}, true);
+                        const result = await rpc("simple_mapping_import_apply",
+                            {...args, expected_states_json: JSON.stringify(expected), preview_fingerprint: preview.preview_fingerprint, confirmed: 1}, true);
                         if (disposed) return;
-                        if (mutation && (result.activation !== true || result.execution !== false)) throw new Error(t("Unexpected mapping import result."));
+                        if (result.activation !== true || result.execution !== false) throw new Error(t("Unexpected mapping import result."));
                         await load();
                         say(mutation ? t("Mutation mappings imported and activated. No HERO operation was executed.")
-                            : result.mutation_mappings?.count ? t("Query mappings active. Mutation mappings prepared for separate contract approval.")
-                            : t("Mappings loaded and active."), "success");
+                            : t("Query mappings imported and activated. No HERO operation was executed."), "success");
                     } catch (error) { if (!disposed) say(`${t("Import failed.")} ${failure(error)}`, "error"); }
                     finally { if (!disposed) setBusy(false); }
                 }, () => { consumed = true; if (!disposed) { setBusy(false); say(t("Import cancelled.")); } });
@@ -182,11 +185,11 @@
             if (busy || disposed) return;
             setBusy(true); say(t("Exporting mapping JSON…"));
             try {
-                const mutation = state.tab === "Mutation";
-                const result = await rpc(mutation ? "mapping_draft_exchange_export" : "config_export",
-                    mutation ? {...context(), format_version: "hero-personal-mapping-portable-v2", drafts_only: 0} : {});
+                const selected = context();
+                const result = await rpc("simple_mapping_export", selected);
                 if (disposed) return;
                 if (typeof result?.content !== "string" || typeof result?.filename !== "string") throw new Error(t("Invalid mapping export response."));
+                if (jsonFormat(result.content) !== (selected.direction === "FRAPPE_TO_MUTATION" ? "mutation" : "query")) throw new Error(t("Invalid mapping export response."));
                 const url = URL.createObjectURL(new Blob([result.content], {type: "application/json"}));
                 const link = el("a", {href: url, download: result.filename});
                 document.body.append(link); link.click(); link.remove();
@@ -200,7 +203,7 @@
             const tabs = ["Query", "Mutation"].map((name) => el("button", {
                 type: "button", class: `btn btn-sm ${state.tab === name ? "btn-primary" : "btn-default"}`, text: t(name),
                 onclick: () => { if (busy) return; state.tab = name; state.operation = ""; render();
-                    if (name === "Mutation" && manager && !snapshots.length) loadSnapshots(); }}));
+                    if (manager && !snapshots.length) loadSnapshots(); }}));
             const operations = state.tab === "Query" ? (state.data?.operations || []).map(item => ({value: item.operation, label: t(item.label)}))
                 : [...new Map((state.data?.sends || []).map(row => [row.operation, {value: row.operation, label: row.operation_label || row.operation}])).values()];
             const operation = select(t("All"), operations, state.operation);
@@ -231,12 +234,10 @@
             if (manager) {
                 actions.append(loadButton(), el("button", {type: "button", class: "btn btn-default", text: t("Export JSON"),
                     "data-mapping-export": "", onclick: exportFile}));
-                if (state.tab === "Mutation") {
-                    const snapshot = select(t("Choose a validated snapshot"), snapshots.map(row => ({value: row.name, label: row.display_name || row.name})), snapshotName);
-                    snapshot.setAttribute("data-mapping-snapshot", "");
-                    snapshot.addEventListener("change", () => { snapshotName = snapshot.value; });
-                    actions.append(labelled("Schema snapshot", snapshot));
-                }
+                const snapshot = select(t("Choose a validated snapshot"), snapshots.map(row => ({value: row.name, label: row.display_name || row.name})), snapshotName);
+                snapshot.setAttribute("data-mapping-snapshot", "");
+                snapshot.addEventListener("change", () => { snapshotName = snapshot.value; });
+                actions.append(labelled("Schema snapshot", snapshot));
             }
             root.replaceChildren(
                 el("header", {class: "hms-header"}, el("div", {class: "hms-title"},
@@ -248,13 +249,14 @@
                        el("div", {class: "hms-control"}, el("span", {text: t("Filter")}), el("div", {class: "hms-pair"}, type, value))),
                     el("div", {class: "hms-table-wrap"}, table)),
                 el("p", {class: "text-muted hms-note", text: t(state.tab === "Query"
-                    ? "Query JSON imports and exports the full configuration package. Edit mappings in the JSON file."
+                    ? "Query JSON contains mappings for the selected snapshot. Edit mappings in the JSON file."
                     : "Mutation JSON contains mappings for the selected snapshot. Import validates and activates mappings; it does not execute HERO operations.")}));
             setBusy(busy);
         }
 
         render();
         load();
+        if (manager) loadSnapshots();
         return {destroy() { disposed = true; snapshotRequest++; root.remove(); }};
     }
 
