@@ -75,13 +75,13 @@
             }
             if (!preview.changes.length) content.append(node("p", t("No changes to send.")));
             for (const conflict of preview.conflicts) content.append(node("p",
-                t("A field was changed in HERO since the last import; it is not overwritten.") + " " + t(conflict.label), "text-danger"));
+                t(conflict.blocked_reason || "A field was changed in HERO since the last import; it is not overwritten.") + " " + t(conflict.label), "text-danger"));
             if (!preview.sending_enabled) content.append(node("p", t("Sending to HERO is switched off globally."), "text-warning"));
             dialog.get_primary_btn().prop("disabled", !preview.can_send);
         }
         async function load() {
             if (flow.closed || flow.attempted) return;
-            flow.preview = null; disable(); dialog.fields_dict.phase.$input.prop("disabled", true);
+            flow.preview = null; disable(); dialog.fields_dict.phase.$input?.prop("disabled", true);
             const request = ++flow.request;
             if (!fresh()) { message(t("The project changed. Save it and reopen the preview."), true); return; }
             message(t("Loading Project changes and logbook activities …"));
@@ -96,7 +96,7 @@
                 phase.df.options = [{value: "", label: "—"}].concat((preview.phases || []).map(item => ({value: String(item.id), label: item.name})));
                 phase.df.hidden = !(preview.phases || []).length;
                 phase.refresh();
-                flow.preview = preview; dialog.fields_dict.phase.$input.prop("disabled", false); render(preview);
+                flow.preview = preview; dialog.fields_dict.phase.$input?.prop("disabled", false); render(preview);
             } catch (error) {
                 if (!flow.closed && request === flow.request) message(errorText(error), true);
             }
@@ -105,7 +105,7 @@
             const preview = flow.preview;
             if (flow.closed || flow.attempted || !preview?.can_send) return;
             if (!fresh()) { disable(); message(t("The project changed. Save it and reopen the preview."), true); return; }
-            flow.attempted = true; disable(); dialog.fields_dict.phase.$input.prop("disabled", true);
+            flow.attempted = true; disable(); dialog.fields_dict.phase.$input?.prop("disabled", true);
             message(t("Sending Project changes and logbook activities …"));
             try {
                 const result = await rpc("project_send", {project, phase_id: dialog.fields_dict.phase.get_value() || null,
