@@ -23,7 +23,7 @@
     const LEGACY_SECTION_TO_TOOL = Object.freeze({analyzer: "analyzer", graph: "graph", services: "services"});
     // Dynamically inserted styles need a release token. Keep frappe.require()
     // JavaScript URLs query-free so Frappe can select its loader and version.
-    const ASSET_RELEASE = "20261104.1";
+    const ASSET_RELEASE = "20261104.2";
     const ASSETS = [
         "/assets/hero_integration/css/hero_tools.css",
         "/assets/hero_integration/css/hero_adapter.css",
@@ -37,7 +37,6 @@
         "/assets/hero_integration/js/hero_overview.js",
         "/assets/hero_integration/js/hero_settings.js",
         "/assets/hero_integration/js/hero_api_summary.js",
-        "/assets/hero_integration/js/hero_mapping_editor.js",
         "/assets/hero_integration/js/hero_mapping_simple.js",
         "/assets/hero_integration/js/hero_diagnostics.js",
         "/assets/hero_integration/js/hero_migration.js",
@@ -47,7 +46,6 @@
         ["hero_overview.js", "hero_integration_overview"],
         ["hero_settings.js", "hero_integration_settings_ui"],
         ["hero_api_summary.js", "hero_integration_api_summary"],
-        ["hero_mapping_editor.js", "hero_integration_mapping_editor"],
         ["hero_mapping_simple.js", "hero_integration_mapping_simple"],
         ["hero_diagnostics.js", "hero_integration_diagnostics"],
         ["hero_migration.js", "hero_integration_migration"],
@@ -91,7 +89,7 @@
         if (method === "get_analyzer_service_draft") return request("workspace_analyzer_service_draft", {snapshot_name: snapshotName(args), schema_node_id: args.schema_node_id});
         if (method === "save_analyzer_service") return request("workspace_analyzer_service_save", {snapshot_name: snapshotName(args), schema_node_id: args.schema_node_id, payload_json: JSON.stringify(args.payload || {}), origin: args.origin || "API Analyzer"});
         if (unsupported.has(method)) {
-            throw new Error("This historic action is intentionally unavailable in the native workspace. Use the ERPNext Mapping Editor or saved read-only service definitions.");
+            throw new Error("This historic action is intentionally unavailable in the native workspace. Use JSON mapping import or saved read-only service definitions.");
         }
         const snapshot_name = snapshotName(args);
         // Keep the API tools' workspace action backed by server-side snapshots.
@@ -178,7 +176,7 @@
     window.hero_integration_rpc = Object.freeze({call: (method, args) => rpc(method, args)});
 
     // One canonical "Remember for Mapping" store for API Analyzer, Graph Viewer
-    // and the Mapping Editor. The server validates node identity and owner.
+    // and the mapping list. The server validates node identity and owner.
     const bookmarkCall = (method, args, write = false) =>
         frappe.call({method: `${API}.${method}`, type: write ? "POST" : "GET", args}).then((response) => {
             if (response?.exc) throw new Error(String(response.exc));
@@ -206,7 +204,7 @@
                         // The label is display only; the internal snapshot name is what gets saved.
                         {fieldname: "snapshot_label", fieldtype: "Data", label: __("Snapshot"), read_only: 1, default: identity.snapshot_label || identity.snapshot_name},
                         {fieldname: "alias", fieldtype: "Data", label: __("Alias"), reqd: 1,
-                            description: __("A readable name for the Mapping Editor. It never replaces the technical node identity.")},
+                            description: __("A readable name for the mapping list. It never replaces the technical node identity.")},
                     ],
                     primary_action_label: __("Save"),
                     primary_action: async (values) => {

@@ -120,15 +120,6 @@ class TestGermanCatalog(unittest.TestCase):
         actual = dict(re.findall(r'^\s*(\w+): "([^"\n]+)",\s*$', section, re.MULTILINE))
         self.assertEqual(actual, {key: labels[key] for key in keys})
 
-    def test_mapping_editor_literal_dialog_descriptions_have_german_entries(self):
-        with (APP / "translations" / "de.csv").open(encoding="utf-8", newline="") as stream:
-            messages = dict(csv.reader(stream))
-        source = (APP / "public" / "js" / "hero_mapping_editor.js").read_text(encoding="utf-8")
-        literal = r"""(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')"""
-        pattern = re.compile(r"\bmodal\(\s*" + literal + r"\s*,\s*(?P<description>" + literal + r")")
-        missing = [ast.literal_eval(match.group('description')) for match in pattern.finditer(source)
-                   if ast.literal_eval(match.group('description')) not in messages]
-        self.assertEqual(missing, [])
 
     def test_framework_extractable_messages_have_german_entries(self):
         try:
@@ -168,14 +159,6 @@ class TestGermanCatalog(unittest.TestCase):
                     missing.append(f"{path.name}: {source}")
         self.assertEqual(missing, [])
 
-    def test_mapping_editor_direct_labels_have_german_entries(self):
-        with (APP / "translations" / "de.csv").open(encoding="utf-8", newline="") as stream:
-            messages = dict(csv.reader(stream))
-        source = (APP / "public" / "js" / "hero_mapping_editor.js").read_text(encoding="utf-8")
-        pattern = re.compile(r"""(?<![\w.$])(?:button|field|modal|say)\(\s*(?P<literal>"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')""")
-        missing = [ast.literal_eval(match.group('literal')) for match in pattern.finditer(source)
-                   if ast.literal_eval(match.group('literal')) and ast.literal_eval(match.group('literal')) not in messages]
-        self.assertEqual(missing, [])
 
     def test_api_exposed_service_error_literals_have_german_entries(self):
         # These exception classes are passed to Frappe's translator at the API

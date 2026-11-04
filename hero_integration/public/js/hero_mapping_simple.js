@@ -1,6 +1,5 @@
-// Simple Mapping editor (layout of the owner's "Mapping Editor" sketch, 2026-11-04):
-// Query/Mutation, schema snapshot, Map Fields (Source → Target, Create), Active Mappings
-// (Activate, Delete, filters) and Mapping Import. It is the only Mapping editor.
+// Mapping page (owner decision 2026-11-04): mappings are written as a JSON configuration file
+// and loaded here; the page only shows them. Nothing is edited on the website.
 (function () {
     "use strict";
     const t = (value) => window.hero_integration_i18n?.text(value) ?? (typeof __ === "function" ? __(value) : String(value));
@@ -30,222 +29,231 @@
     };
     const select = (placeholder, items, value = "") => {
         const node = el("select", {class: "form-control input-sm"}, el("option", {value: "", text: placeholder}));
-        for (const item of items) node.append(el("option", {value: item.value, text: item.label, disabled: item.disabled || false}));
+        for (const item of items) node.append(el("option", {value: item.value, text: item.label}));
         node.value = value;
         return node;
     };
     const labelled = (label, control) => el("label", {class: "hms-control"}, el("span", {text: t(label)}), control);
-    const info = (rows) => el("dl", {class: "hms-info"}, ...rows.flatMap(([key, value]) => [el("dt", {text: t(key)}), el("dd", {text: value || "—"})]));
+    const COLUMNS = [["status", "Status"], ["operation_label", "Operation"], ["hero", "HERO"], ["app", "Target App"],
+                     ["target", "Target"], ["revision", "Revision"]];
 
-    function mount(page, context = {}) {
+    const AREA_LABELS = {HeroCustomers: "Customers", HeroProjectMatches: "Projects", HeroCalendarEvents: "Events",
+                         HeroTasks: "Tasks", HeroEmployees: "Employees", HeroProducts: "Products", HeroServices: "Services",
+                         HeroDocuments: "Documents", HeroPictures: "Pictures"};
+    function previewText(preview) {
+        const areas = (preview?.read_services || []).map((row) => `${t(AREA_LABELS[row.target_operation] || row.target_operation)}: ${t(row.state || "")}`);
+        const summary = areas.length ? `${t("Areas in the file")}: ${areas.join(", ")}` : t("The file contains no mapping areas.");
+        return summary + (preview.replace_mappings
+            ? ` ${t("Existing mappings in these areas will be replaced.")} ${preview.replacement?.field_mappings ?? 0} ${t("field mappings")}, ${preview.replacement?.graphql_mappings ?? 0} ${t("GraphQL mappings")}.` : "")
+            + ` ${t("Changed settings")}: ${(preview.settings || []).length}.`;
+    }
+
+    function jsonFormat(payload) {
+        let value;
+        try { value = JSON.parse(payload); } catch (_) { throw new Error(t("The file is not valid JSON.")); }
+        if (["hero-integration-config-v1", "hero-integration-config-v2"].includes(value?.format_version)) return "configuration";
+        if (value?.format_version === "hero-personal-mapping-portable-v2"
+            && value.direction === "FRAPPE_TO_MUTATION") return "mutation";
+        return "unsupported";
+    }
+    function expectedStates(preview) {
+        if (!Array.isArray(preview?.items)) throw new Error(t("Invalid directional import preview."));
+        return preview.items.map(item => {
+            const expected = item.expected;
+            if (!item.definition_id || !expected || !["generation", "draft_revision", "active_revision", "reconciliation_revision"]
+                .every(key => Number.isInteger(expected[key]) && expected[key] >= 0)) throw new Error(t("Invalid directional import preview."));
+            return {definition_id: item.definition_id, generation: expected.generation, draft_revision: expected.draft_revision,
+                active_revision: expected.active_revision, reconciliation_revision: expected.reconciliation_revision};
+        });
+    }
+    function mutationPreviewText(preview) {
+        const counts = {NEW: 0, REPLACE: 0, UNCHANGED: 0, REMOVE: 0};
+        for (const item of preview.items || []) if (Object.hasOwn(counts, item.state)) counts[item.state]++;
+        return `${t("Mutation mappings")}: ${t("New")} ${counts.NEW}, ${t("Replace")} ${counts.REPLACE}, ` +
+            `${t("Unchanged")} ${counts.UNCHANGED}, ${t("Remove")} ${counts.REMOVE}. ${t("No HERO operation will be executed.")}`;
+    }
+
+    function mount(page) {
         const host = page.main.empty().addClass("hero-integration-ui")[0];
-        const state = {data: null, tab: "Query", operation: "", object: null, sourcePath: "", app: "", doctype: "", field: "",
-                       targetFields: [], selected: new Set(), filterOperation: "", search: "", filterType: "", filterValue: ""};
+        const state = {data: null, tab: "Query", operation: "", search: "", filterType: "", filterValue: ""};
         const status = el("p", {class: "hms-status", role: "status", "aria-live": "polite"});
         const say = (message, kind = "") => { status.textContent = message || ""; status.dataset.kind = kind; };
         const root = el("section", {class: "hms"});
         host.append(root);
 
         async function load() {
-            try {
-                state.data = await rpc("simple_mapping_state");
-                render();
-            } catch (error) { say(failure(error), "error"); render(); }
+            try { const data = await rpc("simple_mapping_state"); if (!disposed) state.data = data; }
+            catch (error) { if (!disposed) say(failure(error), "error"); }
+            if (!disposed) render();
         }
 
-        function header() {
-            const tabs = ["Query", "Mutation"].map((name) => el("button", {
-                type: "button", class: `btn btn-sm ${state.tab === name ? "btn-primary" : "btn-default"}`, text: t(name),
-                onclick: () => { state.tab = name; render(); }}));
-            const snapshots = (state.data?.snapshots || []).map((name) => ({value: name, label: name}));
-            const snapshot = select(t("choose snapshot"), snapshots, snapshots[0]?.value || "");
-            return el("header", {class: "hms-header"},
-                el("div", {class: "hms-title"}, el("h2", {text: t("HERO Mapping Editor")}), el("div", {class: "hms-tabs"}, tabs)),
-                labelled("GraphQL Schema Snapshot", snapshot));
-        }
-
-        const operations = () => state.data?.operations || [];
-        const currentOperation = () => operations().find((item) => item.operation === state.operation);
-        const rulesFor = (predicate) => (state.data?.rules || []).filter(predicate);
-
-        function sourceCard() {
-            const editable = operations().filter((item) => item.editable);
-            const operation = select(t("enter operation"), operations().map((item) => ({
-                value: item.operation, label: t(item.label) + (item.editable ? "" : ` (${t("fixed")})`), disabled: !item.editable})), state.operation);
-            operation.addEventListener("change", () => {
-                state.operation = operation.value; state.object = null; state.sourcePath = "";
-                const area = currentOperation();
-                state.doctype = area?.target_doctype || ""; state.app = ""; state.field = ""; state.targetFields = [];
-                render(); loadTargetFields();
-            });
-            const sources = currentOperation()?.sources || [];
-            const objects = [...new Set(sources.map((item) => item.object))].sort();
-            const object = select(t("enter object"), objects.map((value) => ({value, label: value || t("Main record")})), state.object ?? "");
-            object.disabled = !state.operation;
-            object.addEventListener("change", () => { state.object = object.value; state.sourcePath = ""; render(); });
-            const fields = sources.filter((item) => state.object === null || item.object === state.object);
-            const field = select(t("enter field"), fields.map((item) => ({value: item.path, label: item.field})), state.sourcePath);
-            field.disabled = !state.operation;
-            field.addEventListener("change", () => {
-                state.sourcePath = field.value;
-                const picked = sources.find((item) => item.path === field.value);
-                if (picked && state.object === null) state.object = picked.object;
-                render();
-            });
-            const picked = sources.find((item) => item.path === state.sourcePath);
-            const mapped = picked ? rulesFor((rule) => rule.status === "Active" && rule.operation === state.operation && rule.hero === picked.path) : [];
-            return el("section", {class: "hms-card"}, el("h3", {text: t("Source")}),
-                el("div", {class: "hms-row"}, labelled("Operation", operation), labelled("Object", object), labelled("Field", field)),
-                info([["ID", picked?.path], ["Name", picked?.field], ["Type", picked?.type], ["Node", picked ? (picked.object || t("Main record")) : ""],
-                      ["Revision", currentOperation() ? String(currentOperation().revision) : ""],
-                      ["Status", picked ? (mapped.length ? `${t("Mapped to")} ${mapped.map((rule) => rule.target).join(", ")}` : t("Not mapped")) : ""]]),
-                editable.length ? null : el("p", {class: "text-muted", text: t("No area with configurable field rules.")}));
-        }
-
-        async function loadTargetFields() {
-            if (!state.doctype) return;
-            try {
-                const items = [];
-                for (let start = 0; start < 1000; start += 50) {
-                    const page = await rpc("mapping_target_catalog_page", {doctype: state.doctype, start, page_size: 50});
-                    items.push(...page.items);
-                    if (!page.has_more) break;
-                }
-                state.targetFields = items;
-                state.app = items[0]?.app_name || "";
-                render();
-            } catch (error) { say(failure(error), "error"); }
-        }
-
-        function targetCard() {
-            const app = select(t("enter app"), state.app ? [{value: state.app, label: state.app}] : [], state.app);
-            const doctype = select(t("enter DocType"), state.doctype ? [{value: state.doctype, label: state.doctype}] : [], state.doctype);
-            app.disabled = doctype.disabled = true;  // an area writes its own record type
-            const field = select(t("enter field"), state.targetFields.map((item) => ({
-                value: item.path, label: `${item.label || item.path} (${item.path})`, disabled: !item.selectable})), state.field);
-            field.disabled = !state.targetFields.length;
-            field.addEventListener("change", () => { state.field = field.value; render(); });
-            const picked = state.targetFields.find((item) => item.path === state.field);
-            const writer = picked ? rulesFor((rule) => rule.status === "Active" && rule.target === `${state.doctype}.${picked.path}`) : [];
-            const create = el("button", {type: "button", class: "btn btn-primary hms-create", text: t("Create"),
-                disabled: !(state.operation && state.sourcePath && picked?.selectable) || writer.length > 0, onclick: createRule});
-            return el("section", {class: "hms-card"}, el("h3", {text: t("Target")}),
-                el("div", {class: "hms-row"}, labelled("App", app), labelled("DocType", doctype), labelled("Field", field)),
-                info([["ID", picked ? `${state.doctype}.${picked.path}` : ""], ["Name", picked?.label], ["Type", picked?.fieldtype],
-                      ["Node", picked ? state.doctype : ""], ["Revision", ""],
-                      ["Status", picked ? (writer.length ? `${t("Already written by")} ${writer.map((rule) => rule.hero).join(", ")}` : t(picked.reason || "")) : ""]]),
-                el("div", {class: "hms-card-actions"}, create));
-        }
-
-        async function createRule() {
-            say(t("Creating mapping …"));
-            try {
-                const result = await rpc("simple_mapping_create", {operation: state.operation, source_path: state.sourcePath,
-                    target_doctype: state.doctype, target_field: state.field}, true);
-                say(`${t("Mapping is active.")} ${t("Transformation")}: ${t(result.transformation)}`, "success");
-                state.sourcePath = ""; state.field = "";
-                await load();
-            } catch (error) { say(failure(error), "error"); }
-        }
-
-        function visibleRows() {
-            const rows = state.tab === "Query" ? (state.data?.rules || []) : (state.data?.sends || []);
+        function rows() {
+            const all = state.tab === "Query" ? (state.data?.rules || []) : (state.data?.sends || []);
             const needle = state.search.toLowerCase(), value = state.filterValue.toLowerCase();
-            return rows.filter((row) => (!state.filterOperation || row.operation === state.filterOperation)
+            return all.filter((row) => (!state.operation || row.operation === state.operation)
                 && (!needle || `${row.operation_label || row.operation} ${row.hero} ${row.app} ${row.target}`.toLowerCase().includes(needle))
                 && (!state.filterType || !value || String(row[state.filterType] ?? "").toLowerCase().includes(value)));
         }
 
-        async function change(kind) {
-            const rows = (state.data?.rules || []).filter((row) => state.selected.has(row.definition_id));
-            const wanted = rows.filter((row) => kind === "activate" ? row.status === "Inactive" : row.status === "Active");
-            if (!wanted.length) { say(t(kind === "activate" ? "Select inactive mappings to activate." : "Select active mappings to delete."), "error"); return; }
-            if (kind === "remove" && wanted.some((row) => !row.removable)) { say(t("Identity, name and relation rules cannot be removed here."), "error"); return; }
-            const byOperation = new Map();
-            wanted.forEach((row) => byOperation.set(row.operation, [...(byOperation.get(row.operation) || []), row.definition_id]));
-            say(t(kind === "activate" ? "Activating …" : "Deleting …"));
+        const manager = Boolean(window.hero_integration_ui?.isSystemManager);
+        let disposed = false, busy = false, snapshots = [], snapshotName = "", snapshotRequest = 0;
+        function setBusy(value) {
+            busy = value; root.setAttribute("aria-busy", String(value));
+            root.querySelectorAll("button,input,select").forEach(node => { node.disabled = value; });
+        }
+        function context() {
+            const snapshot = snapshots.find(row => row.name === snapshotName);
+            if (!snapshot?.source_instance) throw new Error(t("Choose a validated schema snapshot first."));
+            return {source_instance: snapshot.source_instance, snapshot_name: snapshot.name, direction: "FRAPPE_TO_MUTATION"};
+        }
+        async function loadSnapshots() {
+            const request = ++snapshotRequest;
             try {
-                for (const [operation, ids] of byOperation) {
-                    await rpc(kind === "activate" ? "simple_mapping_activate" : "simple_mapping_remove",
-                              {operation, definition_ids: JSON.stringify(ids)}, true);
+                const all = [];
+                for (let start = 0; start <= 10000; start += 100) {
+                    const page = await rpc("schema_snapshot_list", {start, page_size: 100});
+                    if (disposed || request !== snapshotRequest) return;
+                    all.push(...page);
+                    if (page.length < 100) break;
+                    if (start === 10000) throw new Error(t("The snapshot list could not be loaded completely. Retry before choosing a snapshot."));
                 }
-                state.selected.clear();
-                say(t(kind === "activate" ? "Mappings activated." : "Mappings deleted."), "success");
-                await load();
-            } catch (error) { say(failure(error), "error"); }
+                snapshots = all.filter(row => row.analysis_status === "Validated" && row.configured_source === true)
+                    .sort((a, b) => String(b.creation || b.modified || "").localeCompare(String(a.creation || a.modified || "")));
+                if (!snapshots.some(row => row.name === snapshotName)) snapshotName = snapshots[0]?.name || "";
+                render();
+            } catch (error) { if (!disposed) say(failure(error), "error"); }
+        }
+        function columns() {
+            return COLUMNS.map(([key, label]) => [key, state.tab === "Mutation"
+                ? ({hero: "Target HERO", app: "Source App", target: "Source Frappe"}[key] || label) : label]);
+        }
+        async function importFile(picked) {
+            if (!picked || busy || disposed) return;
+            const tab = state.tab;
+            setBusy(true); say(t("Checking mapping file …"));
+            try {
+                if (picked.size > 5000000) throw new Error(t("The mapping file exceeds the permitted size."));
+                const payload = await picked.text();
+                if (disposed) return;
+                const format = jsonFormat(payload);
+                const mutation = tab === "Mutation";
+                if (mutation && format !== "mutation") throw new Error(t("Import a Mutation mapping JSON file in this tab. Configuration packages belong in Query."));
+                if (!mutation && format !== "configuration") throw new Error(t("Import a configuration package in Query. Mutation mapping files belong in Mutation."));
+                const selected = mutation ? context() : {};
+                const args = mutation ? {payload_json: payload, snapshot_name: selected.snapshot_name, direction: selected.direction} : {payload_json: payload};
+                const preview = await rpc(mutation ? "simple_mapping_import_preview" : "config_import_preview", args, true);
+                if (disposed) return;
+                if (mutation && preview.can_apply !== true) {
+                    const blockers = (preview.blockers || []).map(item => typeof item === "string" ? t(item) : String(item.message || item.reason || JSON.stringify(item)));
+                    say([t("The Mutation mappings cannot be activated."), ...blockers].join(" "), "error"); setBusy(false); return;
+                }
+                const summary = mutation ? mutationPreviewText(preview) : previewText(preview);
+                say(summary);
+                const confirmation = mutation ? t("Import and activate these Mutation mappings? No HERO operation will be executed.")
+                    : t("Import and activate this configuration now?");
+                let consumed = false;
+                frappe.confirm(`${frappe.utils.escape_html(summary)}<br><br>${frappe.utils.escape_html(confirmation)}`, async () => {
+                    if (disposed || consumed) return;
+                    consumed = true;
+                    say(t("Loading mappings …"));
+                    try {
+                        const result = await rpc(mutation ? "simple_mapping_import_apply" : "config_import", mutation
+                            ? {...args, expected_states_json: JSON.stringify(expectedStates(preview)), preview_fingerprint: preview.preview_fingerprint, confirmed: 1}
+                            : {...args, confirmed: 1}, true);
+                        if (disposed) return;
+                        if (mutation && (result.activation !== true || result.execution !== false)) throw new Error(t("Unexpected mapping import result."));
+                        await load();
+                        say(mutation ? t("Mutation mappings imported and activated. No HERO operation was executed.") : t("Mappings loaded and active."), "success");
+                    } catch (error) { if (!disposed) say(`${t("Import failed.")} ${failure(error)}`, "error"); }
+                    finally { if (!disposed) setBusy(false); }
+                }, () => { consumed = true; if (!disposed) { setBusy(false); say(t("Import cancelled.")); } });
+            } catch (error) { if (!disposed) { say(`${t("The file cannot be loaded.")} ${failure(error)}`, "error"); setBusy(false); } }
+        }
+        function loadButton() {
+            const file = el("input", {type: "file", accept: ".json,application/json", class: "hms-file", "aria-label": t("Import mapping JSON")});
+            file.addEventListener("change", () => { const picked = file.files?.[0]; file.value = ""; importFile(picked); });
+            return el("div", {class: "hms-import"}, el("button", {type: "button", class: "btn btn-primary", text: t("Import JSON"),
+                "data-mapping-import": "", onclick: () => file.click()}), file);
+        }
+        async function exportFile() {
+            if (busy || disposed) return;
+            setBusy(true); say(t("Exporting mapping JSON…"));
+            try {
+                const mutation = state.tab === "Mutation";
+                const result = await rpc(mutation ? "mapping_draft_exchange_export" : "config_export",
+                    mutation ? {...context(), format_version: "hero-personal-mapping-portable-v2", drafts_only: 0} : {});
+                if (disposed) return;
+                if (typeof result?.content !== "string" || typeof result?.filename !== "string") throw new Error(t("Invalid mapping export response."));
+                const url = URL.createObjectURL(new Blob([result.content], {type: "application/json"}));
+                const link = el("a", {href: url, download: result.filename});
+                document.body.append(link); link.click(); link.remove();
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
+                say(t("Mapping JSON exported."), "success");
+            } catch (error) { if (!disposed) say(failure(error), "error"); }
+            finally { if (!disposed) setBusy(false); }
         }
 
-        function listCard() {
-            const query = state.tab === "Query";
-            const operation = select(t("All"), operations().map((item) => ({value: item.operation, label: t(item.label)})), state.filterOperation);
-            operation.addEventListener("change", () => { state.filterOperation = operation.value; render(); });
+        function render() {
+            const tabs = ["Query", "Mutation"].map((name) => el("button", {
+                type: "button", class: `btn btn-sm ${state.tab === name ? "btn-primary" : "btn-default"}`, text: t(name),
+                onclick: () => { if (busy) return; state.tab = name; state.operation = ""; render();
+                    if (name === "Mutation" && manager && !snapshots.length) loadSnapshots(); }}));
+            const operations = state.tab === "Query" ? (state.data?.operations || []).map(item => ({value: item.operation, label: t(item.label)}))
+                : [...new Map((state.data?.sends || []).map(row => [row.operation, {value: row.operation, label: row.operation_label || row.operation}])).values()];
+            const operation = select(t("All"), operations, state.operation);
+            operation.addEventListener("change", () => { state.operation = operation.value; renderTable(); });
             const search = el("input", {class: "form-control input-sm", placeholder: t("search mapping"), value: state.search});
             search.addEventListener("input", () => { state.search = search.value; renderTable(); });
-            const type = select(t("type"), [["status", "Status"], ["app", "Target App"], ["target", "Target"], ["hero", "HERO"]]
-                .map(([value, label]) => ({value, label: t(label)})), state.filterType);
+            const type = select(t("type"), columns().filter(([key]) => key !== "revision").map(([value, label]) => ({value, label: t(label)})), state.filterType);
             type.addEventListener("change", () => { state.filterType = type.value; renderTable(); });
             const value = el("input", {class: "form-control input-sm", placeholder: t("value"), value: state.filterValue});
             value.addEventListener("input", () => { state.filterValue = value.value; renderTable(); });
-            const actions = query ? el("div", {class: "hms-list-actions"},
-                el("button", {type: "button", class: "btn btn-default", text: t("Activate"), onclick: () => change("activate")}),
-                el("button", {type: "button", class: "btn btn-default", text: t("Delete"), onclick: () => change("remove")})) : null;
             const table = el("table", {class: "table hms-table"});
+            const count = el("span", {class: "text-muted"});
             function renderTable() {
-                table.replaceChildren(el("thead", {}, el("tr", {}, ...(query ? [el("th", {})] : []),
-                    ...["Status", "Operation", "HERO", "Target App", "Target", "Revision"].map((name) => el("th", {text: t(name)})))));
+                const visible = rows();
+                count.textContent = `${visible.length} ${t("mappings")}`;
                 const body = el("tbody");
-                for (const row of visibleRows()) {
-                    const box = query ? el("input", {type: "checkbox", "aria-label": t("Select"), checked: state.selected.has(row.definition_id)}) : null;
-                    box?.addEventListener("change", () => box.checked ? state.selected.add(row.definition_id) : state.selected.delete(row.definition_id));
-                    body.append(el("tr", {}, query ? el("td", {}, box) : null,
+                for (const row of visible) {
+                    body.append(el("tr", {},
                         el("td", {}, el("span", {class: `hms-badge hms-${String(row.status).toLowerCase()}`, text: t(row.status)})),
                         el("td", {text: t(row.operation_label || row.operation)}), el("td", {text: row.hero}),
                         el("td", {text: row.app}), el("td", {text: row.target}), el("td", {text: String(row.revision ?? "")})));
                 }
-                if (!body.children.length) body.append(el("tr", {}, el("td", {colspan: query ? 7 : 6, class: "text-muted", text: t("No mappings.")})));
-                table.append(body);
+                if (!visible.length) body.append(el("tr", {}, el("td", {colspan: COLUMNS.length, class: "text-muted", text: t("No mappings.")})));
+                table.replaceChildren(el("thead", {}, el("tr", {}, ...columns().map(([, label]) => el("th", {text: t(label)})))), body);
             }
             renderTable();
-            return el("section", {class: "hms-list"},
-                el("div", {class: "hms-list-head"}, el("h3", {text: t(query ? "Active Mappings" : "Active Send Mappings")}), actions),
-                el("div", {class: "hms-filters"}, labelled("Operation", operation), labelled("Search", search),
-                   el("div", {class: "hms-control"}, el("span", {text: t("Filter")}), el("div", {class: "hms-pair"}, type, value))),
-                el("div", {class: "hms-table-wrap"}, table),
-                query ? null : el("p", {class: "text-muted", text: t("Creating send mappings (ERPNext → HERO) follows; sending to HERO is switched off.")}));
-        }
-
-        function importCard() {
-            const file = el("input", {type: "file", accept: ".json,application/json", class: "hms-file"});
-            file.addEventListener("change", async () => {
-                const picked = file.files?.[0]; file.value = "";
-                if (!picked) return;
-                try {
-                    const payload = await picked.text();
-                    await rpc("config_import_preview", {payload_json: payload});
-                    frappe.confirm(t("Import and activate this configuration now?"), async () => {
-                        try {
-                            await rpc("config_import", {payload_json: payload, confirmed: 1}, true);
-                            say(t("Configuration imported."), "success"); await load();
-                        } catch (error) { say(failure(error), "error"); }
-                    });
-                } catch (error) { say(failure(error), "error"); }
-            });
-            return el("section", {class: "hms-import"}, el("h3", {text: t("Mapping Import")}),
-                el("label", {class: "btn btn-default btn-sm"}, t("Choose File"), file));
-        }
-
-        function render() {
-            const query = state.tab === "Query";
-            root.replaceChildren(header(), status,
-                query ? el("section", {class: "hms-map"}, el("h3", {text: t("Map Fields")}),
-                    el("div", {class: "hms-cards"}, sourceCard(), el("div", {class: "hms-arrow", "aria-hidden": "true", text: "→"}), targetCard())) : null,
-                listCard(), importCard());
+            const actions = el("div", {class: "hms-load"});
+            if (manager) {
+                actions.append(loadButton(), el("button", {type: "button", class: "btn btn-default", text: t("Export JSON"),
+                    "data-mapping-export": "", onclick: exportFile}));
+                if (state.tab === "Mutation") {
+                    const snapshot = select(t("Choose a validated snapshot"), snapshots.map(row => ({value: row.name, label: row.display_name || row.name})), snapshotName);
+                    snapshot.setAttribute("data-mapping-snapshot", "");
+                    snapshot.addEventListener("change", () => { snapshotName = snapshot.value; });
+                    actions.append(labelled("Schema snapshot", snapshot));
+                }
+            }
+            root.replaceChildren(
+                el("header", {class: "hms-header"}, el("div", {class: "hms-title"},
+                    el("h2", {text: t("HERO Mappings")}), el("div", {class: "hms-tabs"}, tabs), actions)),
+                status,
+                el("section", {class: "hms-list"},
+                    el("div", {class: "hms-list-head"}, el("h3", {text: t(state.tab === "Query" ? "Active Mappings" : "Active Send Mappings")}), count),
+                    el("div", {class: "hms-filters"}, labelled("Operation", operation), labelled("Search", search),
+                       el("div", {class: "hms-control"}, el("span", {text: t("Filter")}), el("div", {class: "hms-pair"}, type, value))),
+                    el("div", {class: "hms-table-wrap"}, table)),
+                el("p", {class: "text-muted hms-note", text: t(state.tab === "Query"
+                    ? "Query JSON imports and exports the full configuration package. Edit mappings in the JSON file."
+                    : "Mutation JSON contains mappings for the selected snapshot. Import validates and activates mappings; it does not execute HERO operations.")}));
+            setBusy(busy);
         }
 
         render();
         load();
-        return {destroy() { root.remove(); }};
+        return {destroy() { disposed = true; snapshotRequest++; root.remove(); }};
     }
 
-    window.hero_integration_mapping_simple = Object.freeze({mount});
+    window.hero_integration_mapping_simple = Object.freeze({mount, previewText, jsonFormat, expectedStates, mutationPreviewText});
 })();

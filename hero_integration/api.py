@@ -3999,40 +3999,54 @@ def snapshot_import_file(path: str) -> dict[str, object]:
     return {key: result.get(key) for key in ("status", "snapshot_name", "schema_fingerprint", "type_count")}
 
 
-# ---------------------------------------------------------------- simple Mapping editor
-
-def _simple_ids(value) -> list[str]:
-    ids = json.loads(value) if isinstance(value, str) else value
-    if not isinstance(ids, list) or not ids or len(ids) > 200 or any(not isinstance(item, str) or not item for item in ids):
-        frappe.throw(frappe._("Select at least one mapping."))
-    return ids
-
+# ---------------------------------------------------------------- JSON Mapping list and import
 
 @frappe.whitelist(methods=["GET"])
 def simple_mapping_state() -> dict[str, object]:
-    """Areas, their HERO fields and all field rules for the simple Mapping editor."""
+    """Read-only list of active mappings for the configured HERO source."""
     frappe.only_for("System Manager")
     from hero_integration.services.simple_mapping import state
     return state()
 
 
-@frappe.whitelist(methods=["POST"])
-def simple_mapping_create(operation: str, source_path: str, target_doctype: str, target_field: str) -> dict[str, object]:
-    """Create one field rule and apply it immediately (new mapping revision, read service approved again)."""
-    frappe.only_for("System Manager")
-    from hero_integration.services.simple_mapping import create
-    return create(operation, source_path, target_doctype, target_field)
+
+@contextmanager
+def _simple_mapping_import_errors():
+    from hero_integration.services.mapping_draft_exchange import MappingDraftExchangeError
+    from hero_integration.services.schema_provisioning import SchemaProvisioningError
+    try:
+        with _personal_draft_errors():
+            yield
+    except (MappingDraftExchangeError, SchemaProvisioningError) as error:
+        frappe.throw(translate_error(error, frappe._))
 
 
 @frappe.whitelist(methods=["POST"])
-def simple_mapping_remove(operation: str, definition_ids) -> dict[str, object]:
-    frappe.only_for("System Manager")
-    from hero_integration.services.simple_mapping import remove
-    return remove(operation, _simple_ids(definition_ids))
+def simple_mapping_import_preview(payload_json: str, snapshot_name: str, direction: str):
+    """Validate a Mutation JSON import and publication without executing HERO calls."""
+    _mapping_request_fields({"payload_json", "snapshot_name", "direction"})
+    from hero_integration.services.simple_mapping_exchange import preview
+    with _simple_mapping_import_errors():
+        return preview(payload_json, _mapping_text(snapshot_name, "snapshot_name"),
+                       _mapping_text(direction, "direction"))
 
 
 @frappe.whitelist(methods=["POST"])
-def simple_mapping_activate(operation: str, definition_ids) -> dict[str, object]:
-    frappe.only_for("System Manager")
-    from hero_integration.services.simple_mapping import activate
-    return activate(operation, _simple_ids(definition_ids))
+def simple_mapping_import_apply(payload_json: str, snapshot_name: str, direction: str,
+                                expected_states_json: str, preview_fingerprint: str, confirmed=False):
+    """Import and publish the previewed mappings atomically; execution rights stay separate."""
+    _mapping_request_fields({"payload_json", "snapshot_name", "direction", "expected_states_json",
+                             "preview_fingerprint", "confirmed"})
+    if type(confirmed) not in (bool, int, str) or confirmed not in (True, 1, "1", "true"):
+        frappe.throw(frappe._("MAPPING_CONFIRMATION_REQUIRED: Explicit import confirmation is required."))
+    if not isinstance(expected_states_json, str) or len(expected_states_json.encode('utf-8')) > 131072:
+        frappe.throw(frappe._("MAPPING_INPUT_INVALID: Invalid expected states."))
+    try:
+        states = json.loads(expected_states_json)
+    except (TypeError, ValueError):
+        frappe.throw(frappe._("MAPPING_INPUT_INVALID: expected draft states must be JSON."))
+    from hero_integration.services.simple_mapping_exchange import apply
+    with _simple_mapping_import_errors():
+        return apply(payload_json, _mapping_text(snapshot_name, "snapshot_name"),
+                     _mapping_text(direction, "direction"), states,
+                     _mapping_text(preview_fingerprint, "preview_fingerprint"), confirmed=True)
