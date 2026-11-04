@@ -194,7 +194,9 @@ def _version_text(document):
         from hero_integration.services.project_naming import LOCAL_PROJECT_NAME_FIELDS
         if isinstance(name, str) and name in LOCAL_PROJECT_NAME_FIELDS: continue
         field = metadata.get_field(name) if isinstance(name, str) else None
-        if field is None or field.fieldtype == 'Password' or getattr(field, 'hidden', False): continue
+        if (field is None or field.fieldtype == 'Password' or getattr(field, 'hidden', False)
+                or getattr(field, 'read_only', False) or getattr(field, 'is_virtual', False)
+                or getattr(field, 'permlevel', 0)): continue
         if isinstance(before, (dict, list)) or isinstance(after, (dict, list)): continue
         previous = plain_text(str(before)) if before is not None else '—'
         current = plain_text(str(after)) if after is not None else '—'
@@ -206,7 +208,8 @@ def _version_text(document):
                 counts[row[0]] = counts.get(row[0], 0) + 1
         for name, count in counts.items():
             field = metadata.get_field(name)
-            if field is not None and not getattr(field, 'hidden', False) and field.fieldtype == 'Table':
+            if (field is not None and not getattr(field, 'hidden', False) and not getattr(field, 'read_only', False)
+                    and not getattr(field, 'permlevel', 0) and field.fieldtype == 'Table'):
                 lines.append(str(frappe._(field.label or name)) + ': ' + str(frappe._(label)) + ' (' + str(count) + ')')
     return '\n'.join(lines)
 

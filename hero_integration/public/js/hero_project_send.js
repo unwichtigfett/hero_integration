@@ -67,6 +67,8 @@
             if (preview.data_changes.length) content.append(table);
             if (preview.activities.length) content.append(node("h5", t("Project logbook")));
             for (const activity of preview.activities) {
+                content.append(node("p", t(activity.activity_doctype === "Version" ? "Change history" : "Comment")
+                    + (activity.creation ? " · " + activity.creation : ""), "text-muted"));
                 for (const change of activity.changes) {
                     const entry = node("div", change.new, "mb-3");
                     entry.style.cssText = "white-space:pre-wrap;overflow-wrap:anywhere";

@@ -204,3 +204,15 @@ can advance the activity delivery context; a concurrent Project edit still block
 The ordinary activity confirmation always uses the current full fingerprint. No new activity
 is added after confirmation. A failed or uncertain step stops delivery and reports
 confirmed partial results; native durable receipts prevent duplicate logbook sends.
+
+Project activity summaries omit read-only calculated totals, virtual fields and
+fields with restricted permission levels. Each activity is labelled with its
+native kind and timestamp in the combined confirmation.
+
+A legacy Project Notes baseline is compared using its original Trim projection;
+the native Notes baseline uses the current approved canonical projection. Missing
+or inconsistent partial baselines remain conflicts. Only verified outbound
+acknowledgement retires the replaced legacy hash keys. Customer payload changes
+alone do not block an unchanged Project.customer relation when the synchronized
+same-source identity exactly matches the freshly read HERO customer_id. This
+exception never authorizes changing that relation or writing to the Customer.
