@@ -136,3 +136,22 @@ regions without an explicit policy and relationships without a verified inverse
 are not silently converted into writable assignments. Import validation is not
 proof of successful live HERO writeback; no live mutations are required to import
 or verify a mapping package.
+
+## Identical snapshots and repeated imports
+
+Mapping import compares saved old and selected target schemas before changing
+snapshot references. Equal normalized schemas, recomputed fingerprints, source
+and endpoint permit an atomic reference update of the current mapping/rule,
+reader/service and mutation-contract graph. Approval and mapping revisions remain
+unchanged; native validators recheck the group before and after the transition.
+Different schemas fail with a schema-change error rather than a generic draft
+error. Immutable histories retain their original snapshot references; historical
+Customer-rule provenance accepts a different snapshot name only after the same
+source/schema/endpoint proof. Private snapshot-bound Query drafts require explicit
+reconciliation and are never rewritten silently.
+
+Preview simulates and rolls back the reference transition. The confirmed import
+rechecks it under locks. Query imports perform this DML after schema-provisioning
+DDL, so a later failure can roll back the complete metadata transition. Unchanged
+active Mutation mappings are retained without attempting to publish their unsaved
+baseline drafts; only real changes need a saved publication revision.

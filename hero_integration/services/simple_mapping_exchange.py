@@ -64,7 +64,7 @@ def _activation_blockers(package, preview, schema):
     return blockers
 
 
-def preview(payload, snapshot_name, direction):
+def _preview_current(payload, snapshot_name, direction):
     snapshot, schema = _context(snapshot_name, direction)
     package = exchange._parse_portable(payload, direction)
     if any(package.get('schema', {}).values()):
@@ -78,7 +78,7 @@ def preview(payload, snapshot_name, direction):
     return result
 
 
-def apply(payload, snapshot_name, direction, expected_states, preview_fingerprint, *, confirmed=False):
+def _apply_current(payload, snapshot_name, direction, expected_states, preview_fingerprint, *, confirmed=False):
     if confirmed is not True:
         raise MappingDraftError('Explicit import and publication confirmation is required.')
     checked = preview(payload, snapshot_name, direction)
@@ -96,6 +96,21 @@ def apply(payload, snapshot_name, direction, expected_states, preview_fingerprin
             identity = item.get('local_definition_id') or item['definition_id']
             storage = FrappeMappingDraftStorage()
             draft = storage.service().open_draft(identity, frappe.session.user)
+            if draft.content_revision == 0 and draft.base_active_name:
+                # Saving identical active content intentionally creates no saved
+                # revision. Retain that active definition instead of publishing
+                # an unsaved baseline draft.
+                from hero_integration.services.personal_mapping_content import same_value
+                with storage.transaction(identity, frappe.session.user):
+                    active = storage.active(identity)
+                    if (draft.base_active_revision != active.revision or draft.base_active_hash != active.content_hash
+                            or not same_value(draft.content, storage.initial_content(active.content))):
+                        raise MappingDraftError('Active mapping changed before unchanged import confirmation.')
+                    result = {'name': active.name, 'revision': active.revision, 'unchanged': True}
+                storage.service().discard(identity, frappe.session.user, draft.generation,
+                                          draft.content_revision, confirmed=True)
+                published.append({'definition_id': identity, **result})
+                continue
             result = storage.publish(identity, frappe.session.user, draft.generation, draft.content_revision,
                                      draft.base_active_revision, draft.reconciliation_revision, confirmed=True)
             published.append({'definition_id': identity, **result})
@@ -111,3 +126,32 @@ def apply(payload, snapshot_name, direction, expected_states, preview_fingerprin
         raise
     return {'status': 'IMPORTED_MAPPINGS', 'direction': direction, 'activation': True,
             'execution': False, 'mappings': published}
+
+
+def preview(payload, snapshot_name, direction):
+    from hero_integration.services.mapping_snapshot_rebase import preview_target
+    snapshot, _schema = _context(snapshot_name, direction)
+    with preview_target(snapshot_name, snapshot.source_instance):
+        return _preview_current(payload, snapshot_name, direction)
+
+
+def apply(payload, snapshot_name, direction, expected_states, preview_fingerprint, *, confirmed=False):
+    if confirmed is not True:
+        raise MappingDraftError('Explicit import and publication confirmation is required.')
+    checked = preview(payload, snapshot_name, direction)
+    if not checked['can_apply']:
+        raise MappingDraftError('Mutation import has unresolved publication blockers.')
+    if not isinstance(preview_fingerprint, str) or not hmac.compare_digest(preview_fingerprint, checked['preview_fingerprint']):
+        raise MappingDraftError('Mutation import preview changed; preview again before importing.')
+    from hero_integration.services.mapping_snapshot_rebase import prepare
+    snapshot, _schema = _context(snapshot_name, direction)
+    savepoint = 'hero_snapshot_mapping_import_' + uuid4().hex
+    frappe.db.savepoint(savepoint)
+    try:
+        plan = prepare(snapshot_name, snapshot.source_instance)
+        if plan['needs_rebase']:
+            prepare(snapshot_name, snapshot.source_instance, apply=True, expected_fingerprint=plan['fingerprint'])
+        return _apply_current(payload, snapshot_name, direction, expected_states, preview_fingerprint, confirmed=True)
+    except Exception:
+        frappe.db.rollback(save_point=savepoint)
+        raise

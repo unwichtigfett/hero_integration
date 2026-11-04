@@ -4029,11 +4029,12 @@ def _simple_mapping_import_errors():
     from hero_integration.services.mapping_draft_exchange import MappingDraftExchangeError
     from hero_integration.services.schema_provisioning import SchemaProvisioningError
     from hero_integration.services.mapping_only_exchange import MappingOnlyError
+    from hero_integration.services.mapping_snapshot_rebase import SnapshotRebaseError
     from hero_integration.services.config_exchange import ConfigExchangeError
     try:
         with _personal_draft_errors():
             yield
-    except (MappingDraftExchangeError, SchemaProvisioningError, MappingOnlyError, ConfigExchangeError) as error:
+    except (MappingDraftExchangeError, SchemaProvisioningError, MappingOnlyError, ConfigExchangeError, SnapshotRebaseError) as error:
         frappe.throw(translate_error(error, frappe._))
 
 

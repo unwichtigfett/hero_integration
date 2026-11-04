@@ -23,7 +23,9 @@ class TestSimpleMappingExchange(unittest.TestCase):
         self.storage.service.return_value.open_draft.return_value = SimpleNamespace(generation=1,
             content_revision=1, base_active_revision=0, reconciliation_revision=0)
         self.storage.publish.return_value = {'name': 'ACTIVE', 'revision': 1, 'unchanged': False}
-        patches = [patch.object(simple, 'frappe', self.fake),
+        from contextlib import nullcontext
+        patches = [patch('hero_integration.services.mapping_snapshot_rebase.preview_target', side_effect=lambda *a:nullcontext()),
+            patch('hero_integration.services.mapping_snapshot_rebase.prepare', return_value={'needs_rebase':False}),patch.object(simple, 'frappe', self.fake),
             patch.object(simple, '_context', return_value=(SimpleNamespace(source_instance='configured'), {})),
             patch.object(simple.exchange, '_parse_portable', return_value=self.package),
             patch.object(simple.exchange, 'preview_import', side_effect=lambda *args: deepcopy(self.raw)),
@@ -121,6 +123,20 @@ class TestSimpleMappingExchange(unittest.TestCase):
         self.assertEqual(self.storage.publish.call_args.args[0], 'local-definition')
         self.storage.service.return_value.discard.assert_called_once_with('local-definition', 'actor', 3, 4, confirmed=True)
 
+    def test_unchanged_active_zero_revision_is_retained_without_publication(self):
+        from contextlib import nullcontext
+        active=SimpleNamespace(name='ACTIVE',revision=3,content_hash='hash',content={'source':{}})
+        draft=SimpleNamespace(generation=2,content_revision=0,base_active_name='ACTIVE',
+            base_active_revision=3,base_active_hash='hash',content={'source':{}})
+        self.storage.service.return_value.open_draft.return_value=draft
+        self.storage.transaction.return_value=nullcontext()
+        self.storage.active.return_value=active
+        self.storage.initial_content.return_value=active.content
+        result=self.apply(confirmed=True)
+        self.storage.publish.assert_not_called()
+        self.assertTrue(result['mappings'][0]['unchanged'])
+        self.storage.service.return_value.discard.assert_called_once_with('new','actor',2,0,confirmed=True)
+
     def test_any_publication_failure_rolls_back_import_and_earlier_publications(self):
         self.package['mappings'].append({'definition_id': 'other', 'operation_name': 'update_contact', 'content': self.package['mappings'][0]['content']})
         self.raw['items'].append({'definition_id': 'other', 'state': 'NEW', 'expected': {'generation': 0}})
@@ -128,7 +144,7 @@ class TestSimpleMappingExchange(unittest.TestCase):
         with self.assertRaisesRegex(MappingDraftError, 'second fails'):
             self.apply(confirmed=True)
         self.assertEqual(self.storage.publish.call_count, 2)
-        self.fake.db.rollback.assert_called_once_with(save_point=self.fake.db.savepoint.call_args.args[0])
+        self.assertEqual(self.fake.db.rollback.call_count, 2)
 
 
 class TestSimpleMappingExchangeAPI(unittest.TestCase):

@@ -113,7 +113,7 @@ def _target_state(source_instance, operations, *, lock=False):
     return sha256(json.dumps([selected, services, drafts], sort_keys=True, default=str).encode()).hexdigest()
 
 
-def preview(payload, snapshot_name, source_instance):
+def _preview_current(payload, snapshot_name, source_instance):
     frappe.only_for('System Manager')
     value = parse_file(payload)
     snapshot = _snapshot(snapshot_name, source_instance)
@@ -130,7 +130,7 @@ def preview(payload, snapshot_name, source_instance):
     return checked
 
 
-def apply(payload, snapshot_name, source_instance, fingerprint, *, confirmed=False):
+def _apply_current(payload, snapshot_name, source_instance, fingerprint, *, confirmed=False):
     if confirmed is not True:
         raise MappingOnlyError('Explicit mapping import confirmation is required.')
     checked = preview(payload, snapshot_name, source_instance)
@@ -140,11 +140,37 @@ def apply(payload, snapshot_name, source_instance, fingerprint, *, confirmed=Fal
     snapshot = _snapshot(snapshot_name, source_instance)
     operations = [item['target_operation'] for item in value['read_services']]
     observed = checked['target_revision']
+    rebase_savepoint = None
     def verify_current(locked_snapshot):
+        nonlocal rebase_savepoint
+        from hero_integration.services.mapping_snapshot_rebase import prepare
+        from uuid import uuid4
+        # Provisioning may commit DDL implicitly. Start the atomic metadata
+        # transition only here, after all schema DDL has completed.
+        rebase_savepoint = 'hero_snapshot_query_import_' + uuid4().hex
+        frappe.db.savepoint(rebase_savepoint)
+        plan = prepare(snapshot_name, source_instance)
+        if plan['needs_rebase']:
+            prepare(snapshot_name, source_instance, apply=True, expected_fingerprint=plan['fingerprint'])
         if (locked_snapshot.name != snapshot.name
                 or _target_state(source_instance, operations, lock=True) != observed):
             raise MappingOnlyError('The mapping import preview changed; preview the file again.')
-    result = config.import_config(snapshot.name, _configuration(value, snapshot), source_instance,
-                                  before_mapping_write=verify_current)
+    try:
+        result = config.import_config(snapshot.name, _configuration(value, snapshot), source_instance,
+                                      before_mapping_write=verify_current)
+    except Exception:
+        if rebase_savepoint:
+            frappe.db.rollback(save_point=rebase_savepoint)
+        raise
     result.pop('settings', None)
     return {**result, 'direction': 'QUERY_TO_FRAPPE', 'activation': True, 'execution': False}
+
+
+def preview(payload, snapshot_name, source_instance):
+    from hero_integration.services.mapping_snapshot_rebase import preview_target
+    with preview_target(snapshot_name, source_instance):
+        return _preview_current(payload, snapshot_name, source_instance)
+
+
+def apply(payload, snapshot_name, source_instance, fingerprint, *, confirmed=False):
+    return _apply_current(payload, snapshot_name, source_instance, fingerprint, confirmed=confirmed)
