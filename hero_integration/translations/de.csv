@@ -3225,3 +3225,4 @@ An active rule already writes this ERPNext field; remove it first.,Eine aktive R
 Only inactive field rules of this area can be activated.,Nur inaktive Feldregeln dieses Bereichs können aktiviert werden.
 You have an unpublished draft of this mapping; publish or discard it under Advanced first.,Du hast einen unveröffentlichten Entwurf dieses Mappings; veröffentliche oder verwirf ihn zuerst unter „Erweitert“.
 Select at least one mapping.,Wähle mindestens ein Mapping.
+"Creating send mappings (ERPNext → HERO) follows; sending to HERO is switched off.",Das Anlegen von Sende-Mappings (ERPNext → HERO) folgt; das Senden an HERO ist ausgeschaltet.
