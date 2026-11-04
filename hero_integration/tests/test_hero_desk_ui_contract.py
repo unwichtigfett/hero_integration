@@ -121,7 +121,9 @@ class TestHeroDeskUiContract(unittest.TestCase):
         source = SETTINGS_JS.read_text()
         for contract in (
             "Testing", "testingEnabled", "testingMaxActions", "testing_enabled", "testing_max_actions",
-            "manual synchronization previews are limited", "No business data is modified.",
+            "Max. records per area", "Imports write ERPNext data.",
+            "Full Migration applies the limit separately to each area.",
+            "changing it affects new runs only.",
             "Save Testing Settings", "workspace_testing_settings_save",
         ):
             with self.subTest(contract=contract):

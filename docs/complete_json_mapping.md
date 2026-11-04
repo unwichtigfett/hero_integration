@@ -237,3 +237,24 @@ travel through the Project data mapping only. A Notes-only Version is not an
 outbound activity; mixed Versions retain other eligible changes such as status.
 Native manual Comments still transfer their own text unchanged. Existing native
 Versions and previously created HERO entries are retained.
+
+## Test imports with a record limit
+
+In Settings → Testing, **Max. records per area** limits manually started
+previews and imports to 1–100 source records per area. The default is five.
+Execute imports still write ERPNext data; Preview keeps its preview behavior.
+Full Migration applies the same limit separately to every area, so five
+employees and five products may both be processed. Unchanged, skipped and
+failed records also count toward the limit; related ERPNext documents do not
+each consume another source-record slot.
+
+The run freezes this setting at start. Its child runs and background slices
+retain that limit; changing Settings affects new runs only. Reaching the limit
+finishes the bounded test rather than automatically importing the remainder.
+
+A HERO response can contain more records than the configured limit. Run details
+therefore show each area's processed count and received count separately:
+**5/5 processed · 26 received** means five employee records were processed,
+although HERO returned 26. The run-list column **Created / processed** is not
+a progress fraction against the total HERO inventory. Older test-preview runs
+retain their historical HERO-request-budget display.

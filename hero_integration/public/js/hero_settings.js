@@ -282,7 +282,7 @@
         testingSave.type = "button";
         const testingCard = section("Testing", "testing", "",
             field("Enabled", testingEnabled),
-            field("Max. Actions", testingMaxActions, "When enabled, manual synchronization previews are limited to the configured number of HERO API requests and start with the newest available records. No business data is modified."),
+            field("Max. records per area", testingMaxActions, "Limits manually started previews and imports to this many records in each area. Imports write ERPNext data. Full Migration applies the limit separately to each area. The setting is fixed when the run starts; changing it affects new runs only."),
             column("hero-settings-actions", testingSave, testingStatus)
         );
 

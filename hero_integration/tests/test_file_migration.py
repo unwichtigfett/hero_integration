@@ -50,6 +50,7 @@ class TestFullMigrationChain(unittest.TestCase):
 
         self.no_events = False
         self.addCleanup(patch.stopall)
+        patch("frappe.utils.synchronization.filelock", return_value=contextlib.nullcontext()).start()
         patch.object(fm, "frappe", fake).start()
         patch.object(fm, "_start_step", side_effect=start_step).start()
         patch.object(fm, "_enqueue", side_effect=self.queued.append).start()
@@ -199,7 +200,7 @@ class TestSourceBinding(unittest.TestCase):
             def insert(self, **kwargs):
                 created.append(self)
 
-        fake = SimpleNamespace(get_doc=lambda values: _Run(name="RUN-1", **values),
+        fake = SimpleNamespace(get_single=lambda dt: SimpleNamespace(testing_enabled=0), get_doc=lambda values: _Run(name="RUN-1", **values),
                                db=SimpleNamespace(set_default=lambda *a: None, commit=lambda: None))
         with patch.object(fm, "frappe", fake), patch.object(fm, "_configuration", return_value=_config()), \
                 patch.object(fm, "_enqueue"), patch.object(fm.direct_runtime, "resolve_read"), \
@@ -287,7 +288,7 @@ class TestEveryStartPathIsSourceBound(unittest.TestCase):
         def throw(message, *args, **kwargs):
             raise RuntimeError(message)
 
-        self.fake = SimpleNamespace(only_for=lambda *a: None, throw=throw, _=lambda text: text,
+        self.fake = SimpleNamespace(get_single=lambda dt: SimpleNamespace(testing_enabled=0), only_for=lambda *a: None, throw=throw, _=lambda text: text,
                                     get_doc=lambda values: _Run(name="RUN-1", **values),
                                     db=SimpleNamespace(exists=lambda *a, **k: None, set_default=lambda *a: None,
                                                        commit=lambda: None),

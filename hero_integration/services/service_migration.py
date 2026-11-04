@@ -301,7 +301,8 @@ def upsert(row, detail, read, instance, company, downloader):
 
 
 def sync_services(client, *, source_instance, run_name, downloader, should_stop=None, progress=None, verify_source=None,
-                  time_budget=1200, read=None):
+                  time_budget=1200, read=None, record_limit=None, continue_on_conflict=False):
+    from hero_integration.services.migration_testing import validate_checkpoint
     frappe.only_for("System Manager")
     company, schema = preflight(source_instance)
     read = read or runtime.resolve_read(OPERATION, source_instance)
@@ -311,13 +312,18 @@ def sync_services(client, *, source_instance, run_name, downloader, should_stop=
     stamp = products.digest([source_instance, company, schema, read.mapping_version])
     if state.get("stamp") and state["stamp"] != stamp:
         raise ServiceBlocked("Service source, schema, company or mapping changed; start a new run.")
+    validate_checkpoint(state if raw else {}, record_limit, stamp=stamp)
     state.update(stamp=stamp, done=False, stopped=False)
     deadline = time.monotonic() + time_budget
+    from hero_integration.services.migration_testing import bounded_rows, processed
     while time.monotonic() < deadline:
+        if record_limit is not None and processed(state['counts']) >= record_limit:
+            state.update(done=True, testing_limit_reached=True)
+            break
         if should_stop and should_stop():
             state["stopped"] = True
             break
-        rows = runtime.fetch_page(client, read, state["offset"])
+        rows = bounded_rows(state, runtime.fetch_page(client, read, state["offset"]), record_limit)
         if not rows:
             state["done"] = True
             break
@@ -356,8 +362,10 @@ def sync_services(client, *, source_instance, run_name, downloader, should_stop=
                     state["counts"][previous] -= 1
                 state["outcomes"][str(row["id"])] = result
                 state["counts"][result] = state["counts"].get(result, 0) + 1
-                blocked = True
-                break  # retry exactly this identity on resume
+                state.setdefault('errors', {})[str(row['id'])] = state['last_error']
+                if not continue_on_conflict:
+                    blocked = True
+                    break  # retry exactly this identity on explicit legacy resume
             state["offset"] += 1
             state["last_id"] = row["id"]
             previous = state.setdefault("outcomes", {}).get(str(row["id"]))

@@ -365,7 +365,7 @@ def reset_phase(phase: str) -> None:
 
 def transfer(phase: str, *, source_instance: str | None = None, client=None, downloader=None, dry_run: bool = False,
              time_budget: int = TIME_BUDGET_SECONDS, min_free: int = MIN_FREE_BYTES, should_stop=None,
-             progress=None) -> dict:
+             progress=None, record_limit=None, run_name=None) -> dict:
     """Process one phase from its saved offset until done or the time budget ends.
 
     ``source_instance`` is the HERO source the client reads from; every lookup,
@@ -381,12 +381,19 @@ def transfer(phase: str, *, source_instance: str | None = None, client=None, dow
         raise TransferError(f"Unknown phase {phase!r}; use one of {PHASES}.")
     operation = OPERATION[phase]
     read = direct_runtime.resolve_read(operation, source_instance)
-    state = {} if dry_run else _state(phase)
+    from hero_integration.services.migration_testing import bounded_rows, processed, test_state, save_test_state, validate_checkpoint
+    state = {} if dry_run else test_state(run_name, operation) if record_limit is not None else _state(phase)
+    save = (lambda value: save_test_state(run_name, operation, value)) if record_limit is not None else (lambda value: _save_state(phase, value))
+    if record_limit is not None:
+        validate_checkpoint(state, record_limit, source_instance=source_instance, mapping=read.mapping_version)
+        if state.get('done'):
+            return state
     if state.get("done") or state.get("source_instance") != source_instance or "offset" not in state:
         state = {}  # new pass (or another source's cursor); unchanged files are skipped by their link
     state.pop("cursor", None)
     state.setdefault("offset", 0)
     state["source_instance"] = source_instance
+    state["mapping"] = read.mapping_version
     counts = state.setdefault("counts", {})
     projects = _bindings("project", "Project", source_instance)
     customers = _bindings("customer", "Customer", source_instance)
@@ -405,11 +412,14 @@ def transfer(phase: str, *, source_instance: str | None = None, client=None, dow
         counts[key] = counts.get(key, 0) + amount
 
     while True:
+        if record_limit is not None and processed(counts) >= record_limit:
+            state.update(testing_limit_reached=True)
+            break
         page = direct_runtime.fetch_page(client, read, state["offset"])
         bump("requests")
         if not page:
             break
-        rows = [row for row in page if direct_runtime.belongs(operation, row)]
+        rows = bounded_rows(state, [row for row in page if direct_runtime.belongs(operation, row)], record_limit)
         # Unchanged content is not downloaded again, but its target may have
         # become resolvable since (e.g. projects imported after the documents).
         todo = [(row, known.get(direct_runtime.identity(read, row))) for row in rows]
@@ -419,7 +429,7 @@ def transfer(phase: str, *, source_instance: str | None = None, client=None, dow
             if should_stop and index % 25 == 0 and should_stop():
                 state["stopped"] = True
                 if not dry_run:
-                    _save_state(phase, state)  # retry this page; committed files are skipped later
+                    save(state)  # retry this page; committed files are skipped later
                 return state
             detail = found.get(row["uuid"])
             unchanged = bool(link) and link.source_payload_hash == source_hash(row)
@@ -464,7 +474,7 @@ def transfer(phase: str, *, source_instance: str | None = None, client=None, dow
                 continue
             if shutil.disk_usage(partial_dir).free - int(row.get("size") or 0) < min_free:
                 state["last_error"] = "Not enough free disk space; transfer paused."
-                _save_state(phase, state)
+                save(state)
                 return state
             temp = os.path.join(partial_dir, f"{row['id']}.part")
             try:
@@ -480,7 +490,7 @@ def transfer(phase: str, *, source_instance: str | None = None, client=None, dow
                                  message=f"HERO file {row.get('id')} ({row.get('filename')}): {error}")
         state["offset"] += len(page)
         if not dry_run:
-            _save_state(phase, state)
+            save(state)
             if progress:
                 progress(counts)
         if len(page) < read.page_size:
@@ -489,7 +499,7 @@ def transfer(phase: str, *, source_instance: str | None = None, client=None, dow
             return state
     state.update(done=True)
     if not dry_run:
-        _save_state(phase, state)
+        save(state)
     return state
 
 
