@@ -3468,11 +3468,25 @@ def writeback_available(doctype: str, docname: str) -> dict[str, object]:
         fields=["name", "direction", "status", "mapping_json", "mapping_revision", "schema_snapshot", "schema_fingerprint", "source_instance"],
     )
     actions = []
+    from hero_integration.services.personal_mapping_content import unique_json_object
     for row in rows:
         try:
-            context = _writeback_context(row.name, document, mapping_row=row)
+            content = json.loads(row.mapping_json, object_pairs_hook=unique_json_object)
+            source = content.get('source') if isinstance(content, dict) else None
+            # Configured send/update profiles have their own dispatcher. This
+            # endpoint discovers the older, individual field actions only.
+            if (not isinstance(source, dict) or source.get('doctype') != doctype
+                    or 'usage' in content):
+                continue
+            previous_mute = frappe.flags.mute_messages
+            try:
+                frappe.flags.mute_messages = True
+                context = _writeback_context(row.name, document, mapping_row=row)
+            finally:
+                frappe.flags.mute_messages = previous_mute
         except Exception:
-            # Hide send actions for stale/ambiguous links; explain them on explicit preview.
+            # Ineligible actions stay hidden, including their queued Frappe
+            # dialogs. Explicit preview still reports every validation failure.
             continue
         actions.append({
             "mapping_name": row.name,
