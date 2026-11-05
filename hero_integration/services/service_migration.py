@@ -266,6 +266,11 @@ def upsert(row, detail, read, instance, company, downloader):
     if item and item.name != code:
         raise ServiceBlocked("A changed service article number requires an explicit rename.")
     # Every check uses the saved baseline even when the upstream source hash is unchanged.
+    if (item and fields.get("custom_hero_service_vat_percent") is not None
+            and "taxes" not in baseline.get("values", {}) and item.get("taxes")):
+        # Selecting a VAT rate also takes ownership of the derived native tax
+        # table. A populated local table needs its own prior import proof.
+        raise ServiceBlocked("The service article or activity type was edited locally; review the conflict.")
     template = tax_template(company, fields.get("custom_hero_service_vat_percent"))
     if template:
         fields["taxes"] = [{"item_tax_template": template}]

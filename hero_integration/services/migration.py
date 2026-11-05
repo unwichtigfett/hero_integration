@@ -597,9 +597,11 @@ def _refresh_project_phases(run, source) -> None:
 
 
 def _refresh_project_logbook(run, source) -> None:
-    """Add new HERO logbook entries to the Project activity (read-only, outside the checkpoint)."""
+    """Run the legacy global logbook pass only for unrestricted Execute imports."""
     if getattr(source, "query_adapter", None):
         return  # v2 collections are processed from the approved Project row
+    if bool(int(getattr(run, "testing_enabled", 0) or 0)):
+        return  # this legacy pass cannot restrict writes to the run's selected Projects
     client = getattr(source, "client", None)
     if getattr(run, "mode", "Preview") != "Execute" or client is None or not hasattr(source, "project_status_steps"):
         return  # Preview and test doubles never read or write the logbook

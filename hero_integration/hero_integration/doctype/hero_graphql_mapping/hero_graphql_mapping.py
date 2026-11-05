@@ -241,6 +241,8 @@ def _check_active_writeback_conflicts(snapshot_name, source, name, *, area=None)
 
 def _check_active_send_conflicts(source_instance, doctype, name, mode='UPDATE'):
     from hero_integration.hero_integration.doctype.hero_frappe_mapping.hero_frappe_mapping import _lock_active_target
+    if mode == 'UPDATE':
+        _check_cross_usage_update_conflicts(source_instance, doctype, name, 'SEND_TO_HERO')
     _lock_active_target('native-send:' + source_instance, doctype, 'SEND_TO_HERO')
     rows = frappe.db.sql(
         'SELECT name, mapping_json FROM `tabHERO GraphQL Mapping` '
@@ -248,9 +250,7 @@ def _check_active_send_conflicts(source_instance, doctype, name, mode='UPDATE'):
         ('FRAPPE_TO_MUTATION', 'Active', source_instance, name), as_dict=True,
     )
     for row in rows:
-        value = json.loads(row.mapping_json, object_pairs_hook=_unique_json_object)
-        if not isinstance(value, dict):
-            frappe.throw(frappe._('Existing Send mapping cannot be safely inspected.'))
+        value = _inspect_active_native_profile(row.mapping_json)
         if (value.get('usage') == 'SEND_TO_HERO' and value.get('source', {}).get('doctype') == doctype
                 and value.get('send_options', {}).get('mode') == mode):
             frappe.throw(frappe._('An active Send to HERO mapping already owns this document type, source and mode.'))
@@ -258,6 +258,8 @@ def _check_active_send_conflicts(source_instance, doctype, name, mode='UPDATE'):
 
 def _check_active_mapped_update_conflicts(source_instance, snapshot_name, mapping, name):
     from hero_integration.hero_integration.doctype.hero_frappe_mapping.hero_frappe_mapping import _lock_active_target
+    if mapping['usage'] == 'MAPPED_UPDATE_V2':
+        _check_cross_usage_update_conflicts(source_instance, mapping['source']['doctype'], name, mapping['usage'])
     _lock_active_target('mapped-update:' + source_instance, mapping['area'], mapping['usage'])
     for item in sorted(mapping['assignments'], key=lambda row: (row['source']['doctype'], row['source']['field'])):
         _check_active_writeback_conflicts(snapshot_name, item['source'], name, area=mapping['area'])
@@ -266,8 +268,46 @@ def _check_active_mapped_update_conflicts(source_instance, snapshot_name, mappin
         'WHERE direction=%s AND status=%s AND source_instance=%s AND name!=%s FOR UPDATE',
         ('FRAPPE_TO_MUTATION', 'Active', source_instance, name), as_dict=True)
     for row in rows:
-        value = json.loads(row.mapping_json, object_pairs_hook=_unique_json_object)
+        value = _inspect_active_native_profile(row.mapping_json)
         if value.get('usage') == mapping['usage'] and value.get('area') == mapping['area']:
             if mapping['usage'] == 'PROJECT_LOGBOOK_V1':
                 frappe.throw(frappe._('An active Project logbook mapping already owns this HERO source.'))
             frappe.throw(frappe._('An active mapped update already owns this area and HERO source.'))
+
+
+def _inspect_active_native_profile(raw):
+    try:
+        value = json.loads(raw, object_pairs_hook=_unique_json_object)
+        source = value.get('source') if isinstance(value, dict) else None
+        if not isinstance(source, dict) or not isinstance(source.get('doctype'), str) or not source['doctype']:
+            raise ValueError
+        if value.get('usage') not in {None, 'SEND_TO_HERO', 'MAPPED_UPDATE_V2', 'PROJECT_LOGBOOK_V1'}:
+            raise ValueError
+        if value.get('usage') == 'SEND_TO_HERO':
+            options = value.get('send_options')
+            if not isinstance(options, dict) or options.get('mode') not in {'CREATE', 'UPDATE'}:
+                raise ValueError
+        elif value.get('usage') == 'MAPPED_UPDATE_V2':
+            from hero_integration.services.mapped_update_v2 import AREAS
+            if value.get('area') not in AREAS or source['doctype'] != AREAS[value['area']][0]:
+                raise ValueError
+        return value
+    except (ValueError, TypeError):
+        frappe.throw(frappe._('Existing Send mapping cannot be safely inspected.'))
+
+
+def _check_cross_usage_update_conflicts(source_instance, doctype, name, usage):
+    """Both native update runtimes must serialize ownership of the same slot."""
+    from hero_integration.hero_integration.doctype.hero_frappe_mapping.hero_frappe_mapping import _lock_active_target
+    _lock_active_target('native-update:' + source_instance, doctype, 'UPDATE')
+    rows = frappe.db.sql(
+        'SELECT name, mapping_json FROM `tabHERO GraphQL Mapping` '
+        'WHERE direction=%s AND status=%s AND source_instance=%s AND name!=%s FOR UPDATE',
+        ('FRAPPE_TO_MUTATION', 'Active', source_instance, name), as_dict=True)
+    for row in rows:
+        value = _inspect_active_native_profile(row.mapping_json)
+        other_usage = value.get('usage')
+        if (other_usage in {'SEND_TO_HERO', 'MAPPED_UPDATE_V2'} and other_usage != usage
+                and value['source']['doctype'] == doctype
+                and (other_usage == 'MAPPED_UPDATE_V2' or value['send_options']['mode'] == 'UPDATE')):
+            frappe.throw(frappe._('An active Send to HERO mapping already owns this document type, source and mode.'))

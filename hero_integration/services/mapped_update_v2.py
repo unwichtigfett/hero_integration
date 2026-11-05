@@ -877,8 +877,10 @@ def _acknowledge(ctx,prepared,after):
                 data['target_payload_hash']=owned_digest(ctx.document,tuple(fields))
             values=item_values(after,SimpleNamespace(plan=ctx.query_plan));values.pop('owned',None)
             version=ctx.link.mapping_version.removeprefix('product-migration-v3:')
-            data['source_payload_hash']=digest({**values,'mapping':version})
-            data['observed_source_hash']=data['source_payload_hash']
+            # Readback confirms the sent fields, not every remote Item field.
+            # Force the next import to reconcile any other HERO-side changes.
+            data['source_payload_hash']=''
+            data['observed_source_hash']=digest({**values,'mapping':version})
         elif area=='HeroServices': data['target_payload_hash']=digest(state.get('values',{}))
         elif area=='HeroEmployees':
             from hero_integration.services.employee_migration import _digest

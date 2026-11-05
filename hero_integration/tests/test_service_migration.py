@@ -243,6 +243,26 @@ class TestServiceUpsert(unittest.TestCase):
                 self.assertEqual(item.description, incoming)
                 self.assertIn('description', self.write.call_args.args[6])
 
+    def test_new_tax_mapping_preserves_local_table_before_related_work(self):
+        item, mapped = self.mapping_extension(None, 0, 'custom_hero_service_vat_percent')
+        item['taxes'] = [{'item_tax_template': 'Local tax', 'minimum_net_rate': 25}]
+        before = dict(item)
+        with mapped, patch.object(sm, 'composition') as composition, \
+                patch.object(sm, 'activity') as activity, self.assertRaisesRegex(sm.ServiceBlocked, 'edited locally'):
+            sm.upsert(self.row, self.detail, self.read, 'source-a', 'Company', None)
+        self.assertEqual(item, before)
+        self.assertEqual(self.created, [])
+        self.tax.assert_not_called(); self.price.assert_not_called(); self.write.assert_not_called()
+        composition.assert_not_called(); activity.assert_not_called()
+
+    def test_new_tax_mapping_can_fill_an_empty_native_table(self):
+        item, mapped = self.mapping_extension(None, 0, 'custom_hero_service_vat_percent')
+        item['taxes'] = []
+        with mapped:
+            self.assertEqual(sm.upsert(self.row, self.detail, self.read, 'source-a', 'Company', None), 'updated')
+        self.assertEqual(item.taxes, [{'item_tax_template': 'Tax Zero'}])
+        self.assertIn('taxes', self.write.call_args.args[6])
+
     def test_zero_or_ambiguous_tax_resolution_blocks_before_item_creation(self):
         self.tax.side_effect=sm.ServiceBlocked('Tax review')
         with self.assertRaises(sm.ServiceBlocked):
