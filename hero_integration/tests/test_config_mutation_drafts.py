@@ -25,7 +25,7 @@ class TestCombinedMutationConfiguration(TestCase):
     def test_closed_configuration_preserves_prepared_updates(self):
         value=package()
         self.assertEqual(config._parse(json.dumps(value)),value)
-        self.assertEqual(drafts.summary(value)['mutation_mappings'],{'count':1,'state':'Draft','execution':False,'assignments':1})
+        self.assertEqual(drafts.summary(value)['mutation_mappings'],{'count':1,'state':'Active','execution':False,'assignments':1})
         for change in ('duplicate','foreign_query','not_replacement','execution_flag'):
             data=deepcopy(value)
             if change=='duplicate':
@@ -35,13 +35,16 @@ class TestCombinedMutationConfiguration(TestCase):
             else:data['mutation_mappings'][0]['content']['execute']=True
             with self.subTest(change=change),self.assertRaises(ValueError):config._parse(json.dumps(data))
 
-    def test_draft_import_uses_current_preview_and_never_publishes(self):
+    def test_import_publishes_reviewed_mappings_without_execution(self):
         value=package();identity=value['mutation_mappings'][0]['definition_id']
         expected={'generation':0,'draft_revision':0,'active_revision':0,'reconciliation_revision':0}
         preview={'can_save':True,'preview_fingerprint':'reviewed','items':[{'definition_id':identity,'expected':expected}]}
-        with patch.object(exchange,'preview_import',return_value=preview),patch.object(exchange,'save_import',return_value={'activation':False}) as save:
+        with patch.object(exchange,'preview_import',return_value=preview),patch.object(exchange,'save_import',return_value={'activation':False}) as save, \
+             patch('hero_integration.services.simple_mapping_exchange.publish_imported_mappings', return_value=[{'name':'active'}]) as publish:
             result=drafts.save(value,'source-a','snapshot')
-        self.assertFalse(result['mutation_import']['activation'])
+        self.assertTrue(result['mutation_import']['activation'])
+        self.assertFalse(result['mutation_mappings']['execution'])
+        publish.assert_called_once_with(preview['items'])
         args,kwargs=save.call_args
         self.assertEqual(args[4],[{'definition_id':identity,**expected}])
         self.assertEqual(kwargs,{'confirmed':True,'preview_fingerprint':'reviewed'})

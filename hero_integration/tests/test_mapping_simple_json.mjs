@@ -84,7 +84,7 @@ test('saved mappings are listed and require confirmation before publication', as
     const draft = {definition_id:'def-1', state:'OPEN', generation:2, content_revision:3,
         base_active_revision:4, reconciliation_revision:1, warning_fingerprint:'', warnings:[]};
     const app = await setup({
-        mapping_draft_list: () => ({items:[{definition_id:'def-1', snapshot_name:'snapshot', operation_name:'contacts', active_mapping:'active', active_revision:4}], has_more:false}),
+        mapping_draft_list: () => ({items:[{definition_id:'def-1', snapshot_name:'snapshot', source_instance:'source', operation_name:'contacts', active_mapping:'active', active_revision:4}], has_more:false}),
         mapping_draft_read: () => ({draft}),
         mapping_draft_publish: () => ({name:'active'}),
     });
@@ -99,11 +99,28 @@ test('saved mappings are listed and require confirmation before publication', as
     assert.equal(request.args.confirmed, 1);
 });
 
+test('activation includes drafts on older snapshots of the configured source', async () => {
+    const draft = {definition_id:'def-1', state:'OPEN', generation:1, content_revision:1,
+        base_active_revision:1, reconciliation_revision:0, warnings:[]};
+    const app = await setup({
+        mapping_draft_list: () => ({items:[
+            {definition_id:'def-1', snapshot_name:'older-snapshot', source_instance:'source', operation_name:'contacts', active_mapping:'active', active_revision:1},
+            {definition_id:'foreign', snapshot_name:'older-snapshot', source_instance:'foreign', operation_name:'foreign', active_mapping:'other', active_revision:1}], has_more:false}),
+        mapping_draft_read: () => ({draft}),
+        mapping_draft_publish: () => ({name:'active'}),
+    });
+    await app.click('Activate Mappings');
+    assert.match(app.confirmations[0].message, /older-snapshot/);
+    assert.deepEqual(app.calls.filter(call => call.method === 'mapping_draft_read').map(call => call.args.definition_id), ['def-1']);
+    await app.confirmations[0].accept();
+    assert.equal(app.calls.filter(call => call.method === 'mapping_draft_publish').length, 1);
+});
+
 test('failed activation reports partial result instead of success', async () => {
     const draft = {definition_id:'def-1', state:'OPEN', generation:1, content_revision:1,
         base_active_revision:1, reconciliation_revision:0};
     const app = await setup({
-        mapping_draft_list: () => ({items:[{definition_id:'def-1', snapshot_name:'snapshot', operation_name:'contacts', active_mapping:'active', active_revision:1}], has_more:false}),
+        mapping_draft_list: () => ({items:[{definition_id:'def-1', snapshot_name:'snapshot', source_instance:'source', operation_name:'contacts', active_mapping:'active', active_revision:1}], has_more:false}),
         mapping_draft_read: () => ({draft}),
         mapping_draft_publish: () => { throw new Error('Mapping changed'); },
     });
@@ -116,7 +133,7 @@ test('changed mapping requires individual conflict choice and saves reconciliati
     const draft = {definition_id:'def-1', state:'OPEN', generation:1, content_revision:2,
         base_active_revision:3, reconciliation_revision:0, content_json:'{"field":"draft"}', warnings:[]};
     const app = await setup({
-        mapping_draft_list: () => ({items:[{definition_id:'def-1', snapshot_name:'snapshot', operation_name:'contacts', active_mapping:'active', active_revision:4}], has_more:false}),
+        mapping_draft_list: () => ({items:[{definition_id:'def-1', snapshot_name:'snapshot', source_instance:'source', operation_name:'contacts', active_mapping:'active', active_revision:4}], has_more:false}),
         mapping_draft_read: () => ({draft}),
         mapping_draft_reconcile_preview: () => ({items:[{identifier:'field',state:'CONFLICT',active_json:'"active"',draft_json:'"draft"'}, {identifier:'other',state:'ACTIVE_ONLY'}]}),
         mapping_draft_reconcile_apply: () => ({result_content_json:'{"field":"draft"}', reconciliation_json:'proof'}),

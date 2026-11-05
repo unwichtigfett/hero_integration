@@ -78,7 +78,8 @@
         const message = imported
             ? "Replaced: {0} field mappings and {1} GraphQL mappings. Previous versions remain in history."
             : "Existing mappings in these areas will be replaced: {0} field mappings and {1} GraphQL mappings. Previous versions remain in history.";
-        return " " + format(message, replacement.field_mappings ?? 0, replacement.graphql_mappings ?? 0);
+        return " " + format(message, replacement.field_mappings ?? 0, replacement.graphql_mappings ?? 0)
+            + (imported ? "" : ` ${uiText("Replaced drafts and their history will be deleted.")}`);
     }
     function packageMutationSummary(value, imported = false) {
         const contracts = Array.isArray(value.mutation_contracts?.contracts) ? value.mutation_contracts.contracts : [];
@@ -91,7 +92,7 @@
         }
         const drafts = value.mutation_mappings?.count;
         if (Number.isInteger(drafts) && drafts > 0) {
-            messages.push(format(imported ? "Mutation mappings imported as drafts: {0}." : "Mutation mappings to import as drafts: {0}.", drafts));
+            messages.push(format(imported ? "Mutation mappings imported and activated: {0}." : "Mutation mappings to import and activate: {0}.", drafts));
         }
         if (!messages.length) return "";
         messages.push(uiText(imported ? "No HERO operation was executed." : "No HERO operation will be executed."));

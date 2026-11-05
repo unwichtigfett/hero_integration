@@ -716,6 +716,8 @@ def _new_replacement_mapping(snapshot, item, rules, source_instance, created, se
         expected_reconciliation_revision=draft.reconciliation_revision).draft
     saved = storage.publish(identity, frappe.session.user, draft.generation, draft.content_revision, 0,
                             draft.reconciliation_revision, confirmed=True)
+    from hero_integration.services.mapping_draft_exchange import _delete_replaced_draft
+    _delete_replaced_draft(draft)
     return frappe.get_doc("HERO GraphQL Mapping", saved["name"])
 
 
@@ -959,6 +961,8 @@ def _replace_config(snapshot_name, payload, source_instance, *, before_mapping_w
 
 def _archive_replaced_drafts(source_instance, operations):
     from hero_integration.services.frappe_mapping_draft_storage import FrappeMappingDraftStorage
+    from hero_integration.services.mapping_draft_exchange import _delete_replaced_draft
+    from types import SimpleNamespace
     actor = frappe.session.user
     for name in frappe.get_all("HERO Mapping Draft", filters={"owner_user": actor, "site_scope": frappe.local.site,
                                                              "state": "OPEN"}, pluck="name", limit_page_length=0):
@@ -975,6 +979,7 @@ def _archive_replaced_drafts(source_instance, operations):
         if matches:
             FrappeMappingDraftStorage().service().discard(doc.definition_id, actor, int(doc.generation),
                                                         int(doc.content_revision), confirmed=True)
+            _delete_replaced_draft(SimpleNamespace(key=doc.draft_key, owner=actor, site_scope=frappe.local.site))
 
 
 def _native_parent(snapshot, item, candidates):

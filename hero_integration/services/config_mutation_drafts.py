@@ -38,7 +38,7 @@ def summary(payload):
     mappings = payload.get('mutation_mappings', [])
     if not mappings:
         return {}
-    return {'mutation_mappings': {'count': len(mappings), 'state': 'Draft', 'execution': False,
+    return {'mutation_mappings': {'count': len(mappings), 'state': 'Active', 'execution': False,
             'assignments': sum(len(item['content']['assignments']) for item in mappings)}}
 
 
@@ -53,7 +53,9 @@ def save(payload, source_instance, snapshot_name):
     expected = [{'definition_id': row['definition_id'], **row['expected']} for row in preview['items']]
     result = exchange.save_import(body, source_instance, snapshot_name, DIRECTION, expected,
                                  confirmed=True, preview_fingerprint=preview['preview_fingerprint'])
-    return {**summary(payload), 'mutation_import': result}
+    from hero_integration.services.simple_mapping_exchange import publish_imported_mappings
+    published = publish_imported_mappings(preview['items'])
+    return {**summary(payload), 'mutation_import': {**result, 'activation': True, 'mappings': published}}
 
 
 def export(source_instance, snapshot_name):

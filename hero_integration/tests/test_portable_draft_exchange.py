@@ -70,8 +70,18 @@ class Fake:
         self.snapshot = SimpleNamespace(name=snapshot, source_instance=source, analysis_status='Validated',
             schema_fingerprint=analyze_snapshot(SCHEMA).fingerprint, snapshot_json=json.dumps(SCHEMA),
             check_permission=lambda *_: None)
-        self.db = SimpleNamespace(sql=self.sql, savepoint=self.savepoint, rollback=self.rollback, exists=self.exists,
+        self.db = SimpleNamespace(sql=self.sql, savepoint=self.savepoint, rollback=self.rollback, exists=self.exists, delete=self.delete,
                                   get_value=lambda *args: ('', ''), has_column=lambda *args: True)
+    def delete(self, doctype, filters):
+        if doctype == 'HERO Mapping Draft':
+            row = self.drafts.get(filters['name'])
+            if row and all(row.get(k) == v for k, v in filters.items()):
+                del self.drafts[filters['name']]
+        elif doctype == 'HERO Mapping Revision':
+            self.revisions = {key: row for key, row in self.revisions.items()
+                              if not all(row.get(k) == v for k, v in filters.items())}
+        elif doctype != 'Version':
+            raise AssertionError(doctype)
     def exists(self, doctype, filters):
         if doctype == 'DocType': return filters == 'Customer'
         if doctype == 'Custom Field': return (filters['dt'], filters['fieldname']) in self.schema_fields
@@ -143,7 +153,10 @@ class Fake:
         if query.startswith('select definition_id from `tabHERO Mapping Draft`'):
             return [Row(row) for row in self.drafts.values() if row['definition_id'] == params[0]]
         if 'tabHERO Mapping Draft' in query:
-            row = self.drafts.get(params[0]); return [Row(row)] if row else []
+            row = self.drafts.get(params[0])
+            if query.startswith('select name from `tabHERO Mapping Draft` where name=%s and owner_user=%s'):
+                return [Row(row)] if row and (row.get('owner_user'), row.get('site_scope'), row.get('state')) == params[1:] else []
+            return [Row(row)] if row else []
         if 'tabHERO Mapping Revision' in query:
             value = self.revisions.get(tuple(params))
             return [Row(value)] if value else []
@@ -156,6 +169,8 @@ class Fake:
         if args[0] == 'HERO Frappe Mapping': return Document(self, next(row for row in self.rules if row['name'] == args[1]))
         raise AssertionError(args)
     def get_all(self, doctype, filters, fields, **kwargs):
+        if doctype == 'HERO Mapping Revision':
+            return [Row(row) for row in self.revisions.values() if all(row.get(k) == v for k, v in filters.items())]
         if doctype == 'Custom Field':
             value = self.schema_fields.get((filters['dt'], filters['fieldname']))
             return [Row(value)] if value else []
@@ -1059,6 +1074,23 @@ class TestPortableDraftExchange(unittest.TestCase):
             self.assertEqual(FrappeMappingDraftStorage(existing).service().open_draft('legacy-local-C', existing.session.user).content, content)
             self.assertEqual(existing.active[0]['name'], 'DOC-C')
             self.assertEqual(json.loads(existing.active[0]['mapping_json'])['identity_path'], 'email')
+            # A later publication changes the active baseline while the old
+            # imported draft is still open. A confirmed reimport must work.
+            existing.active[0]['mapping_revision'] += 1
+            preview = exchange.preview_import(raw, 'source-C', 'snapshot-C', 'QUERY_TO_FRAPPE')
+            expected = [dict(definition_id=i['definition_id'], **i['expected']) for i in preview['items']]
+            before_drafts, before_revisions = deepcopy(existing.drafts), deepcopy(existing.revisions)
+            with patch('hero_integration.services.mapping_draft_service.MappingDraftService.save', side_effect=RuntimeError('save failed')):
+                with self.assertRaisesRegex(RuntimeError, 'save failed'):
+                    exchange.save_import(raw, 'source-C', 'snapshot-C', 'QUERY_TO_FRAPPE', expected,
+                                         confirmed=True, preview_fingerprint=preview['preview_fingerprint'])
+            self.assertEqual(existing.drafts, before_drafts)
+            self.assertEqual(existing.revisions, before_revisions)
+            exchange.save_import(raw, 'source-C', 'snapshot-C', 'QUERY_TO_FRAPPE', expected,
+                                 confirmed=True, preview_fingerprint=preview['preview_fingerprint'])
+            draft = FrappeMappingDraftStorage(existing).service().open_draft('legacy-local-C', existing.session.user)
+            self.assertEqual(draft.base_active_revision, existing.active[0]['mapping_revision'])
+            self.assertEqual(draft.content, content)
 
     def test_active_mutation_export_fresh_target(self):
         source, target = Fake('source.test', 'source-A', 'snapshot-A'), Fake('target.test', 'source-B', 'snapshot-B')

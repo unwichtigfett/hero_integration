@@ -32,6 +32,7 @@ class TestSimpleMappingExchange(unittest.TestCase):
             patch.object(simple.exchange, 'preview_import', side_effect=lambda *args: deepcopy(self.raw)),
             patch.object(simple.exchange, '_preview_binding', return_value='activation-proof'),
             patch.object(simple.exchange, 'save_import'),
+            patch.object(simple.exchange, '_delete_replaced_draft'),
             patch.object(simple, 'FrappeMappingDraftStorage', return_value=self.storage),
             patch('hero_integration.services.frappe_writeback.normalise_mapping', side_effect=lambda value, schema: value)]
         for item in patches:
