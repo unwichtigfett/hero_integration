@@ -3665,3 +3665,6 @@ Testing imports cannot resume; start a new bounded run.,Testimporte können nich
 The frozen testing context changed; start a new run.,Der beim Start festgelegte Testkontext wurde geändert; starten Sie einen neuen Lauf.
 Saved contact communication differs from the mapped source value.,Die gespeicherten Kontaktdaten unterscheiden sich vom gemappten Quellwert.
 A nonpaginated employee read requires its single approved request.,Eine Mitarbeiterabfrage ohne Seiteneinteilung darf nur einmal mit der genehmigten Anfrage ausgeführt werden.
+An explicit Query rule identity is not selected by its imported area.,Eine ausdrücklich referenzierte Query-Regel gehört nicht zur importierten Bereichsauswahl.
+The published Query rule selection is incomplete.,Die veröffentlichte Query-Regelauswahl ist unvollständig.
+An explicit Query rule identity has no unique equivalent in its published area.,Für eine ausdrücklich referenzierte Query-Regel gibt es im veröffentlichten Bereich keine eindeutige Entsprechung.

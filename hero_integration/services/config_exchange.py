@@ -549,6 +549,7 @@ def _replacement_check(snapshot, payload, rules):
             service = SimpleNamespace(name="replacement-preview", operation_name=item["operation_name"], query_document=item["query"])
             seal_query(service, snapshot, config, plan)
     if payload.get('mutation_mappings'):
+        _explicit_mutation_rules(payload)
         from hero_integration.services.personal_mapping_content import configured_mutation_helpers
         try:
             for mutation in payload['mutation_mappings']:
@@ -749,6 +750,63 @@ def _retire_replaced(source_instance, operations, keep, keep_services):
     return {"operations": list(operations), "field_mappings": retired, "graphql_mappings": len(old)}
 
 
+def _explicit_mutation_rules(payload):
+    """An explicit readback identity belongs to its own imported Query area."""
+    selections = {item['target_operation']: set(item['mapping']['mapping_definition_ids'])
+                  for item in payload['read_services']}
+    references = {}
+    for item in payload.get('mutation_mappings', []):
+        content = item['content']
+        if content.get('usage') != 'MAPPED_UPDATE_V2':
+            continue
+        area = content['area']
+        ids = {assignment['query_rule_id'] for assignment in content['assignments']
+               if assignment.get('query_rule_id')}
+        if not ids <= selections.get(area, set()):
+            raise ConfigExchangeError('An explicit Query rule identity is not selected by its imported area.')
+        if ids:
+            references.setdefault(area, set()).update(ids)
+    return references
+
+
+def _remap_mutation_rules(payload, rules, mappings):
+    """Bind portable rule references to the actual published area selection."""
+    from hero_integration.services.personal_mapping_content import same
+    references = _explicit_mutation_rules(payload)
+    if not references:
+        return payload
+    imported = {item['target_operation']: item['mapping'] for item in payload['read_services']}
+    identities = {}
+    for area, ids in references.items():
+        mapping = mappings[area]
+        config = json.loads(mapping.mapping_json)
+        selected = config['mapping_definition_ids']
+        active = frappe.get_all('HERO Frappe Mapping', filters={
+            'definition_id': ['in', selected], 'status': 'Active',
+            'schema_snapshot': mapping.schema_snapshot, 'operation': area},
+            fields=['*'], limit_page_length=0)
+        if {row.definition_id for row in active} != set(selected):
+            raise ConfigExchangeError('The published Query rule selection is incomplete.')
+        source_options = (imported[area].get('query_adapter') or {}).get('transform_options', {})
+        target_options = (config.get('query_adapter') or {}).get('transform_options', {})
+        identities[area] = {}
+        for identity in ids:
+            matches = [row.definition_id for row in active
+                       if same(_rule_values(rules[identity]), _rule_values(row))
+                       and same(source_options.get(identity, {}), target_options.get(row.definition_id, {}))]
+            if len(matches) != 1:
+                raise ConfigExchangeError('An explicit Query rule identity has no unique equivalent in its published area.')
+            identities[area][identity] = matches[0]
+    result = deepcopy(payload)
+    for item in result.get('mutation_mappings', []):
+        content = item['content']
+        if content.get('usage') == 'MAPPED_UPDATE_V2':
+            for assignment in content['assignments']:
+                if assignment.get('query_rule_id'):
+                    assignment['query_rule_id'] = identities[content['area']][assignment['query_rule_id']]
+    return result
+
+
 def _replace_config(snapshot_name, payload, source_instance, *, before_mapping_write=None):
     from hero_integration import api
     from hero_integration.services.schema_provisioning import provision_schema
@@ -758,8 +816,6 @@ def _replace_config(snapshot_name, payload, source_instance, *, before_mapping_w
     snapshot, state = _source_snapshot(snapshot_name, payload, source_instance)
     _replacement_check(snapshot, payload, rules)
     operations = [operation for operation in AREA_ORDER if any(item["target_operation"] == operation for item in payload["read_services"])]
-    candidates = _source_mappings(source_instance, operations)
-    _check_native_parents(snapshot, payload, candidates)
     # Schema DDL is explicitly completed before mapping writes/savepoints.
     provision_schema(payload["mapping_package"]["schema"])
     if state == "New":
@@ -767,13 +823,13 @@ def _replace_config(snapshot_name, payload, source_instance, *, before_mapping_w
     lock_exchange_context(source_instance, snapshot.name, "QUERY_TO_FRAPPE")
     if before_mapping_write is not None:
         before_mapping_write(snapshot)
-    operations = [operation for operation in AREA_ORDER if any(item["target_operation"] == operation for item in payload["read_services"])]
-    candidates = _source_mappings(source_instance, operations)
     package_key = "hero-config:" + source_instance + ":" + snapshot.schema_fingerprint + ":" + sha256(
         json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
-    created, kept, results = {}, set(), []
+    created, kept, results, selected_mappings = {}, set(), [], {}
     frappe.db.savepoint("hero_configuration_replace")
     try:
+        candidates = _source_mappings(source_instance, operations)
+        _check_native_parents(snapshot, payload, candidates)
         for item in sorted(payload["read_services"], key=lambda value: AREA_ORDER.index(value["target_operation"])):
             equivalent = _existing_equivalent(item, rules, candidates, created)
             parent = _native_parent(snapshot, item, candidates) if not item["mapping"].get("query_adapter") else None
@@ -803,22 +859,24 @@ def _replace_config(snapshot_name, payload, source_instance, *, before_mapping_w
             else:
                 api.approve_read_service(reader.name, mapping.name, int(reader.service_revision), int(mapping.mapping_revision))
             created[item["target_operation"]] = reader.name
+            selected_mappings[item["target_operation"]] = mapping
             kept.add(mapping.name)
             results.append({"target_operation": item["target_operation"], "state": "Unchanged" if unchanged else "Approved", "service": reader.name})
         _archive_replaced_drafts(source_instance, operations)
         replacement = _retire_replaced(source_instance, operations, kept, set(created.values()))
         _verify_replacement_readers(snapshot, created)
+        mutation_payload = _remap_mutation_rules(payload, rules, selected_mappings)
         contract_result = {}
         if payload.get('mutation_contracts'):
             from hero_integration.services.config_mutation_contracts import apply as import_contracts
             try:
                 contract_result['mutation_contracts'] = import_contracts(snapshot, payload['mutation_contracts'], source_instance,
-                    confirmed=True, mutation_mappings=payload.get('mutation_mappings', []))
+                    confirmed=True, mutation_mappings=mutation_payload.get('mutation_mappings', []))
             except ValueError as error:
                 raise ConfigExchangeError.from_error(error) from error
         from hero_integration.services.config_mutation_drafts import save as save_mutation_drafts
         try:
-            mutation_result = save_mutation_drafts(payload, source_instance, snapshot.name)
+            mutation_result = save_mutation_drafts(mutation_payload, source_instance, snapshot.name)
         except ValueError as error:
             raise ConfigExchangeError.from_error(error) from error
         changes = _settings_changes(payload)

@@ -280,6 +280,11 @@ def validate_plan(plan):
                     'project_address': 'HeroProjectMatches', 'sales_prices': 'HeroProducts'}[relation['kind']]
         if operation != expected:
             raise ValueError('Native relation does not belong to the selected migration area.')
+        if relation['kind'] == 'sales_prices':
+            scalar_lists = {d.relation for d in plan.definitions if d.target_doctype == 'Item Price'}
+            collection_lists = {binding['name'] for binding in relation['price_lists'].values()}
+            if scalar_lists & collection_lists:
+                raise ValueError('Each price list may be fed by one rule only.')
     if operation == 'HeroCalendarEvents':
         names = {d.target_field for d in plan.definitions if d.target_doctype == 'Event'}
         if not {'subject', 'starts_on', 'all_day'} <= names:
