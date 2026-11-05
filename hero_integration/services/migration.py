@@ -1680,14 +1680,17 @@ def _migrate_project(record: dict[str, object], run) -> Result:
         review_reason=" ".join(review) or None,
         creation_values=None if getattr(plan, 'adapter_options', None) else _project_creation_values(record, values.get("company")),
     )
+    unresolved_assignees = False
     if (run.mode != 'Preview' and result.target_name and 'project_match_assignments' in record
             and result.code in {'CREATED', 'UPDATED', 'SKIPPED', 'CONVERGED'}):
         from hero_integration.integrations.project_assignments import sync as sync_assignees
         assignees = sync_assignees(result.target_name, record)
         if assignees["unmatched"]:
             from dataclasses import replace
-            result = replace(result, detail=(result.detail or "") + (
-                f" {assignees['unmatched']} assignee(s) have no ERPNext user with their e-mail."))
+            unresolved_assignees = True
+            result = replace(result, detail=(result.detail or "") + ' ' + frappe._(
+                '{0} project assignee(s) could not be resolved to an active, source-bound ERPNext user; existing assignments were preserved and require review.'
+            ).format(assignees['unmatched']))
     if (getattr(plan, 'adapter_options', None)
             and (result.target_name or run.mode == 'Preview')
             and result.code in {'CREATED', 'UPDATED', 'SKIPPED', 'CONVERGED', 'OBSERVED', 'PREVIEW_OK'}):
@@ -1701,6 +1704,9 @@ def _migrate_project(record: dict[str, object], run) -> Result:
     if name_note and _creates(result):
         from dataclasses import replace
         result = replace(result, detail=(result.detail or "") + name_note)
+    if unresolved_assignees and result.code in {'CREATED', 'UPDATED', 'SKIPPED', 'CONVERGED', 'OBSERVED'}:
+        from dataclasses import replace
+        result = replace(result, code='CONFLICT')
     return result
 
 

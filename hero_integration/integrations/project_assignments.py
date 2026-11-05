@@ -1,9 +1,10 @@
 """HERO project assignees ("Bearbeiter") as native ERPNext assignments (ToDo) on the Project.
 
 Users are matched by the HERO user ID stored on the ERPNext user (people sync);
-records of the older e-mail contract are matched by e-mail. Unknown people are skipped. Only assignments this
-import created (marked in their description) are closed when HERO removes the
-assignee; assignments made in ERPNext stay untouched. No e-mail is sent.
+records of the older e-mail contract are matched by e-mail. Unknown people are reported and prevent
+removal decisions from an incomplete user list. Only assignments this import created (marked in their
+description) are closed when HERO removes the assignee; assignments made in ERPNext stay untouched.
+No e-mail is sent.
 """
 from __future__ import annotations
 
@@ -46,6 +47,7 @@ def sync(project: str, record: dict, frappe_api=None) -> dict:
 
     users = {key: (user_by_hero_user(key[1], source_instance=record.get('_hero_source_instance')) if key[0] == "id" else _user_for(key[1], frappe_api)) for key in found}
     wanted = {user for user in users.values() if user}
+    unmatched = sum(1 for user in users.values() if not user)
     title = frappe_api.db.get_value("Project", project, "project_name") or project
     open_todos = frappe_api.get_all("ToDo", filters={"reference_type": "Project", "reference_name": project,
                                                      "status": "Open"},
@@ -59,9 +61,9 @@ def sync(project: str, record: dict, frappe_api=None) -> dict:
                                 "assigned_by": "Administrator"}).insert(ignore_permissions=True)
             added += 1
         for row in open_todos:
-            if row.allocated_to not in wanted and (row.description or "").startswith(MARKER):
+            if not unmatched and row.allocated_to not in wanted and (row.description or "").startswith(MARKER):
                 todo = frappe_api.get_doc("ToDo", row.name)
                 todo.status = "Cancelled"
                 todo.save(ignore_permissions=True)
                 closed += 1
-    return {"added": added, "closed": closed, "unmatched": sum(1 for user in users.values() if not user)}
+    return {"added": added, "closed": closed, "unmatched": unmatched}

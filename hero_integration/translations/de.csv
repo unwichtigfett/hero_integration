@@ -3668,3 +3668,5 @@ A nonpaginated employee read requires its single approved request.,Eine Mitarbei
 An explicit Query rule identity is not selected by its imported area.,Eine ausdrücklich referenzierte Query-Regel gehört nicht zur importierten Bereichsauswahl.
 The published Query rule selection is incomplete.,Die veröffentlichte Query-Regelauswahl ist unvollständig.
 An explicit Query rule identity has no unique equivalent in its published area.,Für eine ausdrücklich referenzierte Query-Regel gibt es im veröffentlichten Bereich keine eindeutige Entsprechung.
+The linked Item no longer exists in ERPNext; review the binding before importing.,Der verknüpfte Artikel existiert in ERPNext nicht mehr; prüfen Sie vor dem Import die Bindung.
+"{0} project assignee(s) could not be resolved to an active, source-bound ERPNext user; existing assignments were preserved and require review.","{0} Projektbearbeiter konnten keinem aktiven, mit der Quelle verknüpften ERPNext-Benutzer zugeordnet werden; bestehende Zuweisungen wurden beibehalten und müssen geprüft werden."
