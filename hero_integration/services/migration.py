@@ -971,6 +971,31 @@ def _migrate_isolated(migrate) -> Result:
         return Result("BLOCKED_RECORD", f"ERPNext rejected the record ({type(error).__name__}); see Error Log.")
 
 
+def _projection_task_scope(run, plan, mapping, snapshot_source, source_instance):
+    """One owning scope decision for initial intake and deferred reconciliation."""
+    operation = plan.target_operation or plan.operation
+    scope = json.loads(mapping.mapping_json).get('native_task_onboarding')
+    if getattr(plan, 'adapter_options', None) and operation == 'HeroTasks':
+        scope = {'confirmed': True, 'source_instance': snapshot_source, 'source_type': 'Task'}
+    if scope is not None and (operation != 'HeroTasks' or source_instance != scope['source_instance']
+                              or getattr(run, 'source_instance', '') != scope['source_instance']):
+        raise MappingPlanError('Native Task onboarding source does not match the approved run.')
+    return scope
+
+
+def _migrate_projection_record(record, run, plan, task_scope):
+    if task_scope is None:
+        return _migrate_isolated(lambda: _migrate_projection(record, run, plan))
+    task_record = record if any(item.source_path == 'comment' for item in plan.definitions) else {
+        k: v for k, v in record.items() if k != 'comment'}
+    result = _migrate_isolated(lambda: _migrate_native_task(task_record, run, plan, task_scope))
+    if (result.code in {'CREATED', 'UPDATED', 'SKIPPED', 'PREVIEW_OK'} and result.target_doctype == 'Task'
+            and not getattr(plan, 'adapter_options', None)
+            and any(item.source_path == 'target_user_id' for item in plan.definitions)):
+        _record_task_assignment_pending(run, record, result.target_name, task_scope['source_instance'])
+    return result
+
+
 def _process_projection(run, source, *, checkpoint=None) -> None:
     """Reuse the existing run, read service, mapping plan and conflict-safe writer."""
     checkpoint = checkpoint or nullcontext
@@ -990,12 +1015,7 @@ def _process_projection(run, source, *, checkpoint=None) -> None:
         with checkpoint():
             _block_run(run, 'Cannot resume without a verified source snapshot and page identity evidence.')
         return
-    task_scope = json.loads(mapping.mapping_json).get('native_task_onboarding')
-    if getattr(plan, 'adapter_options', None) and operation == 'HeroTasks':
-        task_scope = {'confirmed': True, 'source_instance': snapshot.source_instance, 'source_type': 'Task'}
-    if task_scope is not None and (operation != 'HeroTasks' or source.source_instance != task_scope['source_instance']
-                                   or getattr(run, 'source_instance', '') != task_scope['source_instance']):
-        raise MappingPlanError('Native Task onboarding source does not match the approved run.')
+    task_scope = _projection_task_scope(run, plan, mapping, snapshot.source_instance, source.source_instance)
     seen_ids: set[str] = set()
     _PROJECT_REFERENCE_STATES.clear()
     _load_task_user_directory(source, operation)
@@ -1021,16 +1041,7 @@ def _process_projection(run, source, *, checkpoint=None) -> None:
                 continue
             _cancel_if_requested(run)
             with checkpoint():
-                if task_scope is not None:
-                    task_record = record if any(item.source_path == 'comment' for item in plan.definitions) else {k: v for k, v in record.items() if k != 'comment'}
-                    result = _migrate_isolated(lambda: _migrate_native_task(task_record, run, plan, task_scope))
-                    if (result.code in {'CREATED', 'UPDATED', 'SKIPPED', 'PREVIEW_OK'}
-                            and result.target_doctype == 'Task'
-                            and not getattr(plan, 'adapter_options', None)
-                            and any(item.source_path == 'target_user_id' for item in plan.definitions)):
-                        _record_task_assignment_pending(run, record, result.target_name, task_scope['source_instance'])
-                else:
-                    result = _migrate_isolated(lambda: _migrate_projection(record, run, plan))
+                result = _migrate_projection_record(record, run, plan, task_scope)
                 _record_result(run, PROJECTIONS[operation]['source_type'], record, result)
                 run.resume_phase = operation
                 run.resume_offset, run.resume_record_index = offset, index + 1

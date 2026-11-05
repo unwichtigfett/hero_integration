@@ -642,6 +642,10 @@ def transfer(phase: str, *, source_instance: str | None = None, client=None, dow
             unchanged = unchanged and bool(frappe.db.exists("File", link.target_name))
             reason = skip_reason(row, detail)
             if reason:
+                if reason == 'deleted' and not dry_run:
+                    from hero_integration.services.deferred_references import installed, invalidate
+                    if installed():
+                        invalidate(source_instance, operation, direct_runtime.identity(read, row))
                 bump("unchanged" if unchanged else f"skipped_{reason}")
                 continue
             target = resolve_target(detail, projects, customers)

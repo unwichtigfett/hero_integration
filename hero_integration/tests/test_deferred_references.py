@@ -83,6 +83,43 @@ class TestDeferredObservation(TestCase):
         self.assertEqual(deferred.references(NS(definitions=definitions), record),
             [('User', '3'), ('User', '4'), ('customer', '1'), ('partner', '2')])
 
+    def test_deletion_or_rejection_cancels_the_old_observation_before_dependency_arrives(self):
+        for code in ('SKIPPED_SOURCE_DELETED', 'SKIPPED_REJECTED'):
+            with self.subTest(code=code):
+                deferred.save('old', 'source-a', 'HeroTasks', '7', 'plan',
+                    {'id': 7, 'is_deleted': False}, [('project', '5')])
+                deferred.save('foreign', 'source-b', 'HeroTasks', '7', 'plan',
+                    {'id': 7, 'is_deleted': False}, [('project', '5')])
+                name = deferred.key('source-a', 'HeroTasks', '7')
+                run = NS(name='new', mode='Execute')
+                record = {'id': 7, 'is_deleted': True, '_hero_source_instance': 'source-a'}
+                plan = NS(source_identity=lambda row:str(row['id']))
+                with patch.object(deferred, 'installed', return_value=True), \
+                     patch.object(migration, '_mapping_plan_for_run', return_value=plan):
+                    deferred.remember(run, 'Task', record, NS(code=code))
+                self.assertEqual(self.store[name].status, 'Resolved')
+                self.assertEqual(self.store[name].record_json, '')
+                self.assertEqual(self.store[deferred.key('source-b', 'HeroTasks', '7')].status, 'Waiting')
+                self.ready.add(('source-a', 'project', '5'))
+                with patch.object(migration, '_migrate_native_task') as create:
+                    deferred.resolve_one(name)
+                create.assert_not_called()
+                self.ready.clear()
+
+    def test_files_keep_customer_and_project_alternatives_without_requiring_all_of_them(self):
+        read = NS(plan=NS(source_identity=lambda row:'7'), mapping_version='plan')
+        detail = {'file_upload_matches': [{'project_match_id': 1}, {'project_match_id': 2}],
+                  'file_upload_links': [{'customer_id': 3}]}
+        with patch.object(deferred, 'installed', return_value=True):
+            deferred.remember_file('run', 'source-a', 'HeroDocuments', read, {'id': 7}, detail)
+        pending = self.store[deferred.key('source-a', 'HeroDocuments', '7')]
+        self.assertEqual({(d['source_type'], d['source_id']) for d in pending.dependencies},
+                         {('project', '1'), ('project', '2'), ('customer', '3')})
+        self.ready.add(('source-a', 'customer', '3'))
+        self.assertTrue(deferred.dependencies_ready('source-a', 'HeroDocuments',
+            [('project', '1'), ('project', '2'), ('customer', '3')]))
+        self.assertFalse(deferred.dependencies_ready('source-a', 'HeroTasks', [('project', '1'), ('customer', '3')]))
+
     def test_generic_document_writes_are_rejected(self):
         with self.assertRaises(PermissionError): deferred.assert_owned_write()
 
@@ -93,13 +130,16 @@ class TestDeferredReplay(TestCase):
             operation='HeroProjectMatches', source_id='7', mapping_version='plan',
             record_json=json.dumps({'id': 7, '_hero_source_instance': 'source-a'}),
             dependencies=[NS(source_type='customer', source_id='8')])
-        self.run = NS(name='run', owner='Administrator', state='Completed With Conflicts', mode='Execute')
+        self.run = NS(name='run', owner='Administrator', state='Completed With Conflicts', mode='Execute',
+            source_instance='source-a', source_binding_revision=1, graphql_mapping='mapping')
+        self.config = NS(source_instance='source-a', source_binding_revision=1, source_binding_confirmed=True,
+            endpoint=NS(url='https://same-endpoint.invalid/graphql'))
         self.fake = NS(get_doc=lambda dt,name,**kw:self.pending if dt==deferred.MAIN else self.run,
             set_user=Mock(), only_for=Mock(), db=NS(set_value=Mock()))
         self.apply = Mock(return_value=migration.Result('UPDATED', '', 'Project', 'PROJECT-7'))
         self.plan = NS(mapping_version='plan', source_identity=lambda row:str(row['id']))
         for p in (patch.object(deferred, 'frappe', self.fake), patch.object(deferred, 'available', return_value=True),
-                  patch('hero_integration.client.settings.get_configuration', return_value=NS(source_instance='source-a')),
+                  patch('hero_integration.client.settings.get_configuration', side_effect=lambda **kw:self.config),
                   patch.object(migration, 'validate_run_mappings'), patch.object(migration, '_source_for_run'),
                   patch.object(migration, '_mapping_plan_for_run', return_value=self.plan),
                   patch.object(migration, '_migrate_isolated', side_effect=lambda callback:callback()),
@@ -133,6 +173,59 @@ class TestDeferredReplay(TestCase):
         self.assertEqual(self.fake.db.set_value.call_args.args[2]['status'], 'Conflict')
         self.assertTrue(self.fake.db.set_value.call_args.args[2]['record_json'])
 
+    def test_file_replay_rejects_token_revision_change_or_missing_confirmation_before_relink(self):
+        from hero_integration.services.file_migration import SourceBindingError
+        self.pending.operation = 'HeroDocuments'
+        for revision, confirmed in ((2, True), (1, False)):
+            with self.subTest(revision=revision, confirmed=confirmed):
+                self.config.source_binding_revision, self.config.source_binding_confirmed = revision, confirmed
+                with patch.object(deferred, '_resolve_file') as relink, \
+                     patch('hero_integration.services.file_migration._configuration', return_value=NS(
+                         source_instance='source-a', source_binding_revision=1, source_binding_confirmed=True)) as stale:
+                    with self.assertRaises(SourceBindingError): deferred.resolve_one('pending')
+                stale.assert_not_called()
+                relink.assert_not_called()
+        self.fake.db.set_value.assert_not_called()
+
+    def test_file_replay_checks_binding_again_before_allowing_commit(self):
+        from hero_integration.services.file_migration import SourceBindingError
+        self.pending.operation = 'HeroDocuments'
+        def changed(_pending):
+            self.config.source_binding_revision = 2
+            return 'UPDATED'
+        with patch.object(deferred, '_resolve_file', side_effect=changed):
+            with self.assertRaises(SourceBindingError): deferred.resolve_one('pending')
+        self.fake.db.set_value.assert_not_called()
+
+    def test_one_file_target_is_sufficient_and_uses_the_confirmed_original_binding(self):
+        self.pending.operation = 'HeroPictures'
+        self.pending.dependencies = [NS(source_type='project', source_id='1'), NS(source_type='project', source_id='2')]
+        with patch.object(deferred, 'available', side_effect=lambda source, kind, identity:identity == '2'), \
+             patch.object(deferred, '_resolve_file', return_value='UPDATED') as relink:
+            deferred.resolve_one('pending')
+        relink.assert_called_once()
+        self.assertEqual(self.fake.db.set_value.call_args.args[2]['status'], 'Resolved')
+
+    def test_v2_task_replay_reuses_the_initial_scope_and_processor_without_legacy_onboarding(self):
+        self.pending.operation = 'HeroTasks'
+        self.pending.dependencies = [NS(source_type='project', source_id='8')]
+        self.plan.operation, self.plan.target_operation = 'tasks', 'HeroTasks'
+        self.plan.adapter_options, self.plan.definitions = {'version': 2}, [NS(source_path='title')]
+        self.pending.record_json = json.dumps({'id': 7, 'comment': 'not selected', '_hero_source_instance': 'source-a'})
+        mapping = NS(mapping_json=json.dumps({'query_adapter': {'version': 2}}))
+        original_get_doc = self.fake.get_doc
+        self.fake.get_doc = lambda dt,name,**kw:mapping if dt == 'HERO GraphQL Mapping' else original_get_doc(dt,name,**kw)
+        migration._TASK_USER_DIRECTORY['emails'] = {9: 'foreign@example.invalid'}
+        self.addCleanup(migration._TASK_USER_DIRECTORY.clear)
+        with patch.object(migration, '_source_for_run', return_value=NS(source_instance='source-a')), \
+             patch.object(migration, '_migrate_native_task', return_value=migration.Result('UPDATED', '', 'Task', 'TASK-7')) as write:
+            deferred.resolve_one('pending')
+        self.assertEqual(write.call_args.args[3], {'confirmed': True, 'source_instance': 'source-a', 'source_type': 'Task'})
+        self.assertNotIn('comment', write.call_args.args[0])
+        self.assertNotIn('emails', migration._TASK_USER_DIRECTORY)
+        self.apply.assert_not_called()
+        self.assertEqual(self.fake.db.set_value.call_args.args[2]['status'], 'Resolved')
+
 
 class TestDeferredWakeups(TestCase):
     def test_identity_updates_without_waiters_do_not_enqueue_jobs(self):
@@ -165,7 +258,7 @@ class TestDeferredWakeups(TestCase):
         self.assertNotIn('source-a', fake.db.sql.call_args.args[0])
 
     def test_post_commit_check_closes_provider_arrival_race_without_empty_retry_jobs(self):
-        fake = NS(db=NS(get_value=Mock(return_value=NS(source_instance='source-a', status='Waiting'))),
+        fake = NS(db=NS(get_value=Mock(return_value=NS(source_instance='source-a', status='Waiting', operation='HeroProjectMatches'))),
             get_all=Mock(return_value=[NS(source_type='customer', source_id='8')]), enqueue=Mock(), log_error=Mock())
         with patch.object(deferred, 'frappe', fake), patch.object(deferred, 'available', return_value=False) as available:
             deferred.wake_reference('pending')

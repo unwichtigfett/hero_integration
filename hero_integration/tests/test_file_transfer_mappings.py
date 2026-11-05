@@ -290,6 +290,16 @@ class TestFileMappingImport(_FileFixture):
         self.assertEqual(self.saved_states, [])
         mkdir.assert_not_called()
 
+    def test_observed_file_deletion_cancels_pending_relinks_only_during_execute(self):
+        from hero_integration.services import deferred_references as deferred
+        with patch.object(ft, 'skip_reason', return_value='deleted'), \
+             patch.object(deferred, 'installed', return_value=True), patch.object(deferred, 'invalidate') as cancel:
+            self.run_slice([_row()])
+            cancel.assert_called_once_with('source-a', 'HeroDocuments', '7')
+            cancel.reset_mock()
+            self.run_slice([_row()], dry_run=True)
+            cancel.assert_not_called()
+
     def test_missing_digest_requires_review_without_downloading_or_rebaselining(self):
         row = _row()
         self.run_slice([row], downloader=_Download())

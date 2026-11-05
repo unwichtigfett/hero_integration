@@ -90,6 +90,53 @@ class TestMutationRuleReplacement(unittest.TestCase):
         self.fake.get_all.assert_not_called()
 
 
+class TestExistingMutationRuleReplacement(unittest.TestCase):
+    def setUp(self):
+        self.content = {'usage': 'MAPPED_UPDATE_V2', 'area': 'HeroCustomers', 'read_service': 'old-reader',
+                        'assignments': [{'query_rule_id': 'LOCAL-L'}, {'query_rule_id': ''}]}
+        self.parent = Row(source_instance='source-a', schema_snapshot='old-snapshot', mapping_json=json.dumps(self.content))
+        self.previous = Row(source_instance='source-a', direction='QUERY_TO_FRAPPE', schema_snapshot='old-snapshot',
+            mapping_json=json.dumps({'target_operation': 'HeroCustomers', 'mapping_definition_ids': ['LOCAL-L']}))
+        self.current = Row(name='new-map', schema_snapshot='new-snapshot',
+            mapping_json=json.dumps({'mapping_definition_ids': ['LOCAL-N']}))
+        self.old_rule, self.new_rule = rule('LOCAL-L'), rule('LOCAL-N')
+        self.old_rule.update(status='Disabled', schema_snapshot='old-snapshot')
+        self.new_rule.update(status='Active', schema_snapshot='new-snapshot')
+        docs = {'old-reader': Row(read_mapping='old-map', schema_snapshot='old-snapshot'), 'old-map': self.previous}
+        self.fake = SimpleNamespace(get_doc=lambda dt,name:docs[name], get_all=Mock(side_effect=lambda dt,**kw:
+            [self.old_rule] if kw['filters']['schema_snapshot']=='old-snapshot' else [self.new_rule]))
+        self.patch = patch.object(exchange, 'frappe', self.fake)
+        self.patch.start(); self.addCleanup(self.patch.stop)
+
+    def test_local_reference_uses_retired_local_reader_instead_of_portable_package_identity(self):
+        item = {'definition_id': 'PACKAGE-P', 'content': {'assignments': [{'query_rule_id': 'PACKAGE-R'}]}}
+        original = deepcopy(self.content)
+        result = exchange._remap_existing_mutation_rules(self.parent, item, {'HeroCustomers': self.current})
+        self.assertEqual(result['assignments'], [{'query_rule_id': 'LOCAL-N'}, {'query_rule_id': ''}])
+        self.assertEqual(json.loads(self.parent.mapping_json), original)
+        self.assertEqual(item['content']['assignments'][0]['query_rule_id'], 'PACKAGE-R')
+        self.assertEqual(self.fake.get_all.call_args_list[0].kwargs['filters']['definition_id'], ['in', ['LOCAL-L']])
+
+    def test_changed_rule_semantics_or_transform_options_are_not_rebound(self):
+        self.new_rule['source_path'] = 'different'
+        with self.assertRaises(exchange.ConfigExchangeError):
+            exchange._remap_existing_mutation_rules(self.parent, {}, {'HeroCustomers': self.current})
+        self.new_rule['source_path'] = self.old_rule['source_path']
+        previous = json.loads(self.previous.mapping_json)
+        previous['query_adapter'] = {'transform_options': {'LOCAL-L': {'map': {'A': 'B'}}}}
+        self.previous['mapping_json'] = json.dumps(previous)
+        with self.assertRaises(exchange.ConfigExchangeError):
+            exchange._remap_existing_mutation_rules(self.parent, {}, {'HeroCustomers': self.current})
+
+    def test_foreign_reader_or_unselected_old_identity_is_rejected(self):
+        for change in ('source', 'selection'):
+            with self.subTest(change=change):
+                self.previous['source_instance'] = 'foreign' if change == 'source' else 'source-a'
+                if change == 'selection': self.previous['mapping_json'] = json.dumps({'target_operation': 'HeroCustomers', 'mapping_definition_ids': []})
+                with self.assertRaises(exchange.ConfigExchangeError):
+                    exchange._remap_existing_mutation_rules(self.parent, {}, {'HeroCustomers': self.current})
+
+
 class TestReplacementRebaseOrder(unittest.TestCase):
     def setUp(self):
         self.events = []
