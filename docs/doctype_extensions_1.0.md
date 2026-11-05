@@ -194,4 +194,4 @@ The deterministic offline fixture [`hero_mapping_fixture_v1.json`](../hero_integ
 - Keep Calendar at `Pending Approval` until its explicit timezone/all-day and runtime gates are complete. Keep scheduler/polling disabled. This document authorizes no live HERO requests and no production migration.
 - An adopted four-domain site configuration and a checkout of `hero_int_1.0` or `hero_int_dev` can differ. Reconcile the exact Git commit, installed DocTypes, schema, active read service/mapping revisions and target tests before asserting release parity. The three additional Custom DocTypes and 35 Custom Fields still depend on their guarded schema-adoption flow.
 
-[Mapping matrix](mapping_matrix_1.0.md) · [Installation](../installation_guide_1.0.md)
+[JSON mapping guide](complete_json_mapping.md) · [Installation](../installation_guide_1.0.md)
