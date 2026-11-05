@@ -367,6 +367,9 @@ def _file_slice(run, config) -> None:
         detail = summary(counts)
         if unresolved:
             detail += ' ' + frappe._('{0} related employee identities could not be resolved uniquely.').format(unresolved)
+        historical = len(state.get('testing_historical_user_ids', []))
+        if historical:
+            detail += ' ' + frappe._('{0} deleted HERO users are retained as historical references; no accounts were created for them.').format(historical)
         _finish(run.name, "Completed With Conflicts" if problems else "Completed", detail)
 
 

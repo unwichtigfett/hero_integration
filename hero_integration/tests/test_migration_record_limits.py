@@ -88,6 +88,29 @@ class TestMigrationRecordLimits(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'repeated a page'):
             selected.projection(1)
 
+    def test_project_scan_stops_when_every_frozen_project_was_found(self):
+        source = SimpleNamespace(projects=Mock(side_effect=[
+            SourcePage(({'id': 7},), 1), SourcePage(({'id': 8},), 2),
+            AssertionError('must not read past the complete frozen selection')]))
+        selected = testing.RelatedProjectSource(source, 2,
+            {'version': 1, 'project_ids': ['7', '8'], 'customer_ids': [], 'user_ids': []})
+        first = selected.projects(0)
+        last = selected.projects(first.next_offset)
+        self.assertEqual([row['id'] for row in first.records + last.records], [7, 8])
+        self.assertIsNone(last.next_offset)
+        self.assertEqual(source.projects.call_count, 2)
+        self.assertEqual(selected.results['HeroProjectMatches']['status'], 'COMPLETED')
+
+    def test_related_scan_keeps_scanning_when_one_selected_identity_is_missing(self):
+        source = SimpleNamespace(projects=Mock(side_effect=[
+            SourcePage(({'id': 7},), 1), SourcePage((), None)]))
+        selected = testing.RelatedProjectSource(source, 2,
+            {'version': 1, 'project_ids': ['7', '8'], 'customer_ids': [], 'user_ids': []})
+        self.assertEqual(selected.projects(0).next_offset, 1)
+        self.assertIsNone(selected.projects(1).next_offset)
+        self.assertEqual(selected.results['HeroProjectMatches']['missing_related'], 1)
+        self.assertEqual(selected.status, 'BLOCKED')
+
     def test_related_sample_rejects_changed_task_assignee_before_import(self):
         original = {'id': 2, 'target_project_match_id': 10, 'author_user_id': 4, 'target_user_id': 5}
         cohort = {'version': 1, 'project_ids': ['10'], 'customer_ids': [], 'user_ids': [], 'partner_ids': [],

@@ -82,6 +82,31 @@ def _records(data, path):
     return sorted(rows, key=lambda row: row["id"])
 
 
+def _historical_identities(client, path, wanted_users, wanted_partners):
+    """Verify deleted source identities without provisioning local accounts."""
+    if path not in ('partners', 'company.partners'):
+        raise EmployeeMigrationBlocked('The employee reader has no supported historical identity query.')
+    selection = 'partners(show_deleted: true) { id status user_id user { id } }'
+    body = selection if path == 'partners' else 'company { ' + selection + ' }'
+    rows = _records(client.query('query HeroHistoricalEmployees { ' + body + ' }', {}), path)
+    by_user = {}
+    historical_partners = set()
+    for row in rows:
+        nested = row.get('user') if isinstance(row.get('user'), dict) else {}
+        values = [value for value in (row.get('user_id'), nested.get('id'))
+                  if type(value) is int and value > 0]
+        identities = {str(value) for value in values}
+        consistent = len(identities) == 1
+        deleted = row.get('status') == 'deleted' and consistent
+        for identity in identities:
+            by_user.setdefault(identity, []).append(deleted)
+        if deleted and str(row['id']) in wanted_partners:
+            historical_partners.add(str(row['id']))
+    historical_users = {identity for identity in wanted_users
+                        if identity in by_user and all(by_user[identity])}
+    return sorted(historical_users), sorted(historical_partners)
+
+
 def _link(instance, source_type, source_id, target_doctype):
     names = frappe.get_all("HERO Integration Link", filters={"source_system": "HERO", "source_instance": instance,
                            "source_type": source_type, "source_id": str(source_id)}, pluck="name", limit_page_length=2)
@@ -333,6 +358,24 @@ def sync_employees(client, *, source_instance, run_name, should_stop=None, progr
                 wanted_partners = set(state['testing_cohort_partner_ids'])
                 by_partner = {str(row['id']): row['id'] for row in rows}
                 state['testing_missing_partner_ids'] = sorted(wanted_partners - set(by_partner))
+                if state['testing_missing_user_ids'] or state['testing_missing_partner_ids']:
+                    from hero_integration.client.graphql import HeroClientError
+                    if verify_source:
+                        verify_source()
+                    try:
+                        historical_users, historical_partners = _historical_identities(
+                            client, path, set(state['testing_missing_user_ids']),
+                            set(state['testing_missing_partner_ids']))
+                    except (HeroClientError, EmployeeMigrationBlocked):
+                        # Unknown identities remain unresolved if the source cannot prove deletion.
+                        state['testing_historical_audit_unavailable'] = True
+                    else:
+                        if verify_source:
+                            verify_source()
+                        state['testing_historical_user_ids'] = historical_users
+                        state['testing_historical_partner_ids'] = historical_partners
+                        state['testing_missing_user_ids'] = sorted(set(state['testing_missing_user_ids']) - set(historical_users))
+                        state['testing_missing_partner_ids'] = sorted(set(state['testing_missing_partner_ids']) - set(historical_partners))
                 for identity in sorted(wanted_partners & set(by_partner)):
                     if by_partner[identity] not in selected_ids:
                         selected.append(by_partner[identity])

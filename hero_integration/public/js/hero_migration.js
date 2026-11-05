@@ -116,10 +116,10 @@
         if (!result) return [["Testing results", tr("Results unavailable")]];
         if (Number.isInteger(result.record_limit) && result.record_limit > 0) {
             if (result.selection === 'related_projects') return Object.entries(result.areas || {}).map(([name, area]) => [name,
-                format('{0} · {1} processed · {2} received · {3} related identities unresolved', tr(area?.status || 'PENDING'),
+                format('{0} · {1} processed · {2} received · {3} related identities unresolved · {4} historical users', tr(area?.status || 'PENDING'),
                     number(area?.processed), number(area?.received), number((area?.missing_related || 0) +
                         (area?.missing_related_users || 0) + (area?.ambiguous_related_users || 0) +
-                        (area?.missing_related_partners || 0)))]);
+                        (area?.missing_related_partners || 0)), number(area?.historical_related_users || 0))]);
             return Object.entries(result.areas || {}).map(([name, area]) => [name,
                 format('{0} · {1}/{2} processed · {3} received', tr(area?.status || 'PENDING'),
                     number(area?.processed), number(result.record_limit), number(area?.received))]);
