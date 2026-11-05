@@ -15,6 +15,7 @@ from hero_integration.services import mapped_update_v2, mapped_send
 
 class TestProjectDelivery(TestCase):
     def setUp(self):
+        self.real_candidates = logbook.candidates
         self.data = {'project':'P-H','fingerprint':'data-token','changes':[{'label':'Notes','new':'changed'}],
                      'conflicts':[],'sending_enabled':True,'can_send':True,'phases':[],'hero':{'phase_id':None}}
         self.activities = [{'name':'C1','activity_doctype':'Comment','creation':'1'},
@@ -36,7 +37,7 @@ class TestProjectDelivery(TestCase):
         patches=[patch.object(delivery,'_access',return_value=NS(modified='project-original')),patch.object(delivery,'frappe',self.fake),
             patch.object(delivery,'_sign',side_effect=lambda value:hashlib.sha256(json.dumps(value,sort_keys=True).encode()).hexdigest()),
             patch.object(mapped_send,'preview',side_effect=lambda *args,**kw:deepcopy(self.data)),
-            patch.object(mapped_send,'send',side_effect=send_data),patch.object(logbook,'candidates',side_effect=lambda *a:{'comments':deepcopy(self.activities)}),
+            patch.object(mapped_send,'send',side_effect=send_data),patch.object(logbook,'candidates',side_effect=lambda *a,**kw:{'comments':deepcopy(self.activities)}),
             patch.object(logbook,'preview',side_effect=preview),patch.object(logbook,'send',side_effect=send_activity),
             patch('hero_integration.api._assert_mutation_execution_released')]
         for item in patches:item.start();self.addCleanup(item.stop)
@@ -57,6 +58,41 @@ class TestProjectDelivery(TestCase):
         self.assertTrue(self.preview()['can_send']);self.send(self.preview());self.assertEqual(self.calls,['C1','V1'])
         self.calls.clear();self.activities=[];self.data['changes']=[{'label':'Notes'}]
         self.send(self.preview());self.assertEqual(self.calls,['data'])
+
+    def test_field_only_delivery_without_logbook_profile_previews_and_sends(self):
+        profiles = Mock(return_value=[])
+        fake = NS(get_doc=Mock(return_value=NS()), has_permission=Mock(return_value=True),
+                  get_all=profiles, get_list=Mock())
+        with patch.object(logbook, 'frappe', fake), patch.object(logbook, 'candidates', side_effect=self.real_candidates), \
+             patch.object(mapped_send, '_roles', return_value=True), \
+             patch('hero_integration.client.settings.get_configuration', return_value=NS(source_instance='source-a')):
+            preview = self.preview()
+            self.assertEqual(preview['activities'], [])
+            self.assertEqual(preview['changes'], self.data['changes'])
+            self.assertTrue(preview['can_send'])
+            result = self.send(preview)
+            self.assertEqual(result['status'], 'SENT')
+            self.assertEqual(self.calls, ['data'])
+            fake.get_list.assert_not_called()
+            self.assertEqual(profiles.call_args.kwargs['filters']['source_instance'], 'source-a')
+            # The dedicated activity API still requires its explicit mapping.
+            with self.assertRaisesRegex(ValueError, 'Exactly one active'):
+                self.real_candidates('P-H')
+
+    def test_optional_logbook_does_not_swallow_ambiguous_or_malformed_active_profiles(self):
+        for profiles in ([NS(mapping_json='{}'), NS(mapping_json='{}')], [NS(mapping_json='{')]):
+            with self.subTest(profiles=profiles):
+                query = Mock(return_value=[])
+                fake = NS(get_doc=Mock(return_value=NS()), has_permission=Mock(return_value=True),
+                          get_all=query, get_list=Mock())
+                with patch.object(logbook, 'frappe', fake), patch.object(logbook, 'candidates', side_effect=self.real_candidates), \
+                     patch.object(mapped_send, '_roles', return_value=True), \
+                     patch('hero_integration.client.settings.get_configuration', return_value=NS(source_instance='source-a')):
+                    preview = self.preview()
+                    query.return_value = profiles
+                    with self.assertRaises(ValueError): self.send(preview)
+                    self.assertEqual(self.calls, [])
+                    fake.get_list.assert_not_called()
 
     def test_changed_data_new_activity_and_tampered_confirmation_stop_before_transport(self):
         for change in ('data','new','tamper'):

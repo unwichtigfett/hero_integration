@@ -299,3 +299,13 @@ snapshot rebinding and remaps explicit mutation rule references to the actual
 published rules in that area. File checkpoints restart on a mapping change;
 scalar and collection price rules must use distinct ERPNext price lists. The
 read-only Task author User link is provisioned on installation and upgrade.
+
+A partial product writeback advances only confirmed field baselines. The whole
+Item digest is renewed only when every owned field matches its individual
+confirmed hash; subsequent imports check those hashes before applying upstream
+changes. One-time native-field copies require the exact mapping revision changed
+by that migration, its source-bound synchronized link and unchanged baselines for
+both the legacy mirror and native destination. Missing evidence is left to normal
+reconciliation, and rejected records are never copied. Project field delivery
+also works without a configured logbook profile; invalid or ambiguous existing
+profiles still block delivery.

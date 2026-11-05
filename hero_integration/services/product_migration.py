@@ -195,9 +195,15 @@ def upsert(row: dict, link, masters: _Masters, source_instance: str, read=None) 
         # The HERO article number is the Item's identity; it is never suffixed or reassigned.
         return _code_taken(link, row, values["item_code"], source_instance, read)
     # The baseline covers the fields mapped when it was taken; legacy links used the built-in set.
-    baseline_fields = tuple((_link_baseline(link).get("fields") or {}).keys()) or OWNED
-    if item is not None and link.target_payload_hash and owned_digest(item, baseline_fields) != link.target_payload_hash:
-        return _conflict(link, source, "The Item was changed in ERPNext; the newer HERO article was not applied.")
+    baseline_fields = _link_baseline(link).get("fields") or {}
+    if item is not None:
+        # A partial Send advances only its confirmed fields. An old aggregate
+        # cannot acknowledge the remaining fields, nor veto a valid partial update.
+        changed = (owned_field_digests(item, tuple(baseline_fields)) != baseline_fields
+                   if baseline_fields else bool(link.target_payload_hash)
+                   and owned_digest(item, OWNED) != link.target_payload_hash)
+        if changed:
+            return _conflict(link, source, "The Item was changed in ERPNext; the newer HERO article was not applied.")
     supplier_baseline = _link_baseline(link).get("supplier")
     if item is not None and not _supplier_unchanged(item, values["supplier"], supplier_baseline):
         return _conflict(link, source, "The Item was changed in ERPNext; the newer HERO article was not applied.")
