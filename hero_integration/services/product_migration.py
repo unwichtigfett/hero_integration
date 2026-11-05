@@ -294,7 +294,7 @@ def _supplier_unchanged(item, supplier: dict | None, baseline) -> bool:
     already equals the incoming value. Otherwise its ownership cannot be proved.
     Unrelated suppliers are never part of this comparison.
     """
-    if not supplier or not supplier.get("supplier"):
+    if not supplier or not supplier.get("supplier") or "supplier_part_no" not in supplier:
         return True
     rows = item.get("supplier_items") or []
     if baseline:
@@ -321,7 +321,9 @@ def _set_supplier(item, supplier: dict | None, masters: _Masters) -> dict | None
     name, part = masters.supplier(supplier["supplier"]), supplier.get("supplier_part_no")
     for row in item.get("supplier_items") or []:
         if row.get("supplier") == name:
-            if part and row.get("supplier_part_no") != part:
+            if "supplier_part_no" not in supplier:
+                return None  # Missing source data never establishes a new ownership baseline.
+            if row.get("supplier_part_no") != part:
                 if isinstance(row, dict):
                     row["supplier_part_no"] = part
                 else:

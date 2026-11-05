@@ -11,22 +11,35 @@ from __future__ import annotations
 MARKER = "Bearbeiter (Quelle)"
 
 
-def assignees(record: dict) -> list[tuple[str, object]] | None:
-    """("id", HERO user id) or ("email", e-mail) per assigned user; None when the record has no assignments."""
+def _assignees_with_unknown(record: dict) -> tuple[list[tuple[str, object]] | None, int]:
+    """Keep incomplete source membership separate from an explicitly empty list."""
     if "project_match_assignments" not in record:
-        return None
-    result = []
-    for row in record.get("project_match_assignments") or []:
+        return None, 0
+    rows = record['project_match_assignments']
+    if not isinstance(rows, list):
+        return [], 1
+    result, unknown = [], 0
+    for row in rows:
         if not isinstance(row, dict):
+            unknown += 1
             continue
         if type(row.get("user_id")) is int and row["user_id"] > 0:
             result.append(("id", row["user_id"]))
             continue
         user = row.get("user") if isinstance(row.get("user"), dict) else {}
         email = user.get("email")
-        if isinstance(email, str) and "@" in email:
-            result.append(("email", email.strip().lower()))
-    return sorted(set(result), key=str)
+        if isinstance(email, str):
+            email = email.strip().lower()
+            if email.count('@') == 1 and all(email.split('@')) and not any(char.isspace() for char in email):
+                result.append(('email', email))
+                continue
+        unknown += 1
+    return sorted(set(result), key=str), unknown
+
+
+def assignees(record: dict) -> list[tuple[str, object]] | None:
+    """Return recognized IDs/e-mails, or None when the assignment field is absent."""
+    return _assignees_with_unknown(record)[0]
 
 
 def assignee_emails(record: dict) -> set[str] | None:
@@ -36,7 +49,7 @@ def assignee_emails(record: dict) -> set[str] | None:
 
 def sync(project: str, record: dict, frappe_api=None) -> dict:
     """Open one ToDo per matched HERO assignee; close the import's ToDos of removed assignees."""
-    found = assignees(record)
+    found, unknown = _assignees_with_unknown(record)
     if found is None:
         return {"added": 0, "closed": 0, "unmatched": 0}
     if frappe_api is None:
@@ -47,7 +60,7 @@ def sync(project: str, record: dict, frappe_api=None) -> dict:
 
     users = {key: (user_by_hero_user(key[1], source_instance=record.get('_hero_source_instance')) if key[0] == "id" else _user_for(key[1], frappe_api)) for key in found}
     wanted = {user for user in users.values() if user}
-    unmatched = sum(1 for user in users.values() if not user)
+    unmatched = unknown + sum(1 for user in users.values() if not user)
     title = frappe_api.db.get_value("Project", project, "project_name") or project
     open_todos = frappe_api.get_all("ToDo", filters={"reference_type": "Project", "reference_name": project,
                                                      "status": "Open"},

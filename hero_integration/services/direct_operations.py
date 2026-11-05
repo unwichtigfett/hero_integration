@@ -202,7 +202,12 @@ def resolve(transformation: str, value, record: dict | None = None):
         name = value.strip()[:140] if isinstance(value, str) else ""
         if not name:
             return None
-        part = _path(record, SUPPLIER_PART_PATH)
+        from hero_integration.services.direct_mapping import MISSING, lookup
+        part = lookup(record or {}, SUPPLIER_PART_PATH)
+        if part is MISSING:
+            return {"supplier": name}
+        if part is not None and not isinstance(part, str):
+            raise ValueError("HERO supplier article number must be text or null.")
         return {"supplier": name, "supplier_part_no": part.strip()[:140] if isinstance(part, str) and part.strip() else None}
     if transformation == "HERO UOM":
         text = value.strip()[:140] if isinstance(value, str) else ""
