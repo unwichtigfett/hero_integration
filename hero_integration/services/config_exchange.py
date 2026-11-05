@@ -127,16 +127,39 @@ def _export_settings(settings):
     return result
 
 
+def _snapshot_binding(source_instance=None):
+    from hero_integration.services.schema_refresh import local_snapshot_binding
+    binding = local_snapshot_binding()
+    if source_instance is not None and binding['source_instance'] != source_instance:
+        raise ConfigExchangeError('Configuration import cannot change the locally confirmed HERO source.')
+    return binding
+
+
+def _package_snapshot_names(fingerprint, binding):
+    from hero_integration.services.schema_refresh import offline_endpoint_fingerprint
+    offline = offline_endpoint_fingerprint(binding['source_instance'])
+    for endpoint in dict.fromkeys((binding['endpoint_fingerprint'], offline)):
+        names = frappe.get_all('HERO GraphQL Schema Snapshot', filters={**binding,
+            'endpoint_fingerprint': endpoint, 'schema_fingerprint': fingerprint, 'analysis_status': 'Validated'},
+            pluck='name', order_by='creation desc', limit_page_length=1)
+        if names:
+            return names, ('Unchanged' if endpoint == binding['endpoint_fingerprint'] else 'Pending source verification')
+    # A real endpoint binding cannot be replaced by offline package import.
+    foreign = frappe.get_all('HERO GraphQL Schema Snapshot', filters={'source_instance': binding['source_instance'],
+        'schema_fingerprint': fingerprint, 'analysis_status': 'Validated'}, pluck='name', limit_page_length=1)
+    if foreign:
+        raise ConfigExchangeError('Approved schema snapshot does not match the current HERO endpoint and source instance.')
+    return [], 'New'
+
+
 def _package_snapshot(payload: dict, *, create: bool) -> tuple[str | None, str]:
     """The site's snapshot for the package's schema: existing, created (import) or pending (preview)."""
     item = payload.get("schema_snapshot")
     if not item:
         return None, "not in file"
-    rows = frappe.get_all("HERO GraphQL Schema Snapshot", filters={
-        "schema_fingerprint": item["schema_fingerprint"], "analysis_status": "Validated"},
-        pluck="name", order_by="creation desc", limit_page_length=1)
+    rows, state = _package_snapshot_names(item['schema_fingerprint'], _snapshot_binding())
     if rows:
-        return rows[0], "Unchanged"
+        return rows[0], state
     if not create:
         return None, "New"
     from hero_integration.services.schema_refresh import capture_from_schema
@@ -147,11 +170,12 @@ def _package_snapshot(payload: dict, *, create: bool) -> tuple[str | None, str]:
 
 def _resolve_snapshot(snapshot_name: str, payload: dict, *, create: bool) -> tuple[str | None, str]:
     if snapshot_name:
-        return snapshot_name, "selected"
+        snapshot, state = _source_snapshot(snapshot_name, payload, _snapshot_binding()['source_instance'])
+        return snapshot.name, state
     name, state = _package_snapshot(payload, create=create)
     if name or state == "New":
         return name, state
-    names = frappe.get_all("HERO GraphQL Schema Snapshot", filters={"analysis_status": "Validated"},
+    names = frappe.get_all("HERO GraphQL Schema Snapshot", filters={**_snapshot_binding(), "analysis_status": "Validated"},
                            order_by="creation desc", pluck="name", limit_page_length=1)
     if not names:
         raise ConfigExchangeError("No validated HERO schema snapshot exists and the file contains none.")
@@ -434,13 +458,15 @@ def _source_snapshot(snapshot_name, payload, source_instance, *, create=False):
         snapshot = frappe.get_doc("HERO GraphQL Schema Snapshot", snapshot_name)
         if snapshot.source_instance != source_instance or snapshot.analysis_status != "Validated":
             raise ConfigExchangeError("Replacement snapshot belongs to another or unvalidated HERO source.")
-        return snapshot, "selected"
+        from hero_integration.services.schema_refresh import offline_endpoint_fingerprint
+        endpoint = _snapshot_binding(source_instance)['endpoint_fingerprint']
+        if snapshot.endpoint_fingerprint not in {endpoint, offline_endpoint_fingerprint(source_instance)}:
+            raise ConfigExchangeError('Approved schema snapshot does not match the current HERO endpoint and source instance.')
+        return snapshot, ("selected" if snapshot.endpoint_fingerprint == endpoint else 'Pending source verification')
     packaged = payload["schema_snapshot"]
-    names = frappe.get_all("HERO GraphQL Schema Snapshot", filters={"source_instance": source_instance,
-        "schema_fingerprint": packaged["schema_fingerprint"], "analysis_status": "Validated"},
-        pluck="name", order_by="creation desc", limit_page_length=1)
+    names, state = _package_snapshot_names(packaged['schema_fingerprint'], _snapshot_binding(source_instance))
     if names:
-        return frappe.get_doc("HERO GraphQL Schema Snapshot", names[0]), "Unchanged"
+        return frappe.get_doc("HERO GraphQL Schema Snapshot", names[0]), state
     from hero_integration.services.graphql_graph import analyze_snapshot
     if analyze_snapshot(packaged["schema"]).fingerprint != packaged["schema_fingerprint"]:
         raise ConfigExchangeError("Packaged schema fingerprint does not match its content.")
@@ -450,6 +476,8 @@ def _source_snapshot(snapshot_name, payload, source_instance, *, create=False):
         snapshot = frappe.get_doc("HERO GraphQL Schema Snapshot", name)
         if snapshot.source_instance != source_instance:
             raise ConfigExchangeError("Created schema belongs to another HERO source.")
+        if snapshot.endpoint_fingerprint != _snapshot_binding(source_instance)['endpoint_fingerprint']:
+            raise ConfigExchangeError('Approved schema snapshot does not match the current HERO endpoint and source instance.')
         return snapshot, "Created"
     return SimpleNamespace(name="package-preview", source_instance=source_instance, analysis_status="Validated",
         schema_fingerprint=packaged["schema_fingerprint"], snapshot_json=json.dumps(packaged["schema"])), "New"

@@ -133,6 +133,7 @@ def capture_from_schema(schema: dict, actor: str = "Administrator") -> dict[str,
 
 
 def _capture(actor: str, response: object = None) -> dict[str, object]:
+    live_capture = response is None
     from hero_integration.client.graphql import HeroClientError, HeroGraphQLClient
     from hero_integration.client.settings import HeroConfigurationError, get_configuration
     from hero_integration.services.introspection import (
@@ -199,6 +200,11 @@ def _capture(actor: str, response: object = None) -> dict[str, object]:
             "type_count": type_count,
         }
 
+    if live_capture:
+        bound = _bind_offline_snapshot(configuration, fingerprint, type_count)
+        if bound is not None:
+            return bound
+
     from hero_integration.services.snapshot_inheritance import parent_for
 
     # The parent is the most recently *created* snapshot of this source and endpoint.
@@ -235,6 +241,49 @@ class _OfflineSchema(Exception):
     def __init__(self, schema):
         super().__init__("offline schema")
         self.schema = schema
+
+
+def local_snapshot_binding():
+    """Local provenance for configuration import; no credentials leave this helper."""
+    from hero_integration.services.introspection import endpoint_fingerprint
+    configuration = _offline_configuration()
+    return {'source_instance': configuration.source_instance,
+            'endpoint_fingerprint': endpoint_fingerprint(configuration.endpoint.url, configuration.source_instance)}
+
+
+def offline_endpoint_fingerprint(source_instance):
+    from hero_integration.services.introspection import endpoint_fingerprint
+    return endpoint_fingerprint('https://offline.invalid/graphql', source_instance)
+
+
+def _bind_offline_snapshot(configuration, fingerprint, type_count):
+    """Bind an unconnected package only after confirmed source + live schema proof."""
+    from hero_integration.services.introspection import endpoint_fingerprint
+    from hero_integration.services.graphql_graph import analyze_snapshot
+    if not getattr(configuration, 'source_binding_confirmed', False):
+        return None
+    source = configuration.source_instance
+    offline = offline_endpoint_fingerprint(source)
+    expected = endpoint_fingerprint(configuration.endpoint.url, source)
+    if offline == expected:
+        return None
+    rows = frappe.get_all(SNAPSHOT, filters={'schema_fingerprint': fingerprint, 'source_instance': source,
+        'endpoint_fingerprint': offline, 'analysis_status': 'Validated'}, pluck='name', limit_page_length=2)
+    if len(rows) != 1:
+        return None
+    snapshot = frappe.get_doc(SNAPSHOT, rows[0], for_update=True)
+    if (snapshot.source_instance != source or snapshot.endpoint_fingerprint != offline
+            or snapshot.analysis_status != 'Validated'):
+        raise SchemaRefreshError('The HERO endpoint, token or source instance changed; an administrator must confirm the source binding.')
+    if snapshot.schema_fingerprint != fingerprint or analyze_snapshot(json.loads(snapshot.snapshot_json)).fingerprint != fingerprint:
+        raise SchemaRefreshError('Stored GraphQL schema fingerprint is stale.')
+    # Keep the schema identity, readers, rule lineage and approvals. Only the
+    # deliberately unbound offline provenance gains the verified local endpoint.
+    snapshot.endpoint_fingerprint = expected
+    snapshot.save()
+    return {'status': 'UNCHANGED', 'snapshot_name': snapshot.name, 'schema_fingerprint': fingerprint,
+            'execution_contract_status': snapshot.execution_contract_status or 'Compatible',
+            'type_count': type_count, 'endpoint_bound': True}
 
 
 def _offline_configuration():

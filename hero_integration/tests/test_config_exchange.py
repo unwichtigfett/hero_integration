@@ -59,6 +59,10 @@ class TestConfigParse(unittest.TestCase):
 
 
 class TestPackageContent(unittest.TestCase):
+    def setUp(self):
+        binding = patch.object(cx, "_snapshot_binding", return_value={"source_instance":"default", "endpoint_fingerprint":"local-endpoint"})
+        binding.start(); self.addCleanup(binding.stop)
+
     def test_version_1_files_still_import(self):
         self.assertEqual(cx._parse(payload(entry("HeroCustomers"), version=cx.FORMAT_V1))["format_version"], cx.FORMAT_V1)
 
@@ -105,6 +109,7 @@ class TestSchemaRebase(unittest.TestCase):
         package = {"items": [], "preview_revision": "rev"}
         fake = SimpleNamespace(only_for=lambda role: None, db=SimpleNamespace(get_value=lambda *a: "TARGET"))
         with patch.object(cx, "frappe", fake), \
+                patch.object(cx, "_resolve_snapshot", return_value=("SNAP", "selected")), \
                 patch("hero_integration.services.schema_provisioning.preview_package", return_value=package), \
                 patch.object(api, "_workspace_service_validate", side_effect=ValueError("Field x does not exist")), \
                 patch.object(cx, "_import_service") as created:
