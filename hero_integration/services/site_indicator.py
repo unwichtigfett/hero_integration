@@ -1,5 +1,6 @@
 """Display the running app version and public site label on full HTML pages."""
 from html import escape
+from pathlib import Path
 import re
 from urllib.parse import quote, urlsplit
 
@@ -9,6 +10,20 @@ from hero_integration import __version__
 
 
 MARKER = 'id="hero-site-indicator"'
+REVISION_FILE = Path('/opt/stack/hero_integration.revision')
+
+
+def _build_revision():
+    """Read the immutable image revision, rather than a possibly newer checkout."""
+    try:
+        revision = REVISION_FILE.read_text(encoding='ascii').strip()
+    except (OSError, UnicodeError):
+        return ''
+    return revision[:7] if re.fullmatch(r'[0-9a-f]{40}', revision) else ''
+
+
+# Loaded with the application code and stable until this worker restarts.
+BUILD_REVISION = _build_revision()
 
 
 def label():
@@ -18,7 +33,8 @@ def label():
     except ValueError:
         host = None
     site = host or str(frappe.local.site)
-    return f'v{__version__}_{site.split(".", 1)[0]}'
+    label = f'v{__version__}_{site.split(".", 1)[0]}'
+    return f'{label} · {BUILD_REVISION}' if BUILD_REVISION else label
 
 
 def after_request(response, request=None):

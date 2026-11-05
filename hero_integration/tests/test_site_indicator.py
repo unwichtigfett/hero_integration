@@ -1,5 +1,7 @@
 """Full-page decoration must not change APIs, downloads or expose configuration."""
 from types import SimpleNamespace
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest import TestCase
 from unittest.mock import patch
 
@@ -15,6 +17,21 @@ class TestSiteIndicator(TestCase):
                                       local=SimpleNamespace(site='frontend'))
         p = patch.object(site_indicator, 'frappe', self.frappe)
         p.start(); self.addCleanup(p.stop)
+        p = patch.object(site_indicator, 'BUILD_REVISION', '')
+        p.start(); self.addCleanup(p.stop)
+
+    def test_deployed_build_revision_is_visible_and_validated(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / 'revision'
+            with patch.object(site_indicator, 'REVISION_FILE', path):
+                self.assertEqual(site_indicator._build_revision(), '')
+                path.write_text('a' * 40 + '\n', encoding='ascii')
+                revision = site_indicator._build_revision()
+                self.assertEqual(revision, 'aaaaaaa')
+                with patch.object(site_indicator, 'BUILD_REVISION', revision):
+                    self.assertEqual(site_indicator.label(), f'v{__version__}_test · aaaaaaa')
+                path.write_text('untrusted <text>', encoding='ascii')
+                self.assertEqual(site_indicator._build_revision(), '')
 
     def test_public_site_label_and_running_version_on_desk_portal_and_standalone_pages(self):
         for body in ('<main id="body">Desk</main>', '<main>Login</main>', '<div id="app">CRM</div>'):
