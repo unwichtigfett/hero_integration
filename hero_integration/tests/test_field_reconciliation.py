@@ -29,6 +29,34 @@ class TestReconcile(unittest.TestCase):
         self.assertEqual(self._classify("a", "b", "c").conflicts, {"f"})
         self.assertEqual(self._classify("a", "b", "b").converged, {"f"})
 
+    def test_project_notes_mapping_change_preserves_existing_representation(self):
+        from hero_integration.services.migration import _reconcile_project_notes_representation
+        raw = 'Line one\nLine two'
+        target = '<p>Line one<br>Line two</p>'
+        old = _h(notes='old')
+        source_hashes, target_hashes = _h(notes=raw), _h(notes=target)
+        outcome = reconcile(old, old, source_hashes, target_hashes, tracked={'notes'})
+        self.assertEqual(outcome.conflicts, {'notes'})
+        outcome = _reconcile_project_notes_representation(outcome, {'partner_notes': raw},
+                                                          {'notes': raw}, {'notes': target})
+        self.assertEqual(outcome.converged, {'notes'})
+        self.assertFalse(outcome.conflicts | outcome.apply)
+        source_base = next_baseline(old, source_hashes, outcome, tracked={'notes'})
+        target_base = next_baseline(old, target_hashes, outcome, tracked={'notes'})
+        self.assertEqual(reconcile(source_base, target_base, source_hashes, target_hashes,
+                                   tracked={'notes'}).unchanged, {'notes'})
+
+    def test_project_notes_real_edits_and_markup_remain_conflicts(self):
+        from hero_integration.services.migration import _reconcile_project_notes_representation
+        for raw, current in [('Source', '<p>Local edit</p>'), ('<b>Source</b>', '<p>&lt;b&gt;Source&lt;/b&gt;</p>'),
+                             ('one &amp; two', '<p>one &amp;amp; two</p>')]:
+            with self.subTest(raw=raw):
+                old = _h(notes='old')
+                outcome = reconcile(old, old, _h(notes=raw), _h(notes=current), tracked={'notes'})
+                result = _reconcile_project_notes_representation(outcome, {'partner_notes': raw},
+                                                                  {'notes': raw}, {'notes': current})
+                self.assertEqual(result.conflicts, {'notes'})
+
     def test_missing_fields_are_carried_forward(self):
         outcome = reconcile(_h(f="a"), _h(f="a"), {}, _h(f="z"), tracked={"f"}, missing={"f"})
         self.assertFalse(outcome.apply | outcome.local | outcome.conflicts)

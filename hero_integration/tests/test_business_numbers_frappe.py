@@ -104,6 +104,29 @@ class TestBusinessNumbersOnERPNext(unittest.TestCase):
         self.assertEqual(self.link_target("project"), reference)
         self.assertEqual(frappe.db.get_value("Project", reference, "custom_hero_display_id"), f"0{self.digits}")
 
+    def test_equivalent_project_notes_clear_conflict_without_overwriting(self):
+        company = frappe.db.get_single_value('Global Defaults', 'default_company') or frappe.get_all(
+            'Company', pluck='name', limit=1)[0]
+        reference = f'PV-0{self.digits}'
+        original = {'project_name': f'Synthetic {reference}', 'company': company, 'notes': '<p>Earlier text</p>'}
+        result = migration._upsert('project', self.source_id, {'id': self.source_id}, original,
+                                   'Project', 'project_name', 'old-mapping', EXECUTE, document_name=reference)
+        self.assertEqual(result.code, 'CREATED')
+        current = '<p>First line<br>Second line</p>'
+        frappe.db.set_value('Project', reference, 'notes', current)
+        record = {'id': self.source_id, 'partner_notes': 'First line\nSecond line'}
+        values = {**original, 'notes': record['partner_notes']}
+        result = migration._upsert('project', self.source_id, record, values, 'Project', 'project_name',
+                                   'new-mapping', EXECUTE, document_name=reference)
+        self.assertEqual(result.code, 'CONVERGED')
+        self.assertEqual(frappe.db.get_value('Project', reference, 'notes'), current)
+        self.assertEqual(frappe.db.get_value('HERO Integration Link',
+                                            {'source_type': 'project', 'source_id': self.source_id}, 'sync_status'),
+                         'Synchronized')
+        repeated = migration._upsert('project', self.source_id, record, values, 'Project', 'project_name',
+                                     'new-mapping', EXECUTE, document_name=reference)
+        self.assertEqual(repeated.code, 'SKIPPED')
+
     def test_legacy_customer_id_is_reused_without_rename(self):
         legacy = f"KD-TEST-{self.digits}"
         values = {"customer_name": f"BN Test {self.digits}", "customer_type": "Individual",

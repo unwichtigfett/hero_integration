@@ -117,6 +117,32 @@ class _Comparison:
         )
 
 
+def _same_project_notes_after_mapping_change(record, incoming, current):
+    """Recognize the two supported renderings of the same plain HERO text.
+
+    Preserve the existing HTML and acknowledge each side's own representation.
+    Markup and entities remain conflicts: interpreting them as plain text would
+    not prove that the rendered content is the same.
+    """
+    from hero_integration.services.direct_mapping import plain_text_html
+    from frappe.utils.html_utils import sanitize_html
+
+    raw = record.get('partner_notes')
+    return (isinstance(raw, str) and bool(raw.strip())
+            and not any(character in raw for character in '<>&')
+            and incoming == sanitize_html(raw)
+            and current == plain_text_html(raw))
+
+
+def _reconcile_project_notes_representation(outcome, record, values, target_values):
+    if ('notes' in outcome.conflicts
+            and _same_project_notes_after_mapping_change(record, values.get('notes'), target_values.get('notes'))):
+        from dataclasses import replace
+        return replace(outcome, conflicts=outcome.conflicts - {'notes'},
+                       converged=outcome.converged | {'notes'})
+    return outcome
+
+
 def _task_midnight_baseline(prior_source, prior_target, current):
     """Recognize a proven legacy Date stored by native Datetime as midnight.
 
@@ -1976,6 +2002,8 @@ def observe_monitor_record(operation: str, record: dict[str, object]) -> Result 
     comparison = _Comparison(values, extra)
     target_values = comparison.target_values(target, snapshot)
     outcome = comparison.reconcile(prior_source, prior_target, target_values)
+    if operation == 'HeroProjectMatches':
+        outcome = _reconcile_project_notes_representation(outcome, record, values, target_values)
     if outcome.conflicts:
         detail = f"Field conflict requires review: {', '.join(sorted(outcome.conflicts))}."
         notify_conflict_once(link, set(outcome.conflicts), detail)
@@ -2075,6 +2103,8 @@ def _upsert(
             # baselines are carried forward instead of being compared.
             comparison.omit(set(prior_source) | set(prior_target))
         outcome = comparison.reconcile(prior_source, prior_target, target_values)
+        if source_type == 'project' and doctype == 'Project':
+            outcome = _reconcile_project_notes_representation(outcome, record, values, target_values)
         if outcome.conflicts:
             detail = f"Field conflict requires review: {', '.join(sorted(outcome.conflicts))}."
             if run.mode != "Preview":
