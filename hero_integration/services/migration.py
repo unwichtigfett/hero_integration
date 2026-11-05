@@ -752,10 +752,6 @@ def _cancel_if_requested(run) -> None:
         raise _Cancelled()
 
 
-def _testing_preview_enabled(run) -> bool:
-    return getattr(run, "mode", "") == "Preview" and bool(int(getattr(run, "testing_enabled", 0) or 0))
-
-
 def _persist_testing_result(run, source: TestingPreviewSource) -> None:
     """Store only technical counters and source outcomes for the finished test run."""
     try:
@@ -2528,10 +2524,6 @@ def _record_phase_result(run, phase: str, result: Result) -> None:
     else:
         field = f"{prefix}_skipped"
     setattr(run, field, int(getattr(run, field, 0) or 0) + 1)
-
-
-def _phase_has_blockers(run, phase: str) -> bool:
-    return bool(int(getattr(run, f"{phase}_phase_blocked", 0) or 0))
 
 
 def _customer_phase_completed(run, source_instance: str) -> bool:

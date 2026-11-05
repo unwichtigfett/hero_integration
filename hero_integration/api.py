@@ -443,8 +443,6 @@ def resume_run(run_name: str) -> dict[str, str]:
         except SourceBindingError as error:
             frappe.throw(frappe._(str(error)))
         return {"status": "QUEUED", "run": run.name}
-    if _as_bool(getattr(run, "testing_enabled", 0)):
-        frappe.throw(frappe._("Testing previews cannot resume because their shared HERO request budget is run-bound."))
     from hero_integration.services.migration import validate_run_mappings
 
     from hero_integration.services.migration import _assert_checkpoint_contract
@@ -1287,11 +1285,6 @@ def _testing_settings(settings) -> dict[str, object]:
         "enabled": _as_bool(getattr(settings, "testing_enabled", 0)),
         "max_actions": _testing_max_actions(getattr(settings, "testing_max_actions", 5) or 5),
     }
-
-
-def _testing_preview_configuration() -> dict[str, object]:
-    """Freeze the Settings value onto a manually requested Preview run."""
-    return _testing_settings(frappe.get_single("HERO Integration Settings"))
 
 
 def _save_polling_configuration(settings, **values: object) -> None:

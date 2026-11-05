@@ -60,7 +60,7 @@ class TestTestingPreviewContract(unittest.TestCase):
         with patch.object(migration, '_phase_state', return_value='Pending'), \
              patch.object(migration, '_set_phase_state') as phase, patch.object(migration, '_block_run') as block, \
              patch.object(migration, '_migrate_customer'), patch.object(migration, '_record_result'), \
-             patch.object(migration, '_record_phase_result'), patch.object(migration, '_phase_has_blockers', return_value=False):
+             patch.object(migration, '_record_phase_result'):
             result = migration._process_phase(run, 'customer', reader)
         self.assertFalse(result)
         self.assertEqual(calls, [])
@@ -75,8 +75,7 @@ class TestTestingPreviewContract(unittest.TestCase):
             calls.append(offset)
             return SourcePage((), None)
         with patch.object(migration, '_phase_state', return_value='Pending'), \
-             patch.object(migration, '_set_phase_state'), patch.object(migration, '_block_run') as block, \
-             patch.object(migration, '_phase_has_blockers', return_value=False):
+             patch.object(migration, '_set_phase_state'), patch.object(migration, '_block_run') as block:
             result = migration._process_phase(run, 'customer', reader)
         self.assertFalse(result)
         self.assertEqual(calls, [])
@@ -111,8 +110,7 @@ class TestTestingPreviewContract(unittest.TestCase):
              patch.object(migration, '_set_phase_state'), patch.object(migration, '_block_run'), \
              patch.object(migration, '_migrate_isolated', side_effect=lambda action: action()), \
              patch.object(migration, '_migrate_customer', side_effect=lambda record, _run: processed.append(record['id'])), \
-             patch.object(migration, '_record_result'), patch.object(migration, '_record_phase_result'), \
-             patch.object(migration, '_phase_has_blockers', return_value=False):
+             patch.object(migration, '_record_result'), patch.object(migration, '_record_phase_result'):
             with self.assertRaisesRegex(migration.MappingPlanError, 'identity'):
                 migration._process_phase(run, 'customer', lambda offset: pages[offset])
         self.assertEqual(processed, [1, 2])

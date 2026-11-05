@@ -337,13 +337,6 @@ def _mapping_items(package: dict[str, object], definitions: dict[str, list[dict[
     return result
 
 
-def _declares_target(definitions, mapping):
-    return any(
-        field["doctype"] == mapping["target_doctype"] and field["fieldname"] == mapping["target_field"]
-        for field in definitions["custom_fields"]
-    )
-
-
 def _target_dependency(definitions, mapping):
     for field in definitions['custom_fields']:
         if field['doctype'] == mapping['target_doctype'] and field['fieldname'] == mapping['target_field']:

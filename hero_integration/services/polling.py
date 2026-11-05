@@ -258,26 +258,6 @@ def _notify_polling_event(event_name: str, detail: str) -> None:
             "email_content": recipient_diagnostic(user, detail)}).insert(ignore_permissions=True)
 
 
-def _monitor_observer(operation: str, record: dict[str, object]) -> None:
-    """Persist only meaningful field-comparison outcomes from MONITOR."""
-    from hero_integration.services.integration_events import record_output
-    from hero_integration.services.migration import observe_monitor_record
-
-    result = observe_monitor_record(operation, record)
-    if result is None:
-        return
-    source_id = str(record.get("id")) if isinstance(record.get("id"), int) else "unknown"
-    record_output(
-        source_type=operation,
-        source_id=source_id,
-        result=result.code,
-        action="monitor_reconciliation",
-        detail=result.detail,
-        target_doctype=result.target_doctype,
-        target_name=result.target_name,
-    )
-
-
 def _count_pages(reader, offset: int, max_pages: int, minimum_interval: float, record_observer=None, operation: str = "", page_size: int | None = None) -> _PageCount:
     count = pages = 0
     seen_offsets: set[int] = set()
