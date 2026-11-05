@@ -96,3 +96,18 @@ class TestProductPartialWriteback(TestCase):
         self.item['item_name'] = 'Unsent local name'
         self.assertEqual(self.import_changed_price(), 'conflict')
         self.assertEqual(self.item['item_name'], 'Unsent local name')
+
+    def test_description_send_does_not_acknowledge_an_unimported_remote_name(self):
+        self.row['base_data']['name'] = 'New remote name'
+        self.acknowledge_description()
+        self.assertEqual(self.item['item_name'], self.original_name)
+        self.assertEqual(products.upsert(self.row, self.link, products._Masters(), 'source-a', read=self.read), 'updated')
+        self.assertEqual(self.item['item_name'], 'New remote name')
+        self.assertEqual(self.item['description'], 'Sent description')
+
+    def test_remote_name_after_partial_send_still_conflicts_with_unsent_local_name(self):
+        self.row['base_data']['name'] = 'New remote name'
+        self.item['item_name'] = 'Unsent local name'
+        self.acknowledge_description()
+        self.assertEqual(products.upsert(self.row, self.link, products._Masters(), 'source-a', read=self.read), 'conflict')
+        self.assertEqual(self.item['item_name'], 'Unsent local name')
