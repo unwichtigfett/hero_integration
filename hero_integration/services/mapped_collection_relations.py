@@ -19,13 +19,21 @@ PRICE_DIMENSIONS = ('customer', 'supplier', 'batch_no', 'packing_unit', 'valid_f
 MAX_ROWS = 1000
 
 
+class MissingCollectionIdentity(ValueError):
+    """A related source row cannot yet be addressed without guessing."""
+
+
+class UnboundCustomerAddress(ValueError):
+    """A matching address exists, but its source identity is not established."""
+
+
 def _path(value):
     return isinstance(value, str) and bool(PATH.fullmatch(value))
 
 
 def _identity(value):
     if type(value) not in {str, int} or not str(value).strip() or type(value) is int and value <= 0:
-        raise ValueError('Native collection rows require a stable source identity.')
+        raise MissingCollectionIdentity('Native collection rows require a stable source identity.')
     return str(value).strip()
 
 
@@ -245,7 +253,7 @@ def preflight(item, parent_doctype, parent_name, parent=None):
             for candidate in candidates:
                 address = frappe.get_doc('Address', candidate.name)
                 if any(row.link_doctype == 'Customer' and row.link_name == parent_name for row in address.get('links', [])):
-                    raise ValueError('An existing customer address requires explicit source reconciliation.')
+                    raise UnboundCustomerAddress('An existing customer address requires explicit source reconciliation.')
     elif kind=='customer_contacts':
         if values.get('salutation') and not frappe.db.exists('Salutation',values['salutation']):
             raise ValueError('The explicitly bound native Salutation does not exist.')

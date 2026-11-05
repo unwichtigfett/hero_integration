@@ -44,14 +44,15 @@ class TestMapping(unittest.TestCase):
 
 
 class _Client:
-    def __init__(self, total, reject_above=500):
-        self.total, self.reject_above, self.calls = total, reject_above, []
+    def __init__(self, total, reject_above=500, page_cap=None):
+        self.total, self.reject_above, self.calls, self.page_cap = total, reject_above, [], page_cap
 
     def query(self, document, variables):
         self.calls.append((variables["first"], variables["offset"]))
         if variables["first"] > self.reject_above:
             raise RuntimeError("too large")
-        start, end = variables["offset"], min(variables["offset"] + variables["first"], self.total)
+        size = min(variables['first'], self.page_cap) if self.page_cap else variables['first']
+        start, end = variables["offset"], min(variables["offset"] + size, self.total)
         return {"supply_product_versions": [{"product_id": f"P{i}", "nr": str(i)} for i in range(start, end)]}
 
 
@@ -95,7 +96,7 @@ class TestPaging(unittest.TestCase):
         with patch.object(pm, 'frappe', fake), patch.object(pm, '_links', return_value={}), \
                 patch.object(pm, 'upsert', side_effect=import_article):
             state = pm.sync_products(_Client(2), source_instance='source-a', read=BUILTIN)
-        self.assertEqual(state['counts'], {'requests': 1, 'failed': 1, 'added': 1})
+        self.assertEqual(state['counts'], {'requests': 2, 'failed': 1, 'added': 1})
         self.assertEqual(len(accepted), 1)
         self.assertEqual(len([entry for entry in created if entry[0] == 'Supplier']), 2)
         self.assertEqual(len([entry for entry in created if entry[0] == 'UOM']), 2)
@@ -119,9 +120,34 @@ class TestPaging(unittest.TestCase):
             state = pm.sync_products(client, source_instance="source-a", read=BUILTIN)
         links.assert_called_once_with("source-a")
         self.assertEqual(len(seen), 1200)
-        self.assertEqual([offset for _, offset in client.calls], [0, 500, 1000])
+        self.assertEqual([offset for _, offset in client.calls], [0, 500, 1000, 1200])
         self.assertTrue(state["done"])
         self.assertEqual(state["counts"]["added"], 1200)
+
+    def test_short_server_pages_do_not_truncate_the_import(self):
+        saved, seen = {}, []
+        fake = SimpleNamespace(db=SimpleNamespace(get_default=saved.get, set_default=lambda k, v: saved.__setitem__(k, v),
+            commit=lambda: None, rollback=lambda: None), utils=SimpleNamespace(now_datetime=lambda: 'now'),
+            log_error=lambda **k: None)
+        client = _Client(5, page_cap=2)
+        with patch.object(pm, 'frappe', fake), patch.object(pm, '_links', return_value={}), \
+             patch.object(pm, 'upsert', side_effect=lambda row, *a, **k: seen.append(row['product_id']) or 'added'):
+            result = pm.sync_products(client, source_instance='source-a', read=BUILTIN)
+        self.assertEqual(seen, ['P0', 'P1', 'P2', 'P3', 'P4'])
+        self.assertEqual([offset for _, offset in client.calls], [0, 2, 4, 5])
+        self.assertTrue(result['done'])
+
+    def test_repeated_page_stops_before_a_second_write(self):
+        saved = {}
+        fake = SimpleNamespace(db=SimpleNamespace(get_default=saved.get, set_default=lambda k, v: saved.__setitem__(k, v),
+            commit=lambda: None, rollback=lambda: None), utils=SimpleNamespace(now_datetime=lambda: 'now'),
+            log_error=lambda **k: None)
+        with patch.object(pm, 'frappe', fake), patch.object(pm, '_links', return_value={}), \
+             patch.object(pm, 'fetch_page', return_value=[{'product_id': 'P1'}]), \
+             patch.object(pm, 'upsert', return_value='added') as upsert, \
+             self.assertRaisesRegex(ValueError, 'repeated a product page'):
+            pm.sync_products(_Client(1), source_instance='source-a', read=BUILTIN)
+        self.assertEqual(upsert.call_count, 1)
 
 
 class _Row(dict):

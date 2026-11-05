@@ -1394,6 +1394,21 @@ Project response has an incompatible field: {0},Die Projektantwort enthält ein 
 Project response has an incompatible object: {0},Die Projektantwort enthält ein inkompatibles Objekt: {0}
 ProjectMatch reference awaits or failed administrator review; linked records wait.,Die ProjectMatch-Referenz wartet auf Administratorprüfung oder hat diese nicht bestanden; verknüpfte Datensätze warten.
 ProjectMatch reference has no verified native Project binding.,Die ProjectMatch-Referenz hat keine geprüfte native Project-Bindung.
+Migrate Employees first and Contacts second,Zuerst Mitarbeiter und danach Kontakte migrieren
+Related Test Selection,Zusammengehörige Testauswahl
+Employee Migration Progress,Fortschritt der Mitarbeitermigration
+{0} related employee identities could not be resolved uniquely.,{0} zugehörige Mitarbeiteridentitäten konnten nicht eindeutig aufgelöst werden.
+{0} · up to {1} selected projects and related records,{0} · bis zu {1} ausgewählte Projekte und zugehörige Datensätze
+{0} · {1} processed · {2} received · {3} related identities unresolved,{0} · {1} verarbeitet · {2} empfangen · {3} zugehörige Identitäten nicht aufgelöst
+Pending relationships,Ausstehende Verknüpfungen
+Pending relationship storage is not installed.,Der Speicher für ausstehende Verknüpfungen ist nicht installiert.
+No pending relationships.,Keine ausstehenden Verknüpfungen.
+Imported; waiting for relationship,Importiert; Verknüpfung ausstehend
+Waiting to import,Wartet auf Import
+Conflict requires review,Konflikt muss geprüft werden
+Related HERO IDs,Zugehörige HERO-IDs
+Relationships are rechecked when their source records arrive. Resolved entries disappear from this list.,Verknüpfungen werden beim Eintreffen der Quelldatensätze erneut geprüft. Erledigte Einträge verschwinden aus dieser Liste.
+"Runs Employees, Contacts, Projects, Events, Tasks, Documents, Pictures, Products and Services in this order.","Migriert Mitarbeiter, Kontakte, Projekte, Termine, Aufgaben, Dokumente, Bilder, Artikel und Leistungen in dieser Reihenfolge."
 ProjectMatch reference must be a positive integer.,Die ProjectMatch-Referenz muss eine positive Ganzzahl sein.
 Projection Migration,Projektionsmigration
 Projection does not match this schema snapshot: {0}.,Die Projektion stimmt nicht mit diesem Schema-Snapshot überein: {0}.
@@ -1470,6 +1485,8 @@ Records Created,Erstellte Datensätze
 Records Processed,Verarbeitete Datensätze
 Records Skipped,Übersprungene Datensätze
 Redacted Detail,Redigierte Details
+Pending reviews in this run,Offene Prüfungen in diesem Lauf
+Article imported; a related price requires a stable source identity.,Artikel importiert; ein zugehöriger Preis benötigt eine stabile Quellidentität.
 Referenced identities,Referenzierte Identitäten
 Refresh,Aktualisieren
 Refresh Schema,Schema aktualisieren

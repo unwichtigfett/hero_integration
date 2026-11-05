@@ -7,6 +7,7 @@ import sys
 import types
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from hero_integration.tests.mock_hero_v1 import AMBIGUOUS_PROJECT, CUSTOMERS, PROJECTS, UPDATED_CUSTOMER
 from hero_integration.tests.mapping_fixture import fixture_plan
@@ -716,6 +717,25 @@ class TestProjectCompanyMigration(FakeFrappeMigrationHarness, unittest.TestCase)
             self.assertIn("project_name", result.detail)
             self.assertEqual(project["project_name"], "Locally edited title")
 
+    def test_local_project_change_does_not_block_independent_assignee_reconciliation(self):
+        record = _project_title_inputs(id=782, customer_id=101, project_match_assignments=[{'user_id': 44}])
+        with patch('hero_integration.integrations.project_assignments.sync', return_value={'added': 0, 'closed': 0, 'unmatched': 0}) as sync:
+            self.assertEqual(self._project(record).code, 'CREATED')
+            self.frappe.projects[0]['project_name'] = 'Locally edited title'
+            self.assertEqual(self._project(record).code, 'OBSERVED')
+        self.assertEqual(sync.call_count, 2)
+        self.assertEqual(self.frappe.projects[0]['project_name'], 'Locally edited title')
+
+    def test_project_field_conflict_allows_assignee_additions_but_not_removals(self):
+        record = _project_title_inputs(id=782, customer_id=101, project_match_assignments=[{'user_id': 44}])
+        with patch('hero_integration.integrations.project_assignments.sync', return_value={'added': 0, 'closed': 0, 'unmatched': 0}) as sync:
+            self.assertEqual(self._project(record).code, 'CREATED')
+            self.frappe.projects[0]['project_name'] = 'Locally edited title'
+            result = self._project({**record, 'project_nr': '1112'})
+        self.assertEqual(result.code, 'CONFLICT')
+        self.assertFalse(sync.call_args.kwargs['allow_removals'])
+        self.assertEqual(self.frappe.projects[0]['project_name'], 'Locally edited title')
+
     def test_baseline_without_title_basis_preserves_the_title_once(self):
         # Without a prior title basis, preserve the title and record its basis
         # so subsequent component changes can rename it.
@@ -768,6 +788,17 @@ class TestProjectCompanyMigration(FakeFrappeMigrationHarness, unittest.TestCase)
         self.assertEqual(self._project(record).code, "PENDING_REVIEW")
         self.assertIsNone(self.frappe.projects[0].get("customer"))
         self.assertIn("customer", self.migration._link("project", "793", "default").conflict_detail)
+
+    def test_missing_customer_can_arrive_after_project_when_dependency_is_recordable(self):
+        record = _project_title_inputs(id=793, customer_id=999)
+        with patch('hero_integration.services.deferred_references.installed', return_value=True):
+            self.assertEqual(self._project(record).code, 'CREATED')
+        link = self.migration._link('project', '793', 'default')
+        self.assertEqual(link.sync_status, 'Synchronized')
+        self.assertIsNone(self.frappe.projects[0].get('customer'))
+        self.frappe.links[('customer', '999')] = SimpleNamespace(target_name='Synthetic Customer', target_doctype='Customer')
+        self.assertEqual(self._project(record).code, 'UPDATED')
+        self.assertEqual(self.frappe.projects[0]['customer'], 'Synthetic Customer')
 
     def test_admin_approval_releases_the_project_for_normal_sync(self):
         record = _project_title_inputs(id=794, customer_id=999)

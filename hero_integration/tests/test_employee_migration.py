@@ -191,6 +191,20 @@ class TestEmployeeResume(unittest.TestCase):
         self.assertEqual(final['counts']['conflict'], 0)
         self.assertNotIn('last_error', final)
 
+    def test_progress_uses_run_longtext_and_keeps_legacy_checkpoint(self):
+        legacy = {'counts': {'added': 1}, 'done_ids': [1], 'outcomes': {'1': 'added'}}
+        self.stored[em.STATE_KEY.format('run-1')] = json.dumps(legacy)
+        run_fields = {}
+        self.fake.db.has_column = lambda doctype, field: field == 'employee_progress_json'
+        self.fake.db.get_value = lambda doctype, name, field: run_fields.get(field)
+        self.fake.db.set_value = lambda doctype, name, field, value, **kwargs: run_fields.__setitem__(field, value)
+        with patch.object(em, 'upsert', return_value='added') as upsert:
+            state = self.run_import()
+        self.assertEqual(upsert.call_count, 1)
+        self.assertEqual(state['done_ids'], [1, 2])
+        self.assertEqual(json.loads(run_fields['employee_progress_json'])['done_ids'], [1, 2])
+        self.assertEqual(json.loads(self.stored[em.STATE_KEY.format('run-1')]), legacy)
+
     def test_cancelled_slice_performs_no_writes(self):
         with patch.object(em, 'upsert') as write:
             state = self.run_import(should_stop=lambda: True)

@@ -29,6 +29,8 @@ DIRECT_OPERATIONS = {EMPLOYEE_ACTION: "HeroEmployees", PRODUCT_ACTION: "HeroProd
 # Project Migration processes the referenced contacts first in the same run.
 FULL_STEPS = ("Project Migration", "Schedule Migration", "Projection Migration", "Product Migration",
               "Document Migration", "Picture Migration")
+NEW_FULL_STEPS = (EMPLOYEE_ACTION, "Customer Migration", "Project Migration", "Schedule Migration",
+                  "Projection Migration", "Document Migration", "Picture Migration", PRODUCT_ACTION, SERVICE_ACTION)
 ACTIVE = ("Queued", "Running")
 SUCCESS = ("Completed", "Completed With Conflicts")
 FULL_KEY = "hero_full_migration:{}"
@@ -66,6 +68,123 @@ def bound_configuration(run, *, configuration=None):
     return config
 
 
+def prepare_related_test(run):
+    """Freeze project identities before the first child of a bounded full run."""
+    from hero_integration.services.file_transfer import _client_and_downloader
+    from hero_integration.services.migration_testing import prepare_project_cohort, project_reader_fingerprint, record_limit
+    config = bound_configuration(run)
+    read = direct_runtime.approved_read('HeroProjectMatches', config.source_instance)
+    if read is None:
+        raise SourceBindingError('Related test selection requires an approved Project read service.')
+    before = project_reader_fingerprint(read)
+    client, _, instance = _client_and_downloader(config)
+    if instance != config.source_instance:
+        raise SourceBindingError('The related test reader belongs to another HERO source.')
+    cohort = prepare_project_cohort(client, read, record_limit(run))
+    bound_configuration(run)
+    current = direct_runtime.approved_read('HeroProjectMatches', config.source_instance)
+    if current is None or project_reader_fingerprint(current) != before:
+        raise SourceBindingError('Project mapping changed while selecting related test records.')
+    cohort.update(source_instance=config.source_instance, source_binding_revision=int(config.source_binding_revision),
+                  project_reader_fingerprint=before)
+    return cohort
+
+
+def related_test_for_run(run):
+    """Return only a still-valid sample belonging to this full-run child."""
+    if not bool(int(getattr(run, 'testing_enabled', 0) or 0)):
+        return None
+    parent = frappe.db.get_default(CHILD_KEY.format(run.name))
+    if not parent:
+        return None
+    state = _full(parent)
+    if not state.get('related_test_enabled'):
+        return None  # a full run accepted before related selection existed
+    if not state.get('related_test_digest'):
+        raise SourceBindingError('The frozen related test selection has no integrity proof.')
+    cohort = _load_related_test(parent, expected_digest=state.get('related_test_digest'))
+    config = bound_configuration(run)
+    if (cohort.get('version') != 1 or cohort.get('source_instance') != config.source_instance or
+            cohort.get('source_binding_revision') != int(config.source_binding_revision)):
+        raise SourceBindingError('The related test sample no longer matches the confirmed HERO source.')
+    from hero_integration.services.migration_testing import project_reader_fingerprint
+    read = direct_runtime.approved_read('HeroProjectMatches', config.source_instance)
+    if read is None or project_reader_fingerprint(read) != cohort.get('project_reader_fingerprint'):
+        raise SourceBindingError('The related test Project reader or mapping changed; start a new run.')
+    operation = {'Projection Migration': 'HeroTasks', 'Schedule Migration': 'HeroCalendarEvents'}.get(run.action)
+    if operation and cohort.get('project_ids'):
+        read = direct_runtime.approved_read(operation, config.source_instance)
+        if read is None or project_reader_fingerprint(read) != cohort.get('projection_reader_fingerprints', {}).get(operation):
+            raise SourceBindingError('The related test reader or mapping changed; start a new run.')
+    return cohort
+
+
+def discover_related_test_page(run, state, cohort, *, page_budget=10):
+    """Discover related Tasks and Events in bounded, restartable read-only slices."""
+    import hashlib
+    from hero_integration.services.file_transfer import _client_and_downloader
+    from hero_integration.services.migration_testing import collect_related_projection, project_reader_fingerprint
+    config = bound_configuration(run)
+    client, _, instance = _client_and_downloader(config)
+    if instance != config.source_instance:
+        raise SourceBindingError('Related test discovery belongs to another HERO source.')
+    if not cohort['project_ids']:
+        return True
+    operations = ('HeroTasks', 'HeroCalendarEvents')
+    progress = state.setdefault('related_test_discovery', {'operation_index': 0, 'offset': 0, 'pages': 0})
+    fingerprints = cohort.setdefault('projection_reader_fingerprints', {})
+    readers = {}
+
+    def revalidate_readers():
+        # Discard the read snapshot before rechecking approvals after transport.
+        frappe.db.rollback()
+        bound_configuration(run)
+        for operation, (_, fingerprint) in readers.items():
+            current = direct_runtime.approved_read(operation, instance)
+            if current is None or project_reader_fingerprint(current) != fingerprint:
+                raise SourceBindingError('A related test reader changed during discovery; start a new run.')
+
+    for _ in range(page_budget):
+        index = progress['operation_index']
+        if index >= len(operations):
+            revalidate_readers()
+            return True
+        operation = operations[index]
+        if operation not in readers:
+            read = direct_runtime.approved_read(operation, instance)
+            if read is None:
+                raise SourceBindingError('Related test discovery requires an approved ' + operation + ' read service.')
+            fingerprint = project_reader_fingerprint(read)
+            if operation in fingerprints and fingerprints[operation] != fingerprint:
+                raise SourceBindingError('A related test reader changed during discovery; start a new run.')
+            fingerprints[operation] = fingerprint
+            readers[operation] = (read, fingerprint)
+        read, fingerprint = readers[operation]
+        if progress['pages'] >= 10000:
+            raise SourceBindingError('Related test discovery reached its page budget before the source ended.')
+        bound_configuration(run)
+        page = direct_runtime.fetch_page(client, read, progress['offset'])
+        bound_configuration(run)
+        progress['pages'] += 1
+        if not page:
+            progress.update(operation_index=index + 1, offset=0, pages=0, last_page='')
+            continue
+        values = [row.get('id') if isinstance(row, dict) else None for row in page]
+        if any(not isinstance(value, (int, str)) or isinstance(value, bool) or not str(value).strip() for value in values):
+            raise SourceBindingError('Related test discovery encountered an invalid source identity.')
+        ids = [str(value) for value in values]
+        signature = hashlib.sha256(json.dumps(ids, separators=(',', ':')).encode()).hexdigest()
+        if not all(ids) or len(set(ids)) != len(ids) or signature == progress.get('last_page'):
+            raise SourceBindingError('Related test discovery encountered a missing or repeated source page.')
+        collect_related_projection(cohort, operation, page)
+        if len(cohort['task_ids']) + len(cohort['event_ids']) > 50000:
+            raise SourceBindingError('Related test selection exceeds 50000 Tasks and Events; reduce the project sample.')
+        progress['offset'] += len(page)
+        progress['last_page'] = signature
+    revalidate_readers()
+    return progress['operation_index'] >= len(operations)
+
+
 # ---------------------------------------------------------------- starting
 
 def require_mappings(action: str, instance: str, *, steps=None) -> dict:
@@ -98,6 +217,8 @@ def start(action: str, parent: str = "") -> str:
     if parent:
         bound_configuration(frappe.get_doc("HERO Integration Run", parent))  # a chain never switches sources
     testing = configuration(parent_run, frappe_module=frappe)
+    if action == FULL_ACTION and testing['testing_enabled'] and not frappe.get_meta('HERO Integration Run').has_field('testing_cohort_json'):
+        raise SourceBindingError('Related test selection schema is not installed; migrate the app before starting this run.')
     run = frappe.get_doc({"doctype": "HERO Integration Run", "action": action, "mode": "Execute", "state": "Queued",
                           "source_instance": config.source_instance,
                           "source_binding_revision": int(config.source_binding_revision or 0), **testing, **run_metadata(testing)})
@@ -112,7 +233,7 @@ def start(action: str, parent: str = "") -> str:
         reset()
     elif action == FULL_ACTION:
         _save_full(run.name, {"step": 0, "child": "", "notes": [],
-                              "steps": [EMPLOYEE_ACTION, *FULL_STEPS[:4], SERVICE_ACTION, *FULL_STEPS[4:]]})
+                              "steps": list(NEW_FULL_STEPS)})
     if parent:
         frappe.db.set_default(CHILD_KEY.format(run.name), parent)
     _enqueue(run.name)
@@ -196,6 +317,7 @@ def _file_slice(run, config) -> None:
 
     from hero_integration.services.migration_testing import record_limit, persist
     maximum = record_limit(run)
+    cohort = related_test_for_run(run) if maximum is not None and run.action in {*FILE_ACTIONS, EMPLOYEE_ACTION} else None
     client, downloader, instance = _client_and_downloader(config)
     if run.action == SERVICE_ACTION:
         from hero_integration.services.service_migration import sync_services
@@ -208,9 +330,10 @@ def _file_slice(run, config) -> None:
         from hero_integration.services.employee_migration import sync_employees
 
         with filelock("hero_employee_migration", timeout=5):
+            args = {'cohort_user_ids': cohort['user_ids'], 'cohort_partner_ids': cohort['partner_ids']} if cohort is not None else {}
             state = sync_employees(client, source_instance=instance, run_name=run.name,
                                    should_stop=cancelled, progress=progress, verify_source=lambda: bound_configuration(run),
-                                   record_limit=maximum, continue_on_conflict=True)
+                                   record_limit=maximum, continue_on_conflict=True, **args)
     elif run.action == PRODUCT_ACTION:
         from hero_integration.services.product_migration import sync_products
 
@@ -219,13 +342,15 @@ def _file_slice(run, config) -> None:
                                   record_limit=maximum, run_name=run.name)
     else:
         with filelock("hero_file_transfer", timeout=5):
+            args = {'cohort': cohort} if cohort is not None else {}
             state = transfer(FILE_ACTIONS[run.action], source_instance=instance, client=client,
                              downloader=downloader, should_stop=cancelled, progress=progress,
-                             record_limit=maximum, run_name=run.name)
+                             record_limit=maximum, run_name=run.name, **args)
     counts = state.get("counts") or {}
     if maximum is not None:
         persist(run.name, DIRECT_OPERATIONS[run.action], state)
-    problems = counts.get("failed", 0) + counts.get("conflict", 0)
+    problems = counts.get("failed", 0) + counts.get("conflict", 0) + int(any(
+        state.get(key) for key in ('testing_missing_user_ids', 'testing_ambiguous_user_ids', 'testing_missing_partner_ids')))
     frappe.db.set_value("HERO Integration Run", run.name, run_counts(counts))
     frappe.db.commit()
     if state.get("stopped"):
@@ -237,16 +362,21 @@ def _file_slice(run, config) -> None:
         _enqueue(run.name)
         frappe.db.commit()
     else:
-        _finish(run.name, "Completed With Conflicts" if problems else "Completed", summary(counts))
+        unresolved = sum(len(state.get(key, [])) for key in
+            ('testing_missing_user_ids', 'testing_ambiguous_user_ids', 'testing_missing_partner_ids'))
+        detail = summary(counts)
+        if unresolved:
+            detail += ' ' + frappe._('{0} related employee identities could not be resolved uniquely.').format(unresolved)
+        _finish(run.name, "Completed With Conflicts" if problems else "Completed", detail)
 
 
 def run_counts(counts: dict) -> dict:
     """Run fields for the counts of a product or file pass."""
-    skipped = counts.get("unchanged", 0) + sum(v for k, v in counts.items() if k.startswith("skipped_"))
+    skipped = counts.get("updated", 0) + counts.get("unchanged", 0) + sum(v for k, v in counts.items() if k.startswith("skipped_"))
     problems = counts.get("failed", 0) + counts.get("conflict", 0)
     values = {"created_records": counts.get("added", 0), "skipped_records": skipped,
               "conflict_records": problems, "error_message": summary(counts)}
-    values["processed"] = values["created_records"] + counts.get("updated", 0) + skipped + values["conflict_records"]
+    values["processed"] = values["created_records"] + skipped + values["conflict_records"]
     return values
 
 
@@ -256,6 +386,8 @@ def summary(counts: dict) -> str:
             f"{skipped} skipped, {counts.get('conflict', 0)} conflicts, {counts.get('failed', 0)} failed")
     if "bytes" in counts or "bytes_planned" in counts:
         text += f", {counts.get('bytes', 0) / 2**30:.2f} GB transferred"
+    if counts.get('pending_review'):
+        text += f", {counts['pending_review']} related record(s) awaiting review"
     return text + "."
 
 
@@ -292,6 +424,27 @@ def advance_full(run_name: str) -> None:
 def _advance_full_locked(run_name: str) -> None:
     state = _full(run_name)
     steps = state.get("steps") or FULL_STEPS  # preserve pre-upgrade run checkpoints
+    if (steps == list(NEW_FULL_STEPS) and state.get('step') == 0 and not state.get('child')
+            and frappe.db.get_value('HERO Integration Run', run_name, 'testing_enabled')
+            and not state.get('related_test_enabled')):
+        cohort = prepare_related_test(frappe.get_doc('HERO Integration Run', run_name))
+        state['related_test_digest'] = _save_related_test(run_name, cohort)
+        state['related_test_enabled'] = True
+        _save_full(run_name, state)
+        frappe.db.commit()
+    if (steps == list(NEW_FULL_STEPS) and state.get('step') == 0 and not state.get('child')
+            and state.get('related_test_enabled') and not state.get('related_test_ready')):
+        if not state.get('related_test_digest'):
+            raise SourceBindingError('The frozen related test selection has no integrity proof.')
+        cohort = _load_related_test(run_name, expected_digest=state.get('related_test_digest'))
+        state['related_test_ready'] = discover_related_test_page(frappe.get_doc('HERO Integration Run', run_name), state, cohort)
+        state['related_test_digest'] = _save_related_test(run_name, cohort)
+        _save_full(run_name, state)
+        if not state['related_test_ready']:
+            _enqueue(run_name)
+            frappe.db.commit()
+            return
+        frappe.db.commit()
     while True:
         child = state.get("child")
         if child:
@@ -305,8 +458,22 @@ def _advance_full_locked(run_name: str) -> None:
                 return
             if child_state == "Completed With Conflicts":
                 state["notes"].append(f"{step}: conflicts in {child}")
+            state.setdefault("completed_children", []).append(child)
             state.update(step=state["step"] + 1, child="")
         if state["step"] >= len(steps):
+            if steps == list(NEW_FULL_STEPS) and not state.get("reconciliation_done"):
+                from hero_integration.services.deferred_references import reconcile_source_page
+                source = bound_configuration(frappe.get_doc("HERO Integration Run", run_name)).source_instance
+                testing = bool(frappe.db.get_value("HERO Integration Run", run_name, "testing_enabled"))
+                origins = state.get("completed_children", []) if testing else None
+                cursor, more = reconcile_source_page(source, state.get("reconciliation_after", ""), origin_runs=origins)
+                state["reconciliation_after"] = cursor
+                state["reconciliation_done"] = not more
+                _save_full(run_name, state)
+                if more:
+                    _enqueue(run_name)
+                    frappe.db.commit()
+                    return
             _save_full(run_name, state)
             notes = "; ".join(state["notes"])
             _finish(run_name, "Completed With Conflicts" if notes else "Completed", notes or "All steps completed.")
@@ -314,6 +481,10 @@ def _advance_full_locked(run_name: str) -> None:
         action = steps[state["step"]]
         child = _start_step(action, run_name)
         if not child:
+            if steps == list(NEW_FULL_STEPS):
+                _save_full(run_name, state)
+                _finish(run_name, "Blocked", f"{action}: no approved read service. Approve it before continuing.")
+                return
             state["notes"].append(f"{action}: skipped, no approved read service")
             state["step"] += 1
             continue
@@ -352,6 +523,29 @@ def _full(run_name: str) -> dict:
     return json.loads(raw) if raw else {"step": 0, "child": "", "notes": []}
 
 
+def _load_related_test(run_name: str, *, expected_digest=None) -> dict:
+    import hashlib
+    raw = frappe.db.get_value('HERO Integration Run', run_name, 'testing_cohort_json')
+    if expected_digest is not None and (not isinstance(raw, str) or
+            hashlib.sha256(raw.encode()).hexdigest() != expected_digest):
+        raise SourceBindingError('The frozen related test selection changed; start a new run.')
+    try:
+        cohort = json.loads(raw or '')
+    except (TypeError, ValueError):
+        raise SourceBindingError('The frozen related test selection is missing or invalid.') from None
+    if not isinstance(cohort, dict) or cohort.get('version') != 1:
+        raise SourceBindingError('The frozen related test selection is missing or invalid.')
+    return cohort
+
+
+def _save_related_test(run_name: str, cohort: dict) -> str:
+    import hashlib
+    raw = json.dumps(cohort, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+    frappe.db.set_value('HERO Integration Run', run_name, 'testing_cohort_json',
+                        raw)
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
 def _save_full(run_name: str, state: dict) -> None:
     frappe.db.set_default(FULL_KEY.format(run_name), json.dumps(state))
 
@@ -381,7 +575,7 @@ AREA_TEXT = {
                  "Transfer HERO project pictures as private files.",
                  "All HERO pictures, attached to their Project. Unchanged files are skipped."),
     "full": ("Everything", "Full Migration", FULL_ACTION,
-             "Run all migrations one after another: projects with contacts, events, tasks, products, services, documents, pictures.",
+             "Run all migrations one after another: employees, contacts, projects, events, tasks, documents, pictures, products, services.",
              "Each step is its own run in the history. A stopped step blocks the chain; continue the run to retry it."),
 }
 AREA_KEYS = {key: text[2] for key, text in AREA_TEXT.items()}

@@ -270,14 +270,26 @@ def upsert(record, instance, company, languages, read=None):
     return "added" if is_new else "updated"
 
 
-def sync_employees(client, *, source_instance, run_name, should_stop=None, progress=None, time_budget=1200, verify_source=None, record_limit=None, continue_on_conflict=False):
+def sync_employees(client, *, source_instance, run_name, should_stop=None, progress=None, time_budget=1200, verify_source=None, record_limit=None, continue_on_conflict=False, cohort_user_ids=None, cohort_partner_ids=None):
     from hero_integration.services.migration_testing import validate_limit
     validate_limit(record_limit)
     frappe.only_for("System Manager")
     read = runtime.resolve_read(OPERATION, source_instance)
     company, snapshot, document, path = preflight(source_instance, read=read)
     stamp = _digest([company, JOINING_DATE, snapshot, document, read.mapping_version, VERSION])
-    raw = frappe.db.get_default(STATE_KEY.format(run_name))
+    has_column = getattr(frappe.db, 'has_column', None)
+    use_run_field = bool(has_column and has_column('HERO Integration Run', 'employee_progress_json'))
+    raw = (frappe.db.get_value('HERO Integration Run', run_name, 'employee_progress_json') if use_run_field else None)
+    if not raw:
+        raw = frappe.db.get_default(STATE_KEY.format(run_name))
+    def save_progress(value):
+        payload = json.dumps(value, separators=(',', ':'))
+        if use_run_field:
+            frappe.db.set_value('HERO Integration Run', run_name, 'employee_progress_json', payload, update_modified=False)
+        else:
+            if len(payload.encode('utf-8')) > 60000:
+                raise EmployeeMigrationBlocked('Employee progress requires the updated run schema; migrate the app before continuing.')
+            frappe.db.set_default(STATE_KEY.format(run_name), payload)
     state = json.loads(raw) if raw else {"counts": {}, "done_ids": []}
     if state.get("stamp") and state["stamp"] != stamp:
         raise EmployeeMigrationBlocked("Employee source schema, company or mapping changed; start a new run.")
@@ -288,9 +300,43 @@ def sync_employees(client, *, source_instance, run_name, should_stop=None, progr
             raise EmployeeMigrationBlocked('The frozen testing record limit changed; start a new run.')
         state['testing_record_limit'] = record_limit
         state['testing_records_received'] = len(rows)
+        if cohort_user_ids is not None:
+            cohort_ids = sorted({str(value) for value in cohort_user_ids})
+            if state.get('testing_cohort_user_ids', cohort_ids) != cohort_ids:
+                raise EmployeeMigrationBlocked('The frozen related project sample changed; start a new run.')
+            state['testing_cohort_user_ids'] = cohort_ids
+            partner_ids = sorted({str(value) for value in (cohort_partner_ids or [])})
+            if state.get('testing_cohort_partner_ids', partner_ids) != partner_ids:
+                raise EmployeeMigrationBlocked('The frozen related project sample changed; start a new run.')
+            state['testing_cohort_partner_ids'] = partner_ids
         selected = state.get('testing_selected_ids')
         if selected is None:
             selected = [row['id'] for row in rows[:record_limit]]
+            if cohort_user_ids is not None:
+                wanted = set(state['testing_cohort_user_ids'])
+                selected_ids = set(selected)
+                matched = {}
+                for row in rows:
+                    nested = row.get('user') if isinstance(row.get('user'), dict) else {}
+                    identities = {str(value) for value in (row.get('user_id'), nested.get('id'))
+                                  if type(value) is int and value > 0}
+                    matches = identities & wanted
+                    for identity in matches:
+                        matched.setdefault(identity, []).append(row['id'])
+                state['testing_missing_user_ids'] = sorted(wanted - set(matched))
+                state['testing_ambiguous_user_ids'] = sorted(identity for identity, ids in matched.items() if len(ids) != 1)
+                for identity in sorted(matched):
+                    ids = matched[identity]
+                    if len(ids) == 1 and ids[0] not in selected_ids:
+                        selected.append(ids[0])
+                        selected_ids.add(ids[0])
+                wanted_partners = set(state['testing_cohort_partner_ids'])
+                by_partner = {str(row['id']): row['id'] for row in rows}
+                state['testing_missing_partner_ids'] = sorted(wanted_partners - set(by_partner))
+                for identity in sorted(wanted_partners & set(by_partner)):
+                    if by_partner[identity] not in selected_ids:
+                        selected.append(by_partner[identity])
+                        selected_ids.add(by_partner[identity])
             state['testing_selected_ids'] = selected
         by_id = {row['id']: row for row in rows}
         if any(identity not in by_id for identity in selected):
@@ -331,7 +377,7 @@ def sync_employees(client, *, source_instance, run_name, should_stop=None, progr
             state["counts"][previous] -= 1
         state["outcomes"][str(record["id"])] = result
         state["counts"][result] = state["counts"].get(result, 0) + 1
-        frappe.db.set_default(STATE_KEY.format(run_name), json.dumps(state))
+        save_progress(state)
         frappe.db.commit()
         if progress:
             progress(state["counts"])
@@ -341,6 +387,6 @@ def sync_employees(client, *, source_instance, run_name, should_stop=None, progr
         state["last_error"] = next(iter(state["errors"].values()))
     else:
         state.pop("last_error", None)
-    frappe.db.set_default(STATE_KEY.format(run_name), json.dumps(state))
+    save_progress(state)
     frappe.db.commit()
     return state

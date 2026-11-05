@@ -159,6 +159,20 @@ class TestPeopleAndSourceFields(unittest.TestCase):
         self.assertEqual(documents['manual'].status, 'Open')
         documents['manual'].save.assert_not_called()
 
+    def test_partial_project_assignee_pass_never_closes_other_assignments(self):
+        from types import SimpleNamespace as NS
+        from unittest import mock
+        from hero_integration.integrations import project_assignments as pa
+        owned = NS(name='owned', allocated_to='old@example.invalid', description=pa.MARKER + ': Project')
+        inserted = []
+        api = NS(db=NS(get_value=lambda *args: 'Project title'), get_all=lambda *args, **kwargs: [owned],
+                 get_doc=lambda value, name=None: NS(insert=lambda **kwargs: inserted.append(value)))
+        record = {'_hero_source_instance': 'source-a', 'project_match_assignments': [{'user_id': 7}]}
+        with mock.patch('hero_integration.integrations.hero_people.user_by_hero_user', return_value='new@example.invalid'):
+            result = pa.sync('P-1', record, api, allow_removals=False)
+        self.assertEqual(result, {'added': 1, 'closed': 0, 'unmatched': 0})
+        self.assertEqual(inserted[0]['allocated_to'], 'new@example.invalid')
+
     def test_fully_resolved_replacement_closes_only_removed_imported_assignment(self):
         from types import SimpleNamespace as NS
         from unittest import mock

@@ -7,8 +7,8 @@ class Element {
     constructor(tag) { this.tag = tag; this.children = []; this.dataset = {}; this.textContent = ''; this.isConnected = true; }
     append(...children) { this.children.push(...children); }
     replaceChildren(...children) { this.children = children; }
-    setAttribute(name, value) { if (name.startsWith('data-')) this.dataset[name.slice(5)] = value; }
-    addEventListener() {}
+    setAttribute(name, value) { if (name.startsWith('data-')) this.dataset[name.slice(5)] = value; if (name === 'disabled') this.disabled = true; }
+    addEventListener(name, handler) { this.listeners ||= {}; this.listeners[name] = handler; }
     querySelectorAll(tag) { return this.children.flatMap(child => child instanceof Element ? [...(child.tag === tag ? [child] : []), ...child.querySelectorAll(tag)] : []); }
 }
 const flush = () => new Promise(resolve => setImmediate(resolve));
@@ -22,7 +22,8 @@ function setup() {
     const context = {window: {}, document, setTimeout(fn, ms) { timers.set(++id, {fn, ms}); return id; }, clearTimeout(key) { timers.delete(key); },
         frappe: {call({method, type, callback}) {
             calls.push({method, type});
-            callback({message: method.endsWith('sync_page_state') ? data : {rows: [], start: 0, total: 0}});
+            callback({message: method.endsWith('sync_page_state') ? data : method.endsWith('sync_page_pending_relationships')
+                ? data.pending_response : {rows: [], start: 0, total: 0}});
             return Promise.resolve();
         }}};
     vm.runInNewContext(readFileSync(new URL('../public/js/hero_migration.js', import.meta.url), 'utf8'), context);
@@ -95,5 +96,39 @@ test('States includes employees and services, including a zero service count', a
     const metric = label => app.host.querySelectorAll('div').find(el => el.className === 'hero-sync-metric' && el.children[0].textContent === label)?.children[1].textContent;
     assert.equal(metric('Employees'), '5');
     assert.equal(metric('Services'), '0');
+    app.view.destroy();
+});
+
+test('manual prerequisites expose only the allowed start button', async () => {
+    const app = setup(); await flush();
+    const area = key => ({key, label: key, action_label: key, button: 'Start', ready: true,
+        kind: 'direct', description: '', scope_note: '', blocker: '', scope: {objects: [], object_count: 0, field_count: 0}});
+    app.data.areas = [area('contacts'), area('projects')];
+    app.data.file_areas = [area('employees')];
+    app.data.manual_prerequisite = 'employees';
+    await app.tick();
+    const action = key => app.host.querySelectorAll('button').find(el => el.dataset.area === key && el.className === 'hero-sync-action');
+    assert.equal(action('employees').disabled, undefined);
+    assert.equal(action('contacts').disabled, true);
+    assert.equal(action('contacts').children[0], 'Waiting');
+    assert.ok(app.host.querySelectorAll('p').some(el => el.textContent === 'Migrate Employees first and Contacts second'));
+    app.data.manual_prerequisite = 'contacts'; await app.tick();
+    assert.equal(action('contacts').disabled, undefined);
+    assert.equal(action('employees').disabled, true);
+    app.data.manual_prerequisite = ''; await app.tick();
+    assert.equal(action('projects').disabled, undefined);
+    app.view.destroy();
+});
+
+test('pending relationships disappear from the list after resolution', async () => {
+    const app = setup(); await flush();
+    app.data.pending_response = {available: true, start: 0, total: 1, rows: [{operation: 'HeroTasks', source_id: '7',
+        display_status: 'Waiting to import', dependencies: [{source_type: 'project', source_id: '5'}]}]};
+    app.host.querySelectorAll('button').find(el => el.textContent === 'Pending relationships').listeners.click();
+    await flush();
+    assert.ok(app.host.querySelectorAll('td').some(el => el.textContent === 'Waiting to import'));
+    app.data.pending_response = {available: true, start: 0, total: 0, rows: []};
+    await app.tick();
+    assert.ok(app.host.querySelectorAll('p').some(el => el.textContent === 'No pending relationships.'));
     app.view.destroy();
 });

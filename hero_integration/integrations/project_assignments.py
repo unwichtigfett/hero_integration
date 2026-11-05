@@ -47,7 +47,7 @@ def assignee_emails(record: dict) -> set[str] | None:
     return None if found is None else {value for kind, value in found if kind == "email"}
 
 
-def sync(project: str, record: dict, frappe_api=None) -> dict:
+def sync(project: str, record: dict, frappe_api=None, *, allow_removals: bool = True) -> dict:
     """Open one ToDo per matched HERO assignee; close the import's ToDos of removed assignees."""
     found, unknown = _assignees_with_unknown(record)
     if found is None:
@@ -74,7 +74,7 @@ def sync(project: str, record: dict, frappe_api=None) -> dict:
                                 "assigned_by": "Administrator"}).insert(ignore_permissions=True)
             added += 1
         for row in open_todos:
-            if not unmatched and row.allocated_to not in wanted and (row.description or "").startswith(MARKER):
+            if allow_removals and not unmatched and row.allocated_to not in wanted and (row.description or "").startswith(MARKER):
                 todo = frappe_api.get_doc("ToDo", row.name)
                 todo.status = "Cancelled"
                 todo.save(ignore_permissions=True)

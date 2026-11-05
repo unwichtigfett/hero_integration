@@ -46,7 +46,8 @@ class TestTaskAssignmentTransfer(unittest.TestCase):
             bindings.append(binding.identity_key)
         self.bindings = bindings
         payload = {'source_instance': self.source, 'issuer': self.users[0], 'company': company,
-                   'user_bindings': bindings, 'allow_initial': True, 'allow_transfer': self._testMethodName != 'test_transfer_requires_policy'}
+                   'user_bindings': bindings, 'allow_initial': True, 'allow_transfer': self._testMethodName != 'test_transfer_requires_policy',
+                   'native_effects': {'date_rule': 'LOCAL_TODAY', 'allow_notifications': True, 'allow_follow': True}}
         self.policy = task_assignment_policy_create(json.dumps(payload))['name']
         task_assignment_policy_approve(self.policy, 1)
         settings = frappe.get_single('System Settings'); settings.disable_document_sharing = 1; settings.save()
@@ -75,20 +76,22 @@ class TestTaskAssignmentTransfer(unittest.TestCase):
     def transfer(self):
         _record_task_assignment_pending(self.run, {**self.record, 'target_user_id': 991002}, self.task, self.source)
 
-    def test_allowed_transfer_and_repeat(self):
+    def test_unordered_transfer_is_held_and_repeat_preserves_assignment(self):
         prior = self.state(); old_name = prior.todo
         self.transfer()
-        state = self.state(); self.assertEqual((state.state, state.state_revision, state.user_binding), ('SYSTEM', 2, self.bindings[1]))
-        self.assertEqual(frappe.get_doc('ToDo', old_name).status, 'Cancelled')
-        todo = frappe.get_doc('ToDo', state.todo)
-        self.assertEqual((todo.status, todo.allocated_to), ('Open', self.users[1]))
+        state = self.state(); self.assertEqual((state.state, state.state_revision, state.user_binding), ('SYSTEM', 1, self.bindings[0]))
+        todo = frappe.get_doc('ToDo', old_name)
+        self.assertEqual((todo.status, todo.allocated_to), ('Open', self.users[0]))
         self.transfer()
         self.assertEqual(frappe.db.count('ToDo', {'reference_type': 'Task', 'reference_name': self.task, 'status': 'Open'}), 1)
-        self.assertEqual(self.state().state_revision, 2)
+        self.assertEqual(self.state().state_revision, 1)
         self.assertFalse(frappe.db.exists('DocShare', {'share_doctype': 'Task', 'share_name': self.task, 'user': self.users[1]}))
         _record_task_assignment_pending(self.run, self.record, self.task, self.source)
-        self.assertEqual((self.state().todo, self.state().state_revision), (state.todo, 2))
+        self.assertEqual((self.state().todo, self.state().state_revision), (state.todo, 1))
         self.assertTrue(frappe.db.exists('HERO Integration Record', {'technical_action': 'task_assignment_review', 'target_name': self.task}))
+        details = frappe.get_all('HERO Integration Record', filters={'technical_action': 'task_assignment_review',
+                                 'target_name': self.task}, pluck='detail')
+        self.assertTrue(any('PENDING_SOURCE_ORDER' in detail for detail in details))
 
     def test_local_save_same_recipient_blocks_transfer(self):
         state = self.state(); old_name = state.todo
@@ -115,10 +118,13 @@ class TestTaskAssignmentTransfer(unittest.TestCase):
     def test_authenticated_rpc_and_unauthorized_rpc(self):
         from frappe.utils.password import set_encrypted_password
         frappe.set_user('Administrator')
-        denied = frappe.get_doc({'doctype': 'User', 'email': 'rpc-denied@example.invalid',
+        nonce = uuid4().hex[:12]
+        denied = frappe.get_doc({'doctype': 'User', 'email': f'rpc-denied-{nonce}@example.invalid',
             'first_name': 'Denied', 'enabled': 1, 'send_welcome_email': 0}).insert()
-        for user, key, secret in ((self.users[0], 'task32b-good', 'task32b-good-secret'),
-                                  (denied.name, 'task32b-denied', 'task32b-denied-secret')):
+        good_key, good_secret = f'good-{nonce}', f'good-secret-{nonce}'
+        denied_key, denied_secret = f'denied-{nonce}', f'denied-secret-{nonce}'
+        for user, key, secret in ((self.users[0], good_key, good_secret),
+                                  (denied.name, denied_key, denied_secret)):
             frappe.db.set_value('User', user, 'api_key', key)
             set_encrypted_password('User', user, secret, 'api_secret')
         old = self.state().todo
@@ -136,12 +142,12 @@ class TestTaskAssignmentTransfer(unittest.TestCase):
             if response.status_code not in (200, 403):
                 print('RPC_UNEXPECTED_STATUS', response.status_code, response.get_data(as_text=True)[:1000], flush=True)
             results.append(response.status_code)
-        thread = threading.Thread(target=request, args=('task32b-denied', 'task32b-denied-secret'))
+        thread = threading.Thread(target=request, args=(denied_key, denied_secret))
         thread.start(); thread.join(timeout=30); self.assertFalse(thread.is_alive())
         frappe.db.rollback()
         self.assertEqual(results, [403])
         self.assertEqual((self.state().state, self.state().state_revision), ('SYSTEM', 1))
-        thread = threading.Thread(target=request, args=('task32b-good', 'task32b-good-secret'))
+        thread = threading.Thread(target=request, args=(good_key, good_secret))
         thread.start(); thread.join(timeout=30); self.assertFalse(thread.is_alive())
         frappe.db.rollback()
         self.assertEqual(results, [403, 200])
@@ -166,13 +172,15 @@ class TestTaskAssignmentTransfer(unittest.TestCase):
         self.assertFalse(frappe.db.exists('ToDo', {'reference_type': 'Task', 'reference_name': task.name, 'status': 'Open'}))
         self.assertFalse(frappe.db.exists('HERO Task Assignment State', {'task_name': task.name}))
 
-    def test_real_unpatched_boundary_holds_transfer(self):
+    def test_real_unpatched_boundary_holds_initial_assignment(self):
         from hero_integration.services.task_assignment_state import assignment_boundary_available
         if assignment_boundary_available():
             self.skipTest('Requires the actual unpatched private framework')
-        old = self.state(); self.transfer()
-        self.assertEqual((self.state().todo, self.state().state_revision), (old.todo, 1))
-        self.assertEqual(frappe.get_doc('ToDo', old.todo).status, 'Open')
+        self.assertFalse(frappe.db.exists('HERO Task Assignment State', {'task_name': self.task}))
+        self.assertFalse(frappe.db.exists('ToDo', {'reference_type': 'Task', 'reference_name': self.task, 'status': 'Open'}))
+        details = frappe.get_all('HERO Integration Record', filters={'technical_action': 'task_assignment_review',
+                                 'target_name': self.task}, pluck='detail')
+        self.assertTrue(any('native assignment boundary is unavailable' in detail for detail in details))
 
     def test_caught_native_failure_does_not_confirm_local_instruction(self):
         from frappe.desk.form import assign_to
@@ -255,7 +263,7 @@ class TestTaskAssignmentTransfer(unittest.TestCase):
         frappe.set_user('Administrator')
         company = frappe.get_doc('Company', frappe.get_doc('Project', frappe.get_doc('Task', self.task).project).company)
         other = frappe.get_doc({'doctype': 'Company', 'company_name': 'Other scope ' + self._testMethodName,
-            'abbr': 'O32B', 'default_currency': company.default_currency}).insert()
+            'abbr': 'O32B', 'default_currency': company.default_currency, 'country': company.country}).insert()
         project = frappe.get_doc('Project', frappe.get_doc('Task', self.task).project)
         project.company = other.name; project.save()
         frappe.set_user(self.users[0]); self.transfer()
@@ -378,14 +386,13 @@ class TestTaskAssignmentTransfer(unittest.TestCase):
         frappe.db.rollback()
         self.assertIn(sorted(results), (['OK', 'OK'], ['OK', 'QueryDeadlockError']))
         state = self.state()
-        self.assertEqual((state.state, state.state_revision), ('SYSTEM', 2))
-        self.assertIn(state.user_binding, self.bindings[1:])
-        self.assertEqual(frappe.get_doc('ToDo', old_name).status, 'Cancelled')
+        self.assertEqual((state.state, state.state_revision, state.user_binding), ('SYSTEM', 1, self.bindings[0]))
+        self.assertEqual(frappe.get_doc('ToDo', old_name).status, 'Open')
         self.assertEqual(frappe.db.count('ToDo', {'reference_type': 'Task', 'reference_name': task, 'status': 'Open'}), 1)
-        self.assertEqual(frappe.db.count('HERO Integration Record', {'technical_action': 'task_assignment_transferred', 'target_name': task}), 1)
+        self.assertEqual(frappe.db.count('HERO Integration Record', {'technical_action': 'task_assignment_transferred', 'target_name': task}), 0)
         reviews = frappe.db.count('HERO Integration Record', {'technical_action': 'task_assignment_review', 'target_name': task})
-        self.assertEqual(reviews, 1 if results.count('OK') == 2 else 0)
-        print(f'CONCURRENT_TRANSFER independent_connections=2 distinct_recipients=2 transferred=1 review={reviews} results={sorted(results)} open_todos=1', flush=True)
+        self.assertEqual(reviews, results.count('OK'))
+        print(f'CONCURRENT_TRANSFER independent_connections=2 distinct_recipients=2 transferred=0 review={reviews} results={sorted(results)} open_todos=1', flush=True)
 
     def test_competing_initial_assignment(self):
         row = {**self.record, 'id': 991011}

@@ -151,10 +151,11 @@ class _TxDB:
         self.data[doctype][name].update(values)
 
     def sql(self, query, params):
-        source_type, doctype, instance = params
-        return [(row["source_id"], row["target_name"]) for row in self.data["HERO Integration Link"].values()
-                if row["source_type"] == source_type and row["target_doctype"] == doctype
-                and row["source_instance"] == instance and row.get("target_name")]
+        source_type, instance = params
+        return [(row["source_id"], row["target_doctype"], row.get("target_name"), row.get("sync_status", "Synchronized"))
+                for row in self.data["HERO Integration Link"].values()
+                if row["source_type"] == source_type and row["source_instance"] == instance
+                and row.get("source_system", "HERO") == "HERO"]
 
     def insert(self, values):
         self.counter += 1
@@ -273,7 +274,9 @@ class _ListClient:
     def query(self, document, variables):
         if "uuids" in variables:
             return {"file_uploads": [self.detail_rows[uuid] for uuid in variables["uuids"]]}
-        return {"FileUpload_FileUploads": _page(self.rows, "end", False)}
+        offset = variables.get('offset', 0)
+        first = variables.get('first', len(self.rows))
+        return {"FileUpload_FileUploads": _page(self.rows[offset:offset + first], "end", False)}
 
 
 class _NoDownload:
@@ -295,6 +298,25 @@ class TestSourceAndTargetBinding(_FileFixture):
         self.assertEqual(ft._bindings("project", "Project", "source-b"), {"42": "PROJECT-B"})
         self.assertEqual(ft.resolve_target({"file_upload_matches": [{"project_match_id": 42}]}, projects, {}),
                          ("Project", "PROJECT-A"))
+
+    def test_related_test_selection_uses_project_and_customer_identities(self):
+        cohort = {'project_ids': ['42'], 'customer_ids': ['5']}
+        base = {'file_upload_matches': [], 'file_upload_links': [], 'customer_document': None}
+        self.assertTrue(ft.belongs_to_test_cohort({**base, 'file_upload_matches': [{'project_match_id': 42}]}, cohort))
+        self.assertTrue(ft.belongs_to_test_cohort({**base, 'customer_document': {'project_match_id': None, 'contact_id': 5}}, cohort))
+        self.assertFalse(ft.belongs_to_test_cohort({**base, 'file_upload_matches': [{'project_match_id': 7}]}, cohort))
+        with self.assertRaisesRegex(ft.TransferError, 'omits'):
+            ft.belongs_to_test_cohort({'file_upload_matches': []}, cohort)
+
+    def test_ambiguous_or_untrusted_target_is_not_adopted_for_an_attachment(self):
+        self.db.data['HERO Integration Link']['DUP'] = {
+            'source_type': 'project', 'source_id': '42', 'source_instance': 'source-a',
+            'target_doctype': 'Project', 'target_name': 'OTHER', 'sync_status': 'Rejected'}
+        self.db.data['HERO Integration Link']['FOREIGN'] = {
+            'source_type': 'project', 'source_id': '88', 'source_instance': 'source-a', 'source_system': 'OTHER',
+            'target_doctype': 'Project', 'target_name': 'FOREIGN', 'sync_status': 'Synchronized'}
+        self.assertNotIn('42', ft._bindings('project', 'Project', 'source-a'))
+        self.assertNotIn('88', ft._bindings('project', 'Project', 'source-a'))
 
     def test_new_file_link_records_the_run_source(self):
         row = {"id": 7, "uuid": "u7", "filename": "Rechnung.pdf", "modified": "1", "size": 3,

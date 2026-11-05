@@ -71,7 +71,9 @@ class TestSchedulerContract(unittest.TestCase):
         )
         with patch.object(api, "frappe", fake_frappe), patch.object(
             api, "_has_active_run", return_value=False
-        ), patch.object(api, "_start_migration", return_value={"status": "QUEUED"}) as start:
+        ), patch.object(api, "_configured_source_instance", return_value="source"), \
+             patch.object(api, "_assert_manual_prerequisite"), \
+             patch.object(api, "_start_migration", return_value={"status": "QUEUED"}) as start:
             api.start_migration("Sync", dry_run=0)
 
         self.assertEqual(calls, [("only_for", "System Manager")])

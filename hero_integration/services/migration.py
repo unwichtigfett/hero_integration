@@ -54,6 +54,7 @@ class Result:
     detail: str
     target_doctype: str = ""
     target_name: str = ""
+    pending_relation: bool = False
 
 
 class CustomerAddressError(ValueError):
@@ -237,15 +238,19 @@ def execute_run(run_name: str) -> None:
         config = get_configuration()
         source = _source_for_run(run, config)
         if bool(int(getattr(run, 'testing_enabled', 0) or 0)):
-            from hero_integration.services.migration_testing import RecordLimitedSource, record_limit
-            testing_source = RecordLimitedSource(source, record_limit(run))
+            from hero_integration.services.file_migration import related_test_for_run
+            from hero_integration.services.migration_testing import RecordLimitedSource, RelatedProjectSource, record_limit
+            cohort = related_test_for_run(run)
+            testing_source = (RelatedProjectSource(source, record_limit(run), cohort) if cohort is not None
+                              else RecordLimitedSource(source, record_limit(run)))
             source = testing_source
         _process_requested_phases(run, source, checkpoint=lambda: _checkpoint_transaction(run, claim_started_on))
         run.reload()
         if run.state == "Running":
             with _checkpoint_transaction(run, claim_started_on):
                 run.reload()
-                run.state = "Completed With Conflicts" if run.conflict_records else "Completed"
+                incomplete_sample = bool(testing_source and getattr(testing_source, 'status', '') == 'BLOCKED')
+                run.state = "Completed With Conflicts" if run.conflict_records or incomplete_sample else "Completed"
                 run.finished_on = now_datetime()
                 run.save()
                 _mark_sync_success(run)
@@ -690,10 +695,10 @@ def _mapping_plan_for_run(run, target_operation: str):
     )
 
 
-def _validate_enumeration_page(page: SourcePage, offset: int, seen_ids: set[str]) -> None:
+def _validate_enumeration_page(page: SourcePage, offset: int, seen_ids: set[str], *, allow_filtered_empty=False) -> None:
     """Reject invalid pagination before applying any records from the page."""
     if page.next_offset is not None and (type(page.next_offset) is not int
-            or page.next_offset <= offset or not page.records):
+            or page.next_offset <= offset or (not page.records and not allow_filtered_empty)):
         raise MappingPlanError('Source pagination did not advance safely.')
     identities = []
     for row in page.records:
@@ -724,8 +729,14 @@ def _process_phase(run, phase: str, reader, *, checkpoint=None) -> bool:
     seen_ids: set[str] = set()
     while True:
         _cancel_if_requested(run)
-        page: SourcePage = reader(offset)
         testing_source = getattr(reader, "__self__", None)
+        from hero_integration.services.migration_testing import RelatedProjectSource
+        try:
+            page: SourcePage = reader(offset)
+        except ValueError as error:
+            if isinstance(testing_source, RelatedProjectSource):
+                raise MappingPlanError(str(error)) from error
+            raise
         if isinstance(testing_source, TestingPreviewSource) and testing_source.status in {"BLOCKED", "LIMIT_REACHED"}:
             detail = (
                 "Testing preview blocked because newest-first ordering is not verified for the selected HERO source."
@@ -736,7 +747,7 @@ def _process_phase(run, phase: str, reader, *, checkpoint=None) -> bool:
                 _set_phase_state(run, phase, "Blocked")
                 _block_run(run, detail)
             return False
-        _validate_enumeration_page(page, offset, seen_ids)
+        _validate_enumeration_page(page, offset, seen_ids, allow_filtered_empty=isinstance(testing_source, RelatedProjectSource))
         for index, record in enumerate(page.records):
             if index < record_index:
                 continue
@@ -778,8 +789,10 @@ def _persist_testing_result(run, source: TestingPreviewSource) -> None:
         run.testing_executed_actions = source.executed_actions
         run.testing_records_received = source.records_received
         run.testing_status = status
-        from hero_integration.services.migration_testing import RecordLimitedSource
+        from hero_integration.services.migration_testing import RecordLimitedSource, RelatedProjectSource
         results = {'record_limit': source.maximum, 'areas': source.results} if isinstance(source, RecordLimitedSource) else source.results
+        if isinstance(source, RelatedProjectSource):
+            results['selection'] = 'related_projects'
         run.testing_results_json = json.dumps(results, ensure_ascii=False, sort_keys=True)
         run.save()
     except Exception:
@@ -992,7 +1005,10 @@ def _migrate_projection_record(record, run, plan, task_scope):
     if (result.code in {'CREATED', 'UPDATED', 'SKIPPED', 'PREVIEW_OK'} and result.target_doctype == 'Task'
             and not getattr(plan, 'adapter_options', None)
             and any(item.source_path == 'target_user_id' for item in plan.definitions)):
-        _record_task_assignment_pending(run, record, result.target_name, task_scope['source_instance'])
+        action = _record_task_assignment_pending(run, record, result.target_name, task_scope['source_instance'])
+        if action in {'BLOCKED', 'PENDING_IDENTITY', 'CONFLICT'}:
+            from dataclasses import replace
+            result = replace(result, pending_relation=True)
     return result
 
 
@@ -1021,7 +1037,13 @@ def _process_projection(run, source, *, checkpoint=None) -> None:
     _load_task_user_directory(source, operation)
     while True:
         _cancel_if_requested(run)
-        page = source.projection(offset)
+        from hero_integration.services.migration_testing import RelatedProjectSource
+        try:
+            page = source.projection(offset)
+        except ValueError as error:
+            if isinstance(source, RelatedProjectSource):
+                raise MappingPlanError(str(error)) from error
+            raise
         if isinstance(source, TestingPreviewSource) and source.status in {"BLOCKED", "LIMIT_REACHED"}:
             detail = (
                 "Testing preview blocked because newest-first ordering is not verified for the selected HERO source."
@@ -1032,7 +1054,7 @@ def _process_projection(run, source, *, checkpoint=None) -> None:
                 _block_run(run, detail)
             return
         try:
-            _validate_enumeration_page(page, offset, seen_ids)
+            _validate_enumeration_page(page, offset, seen_ids, allow_filtered_empty=isinstance(source, RelatedProjectSource))
         except MappingPlanError as error:
             raise RepeatedProjectionPageError(str(error)) from error
         _prefetch_project_references(source, operation, page.records)
@@ -1224,14 +1246,18 @@ def _record_task_assignment_pending(run, record, task_name: str, source_instance
         record_output(run=run.name, source_type='Task', source_id=str(record['id']), result='CREATED',
                       action='task_assignment_created', target_doctype='Task', target_name=task_name,
                       correlation_id=todo_name, detail='Approved native assignment created.')
-        return
+        return 'CREATE'
     detail = json.dumps({'decision': plan.action, 'proposed': plan.proposed, 'reason': plan.detail, 'recipient': plan.recipient,
                          'existing_todos': list(plan.existing), 'local_date': plan.date_rule or 'POLICY_REQUIRED'}, sort_keys=True)
+    pending = (plan.action == 'PENDING_IDENTITY' or
+               (plan.action == 'BLOCKED' and plan.detail.startswith(('PENDING_AUTHORITY:', 'PENDING_SOURCE_ORDER:',
+                                                                       'PENDING_TASK:', 'POLICY_REQUIRED:'))))
     record_output(run=run.name, source_type='Task', source_id=str(record['id']),
-                  result='CONFLICT' if plan.action in {'BLOCKED', 'CONFLICT', 'PENDING_IDENTITY'} else 'SKIPPED',
+                  result='PENDING_REVIEW' if pending else 'CONFLICT' if plan.action in {'BLOCKED', 'CONFLICT'} else 'SKIPPED',
                   action='task_assignment_review', detail=detail, target_doctype='Task', target_name=task_name)
-    if plan.action in {'BLOCKED', 'CONFLICT', 'PENDING_IDENTITY'} and hasattr(run, 'conflict_records'):
+    if not pending and plan.action in {'BLOCKED', 'CONFLICT'} and hasattr(run, 'conflict_records'):
         run.conflict_records = int(run.conflict_records or 0) + 1
+    return plan.action
 
 
 def _migrate_native_task(record, run, plan, scope) -> Result:
@@ -1541,7 +1567,7 @@ def _migrate_projection(record, run, plan) -> Result:
             if target is not None and target.get('custom_hero_is_recurring') and record.get('is_recurring') is True:
                 # An approved recurring event keeps its reviewed times silently.
                 review = [reason for reason in review if not reason.startswith('Recurring HERO event')]
-        values = plan.values(record, project_link=lambda value: _project_name_for_source(value, instance),
+        values = plan.values(record, project_link=lambda value: _project_name_or_deferred(value, instance, plan, record),
                              native_value=lambda target: native_values[target], allow_partial=bool(existing))
         values['custom_hero_key'] = _digest([instance, contract['source_type'], source_id])
         values['custom_hero_source_instance'] = instance
@@ -1650,6 +1676,20 @@ def _project_name_for_source(value, source_instance):
     return link.target_name
 
 
+def _project_name_or_deferred(value, source_instance, plan, record):
+    """Allow an optional absent Project while recording its exact dependency."""
+    try:
+        return _project_name_for_source(value, source_instance)
+    except DeletedSourceProjectError:
+        raise
+    except MappingPlanError:
+        from hero_integration.services.deferred_references import installed, references
+        if (type(value) is int and value > 0 and not _link('project', str(value), source_instance)
+                and installed(frappe) and ('project', str(value)) in references(plan, record)):
+            return None
+        raise
+
+
 def _migrate_project(record: dict[str, object], run) -> Result:
     if not _target_available("Project"):
         return Result("UNAVAILABLE", "Project is not installed on this site.")
@@ -1669,6 +1709,13 @@ def _migrate_project(record: dict[str, object], run) -> Result:
             except UnlinkedCustomerError:
                 if existing:
                     keep.add("customer")
+                    return None
+                # A genuinely absent source identity is a deferred relationship,
+                # not an administrator rejection. Only use this path when the
+                # existing queue can capture this exact mapped dependency.
+                from hero_integration.services.deferred_references import installed, references
+                if (type(value) is int and value > 0 and not _link("customer", str(value), source_instance)
+                        and installed(frappe) and ("customer", str(value)) in references(plan, record)):
                     return None
                 review.append(_unlinked_customer_reason(value))
                 return None
@@ -1709,17 +1756,21 @@ def _migrate_project(record: dict[str, object], run) -> Result:
         review_reason=" ".join(review) or None,
         creation_values=None if getattr(plan, 'adapter_options', None) else _project_creation_values(record, values.get("company")),
     )
-    unresolved_assignees = False
+    field_conflict = result.code == 'CONFLICT' and (result.detail or '').startswith('Field conflict requires review:')
     if (run.mode != 'Preview' and result.target_name and 'project_match_assignments' in record
-            and result.code in {'CREATED', 'UPDATED', 'SKIPPED', 'CONVERGED'}):
+            and (result.code in {'CREATED', 'UPDATED', 'SKIPPED', 'CONVERGED', 'OBSERVED'} or field_conflict)):
         from hero_integration.integrations.project_assignments import sync as sync_assignees
-        assignees = sync_assignees(result.target_name, record)
+        assignees = (sync_assignees(result.target_name, record, allow_removals=False) if field_conflict
+                     else sync_assignees(result.target_name, record))
         if assignees["unmatched"]:
-            from dataclasses import replace
-            unresolved_assignees = True
-            result = replace(result, detail=(result.detail or "") + ' ' + frappe._(
+            detail = frappe._(
                 '{0} project assignee(s) could not be resolved to an active, source-bound ERPNext user; existing assignments were preserved and require review.'
-            ).format(assignees['unmatched']))
+            ).format(assignees['unmatched'])
+            record_output(run=run.name, source_type='project', source_id=str(source_id), result='PENDING_REVIEW',
+                          action='project_assignment_review', target_doctype='Project',
+                          target_name=result.target_name, detail=detail)
+            from dataclasses import replace
+            result = replace(result, pending_relation=True)
     if (getattr(plan, 'adapter_options', None)
             and (result.target_name or run.mode == 'Preview')
             and result.code in {'CREATED', 'UPDATED', 'SKIPPED', 'CONVERGED', 'OBSERVED', 'PREVIEW_OK'}):
@@ -1733,9 +1784,6 @@ def _migrate_project(record: dict[str, object], run) -> Result:
     if name_note and _creates(result):
         from dataclasses import replace
         result = replace(result, detail=(result.detail or "") + name_note)
-    if unresolved_assignees and result.code in {'CREATED', 'UPDATED', 'SKIPPED', 'CONVERGED', 'OBSERVED'}:
-        from dataclasses import replace
-        result = replace(result, code='CONFLICT')
     return result
 
 
@@ -1747,8 +1795,15 @@ def _sync_mapped_relations(plan, record, result, run):
         return result
     from dataclasses import replace
     from hero_integration.services.mapped_relations import sync
+    from hero_integration.services.mapped_collection_relations import UnboundCustomerAddress
     try:
         counts = sync(plan, record, plan.target_doctype, result.target_name or '', preview=run.mode == 'Preview')
+    except UnboundCustomerAddress as error:
+        if run.mode != 'Preview' and result.target_name:
+            record_output(run=run.name, source_type='customer', source_id=str(plan.source_identity(record)),
+                result='PENDING_REVIEW', action='customer_address_review', target_doctype='Customer',
+                target_name=result.target_name, detail=str(error))
+        return replace(result, pending_relation=True)
     except ValueError as error:
         return replace(result, code='CONFLICT', detail=(result.detail or '') + ' ' + str(error))
     if counts.get('conflicts'):
@@ -1968,8 +2023,6 @@ def _upsert(
     if existing:
         if existing.target_doctype != doctype:
             return Result('CONFLICT', 'Stored binding has an incompatible target DocType.')
-        if preserve_omitted and existing.mapping_version != mapping_version:
-            return Result('CONFLICT', 'Event binding or approved mapping version requires review.', doctype, existing.target_name)
         if not frappe.db.exists(existing.target_doctype, existing.target_name):
             if run.mode != "Preview":
                 _mark_link_conflict(existing, "Stored target reference no longer exists.")
@@ -1978,6 +2031,26 @@ def _upsert(
         snapshot = target_snapshot or (lambda item: _target_values(item, values))
         prior_source = decode_hashes(getattr(existing, "source_field_hashes", ""))
         prior_target = decode_hashes(getattr(existing, "target_field_hashes", ""))
+        if preserve_omitted and existing.mapping_version != mapping_version:
+            # An approved mapping may have been republished without changing
+            # this Event. Rebind only when every previous target field and every
+            # currently supplied source field still matches its own baseline.
+            # New fields, changed values or missing baselines require review.
+            comparison = _Comparison(values, comparison_extra)
+            if prior_source is not None and prior_target is not None:
+                comparison.omit(set(prior_source) | set(prior_target))
+                current_target = field_hashes(comparison.target_values(target, snapshot))
+                safe = (bool(comparison.source_hashes) and set(comparison.source_hashes) <= set(prior_source)
+                        and set(prior_source) == set(prior_target)
+                        and all(prior_source[field] == value for field, value in comparison.source_hashes.items())
+                        and all(current_target.get(field) == value for field, value in prior_target.items()))
+            else:
+                safe = False
+            if not safe:
+                return Result('CONFLICT', 'Event binding or approved mapping version requires review.', doctype, existing.target_name)
+            if run.mode != 'Preview':
+                existing.mapping_version = mapping_version
+                _save_link(existing)
         # RC15 links have whole-payload hashes only.  They remain fail-closed
         # until an administrator establishes a fresh, field-level baseline.
         if prior_source is None or prior_target is None:
@@ -2635,16 +2708,28 @@ def _migrate_mapped_task(record, run, plan, scope) -> Result:
         return Result('SKIPPED_SOURCE_DELETED', 'Source deletion does not delete or close a Task.')
     try:
         values = mapped_values(plan, record,
-            project_link=lambda value: _project_name_for_source(value, instance))
-        assignment = mapped_values(plan, record, target_doctype='ToDo')
+            project_link=lambda value: _project_name_or_deferred(value, instance, plan, record))
         if values.get('completed_on'):
             values['status'] = 'Completed'
     except (ValueError, MappingPlanError) as error:
         return Result('BLOCKED_RECORD', str(error))
+    assignment_error = None
+    try:
+        assignment = mapped_values(plan, record, target_doctype='ToDo')
+    except (ValueError, MappingPlanError) as error:
+        # A bad or unresolved assignee is not evidence that the Task itself
+        # is invalid. Keep any local assignment and report the relation apart.
+        assignment, assignment_error = {}, str(error)
     if not values.get('subject'):
         return Result('BLOCKED_RECORD', 'A mapped Task title is required for intake.')
     result = _upsert('Task', source_id, record, values, 'Task', 'subject', plan.mapping_version, run,
         source_instance=instance, required_on_create=('subject',))
+    if assignment_error and result.target_name and run.mode != 'Preview':
+        record_output(run=run.name, source_type='Task', source_id=str(source_id), result='PENDING_REVIEW',
+            action='task_assignment_review', target_doctype='Task', target_name=result.target_name,
+            detail='Task was imported; its assignee requires review: ' + assignment_error)
+        from dataclasses import replace
+        result = replace(result, pending_relation=True)
     recipient = assignment.get('allocated_to')
     if recipient and result.target_name and result.code in {'CREATED', 'UPDATED', 'SKIPPED', 'CONVERGED', 'OBSERVED', 'PREVIEW_OK'}:
         assignment_rule = next(spec for spec in plan.definitions if spec.target_doctype == 'ToDo')
@@ -2653,8 +2738,20 @@ def _migrate_mapped_task(record, run, plan, scope) -> Result:
         admitted = _plan_task_assignment(run, assignment_record, result.target_name, instance)
         if admitted.recipient and admitted.recipient != recipient:
             return Result('CONFLICT', 'Mapped assignee differs from its verified native User binding.', 'Task', result.target_name)
-        _record_task_assignment_pending(run, assignment_record, result.target_name, instance)
+        assignment_action = _record_task_assignment_pending(run, assignment_record, result.target_name, instance)
+        if assignment_action in {'BLOCKED', 'PENDING_IDENTITY', 'CONFLICT'}:
+            from dataclasses import replace
+            result = replace(result, pending_relation=True)
         _ack_mapped_assignment(run, assignment_record, result.target_name, instance, recipient)
+    elif not assignment_error and result.target_name and run.mode != 'Preview':
+        from hero_integration.services.direct_mapping import MISSING, lookup
+        assignment_rule = next((spec for spec in plan.definitions if spec.target_doctype == 'ToDo'
+                                and spec.target_field == 'allocated_to'), None)
+        raw = lookup(record, assignment_rule.source_path) if assignment_rule else MISSING
+        if type(raw) is int and raw > 0:
+            _record_task_assignment_pending(run, {**record, 'target_user_id': raw}, result.target_name, instance)
+            from dataclasses import replace
+            result = replace(result, pending_relation=True)
     return result
 
 

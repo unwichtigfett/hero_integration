@@ -64,6 +64,20 @@ class TestMigrationProjectReferences(unittest.TestCase):
                 error = m.DeletedSourceProjectError if state == 'Source Deleted' else m.MappingPlanError
                 with self.assertRaises(error): m._project_name_for_source(1, 'source-a')
 
+    def test_absent_project_may_wait_but_held_and_deleted_links_remain_blocked(self):
+        m = self.migration
+        plan = SimpleNamespace(definitions=[SimpleNamespace(transformation='HERO Project Link',
+            purpose='Project Relation', source_path='project_match_id')])
+        record = {'project_match_id': 7, '_hero_source_instance': 'source-a'}
+        with patch('hero_integration.services.deferred_references.installed', return_value=True), \
+             patch.object(m, '_link', return_value=None):
+            self.assertIsNone(m._project_name_or_deferred(7, 'source-a', plan, record))
+        for state in ('Rejected', 'Pending Review', 'Source Deleted'):
+            with self.subTest(state=state), patch('hero_integration.services.deferred_references.installed', return_value=True), \
+                 patch.object(m, '_link', return_value=SimpleNamespace(sync_status=state, target_doctype='Project', target_name='P')):
+                with self.assertRaises(m.MappingPlanError):
+                    m._project_name_or_deferred(7, 'source-a', plan, record)
+
     def test_deleted_missing_or_held_customer_target_cannot_establish_a_relation(self):
         m = self.migration
         fake = SimpleNamespace(db=SimpleNamespace(exists=lambda *args:False))

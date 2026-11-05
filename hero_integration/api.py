@@ -31,6 +31,10 @@ def start_migration(
 ) -> dict[str, str]:
     """Queue a manually requested migration; this RPC is always administrative."""
     frappe.only_for("System Manager")
+    if not bool(int(dry_run)):
+        key = {"Customer Migration": "contacts", "Project Migration": "projects",
+               "Schedule Migration": "events", "Projection Migration": "tasks"}.get(action, "other")
+        _assert_manual_prerequisite(key, _configured_source_instance())
     return _start_migration(
         action=action, dry_run=dry_run, scheduled=False, graphql_service=graphql_service
     )
@@ -552,7 +556,7 @@ def sync_page_state() -> dict[str, object]:
     """Stored state of the Synchronization page; this endpoint never contacts HERO."""
     frappe.only_for("System Manager")
     from hero_integration.services.polling import runtime_plan
-    from hero_integration.services.sync_page import ACTIVE_STATES, AREAS
+    from hero_integration.services.sync_page import ACTIVE_STATES, AREAS, manual_prerequisite
 
     from hero_integration.services.read_contract import reuse_page_reads
 
@@ -565,6 +569,7 @@ def sync_page_state() -> dict[str, object]:
         services = _sync_area_read_services(instance)
         return {
             "source_instance": instance,
+            "manual_prerequisite": manual_prerequisite(instance, frappe),
             "active_run": active[0] if active else None,
             "areas": [_sync_area_state(item, instance, services.get(item.operation) or [], active, plan) for item in AREAS],
             "file_areas": _file_areas(active, instance),
@@ -594,6 +599,8 @@ def sync_area_start(area: str) -> dict[str, object]:
     from hero_integration.services.file_migration import AREA_KEYS
 
     key = str(area or "").strip().lower()
+    instance = _configured_source_instance()
+    _assert_manual_prerequisite(key, instance)
     if key in AREA_KEYS:
         if frappe.db.exists("HERO Integration Run", {"state": ["in", list(ACTIVE_STATES)]}):
             frappe.throw(frappe._("Another HERO run is still queued or running. Start this area when it has finished."))
@@ -604,7 +611,6 @@ def sync_area_start(area: str) -> dict[str, object]:
         except SourceBindingError as error:
             frappe.throw(frappe._(str(error)))
     item = _sync_area(area)
-    instance = _configured_source_instance()
     if frappe.db.exists("HERO Integration Run", {"state": ["in", list(ACTIVE_STATES)]}):
         frappe.throw(frappe._("Another HERO run is still queued or running. Start this area when it has finished."))
     services = _sync_area_read_services(instance).get(item.operation) or []
@@ -613,6 +619,12 @@ def sync_area_start(area: str) -> dict[str, object]:
     result = _start_migration(action=item.run_action, dry_run=0, scheduled=False,
                               graphql_service=services[0]["service"], source_instance=instance)
     return {**result, "area": item.key}
+
+
+def _assert_manual_prerequisite(key: str, instance: str) -> None:
+    from hero_integration.services.sync_page import manual_allowed, manual_prerequisite
+    if not manual_allowed(key, manual_prerequisite(instance, frappe)):
+        frappe.throw(frappe._("Migrate Employees first and Contacts second"))
 
 
 @frappe.whitelist(methods=["POST"])
@@ -675,6 +687,11 @@ def sync_page_run_detail(run_name: str) -> dict[str, object]:
             fields=["source_type", "source_id", "result", "detail", "target_doctype", "target_name"],
             order_by="creation asc", limit_page_length=20,
         ),
+        "pending_reviews": frappe.get_all(
+            "HERO Integration Record", filters={"run": run.name, "result": "PENDING_REVIEW"},
+            fields=["source_type", "source_id", "result", "detail", "target_doctype", "target_name"],
+            order_by="creation asc", limit_page_length=20,
+        ),
         "can_cancel": run.state in {"Queued", "Running"},
         "can_continue": run.state in {"Failed", "Cancelled", "Blocked"} and not _as_bool(getattr(run, "testing_enabled", 0)),
     })
@@ -693,6 +710,35 @@ def sync_page_conflict_report(name: str, kind: str = "link") -> dict[str, object
         return report(name, _configured_source_instance())
     except (frappe.PermissionError, frappe.ValidationError) as error:
         frappe.throw(frappe._(str(error)))
+
+
+@frappe.whitelist(methods=["GET"])
+def sync_page_pending_relationships(start: int | str = 0, page_size: int | str = 8) -> dict[str, object]:
+    """Current unresolved observations; resolved observations never appear here."""
+    frappe.only_for("System Manager")
+    from hero_integration.services.deferred_references import MAIN, CHILD, installed
+    start = _mapping_int(start, "start", 0, 2147483647)
+    page_size = _mapping_int(page_size, "page_size", 1, 50)
+    if not installed():
+        return {"start": start, "total": 0, "rows": [], "available": False}
+    source = _configured_source_instance()
+    filters = {"source_instance": source, "status": ["in", ["Waiting", "Conflict"]]}
+    rows = frappe.get_all(MAIN, filters=filters, fields=["name", "operation", "source_id", "status", "detail"],
+                          order_by="modified desc, name desc", limit_start=start, limit_page_length=page_size)
+    kinds = {"HeroCustomers": "customer", "HeroProjectMatches": "project", "HeroTasks": "Task",
+             "HeroCalendarEvents": "CalendarEvent", "HeroDocuments": "file_upload", "HeroPictures": "file_upload"}
+    for row in rows:
+        kind = kinds.get(row["operation"])
+        links = frappe.get_all("HERO Integration Link", filters={"source_system": "HERO", "source_instance": source,
+            "source_type": kind, "source_id": row["source_id"]}, fields=["target_doctype", "target_name"],
+            limit_page_length=2) if kind else []
+        imported = len(links) == 1 and bool(links[0].get("target_doctype")) and bool(links[0].get("target_name")) and bool(
+            frappe.db.exists(links[0]["target_doctype"], links[0]["target_name"]))
+        row["display_status"] = ("Conflict requires review" if row["status"] == "Conflict" else
+                                 "Imported; waiting for relationship" if imported else "Waiting to import")
+        row["dependencies"] = frappe.get_all(CHILD, filters={"parent": row["name"], "parenttype": MAIN},
+            fields=["source_type", "source_id"], order_by="idx asc", limit_page_length=0)
+    return {"start": start, "total": frappe.db.count(MAIN, filters), "rows": rows, "available": True}
 
 
 @frappe.whitelist(methods=["GET"])

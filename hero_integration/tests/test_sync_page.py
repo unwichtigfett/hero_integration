@@ -22,6 +22,26 @@ def _settings(**values):
 
 
 class TestAreas(unittest.TestCase):
+    def test_manual_prerequisites_are_source_scoped_and_require_terminal_success(self):
+        runs = {}
+        def get_all(doctype, *, filters, **kwargs):
+            self.assertEqual(filters['source_instance'], 'source-a')
+            state = runs.get(filters['action'])
+            return [{'state': state}] if state else []
+        owner = SimpleNamespace(get_all=get_all)
+        self.assertEqual(sync_page.manual_prerequisite('source-a', owner), 'employees')
+        for state in ('Queued', 'Running', 'Failed', 'Cancelled', 'Blocked'):
+            runs['Employee Migration'] = state
+            self.assertEqual(sync_page.manual_prerequisite('source-a', owner), 'employees')
+        runs['Employee Migration'] = 'Completed With Conflicts'
+        self.assertEqual(sync_page.manual_prerequisite('source-a', owner), 'contacts')
+        runs['Customer Migration'] = 'Completed'
+        self.assertEqual(sync_page.manual_prerequisite('source-a', owner), '')
+        self.assertTrue(sync_page.manual_allowed('employees', 'employees'))
+        self.assertFalse(sync_page.manual_allowed('contacts', 'employees'))
+        self.assertFalse(sync_page.manual_allowed('tasks', 'contacts'))
+        self.assertTrue(sync_page.manual_allowed('tasks', ''))
+
     def test_offline_import_restores_frappe_and_api_module_cache(self):
         script = """\
 import sys
@@ -166,9 +186,19 @@ class TestAreaStart(unittest.TestCase):
     def start(self, services, existing_runs=False):
         fake = _Frappe(_settings(hero_source_instance="main"), existing_runs)
         with patch.object(api, "frappe", fake), patch.object(api, "_configured_source_instance", return_value="main"), \
+                patch.object(sync_page, "manual_prerequisite", return_value=""), \
                 patch.object(api, "_sync_area_read_services", return_value=services), \
                 patch.object(api, "_start_migration", return_value={"status": "QUEUED", "run": "RUN-1"}) as start:
             return api.sync_area_start("events"), start
+
+    def test_server_rejects_start_before_prerequisites(self):
+        fake = _Frappe(_settings())
+        with patch.object(api, 'frappe', fake), patch.object(api, '_configured_source_instance', return_value='main'), \
+                patch.object(sync_page, 'manual_prerequisite', return_value='employees'):
+            with self.assertRaisesRegex(ValueError, 'Migrate Employees first'):
+                api.sync_area_start('contacts')
+            with self.assertRaisesRegex(ValueError, 'Migrate Employees first'):
+                api.start_migration('Project Migration', dry_run=0, graphql_service='SERVICE')
 
     def test_missing_service_explanation_uses_current_language_and_keeps_source(self):
         source = ('{0} needs an approved read service with an active mapping for {1} '
@@ -194,6 +224,30 @@ class TestAreaStart(unittest.TestCase):
             self.start({})
         with self.assertRaisesRegex(ValueError, "Another HERO run is still queued or running"):
             self.start({"HeroCalendarEvents": [{"service": "SVC"}]}, existing_runs=True)
+
+
+class TestPendingRelationshipsApi(unittest.TestCase):
+    def test_only_unresolved_records_are_returned_with_source_scoped_target_status(self):
+        rows = [dict(name='a', operation='HeroTasks', source_id='7', status='Waiting', detail=''),
+                dict(name='b', operation='HeroCalendarEvents', source_id='8', status='Waiting', detail=''),
+                dict(name='c', operation='HeroTasks', source_id='9', status='Conflict', detail='review')]
+        calls = []
+        def get_all(doctype, **kwargs):
+            calls.append((doctype, kwargs))
+            if doctype == 'HERO Pending Reference':
+                return rows
+            if doctype == 'HERO Integration Link':
+                return [{'target_doctype': 'Task', 'target_name': 'TASK-7'}] if kwargs['filters']['source_id'] == '7' else []
+            return [{'source_type': 'project', 'source_id': '5'}]
+        fake = SimpleNamespace(only_for=lambda role: None, get_all=get_all,
+            db=SimpleNamespace(exists=lambda doctype, name: name == 'TASK-7', count=lambda *args: 3))
+        with patch.object(api, 'frappe', fake), patch.object(api, '_configured_source_instance', return_value='source-a'), \
+                patch('hero_integration.services.deferred_references.installed', return_value=True):
+            result = api.sync_page_pending_relationships()
+        self.assertEqual([r['display_status'] for r in result['rows']],
+            ['Imported; waiting for relationship', 'Waiting to import', 'Conflict requires review'])
+        self.assertEqual(calls[0][1]['filters'], {'source_instance': 'source-a', 'status': ['in', ['Waiting', 'Conflict']]})
+        self.assertTrue(all(c[1]['filters']['source_instance'] == 'source-a' for c in calls if c[0] == 'HERO Integration Link'))
 
 
 class TestAutoSyncAreaGate(unittest.TestCase):

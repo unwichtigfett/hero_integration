@@ -17,7 +17,9 @@ class _DB:
     def get_value(self, doctype, name, field):
         return self.runs.get(name, {}).get(field)
 
-    def set_value(self, doctype, name, values):
+    def set_value(self, doctype, name, values, value=None):
+        if isinstance(values, str):
+            values = {values: value}
         self.runs.setdefault(name, {}).update(values)
 
     def get_default(self, key):
@@ -38,7 +40,7 @@ class TestFullMigrationChain(unittest.TestCase):
         self.db = _DB()
         self.db.runs["FULL"] = {"state": "Running"}
         self.started, self.queued = [], []
-        fake = SimpleNamespace(db=self.db, log_error=lambda **k: None)
+        fake = SimpleNamespace(db=self.db, log_error=lambda **k: None, get_doc=lambda *a: SimpleNamespace())
 
         def start_step(action, parent):
             if action == "Schedule Migration" and self.no_events:
@@ -61,15 +63,42 @@ class TestFullMigrationChain(unittest.TestCase):
         self.db.runs[child]["state"] = state
         fm.advance_full("FULL")
 
-    def test_new_full_run_keeps_services_after_product_links_and_before_files(self):
-        steps = [fm.EMPLOYEE_ACTION, *fm.FULL_STEPS[:4], fm.SERVICE_ACTION, *fm.FULL_STEPS[4:]]
+    def test_new_full_run_follows_dependency_order(self):
+        steps = list(fm.NEW_FULL_STEPS)
         fm._save_full("FULL", {"step": 0, "child": "", "notes": [], "steps": steps})
-        fm.advance_full("FULL")
-        for _ in steps:
-            self.finish_current()
+        with patch.object(fm, 'bound_configuration', return_value=SimpleNamespace(source_instance='source-a')), \
+             patch('hero_integration.services.deferred_references.reconcile_source_page', return_value=('', False)) as reconcile:
+            fm.advance_full("FULL")
+            for _ in steps:
+                self.finish_current()
+        reconcile.assert_called_once_with('source-a', '', origin_runs=None)
         self.assertEqual(self.started, steps)
-        self.assertEqual(self.started.index(fm.SERVICE_ACTION), self.started.index(fm.PRODUCT_ACTION) + 1)
+        self.assertEqual(self.started, ['Employee Migration', 'Customer Migration', 'Project Migration',
+            'Schedule Migration', 'Projection Migration', 'Document Migration', 'Picture Migration',
+            'Product Migration', 'Service Migration'])
         self.assertEqual(self.db.runs["FULL"]["state"], "Completed")
+
+    def test_final_reconciliation_is_bounded_and_finishes_before_parent(self):
+        state = {'step': len(fm.NEW_FULL_STEPS), 'child': '', 'notes': [], 'steps': list(fm.NEW_FULL_STEPS)}
+        fm._save_full('FULL', state)
+        with patch.object(fm, 'bound_configuration', return_value=SimpleNamespace(source_instance='source-a')), \
+             patch('hero_integration.services.deferred_references.reconcile_source_page', side_effect=[('last', True), ('last', False)]) as reconcile:
+            fm.advance_full('FULL')
+            self.assertEqual(self.db.runs['FULL']['state'], 'Running')
+            self.assertEqual(self.queued, ['FULL'])
+            fm.advance_full('FULL')
+        self.assertEqual([call.args for call in reconcile.call_args_list], [('source-a', ''), ('source-a', 'last')])
+        self.assertEqual(self.db.runs['FULL']['state'], 'Completed')
+
+    def test_test_run_final_sweep_is_limited_to_its_own_children(self):
+        self.db.runs['FULL']['testing_enabled'] = 1
+        state = {'step': len(fm.NEW_FULL_STEPS), 'child': '', 'notes': [],
+                 'steps': list(fm.NEW_FULL_STEPS), 'completed_children': ['CHILD-1', 'CHILD-2']}
+        fm._save_full('FULL', state)
+        with patch.object(fm, 'bound_configuration', return_value=SimpleNamespace(source_instance='source-a')), \
+             patch('hero_integration.services.deferred_references.reconcile_source_page', return_value=('', False)) as reconcile:
+            fm.advance_full('FULL')
+        reconcile.assert_called_once_with('source-a', '', origin_runs=['CHILD-1', 'CHILD-2'])
 
     def test_steps_run_one_after_another_and_complete(self):
         fm.advance_full("FULL")
@@ -95,6 +124,103 @@ class TestFullMigrationChain(unittest.TestCase):
         self.finish_current("Failed")
         self.assertEqual(self.db.runs["FULL"]["state"], "Blocked")
         self.assertEqual(self.started, ["Project Migration"])
+
+    def test_new_chain_stops_if_a_read_service_is_missing(self):
+        fm._save_full("FULL", {"step": 3, "child": "", "notes": [], "steps": list(fm.NEW_FULL_STEPS)})
+        self.no_events = True
+        fm.advance_full("FULL")
+        self.assertEqual(self.db.runs['FULL']['state'], 'Blocked')
+        self.assertIn('Schedule Migration: no approved read service', self.db.runs['FULL']['error_message'])
+
+    def test_new_test_chain_freezes_related_projects_before_employees_start(self):
+        self.db.runs['FULL']['testing_enabled'] = 1
+        fm._save_full('FULL', {'step': 0, 'child': '', 'notes': [], 'steps': list(fm.NEW_FULL_STEPS)})
+        sample = {'version': 1, 'project_ids': ['7'], 'customer_ids': ['8'], 'user_ids': ['9']}
+        with patch.object(fm, 'prepare_related_test', return_value=sample) as prepare, \
+             patch.object(fm, 'discover_related_test_page', return_value=True):
+            fm.advance_full('FULL')
+        prepare.assert_called_once()
+        self.assertEqual(fm._load_related_test('FULL'), sample)
+        self.assertNotIn('related_test_cohort', fm._full('FULL'))
+        self.assertEqual(self.started, ['Employee Migration'])
+
+    def test_changed_related_selection_is_rejected_before_discovery(self):
+        self.db.runs['FULL']['testing_enabled'] = 1
+        digest = fm._save_related_test('FULL', {'version': 1, 'project_ids': ['7']})
+        fm._save_full('FULL', {'step': 0, 'child': '', 'notes': [], 'steps': list(fm.NEW_FULL_STEPS),
+                              'related_test_enabled': True, 'related_test_digest': digest})
+        self.db.runs['FULL']['testing_cohort_json'] = '{"version":1,"project_ids":["8"]}'
+        with self.assertRaisesRegex(fm.SourceBindingError, 'selection changed'):
+            fm.advance_full('FULL')
+        self.assertEqual(self.started, [])
+
+    def test_related_test_discovery_resumes_before_starting_children(self):
+        self.db.runs['FULL']['testing_enabled'] = 1
+        sample = {'version': 1, 'project_ids': ['7'], 'customer_ids': ['8'], 'user_ids': ['9']}
+        digest = fm._save_related_test('FULL', sample)
+        fm._save_full('FULL', {'step': 0, 'child': '', 'notes': [], 'steps': list(fm.NEW_FULL_STEPS),
+                              'related_test_enabled': True, 'related_test_digest': digest})
+        with patch.object(fm, 'discover_related_test_page', side_effect=[False, True]):
+            fm.advance_full('FULL')
+            self.assertEqual(self.started, [])
+            self.assertEqual(self.queued, ['FULL'])
+            fm.advance_full('FULL')
+        self.assertEqual(self.started, ['Employee Migration'])
+
+    def test_related_test_discovery_collects_task_users_and_event_partners_in_slices(self):
+        config = SimpleNamespace(source_instance='source-a', source_binding_revision=1)
+        def read(operation):
+            return SimpleNamespace(operation=operation, origin='approved', mapping='m', mapping_version='v1',
+                                   document='query', records_path='rows', variables={}, page_size=2)
+        pages = {
+            ('HeroTasks', 0): [{'id': 4, 'target_project_match_id': 7, 'author_user_id': 11, 'target_user_id': 12}],
+            ('HeroCalendarEvents', 0): [{'id': 5, 'project_match_id': 7, 'partners': [{'id': 13}]}],
+        }
+        state = {}
+        cohort = {'version': 1, 'project_ids': ['7'], 'customer_ids': ['8'],
+                  'user_ids': [], 'partner_ids': [], 'task_ids': [], 'event_ids': []}
+        with patch.object(fm, 'bound_configuration', return_value=config), \
+             patch('hero_integration.services.file_transfer._client_and_downloader', return_value=('client', None, 'source-a')), \
+             patch.object(fm.direct_runtime, 'approved_read', side_effect=lambda op, source: read(op)), \
+             patch.object(fm.direct_runtime, 'fetch_page', side_effect=lambda client, reader, offset: pages.get((reader.operation, offset), [])):
+            self.assertFalse(fm.discover_related_test_page(SimpleNamespace(), state, cohort, page_budget=1))
+            self.assertFalse(fm.discover_related_test_page(SimpleNamespace(), state, cohort, page_budget=1))
+            self.assertFalse(fm.discover_related_test_page(SimpleNamespace(), state, cohort, page_budget=1))
+            self.assertTrue(fm.discover_related_test_page(SimpleNamespace(), state, cohort, page_budget=1))
+        self.assertEqual((cohort['task_ids'], cohort['event_ids']), (['4'], ['5']))
+        self.assertEqual((cohort['user_ids'], cohort['partner_ids']), (['11', '12'], ['13']))
+
+    def test_related_full_test_selection_flows_from_project_to_task_and_event_readers(self):
+        from hero_integration.services.migration_testing import RelatedProjectSource
+        from hero_integration.sources.hero import SourcePage
+        config = SimpleNamespace(source_instance='source-a', source_binding_revision=1)
+        rule = SimpleNamespace(transformation='HERO Customer Link', purpose='Customer Relation', source_path='customer_id')
+        plan = SimpleNamespace(source_identity=lambda row: str(row['id']), definitions=[rule], mapping_version='v1')
+        def read(operation):
+            return SimpleNamespace(operation=operation, origin='approved', mapping='m', mapping_version='v1', plan=plan,
+                                   document='query', records_path='rows', variables={}, page_size=5)
+        project = {'id': 7, 'customer_id': 8, 'is_deleted': False, 'project_match_assignments': [{'user_id': 9}]}
+        task = {'id': 4, 'target_project_match_id': 7, 'author_user_id': 11, 'target_user_id': 12}
+        event = {'id': 5, 'project_match_id': 7, 'partners': [{'id': 13}]}
+        pages = {('HeroProjectMatches', 0): [project], ('HeroTasks', 0): [task], ('HeroCalendarEvents', 0): [event]}
+        run = SimpleNamespace(testing_enabled=1, testing_max_actions=1)
+        with patch.object(fm, 'bound_configuration', return_value=config), \
+             patch('hero_integration.services.file_transfer._client_and_downloader', return_value=('client', None, 'source-a')), \
+             patch.object(fm.direct_runtime, 'approved_read', side_effect=lambda op, source: read(op)), \
+             patch.object(fm.direct_runtime, 'fetch_page', side_effect=lambda client, reader, offset: pages.get((reader.operation, offset), [])):
+            cohort = fm.prepare_related_test(run)
+            state = {}
+            self.assertTrue(fm.discover_related_test_page(run, state, cohort, page_budget=10))
+        self.assertEqual(cohort['customer_ids'], ['8'])
+        self.assertEqual(cohort['user_ids'], ['11', '12', '9'])
+        self.assertEqual(cohort['partner_ids'], ['13'])
+        source = SimpleNamespace(contract=SimpleNamespace(target_operation='HeroTasks'),
+            projection=lambda offset: SourcePage(({'id': 100, 'target_project_match_id': 99}, task), 2)
+            if offset == 0 else SourcePage((), None))
+        wrapper = RelatedProjectSource(source, 1, cohort)
+        selected = wrapper.projection(0)
+        self.assertEqual([row['id'] for row in selected.records], [4])
+        self.assertEqual(wrapper.projection(selected.next_offset), SourcePage((), None))
 
     def test_a_finished_child_queues_its_parent(self):
         self.db.defaults[fm.CHILD_KEY.format("RUN-9")] = "FULL"
@@ -137,6 +263,22 @@ class TestFileSlice(unittest.TestCase):
             fm._file_slice(SimpleNamespace(name='R',action=fm.EMPLOYEE_ACTION),SimpleNamespace(source_instance='default'))
         self.assertEqual(importer.call_args.kwargs['run_name'],'R')
         self.assertEqual(db.runs['R']['state'],'Completed')
+
+    def test_employee_child_receives_frozen_related_user_and_partner_ids(self):
+        db = _DB(); db.runs['R'] = {'state': 'Running'}
+        fake = SimpleNamespace(db=db, log_error=lambda **k: None)
+        lock = SimpleNamespace(filelock=lambda *a, **k: contextlib.nullcontext())
+        cohort = {'user_ids': ['11', '12'], 'partner_ids': ['13']}
+        run = SimpleNamespace(name='R', action=fm.EMPLOYEE_ACTION, testing_enabled=1, testing_max_actions=1)
+        with patch.object(fm, 'frappe', fake), patch.object(fm, 'now_datetime', lambda:'now'), \
+             patch.object(fm, 'related_test_for_run', return_value=cohort), \
+             patch.dict('sys.modules', {'frappe.utils.synchronization': lock}), \
+             patch('hero_integration.services.migration_testing.persist'), \
+             patch('hero_integration.services.file_transfer._client_and_downloader', return_value=('c', 'd', 'source-a')), \
+             patch('hero_integration.services.employee_migration.sync_employees', return_value={'done': True, 'counts': {}}) as importer:
+            fm._file_slice(run, SimpleNamespace(source_instance='source-a'))
+        self.assertEqual(importer.call_args.kwargs['cohort_user_ids'], ['11', '12'])
+        self.assertEqual(importer.call_args.kwargs['cohort_partner_ids'], ['13'])
 
     def test_unfinished_phase_queues_the_next_slice(self):
         run, queued = self.run_slice({"done": False, "counts": {"added": 3, "unchanged": 2}})
@@ -183,6 +325,26 @@ class TestSourceBinding(unittest.TestCase):
     def bound(self, run, config):
         with patch.object(fm, "_configuration", return_value=config):
             return fm.bound_configuration(run)
+
+    def test_related_test_sample_rejects_changed_source_or_reader(self):
+        from hero_integration.services.migration_testing import project_reader_fingerprint
+        read = SimpleNamespace(operation='HeroProjectMatches', origin='svc', mapping='map', mapping_version='v1',
+                               document='query', records_path='rows', variables={}, page_size=100)
+        sample = {'version': 1, 'source_instance': 'source-a', 'source_binding_revision': 3,
+                  'project_reader_fingerprint': project_reader_fingerprint(read), 'project_ids': ['1']}
+        run = SimpleNamespace(name='CHILD', testing_enabled=1, action='Employee Migration')
+        fake = SimpleNamespace(db=SimpleNamespace(get_default=lambda key: 'FULL'))
+        with patch.object(fm, 'frappe', fake), patch.object(fm, '_full', return_value={'related_test_enabled': True, 'related_test_digest': 'digest'}), \
+             patch.object(fm, '_load_related_test', return_value=sample), \
+             patch.object(fm, 'bound_configuration', return_value=_config()), \
+             patch.object(fm.direct_runtime, 'approved_read', return_value=read):
+            self.assertEqual(fm.related_test_for_run(run), sample)
+            read.document = 'changed query'
+            with self.assertRaisesRegex(fm.SourceBindingError, 'reader or mapping changed'):
+                fm.related_test_for_run(run)
+            sample['source_instance'] = 'other'
+            with self.assertRaisesRegex(fm.SourceBindingError, 'confirmed HERO source'):
+                fm.related_test_for_run(run)
 
     def test_run_uses_only_the_confirmed_binding_it_was_queued_under(self):
         run = SimpleNamespace(source_instance="source-a", source_binding_revision=3)
@@ -294,6 +456,7 @@ class TestEveryStartPathIsSourceBound(unittest.TestCase):
                                                        commit=lambda: None),
                                     log_error=lambda **kwargs: self.queued.append(("logged", kwargs)))
         for target in (patch.object(api, "frappe", self.fake), patch.object(ft, "frappe", self.fake),
+                       patch("hero_integration.services.sync_page.manual_prerequisite", return_value=""),
                        patch.object(fm, "frappe", self.fake), patch.object(fm.direct_runtime, "resolve_read"),
                        patch.object(fm, "_enqueue", side_effect=lambda name: self.queued.append(name)),
                        patch("hero_integration.services.file_transfer.reset_phase")):
