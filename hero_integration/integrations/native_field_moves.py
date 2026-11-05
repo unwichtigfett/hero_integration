@@ -109,7 +109,7 @@ def _revise(definition_id: str, operation: str) -> list[str]:
     return changes
 
 
-def revise_rules() -> dict:
+def revise_rules(copy_scopes=None) -> dict:
     """Publish a revised mapping for every active read mapping that still has an old rule.
 
     Each mapping is revised on its own; a failure is logged, rolled back and does not stop the others.
@@ -126,7 +126,12 @@ def revise_rules() -> dict:
         savepoint = "hero_native_move_" + uuid4().hex
         frappe.db.savepoint(savepoint)
         try:
+            before = _copy_plan(row.name)
             report[row.name] = _revise(row.definition_id, config["target_operation"])
+            if copy_scopes is not None and report[row.name] and before:
+                after = _copy_plan(row.name)
+                if after and before['source'] == after['source'] and before['snapshot'] == after['snapshot']:
+                    copy_scopes.append({'before': before, 'after': after})
         except Exception as error:
             frappe.db.rollback(save_point=savepoint)
             frappe.log_error(title="HERO native field move: mapping not revised", message=f"{row.name}: {error!r}")
@@ -148,43 +153,98 @@ def _written_targets() -> set[tuple[str, str]]:
     return {(row.target_doctype, row.target_field) for row in rows}
 
 
-def _hero_type_rule_active() -> bool:
-    return bool(frappe.db.exists("HERO Frappe Mapping", {"status": "Active", "target_field": "customer_type",
-                                                         "transformation": "Customer Type From HERO Type",
-                                                         "personal_graphql_mapping": ["is", "set"]}))
+def _copy_plan(name):
+    """Capture exact selected rules; unprovable legacy mappings grant no data writes."""
+    from hero_integration.services.mapping_runtime import active_mapping_plan
+    try:
+        mapping = frappe.get_doc("HERO GraphQL Mapping", name, for_update=True)
+        if mapping.status != "Active" or mapping.direction != "QUERY_TO_FRAPPE":
+            return None
+        config = json.loads(mapping.mapping_json)
+        if not mapping.source_instance or not mapping.schema_snapshot:
+            return None
+        snapshot = frappe.get_doc("HERO GraphQL Schema Snapshot", mapping.schema_snapshot)
+        if snapshot.source_instance != mapping.source_instance or snapshot.analysis_status != "Validated":
+            return None
+        plan = active_mapping_plan(mapping.operation_name,
+            definition_ids=tuple(config['mapping_definition_ids']),
+            target_operation=config['target_operation'], mapping_name=name)
+        return {'name': name, 'source': mapping.source_instance, 'snapshot': mapping.schema_snapshot,
+                'revision': int(mapping.mapping_revision), 'version': plan.mapping_version, 'plan': plan}
+    except (ValueError, TypeError, KeyError, AttributeError):
+        return None
 
 
-def copy_values() -> dict:
-    """Copy the HERO values into the native fields that an active mapping now writes, where still empty."""
+def _copy_moves(before, after):
+    """Select only the legacy-to-native moves proven by both exact rule sets."""
     from hero_integration.services.direct_mapping import hero_customer_type, plain_text_html
+    definitions = (
+        ('Customer', 'customer', 'custom_hero_customer_type', 'customer_type', 'type',
+         'Customer Type From HERO Type', hero_customer_type),
+        ('Project', 'project', 'custom_hero_partner_notes', 'notes', 'partner_notes',
+         'Plain Text To HTML', plain_text_html),
+        ('Event', 'CalendarEvent', 'custom_hero_color', 'color', 'color', 'Identity', lambda value: value),
+        ('Event', 'CalendarEvent', 'custom_hero_is_done', 'status', 'is_done', 'Native Adapter',
+         lambda value: 'Completed' if value == 'true' else None),
+    )
+    for doctype, kind, legacy, target, path, transform, convert in definitions:
+        legacy_transforms = {'Scalar Text'} if target == 'status' else {'Identity', 'Trim'}
+        old = [rule for rule in before['plan'].definitions
+               if rule.target_doctype == doctype and rule.target_field == legacy and rule.source_path == path
+               and rule.transformation in legacy_transforms]
+        new = [rule for rule in after['plan'].definitions
+               if rule.target_doctype == doctype and rule.target_field == target and rule.source_path == path
+               and rule.transformation == transform]
+        old_native = [rule for rule in before['plan'].definitions
+                      if rule.target_doctype == doctype and rule.target_field == target]
+        if len(old) == len(new) == 1 and (not old_native or old_native[0] != new[0]):
+            yield doctype, kind, legacy, target, convert
 
-    written = _written_targets()
+
+def copy_values(scopes=()) -> dict:
+    """Copy unchanged source-bound values only from mappings revised by this run.
+
+    Both legacy value and native destination require old field baselines.
+    Missing historical evidence is left for normal reconciliation.
+    """
+    from hero_integration.services.change_detection import decode, field_hashes
+
     copied = {"notes": 0, "color": 0, "status": 0, "customer_type": 0}
-    if ("Project", "notes") in written and frappe.db.has_column("Project", "custom_hero_partner_notes"):
-        for row in frappe.get_all("Project", filters={"custom_hero_partner_notes": ["is", "set"]},
-                                  fields=["name", "notes", "custom_hero_partner_notes"], limit_page_length=0):
-            if not (row.notes or "").strip() and plain_text_html(row.custom_hero_partner_notes):
-                frappe.db.set_value("Project", row.name, "notes", plain_text_html(row.custom_hero_partner_notes),
-                                    update_modified=False)
-                copied["notes"] += 1
-    if ("Event", "color") in written and frappe.db.has_column("Event", "custom_hero_color"):
-        for row in frappe.get_all("Event", filters={"custom_hero_color": ["is", "set"]},
-                                  fields=["name", "color", "custom_hero_color"], limit_page_length=0):
-            if not row.color:
-                frappe.db.set_value("Event", row.name, "color", row.custom_hero_color, update_modified=False)
-                copied["color"] += 1
-    if ("Event", "status") in written and frappe.db.has_column("Event", "custom_hero_is_done"):
-        for name in frappe.get_all("Event", filters={"custom_hero_is_done": "true", "status": "Open"}, pluck="name",
-                                   limit_page_length=0):
-            frappe.db.set_value("Event", name, "status", "Completed", update_modified=False)
-            copied["status"] += 1
-    if ("Customer", "customer_type") in written and _hero_type_rule_active() and frappe.db.has_column("Customer", "custom_hero_customer_type"):
-        for row in frappe.get_all("Customer", filters={"custom_hero_customer_type": ["is", "set"]},
-                                  fields=["name", "customer_type", "custom_hero_customer_type"], limit_page_length=0):
-            wanted = hero_customer_type(row.custom_hero_customer_type)
-            if row.customer_type != wanted:
-                frappe.db.set_value("Customer", row.name, "customer_type", wanted, update_modified=False)
-                copied["customer_type"] += 1
+    for scope in scopes:
+        before, after = scope['before'], scope['after']
+        current = _copy_plan(after['name'])
+        if not current or any(current[key] != after[key] for key in ('source', 'snapshot', 'revision', 'version')):
+            continue
+        for doctype, kind, legacy, target, convert in _copy_moves(before, after):
+            if not frappe.db.has_column(doctype, legacy):
+                continue
+            filters = {'source_system': 'HERO', 'source_instance': before['source'], 'source_type': kind,
+                       'target_doctype': doctype, 'sync_status': 'Synchronized', 'mapping_version': before['version']}
+            for name in frappe.get_all('HERO Integration Link', filters=filters, pluck='name', limit_page_length=0):
+                link = frappe.get_doc('HERO Integration Link', name, for_update=True)
+                if any(link.get(key) != value for key, value in filters.items()):
+                    continue
+                owners = frappe.get_all('HERO Integration Link', filters={'target_doctype': doctype,
+                    'target_name': link.target_name}, pluck='name', limit_page_length=2)
+                if owners != [name] or not frappe.db.exists(doctype, link.target_name):
+                    continue
+                doc = frappe.get_doc(doctype, link.target_name, for_update=True)
+                baseline = decode(link.target_field_hashes) or {}
+                values = {legacy: doc.get(legacy), target: doc.get(target)}
+                if any(baseline.get(field) != digest for field, digest in field_hashes(values).items()):
+                    continue
+                raw = values[legacy]
+                if target == 'customer_type' and (not isinstance(raw, str) or raw.strip().lower() not in {'private', 'commercial'}):
+                    continue
+                wanted = convert(raw)
+                if wanted in (None, '') or wanted == values[target]:
+                    continue
+                if target in {'notes', 'color'} and values[target] not in (None, ''):
+                    continue
+                if target == 'status' and values[target] != 'Open':
+                    continue
+                frappe.db.set_value(doctype, doc.name, target, wanted, update_modified=False)
+                copied[target] += 1
     return copied
 
 
@@ -210,8 +270,9 @@ def run() -> dict:
     previous = frappe.session.user
     frappe.set_user("Administrator")
     try:
-        rules = revise_rules()
-        copied = copy_values()
+        scopes = []
+        rules = revise_rules(copy_scopes=scopes)
+        copied = copy_values(scopes)
         hidden = hide_redundant_fields()
     finally:
         frappe.set_user(previous)

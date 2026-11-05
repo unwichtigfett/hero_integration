@@ -410,7 +410,7 @@ def preview(comment, *, activity_doctype='Comment', client=None, delivery_projec
         'blocked_reason': '' if enabled else 'Global HERO mutation execution is currently OFF.'}
 
 
-def candidates(project):
+def candidates(project, *, require_mapping=True):
     from hero_integration.services.mapped_send import _roles
     from hero_integration.client.settings import get_configuration
     if not _roles(): _fail('Only System Managers and HERO Writeback users may send to HERO.')
@@ -419,6 +419,8 @@ def candidates(project):
     source = get_configuration(fresh=True).source_instance
     profiles = frappe.get_all('HERO GraphQL Mapping', filters={'source_instance': source, 'status': 'Active',
         'direction': 'FRAPPE_TO_MUTATION', 'operation_name': OPERATION}, fields=['mapping_json'], limit_page_length=2)
+    if not profiles and require_mapping is False:
+        return {'comments': []}
     if len(profiles) != 1: _fail('Exactly one active Project logbook mutation mapping is required.')
     from hero_integration.services.personal_mapping_content import unique_json_object
     content = json.loads(profiles[0].mapping_json, object_pairs_hook=unique_json_object)

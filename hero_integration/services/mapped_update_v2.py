@@ -824,7 +824,7 @@ def _check_local_current(ctx,prepared):
 
 def _acknowledge(ctx,prepared,after):
     from hero_integration.services.change_detection import decode,encode
-    from hero_integration.services.product_migration import digest,item_values,owned_digest
+    from hero_integration.services.product_migration import digest,item_values,owned_digest,owned_field_digests
     items={item['id']:item for item in ctx.content['assignments']};updates={}
     for change in prepared.changes:
         item=items[change['id']];link=ctx.source_links[item['id']];field=item['source']['field'];area=ctx.content['area']
@@ -865,7 +865,11 @@ def _acknowledge(ctx,prepared,after):
             frappe.db.set_value('HERO Integration Link',name,data,update_modified=False)
             continue
         if area=='HeroProducts':
-            data['target_payload_hash']=owned_digest(ctx.document,tuple(state.get('fields',{})))
+            fields=state.get('fields',{})
+            # Unsent local fields retain their previous individual proof. Only
+            # rebuild the aggregate when every owned field matches that proof.
+            if fields and owned_field_digests(ctx.document,tuple(fields))==fields:
+                data['target_payload_hash']=owned_digest(ctx.document,tuple(fields))
             values=item_values(after,SimpleNamespace(plan=ctx.query_plan));values.pop('owned',None)
             version=ctx.link.mapping_version.removeprefix('product-migration-v3:')
             data['source_payload_hash']=digest({**values,'mapping':version})

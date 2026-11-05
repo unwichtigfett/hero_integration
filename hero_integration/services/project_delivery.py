@@ -48,7 +48,7 @@ def preview(project, *, phase_id=None, client=None):
     reader = PreviewReader(client)
     data = mapped_send.preview('Project', project, phase_id=phase_id, client=reader)
     activities = []
-    for activity in logbook.candidates(project)['comments']:
+    for activity in logbook.candidates(project, require_mapping=False)['comments']:
         item = logbook.preview(activity['name'], activity_doctype=activity['activity_doctype'], client=reader)
         if item['project'] != project:
             raise ProjectDeliveryError('The Project send preview changed; open it again.')
