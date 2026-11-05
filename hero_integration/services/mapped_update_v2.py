@@ -496,8 +496,8 @@ def _canonical(ctx,item,remote):
         raise MappedUpdateError('This native projection lacks a reversible baseline.')
     if getattr(ctx.query_plan,'adapter_options',None) is not None:
         from hero_integration.services.query_mapping import transform
-        value=transform(rule,raw,ctx.query_plan.adapter_options)
-    else: value=transformed_value(rule,raw)
+        value=transform(rule,raw,ctx.query_plan.adapter_options,source_instance=ctx.proof.source_instance)
+    else: value=transformed_value(rule,raw,source_instance=ctx.proof.source_instance)
     if ctx.content['area']=='HeroCustomers' and item['source']['field'] in {'mobile_no','phone'}:
         from hero_integration.services.migration import _phone_number
         value=_phone_number(value)[0]

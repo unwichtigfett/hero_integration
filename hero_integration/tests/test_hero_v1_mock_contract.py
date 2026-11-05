@@ -155,8 +155,8 @@ class TestHeroV1MockContract(unittest.TestCase):
     def test_source_and_mapping_cover_all_fixed_values(self):
         source = _StrictSource()
         customers, projects = HeroSource(source).customers(), HeroSource(source).projects()
-        self.assertEqual(customers.records, (CUSTOMER,))
-        self.assertEqual(projects.records, (PROJECT,))
+        self.assertEqual(customers.records, ({**CUSTOMER, "_hero_source_instance": "default"},))
+        self.assertEqual(projects.records, ({**PROJECT, "_hero_source_instance": "default"},))
         customer_plan = fixture_plan("HeroCustomers")
         project_plan = fixture_plan("HeroProjectMatches")
         self.assertEqual(customer_plan.values(CUSTOMER), {
@@ -232,8 +232,8 @@ class TestHeroV1MockContract(unittest.TestCase):
         third_page = source.customers(second_page.next_offset or 0)
         self.assertEqual((first_page.next_offset, second_page.next_offset, third_page.next_offset), (100, 101, None))
         self.assertEqual(third_page.records, ())
-        self.assertEqual(second_page.records[0], UPDATED_CUSTOMER)
-        self.assertEqual(projects.records, PROJECTS)
+        self.assertEqual(second_page.records[0], {**UPDATED_CUSTOMER, "_hero_source_instance": "default"})
+        self.assertEqual(projects.records, tuple({**row, "_hero_source_instance": "default"} for row in PROJECTS))
         valid_customer_ids = {row["id"] for row in CUSTOMERS if not row["is_deleted"]}
         self.assertTrue(all(row["customer_id"] in valid_customer_ids for row in PROJECTS))
         self.assertFalse(fixture_plan("HeroCustomers").values(INVALID_CUSTOMER).get("customer_name"))
@@ -241,7 +241,7 @@ class TestHeroV1MockContract(unittest.TestCase):
         self.assertNotIn(AMBIGUOUS_PROJECT["customer_id"], valid_customer_ids)
         self.assertEqual(
             graphql_envelope(CUSTOMER_QUERY_V1, mock_source.calls[0][1]),
-            {"data": {"contacts": list(first_page.records)}},
+            {"data": {"contacts": [{key: value for key, value in row.items() if key != "_hero_source_instance"} for row in first_page.records]}},
         )
 
 

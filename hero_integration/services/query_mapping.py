@@ -287,7 +287,7 @@ def validate_plan(plan):
     return options
 
 
-def _transform(spec, value, options):
+def _transform(spec, value, options, *, source_instance=None):
     opts = options.get('transform_options', {}).get(spec.definition_id, {})
     if value is MISSING:
         return MISSING
@@ -298,7 +298,7 @@ def _transform(spec, value, options):
         return country_name(value)
     if spec.transformation == 'User By Partner ID':
         from hero_integration.integrations.hero_people import user_by_partner
-        return user_by_partner(value)
+        return user_by_partner(value, source_instance=source_instance)
     if spec.transformation in {'Number', 'Integer'}:
         return _number(value) if spec.transformation == 'Number' else _integer(value)
     if spec.transformation in {'Value Map', 'Link Map'}:
@@ -339,7 +339,7 @@ def _transform(spec, value, options):
                 mapped[target] = _canonical(converted, opts['child_types'][target])
             result.append(mapped)
         return result
-    return transformed_value(spec, value)
+    return transformed_value(spec, value, source_instance=source_instance)
 
 
 def _validate_native_spec(spec, adapter_options):
@@ -659,7 +659,7 @@ def mapped_values(plan, record, *, customer_link=None, confirmed_company=None, p
             from hero_integration.services.query_mapping_extensions import bound_user
             value = bound_user(raw, record.get('_hero_source_instance', 'default'))
         else:
-            value = transform(spec, raw, plan.adapter_options)
+            value = transform(spec, raw, plan.adapter_options, source_instance=record.get('_hero_source_instance'))
         opts = plan.adapter_options.get('transform_options', {}).get(spec.definition_id, {})
         expected_type = opts.get('target_type') or _inferred_target(spec)
         if expected_type:
@@ -758,7 +758,7 @@ def seal_lookup_query(service, snapshot, config):
 def event_record(plan, record):
     """Provide the time adapter's semantic inputs from selected field bindings."""
     names = {'subject': 'title', 'description': 'description', 'location': 'full_address',
-             'starts_on': 'start', 'ends_on': 'end', 'all_day': 'all_day',
+             'starts_on': 'start', 'ends_on': 'end', 'all_day': 'all_day', 'status': 'is_done',
              'custom_hero_resources': 'resources', 'custom_hero_partners': 'partners'}
     result = {'is_recurring': lookup(record, 'is_recurring')}
     for spec in plan.definitions:
@@ -880,7 +880,7 @@ def _inferred_target(spec):
     return None
 
 
-def transform(spec, value, options):
+def transform(spec, value, options, *, source_instance=None):
     """Apply declared output defaults only to explicit null, never to missing data."""
     opts = options.get('transform_options', {}).get(spec.definition_id, {})
     _validate_option_keys(spec, opts)
@@ -893,7 +893,7 @@ def transform(spec, value, options):
             from frappe.utils.html_utils import sanitize_html
             result = sanitize_html(result)
     else:
-        result = _transform(spec, value, options)
+        result = _transform(spec, value, options, source_instance=source_instance)
     target_type = opts.get('target_type') or _inferred_target(spec)
     return _canonical(result, target_type) if target_type else result
 

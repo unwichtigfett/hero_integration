@@ -3663,3 +3663,4 @@ The frozen testing record limit changed; start a new run.,Das beim Start festgel
 Testing migration requires a run-bound checkpoint.,Die Testmigration benötigt einen an den Lauf gebundenen Prüfpunkt.
 Testing imports cannot resume; start a new bounded run.,Testimporte können nicht fortgesetzt werden; starten Sie einen neuen begrenzten Lauf.
 The frozen testing context changed; start a new run.,Der beim Start festgelegte Testkontext wurde geändert; starten Sie einen neuen Lauf.
+Saved contact communication differs from the mapped source value.,Die gespeicherten Kontaktdaten unterscheiden sich vom gemappten Quellwert.

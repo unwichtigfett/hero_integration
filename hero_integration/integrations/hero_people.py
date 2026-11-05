@@ -2,8 +2,8 @@
 
 Read-only towards HERO (one query). For every active partner with an e-mail and no
 ERPNext user yet, an enabled System User with only the Employee role is created: no welcome e-mail,
-no password. Every user of a HERO partner carries the partner ID and the HERO user
-ID, so projects, assignments and tasks link people by ID, not by e-mail. Of an
+no password. Legacy User ID fields remain observations; ID-based assignments
+require source-bound Integration Links from the Employee migration. Of an
 existing user only these two empty ID fields are filled; nothing else changes.
 Users of partners that left HERO are reported, not disabled. Existing account roles remain local.
 """
@@ -45,31 +45,52 @@ def _id(value) -> str | None:
     return str(value) if type(value) is int and value > 0 else None
 
 
-def _user_with(field: str, value) -> str | None:
+def _scoped_link(source_type, value, source_instance):
+    """Legacy User ID fields cannot establish which HERO source owns a person."""
     key = _id(value)
-    if not key or not frappe.db.has_column("User", field):
+    if not key or not isinstance(source_instance, str) or not source_instance.strip():
         return None
-    rows = frappe.db.sql(f"SELECT name FROM `tabUser` WHERE enabled=1 AND `{field}`=%s LIMIT 2", (key,))
+    rows = frappe.get_all("HERO Integration Link", filters={
+        "source_system": "HERO", "source_instance": source_instance,
+        "source_type": source_type, "source_id": key,
+    }, fields=["target_doctype", "target_name", "sync_status"], limit_page_length=2)
+    if len(rows) != 1 or rows[0].sync_status != "Synchronized":
+        return None
+    return rows[0]
+
+
+def user_by_partner(partner_id, *, source_instance=None) -> str | None:
+    """Resolve a partner through its source-bound Employee and User links."""
+    link = _scoped_link("partner", partner_id, source_instance)
+    if not link or link.target_doctype != "Employee":
+        return None
+    user = frappe.db.get_value("Employee", link.target_name, "user_id")
+    if not user or not frappe.db.get_value("User", user, "enabled"):
+        return None
+    links = frappe.get_all("HERO Integration Link", filters={
+        "source_system": "HERO", "source_instance": source_instance,
+        "source_type": "User", "target_doctype": "User", "target_name": user,
+    }, fields=["sync_status"], limit_page_length=2)
+    return user if len(links) == 1 and links[0].sync_status == "Synchronized" else None
+
+
+def user_by_hero_user(user_id, *, source_instance=None) -> str | None:
+    """The enabled User with a unique synchronized binding in this source."""
+    link = _scoped_link("User", user_id, source_instance)
+    if not link or link.target_doctype != "User":
+        return None
+    return link.target_name if frappe.db.get_value("User", link.target_name, "enabled") else None
+
+
+def _existing_user(email: str, partner_id: str | None = None, *, source_instance=None) -> str | None:
+    if partner_id and str(partner_id).isdigit():
+        user = user_by_partner(int(partner_id), source_instance=source_instance)
+        if user:
+            return user
+    # An exact, unambiguous login remains usable for first adoption. The caller
+    # checks existing bindings and privileges before assigning any ownership.
+    rows = frappe.db.sql("SELECT name FROM `tabUser` WHERE LOWER(email)=%s OR LOWER(name)=%s LIMIT 2", (email, email))
     return rows[0][0] if len(rows) == 1 else None
-
-
-def user_by_partner(partner_id) -> str | None:
-    """The enabled ERPNext User of a HERO partner ID, else None."""
-    return _user_with(PARTNER_FIELD, partner_id)
-
-
-def user_by_hero_user(user_id) -> str | None:
-    """The enabled ERPNext User of a HERO user ID (assignments, tasks), else None."""
-    return _user_with(USER_ID_FIELD, user_id)
-
-
-def _existing_user(email: str, partner_id: str | None = None) -> str | None:
-    if partner_id and frappe.db.has_column("User", PARTNER_FIELD):
-        rows = frappe.db.sql(f"SELECT name FROM `tabUser` WHERE `{PARTNER_FIELD}`=%s LIMIT 1", (partner_id,))
-        if rows:
-            return rows[0][0]
-    rows = frappe.db.sql("SELECT name FROM `tabUser` WHERE LOWER(email)=%s OR LOWER(name)=%s LIMIT 1", (email, email))
-    return rows[0][0] if rows else None
 
 
 def _ids(partner: dict) -> dict:

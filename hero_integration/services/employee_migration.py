@@ -148,7 +148,7 @@ def upsert(record, instance, company, languages, read=None):
     login_email = (mapped.get(("User", "email")) or "").strip().lower()
     # Exact login email identifies an existing account on first adoption only.
     # Future runs use the source link, never an edited email as a rename request.
-    user_name = user_link.target_name if user_link else (_existing_user(login_email, str(record["id"])) or login_email)
+    user_name = user_link.target_name if user_link else (_existing_user(login_email, str(record["id"]), source_instance=instance) or login_email)
     if not user_name or user_name.casefold() in {"administrator", "guest"}:
         raise EmployeeMigrationBlocked("A valid employee login email is required.")
     new_user = not frappe.db.exists("User", user_name)

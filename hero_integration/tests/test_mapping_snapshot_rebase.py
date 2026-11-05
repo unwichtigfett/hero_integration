@@ -111,6 +111,98 @@ class TestSnapshotRebase(TestCase):
         self.mocks = [value.start() for value in patches]
         for value in patches: self.addCleanup(value.stop)
 
+    def configure_send_mapping(self):
+        from hero_integration.tests.test_mapped_send import SCHEMA as send_schema, DOCUMENT, content
+        value = content(); value['send_options']['read_service'] = 'reader'
+        fingerprint = analyze_snapshot(send_schema).fingerprint
+        for rows in self.fake.rows.values():
+            for row in rows.values():
+                if 'schema_fingerprint' in row: row['schema_fingerprint'] = fingerprint
+        for snapshot in self.fake.rows[rebase.SNAPSHOT].values():
+            snapshot['snapshot_json'] = json.dumps(send_schema)
+        self.fake.rows[rebase.MAPPING]['mutation'].update(operation_name='update_contact', mapping_json=json.dumps(value))
+        self.fake.rows[rebase.SERVICE]['sender']['query_document'] = DOCUMENT
+        self.fake.rows[rebase.CONTRACT]['contract'].update(operation_name='update_contact', mapping_json='{}',
+            contract_fingerprint=parse_mutation(DOCUMENT).fingerprint)
+        self.mocks[4].side_effect = lambda *args: NS(target_operation='HeroCustomers', identity_path='id')
+        validator = patch('hero_integration.services.frappe_mapping_catalog.validate_send_mapping_sources')
+        self.addCleanup(validator.stop)
+        return validator.start()
+
+    def test_existing_send_mapping_rebases_without_rewriting_or_granting_approval(self):
+        validator = self.configure_send_mapping()
+        before = deepcopy(self.fake.rows)
+        plan = rebase.prepare('new', 'source')
+        rebase.prepare('new', 'source', apply=True, expected_fingerprint=plan['fingerprint'])
+        self.assertTrue(validator.called)
+        for binding in plan['bindings']:
+            self.assertEqual(self.fake.rows[binding['doctype']][binding['name']],
+                             {**before[binding['doctype']][binding['name']], 'schema_snapshot': 'new'})
+
+    def test_send_rebase_still_checks_native_fields_and_readback_binding(self):
+        validator = self.configure_send_mapping()
+        before = deepcopy(self.fake.rows)
+        validator.side_effect = ValueError('Native field is protected')
+        with self.assertRaisesRegex(ValueError, 'protected'):
+            rebase.prepare('new', 'source', apply=True)
+        self.assertEqual(self.fake.rows, before)
+        validator.side_effect = None
+        self.mocks[4].side_effect = lambda *args: NS(target_operation='HeroTasks', identity_path='id')
+        with self.assertRaisesRegex(ValueError, 'readback graph'):
+            rebase.prepare('new', 'source', apply=True)
+        self.assertEqual(self.fake.rows, before)
+
+    def test_send_rebase_still_checks_saved_input_and_mutation_selection_schema(self):
+        self.configure_send_mapping()
+        mapping = self.fake.rows[rebase.MAPPING]['mutation']
+        original = mapping['mapping_json']
+        content = json.loads(original); content['target']['field'] = 'unknown_field'
+        mapping['mapping_json'] = json.dumps(content)
+        before = deepcopy(self.fake.rows)
+        with self.assertRaises(ValueError): rebase.prepare('new', 'source')
+        self.assertEqual(self.fake.rows, before)
+        mapping['mapping_json'] = original
+        sender = self.fake.rows[rebase.SERVICE]['sender']
+        sender['query_document'] = sender['query_document'].replace('{ id }', '{ unknown_field }')
+        self.fake.rows[rebase.CONTRACT]['contract']['contract_fingerprint'] = parse_mutation(sender['query_document']).fingerprint
+        before = deepcopy(self.fake.rows)
+        with self.assertRaisesRegex(ValueError, 'invalid mutation'):
+            rebase.prepare('new', 'source')
+        self.assertEqual(self.fake.rows, before)
+
+    def test_send_rebase_rejects_different_snapshot_schema(self):
+        self.configure_send_mapping()
+        snapshot = self.fake.rows[rebase.SNAPSHOT]['new']
+        raw = json.loads(snapshot.snapshot_json); raw['__schema']['description'] = 'changed'
+        snapshot.update(snapshot_json=json.dumps(raw), schema_fingerprint=analyze_snapshot(raw).fingerprint)
+        before = deepcopy(self.fake.rows)
+        with self.assertRaisesRegex(ValueError, 'schemas differ'): rebase.prepare('new', 'source')
+        self.assertEqual(self.fake.rows, before)
+
+    def test_legacy_reviewed_field_mapping_keeps_its_existing_contract_format(self):
+        self.configure_send_mapping()
+        raw = json.loads(self.fake.rows[rebase.SNAPSHOT]['old'].snapshot_json)
+        input_type = next(row for row in raw['__schema']['types'] if row['name'] == 'CustomerInput')
+        field = deepcopy(next(row for row in input_type['inputFields'] if row['name'] == 'remarks'))
+        field['name'] = 'first_name'; input_type['inputFields'].append(field)
+        fingerprint = analyze_snapshot(raw).fingerprint
+        for rows in self.fake.rows.values():
+            for row in rows.values():
+                if 'schema_fingerprint' in row: row['schema_fingerprint'] = fingerprint
+        for snapshot in self.fake.rows[rebase.SNAPSHOT].values(): snapshot['snapshot_json'] = json.dumps(raw)
+        self.fake.rows[rebase.MAPPING]['mutation']['mapping_json'] = json.dumps({
+            'source': {'doctype': 'Customer', 'field': 'first_name'},
+            'target': {'operation': 'update_contact', 'argument': 'contact', 'input_type': 'CustomerInput', 'field': 'first_name'},
+            'transformation': 'Trim'})
+        before = deepcopy(self.fake.rows)
+        with patch('hero_integration.services.frappe_mapping_catalog.validate_draft_writeback_source') as validate_field:
+            plan = rebase.prepare('new', 'source')
+            rebase.prepare('new', 'source', apply=True, expected_fingerprint=plan['fingerprint'])
+        self.assertTrue(validate_field.called)
+        self.assertEqual(validate_field.call_args.args[:2], ('Customer', 'first_name'))
+        self.assertEqual(self.fake.rows[rebase.MAPPING]['mutation'],
+                         {**before[rebase.MAPPING]['mutation'], 'schema_snapshot': 'new'})
+
     def test_equal_snapshot_proof_recomputes_full_schema_and_endpoint(self):
         self.assertTrue(rebase.snapshots_equivalent('old', 'new', 'source'))
         self.fake.rows[rebase.SNAPSHOT]['new']['endpoint_fingerprint'] = 'f'*64

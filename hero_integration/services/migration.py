@@ -1428,7 +1428,7 @@ def _task_lifecycle_source(record) -> dict:
     def user_for(hero_user_id, email):
         # The HERO user ID stored by the people sync identifies the person; the e-mail is the fallback.
         from hero_integration.integrations.hero_people import user_by_hero_user
-        return user_by_hero_user(hero_user_id) or (task_lifecycle._user_for(email, frappe) if email else None)
+        return user_by_hero_user(hero_user_id, source_instance=record.get('_hero_source_instance')) or (task_lifecycle._user_for(email, frappe) if email else None)
     user_for = user_for if wants_author and emails is not None else None
     values = task_lifecycle.source_values(record, _external_task_deadline, emails or {}, today, user_for=user_for)
     if emails is None or not wants_assignee:

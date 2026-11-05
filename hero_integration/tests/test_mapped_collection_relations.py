@@ -212,6 +212,66 @@ class TestMappedCollectionRelations(TestCase):
         self.assertEqual(len(self.docs('Contact')),1)
         self.assertEqual(self.sync(CONTACTS,self.contacts)['updated'],1)
 
+    def shared_primary_contact(self, config=CONTACTS):
+        person = self.contacts['contacts'][0]
+        person.update(id=100, phone_home='+491234', phone_mobile='+491234')
+        contact = Doc(self.site, {'doctype': 'Contact', 'name': 'shared-primary',
+            'first_name': person['first_name'], 'last_name': person['last_name'],
+            'designation': person['position'], 'email_ids': [NS(email_id=person['email'], is_primary=1)],
+            'phone_nos': [NS(phone='+491234', is_primary_phone=1, is_primary_mobile_no=1)],
+            'links': [{'link_doctype': 'Customer', 'link_name': 'C1'}]}).insert()
+        self.site.docs['Customer', 'C1'].set('customer_primary_contact', contact.name)
+        Doc(self.site, {'doctype': 'HERO Integration Link', 'source_system': 'HERO', 'source_instance': 'source-a',
+            'source_type': 'customer', 'source_id': '100', 'target_doctype': 'Customer', 'target_name': 'C1'}).insert()
+        self.assertEqual(self.sync(config, self.contacts)['created'], 1)
+        self.assertEqual(len(contact.phone_nos), 1)
+        return contact
+
+    def test_shared_primary_phone_row_splits_when_source_numbers_diverge(self):
+        contact = self.shared_primary_contact()
+        self.contacts['contacts'][0].update(phone_home='+495678', phone_mobile='+499876')
+        self.assertEqual(self.sync(CONTACTS, self.contacts)['updated'], 1)
+        self.assertEqual(collection._contact_value(contact, 'phone'), '+495678')
+        self.assertEqual(collection._contact_value(contact, 'mobile_no'), '+499876')
+        self.assertEqual(len(contact.phone_nos), 2)
+        self.assertEqual(self.sync(CONTACTS, self.contacts)['updated'], 1)
+        self.assertEqual(len(contact.phone_nos), 2)
+
+    def test_shared_phone_update_preserves_unmapped_mobile_number(self):
+        config = deepcopy(CONTACTS)
+        del config['fields']['mobile_no']
+        contact = self.shared_primary_contact(config)
+        self.contacts['contacts'][0]['phone_home'] = '+495678'
+        self.assertEqual(self.sync(config, self.contacts)['updated'], 1)
+        self.assertEqual(collection._contact_value(contact, 'phone'), '+495678')
+        self.assertEqual(collection._contact_value(contact, 'mobile_no'), '+491234')
+
+    def test_contact_save_mismatch_rolls_back_without_confirming_new_baseline(self):
+        contact = self.shared_primary_contact()
+        links = [doc for doc in self.docs('HERO Integration Link') if doc.source_type == 'customer_contact']
+        before = links[0].target_payload_hash
+        self.contacts['contacts'][0].update(phone_home='+495678', phone_mobile='+499876')
+        save = Doc.save
+
+        def corrupt(document, **kwargs):
+            if document.doctype == 'Contact':
+                document.phone_nos[0].phone = 'unexpected'
+            return save(document, **kwargs)
+
+        with patch.object(Doc, 'save', corrupt), self.assertRaisesRegex(ValueError, 'communication differs'):
+            self.sync(CONTACTS, self.contacts)
+        link = next(doc for doc in self.docs('HERO Integration Link') if doc.source_type == 'customer_contact')
+        self.assertEqual(link.target_payload_hash, before)
+        self.assertEqual(collection._contact_value(self.docs('Contact')[0], 'phone'), '+491234')
+
+    def test_shared_phone_preview_does_not_split_or_change_rows(self):
+        contact = self.shared_primary_contact()
+        self.contacts['contacts'][0].update(phone_home='+495678', phone_mobile='+499876')
+        self.assertEqual(self.sync(CONTACTS, self.contacts, preview=True)['planned'], 1)
+        self.assertEqual(len(contact.phone_nos), 1)
+        self.assertEqual(collection._contact_value(contact, 'phone'), '+491234')
+        self.assertEqual(collection._contact_value(contact, 'mobile_no'), '+491234')
+
     def test_contact_preview_has_no_writes_and_unknown_salutation_blocks(self):
         self.assertEqual(self.sync(CONTACTS,self.contacts,preview=True)['planned'],1)
         self.assertEqual(self.docs('Contact'),[])
