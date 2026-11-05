@@ -87,4 +87,5 @@ class TestSchedulerCadence(unittest.TestCase):
                       if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == "scheduler_events")
         self.assertEqual(events, {"cron": {"* * * * *": [
             "hero_integration.tasks.run_scheduled_sync", "hero_integration.tasks.run_scheduled_schema_refresh",
+            "hero_integration.services.deferred_references.recover_pending",
         ]}, "daily": ["hero_integration.integrations.hero_people.sync_daily"]})

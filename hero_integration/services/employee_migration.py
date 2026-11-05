@@ -137,6 +137,32 @@ def _write_link(link, instance, source_type, source_id, doc, values, record, map
                         "source_type": source_type, "source_id": str(source_id), **changes}).insert(ignore_permissions=True)
 
 
+def _ensure_user_object_binding(read, instance, source_id, user_name):
+    """Expose the same verified User identity to the native assignment boundary."""
+    if not read.mapping:
+        return False  # Builtin plans are templates; live execution requires an approved reader.
+    from hero_integration.services.binding_registry import BindingRegistryService, FrappeBindingStorage
+    from hero_integration.hero_integration.doctype.hero_frappe_mapping.hero_frappe_mapping import _lock_active_target
+    site = frappe.local.site
+    _lock_active_target('employee-user-binding', site, _digest([instance, str(source_id)]))
+    existing = frappe.get_all('HERO Object Binding', filters={
+        'site_scope': site, 'source_instance': instance, 'object_type': 'User',
+        'external_object_id': str(source_id), 'target_doctype': 'User', 'lifecycle': 'VALID'},
+        fields=['name', 'target_name'], limit_page_length=2)
+    if existing:
+        if len(existing) != 1 or existing[0].target_name != user_name:
+            raise EmployeeMigrationBlocked('The employee User object binding is ambiguous or points to another account.')
+        return False
+    mapping = frappe.get_doc('HERO GraphQL Mapping', read.mapping)
+    if mapping.source_instance != instance or mapping.status != 'Active':
+        raise EmployeeMigrationBlocked('The employee mapping no longer belongs to the approved source.')
+    BindingRegistryService(FrappeBindingStorage(frappe)).create_or_resolve_object_binding(
+        site_scope=site, source_instance=instance, object_type='User', external_object_id=str(source_id),
+        target_app='frappe', target_doctype='User', target_name=user_name,
+        mapping_definition_id=mapping.definition_id, mapping_revision=int(mapping.mapping_revision))
+    return True
+
+
 def upsert(record, instance, company, languages, read=None):
     """All checks precede writes. Caller rolls back the entire record on failure."""
     read = read or runtime.resolve_read(OPERATION, instance)
@@ -214,6 +240,9 @@ def upsert(record, instance, company, languages, read=None):
             getattr(user_link, "mapping_version", "") == read.mapping_version and
             _values(employee, employee_values) == {key: str(value or "") for key, value in employee_values.items()} and
             _values(user, user_values) == {key: str(value or "") for key, value in user_values.items()}):
+        if _ensure_user_object_binding(read, instance, user_id, user_name):
+            from hero_integration.services.deferred_references import binding_updated
+            binding_updated(user_link)
         return "unchanged"
     is_new = employee is None
     if is_new:
@@ -237,6 +266,7 @@ def upsert(record, instance, company, languages, read=None):
             employee.save(ignore_permissions=True)
     _write_link(user_link, instance, "User", user_id, user, user_values, record, read.mapping_version)
     _write_link(employee_link, instance, "partner", record["id"], employee, employee_values, record, read.mapping_version)
+    _ensure_user_object_binding(read, instance, user_id, user_name)
     return "added" if is_new else "updated"
 
 

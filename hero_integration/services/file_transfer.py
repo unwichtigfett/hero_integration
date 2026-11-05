@@ -183,7 +183,8 @@ def source_hash(row: dict) -> str:
 def _bindings(source_type: str, doctype: str, source_instance: str) -> dict[str, str]:
     """HERO id → Frappe name, only for links of this HERO source (ids repeat across sources)."""
     return dict(frappe.db.sql("""SELECT source_id, target_name FROM `tabHERO Integration Link`
-        WHERE source_type=%s AND target_doctype=%s AND source_instance=%s AND IFNULL(target_name, '') != ''""",
+        WHERE source_type=%s AND target_doctype=%s AND source_instance=%s AND IFNULL(target_name, '') != ''
+          AND sync_status NOT IN ('Pending Review', 'Rejected', 'Source Deleted')""",
                               (source_type, doctype, source_instance)))
 
 
@@ -646,6 +647,9 @@ def transfer(phase: str, *, source_instance: str | None = None, client=None, dow
             target = resolve_target(detail, projects, customers)
             fields = mapped_values(read, row)
             try:
+                if not dry_run:
+                    from hero_integration.services.deferred_references import remember_file
+                    remember_file(run_name, source_instance, operation, read, row, detail)
                 reconciled = reconcile_legacy_file(link, read, row, target, folders[bool(target[0])], source_instance, dry_run=dry_run)
                 if reconciled:
                     bump(reconciled)

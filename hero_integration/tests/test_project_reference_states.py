@@ -56,6 +56,22 @@ class TestMigrationProjectReferences(unittest.TestCase):
                 with self.assertRaisesRegex(m.MappingPlanError, "no verified native Project binding"):
                     m._project_name_for_source(unknown, "default")
 
+    def test_deleted_or_held_link_is_never_used_as_a_project_reference(self):
+        m = self.migration
+        for state in ('Source Deleted', 'Pending Review', 'Rejected'):
+            with self.subTest(state=state), patch.object(m, '_link', return_value=SimpleNamespace(
+                    sync_status=state, target_doctype='Project', target_name='P-1')):
+                error = m.DeletedSourceProjectError if state == 'Source Deleted' else m.MappingPlanError
+                with self.assertRaises(error): m._project_name_for_source(1, 'source-a')
+
+    def test_deleted_missing_or_held_customer_target_cannot_establish_a_relation(self):
+        m = self.migration
+        fake = SimpleNamespace(db=SimpleNamespace(exists=lambda *args:False))
+        for state in ('Synchronized', 'Source Deleted', 'Pending Review', 'Rejected'):
+            with self.subTest(state=state), patch.object(m, 'frappe', fake), patch.object(m, '_link', return_value=SimpleNamespace(
+                    sync_status=state, target_doctype='Customer', target_name='C-1')):
+                with self.assertRaises(m.UnlinkedCustomerError): m._customer_name_for_source(1, 'source-a')
+
     def test_prefetch_reads_only_unbound_references_once_per_id(self):
         m = self.migration
         calls = []

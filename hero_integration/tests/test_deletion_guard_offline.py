@@ -24,7 +24,7 @@ class TestDeletionGuard(unittest.TestCase):
         handler = "hero_integration.services.guards.assert_app_document_deletion_allowed"
         for doctype in hooks._HERO_OWNED_DOCTYPES:
             with self.subTest(doctype=doctype):
-                self.assertEqual(hooks.doc_events[doctype], {"on_trash": handler})
+                self.assertEqual(hooks.doc_events[doctype]["on_trash"], handler)
         self.assertEqual(hooks.doc_events["ToDo"]["on_trash"],
                          "hero_integration.services.task_assignment_state.observe_local_todo")
         self.assertEqual(hooks.doc_events["Task"]["validate"],

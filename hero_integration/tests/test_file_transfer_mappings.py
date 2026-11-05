@@ -424,6 +424,39 @@ class TestFileMappingImport(_FileFixture):
         self.assertNotIn(link['target_name'], self.db.committed['File'])
 
 
+    def test_deferred_attachment_after_project_arrives_preserves_blob_and_local_edits(self):
+        from hero_integration.services import deferred_references as deferred
+        project_link = self.db.data['HERO Integration Link'].pop('PA')
+        self.db.commit()
+        row, downloader = _row(), _Download()
+        self.run_slice([row], downloader=downloader)
+        file, link = self.imported()
+        self.assertFalse(file.get('attached_to_name'))
+        original_url = file['file_url']
+        with open(ft._disk_path(original_url), 'rb') as stream:
+            original_bytes = stream.read()
+        self.db.data['HERO Integration Link']['PA'] = project_link
+        self.db.commit()
+        read = rt.builtin_read('HeroDocuments')
+        pending = SimpleNamespace(operation='HeroDocuments', source_instance='source-a', source_id='7',
+            mapping_version=read.mapping_version, record_json=json.dumps({'row': row,
+                'detail': {'file_upload_matches': [{'project_match_id': 42}]}}))
+        with patch.object(deferred, 'frappe', ft.frappe), \
+             patch.object(rt, 'resolve_read', return_value=read), \
+             patch.object(ft, '_folder', return_value='Home/HERO/Dokumente'), \
+             patch.object(ft, 'commit_file', side_effect=AssertionError('must not replace the blob')):
+            self.assertEqual(deferred._resolve_file(pending), 'UPDATED')
+            self.assertEqual(self.db.data['File'][link['target_name']]['attached_to_name'], 'PROJECT-A')
+            self.assertEqual(self.db.data['File'][link['target_name']]['file_url'], original_url)
+            with open(ft._disk_path(original_url), 'rb') as stream:
+                self.assertEqual(stream.read(), original_bytes)
+            self.db.commit()
+            self.db.data['File'][link['target_name']]['folder'] = 'LOCAL'
+            self.db.commit()
+            with self.assertRaises(ft.FileConflict): deferred._resolve_file(pending)
+        self.assertEqual(downloader.calls, 1)
+
+
 class TestFileOffsetPaging(_FileFixture):
     run_slice = TestFileMappingImport.run_slice
 

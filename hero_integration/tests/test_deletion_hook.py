@@ -33,7 +33,7 @@ class TestDeletionHook(IntegrationTestCase):
         self.assertTrue(hero_integration.hooks._HERO_OWNED_DOCTYPES)
         self.assertTrue(
             all(
-                hero_integration.hooks.doc_events[doctype] == {"on_trash": _HANDLER}
+                hero_integration.hooks.doc_events[doctype].get("on_trash") == _HANDLER
                 for doctype in hero_integration.hooks._HERO_OWNED_DOCTYPES
             )
         )

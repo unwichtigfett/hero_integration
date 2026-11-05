@@ -1,0 +1,98 @@
+{
+  "doctype": "DocType",
+  "name": "HERO Pending Reference",
+  "module": "HERO Integration",
+  "autoname": "field:identity_key",
+  "fields": [
+    {
+      "fieldname": "identity_key",
+      "label": "Identity Key",
+      "fieldtype": "Data",
+      "reqd": 1,
+      "unique": 1,
+      "read_only": 1
+    },
+    {
+      "fieldname": "source_instance",
+      "label": "Source Instance",
+      "fieldtype": "Data",
+      "reqd": 1,
+      "read_only": 1,
+      "search_index": 1
+    },
+    {
+      "fieldname": "operation",
+      "label": "Area",
+      "fieldtype": "Data",
+      "reqd": 1,
+      "read_only": 1
+    },
+    {
+      "fieldname": "source_id",
+      "label": "Source ID",
+      "fieldtype": "Data",
+      "reqd": 1,
+      "read_only": 1
+    },
+    {
+      "fieldname": "origin_run",
+      "label": "Origin Run",
+      "fieldtype": "Data",
+      "reqd": 1,
+      "read_only": 1
+    },
+    {
+      "fieldname": "mapping_version",
+      "label": "Mapping Version",
+      "fieldtype": "Data",
+      "read_only": 1
+    },
+    {
+      "fieldname": "status",
+      "label": "Status",
+      "fieldtype": "Select",
+      "options": "Waiting\nResolved\nConflict",
+      "default": "Waiting",
+      "read_only": 1,
+      "in_list_view": 1,
+      "search_index": 1
+    },
+    {
+      "fieldname": "record_json",
+      "label": "Pending Source Observation",
+      "fieldtype": "Code",
+      "options": "JSON",
+      "hidden": 1,
+      "read_only": 1
+    },
+    {
+      "fieldname": "dependencies",
+      "label": "Missing Relationships",
+      "fieldtype": "Table",
+      "options": "HERO Pending Dependency",
+      "read_only": 1
+    },
+    {
+      "fieldname": "detail",
+      "label": "Details",
+      "fieldtype": "Small Text",
+      "read_only": 1
+    },
+    {
+      "fieldname": "last_checked",
+      "label": "Last Checked",
+      "fieldtype": "Datetime",
+      "read_only": 1,
+      "search_index": 1
+    }
+  ],
+  "permissions": [
+    {
+      "role": "System Manager",
+      "read": 1,
+      "write": 1,
+      "create": 1
+    }
+  ],
+  "modified": "2026-11-05 00:00:00.000000"
+}
