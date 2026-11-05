@@ -836,6 +836,32 @@ def _remap_mutation_rules(payload, rules, mappings):
     return result
 
 
+def _remap_existing_mutation_rules(parent, item, mappings):
+    """Map local active references through their own retired reader provenance."""
+    content = json.loads(parent.mapping_json)
+    if content.get('usage') != 'MAPPED_UPDATE_V2':
+        return content
+    ids = {row['query_rule_id'] for row in content['assignments'] if row.get('query_rule_id')}
+    if not ids:
+        return content
+    area = content['area']
+    service = frappe.get_doc('HERO GraphQL Service', content['read_service'])
+    previous = frappe.get_doc('HERO GraphQL Mapping', service.read_mapping)
+    config = json.loads(previous.mapping_json)
+    if (previous.source_instance != parent.source_instance or previous.direction != 'QUERY_TO_FRAPPE'
+            or previous.schema_snapshot != parent.schema_snapshot or service.schema_snapshot != previous.schema_snapshot
+            or config.get('target_operation') != area or not ids <= set(config.get('mapping_definition_ids', []))):
+        raise ConfigExchangeError('Existing mutation references are outside their local Query context.')
+    rows = frappe.get_all('HERO Frappe Mapping', filters={'definition_id': ['in', sorted(ids)],
+        'operation': area, 'schema_snapshot': previous.schema_snapshot, 'status': ['in', ['Active', 'Disabled']]},
+        fields=['*'], limit_page_length=0)
+    if len(rows) != len(ids) or {row.definition_id for row in rows} != ids:
+        raise ConfigExchangeError('Existing mutation Query rule provenance is incomplete.')
+    local = {'read_services': [{'target_operation': area, 'mapping': config}],
+             'mutation_mappings': [{**item, 'content': content}]}
+    return _remap_mutation_rules(local, {row.definition_id: row for row in rows}, mappings)['mutation_mappings'][0]['content']
+
+
 def _replace_config(snapshot_name, payload, source_instance, *, before_mapping_write=None):
     from hero_integration import api
     from hero_integration.services.schema_provisioning import provision_schema
@@ -910,11 +936,9 @@ def _replace_config(snapshot_name, payload, source_instance, *, before_mapping_w
             if mutation_payload.get('mutation_mappings'):
                 from hero_integration.services.simple_mapping_exchange import _target_mutations
                 def preserve_active_content(parent, item):
-                    # Keep existing active semantics; imported changes remain
-                    # personal drafts. Reuse the exact Query-rule lineage proof.
-                    old_payload = {**payload, 'mutation_mappings': [
-                        {**item, 'content': json.loads(parent.mapping_json)}]}
-                    return _remap_mutation_rules(old_payload, rules, selected_mappings)['mutation_mappings'][0]['content']
+                    # Existing references are local IDs, independently of the
+                    # portable package IDs used for the incoming draft.
+                    return _remap_existing_mutation_rules(parent, item, selected_mappings)
                 body = json.dumps(portable(mutation_payload), ensure_ascii=False)
                 with _target_mutations(body, snapshot, 'FRAPPE_TO_MUTATION', persist=True,
                                        existing_content=preserve_active_content):

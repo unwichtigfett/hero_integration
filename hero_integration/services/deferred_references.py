@@ -68,7 +68,8 @@ def available(source, kind, identity):
     if len(rows) != 1:
         return False
     link = rows[0]
-    if (link.target_doctype != TARGETS[kind] or link.sync_status != 'Synchronized'
+    statuses = {'Synchronized', 'Conflict'} if kind in {'customer', 'project'} else {'Synchronized'}
+    if (link.target_doctype != TARGETS[kind] or link.sync_status not in statuses
             or not frappe.db.exists(link.target_doctype, link.target_name)):
         return False
     if kind == 'User':
@@ -96,8 +97,7 @@ def _private_observation(value):
 
 
 def remember(run, source_type, record, result):
-    if (_replaying.get() or run.mode == 'Preview' or source_type not in OPERATIONS or not installed()
-            or result.code in {'SKIPPED_SOURCE_DELETED', 'SKIPPED_REJECTED'}):
+    if (_replaying.get() or run.mode == 'Preview' or source_type not in OPERATIONS or not installed()):
         return
     from hero_integration.services.migration import _mapping_plan_for_run, _source_instance
     operation = OPERATIONS[source_type]
@@ -106,6 +106,9 @@ def remember(run, source_type, record, result):
         identity = plan.source_identity(record)
     except ValueError:
         return  # Invalid upstream identities need review; there is no safe retry key.
+    if result.code in {'SKIPPED_SOURCE_DELETED', 'SKIPPED_REJECTED'}:
+        invalidate(_source_instance(record), operation, identity)
+        return
     save(run.name, _source_instance(record), operation, identity, plan.mapping_version,
          record, references(plan, record))
 
@@ -119,17 +122,31 @@ def remember_file(run_name, source, operation, read, record, detail):
     projects += [document.get('project_match_id')] + [row.get('project_match_id') for row in links]
     customers = [document.get('contact_id')] + [row.get('customer_id') for row in links]
     deps = [('project', str(v)) for v in projects if type(v) is int and v > 0]
-    if not deps:
-        deps = [('customer', str(v)) for v in customers if type(v) is int and v > 0]
+    deps += [('customer', str(v)) for v in customers if type(v) is int and v > 0]
     save(run_name, source, operation, read.plan.source_identity(record), read.mapping_version,
          {'row': record, 'detail': detail}, sorted(set(deps)))
 
 
+def invalidate(source, operation, identity):
+    """A newer deletion/rejection cancels the old observation atomically."""
+    name = key(source, operation, identity)
+    if frappe.db.exists(MAIN, name):
+        frappe.db.set_value(MAIN, name, {'status': 'Resolved', 'record_json': '',
+            'detail': 'Source deletion or rejection observed; deferred writes cancelled.'})
+
+
+def dependencies_ready(source, operation, dependencies):
+    candidates = [available(source, kind, identity) for kind, identity in dependencies]
+    if operation in {'HeroDocuments', 'HeroPictures'}:
+        return not candidates or any(candidates)
+    return all(candidates)
+
+
 def save(run_name, source, operation, identity, version, record, dependencies):
     name = key(source, operation, identity)
-    missing = [(kind, value) for kind, value in dependencies if not available(source, kind, value)]
+    ready = dependencies_ready(source, operation, dependencies)
     exists = frappe.db.exists(MAIN, name)
-    if not missing:
+    if ready:
         if exists:
             frappe.db.set_value(MAIN, name, {'status': 'Resolved', 'record_json': '', 'detail': ''})
         return
@@ -165,12 +182,13 @@ def binding_updated(doc, method=None):
 def wake_reference(name, *, scheduled=None):
     """Post-commit race closure: enqueue only if every missing identity arrived."""
     try:
-        pending = frappe.db.get_value(MAIN, name, ['source_instance', 'status'], as_dict=True)
+        pending = frappe.db.get_value(MAIN, name, ['source_instance', 'status', 'operation'], as_dict=True)
         if not pending or pending.status != 'Waiting':
             return
         dependencies = frappe.get_all(CHILD, filters={'parent': name, 'parenttype': MAIN},
             fields=['source_type', 'source_id'], limit_page_length=0)
-        if dependencies and all(available(pending.source_instance, row.source_type, row.source_id) for row in dependencies):
+        if dependencies and dependencies_ready(pending.source_instance, pending.operation,
+                [(row.source_type, row.source_id) for row in dependencies]):
             identity = (pending.source_instance, dependencies[0].source_type, dependencies[0].source_id)
             if scheduled is not None:
                 if identity in scheduled:
@@ -225,8 +243,8 @@ def resolve_dependency(source, kind, identity, after=''):
 
 def resolve_one(name):
     pending = frappe.get_doc(MAIN, name, for_update=True)
-    if pending.status != 'Waiting' or any(not available(pending.source_instance, row.source_type, row.source_id)
-                                          for row in pending.dependencies):
+    if pending.status != 'Waiting' or not dependencies_ready(pending.source_instance, pending.operation,
+            [(row.source_type, row.source_id) for row in pending.dependencies]):
         return
     from hero_integration.services import migration as m
     from hero_integration.client.settings import get_configuration
@@ -244,6 +262,9 @@ def resolve_one(name):
             raise ValueError('The configured source changed.')
         if pending.operation in {'HeroDocuments', 'HeroPictures'}:
             from hero_integration.services.file_transfer import FileConflict
+            from hero_integration.services.file_migration import bound_configuration
+            if bound_configuration(run, configuration=config).source_instance != pending.source_instance:
+                raise ValueError('The deferred file source changed.')
             try:
                 code = _resolve_file(pending)
             except FileConflict as error:
@@ -256,21 +277,26 @@ def resolve_one(name):
                         changes['sync_status'] = 'Conflict'
                     frappe.db.set_value('HERO Integration Link', links[0].name, changes)
                 code = 'CONFLICT'
+            # A fresh connection avoids an older request transaction's read snapshot.
+            bound_configuration(run, configuration=get_configuration(fresh=True))
         else:
             m.validate_run_mappings(run)
-            m._source_for_run(run, config)  # Source/endpoint proof; constructs no external request.
+            source = m._source_for_run(run, config)  # Source/endpoint proof; no external request.
             plan = m._mapping_plan_for_run(run, pending.operation)
             if plan.mapping_version != pending.mapping_version:
                 raise ValueError('The approved mapping changed; refresh the source record before retrying.')
             record = json.loads(pending.record_json)
             if str(plan.source_identity(record)) != pending.source_id or m._source_instance(record) != pending.source_instance:
                 raise ValueError('The deferred source identity changed.')
-            action = {'HeroCustomers': m._migrate_customer, 'HeroProjectMatches': m._migrate_project}.get(
-                pending.operation, lambda rec, ctx: m._migrate_projection(rec, ctx, plan))
-            if pending.operation == 'HeroTasks':
-                scope = json.loads(frappe.get_doc('HERO GraphQL Mapping', run.graphql_mapping).mapping_json).get('native_task_onboarding') or {}
-                action = lambda rec, ctx: m._migrate_native_task(rec, ctx, plan, scope)
-            result = m._migrate_isolated(lambda: action(record, run))
+            if pending.operation in {'HeroCustomers', 'HeroProjectMatches'}:
+                action = m._migrate_customer if pending.operation == 'HeroCustomers' else m._migrate_project
+                result = m._migrate_isolated(lambda: action(record, run))
+            else:
+                # A long-lived worker must not reuse another run's legacy User directory.
+                m._load_task_user_directory(None, pending.operation)
+                mapping = frappe.get_doc('HERO GraphQL Mapping', run.graphql_mapping)
+                scope = m._projection_task_scope(run, plan, mapping, source.source_instance, source.source_instance)
+                result = m._migrate_projection_record(record, run, plan, scope)
             code = result.code
             from hero_integration.services.integration_events import record_output
             record_output(run=run.name, source_type={'HeroCustomers': 'customer', 'HeroProjectMatches': 'project', 'HeroTasks': 'Task',

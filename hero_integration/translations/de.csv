@@ -3694,3 +3694,5 @@ Details,Einzelheiten
 The employee User object binding is ambiguous or points to another account.,Die Benutzerbindung des Mitarbeiters ist mehrdeutig oder verweist auf ein anderes Konto.
 The employee mapping no longer belongs to the approved source.,Das Mitarbeitermapping gehört nicht mehr zur freigegebenen Quelle.
 Last Checked,Zuletzt geprüft
+Existing mutation references are outside their local Query context.,Vorhandene Mutationsreferenzen liegen außerhalb ihres lokalen Query-Kontexts.
+Existing mutation Query rule provenance is incomplete.,Die Herkunft der vorhandenen Query-Feldregel einer Mutation ist unvollständig.

@@ -47,17 +47,17 @@ def _configuration():
     return get_configuration()
 
 
-def confirmed_configuration():
-    config = _configuration()
+def confirmed_configuration(configuration=None):
+    config = _configuration() if configuration is None else configuration
     if not config.source_binding_confirmed:
         raise SourceBindingError("The HERO endpoint, token or source instance changed; "
                                  "an administrator must confirm the source binding.")
     return config
 
 
-def bound_configuration(run):
-    """The configuration a run may use: the confirmed binding it was queued under."""
-    config = confirmed_configuration()
+def bound_configuration(run, *, configuration=None):
+    """Validate the queued binding; callers may supply a freshly read proof."""
+    config = confirmed_configuration() if configuration is None else confirmed_configuration(configuration)
     recorded = str(getattr(run, "source_instance", "") or "")
     if not recorded or recorded != config.source_instance:
         raise SourceBindingError("The run belongs to another HERO source instance; queue a new run.")

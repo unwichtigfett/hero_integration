@@ -154,14 +154,14 @@ class TestTaskAssignmentPlanning(unittest.TestCase):
                  resume_offset=0, resume_record_index=0, save=lambda: None)
         source = NS(source_instance='source', contract=NS(target_operation='HeroTasks'),
                     projection=lambda offset: NS(records=[self.record], next_offset=None))
-        plan = NS(definitions=[NS(source_path='target_user_id')])
+        plan = NS(definitions=[NS(source_path='target_user_id')], target_operation='HeroTasks', operation='HeroTasks')
         mapping = NS(mapping_json=json.dumps({'native_task_onboarding': {
             'confirmed': True, 'source_instance': 'source', 'source_type': 'Task'}}))
         original_get_doc = self.fake.get_doc
         def get_doc(doctype, name, **kwargs):
             if doctype == 'HERO GraphQL Service': return NS(schema_snapshot='SNAP')
             if doctype == 'HERO GraphQL Mapping': return mapping
-            if doctype == 'HERO GraphQL Schema Snapshot': return NS()
+            if doctype == 'HERO GraphQL Schema Snapshot': return NS(source_instance='source')
             return original_get_doc(doctype, name, **kwargs)
         self.fake.get_doc = get_doc
         output = []
