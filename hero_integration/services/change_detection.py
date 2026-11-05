@@ -101,6 +101,11 @@ def new_mapped_field_conflicts(doc, values, knownfields) -> set[str]:
             and not _same_mapped_value(current, incoming)}
 
 
+def native_values_changed(before: Mapping[str, object], after: Mapping[str, object]) -> bool:
+    """Compare owned native values, including child rows, before deciding to save."""
+    return set(before) != set(after) or any(not _same_mapped_value(before[key], after[key]) for key in before)
+
+
 def encode(hashes: Mapping[str, str]) -> str:
     return json.dumps(dict(sorted(hashes.items())), sort_keys=True, separators=(",", ":"))
 

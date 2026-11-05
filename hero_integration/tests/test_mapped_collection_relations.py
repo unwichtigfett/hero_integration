@@ -57,7 +57,7 @@ class TestMappedCollectionRelations(TestCase):
 
     def test_secondary_addresses_skip_primary_and_deleted_and_repeat_without_duplicates(self):
         self.assertEqual(self.sync(ADDRESSES, self.address)['created'], 1)
-        self.assertEqual(self.sync(ADDRESSES, self.address)['updated'], 1)
+        self.assertEqual(self.sync(ADDRESSES, self.address)['unchanged'], 1)
         addresses = self.docs('Address')
         self.assertEqual(len(addresses), 1)
         self.assertEqual((addresses[0].country, addresses[0].links[0].link_name), ('Germany', 'C1'))
@@ -81,7 +81,7 @@ class TestMappedCollectionRelations(TestCase):
 
     def test_sales_prices_create_only_explicit_lists_and_native_prices(self):
         self.assertEqual(self.sync(PRICES, self.prices)['created'], 2)
-        self.assertEqual(self.sync(PRICES, self.prices)['updated'], 2)
+        self.assertEqual(self.sync(PRICES, self.prices)['unchanged'], 2)
         self.assertEqual(len(self.docs('Item Price')), 2)
         self.assertEqual(len(self.docs('Price List')), 2)
         self.assertEqual({p.price_list for p in self.docs('Item Price')}, {'Standard Selling', 'Wholesale'})
@@ -168,7 +168,7 @@ class TestMappedCollectionRelations(TestCase):
 
     def test_contact_persons_create_native_contacts_not_customers_or_duplicate_primary(self):
         self.assertEqual(self.sync(CONTACTS,self.contacts)['created'],1)
-        self.assertEqual(self.sync(CONTACTS,self.contacts)['updated'],1)
+        self.assertEqual(self.sync(CONTACTS,self.contacts)['unchanged'],1)
         contact=self.docs('Contact')[0]
         self.assertEqual(len(self.docs('Contact')),1)
         self.assertEqual((contact.first_name,contact.links[0].link_name),('Example','C1'))
@@ -210,7 +210,7 @@ class TestMappedCollectionRelations(TestCase):
             'source_type':'customer','source_id':'100','target_doctype':'Customer','target_name':'C1'}).insert()
         self.assertEqual(self.sync(CONTACTS,self.contacts)['created'],1)
         self.assertEqual(len(self.docs('Contact')),1)
-        self.assertEqual(self.sync(CONTACTS,self.contacts)['updated'],1)
+        self.assertEqual(self.sync(CONTACTS,self.contacts)['unchanged'],1)
 
     def shared_primary_contact(self, config=CONTACTS):
         person = self.contacts['contacts'][0]
@@ -234,7 +234,7 @@ class TestMappedCollectionRelations(TestCase):
         self.assertEqual(collection._contact_value(contact, 'phone'), '+495678')
         self.assertEqual(collection._contact_value(contact, 'mobile_no'), '+499876')
         self.assertEqual(len(contact.phone_nos), 2)
-        self.assertEqual(self.sync(CONTACTS, self.contacts)['updated'], 1)
+        self.assertEqual(self.sync(CONTACTS, self.contacts)['unchanged'], 1)
         self.assertEqual(len(contact.phone_nos), 2)
 
     def test_shared_phone_update_preserves_unmapped_mobile_number(self):
@@ -278,3 +278,12 @@ class TestMappedCollectionRelations(TestCase):
         self.assertEqual(self.site.saved,{})
         self.contacts['contacts'][0]['title']='Unknown'
         with self.assertRaisesRegex(ValueError,'salutation'):self.sync(CONTACTS,self.contacts)
+
+    def test_identical_collection_values_do_not_save_native_documents(self):
+        for config, record in ((ADDRESSES, self.address), (PRICES, self.prices), (CONTACTS, self.contacts)):
+            with self.subTest(kind=config['kind']):
+                self.sync(config, record)
+                with patch.object(Doc, 'save', side_effect=AssertionError('unnecessary native save')):
+                    result = self.sync(config, record)
+                self.assertGreater(result['unchanged'], 0)
+                self.assertEqual(result['updated'], 0)

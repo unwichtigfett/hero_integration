@@ -343,6 +343,18 @@ def _read_record(ctx,client):
     if ctx.content['area'] == 'HeroProjectMatches':
         from hero_integration.services.project_identity_read import ProjectIdentityReader
         client = ProjectIdentityReader(client, ctx.raw_schema, ctx.hero_id)
+    elif ctx.content['area'] != 'HeroEmployees' and getattr(ctx, 'raw_schema', None):
+        from hero_integration.services.project_identity_read import CollectionIdentityReader
+        # A file UUID only narrows the search; the returned native ID must still
+        # match the source-bound Integration Link below before any mutation.
+        file_uuid = None
+        if ctx.content['area'] in {'HeroDocuments', 'HeroPictures'}:
+            for spec in ctx.query_plan.definitions:
+                if spec.source_path == 'uuid' and spec.transformation in {'Identity', 'Trim'}:
+                    file_uuid = ctx.document.get(spec.target_field)
+                    break
+        client = CollectionIdentityReader(client, ctx.raw_schema, ctx.content['area'],
+            ctx.content['identity']['read_path'], ctx.hero_id, file_uuid=file_uuid)
     source=GraphQLServiceSource(client,ctx.read.service,ctx.read.contract,ctx.proof.source_instance,revalidate=revalidate)
     found=None;offset=0
     for _ in range(2000):

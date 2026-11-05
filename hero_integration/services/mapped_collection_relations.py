@@ -335,6 +335,7 @@ def apply(plan, item, prepared, parent_doctype, parent_name, parent):
             **_evidence(plan, binding, binding)}).insert(ignore_permissions=True)
     target = 'Address' if prepared['collection_kind'] == 'customer_addresses' else 'Contact' if prepared['collection_kind']=='customer_contacts' else 'Item Price'
     existed=document is not None
+    before = _observed(prepared) if existed else None
     writable={field:value for field,value in prepared['values'].items() if target!='Contact' or field not in {'email_id','phone','mobile_no'} and value not in (None,'')}
     if document:
         document.update(writable)
@@ -348,8 +349,11 @@ def apply(plan, item, prepared, parent_doctype, parent_name, parent):
     if target=='Contact':
         for field in ('email_id','phone','mobile_no'):
             if field in prepared['values']:_set_contact_value(document,field,prepared['values'][field])
-    if existed: document.save()
-    else: document.insert()
+    prepared['document'] = document
+    from hero_integration.services.change_detection import native_values_changed
+    changed = not existed or native_values_changed(before, _observed(prepared))
+    if existed and changed: document.save()
+    elif not existed: document.insert()
     if target == 'Contact':
         for field in ('email_id', 'phone', 'mobile_no'):
             expected = prepared['values'].get(field)
@@ -363,7 +367,7 @@ def apply(plan, item, prepared, parent_doctype, parent_name, parent):
         frappe.get_doc({'doctype': 'HERO Integration Link', 'source_system': 'HERO', 'source_type': item['source_type'],
             'source_instance': item['source_instance'], 'source_id': item['source_id'],
             'target_doctype': target, 'target_name': document.name, **evidence}).insert(ignore_permissions=True)
-    return 'updated' if link else 'created'
+    return ('updated' if changed else 'unchanged') if link else 'created'
 
 
 def lookup_managed_price(item_name, price_list, source_instance, *, allow_rate_change=False):

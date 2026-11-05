@@ -73,3 +73,20 @@ class TestWorkspaceSnapshotBinding(unittest.TestCase):
             api.workspace_graph("SAVED-SNAPSHOT", node_id="type:Unknown")
 
         self.assertEqual(self.frappe.permission_calls, ["System Manager"])
+
+    def test_graph_pages_analyze_once_and_transfer_each_edge_once(self):
+        from hero_integration.services import graphql_graph, workspace_compat
+        edges, pages = [], 0
+        with patch.object(api, '_existing_mappings', return_value=[]), \
+             patch.object(graphql_graph, 'analyze_snapshot', wraps=graphql_graph.analyze_snapshot) as analyze, \
+             patch.object(workspace_compat, 'analyze_snapshot', side_effect=AssertionError('second analysis')):
+            start = 0
+            while True:
+                page = api.workspace_graph('SAVED-SNAPSHOT', start=start, page_size=2)
+                pages += 1
+                edges.extend(page['edges'])
+                if start: self.assertEqual(page['edges'], [])
+                if not page['has_more']: break
+                start += len(page['nodes'])
+        self.assertEqual(len(edges), len(self.graph.edges))
+        self.assertEqual(analyze.call_count, pages)

@@ -131,7 +131,7 @@ def _valid_iban(value):
 def sync(plan, record, parent_doctype, parent_name, *, preview=False):
     """Apply configured child relations inside the caller's import transaction."""
     items = prepare(plan, record, parent_doctype, parent_name)
-    counts = {'created': 0, 'updated': 0, 'conflicts': 0, 'planned': len(items)}
+    counts = {'created': 0, 'updated': 0, 'unchanged': 0, 'conflicts': 0, 'planned': len(items)}
     if not items: return counts
     parent = frappe.get_doc(parent_doctype, parent_name) if frappe.db.exists(parent_doctype, parent_name) else None
     frappe.has_permission(parent_doctype, 'write' if parent else 'create', doc=parent, throw=True)
@@ -239,6 +239,9 @@ def _apply(plan, item, prepared, parent_doctype, parent_name, parent):
                 'observed_source_hash': _hash(values), 'observed_target_hash': _hash(observed),
                 'last_observed_on': frappe.utils.now_datetime()}, update_modified=False)
             return 'conflicts'
+    before = {field: document.get(field) for field in values} if document else None
+    if document and target == 'Address':
+        before['links'] = sorted((row.link_doctype, row.link_name) for row in document.get('links', []))
     if kind == 'customer_bank_account' and prepared['bank'] is None:
         bank = frappe.get_doc({'doctype': 'Bank', 'bank_name': item['values']['bank_name'],
                               'swift_number': item['values']['swift_number'] or None}).insert()
@@ -251,8 +254,13 @@ def _apply(plan, item, prepared, parent_doctype, parent_name, parent):
             **({'account_name': title} if target == 'Bank Account' else {'address_title': title})})
     if target == 'Address' and not any(row.link_doctype == parent_doctype and row.link_name == parent_name for row in document.get('links', [])):
         document.append('links', {'link_doctype': parent_doctype, 'link_name': parent_name})
-    if link: document.save()
-    else: document.insert()
+    from hero_integration.services.change_detection import native_values_changed
+    after = {field: document.get(field) for field in values}
+    if target == 'Address':
+        after['links'] = sorted((row.link_doctype, row.link_name) for row in document.get('links', []))
+    changed = before is None or native_values_changed(before, after)
+    if link and changed: document.save()
+    elif not link: document.insert()
     observed = {field: document.get(field) for field in values}
     evidence = {'sync_status': 'Synchronized', 'conflict_detail': '', 'mapping_version': plan.mapping_version,
                 'source_payload_hash': _hash(item['values']), 'target_payload_hash': _hash(observed),
@@ -263,8 +271,9 @@ def _apply(plan, item, prepared, parent_doctype, parent_name, parent):
             'source_instance': item['source_instance'], 'source_id': item['source_id'],
             'target_doctype': target, 'target_name': document.name, **evidence}).insert(ignore_permissions=True)
     if target == 'Address' and parent.get(item['config']['parent_field']) != document.name:
+        changed = True
         parent.set(item['config']['parent_field'], document.name)
         from hero_integration.services.change_detection import managed_target_update
         with managed_target_update(parent_doctype, parent_name, None):
             parent.save()
-    return 'updated' if link else 'created'
+    return ('updated' if changed else 'unchanged') if link else 'created'
