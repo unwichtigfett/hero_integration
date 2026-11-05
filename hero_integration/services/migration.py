@@ -116,6 +116,24 @@ class _Comparison:
         )
 
 
+def _task_midnight_baseline(prior_source, prior_target, current):
+    """Recognize a proven legacy Date stored by native Datetime as midnight.
+
+    Both old acknowledgements must prove the same day. Any changed day, time
+    component or timezone keeps the original conflict baseline intact.
+    """
+    from datetime import datetime, time
+    result = dict(prior_target)
+    for field in ('exp_start_date', 'exp_end_date'):
+        value = current.get(field)
+        if not isinstance(value, datetime) or value.tzinfo is not None or value.time() != time.min:
+            continue
+        day_hash = field_hashes({field: value.date().isoformat()})[field]
+        if prior_source.get(field) == prior_target.get(field) == day_hash:
+            result[field] = field_hashes({field: value})[field]
+    return result
+
+
 def _run_checkpoint_contract(run, *, lock=False):
     """The effective reader/rule contract on the existing Run, without credentials."""
     from hero_integration.services.mapping_runtime import effective_rule_fingerprint
@@ -1963,6 +1981,8 @@ def _upsert(
             return Result("SKIPPED", "Record is already synchronized.", doctype, target.name)
         comparison = _Comparison(values, comparison_extra)
         target_values = comparison.target_values(target, snapshot)
+        if doctype == 'Task':
+            prior_target = _task_midnight_baseline(prior_source, prior_target, target_values)
         target_field_hashes = field_hashes(target_values)
         if preserve_omitted:
             # Events omit unconfirmed values entirely: their acknowledged

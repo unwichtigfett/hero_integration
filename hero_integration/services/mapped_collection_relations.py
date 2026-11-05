@@ -125,7 +125,10 @@ def prepare(relation, record, parent_doctype, parent_name):
                 raise ValueError('Customer address deletion state must be an explicit Boolean.')
             if deleted:
                 continue  # Remote deletion never deletes or disables a local address.
-        identity = _identity(_read(row, relation['identity_path']))
+        raw_identity = _read(row, relation['identity_path'])
+        if kind == 'sales_prices' and _read(row, relation['fields']['price_list_rate']) is None:
+            continue  # An absent source price needs no row identity and writes nothing.
+        identity = _identity(raw_identity)
         if kind == 'customer_addresses' and identity == primary:
             continue  # Primary address is already handled by the canonical customer importer.
         values = {field: _read(row, path) for field, path in relation['fields'].items()}

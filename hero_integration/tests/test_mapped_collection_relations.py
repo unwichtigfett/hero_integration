@@ -287,3 +287,12 @@ class TestMappedCollectionRelations(TestCase):
                     result = self.sync(config, record)
                 self.assertGreater(result['unchanged'], 0)
                 self.assertEqual(result['updated'], 0)
+
+    def test_unpopulated_price_with_null_identity_is_not_a_price_write(self):
+        record = {'_hero_source_instance': 'source-a', 'sales_prices': [
+            {'id': None, 'supply_sales_price_id': 10, 'net_price_per_unit': None}]}
+        self.assertEqual(self.sync(PRICES, record)['planned'], 0)
+        self.assertFalse(self.docs('Item Price'))
+        record['sales_prices'][0]['net_price_per_unit'] = 0
+        with self.assertRaisesRegex(ValueError, 'stable source identity'):
+            self.sync(PRICES, record)
