@@ -26,6 +26,7 @@ scheduler_events = {
     "cron": {"* * * * *": [
         "hero_integration.tasks.run_scheduled_sync",
         "hero_integration.tasks.run_scheduled_schema_refresh",
+        "hero_integration.services.deferred_references.recover_pending",
     ]},
     # New employees get an active ERPNext user with the Employee role, without e-mail.
     "daily": ["hero_integration.integrations.hero_people.sync_daily"],
@@ -118,3 +119,6 @@ has_permission = {
 permission_query_conditions["Version"] = "hero_integration.services.mapping_draft_access.personal_version_query"
 has_permission["Version"] = "hero_integration.services.mapping_draft_access.personal_version_permission"
 extend_doctype_class = {"Version": ["hero_integration.services.mapping_draft_access.PersonalMappingVersionAccess"]}
+
+# Source identities wake only records that were waiting for these relationships.
+doc_events["HERO Integration Link"]["on_update"] = "hero_integration.services.deferred_references.binding_updated"

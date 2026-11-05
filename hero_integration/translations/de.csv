@@ -3682,3 +3682,15 @@ The legacy file source or mapping changed; review is required before updating.,D
 The legacy file attachment or folder requires review before establishing a baseline.,Die Zuordnung oder der Ordner der älteren Datei muss vor dem Bestätigen des Vergleichsstands geprüft werden.
 Mapping context changed; preview the import again.,Der Mapping-Kontext hat sich geändert; bitte die Importvorschau erneut laden.
 Existing inactive mutation requires review before switching schema contexts.,Eine vorhandene inaktive Mutation muss vor dem Wechsel des Schema-Kontexts geprüft werden.
+Dependency Key,Abhängigkeitsschlüssel
+Source Type,Quelltyp
+Area,Bereich
+Origin Run,Ursprünglicher Lauf
+Waiting,Wartend
+Resolved,Aufgelöst
+Pending Source Observation,Wartende Quellbeobachtung
+Missing Relationships,Fehlende Beziehungen
+Details,Einzelheiten
+The employee User object binding is ambiguous or points to another account.,Die Benutzerbindung des Mitarbeiters ist mehrdeutig oder verweist auf ein anderes Konto.
+The employee mapping no longer belongs to the approved source.,Das Mitarbeitermapping gehört nicht mehr zur freigegebenen Quelle.
+Last Checked,Zuletzt geprüft

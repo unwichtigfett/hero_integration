@@ -1622,6 +1622,8 @@ def _project_name_for_source(value, source_instance):
     if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
         raise MappingPlanError('ProjectMatch reference must be a positive integer.')
     link = _link('project', str(value), source_instance)
+    if getattr(link, 'sync_status', '') == 'Source Deleted':
+        raise DeletedSourceProjectError('The referenced HERO project is deleted; the record is not imported.')
     if getattr(link, 'sync_status', '') in {REVIEW_PENDING, REVIEW_REJECTED}:
         raise MappingPlanError('ProjectMatch reference awaits or failed administrator review; linked records wait.')
     if not link:
@@ -2177,6 +2179,8 @@ def decide_review(link, decision: str) -> None:
 
 
 def _record_result(run, source_type: str, record: dict[str, object], result: Result) -> None:
+    from hero_integration.services.deferred_references import remember
+    remember(run, source_type, record, result)
     source_id = str(record.get("id")) if isinstance(record.get("id"), int) else "unknown"
     record_output(
         run=run.name, source_type=source_type, source_id=source_id, result=result.code,
@@ -2308,7 +2312,9 @@ def _customer_name_for_source(value: object, source_instance: str = "default") -
         raise MappingPlanError("The configured HERO customer relation requires a positive integer identity.")
     source_id = str(value)
     customer_link = _link("customer", source_id, source_instance)
-    if not customer_link or customer_link.target_doctype != "Customer":
+    if (not customer_link or customer_link.target_doctype != "Customer"
+            or getattr(customer_link, "sync_status", "") in {REVIEW_PENDING, REVIEW_REJECTED, "Source Deleted"}
+            or not frappe.db.exists("Customer", customer_link.target_name)):
         raise UnlinkedCustomerError("The configured HERO customer relation has no unambiguous ERPNext link.")
     return customer_link.target_name
 

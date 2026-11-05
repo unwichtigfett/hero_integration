@@ -1081,7 +1081,9 @@ class _FakeDatabase:
         if doctype in {"Customer", "Project"}:
             if isinstance(filters, str):
                 records = self.frappe_api.customers if doctype == "Customer" else self.frappe_api.projects
-                return any(record.get("name") == filters for record in records)
+                return (any(record.get("name") == filters for record in records)
+                        or doctype == "Customer" and any(link.target_doctype == "Customer" and link.target_name == filters
+                            for link in self.frappe_api.links.values()))
             fieldname = "customer_name" if doctype == "Customer" else "project_name"
             records = self.frappe_api.customers if doctype == "Customer" else self.frappe_api.projects
             return next((record["name"] for record in records if record.get(fieldname) == filters[fieldname]), None)

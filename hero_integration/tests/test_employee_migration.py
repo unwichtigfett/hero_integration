@@ -210,3 +210,41 @@ class TestEmployeeResume(unittest.TestCase):
         with patch.object(em, 'upsert') as write, self.assertRaisesRegex(em.EmployeeMigrationBlocked, 'list changed'):
             self.run_import()
         write.assert_not_called()
+
+
+class TestEmployeeAssignmentIdentity(unittest.TestCase):
+    def setUp(self):
+        from dataclasses import replace
+        self.read = replace(em.runtime.builtin_read('HeroEmployees'), mapping='approved-employees')
+        self.mapping = SimpleNamespace(source_instance='source-a', status='Active', definition_id='employees', mapping_revision=2)
+        self.rows = []
+        self.fake = SimpleNamespace(local=SimpleNamespace(site='site.example'),
+            get_all=Mock(side_effect=lambda *a, **kw:self.rows), get_doc=Mock(return_value=self.mapping))
+        self.registry = Mock()
+        for p in (patch.object(em, 'frappe', self.fake),
+                  patch('hero_integration.services.binding_registry.BindingRegistryService', return_value=self.registry),
+                  patch('hero_integration.services.binding_registry.FrappeBindingStorage'),
+                  patch('hero_integration.hero_integration.doctype.hero_frappe_mapping.hero_frappe_mapping._lock_active_target')):
+            p.start(); self.addCleanup(p.stop)
+
+    def test_employee_produces_the_source_scoped_identity_used_by_task_assignment(self):
+        self.assertTrue(em._ensure_user_object_binding(self.read, 'source-a', 22, 'employee@example.invalid'))
+        self.registry.create_or_resolve_object_binding.assert_called_once_with(
+            site_scope='site.example', source_instance='source-a', object_type='User', external_object_id='22',
+            target_app='frappe', target_doctype='User', target_name='employee@example.invalid',
+            mapping_definition_id='employees', mapping_revision=2)
+        self.assertEqual(self.fake.get_all.call_args.kwargs['filters']['source_instance'], 'source-a')
+
+    def test_unchanged_identity_is_reused_even_after_mapping_revision_changes(self):
+        self.rows = [SimpleNamespace(name='binding', target_name='employee@example.invalid')]
+        self.mapping.mapping_revision = 8
+        self.assertFalse(em._ensure_user_object_binding(self.read, 'source-a', 22, 'employee@example.invalid'))
+        self.registry.create_or_resolve_object_binding.assert_not_called()
+
+    def test_ambiguous_or_different_binding_never_reassigns_a_person(self):
+        for rows in ([SimpleNamespace(target_name='other@example.invalid')],
+                     [SimpleNamespace(target_name='employee@example.invalid')]*2):
+            self.rows = rows
+            with self.assertRaises(em.EmployeeMigrationBlocked):
+                em._ensure_user_object_binding(self.read, 'source-a', 22, 'employee@example.invalid')
+        self.registry.create_or_resolve_object_binding.assert_not_called()
