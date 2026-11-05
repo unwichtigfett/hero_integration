@@ -309,3 +309,9 @@ both the legacy mirror and native destination. Missing evidence is left to norma
 reconciliation, and rejected records are never copied. Project field delivery
 also works without a configured logbook profile; invalid or ambiguous existing
 profiles still block delivery.
+
+An Item deleted in ERPNext is reported as a binding conflict instead of being
+counted unchanged or recreated automatically. If any HERO project assignee cannot
+be resolved, existing imported assignments are retained and the Project result
+requires review. Other mapped Project data, logbook entries and native relations
+still run; a fully resolved empty assignment list can close imported assignments.

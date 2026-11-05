@@ -183,14 +183,16 @@ def upsert(row: dict, link, masters: _Masters, source_instance: str, read=None) 
     owned = values.pop("owned")
     source = digest({**values, "mapping": read.mapping_version})
     relations = (getattr(read.plan, 'adapter_options', None) or {}).get('native_relations')
-    if link and link.source_payload_hash == source and not relations:
-        return "unchanged"
     status, detail = (getattr(link, "sync_status", "") or "", getattr(link, "conflict_detail", "") or "") if link else ("", "")
     if status == "Rejected":
         return "skipped_rejected"  # declined: HERO changes to this article are not imported
     if status == "Conflict" and detail.startswith(CODE_TAKEN_PREFIX):
         return "conflict"  # the taken item code waits for approve (link that Item) or decline
-    item = frappe.get_doc("Item", link.target_name) if link and frappe.db.exists("Item", link.target_name) else None
+    if link and (not link.target_name or not frappe.db.exists("Item", link.target_name)):
+        return _conflict(link, source, "The linked Item no longer exists in ERPNext; review the binding before importing.")
+    if link and link.source_payload_hash == source and not relations:
+        return "unchanged"
+    item = frappe.get_doc("Item", link.target_name) if link else None
     if item is None and frappe.db.exists("Item", values["item_code"]):
         # The HERO article number is the Item's identity; it is never suffixed or reassigned.
         return _code_taken(link, row, values["item_code"], source_instance, read)

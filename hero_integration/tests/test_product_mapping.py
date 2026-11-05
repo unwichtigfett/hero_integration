@@ -204,6 +204,22 @@ SUPPLIER_ROW = {**ROW, "supply_operator": {"name": "Krannich Solar"},
 
 
 class TestProductDecisions(unittest.TestCase):
+    def test_deleted_bound_item_is_a_conflict_even_when_hero_payload_is_unchanged(self):
+        for source_changed in (False, True):
+            with self.subTest(source_changed=source_changed):
+                fake = _Frappe()
+                with patch.object(pm, "frappe", fake):
+                    self.assertEqual(pm.upsert(ROW, None, pm._Masters(), "default", read=BUILTIN), "added")
+                    link = SimpleNamespace(name="L1", **fake.links[-1][1])
+                    del fake.items[link.target_name]
+                    original_masters = list(fake.masters)
+                    incoming = {**ROW, "base_price": 200} if source_changed else ROW
+                    self.assertEqual(pm.upsert(incoming, link, pm._Masters(), "default", read=BUILTIN), "conflict")
+                self.assertEqual(fake.items, {})
+                self.assertEqual(fake.masters, original_masters)
+                self.assertEqual(fake.links[-1][2]["sync_status"], "Conflict")
+                self.assertIn("no longer exists", fake.links[-1][2]["conflict_detail"])
+
     def test_category_is_the_group_and_the_catalog_its_fallback(self):
         self.assertEqual(pm.item_values(SUPPLIER_ROW, own_read())["item_group"], "Batteriespeicher")
         self.assertEqual(pm.item_values(ROW, own_read())["item_group"], "Eigene Artikel")  # no category: catalog

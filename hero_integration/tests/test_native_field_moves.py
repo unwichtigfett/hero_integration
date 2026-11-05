@@ -131,9 +131,49 @@ class TestPeopleAndSourceFields(unittest.TestCase):
         with mock.patch("hero_integration.services.task_lifecycle._user_for",
                         side_effect=lambda email, _api: "anna" if email.startswith("anna") else None):
             result = pa.sync("P-1", record, api)
-        self.assertEqual(result, {"added": 1, "closed": 1, "unmatched": 1})
+        self.assertEqual(result, {"added": 1, "closed": 0, "unmatched": 1})
         self.assertEqual(inserted[0]["allocated_to"], "anna")
-        self.assertEqual(saved, ["T1"])  # the manual ToDo stays
+        self.assertEqual(saved, [])  # incomplete resolution cannot prove any removal
+
+    def test_unresolved_hero_id_preserves_owned_assignment_until_removal_is_proven(self):
+        from types import SimpleNamespace as NS
+        from unittest import mock
+        from hero_integration.integrations import project_assignments as pa
+        owned = NS(name='owned', allocated_to='old@example.invalid', description=pa.MARKER + ': Project')
+        manual = NS(name='manual', allocated_to='manual@example.invalid', description='Created manually')
+        documents = {row.name: NS(status='Open', save=mock.Mock()) for row in (owned, manual)}
+        api = NS(db=NS(get_value=lambda *args: 'Project title'), get_all=lambda *args, **kwargs: [owned, manual],
+                 get_doc=mock.Mock(side_effect=lambda doctype, name: documents[name]))
+        record = {'_hero_source_instance': 'source-a', 'project_match_assignments': [{'user_id': 7}]}
+        with mock.patch('hero_integration.integrations.hero_people.user_by_hero_user', return_value=None) as resolve:
+            self.assertEqual(pa.sync('P-1', record, api), {'added': 0, 'closed': 0, 'unmatched': 1})
+            resolve.assert_called_once_with(7, source_instance='source-a')
+            api.get_doc.assert_not_called()
+            resolve.return_value = owned.allocated_to
+            self.assertEqual(pa.sync('P-1', record, api), {'added': 0, 'closed': 0, 'unmatched': 0})
+            api.get_doc.assert_not_called()
+            record['project_match_assignments'] = []
+            self.assertEqual(pa.sync('P-1', record, api), {'added': 0, 'closed': 1, 'unmatched': 0})
+        self.assertEqual(documents['owned'].status, 'Cancelled')
+        documents['owned'].save.assert_called_once_with(ignore_permissions=True)
+        self.assertEqual(documents['manual'].status, 'Open')
+        documents['manual'].save.assert_not_called()
+
+    def test_fully_resolved_replacement_closes_only_removed_imported_assignment(self):
+        from types import SimpleNamespace as NS
+        from unittest import mock
+        from hero_integration.integrations import project_assignments as pa
+        rows = [NS(name='owned', allocated_to='old@example.invalid', description=pa.MARKER + ': Project'),
+                NS(name='manual', allocated_to='manual@example.invalid', description='Manual')]
+        inserted, closed = [], []
+        api = NS(db=NS(get_value=lambda *args: 'Project'), get_all=lambda *args, **kwargs: rows,
+                 get_doc=lambda value, name=None: NS(insert=lambda **kwargs: inserted.append(value))
+                 if isinstance(value, dict) else NS(status='Open', save=lambda **kwargs: closed.append(name)))
+        with mock.patch('hero_integration.integrations.hero_people.user_by_hero_user', return_value='new@example.invalid'):
+            result = pa.sync('P-1', {'project_match_assignments': [{'user_id': 8}]}, api)
+        self.assertEqual(result, {'added': 1, 'closed': 1, 'unmatched': 0})
+        self.assertEqual(inserted[0]['allocated_to'], 'new@example.invalid')
+        self.assertEqual(closed, ['owned'])
 
     def test_task_author_is_resolved_only_with_a_resolver(self):
         from datetime import date
