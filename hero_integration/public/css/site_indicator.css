@@ -1,0 +1,29 @@
+#hero-site-indicator {
+    position: fixed;
+    right: max(0.5rem, env(safe-area-inset-right));
+    bottom: max(0.5rem, env(safe-area-inset-bottom));
+    z-index: 1040;
+    max-width: calc(100vw - 1rem);
+    padding: 0.2rem 0.45rem;
+    overflow-wrap: anywhere;
+    border: 1px solid var(--border-color, #d1d8dd);
+    border-radius: 0.3rem;
+    background: var(--fg-color, #fff);
+    color: var(--text-muted, #595959);
+    font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    pointer-events: none;
+}
+
+:root[data-theme="dark"] #hero-site-indicator,
+:root[data-hero-theme="navy"] #hero-site-indicator,
+:root.dark #hero-site-indicator {
+    background: var(--fg-color, #161b22);
+    color: var(--text-muted, #b1bac4);
+    border-color: var(--border-color, #3d444d);
+}
+
+@media print {
+    #hero-site-indicator {
+        display: none !important;
+    }
+}
