@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from hashlib import sha256
 
@@ -53,7 +55,38 @@ def task_materialization(snapshot, config, plan):
     return request, seal
 
 
+_page_read_cache = ContextVar("hero_sync_page_read_cache", default=None)
+
+
+@contextmanager
+def reuse_page_reads():
+    """Reuse validation only while assembling one read-only synchronization page."""
+    token = _page_read_cache.set({})
+    try:
+        yield
+    finally:
+        _page_read_cache.reset(token)
+
+
+def page_read_cache():
+    return _page_read_cache.get()
+
+
 def from_documents(service, mapping, snapshot) -> ReadContract:
+    cache = page_read_cache()
+    if cache is None:
+        return _from_documents(service, mapping, snapshot)
+    # Include document content so altered approvals/configuration cannot reuse
+    # an earlier result merely because the document names stayed the same.
+    values = [doc.as_dict() if hasattr(doc, "as_dict") else vars(doc)
+              for doc in (service, mapping, snapshot)]
+    key = ("contract", sha256(json.dumps(values, sort_keys=True, default=str).encode()).hexdigest())
+    if key not in cache:
+        cache[key] = _from_documents(service, mapping, snapshot)
+    return cache[key]
+
+
+def _from_documents(service, mapping, snapshot) -> ReadContract:
     """Validate the legacy B7 saved-query contract used by the migration executor.
 
     B8 materialization instead requires ``universal_from_documents`` and its
