@@ -52,6 +52,68 @@ class TestSupplierBaseline(unittest.TestCase):
         self.assertEqual(json.loads(self.fake.links[-1][2]['target_field_hashes'])['supplier']['supplier_part_no'],
                          'NEW-HERO-PART')
 
+    def test_explicit_null_or_blank_clears_owned_number_and_keeps_other_supplier(self):
+        self.initial_import()
+        self.item['supplier_items'].append({'supplier': 'Other', 'supplier_part_no': 'KEEP'})
+        for empty in (None, '', '   '):
+            with self.subTest(empty=empty):
+                self.item['supplier_items'][0]['supplier_part_no'] = '0151231'
+                self.assertEqual(self.update(supplier_id=empty), 'updated')
+                self.assertIsNone(self.item['supplier_items'][0]['supplier_part_no'])
+                self.assertEqual(self.item['supplier_items'][1]['supplier_part_no'], 'KEEP')
+                state = json.loads(self.fake.links[-1][2]['target_field_hashes'])
+                self.assertIsNone(state['supplier']['supplier_part_no'])
+                self.item['item_name'] = 'MODUL: AXIpremium'  # Restore the original baseline between cases.
+
+    def test_explicit_clear_preserves_locally_changed_number_as_conflict(self):
+        self.initial_import()
+        self.item['supplier_items'][0]['supplier_part_no'] = 'LOCAL'
+        self.assertEqual(self.update(supplier_id=None), 'conflict')
+        self.assertEqual(self.item['supplier_items'][0]['supplier_part_no'], 'LOCAL')
+
+    def test_missing_part_preserves_number_and_does_not_acknowledge_local_change(self):
+        self.initial_import()
+        self.item['supplier_items'][0]['supplier_part_no'] = 'LOCAL'
+        row = deepcopy(SUPPLIER_ROW)
+        del row['base_data']['supplier_id']
+        row['base_data']['name'] = 'New HERO name'
+        self.assertNotIn('supplier_part_no', pm.item_values(row, self.read)['supplier'])
+        self.assertEqual(pm.upsert(row, self.link, pm._Masters(), 'source-a', read=self.read), 'updated')
+        self.assertEqual(self.item['supplier_items'][0]['supplier_part_no'], 'LOCAL')
+        state = json.loads(self.fake.links[-1][2]['target_field_hashes'])
+        self.assertEqual(state['supplier']['supplier_part_no'], '0151231')
+
+    def test_legacy_baseline_cannot_clear_an_unproven_number(self):
+        self.initial_import()
+        original = json.loads(self.link.target_field_hashes)
+        original.pop('supplier')
+        self.link.target_field_hashes = json.dumps(original)
+        self.assertEqual(self.update(supplier_id=None), 'conflict')
+        self.assertEqual(self.item['supplier_items'][0]['supplier_part_no'], '0151231')
+
+    def test_missing_part_cannot_adopt_legacy_local_number_for_a_later_clear(self):
+        self.initial_import()
+        original = json.loads(self.link.target_field_hashes)
+        original.pop('supplier')
+        self.link.target_field_hashes = json.dumps(original)
+        self.item['supplier_items'][0]['supplier_part_no'] = 'LOCAL'
+        row = deepcopy(SUPPLIER_ROW)
+        del row['base_data']['supplier_id']
+        row['base_data']['name'] = 'New HERO name'
+        self.assertEqual(pm.upsert(row, self.link, pm._Masters(), 'source-a', read=self.read), 'updated')
+        for key, value in self.fake.links[-1][2].items():
+            setattr(self.link, key, value)
+        self.assertNotIn('supplier', json.loads(self.link.target_field_hashes))
+        row['base_data']['supplier_id'] = None
+        self.assertEqual(pm.upsert(row, self.link, pm._Masters(), 'source-a', read=self.read), 'conflict')
+        self.assertEqual(self.item['supplier_items'][0]['supplier_part_no'], 'LOCAL')
+
+    def test_invalid_part_type_is_not_treated_as_an_explicit_clear(self):
+        self.initial_import()
+        with self.assertRaisesRegex(ValueError, 'must be text or null'):
+            self.update(supplier_id=123)
+        self.assertEqual(self.item['supplier_items'][0]['supplier_part_no'], '0151231')
+
     def test_missing_or_ambiguous_managed_supplier_row_blocks(self):
         self.initial_import()
         for changed in ([], [{'supplier': 'Krannich Solar', 'supplier_part_no': '0151231'}] * 2):

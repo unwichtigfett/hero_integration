@@ -131,7 +131,7 @@ class TestPeopleAndSourceFields(unittest.TestCase):
         with mock.patch("hero_integration.services.task_lifecycle._user_for",
                         side_effect=lambda email, _api: "anna" if email.startswith("anna") else None):
             result = pa.sync("P-1", record, api)
-        self.assertEqual(result, {"added": 1, "closed": 0, "unmatched": 1})
+        self.assertEqual(result, {"added": 1, "closed": 0, "unmatched": 2})
         self.assertEqual(inserted[0]["allocated_to"], "anna")
         self.assertEqual(saved, [])  # incomplete resolution cannot prove any removal
 
@@ -174,6 +174,51 @@ class TestPeopleAndSourceFields(unittest.TestCase):
         self.assertEqual(result, {'added': 1, 'closed': 1, 'unmatched': 0})
         self.assertEqual(inserted[0]['allocated_to'], 'new@example.invalid')
         self.assertEqual(closed, ['owned'])
+
+    def test_unidentified_members_and_unknown_lists_preserve_existing_assignments(self):
+        from types import SimpleNamespace as NS
+        from unittest import mock
+        from hero_integration.integrations import project_assignments as pa
+        owned = NS(name='owned', allocated_to='old@example.invalid', description=pa.MARKER + ': Project')
+        invalid = [None, {}, '', 0, False, {'user_id': 0}, {'user_id': -1}, {'user_id': True},
+                   {'user_id': '7'}, {'user': None}, {'user': {'email': '@'}},
+                   {'user': {'email': 'missing@'}}, {'user': {'email': 'a b@example.invalid'}}]
+        for assignments in ([row] for row in invalid):
+            with self.subTest(assignments=assignments):
+                api = NS(db=NS(get_value=lambda *args: 'Project'), get_all=lambda *args, **kwargs: [owned],
+                         get_doc=mock.Mock())
+                result = pa.sync('P1', {'project_match_assignments': assignments}, api)
+                self.assertEqual(result, {'added': 0, 'closed': 0, 'unmatched': 1})
+                api.get_doc.assert_not_called()
+        for assignments in (None, {}, '', False):
+            with self.subTest(collection=assignments):
+                api = NS(db=NS(get_value=lambda *args: 'Project'), get_all=lambda *args, **kwargs: [owned],
+                         get_doc=mock.Mock())
+                self.assertEqual(pa.sync('P1', {'project_match_assignments': assignments}, api),
+                                 {'added': 0, 'closed': 0, 'unmatched': 1})
+                api.get_doc.assert_not_called()
+
+    def test_mixed_known_and_unidentified_members_add_known_without_removals(self):
+        from types import SimpleNamespace as NS
+        from unittest import mock
+        from hero_integration.integrations import project_assignments as pa
+        owned = NS(name='owned', allocated_to='old@example.invalid', description=pa.MARKER + ': Project')
+        inserted = []
+        api = NS(db=NS(get_value=lambda *args: 'Project'), get_all=lambda *args, **kwargs: [owned],
+                 get_doc=lambda value: NS(insert=lambda **kwargs: inserted.append(value)))
+        record = {'project_match_assignments': [{'user_id': 8}, {'user': None}, None]}
+        with mock.patch('hero_integration.integrations.hero_people.user_by_hero_user', return_value='new@example.invalid'):
+            result = pa.sync('P1', record, api)
+        self.assertEqual(result, {'added': 1, 'closed': 0, 'unmatched': 2})
+        self.assertEqual(inserted[0]['allocated_to'], 'new@example.invalid')
+
+    def test_missing_assignment_field_does_not_claim_membership_or_touch_todos(self):
+        from unittest import mock
+        from hero_integration.integrations import project_assignments as pa
+        api = mock.Mock()
+        self.assertEqual(pa.sync('P1', {}, api), {'added': 0, 'closed': 0, 'unmatched': 0})
+        api.assert_not_called()
+        self.assertEqual(api.mock_calls, [])
 
     def test_task_author_is_resolved_only_with_a_resolver(self):
         from datetime import date

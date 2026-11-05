@@ -315,3 +315,9 @@ counted unchanged or recreated automatically. If any HERO project assignee canno
 be resolved, existing imported assignments are retained and the Project result
 requires review. Other mapped Project data, logbook entries and native relations
 still run; a fully resolved empty assignment list can close imported assignments.
+
+Malformed or null project-assignment membership is unknown, never an explicit
+removal; it contributes to the assignment review count. For supplier part numbers,
+missing data leaves both the native value and ownership proof unchanged. Explicit
+null or empty text clears only an already proven managed value. Nontext values
+are rejected instead of being interpreted as a deletion.
