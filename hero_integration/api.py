@@ -1858,6 +1858,7 @@ def mapping_draft_list(direction: str, start: int | str = 0, page_size: int | st
             "schema_fingerprint", "direction", "operation_kind", "operation_name")}
         if active_mapping:
             item["active_mapping"] = active_mapping
+            item["active_revision"] = int(parent.mapping_revision or 0)
         try:
             content = json.loads(doc.content_json)
         except (TypeError, ValueError):

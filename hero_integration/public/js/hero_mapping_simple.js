@@ -178,8 +178,94 @@
         function loadButton() {
             const file = el("input", {type: "file", accept: ".json,application/json", class: "hms-file", "aria-label": t("Import mapping JSON")});
             file.addEventListener("change", () => { const picked = file.files?.[0]; file.value = ""; importFile(picked); });
-            return el("div", {class: "hms-import"}, el("button", {type: "button", class: "btn btn-primary", text: t("Import JSON"),
+            return el("div", {class: "hms-import"}, el("button", {type: "button", class: "btn btn-default", text: t("Import JSON"),
                 "data-mapping-import": "", onclick: () => file.click()}), file);
+        }
+        async function activateMappings() {
+            if (busy || disposed) return;
+            setBusy(true);
+            try {
+                const selected = context();
+                const items = [];
+                for (let start = 0; start <= 10000; start += 100) {
+                    const page = await rpc("mapping_draft_list", {direction: selected.direction, start, page_size: 100});
+                    if (!Array.isArray(page?.items)) throw new Error(t("Could not load mapping drafts."));
+                    items.push(...page.items.filter(item => item.snapshot_name === selected.snapshot_name));
+                    if (!page.has_more) break;
+                    if (start === 10000) throw new Error(t("Could not load mapping drafts."));
+                }
+                if (disposed) return;
+                if (!items.length) { say(t("No mapping drafts for this snapshot.")); setBusy(false); return; }
+                const drafts = [];
+                for (const item of items) {
+                    const result = await rpc("mapping_draft_read", {definition_id: item.definition_id});
+                    if (!result?.draft || result.draft.state !== "OPEN" || result.draft.content_revision < 1)
+                        throw new Error(t("A mapping draft has no saved revision. Reload and review it first."));
+                    const draft = {...result.draft, operation_name: item.operation_name,
+                        current_revision: item.active_mapping ? item.active_revision : 0};
+                    if (!Number.isInteger(draft.current_revision) || draft.current_revision < 0)
+                        throw new Error(t("Could not load current mapping revision."));
+                    if (draft.current_revision !== draft.base_active_revision) {
+                        const args = {definition_id: draft.definition_id, expected_generation: draft.generation,
+                            expected_draft_revision: draft.content_revision, expected_active_revision: draft.current_revision,
+                            expected_reconciliation_revision: draft.reconciliation_revision, candidate_json: draft.content_json};
+                        const preview = await rpc("mapping_draft_reconcile_preview", args, true);
+                        if (!Array.isArray(preview?.items)) throw new Error(t("Could not compare mapping changes."));
+                        draft.reconciliation = {args, preview};
+                    }
+                    drafts.push(draft);
+                }
+                if (disposed) return;
+                const names = drafts.map(d => `${d.operation_name} (${d.definition_id})`).join(", ");
+                const warnings = drafts.flatMap(d => d.warnings || []);
+                const changed = drafts.filter(d => d.reconciliation).map(d => d.operation_name).join(", ");
+                const summary = `${t("Activate these saved mappings?")} ${names}` +
+                    (changed ? ` ${t("Changed active mappings require review")}: ${changed}.` : "") +
+                    (warnings.length ? ` ${t("Warnings")}: ${warnings.join("; ")}` : "");
+                let consumed = false;
+                frappe.confirm(frappe.utils.escape_html(summary), async () => {
+                    if (disposed || consumed) return;
+                    consumed = true;
+                    let activated = 0;
+                    try {
+                        for (const draft of drafts) {
+                            if (draft.reconciliation) {
+                                const {args, preview} = draft.reconciliation;
+                                const choices = {};
+                                for (const item of preview.items.filter(row => row.state === "CONFLICT")) {
+                                    const question = `${draft.operation_name}: ${item.identifier}\n${t("Active")}: ${item.active_json}\n${t("Draft")}: ${item.draft_json}\n${t("Use the draft value? Choose Cancel to keep the active value.")}`;
+                                    choices[item.identifier] = await new Promise(resolve => frappe.confirm(
+                                        frappe.utils.escape_html(question).replace(/\n/g, "<br>"), () => resolve("DRAFT"), () => resolve("ACTIVE")));
+                                    if (disposed) return;
+                                }
+                                const accepted = preview.items.filter(row => row.state === "ACTIVE_ONLY").map(row => row.identifier);
+                                const applied = await rpc("mapping_draft_reconcile_apply", {...args,
+                                    accepted_suggestions_json: JSON.stringify({items: accepted}),
+                                    conflict_choices_json: JSON.stringify(choices)}, true);
+                                const saved = await rpc("mapping_draft_save", {definition_id: draft.definition_id,
+                                    expected_generation: draft.generation, expected_draft_revision: draft.content_revision,
+                                    expected_active_revision: draft.current_revision,
+                                    expected_reconciliation_revision: draft.reconciliation_revision,
+                                    mapping_json: applied.result_content_json, reconciliation_json: applied.reconciliation_json}, true);
+                                if (!saved?.draft) throw new Error(t("Could not save the reviewed mapping."));
+                                Object.assign(draft, saved.draft);
+                            }
+                            await rpc("mapping_draft_publish", {definition_id: draft.definition_id,
+                                expected_generation: draft.generation, expected_draft_revision: draft.content_revision,
+                                expected_active_revision: draft.current_revision,
+                                expected_reconciliation_revision: draft.reconciliation_revision,
+                                warning_fingerprint: draft.warning_fingerprint || "", confirmed: 1}, true);
+                            activated++;
+                        }
+                        await load();
+                        if (!disposed) say(t("Mappings activated."), "success");
+                    } catch (error) {
+                        if (!disposed) { await load(); say(`${t("Activation stopped.")} ${activated}/${drafts.length}. ${failure(error)}`, "error"); }
+                    } finally { if (!disposed) setBusy(false); }
+                }, () => { consumed = true; if (!disposed) setBusy(false); });
+            } catch (error) {
+                if (!disposed) { say(failure(error), "error"); setBusy(false); }
+            }
         }
         async function exportFile() {
             if (busy || disposed) return;
@@ -232,7 +318,8 @@
             renderTable();
             const actions = el("div", {class: "hms-load"});
             if (manager) {
-                actions.append(loadButton(), el("button", {type: "button", class: "btn btn-default", text: t("Export JSON"),
+                actions.append(el("button", {type: "button", class: "btn btn-primary", text: t("Activate Mappings"),
+                    "data-mapping-activate": "", onclick: activateMappings}), loadButton(), el("button", {type: "button", class: "btn btn-default", text: t("Export JSON"),
                     "data-mapping-export": "", onclick: exportFile}));
                 const snapshot = select(t("Choose a validated snapshot"), snapshots.map(row => ({value: row.name, label: row.display_name || row.name})), snapshotName);
                 snapshot.setAttribute("data-mapping-snapshot", "");

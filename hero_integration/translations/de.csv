@@ -3118,6 +3118,17 @@ Native replacement contains unsupported configuration fields.,Das native Ersatzm
 Mapping actions,Mapping-Aktionen
 Import mapping JSON,Mapping-JSON importieren
 Import JSON,JSON importieren
+Activate Mappings,Mappings aktivieren
+Could not load mapping drafts.,Mapping-Entwürfe konnten nicht geladen werden.
+No mapping drafts for this snapshot.,Für diesen Schema-Snapshot gibt es keine Mapping-Entwürfe.
+A mapping draft has no saved revision. Reload and review it first.,Ein Mapping-Entwurf hat keine gespeicherte Revision. Bitte zuerst neu laden und prüfen.
+Activate these saved mappings?,Diese gespeicherten Mappings aktivieren?
+Activation stopped.,Aktivierung gestoppt.
+Could not load current mapping revision.,Die aktuelle Mapping-Revision konnte nicht geladen werden.
+Could not compare mapping changes.,Die Mapping-Änderungen konnten nicht verglichen werden.
+Changed active mappings require review,Geänderte aktive Mappings müssen geprüft werden
+Use the draft value? Choose Cancel to keep the active value.,Entwurfswert übernehmen? Abbrechen behält den aktiven Wert.
+Could not save the reviewed mapping.,Das geprüfte Mapping konnte nicht gespeichert werden.
 Export drafts,Entwürfe exportieren
 JSON exchanges your saved drafts for this direction. Active mappings and execution permissions remain unchanged.,JSON überträgt Ihre gespeicherten Entwürfe für diese Richtung. Aktive Mappings und Ausführungsrechte bleiben unverändert.
 Exporting drafts…,Entwürfe werden exportiert…

@@ -1,5 +1,20 @@
 """Personal mapping document access for native Frappe list/detail paths."""
+from contextlib import contextmanager
+from contextvars import ContextVar
+
 import frappe
+
+_configuration_import_mapping = ContextVar('hero_configuration_import_mapping', default=None)
+
+
+@contextmanager
+def configuration_import_mapping(doc):
+    """Permit the validated importer to update exactly its locked mapping."""
+    token = _configuration_import_mapping.set(doc)
+    try:
+        yield
+    finally:
+        _configuration_import_mapping.reset(token)
 
 
 def personal_mapping_draft_query(user=None):
@@ -78,6 +93,8 @@ def protect_managed_mapping(doc):
     if not _fresh_definition_candidates(frappe, definition):
         return
     if changed:
+        if _configuration_import_mapping.get() is doc:
+            return
         from hero_integration.services.frappe_mapping_draft_storage import is_personal_publication
         if is_personal_publication(doc):
             return
