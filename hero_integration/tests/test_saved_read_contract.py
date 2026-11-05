@@ -5,7 +5,7 @@ import sys
 from dataclasses import asdict
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from hero_integration.services.read_contract import ReadContractError, from_documents
 from hero_integration.sources.hero import CUSTOMER_CONTRACT_V1, customer_query, GraphQLServiceSource
@@ -271,7 +271,7 @@ class TestGeneratedTaskRead(unittest.TestCase):
                 api.approve_read_service('SERVICE', 'MAP', 7, 3)
 
     def test_real_executor_decoder_mapping_and_task_adapter_replay_offline(self):
-        from hero_integration.services import migration
+        from hero_integration.services import deferred_references, migration
         from hero_integration.client.graphql import HeroEndpoint, HeroGraphQLClient
         from hero_integration.hero_integration.doctype.hero_frappe_mapping import hero_frappe_mapping
         from hero_integration.hero_integration.doctype.hero_graphql_mapping import hero_graphql_mapping
@@ -332,6 +332,7 @@ class TestGeneratedTaskRead(unittest.TestCase):
                                'target_user_id': 99, 'author_user_id': None, 'target_project_match_id': 101,
                                'due_date': '2026-10-29T12:30:00+00:00'}]}
         with patch.object(migration, 'frappe', self.fake_frappe), \
+             patch.object(deferred_references, 'frappe', self.fake_frappe), \
              patch.object(migration, 'get_configuration', return_value=config), \
              patch.object(hero_frappe_mapping, '_lock_active_target'), \
              patch.object(hero_graphql_mapping, 'lock_exchange_context'), \
@@ -351,6 +352,21 @@ class TestGeneratedTaskRead(unittest.TestCase):
         self.assertEqual(str(records['task'].custom_hero_due_date), '2026-10-29 13:30:00')
         self.assertTrue(any('PENDING_IDENTITY' in event.get('detail', '') for event in events))
         self.assertEqual(transport.call_count, 4)
+
+    def test_offline_replay_isolated_from_preloaded_site_database(self):
+        from hero_integration.services import deferred_references
+
+        # The site runner loads this service before our sys.modules replacement.
+        # Its module-local framework reference must never reach the host DB.
+        host_db = Mock()
+        host_db.table_exists.return_value = True
+        host_db.exists.side_effect = AssertionError('Offline replay reached host database')
+        host_frappe = SimpleNamespace(db=host_db)
+        with patch.object(deferred_references, 'frappe', host_frappe):
+            replay = type(self)('test_real_executor_decoder_mapping_and_task_adapter_replay_offline')
+            replay.debug()
+            self.assertIs(deferred_references.frappe, host_frappe)
+        self.assertEqual(host_db.mock_calls, [])
 
 
 class _Client:
