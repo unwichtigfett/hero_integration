@@ -56,6 +56,51 @@ class _Client:
 
 
 class TestPaging(unittest.TestCase):
+    def test_rollback_discards_supplier_and_other_master_caches_before_next_article(self):
+        saved, documents, created, accepted = {}, {}, [], []
+
+        def get_doc(values):
+            doctype = values['doctype']
+            name = f'SUP-{len(created) + 1}' if doctype == 'Supplier' else values['uom_name']
+
+            def insert(**kwargs):
+                documents[doctype, name] = dict(values)
+                created.append((doctype, name))
+                return document
+
+            document = SimpleNamespace(name=name, insert=insert)
+            return document
+
+        def get_value(doctype, filters, field):
+            return next((name for (kind, name), values in documents.items()
+                         if kind == doctype and all(values.get(key) == value for key, value in filters.items())), None)
+
+        fake = SimpleNamespace(
+            db=SimpleNamespace(get_default=saved.get, set_default=lambda key, value: saved.__setitem__(key, value),
+                               exists=lambda doctype, name: (doctype, name) in documents,
+                               get_value=get_value, commit=lambda: None, rollback=documents.clear),
+            get_doc=get_doc, utils=SimpleNamespace(now_datetime=lambda: 'now'), log_error=lambda **kwargs: None)
+
+        def import_article(row, link, masters, instance, **kwargs):
+            masters.ensure('UOM', 'Stk', uom_name='Stk')
+            supplier = masters.supplier('New supplier')
+            if row['product_id'] == 'P0':
+                raise ValueError('First article validation fails after its masters were inserted')
+            # The second article must not use either master rolled back with P0.
+            self.assertIn(('UOM', 'Stk'), documents)
+            self.assertIn(('Supplier', supplier), documents)
+            accepted.append((row['product_id'], supplier))
+            return 'added'
+
+        with patch.object(pm, 'frappe', fake), patch.object(pm, '_links', return_value={}), \
+                patch.object(pm, 'upsert', side_effect=import_article):
+            state = pm.sync_products(_Client(2), source_instance='source-a', read=BUILTIN)
+        self.assertEqual(state['counts'], {'requests': 1, 'failed': 1, 'added': 1})
+        self.assertEqual(len(accepted), 1)
+        self.assertEqual(len([entry for entry in created if entry[0] == 'Supplier']), 2)
+        self.assertEqual(len([entry for entry in created if entry[0] == 'UOM']), 2)
+        self.assertTrue(state['done'])
+
     def test_rejected_page_is_read_in_halves(self):
         rows = pm.fetch_page(_Client(1000, reject_above=250), 0, read=BUILTIN)
         self.assertEqual(len(rows), 500)

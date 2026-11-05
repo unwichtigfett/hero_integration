@@ -297,6 +297,11 @@ class GraphQLServiceSource:
             raise ReadContractError('Read offset is invalid or exceeds the reviewed run bound.')
         if operation != self.contract.target_operation:
             return SourcePage((), None)
+        from hero_integration.services.direct_operations import OPERATIONS
+        direct = OPERATIONS.get(operation, {})
+        unpaged = bool(direct.get('unpaged'))
+        if unpaged and (offset != 0 or self.contract.variables):
+            raise ReadContractError('A nonpaginated employee read requires its single approved request.')
         lookup = self.contract.target_operation == 'HeroLookup'
         one_shot_lookup = False
         lookup_bound = None
@@ -337,10 +342,31 @@ class GraphQLServiceSource:
             from hero_integration.graphql_protocol.graphql_result_decoder import decode_graphql_result
             from hero_integration.graphql_protocol.transport import Response
             decode_graphql_result(request, Response(True, json.dumps({'data': data}), True))
-        records = value_at(data, self.contract.records_path)
+        if unpaged:
+            from hero_integration.services.employee_migration import (
+                _records as employee_records, EmployeeMigrationBlocked, MAX_RECORDS,
+            )
+            try:
+                records = employee_records(data, self.contract.records_path)
+            except EmployeeMigrationBlocked as error:
+                raise ReadContractError(str(error)) from error
+        elif direct.get('record_prefix') == 'edges.node':
+            from hero_integration.services.direct_runtime import DirectRead, records as direct_records
+            # Preserve the saved reader's fail-closed shape checks before using
+            # the direct adapter, which otherwise treats absent lists as empty.
+            path = self.contract.records_path
+            edges = value_at(data, path[:-len('.node')] if path.endswith('.edges.node') else path)
+            if not isinstance(edges, list):
+                raise ReadContractError('The selected result path is not a list of objects.')
+            try:
+                records = direct_records(DirectRead(operation, None, self.service.query_document, path), data)
+            except ValueError as error:
+                raise ReadContractError('The selected result path is not a list of objects.') from error
+        else:
+            records = value_at(data, self.contract.records_path)
         if not isinstance(records, list) or not all(isinstance(row, dict) for row in records):
             raise ReadContractError("The selected result path is not a list of objects.")
-        bound = lookup_bound if one_shot_lookup else self.contract.page_size
+        bound = MAX_RECORDS if unpaged else lookup_bound if one_shot_lookup else self.contract.page_size
         if len(records) > bound:
             raise ReadContractError('Response exceeds the approved lookup bound.' if lookup else 'Response exceeds the approved page size.')
         for row in records:
@@ -349,7 +375,7 @@ class GraphQLServiceSource:
             from hero_integration.services.project_logbook import complete_mapped_histories
             records = complete_mapped_histories(self, records, variables)
         annotated = tuple({**row, "_hero_source_instance": self.source_instance} for row in records)
-        if one_shot_lookup:
+        if one_shot_lookup or unpaged:
             return SourcePage(annotated, None)
         # Only an empty page ends an offset scan (see HeroSource._page).
         return SourcePage(annotated, offset + len(records) if records else None)
