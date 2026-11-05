@@ -15,7 +15,7 @@ import frappe
 
 from hero_integration.services.localized_error import LocalizedError
 from hero_integration.services.frappe_mapping_draft_storage import FrappeMappingDraftStorage, assert_portable_identity_schema, lock_definition_drafts, lock_identity_drafts
-from hero_integration.services.mapping_draft_service import DraftConflict, MappingDraftError
+from hero_integration.services.mapping_draft_service import DraftConflict, MappingDraftError, _save_baseline
 from hero_integration.services.personal_mapping_content import bounded, prepare_exchange_content, references, RULE_FIELDS, validate_exchange_action
 from hero_integration.services.mapping_draft_service import draft_key
 from hero_integration.services.schema_provisioning import (
@@ -1015,9 +1015,12 @@ def _preview_portable(payload, source_instance, snapshot_name, direction):
                      'active_revision': row['mapping_revision'],
                      'reconciliation_revision': draft.reconciliation_revision if draft else 0}
             prepared = _prepare_item(candidate, row, local_content, package['schema'], portable=True)
+            stale = bool(draft and (_save_baseline(draft) != (candidate['base_active_name'],
+                candidate['base_active_revision'], candidate['base_active_hash'])
+                or draft.base_schema_fingerprint != candidate['base_schema_fingerprint']))
             items.append({'definition_id': identity, 'local_definition_id': local_id,
                           'rule_remapping': remapping,
-                          'state': 'NEW' if draft is None else 'UNCHANGED' if _same(local_content, prepared['content']) else 'REPLACE',
+                          'state': 'NEW' if draft is None else 'UNCHANGED' if not stale and _same(local_content, prepared['content']) else 'REPLACE',
                           'expected': state, 'removal': False, 'content_hash': _hash(item['content']),
                           'references': prepared['references'], 'metadata': prepared.get('metadata', {}),
                           'conflicts': prepared['conflicts']})
@@ -1118,11 +1121,23 @@ def _save_portable(payload, source_instance, snapshot_name, direction, expected_
                 if state['generation'] == 0:
                     opened = service.open_draft(local_id, frappe.session.user)
                     generation, revision = opened.generation, 0
+                    reconciliation_revision = 0
                 else:
                     generation, revision = state['generation'], state['draft_revision']
+                    reconciliation_revision = state['reconciliation_revision']
+                    if draft and (_save_baseline(draft) != (candidate['base_active_name'],
+                            candidate['base_active_revision'], candidate['base_active_hash'])
+                            or draft.base_schema_fingerprint != candidate['base_schema_fingerprint']):
+                        # The confirmed replacement removes the old draft and its
+                        # revisions before starting from the current definition.
+                        service.discard(local_id, frappe.session.user, generation, revision, confirmed=True)
+                        _delete_replaced_draft(draft)
+                        opened = service.open_draft(local_id, frappe.session.user)
+                        generation, revision = opened.generation, opened.content_revision
+                        reconciliation_revision = opened.reconciliation_revision
                 result = service.save(local_id, frappe.session.user, revision, state['active_revision'],
                                       prepared['content'], expected_generation=generation,
-                                      expected_reconciliation_revision=state['reconciliation_revision'])
+                                      expected_reconciliation_revision=reconciliation_revision)
                 created['unchanged' if result.unchanged else 'drafts'].append(identity)
                 continue
             if state['generation'] == 0:
@@ -1141,6 +1156,27 @@ def _save_portable(payload, source_instance, snapshot_name, direction, expected_
         raise
     return {'status': 'SAVED_DRAFTS_ONLY', 'direction': direction, 'schema': {'created': {}},
             'drafts': created, 'activation': False}
+
+
+def _delete_replaced_draft(draft):
+    """Delete this actor's discarded replacement and its history in the import transaction."""
+    actor = frappe.session.user
+    if draft.owner != actor or draft.site_scope != frappe.local.site:
+        raise PermissionError('Cannot delete another administrator\'s draft.')
+    rows = frappe.db.sql('select name from `tabHERO Mapping Draft` where name=%s and owner_user=%s '
+                         'and site_scope=%s and state=%s for update',
+                         (draft.key, actor, draft.site_scope, 'DISCARDED'), as_dict=True)
+    if len(rows) != 1:
+        raise DraftConflict('Draft changed before deletion; retry the import.')
+    revisions = frappe.get_all('HERO Mapping Revision', filters={'draft_key': draft.key, 'actor': actor},
+                               fields=['name'], limit_page_length=0)
+    names = [_value(row, 'name') for row in revisions]
+    if names:
+        frappe.db.delete('Version', {'ref_doctype': 'HERO Mapping Revision', 'docname': ['in', names]})
+    frappe.db.delete('Version', {'ref_doctype': 'HERO Mapping Draft', 'docname': draft.key})
+    frappe.db.delete('HERO Mapping Revision', {'draft_key': draft.key, 'actor': actor})
+    frappe.db.delete('HERO Mapping Draft', {'name': draft.key, 'owner_user': actor,
+                                            'site_scope': draft.site_scope, 'state': 'DISCARDED'})
 
 
 def export_package(source_instance: str, snapshot_name: str, direction: str, *, format_version: str = FORMAT_VERSION,

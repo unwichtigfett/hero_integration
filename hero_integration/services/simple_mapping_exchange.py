@@ -80,6 +80,43 @@ def _preview_current(payload, snapshot_name, direction):
     return result
 
 
+def publish_imported_mappings(items):
+    """Publish imported mappings and delete their temporary drafts and revisions."""
+    published = []
+    for item in sorted(items, key=lambda row: row['definition_id']):
+        identity = item.get('local_definition_id') or item['definition_id']
+        storage = FrappeMappingDraftStorage()
+        draft = storage.service().open_draft(identity, frappe.session.user)
+        if draft.content_revision == 0 and draft.base_active_name:
+            # Saving identical active content intentionally creates no saved
+            # revision. Retain that active definition instead of publishing
+            # an unsaved baseline draft.
+            from hero_integration.services.personal_mapping_content import same_value
+            with storage.transaction(identity, frappe.session.user):
+                active = storage.active(identity)
+                if (draft.base_active_revision != active.revision or draft.base_active_hash != active.content_hash
+                        or not same_value(draft.content, storage.initial_content(active.content))):
+                    raise MappingDraftError('Active mapping changed before unchanged import confirmation.')
+                result = {'name': active.name, 'revision': active.revision, 'unchanged': True}
+            storage.service().discard(identity, frappe.session.user, draft.generation,
+                                      draft.content_revision, confirmed=True)
+            exchange._delete_replaced_draft(draft)
+            published.append({'definition_id': identity, **result})
+            continue
+        result = storage.publish(identity, frappe.session.user, draft.generation, draft.content_revision,
+                                 draft.base_active_revision, draft.reconciliation_revision, confirmed=True)
+        published.append({'definition_id': identity, **result})
+        # Publication of an existing mapping can leave the helper draft open.
+        # Discard only this actor's exact successfully published revision.
+        current = frappe.get_doc('HERO Mapping Draft',
+            draft_key(frappe.local.site, identity, frappe.session.user), for_update=True)
+        if current.state == 'OPEN':
+            storage.service().discard(identity, frappe.session.user, int(current.generation),
+                                      int(current.content_revision), confirmed=True)
+        exchange._delete_replaced_draft(draft)
+    return published
+
+
 def _apply_current(payload, snapshot_name, direction, expected_states, preview_fingerprint, *, confirmed=False):
     if confirmed is not True:
         raise MappingDraftError('Explicit import and publication confirmation is required.')
@@ -94,35 +131,7 @@ def _apply_current(payload, snapshot_name, direction, expected_states, preview_f
     try:
         exchange.save_import(payload, checked['source_instance'], snapshot_name, direction, expected_states,
                              confirmed=True, preview_fingerprint=checked['draft_preview_fingerprint'])
-        for item in sorted(checked['items'], key=lambda row: row['definition_id']):
-            identity = item.get('local_definition_id') or item['definition_id']
-            storage = FrappeMappingDraftStorage()
-            draft = storage.service().open_draft(identity, frappe.session.user)
-            if draft.content_revision == 0 and draft.base_active_name:
-                # Saving identical active content intentionally creates no saved
-                # revision. Retain that active definition instead of publishing
-                # an unsaved baseline draft.
-                from hero_integration.services.personal_mapping_content import same_value
-                with storage.transaction(identity, frappe.session.user):
-                    active = storage.active(identity)
-                    if (draft.base_active_revision != active.revision or draft.base_active_hash != active.content_hash
-                            or not same_value(draft.content, storage.initial_content(active.content))):
-                        raise MappingDraftError('Active mapping changed before unchanged import confirmation.')
-                    result = {'name': active.name, 'revision': active.revision, 'unchanged': True}
-                storage.service().discard(identity, frappe.session.user, draft.generation,
-                                          draft.content_revision, confirmed=True)
-                published.append({'definition_id': identity, **result})
-                continue
-            result = storage.publish(identity, frappe.session.user, draft.generation, draft.content_revision,
-                                     draft.base_active_revision, draft.reconciliation_revision, confirmed=True)
-            published.append({'definition_id': identity, **result})
-            # Publication of an existing mapping can leave the helper draft open.
-            # Discard only this actor's exact successfully published revision.
-            current = frappe.get_doc('HERO Mapping Draft',
-                draft_key(frappe.local.site, identity, frappe.session.user), for_update=True)
-            if current.state == 'OPEN':
-                storage.service().discard(identity, frappe.session.user, int(current.generation),
-                                          int(current.content_revision), confirmed=True)
+        published = publish_imported_mappings(checked['items'])
     except Exception:
         frappe.db.rollback(save_point=savepoint)
         raise

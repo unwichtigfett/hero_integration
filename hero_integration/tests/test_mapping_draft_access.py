@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from hero_integration import hooks
+from hero_integration import api
 from hero_integration.services import mapping_draft_access as access
 
 
@@ -24,6 +25,25 @@ class TestPersonalMappingAccess(unittest.TestCase):
         self.frappe.get_roles.return_value = ["Employee"]
         self.assertEqual(access.personal_mapping_query(doctype="HERO Mapping Draft"), "1=0")
         self.frappe.db.escape.assert_not_called()
+
+    def test_confirmed_publication_deletes_only_after_success(self):
+        fake = SimpleNamespace(session=SimpleNamespace(user='manager'), local=SimpleNamespace(site='site'),
+            get_doc=Mock(return_value=SimpleNamespace(state='OPEN', generation=2, content_revision=3)))
+        storage = Mock()
+        storage.publish.return_value = {'name': 'active'}
+        with patch.object(api, 'frappe', fake), patch.object(api, '_mapping_request_fields'), \
+             patch.object(api, '_personal_draft_identity', return_value=('definition', 'key')), \
+             patch('hero_integration.services.frappe_mapping_draft_storage.FrappeMappingDraftStorage', return_value=storage), \
+             patch('hero_integration.services.mapping_draft_exchange._delete_replaced_draft') as delete:
+            result = api.mapping_draft_publish('definition', 2, 3, 4, 0, confirmed=True, delete_after=True)
+            self.assertEqual(result['name'], 'active')
+            storage.service.return_value.discard.assert_called_once_with('definition', 'manager', 2, 3, confirmed=True)
+            delete.assert_called_once()
+            delete.reset_mock()
+            storage.publish.side_effect = RuntimeError('failed')
+            with self.assertRaisesRegex(RuntimeError, 'failed'):
+                api.mapping_draft_publish('definition', 2, 3, 4, 0, confirmed=True, delete_after=True)
+            delete.assert_not_called()
         self.frappe.get_roles.return_value = ["System Manager"]
         for doctype, column in (("HERO Mapping Draft", "owner_user"), ("HERO Mapping Revision", "actor")):
             with self.subTest(doctype=doctype):

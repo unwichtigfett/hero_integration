@@ -277,8 +277,8 @@ test('configuration summaries distinguish requested active contracts from mappin
     const translations = {
         'Mutation contracts: {0}; requested active status: {1}.':'Mutationsverträge: {0}; gewünschter Status Aktiv: {1}.',
         'Mutation contracts imported: {0}; active: {1}.':'Mutationsverträge importiert: {0}; aktiv: {1}.',
-        'Mutation mappings to import as drafts: {0}.':'Als Entwürfe zu importierende Mutationsmappings: {0}.',
-        'Mutation mappings imported as drafts: {0}.':'Als Entwürfe importierte Mutationsmappings: {0}.',
+        'Mutation mappings to import and activate: {0}.':'Als Entwürfe zu importierende Mutationsmappings: {0}.',
+        'Mutation mappings imported and activated: {0}.':'Als Entwürfe importierte Mutationsmappings: {0}.',
     };
     const window = {hero_integration_platform:{},hero_integration_i18n:{text:value=>translations[value]||value}};
     vm.runInNewContext(source,{window});
@@ -317,7 +317,7 @@ test('the existing configuration confirmation explicitly announces eight active 
     const workspace=new Element('main');await window.hero_integration_settings_ui.mount(workspace);
     const input=workspace.find(element=>element.type==='file');input.files=[{text:async()=>'{}'}];await input.handlers.change();
     assert.match(confirmation,/Mutation contracts: 8; requested active status: 8\./);
-    assert.match(confirmation,/Mutation mappings to import as drafts: 8\./);
+    assert.match(confirmation,/Mutation mappings to import and activate: 8\./);
     assert.match(confirmation,/No HERO operation will be executed/);
     assert.deepEqual(calls,['workspace_settings_get','config_import_preview']);
 });

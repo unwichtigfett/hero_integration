@@ -45,6 +45,7 @@
         const summary = areas.length ? `${t("Areas in the file")}: ${areas.join(", ")}` : t("The file contains no mapping areas.");
         return summary + (preview.replace_mappings
             ? ` ${t("Existing mappings in these areas will be replaced.")} ${preview.replacement?.field_mappings ?? 0} ${t("field mappings")}, ${preview.replacement?.graphql_mappings ?? 0} ${t("GraphQL mappings")}.` : "")
+            + ` ${t("Replaced drafts and their history will be deleted.")}`
             + ` ${t("No HERO operation will be executed.")}`;
     }
 
@@ -74,7 +75,7 @@
         const counts = {NEW: 0, REPLACE: 0, UNCHANGED: 0, REMOVE: 0};
         for (const item of preview.items || []) if (Object.hasOwn(counts, item.state)) counts[item.state]++;
         return `${t("Mutation mappings")}: ${t("New")} ${counts.NEW}, ${t("Replace")} ${counts.REPLACE}, ` +
-            `${t("Unchanged")} ${counts.UNCHANGED}, ${t("Remove")} ${counts.REMOVE}. ${t("No HERO operation will be executed.")}`;
+            `${t("Unchanged")} ${counts.UNCHANGED}, ${t("Remove")} ${counts.REMOVE}. ${t("Replaced drafts and their history will be deleted.")} ${t("No HERO operation will be executed.")}`;
     }
 
     function mount(page) {
@@ -186,22 +187,23 @@
             setBusy(true);
             try {
                 const selected = context();
+                const source = snapshots.find(row => row.name === selected.snapshot_name)?.source_instance;
                 const items = [];
                 for (let start = 0; start <= 10000; start += 100) {
                     const page = await rpc("mapping_draft_list", {direction: selected.direction, start, page_size: 100});
                     if (!Array.isArray(page?.items)) throw new Error(t("Could not load mapping drafts."));
-                    items.push(...page.items.filter(item => item.snapshot_name === selected.snapshot_name));
+                    items.push(...page.items.filter(item => item.source_instance === source));
                     if (!page.has_more) break;
                     if (start === 10000) throw new Error(t("Could not load mapping drafts."));
                 }
                 if (disposed) return;
-                if (!items.length) { say(t("No mapping drafts for this snapshot.")); setBusy(false); return; }
+                if (!items.length) { say(t("No mapping drafts for this source.")); setBusy(false); return; }
                 const drafts = [];
                 for (const item of items) {
                     const result = await rpc("mapping_draft_read", {definition_id: item.definition_id});
                     if (!result?.draft || result.draft.state !== "OPEN" || result.draft.content_revision < 1)
                         throw new Error(t("A mapping draft has no saved revision. Reload and review it first."));
-                    const draft = {...result.draft, operation_name: item.operation_name,
+                    const draft = {...result.draft, operation_name: item.operation_name, snapshot_name: item.snapshot_name,
                         current_revision: item.active_mapping ? item.active_revision : 0};
                     if (!Number.isInteger(draft.current_revision) || draft.current_revision < 0)
                         throw new Error(t("Could not load current mapping revision."));
@@ -216,10 +218,11 @@
                     drafts.push(draft);
                 }
                 if (disposed) return;
-                const names = drafts.map(d => `${d.operation_name} (${d.definition_id})`).join(", ");
+                const names = drafts.map(d => `${d.operation_name} (${d.snapshot_name}; ${d.definition_id})`).join(", ");
                 const warnings = drafts.flatMap(d => d.warnings || []);
                 const changed = drafts.filter(d => d.reconciliation).map(d => d.operation_name).join(", ");
                 const summary = `${t("Activate these saved mappings?")} ${names}` +
+                    ` ${t("Activated drafts and their history will be deleted.")}` +
                     (changed ? ` ${t("Changed active mappings require review")}: ${changed}.` : "") +
                     (warnings.length ? ` ${t("Warnings")}: ${warnings.join("; ")}` : "");
                 let consumed = false;
@@ -254,7 +257,7 @@
                                 expected_generation: draft.generation, expected_draft_revision: draft.content_revision,
                                 expected_active_revision: draft.current_revision,
                                 expected_reconciliation_revision: draft.reconciliation_revision,
-                                warning_fingerprint: draft.warning_fingerprint || "", confirmed: 1}, true);
+                                warning_fingerprint: draft.warning_fingerprint || "", confirmed: 1, delete_after: 1}, true);
                             activated++;
                         }
                         await load();

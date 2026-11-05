@@ -88,4 +88,9 @@ def replace_native_mapping(snapshot, item, rules, source_instance, created, read
                 int(parent.mapping_revision), int(current.mapping_revision))
     published = storage.publish(parent.definition_id, actor, saved.generation, saved.content_revision,
                                 int(parent.mapping_revision), saved.reconciliation_revision, confirmed=True)
+    current = frappe.get_doc('HERO Mapping Draft', key, for_update=True)
+    if current.state == 'OPEN':
+        service.discard(parent.definition_id, actor, int(current.generation), int(current.content_revision), confirmed=True)
+    from hero_integration.services.mapping_draft_exchange import _delete_replaced_draft
+    _delete_replaced_draft(saved)
     return frappe.get_doc('HERO GraphQL Mapping', published['name'])

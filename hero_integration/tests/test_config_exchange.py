@@ -274,12 +274,12 @@ class TestReplacementRetirement(unittest.TestCase):
         self.assertEqual(changes[2][2]["execution_status"], "Pending Approval")
         self.assertEqual(len(locks), 2)
 
-    def test_only_current_actor_source_drafts_are_archived(self):
+    def test_only_current_actor_source_drafts_are_deleted(self):
         from unittest.mock import Mock
-        docs = {"own-a": _Record(definition_id="id-a", generation=2, content_revision=3, base_active_mapping="",
+        docs = {"own-a": _Record(draft_key="own-a", definition_id="id-a", generation=2, content_revision=3, base_active_mapping="",
                     content_json=json.dumps({"target_operation": "HeroProducts"}),
                     new_definition_json=json.dumps({"source_instance": "source-a", "direction": "QUERY_TO_FRAPPE"})),
-                "own-b": _Record(definition_id="id-b", generation=1, content_revision=1, base_active_mapping="",
+                "own-b": _Record(draft_key="own-b", definition_id="id-b", generation=1, content_revision=1, base_active_mapping="",
                     content_json=json.dumps({"target_operation": "HeroProducts"}),
                     new_definition_json=json.dumps({"source_instance": "source-b", "direction": "QUERY_TO_FRAPPE"}))}
         def get_all(doctype, **kwargs):
@@ -291,9 +291,11 @@ class TestReplacementRetirement(unittest.TestCase):
                                get_all=get_all, get_doc=lambda doctype, name, **kw: docs[name])
         storage = SimpleNamespace(service=lambda: SimpleNamespace(discard=discard))
         with patch.object(cx, "frappe", fake), \
-                patch("hero_integration.services.frappe_mapping_draft_storage.FrappeMappingDraftStorage", return_value=storage):
+                patch("hero_integration.services.frappe_mapping_draft_storage.FrappeMappingDraftStorage", return_value=storage), \
+                patch("hero_integration.services.mapping_draft_exchange._delete_replaced_draft") as delete:
             cx._archive_replaced_drafts("source-a", ["HeroProducts"])
         discard.assert_called_once_with("id-a", "actor", 2, 3, confirmed=True)
+        self.assertEqual(delete.call_args.args[0].key, "own-a")
 
 
 class TestScopedConfigurationExport(unittest.TestCase):

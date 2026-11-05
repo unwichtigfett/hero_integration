@@ -2093,9 +2093,10 @@ def mapping_draft_save(definition_id: str, expected_generation: int | str,
 @frappe.whitelist(methods=['POST'])
 def mapping_draft_publish(definition_id: str, expected_generation: int | str,
                           expected_draft_revision: int | str, expected_active_revision: int | str,
-                          expected_reconciliation_revision: int | str, confirmed=False, warning_fingerprint: str = ''):
+                          expected_reconciliation_revision: int | str, confirmed=False, warning_fingerprint: str = '',
+                          delete_after=False):
     _mapping_request_fields({'definition_id', 'expected_generation', 'expected_draft_revision',
-                             'expected_active_revision', 'expected_reconciliation_revision', 'confirmed', 'warning_fingerprint'})
+                             'expected_active_revision', 'expected_reconciliation_revision', 'confirmed', 'warning_fingerprint', 'delete_after'})
     definition_id, _ = _personal_draft_identity(definition_id)
     generation = _mapping_int(expected_generation, 'expected_generation', 1)
     revision = _mapping_int(expected_draft_revision, 'expected_draft_revision', 1)
@@ -2103,11 +2104,25 @@ def mapping_draft_publish(definition_id: str, expected_generation: int | str,
     reconciliation_revision = _mapping_int(expected_reconciliation_revision, 'expected_reconciliation_revision')
     if not isinstance(warning_fingerprint, str) or len(warning_fingerprint) > 140:
         frappe.throw(frappe._('MAPPING_INPUT_INVALID: Invalid warning fingerprint.'))
+    if delete_after not in (True, False, 0, 1, '0', '1', 'true', 'false'):
+        frappe.throw(frappe._('MAPPING_INPUT_INVALID: Invalid delete_after.'))
     from hero_integration.services.frappe_mapping_draft_storage import FrappeMappingDraftStorage
     with _personal_draft_errors():
-        return FrappeMappingDraftStorage().publish(definition_id, frappe.session.user, generation, revision, active,
+        storage = FrappeMappingDraftStorage()
+        result = storage.publish(definition_id, frappe.session.user, generation, revision, active,
             reconciliation_revision, confirmed=confirmed in (True, 1, '1', 'true', 'True'),
             warning_fingerprint=warning_fingerprint)
+        if delete_after in (True, 1, '1', 'true'):
+            from types import SimpleNamespace
+            from hero_integration.services.mapping_draft_exchange import _delete_replaced_draft
+            from hero_integration.services.mapping_draft_service import draft_key
+            key = draft_key(frappe.local.site, definition_id, frappe.session.user)
+            doc = frappe.get_doc('HERO Mapping Draft', key, for_update=True)
+            if doc.state == 'OPEN':
+                storage.service().discard(definition_id, frappe.session.user, int(doc.generation),
+                                          int(doc.content_revision), confirmed=True)
+            _delete_replaced_draft(SimpleNamespace(key=key, owner=frappe.session.user, site_scope=frappe.local.site))
+        return result
 
 
 def _reconciliation_request(definition_id, expected_generation, expected_draft_revision,
