@@ -282,3 +282,11 @@ Compatible schema rebinding validates existing `SEND_TO_HERO` and legacy field
 writebacks using their respective validators, including their source fields,
 mutation documents and contracts. Those profiles do not need conversion to a
 new mapping format merely to accept an equivalent schema snapshot.
+
+Employee readbacks use the complete approved unpaged partner list once, with the
+same 10,000-record and identity checks as employee intake. File readbacks unwrap
+the selected connection edge nodes while retaining saved-query validation.
+The deployment migration removes the two global uniqueness constraints from
+legacy User person-ID observation fields; source-bound Integration Links retain
+their unique source keys. A product rollback also discards both master caches so
+subsequent records can recreate masters rolled back with the failed record.

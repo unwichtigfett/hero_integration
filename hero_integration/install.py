@@ -18,7 +18,7 @@ HERO_CUSTOM_FIELDS = {
         {"fieldname":"custom_hero_logbook_context", "label":"Source Context", "fieldtype":"Code", "options":"JSON",
          "read_only":1, "no_copy":1, "hidden":1},
     ],
-    # The HERO person behind an ERPNext user: projects, assignments and tasks link it by these IDs.
+    # Observed source IDs; identity is unique only within source-bound Integration Links.
     "User": [
         {
             "fieldname": "custom_hero_partner_id",
@@ -27,7 +27,7 @@ HERO_CUSTOM_FIELDS = {
             "insert_after": "username",
             "read_only": 1,
             "no_copy": 1,
-            "unique": 1,
+            "unique": 0,
         },
         {
             "fieldname": "custom_hero_user_id",
@@ -36,7 +36,7 @@ HERO_CUSTOM_FIELDS = {
             "insert_after": "custom_hero_partner_id",
             "read_only": 1,
             "no_copy": 1,
-            "unique": 1,
+            "unique": 0,
             "hidden": 1,
         },
     ],

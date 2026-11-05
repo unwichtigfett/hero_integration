@@ -462,7 +462,7 @@ def sync_products(client=None, *, source_instance: str | None = None, time_budge
                 frappe.db.commit()
             except Exception as error:
                 frappe.db.rollback()
-                masters.seen.clear()  # a rollback may undo masters created in this article
+                masters = _Masters()  # rollback invalidates both master existence and Supplier-name caches
                 result = "failed"
                 frappe.log_error(title="HERO product migration failed",
                                  message=f"HERO article {key} ({row.get('nr')}): {error}")
