@@ -58,6 +58,49 @@ def check_value(value: object) -> object:
     return int(value) if isinstance(value, bool) else value
 
 
+def _same_mapped_value(current, incoming):
+    """Compare native storage representations without treating text as numbers."""
+    from datetime import date, datetime
+    from decimal import Decimal, InvalidOperation
+    from numbers import Number
+
+    current, incoming = check_value(current), check_value(incoming)
+    if isinstance(current, (Number, Decimal)) or isinstance(incoming, (Number, Decimal)):
+        if not (isinstance(current, (Number, Decimal)) and isinstance(incoming, (Number, Decimal))):
+            return False
+        try:
+            left, right = Decimal(str(current)), Decimal(str(incoming))
+            return left.is_finite() and right.is_finite() and left == right
+        except (InvalidOperation, ValueError):
+            return False
+    if field_hashes({'value': current}) == field_hashes({'value': incoming}):
+        return True
+    if isinstance(current, (date, datetime)) or isinstance(incoming, (date, datetime)):
+        try:
+            if isinstance(current, datetime) or isinstance(incoming, datetime):
+                left = current if isinstance(current, datetime) else datetime.fromisoformat(str(current))
+                right = incoming if isinstance(incoming, datetime) else datetime.fromisoformat(str(incoming))
+            else:
+                left = current if isinstance(current, date) else date.fromisoformat(str(current))
+                right = incoming if isinstance(incoming, date) else date.fromisoformat(str(incoming))
+            return left == right
+        except (TypeError, ValueError):
+            return False
+    return False
+
+
+def new_mapped_field_conflicts(doc, values, knownfields) -> set[str]:
+    """New ownership never overwrites a differing occupied native field.
+
+    Existing baseline keys remain the responsibility of the normal three-way
+    comparison. Zero and False are occupied values, not missing defaults.
+    """
+    known = set(knownfields)
+    return {field for field, incoming in values.items() if field not in known
+            and (current := doc.get(field)) is not None and current != ''
+            and not _same_mapped_value(current, incoming)}
+
+
 def encode(hashes: Mapping[str, str]) -> str:
     return json.dumps(dict(sorted(hashes.items())), sort_keys=True, separators=(",", ":"))
 

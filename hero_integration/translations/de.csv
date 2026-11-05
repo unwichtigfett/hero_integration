@@ -3676,3 +3676,4 @@ The imported file content is unavailable and requires review.,Der Inhalt der imp
 The imported file has no verified target baseline and requires review.,Für die importierte Datei fehlt eine bestätigte Zielbasis; sie muss geprüft werden.
 The imported file was changed locally and requires review.,Die importierte Datei wurde lokal geändert und muss geprüft werden.
 A newly mapped file field already contains a local value and requires review.,Ein neu zugeordnetes Dateifeld enthält bereits einen lokalen Wert und muss geprüft werden.
+Newly mapped employee or user fields contain different local values; review before importing.,Neu zugeordnete Mitarbeiter- oder Benutzerfelder enthalten abweichende lokale Werte; bitte vor dem Import prüfen.

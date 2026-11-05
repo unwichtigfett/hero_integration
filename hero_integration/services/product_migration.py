@@ -206,6 +206,11 @@ def upsert(row: dict, link, masters: _Masters, source_instance: str, read=None) 
                    and owned_digest(item, OWNED) != link.target_payload_hash)
         if changed:
             return _conflict(link, source, "The Item was changed in ERPNext; the newer HERO article was not applied.")
+        from hero_integration.services.change_detection import new_mapped_field_conflicts
+        incoming = {key: values[key] for key in owned
+                    if values[key] is not None or key not in REQUIRED_FALLBACKS}
+        if new_mapped_field_conflicts(item, incoming, tuple(baseline_fields) if baseline_fields else OWNED):
+            return _conflict(link, source, "The Item was changed in ERPNext; the newer HERO article was not applied.")
     supplier_baseline = _link_baseline(link).get("supplier")
     if item is not None and not _supplier_unchanged(item, values["supplier"], supplier_baseline):
         return _conflict(link, source, "The Item was changed in ERPNext; the newer HERO article was not applied.")

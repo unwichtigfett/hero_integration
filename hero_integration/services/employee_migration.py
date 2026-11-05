@@ -115,6 +115,13 @@ def _assert_adoptable(doc, values):
         raise EmployeeMigrationBlocked("Existing ERPNext employee or user values differ; review before linking.")
 
 
+def _assert_new_fields(link, doc, values):
+    if link:
+        from hero_integration.services.change_detection import new_mapped_field_conflicts
+        if new_mapped_field_conflicts(doc, values, json.loads(link.target_field_hashes or '{}')):
+            raise EmployeeMigrationBlocked("Newly mapped employee or user fields contain different local values; review before importing.")
+
+
 def _write_link(link, instance, source_type, source_id, doc, values, record, mapping_version):
     previous = json.loads(link.target_field_hashes or "{}") if link else {}
     baseline = _values(doc, set(values) | set(previous))
@@ -190,10 +197,12 @@ def upsert(record, instance, company, languages, read=None):
         if any(row.name != (employee_link.name if employee_link else None) for row in other_employees):
             raise EmployeeMigrationBlocked("The ERPNext employee is already bound to another HERO identity.")
     _assert_unchanged(user_link, user)
+    _assert_new_fields(user_link, user, user_values)
     if not user_link and not new_user:
         _assert_adoptable(user, user_values)
     if employee:
         _assert_unchanged(employee_link, employee)
+        _assert_new_fields(employee_link, employee, employee_values)
         if not employee_link:
             _assert_adoptable(employee, employee_values)
     if employee and mapped.get(("Employee", "employee_name")) and employee.get("middle_name"):

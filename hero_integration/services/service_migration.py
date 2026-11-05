@@ -259,6 +259,10 @@ def upsert(row, detail, read, instance, company, downloader):
     if item is None and frappe.db.exists("Item", code):
         raise ServiceBlocked("Service article number is already used; bind the existing article explicitly.")
     baseline = baseline_check(link, item) if item else {}
+    if item:
+        from hero_integration.services.change_detection import new_mapped_field_conflicts
+        if new_mapped_field_conflicts(item, fields, baseline.get('values', {})):
+            raise ServiceBlocked("The service article or activity type was edited locally; review the conflict.")
     if item and item.name != code:
         raise ServiceBlocked("A changed service article number requires an explicit rename.")
     # Every check uses the saved baseline even when the upstream source hash is unchanged.

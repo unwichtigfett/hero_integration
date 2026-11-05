@@ -206,6 +206,43 @@ class TestServiceUpsert(unittest.TestCase):
             sm.upsert(self.row,self.detail,self.read,'source-a','Company',None)
         self.tax.assert_not_called();self.write.assert_not_called()
 
+    def mapping_extension(self, local, incoming, field='description'):
+        code, fields, barcode, selling = sm.service_values(self.row, self.read)
+        fields[field] = incoming
+        baseline = {name: value for name, value in fields.items() if name != field}
+        item = _Document(doctype='Item', name=code, **baseline, **{field: local})
+        link = SimpleNamespace(target_name=code, target_field_hashes=json.dumps({'values': baseline}),
+            target_payload_hash=sm.products.digest(baseline), source_payload_hash='previous-mapping', sync_status='Synchronized')
+        self.get_link.return_value = link
+        self.fake.get_doc = lambda value, *args, **kwargs: item if value == 'Item' else self.get_doc(value, *args, **kwargs)
+        return item, patch.object(sm, 'service_values', return_value=(code, fields, barcode, selling))
+
+    def test_mapping_extension_blocks_occupied_fields_before_related_writes(self):
+        for field, local, incoming in (('description', 'Local text', 'HERO text'),
+                                       ('custom_hero_service_quantity', 0, 3),
+                                       ('custom_hero_service_is_fixed_net_price', False, True)):
+            with self.subTest(field=field):
+                item, mapped = self.mapping_extension(local, incoming, field)
+                before = dict(item)
+                with mapped, patch.object(sm, 'composition') as composition, \
+                     patch.object(sm.products, 'apply_price') as apply_price, patch.object(sm, 'attach_file') as attachment, \
+                     self.assertRaisesRegex(sm.ServiceBlocked, 'edited locally'):
+                    sm.upsert(self.row, self.detail, self.read, 'source-a', 'Company', None)
+                self.assertEqual(item, before)
+                self.assertEqual(self.created, [])
+                self.tax.assert_not_called(); self.price.assert_not_called(); self.write.assert_not_called()
+                composition.assert_not_called(); apply_price.assert_not_called(); attachment.assert_not_called()
+
+    def test_mapping_extension_allows_empty_or_equal_native_values(self):
+        for local, incoming in ((None, 'HERO text'), ('', 'HERO text'), ('Same text', 'Same text'), (False, 0)):
+            with self.subTest(local=local):
+                item, mapped = self.mapping_extension(local, incoming)
+                with mapped:
+                    result = sm.upsert(self.row, self.detail, self.read, 'source-a', 'Company', None)
+                self.assertEqual(result, 'updated')
+                self.assertEqual(item.description, incoming)
+                self.assertIn('description', self.write.call_args.args[6])
+
     def test_zero_or_ambiguous_tax_resolution_blocks_before_item_creation(self):
         self.tax.side_effect=sm.ServiceBlocked('Tax review')
         with self.assertRaises(sm.ServiceBlocked):
