@@ -16,6 +16,8 @@ before_uninstall = "hero_integration.services.desk_theme.remove_navy_theme"
 
 app_include_css = ["/assets/hero_integration/css/navy_theme.css"]
 app_include_js = ["/assets/hero_integration/js/navy_theme.js"]
+# Includes standalone CRM/Helpdesk templates as well as Desk and portal pages.
+after_request = ["hero_integration.services.site_indicator.after_request"]
 override_whitelisted_methods = {
     "frappe.core.doctype.user.user.switch_theme": "hero_integration.services.desk_theme.switch_theme",
 }
