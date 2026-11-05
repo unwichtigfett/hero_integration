@@ -556,32 +556,35 @@ def sync_page_state() -> dict[str, object]:
     from hero_integration.services.polling import runtime_plan
     from hero_integration.services.sync_page import ACTIVE_STATES, AREAS
 
-    settings = frappe.get_single("HERO Integration Settings")
-    instance = _configured_source_instance()
-    plan = runtime_plan(settings)
-    active = frappe.get_all("HERO Integration Run", filters={"state": ["in", list(ACTIVE_STATES)]},
-                            fields=["name", "action", "state"], order_by="creation asc", limit_page_length=20)
-    services = _sync_area_read_services(instance)
-    return {
-        "source_instance": instance,
-        "active_run": active[0] if active else None,
-        "areas": [_sync_area_state(item, instance, services.get(item.operation) or [], active, plan) for item in AREAS],
-        "file_areas": _file_areas(active, instance),
-        "service": {
-            "mode": plan["mode"], "allowed": plan["mode"] != "OFF", "paused": plan["paused"],
-            "running": plan["mode"] != "OFF" and not plan["paused"] and any(plan["areas"].values()),
-            "interval_minutes": plan["interval_minutes"], "timezone": plan["timezone"],
-            "execution_window": plan["execution_window"], "page_size": plan["page_size"],
-            "pagination_strategy": plan["pagination_strategy"], "retry_limit": plan["retry_limit"],
-            "retry_backoff_seconds": plan["retry_backoff_seconds"], "timeout_seconds": plan["timeout_seconds"],
-            "rate_limit": plan["rate_limit"], "notifications": plan["notifications"],
-            "polled_sources": plan["sources"], "unsupported": plan["unsupported_sources"],
-            "sync_status": getattr(settings, "sync_status", "") or "Not started",
-            "sync_error": getattr(settings, "sync_error", "") or "",
-            "last_successful_sync": getattr(settings, "last_successful_sync", None),
-        },
-        "metrics": _sync_metrics(instance),
-    }
+    from hero_integration.services.read_contract import reuse_page_reads
+
+    with reuse_page_reads():
+        settings = frappe.get_single("HERO Integration Settings")
+        instance = _configured_source_instance()
+        plan = runtime_plan(settings)
+        active = frappe.get_all("HERO Integration Run", filters={"state": ["in", list(ACTIVE_STATES)]},
+                                fields=["name", "action", "state"], order_by="creation asc", limit_page_length=20)
+        services = _sync_area_read_services(instance)
+        return {
+            "source_instance": instance,
+            "active_run": active[0] if active else None,
+            "areas": [_sync_area_state(item, instance, services.get(item.operation) or [], active, plan) for item in AREAS],
+            "file_areas": _file_areas(active, instance),
+            "service": {
+                "mode": plan["mode"], "allowed": plan["mode"] != "OFF", "paused": plan["paused"],
+                "running": plan["mode"] != "OFF" and not plan["paused"] and any(plan["areas"].values()),
+                "interval_minutes": plan["interval_minutes"], "timezone": plan["timezone"],
+                "execution_window": plan["execution_window"], "page_size": plan["page_size"],
+                "pagination_strategy": plan["pagination_strategy"], "retry_limit": plan["retry_limit"],
+                "retry_backoff_seconds": plan["retry_backoff_seconds"], "timeout_seconds": plan["timeout_seconds"],
+                "rate_limit": plan["rate_limit"], "notifications": plan["notifications"],
+                "polled_sources": plan["sources"], "unsupported": plan["unsupported_sources"],
+                "sync_status": getattr(settings, "sync_status", "") or "Not started",
+                "sync_error": getattr(settings, "sync_error", "") or "",
+                "last_successful_sync": getattr(settings, "last_successful_sync", None),
+            },
+            "metrics": _sync_metrics(instance),
+        }
 
 
 @frappe.whitelist(methods=["POST"])
@@ -766,7 +769,12 @@ def _sync_area_read_services(instance: str) -> dict[str, list[dict[str, str]]]:
 
     Only services whose stored read contract is still valid are returned.
     """
-    from hero_integration.services.read_contract import ReadContractError, from_documents
+    from hero_integration.services.read_contract import ReadContractError, from_documents, page_read_cache
+
+    cache = page_read_cache()
+    key = ("services", instance)
+    if cache is not None and key in cache:
+        return cache[key]
 
     candidates: dict[str, list[tuple[object, object, dict[str, str]]]] = {}
     rows = frappe.get_all("HERO GraphQL Service", filters={"execution_status": "Approved", "status": "Validated"},
@@ -798,6 +806,8 @@ def _sync_area_read_services(instance: str) -> dict[str, list[dict[str, str]]]:
                 continue
             result.setdefault(operation, []).append(item)
             break  # the first valid one is used; the rest need no analysis
+    if cache is not None:
+        cache[key] = result
     return result
 
 
