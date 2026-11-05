@@ -120,6 +120,8 @@ def _export_settings(settings):
     meta = getattr(settings, 'meta', None)
     result = {}
     for key in SETTINGS_KEYS:
+        if key == 'hero_source_instance':
+            continue  # Source identity belongs to the receiving site.
         field = meta.get_field(key) if meta else None
         if field and field.fieldtype == 'Password':
             continue
@@ -144,11 +146,7 @@ def _package_snapshot_names(fingerprint, binding):
             pluck='name', order_by='creation desc', limit_page_length=1)
         if names:
             return names, ('Unchanged' if endpoint == binding['endpoint_fingerprint'] else 'Pending source verification')
-    # A real endpoint binding cannot be replaced by offline package import.
-    foreign = frappe.get_all('HERO GraphQL Schema Snapshot', filters={'source_instance': binding['source_instance'],
-        'schema_fingerprint': fingerprint, 'analysis_status': 'Validated'}, pluck='name', limit_page_length=1)
-    if foreign:
-        raise ConfigExchangeError('Approved schema snapshot does not match the current HERO endpoint and source instance.')
+    # Unrelated historical endpoint captures do not constrain portable imports.
     return [], 'New'
 
 
@@ -188,12 +186,8 @@ def _settings_changes(payload: dict) -> dict:
     meta = getattr(settings, 'meta', None)
     if meta and any(meta.get_field(key) and meta.get_field(key).fieldtype == 'Password' for key in wanted):
         raise ConfigExchangeError('Password fields cannot be transferred in configuration packages.')
-    requested_source = wanted.get('hero_source_instance')
-    current_source = settings.get('hero_source_instance') or 'default'
-    if requested_source not in (None, '', current_source):
-        raise ConfigExchangeError('Configuration import cannot change the locally confirmed HERO source.')
     return {key: value for key, value in wanted.items()
-            if key in SETTINGS_KEYS and settings.get(key) != value
+            if key in SETTINGS_KEYS and key != 'hero_source_instance' and settings.get(key) != value
             and not (settings.get(key) in (None, "", 0) and value in (None, "", 0))}
 
 
@@ -452,8 +446,6 @@ def _replacement_rules(payload):
 
 def _source_snapshot(snapshot_name, payload, source_instance, *, create=False):
     """A matching fingerprint in another HERO source is never reusable."""
-    if payload.get("settings", {}).get("hero_source_instance", source_instance) != source_instance:
-        raise ConfigExchangeError("Replacement cannot change the configured HERO source instance.")
     if snapshot_name:
         snapshot = frappe.get_doc("HERO GraphQL Schema Snapshot", snapshot_name)
         if snapshot.source_instance != source_instance or snapshot.analysis_status != "Validated":
@@ -463,6 +455,13 @@ def _source_snapshot(snapshot_name, payload, source_instance, *, create=False):
         if snapshot.endpoint_fingerprint not in {endpoint, offline_endpoint_fingerprint(source_instance)}:
             raise ConfigExchangeError('Approved schema snapshot does not match the current HERO endpoint and source instance.')
         return snapshot, ("selected" if snapshot.endpoint_fingerprint == endpoint else 'Pending source verification')
+    # Imported schema identity is provenance. Prefer the verified local endpoint
+    # schema; the replacement validators check every selected rule and query.
+    binding = _snapshot_binding(source_instance)
+    current = frappe.get_all("HERO GraphQL Schema Snapshot", filters={**binding, "analysis_status": "Validated"},
+                             pluck="name", order_by="creation desc", limit_page_length=1)
+    if current:
+        return _source_snapshot(current[0], payload, source_instance)
     packaged = payload["schema_snapshot"]
     names, state = _package_snapshot_names(packaged['schema_fingerprint'], _snapshot_binding(source_instance))
     if names:
@@ -476,9 +475,11 @@ def _source_snapshot(snapshot_name, payload, source_instance, *, create=False):
         snapshot = frappe.get_doc("HERO GraphQL Schema Snapshot", name)
         if snapshot.source_instance != source_instance:
             raise ConfigExchangeError("Created schema belongs to another HERO source.")
-        if snapshot.endpoint_fingerprint != _snapshot_binding(source_instance)['endpoint_fingerprint']:
+        from hero_integration.services.schema_refresh import offline_endpoint_fingerprint
+        endpoint = _snapshot_binding(source_instance)['endpoint_fingerprint']
+        if snapshot.endpoint_fingerprint not in {endpoint, offline_endpoint_fingerprint(source_instance)}:
             raise ConfigExchangeError('Approved schema snapshot does not match the current HERO endpoint and source instance.')
-        return snapshot, "Created"
+        return snapshot, ('Created' if snapshot.endpoint_fingerprint == endpoint else 'Pending source verification')
     return SimpleNamespace(name="package-preview", source_instance=source_instance, analysis_status="Validated",
         schema_fingerprint=packaged["schema_fingerprint"], snapshot_json=json.dumps(packaged["schema"])), "New"
 
@@ -894,6 +895,8 @@ def _replace_config(snapshot_name, payload, source_instance, *, before_mapping_w
         replacement = _retire_replaced(source_instance, operations, kept, set(created.values()))
         _verify_replacement_readers(snapshot, created)
         mutation_payload = _remap_mutation_rules(payload, rules, selected_mappings)
+        mutation_payload['schema_snapshot'] = {'schema_fingerprint': snapshot.schema_fingerprint,
+            'schema': json.loads(snapshot.snapshot_json)}
         contract_result = {}
         if payload.get('mutation_contracts'):
             from hero_integration.services.config_mutation_contracts import apply as import_contracts
@@ -902,9 +905,22 @@ def _replace_config(snapshot_name, payload, source_instance, *, before_mapping_w
                     confirmed=True, mutation_mappings=mutation_payload.get('mutation_mappings', []))
             except ValueError as error:
                 raise ConfigExchangeError.from_error(error) from error
-        from hero_integration.services.config_mutation_drafts import save as save_mutation_drafts
+        from hero_integration.services.config_mutation_drafts import portable, save as save_mutation_drafts
         try:
-            mutation_result = save_mutation_drafts(mutation_payload, source_instance, snapshot.name)
+            if mutation_payload.get('mutation_mappings'):
+                from hero_integration.services.simple_mapping_exchange import _target_mutations
+                def preserve_active_content(parent, item):
+                    # Keep existing active semantics; imported changes remain
+                    # personal drafts. Reuse the exact Query-rule lineage proof.
+                    old_payload = {**payload, 'mutation_mappings': [
+                        {**item, 'content': json.loads(parent.mapping_json)}]}
+                    return _remap_mutation_rules(old_payload, rules, selected_mappings)['mutation_mappings'][0]['content']
+                body = json.dumps(portable(mutation_payload), ensure_ascii=False)
+                with _target_mutations(body, snapshot, 'FRAPPE_TO_MUTATION', persist=True,
+                                       existing_content=preserve_active_content):
+                    mutation_result = save_mutation_drafts(mutation_payload, source_instance, snapshot.name)
+            else:
+                mutation_result = save_mutation_drafts(mutation_payload, source_instance, snapshot.name)
         except ValueError as error:
             raise ConfigExchangeError.from_error(error) from error
         changes = _settings_changes(payload)

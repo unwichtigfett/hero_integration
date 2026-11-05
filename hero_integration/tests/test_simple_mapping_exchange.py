@@ -24,7 +24,7 @@ class TestSimpleMappingExchange(unittest.TestCase):
             content_revision=1, base_active_revision=0, reconciliation_revision=0)
         self.storage.publish.return_value = {'name': 'ACTIVE', 'revision': 1, 'unchanged': False}
         from contextlib import nullcontext
-        patches = [patch('hero_integration.services.mapping_snapshot_rebase.preview_target', side_effect=lambda *a:nullcontext()),
+        patches = [patch.object(simple, '_target_mutations', side_effect=lambda *a, **kw:nullcontext()),
             patch('hero_integration.services.mapping_snapshot_rebase.prepare', return_value={'needs_rebase':False}),
             patch('hero_integration.services.mapping_import_context.resolve', side_effect=lambda name,source,payload=None: {'snapshot_name':name,'payload':payload,'validated_against_snapshot':name}),patch.object(simple, 'frappe', self.fake),
             patch.object(simple, '_context', return_value=(SimpleNamespace(source_instance='configured'), {})),
@@ -179,3 +179,89 @@ class TestSimpleMappingExchangeAPI(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestMutationTargetBinding(unittest.TestCase):
+    def setUp(self):
+        import json
+        self.json = json
+        self.events = []
+        self.rows = {'mapping': {'name': 'mapping', 'source_instance': 'source', 'schema_snapshot': 'old',
+            'direction': simple.DIRECTION, 'operation_kind': 'MUTATION', 'operation_name': 'update_task',
+            'mapping_json': '{}', 'status': 'Active', 'mapping_revision': 4},
+            'unselected': {'name': 'unselected', 'schema_snapshot': 'old'}}
+        self.before = deepcopy(self.rows)
+        outer = self
+        class Parent(SimpleNamespace):
+            def check_permission(self, permission):
+                outer.events.append(('permission', permission))
+            def save(self):
+                outer.events.append(('save', self.schema_snapshot, self.status))
+                if outer.reject_activation and self.status == 'Active':
+                    raise ValueError('target schema field is unavailable')
+                self.mapping_revision += 1
+                outer.rows[self.name] = deepcopy(vars(self))
+        self.reject_activation = False
+        self.points = {}
+        def savepoint(name): self.points[name] = deepcopy(self.rows)
+        def rollback(*, save_point): self.rows = deepcopy(self.points[save_point])
+        self.fake = SimpleNamespace(only_for=Mock(), clear_document_cache=Mock(),
+            db=SimpleNamespace(savepoint=savepoint, rollback=rollback), get_all=Mock(return_value=['mapping']),
+            get_doc=lambda _dt, name, **kw: Parent(**deepcopy(self.rows[name])))
+        self.snapshot = SimpleNamespace(name='current', source_instance='source')
+        self.package = {'schema': {}, 'mappings': [{'definition_id': 'portable', 'operation_kind': 'MUTATION',
+            'operation_name': 'update_task', 'content': {'read_service': 'foreign-reader'}}]}
+        def bind(package, *args): package['mappings'][0]['content']['read_service'] = 'local-reader'
+        for p in (patch.object(simple, 'frappe', self.fake),
+                  patch.object(simple.exchange, '_parse_portable', return_value=self.package),
+                  patch.object(simple.exchange, '_lock_context'),
+                  patch.object(simple.exchange, '_bind_mapped_update_readbacks', side_effect=bind)):
+            p.start(); self.addCleanup(p.stop)
+
+    def test_preview_revalidates_in_target_and_restores_original_active_definition(self):
+        with simple._target_mutations('file', self.snapshot, simple.DIRECTION):
+            row = self.rows['mapping']
+            self.assertEqual(row['schema_snapshot'], 'current')
+            self.assertEqual(row['status'], 'Active')
+            self.assertEqual(self.json.loads(row['mapping_json'])['read_service'], 'local-reader')
+            self.assertEqual(row['mapping_revision'], 6)
+        self.assertEqual(self.rows, self.before)
+        self.assertEqual(self.events, [('permission', 'write'), ('save', 'current', 'Draft'), ('save', 'current', 'Active')])
+
+    def test_confirmed_target_binding_keeps_identity_and_unselected_definitions(self):
+        with simple._target_mutations('file', self.snapshot, simple.DIRECTION, persist=True):
+            pass
+        self.assertEqual(self.rows['mapping']['name'], 'mapping')
+        self.assertEqual(self.rows['mapping']['schema_snapshot'], 'current')
+        self.assertEqual(self.rows['unselected'], self.before['unselected'])
+
+    def test_invalid_target_or_failed_following_preview_restores_old_definition(self):
+        self.reject_activation = True
+        with self.assertRaisesRegex(ValueError, 'unavailable'):
+            with simple._target_mutations('file', self.snapshot, simple.DIRECTION):
+                self.fail('must not expose an invalid target')
+        self.assertEqual(self.rows, self.before)
+        self.reject_activation = False
+        with self.assertRaisesRegex(ValueError, 'publication blocker'):
+            with simple._target_mutations('file', self.snapshot, simple.DIRECTION):
+                raise ValueError('publication blocker')
+        self.assertEqual(self.rows, self.before)
+
+    def test_foreign_local_source_is_never_overwritten_by_file(self):
+        self.rows['mapping']['source_instance'] = 'another-source'
+        with self.assertRaisesRegex(MappingDraftError, 'different target context'):
+            with simple._target_mutations('file', self.snapshot, simple.DIRECTION):
+                pass
+        self.assertEqual(self.events, [])
+
+    def test_configuration_rebinding_preserves_active_content_for_separate_draft_import(self):
+        self.rows['mapping']['mapping_json'] = self.json.dumps({'field': 'approved-old-field'})
+        def keep_existing(parent, item):
+            self.assertEqual(item['content']['read_service'], 'foreign-reader')
+            return self.json.loads(parent.mapping_json)
+        with simple._target_mutations('file', self.snapshot, simple.DIRECTION, persist=True,
+                                      existing_content=keep_existing):
+            current = self.json.loads(self.rows['mapping']['mapping_json'])
+            self.assertEqual(current['field'], 'approved-old-field')
+            self.assertEqual(current['read_service'], 'local-reader')
+        self.assertNotIn('field', self.before['mapping']['mapping_json'])

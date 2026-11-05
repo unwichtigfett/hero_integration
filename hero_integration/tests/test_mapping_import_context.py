@@ -47,40 +47,37 @@ class TestCompatibleImportContext(TestCase):
         return json.dumps({'format_version':'hero-personal-mapping-portable-v2','direction':'FRAPPE_TO_MUTATION',
                            'schema_fingerprint':fp,'mappings':[{'content':profile()}]})
 
-    def test_unused_extensions_load_on_approved_snapshot_with_existing_or_new_file_fingerprint(self):
-        for fp in ('old-fingerprint','new-fingerprint'):
-            resolved=context.resolve('new','source',self.payload(fp))
-            self.assertEqual(resolved['snapshot_name'],'old')
-            self.assertEqual(resolved['validated_against_snapshot'],'new')
-            self.assertEqual(json.loads(resolved['payload'])['schema_fingerprint'],'old-fingerprint')
-            self.assertTrue(resolved['dependency_fingerprint'])
+    def test_files_from_unknown_snapshots_and_endpoints_use_current_target(self):
+        self.docs['new']['endpoint_fingerprint'] = 'another-customer'
+        for fp in ('old-fingerprint', 'new-fingerprint', 'unknown-exporting-snapshot'):
+            resolved = context.resolve('new', 'source', self.payload(fp))
+            self.assertEqual(resolved['snapshot_name'], 'new')
+            self.assertEqual(json.loads(resolved['payload'])['schema_fingerprint'], 'new-fingerprint')
+            self.assertEqual(resolved['validated_against_snapshot'], 'new')
+        self.fake.get_all.assert_not_called()
 
-    def test_changed_used_input_blocks_before_import(self):
-        self.schemas['new']=introspection_from_schema(build_schema('''
-            type Task { id: Int title: String }
-            input TaskInput { id: Int title: Int }
-            type Query { tasks: [Task] }
-            type Mutation { update_task(task: TaskInput): Task }
-        '''))['__schema']
-        with self.assertRaises(MappingSchemaCompatibilityError):context.resolve('new','source',self.payload())
+    def test_incoming_query_is_bound_to_current_schema_for_owning_validation(self):
+        self.schemas['new'] = schema('automation: Boolean', title='Int')
+        package = {'format_version': 'hero-integration-mappings-v1', 'schema_fingerprint': 'foreign',
+            'mapping_package': {'schema_fingerprint': 'foreign'},
+            'read_services': [{'query': 'query{tasks{id title}}'}]}
+        resolved = context.resolve('new', 'source', json.dumps(package))
+        payload = json.loads(resolved['payload'])
+        self.assertEqual(resolved['snapshot_name'], 'new')
+        self.assertEqual(payload['schema_fingerprint'], 'new-fingerprint')
+        self.assertEqual(payload['mapping_package']['schema_fingerprint'], 'new-fingerprint')
+        self.assertEqual(payload['read_services'], package['read_services'])
 
-    def test_incoming_query_has_its_own_dependency_check(self):
-        self.schemas['new']=schema('automation: Boolean',title='Int')
-        package={'format_version':'hero-integration-mappings-v1','schema_fingerprint':'old-fingerprint',
-            'mapping_package':{'schema_fingerprint':'old-fingerprint'},
-            'read_services':[{'query':'query{tasks{id title}}'}]}
-        with self.assertRaises(MappingSchemaCompatibilityError):context.resolve('new','source',json.dumps(package))
+    def test_schema_dependency_changes_still_block_export_of_old_context(self):
+        self.schemas['new'] = schema(title='Int')
+        with patch.object(context, 'check_compatibility', side_effect=MappingSchemaCompatibilityError(['Task.title'])):
+            with self.assertRaises(MappingSchemaCompatibilityError):
+                context.resolve('new', 'source')
 
-    def test_foreign_endpoint_and_unknown_file_schema_are_rejected(self):
-        with self.assertRaises(SnapshotRebaseError):context.resolve('new','source',self.payload('unknown'))
-        self.docs['new']['endpoint_fingerprint']='foreign'
-        with self.assertRaises(SnapshotRebaseError):context.resolve('new','source',self.payload())
-
-    def test_no_active_mapping_or_same_snapshot_does_not_require_compatibility_rebinding(self):
-        value=self.payload()
-        resolved=context.resolve('old','source',value)
-        self.assertEqual(resolved['payload'],value)
-        self.assertEqual(resolved['snapshot_name'],'old')
+    def test_no_active_mapping_or_same_snapshot_import_still_binds_file_to_target(self):
+        resolved = context.resolve('old', 'source', self.payload('foreign'))
+        self.assertEqual(json.loads(resolved['payload'])['schema_fingerprint'], 'old-fingerprint')
+        self.assertEqual(resolved['snapshot_name'], 'old')
 
     def test_export_resolves_the_same_approved_context(self):
         self.assertEqual(context.resolve('new','source')['snapshot_name'],'old')

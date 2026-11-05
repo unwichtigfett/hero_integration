@@ -199,7 +199,7 @@ class TestExplicitReplacement(unittest.TestCase):
         with patch.object(cx, "frappe", SimpleNamespace(get_doc=lambda *a: foreign)):
             with self.assertRaisesRegex(cx.ConfigExchangeError, "another"):
                 cx._source_snapshot("snapshot", self.replacement(), "source-a")
-            with self.assertRaisesRegex(cx.ConfigExchangeError, "cannot change"):
+            with self.assertRaisesRegex(cx.ConfigExchangeError, "another"):
                 cx._source_snapshot("snapshot", self.replacement(settings={"hero_source_instance": "source-b"}), "source-a")
 
     def test_missing_native_task_authority_blocks_before_schema_or_reader_writes(self):
@@ -366,3 +366,24 @@ class TestReplacementFinalCheck(unittest.TestCase):
                 patch("hero_integration.services.read_contract.from_documents", return_value=_Record(target_operation="HeroProducts")):
             with self.assertRaisesRegex(cx.ConfigExchangeError, "another mapping area"):
                 cx._verify_replacement_readers(snapshot, {"HeroCustomers": "reader"})
+
+
+class TestPortableTargetConfiguration(unittest.TestCase):
+    def test_current_local_schema_wins_over_foreign_packaged_fingerprint(self):
+        binding = {'source_instance': 'local-source', 'endpoint_fingerprint': 'local-endpoint'}
+        local = SimpleNamespace(name='current', source_instance='local-source', endpoint_fingerprint='local-endpoint',
+            analysis_status='Validated', schema_fingerprint='current-schema')
+        fake = SimpleNamespace(get_all=lambda *a, **kw: ['current'], get_doc=lambda *a: local)
+        with patch.object(cx, 'frappe', fake), patch.object(cx, '_snapshot_binding', return_value=binding):
+            result, state = cx._source_snapshot(None, {'settings': {'hero_source_instance': 'foreign-source'},
+                'schema_snapshot': {'schema_fingerprint': 'old-foreign-schema'}}, 'local-source')
+        self.assertIs(result, local)
+        self.assertEqual(state, 'selected')
+
+    def test_legacy_source_setting_is_ignored_and_never_exported(self):
+        settings = {'hero_source_instance': 'local-source', 'timeout_seconds': 30}
+        fake = SimpleNamespace(get_single=lambda *a: settings)
+        with patch.object(cx, 'frappe', fake):
+            self.assertEqual(cx._settings_changes({'settings': {'hero_source_instance': 'foreign', 'timeout_seconds': 45}}),
+                {'timeout_seconds': 45})
+        self.assertNotIn('hero_source_instance', cx._export_settings(settings))
