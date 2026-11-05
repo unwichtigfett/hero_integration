@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import mimetypes
 import os
 import re
 import shutil
@@ -267,9 +268,24 @@ def _attachment(target: tuple, folder: str) -> dict:
     return {"attached_to_doctype": doctype, "attached_to_name": name, "folder": folder} if doctype else {}
 
 
-def mapped_values(read, row: dict) -> dict:
+def _mapped_source_values(read, row: dict) -> dict:
     values = direct_runtime.record_values(read.plan, row, "File")
     values["file_name"] = values.get("file_name") or safe_name("")
+    return values
+
+
+def _native_file_type(filename):
+    # Same native coercion as Frappe File.set_file_type; MIME strings are not
+    # the extension labels used by File.file_type and its image filters.
+    mime = mimetypes.guess_type(filename)[0]
+    extension = mimetypes.guess_extension(mime) if mime else None
+    return extension.lstrip('.').upper() if extension else None
+
+
+def mapped_values(read, row: dict) -> dict:
+    values = _mapped_source_values(read, row)
+    if 'file_type' in values and (native := _native_file_type(values['file_name'])):
+        values['file_type'] = native
     return values
 
 
@@ -309,6 +325,89 @@ def _target_hash(name, fields, *, document=None):
 def _target_baseline(name, fields):
     return json.dumps({**json.loads(field_hashes(fields)), 'version': 2,
                        'mapped_fields': sorted(fields), 'target': _target_hash(name, fields)})
+
+
+def _legacy_fields_digest(raw):
+    try:
+        data = json.loads(raw or '{}')
+    except (ValueError, TypeError):
+        return None
+    if (not isinstance(data, dict) or data.get('version') not in (None, 1)
+            or set(data) - {'fields', 'version'} or not isinstance(data.get('fields'), str)
+            or not re.fullmatch('[0-9a-f]{64}', data['fields'])):
+        return None
+    return data['fields']
+
+
+def reconcile_legacy_file(existing, read, row, target, folder, source_instance, *, dry_run=False):
+    """Upgrade only proven unchanged legacy files; never replace their blobs."""
+    if not existing or _legacy_fields_digest(getattr(existing, 'target_field_hashes', None)) is None:
+        return None
+    from hero_integration.services.conflict_report import RECHECK_PREFIX
+    link = frappe.get_doc('HERO Integration Link', existing.name, for_update=not dry_run)
+    digest = _legacy_fields_digest(getattr(link, 'target_field_hashes', None))
+    if digest is None:
+        return None  # Another worker may already have established a v2 baseline.
+    reason = (getattr(link, 'conflict_detail', '') or '').removeprefix(RECHECK_PREFIX)
+    permitted = {'The imported file has no verified target baseline and requires review.',
+                 'The imported file target requires review before synchronization.'}
+    if (link.sync_status not in {'Synchronized', 'Conflict'}
+            or link.sync_status == 'Conflict' and reason not in permitted):
+        return None
+    identity = direct_runtime.identity(read, row)
+    if (link.source_system != 'HERO' or link.source_type != SOURCE_TYPE or link.source_instance != source_instance
+            or str(link.source_id) != identity or link.target_doctype != 'File' or link.target_name != existing.target_name):
+        raise FileConflict('The imported file target requires review before synchronization.')
+    source_values = _mapped_source_values(read, row)
+    if link.source_payload_hash != source_hash(row) or digest != json.loads(field_hashes(source_values))['fields']:
+        raise FileConflict('The legacy file source or mapping changed; review is required before updating.')
+    document = frappe.get_doc('File', link.target_name, for_update=not dry_run)
+    bindings = frappe.get_all('HERO Integration Link', filters={'target_doctype': 'File', 'target_name': link.target_name},
+                             fields=['name'], limit_page_length=2)
+    if len(bindings) != 1 or bindings[0].name != existing.name:
+        raise FileConflict('The imported file target requires review before synchronization.')
+    if (not getattr(document, 'is_private', 0) or
+            not (document.file_url or '').startswith('/private/files/hero-' + identity + '-')):
+        raise FileConflict('The imported file target requires review before synchronization.')
+    if (document.folder != folder or (document.attached_to_doctype or None) != (target[0] or None)
+            or (document.attached_to_name or None) != (target[1] or None)
+            or getattr(document, 'attached_to_field', None)):
+        raise FileConflict('The legacy file attachment or folder requires review before establishing a baseline.')
+    fields = mapped_values(read, row)
+    repairs = {}
+    for name, expected in fields.items():
+        current = getattr(document, name, None)
+        if value_hash(current) == value_hash(expected):
+            continue
+        if name == 'file_type' and expected == _native_file_type(document.file_name) and value_hash(current) == value_hash(source_values[name]):
+            repairs[name] = expected  # Repair only the old importer's proven MIME value.
+            continue
+        raise FileConflict('The imported file was changed locally and requires review.')
+    current = _target_hash(link.target_name, fields, document=document)
+    if (current['_blob_md5'] != link.target_payload_hash or document.content_hash != link.target_payload_hash
+            or document.file_size != row.get('size')):
+        raise FileConflict('The imported file was changed locally and requires review.')
+    created = (row.get('created') or '').replace('T', ' ')[:19]
+    if created and value_hash(document.creation) != value_hash(created):
+        raise FileConflict('The imported file was changed locally and requires review.')
+    if dry_run:
+        return 'would_update'
+    try:
+        if repairs:
+            frappe.db.set_value('File', link.target_name, repairs, update_modified=False)
+            for name, value in repairs.items():
+                setattr(document, name, value)
+        baseline = {**json.loads(field_hashes(fields)), 'version': 2, 'mapped_fields': sorted(fields),
+                    'target': _target_hash(link.target_name, fields, document=document),
+                    'legacy': {'fields': digest, 'mapping_version': getattr(link, 'mapping_version', '')}}
+        frappe.db.set_value('HERO Integration Link', existing.name, {'target_field_hashes': json.dumps(baseline),
+            'mapping_version': read.mapping_version, 'sync_status': 'Synchronized', 'conflict_detail': '',
+            'last_synced_on': frappe.utils.now_datetime()})
+        frappe.db.commit()
+    except Exception:
+        frappe.db.rollback()
+        raise
+    return 'updated' if repairs else 'unchanged'
 
 
 def _assert_target_baseline(existing, fields, *, lock=False):
@@ -500,7 +599,9 @@ def transfer(phase: str, *, source_instance: str | None = None, client=None, dow
     known = _known_files(source_instance)
     if not dry_run:
         allow_unlimited_attachments()
-    folders = {} if dry_run else {
+    folders = {
+        True: "/".join(("Home", ROOT_FOLDER, PHASE_FOLDER[phase])),
+        False: "/".join(("Home", ROOT_FOLDER, PHASE_FOLDER[phase], UNASSIGNED_FOLDER))} if dry_run else {
         True: _folder(ROOT_FOLDER, PHASE_FOLDER[phase]), False: _folder(ROOT_FOLDER, PHASE_FOLDER[phase], UNASSIGNED_FOLDER)}
     if not dry_run:
         # Folder setup belongs to the transfer, not the first file's transaction.
@@ -545,10 +646,21 @@ def transfer(phase: str, *, source_instance: str | None = None, client=None, dow
             target = resolve_target(detail, projects, customers)
             fields = mapped_values(read, row)
             try:
+                reconciled = reconcile_legacy_file(link, read, row, target, folders[bool(target[0])], source_instance, dry_run=dry_run)
+                if reconciled:
+                    bump(reconciled)
+                    if not dry_run:
+                        bump('baselines_verified')
+                    continue
                 _assert_target_baseline(link, fields, lock=not dry_run and unchanged)
             except FileConflict as error:
                 _record_conflict(link, error, dry_run=dry_run)
                 bump('conflict')
+                continue
+            except Exception as error:
+                frappe.db.rollback()
+                bump('failed')
+                frappe.log_error(title="HERO file transfer failed", message=f"HERO file {row.get('id')}: {error}")
                 continue
             if unchanged:
                 try:

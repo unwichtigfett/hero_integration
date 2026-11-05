@@ -3678,3 +3678,5 @@ The imported file was changed locally and requires review.,Die importierte Datei
 A newly mapped file field already contains a local value and requires review.,Ein neu zugeordnetes Dateifeld enthält bereits einen lokalen Wert und muss geprüft werden.
 Newly mapped employee or user fields contain different local values; review before importing.,Neu zugeordnete Mitarbeiter- oder Benutzerfelder enthalten abweichende lokale Werte; bitte vor dem Import prüfen.
 Pending source verification,Verifizierung der Quelle steht aus
+The legacy file source or mapping changed; review is required before updating.,Die Quelle oder das Mapping der älteren Datei hat sich geändert; vor der Aktualisierung ist eine Prüfung erforderlich.
+The legacy file attachment or folder requires review before establishing a baseline.,Die Zuordnung oder der Ordner der älteren Datei muss vor dem Bestätigen des Vergleichsstands geprüft werden.

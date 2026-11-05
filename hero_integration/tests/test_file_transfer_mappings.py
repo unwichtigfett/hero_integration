@@ -58,6 +58,85 @@ def _own_read():
 
 
 class TestFileMappingImport(_FileFixture):
+    def legacy_file(self, *, native_type="PDF", phase="documents"):
+        read = rt.builtin_read(ft.OPERATION[phase])
+        type_rule = replace(read.plan.definitions[1], definition_id="type", source_path="type",
+                            target_field="file_type", purpose="Field")
+        read = replace(read, plan=plan_from_definitions(ft.OPERATION[phase],
+            [*read.plan.definitions, type_rule], target_operation=ft.OPERATION[phase],
+            adapter_options={"version": 2}))
+        row = _row(type="application/pdf")
+        if phase == "images":
+            row.update(filename="Bild.jpg", category="images", type="image/jpeg")
+        self.run_slice([row], read=read, phase=phase, downloader=_Download())
+        name, link = next((name, link) for name, link in self.db.data["HERO Integration Link"].items()
+                          if link["source_id"] == "7")
+        file = self.db.data["File"][link["target_name"]]
+        file["file_type"] = native_type
+        link.update(target_field_hashes=ft.field_hashes(ft._mapped_source_values(read, row)),
+            sync_status="Conflict", conflict_detail="Recheck requested: The imported file has no verified target baseline and requires review.")
+        self.db.commit()
+        return read, row, name, link, file
+
+    def test_legacy_documents_and_images_reconcile_without_download(self):
+        for phase, native in (("documents", "PDF"), ("images", "JPG")):
+            with self.subTest(phase=phase):
+                read, row, name, link, file = self.legacy_file(native_type=native, phase=phase)
+                before = copy.deepcopy(file)
+                state = self.run_slice([row], read=read, phase=phase)
+                self.assertEqual(state["counts"]["baselines_verified"], 1)
+                current = self.db.committed["HERO Integration Link"][name]
+                self.assertEqual(current["sync_status"], "Synchronized")
+                self.assertEqual(json.loads(current["target_field_hashes"])["version"], 2)
+                self.assertEqual(self.db.committed["File"][current["target_name"]], before)
+                self.assertEqual(self.run_slice([row], read=read, phase=phase)["counts"]["unchanged"], 1)
+
+    def test_legacy_mime_repair_preview_and_atomic_commit(self):
+        read, row, name, link, file = self.legacy_file(native_type="application/pdf")
+        before = copy.deepcopy(self.db.committed)
+        state = self.run_slice([row], read=read, dry_run=True)
+        self.assertEqual(state["counts"]["would_update"], 1)
+        self.assertEqual(self.db.data, before)
+        self.db.fail_on = "HERO Integration Link"
+        self.assertEqual(self.run_slice([row], read=read)["counts"]["failed"], 1)
+        self.assertEqual(self.db.data, before)
+        self.db.fail_on = None
+        self.assertEqual(self.run_slice([row], read=read)["counts"]["updated"], 1)
+        self.assertEqual(self.imported()[0]["file_type"], "PDF")
+
+    def test_legacy_local_changes_and_ambiguous_bindings_stay_conflicts(self):
+        read, row, name, link, file = self.legacy_file()
+        baseline = copy.deepcopy(self.db.committed)
+        for change in ("file_name", "folder", "attached_to_name", "creation", "blob", "source", "mapping", "binding", "pending"):
+            with self.subTest(change=change):
+                self.db.data = copy.deepcopy(baseline)
+                link = self.db.data["HERO Integration Link"][name]
+                file = self.db.data["File"][link["target_name"]]
+                incoming = dict(row)
+                with open(ft._disk_path(file["file_url"]), "wb") as stream:
+                    stream.write(b"pdf")
+                if change in {"file_name", "folder", "attached_to_name", "creation"}:
+                    file[change] = "LOCAL"
+                elif change == "blob":
+                    with open(ft._disk_path(file["file_url"]), "wb") as stream:
+                        stream.write(b"local")
+                elif change == "source":
+                    incoming["modified"] = "2"
+                elif change == "mapping":
+                    incoming["filename"] = "Other.pdf"
+                elif change == "binding":
+                    self.db.data["HERO Integration Link"]["foreign"] = dict(link, source_instance="source-b")
+                else:
+                    link["sync_status"] = "Pending Review"
+                self.db.commit()
+                original_file, original_hash = copy.deepcopy(file), link["target_field_hashes"]
+                state = self.run_slice([incoming], read=read)
+                self.assertEqual(state["counts"]["conflict"], 1)
+                self.assertEqual(self.db.committed["File"][link["target_name"]], original_file)
+                self.assertEqual(self.db.committed["HERO Integration Link"][name]["target_field_hashes"], original_hash)
+                if change == "pending":
+                    self.assertEqual(self.db.committed["HERO Integration Link"][name]["sync_status"], "Pending Review")
+
     def test_first_file_conflict_preserves_new_folders_for_following_file(self):
         self.db.data['HERO Integration Link']['L1'].pop('target_field_hashes', None)
         self.db.commit()
