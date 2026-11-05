@@ -9,7 +9,9 @@ app_license = "MIT"
 
 before_install = "hero_integration.install.before_install"
 after_install = "hero_integration.install.after_install"
-after_migrate = "hero_integration.install.after_migrate"
+# Mapping configuration is transferred explicitly through the JSON importer.
+# A code deployment must not reapply archived, site-specific mapping drafts.
+after_migrate = ["hero_integration.install.after_migrate"]
 before_uninstall = "hero_integration.services.desk_theme.remove_navy_theme"
 
 app_include_css = ["/assets/hero_integration/css/navy_theme.css"]
@@ -25,13 +27,15 @@ scheduler_events = {
         "hero_integration.tasks.run_scheduled_sync",
         "hero_integration.tasks.run_scheduled_schema_refresh",
     ]},
+    # New employees get an active ERPNext user with the Employee role, without e-mail.
+    "daily": ["hero_integration.integrations.hero_people.sync_daily"],
 }
 
 # Native Desk extension only.  It asks the server for eligible, linked fields
 # on every form refresh and never observes or sends values by itself.
 doctype_js = {
     "Customer": ["public/js/hero_writeback.js", "public/js/hero_customer_send.js"],
-    "Project": ["public/js/hero_writeback.js", "public/js/hero_project_send.js"],
+    "Project": ["public/js/hero_project_send.js"],
     "Task": ["public/js/hero_task_send.js"],
     "HERO Integration Link": ["public/js/hero_diagnostics.js"],
     "HERO Integration Record": ["public/js/hero_diagnostics.js"],
@@ -69,11 +73,13 @@ doc_events = {
     doctype: {"on_trash": "hero_integration.services.guards.assert_app_document_deletion_allowed"}
     for doctype in _HERO_OWNED_DOCTYPES
 }
+# Integration history must not prevent normal deletion of ERPNext records.
+# ERPNext permissions and references from business documents still apply.
+ignore_links_on_delete = ["HERO Integration Link"]
+
 # Observe only targets identified by Integration Links; no queueing or HERO I/O.
 doc_events["*"] = {
     "on_update": "hero_integration.services.change_detection.observe_frappe_target_change",
-    # A HERO-bound record is deleted only by the purge or a review rejection.
-    "on_trash": "hero_integration.services.guards.protect_hero_bound_target",
 }
 doc_events["ToDo"] = {
     "on_update": "hero_integration.services.task_assignment_state.observe_local_todo",
@@ -88,8 +94,10 @@ for _doctype in ("ERPNext HD Settings", "ERPNext CRM Settings"):
 doc_events["Project"] = {
     "validate": "hero_integration.services.guards.protect_hero_project_ids",
     "before_rename": "hero_integration.services.guards.protect_hero_project_rename",
+    "on_update": "hero_integration.services.project_logbook_writeback.capture_project_activity",
 }
 doc_events["Task"] = {"validate": "hero_integration.services.change_detection.protect_external_task_deadline"}
+doc_events["Version"] = {"before_insert": "hero_integration.services.project_logbook_writeback.mark_imported_project_version"}
 
 # Requires the separately distributed Frappe assignment-intent v2 patch.
 assignment_intent_before = ["hero_integration.services.task_assignment_state.before_native_assignment"]

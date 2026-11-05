@@ -99,6 +99,38 @@ test('invalid language codes do not prevent numeric summaries', () => {
   assert.equal(window.hero_integration_migration.phaseSummary('Running', 1234), 'Running · 1,234 processed');
 });
 
+test('record testing shows the frozen per-area limit separately from received rows', () => {
+  const messages = {'LIMIT_REACHED':'Limit erreicht', 'COMPLETED':'Abgeschlossen',
+    '{0} · up to {1} records per area':'{0} · bis zu {1} Datensätze je Bereich',
+    '{0} · {1}/{2} processed · {3} received':'{0} · {1}/{2} verarbeitet · {3} empfangen'};
+  window.hero_integration_i18n.text = value => messages[value] || value;
+  frappe.boot.lang = 'de';
+  const {testingSummary, testingAreaSummaries} = window.hero_integration_migration;
+  const run = {testing_status:'LIMIT_REACHED', testing_max_actions:99,
+    testing_results_json:JSON.stringify({record_limit:5,areas:{
+      HeroEmployees:{processed:5,received:26,status:'LIMIT_REACHED'},
+      HeroProducts:{processed:3,received:3,status:'COMPLETED'}}})};
+  assert.equal(testingSummary(run), 'Limit erreicht · bis zu 5 Datensätze je Bereich');
+  assert.deepEqual(JSON.parse(JSON.stringify(testingAreaSummaries(run))), [
+    ['HeroEmployees','Limit erreicht · 5/5 verarbeitet · 26 empfangen'],
+    ['HeroProducts','Abgeschlossen · 3/5 verarbeitet · 3 empfangen']]);
+});
+
+test('queued record tests and malformed legacy results remain displayable', () => {
+  window.hero_integration_i18n.text = value => value;
+  const {testingSummary, testingAreaSummaries} = window.hero_integration_migration;
+  const queued = {testing_results_json:JSON.stringify({record_limit:5,areas:{}})};
+  assert.equal(testingSummary(queued), 'PENDING · up to 5 records per area');
+  assert.equal(testingAreaSummaries(queued).length, 0);
+  for (const value of ['{', 'null', '[]']) {
+    const malformed = {testing_results_json:value,testing_max_actions:5};
+    assert.equal(testingSummary(malformed), 'PENDING · 0/5 HERO requests · 0 records');
+    assert.equal(testingAreaSummaries(malformed)[0][1], 'Results unavailable');
+  }
+  const legacy = {testing_results_json:JSON.stringify({HeroCustomers:{status:'LIMIT_REACHED'}})};
+  assert.equal(testingAreaSummaries(legacy)[0][1], 'LIMIT_REACHED');
+});
+
 test('price conflicts of the product import translate with the price list name', () => {
   const messages = {'The {0} price {1} was changed in ERPNext. The newer HERO article was not applied.': 'Preis {1} ({0}) in ERPNext geändert.',
                     'Standard Selling': 'Standard-Verkauf'};

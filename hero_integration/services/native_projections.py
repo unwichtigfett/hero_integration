@@ -1,4 +1,7 @@
-"""Finite Item/Event adapters; no accounting, stock, sharing or outbound actions."""
+"""Finite Event adapter; no sharing or outbound actions.
+
+HERO articles are imported by services.product_migration (configurable
+HeroProducts mapping), not through a projection adapter."""
 from __future__ import annotations
 
 from datetime import datetime, time, timedelta, timezone
@@ -27,14 +30,7 @@ def validate_options(contract, options):
         if options['all_day_end'] not in {'inclusive', 'exclusive'}:
             raise ValueError('Event all-day end semantics must be explicit.')
     else:
-        if set(options) != {'confirmed', 'item_group', 'uom_map', 'is_stock_item'}:
-            raise ValueError('Item configuration has unknown or missing options.')
-        if not isinstance(options['item_group'], str) or not options['item_group'].strip():
-            raise ValueError('Item Group must be explicitly configured.')
-        if not isinstance(options['uom_map'], dict) or not options['uom_map'] or not all(isinstance(k, str) and isinstance(v, str) and k and v for k, v in options['uom_map'].items()):
-            raise ValueError('An explicit HERO unit_type to native UOM map is required.')
-        if type(options['is_stock_item']) is not bool or (kind == 'service' and options['is_stock_item']):
-            raise ValueError('Stock behavior must be explicit; services cannot be stock items.')
+        raise ValueError('Unsupported native adapter kind.')
 
 
 def key_for(instance, entity_type, identity):
@@ -96,29 +92,12 @@ RECURRING_REVIEW = ('HERO marks this event as recurring but supplies no recurren
                     'only the delivered occurrence was imported as a single event.')
 
 
-def values(contract, record, identity, instance, options, *, lookup, item_link=None, allow_partial=False, review=None):
+def values(contract, record, identity, instance, options, *, lookup, allow_partial=False, review=None):
     """Resolve native values before _upsert; lookup must enforce native read permission."""
     kind = contract.get('native_kind')
     validate_options(contract, options)
-    if not kind:
-        product_id = record.get('product_id')
-        if not isinstance(product_id, str) or not product_id.strip() or item_link is None:
-            raise ValueError('Product version requires a verified source-product Item binding.')
-        return {'custom_hero_item': item_link(product_id)}
-    if kind in {'product', 'service'}:
-        group = lookup('Item Group', options['item_group'])
-        if group.get('is_group'):
-            raise ValueError('Item Group must be a leaf group.')
-        source_unit = record.get('unit_type')
-        if source_unit not in options['uom_map']:
-            raise ValueError('HERO unit_type has no explicit native UOM binding.')
-        uom_name = options['uom_map'][source_unit]
-        if not lookup('UOM', uom_name).get('enabled'):
-            raise ValueError('Configured UOM is not enabled.')
-        return {'item_code': 'HERO-' + key_for(instance, contract['source_type'], identity),
-                'item_name': _text(record.get('name'), 'Item name', required=True, limit=140),
-                'description': _html(_text(record.get('description'), 'Item description')),
-                'stock_uom': uom_name, 'item_group': options['item_group']}
+    if kind != 'event':
+        raise ValueError('Unsupported native adapter kind.')
     times = {}
     try:
         if type(record.get('is_recurring')) is not bool:
@@ -164,10 +143,12 @@ def values(contract, record, identity, instance, options, *, lookup, item_link=N
                   'custom_hero_resource_type': _text(r.get('type'), 'Resource type', limit=140), 'custom_hero_type_id': str(r['type_id']) if r.get('type_id') is not None else None}
                  for r in record.get('resources') or []]
     partners = [{'custom_hero_source_id': str(r['id']), 'custom_hero_partner_name': _text(r.get('full_name'), 'Partner name', limit=140)} for r in record.get('partners') or []]
+    # A HERO appointment marked done is a completed native Event.
+    status = {'status': 'Completed' if record['is_done'] is True else 'Open'} if 'is_done' in record else {}
     return {'subject': _event_subject(record, creating=not allow_partial), 'description': _html(_text(record.get('description'), 'Event description')),
             'location': _text(record.get('full_address'), 'Event location', limit=140),
             'custom_hero_resources': resources, 'custom_hero_partners': partners,
-            **times}
+            **status, **times}
 
 
 def creation_defaults(contract, options):
@@ -176,8 +157,4 @@ def creation_defaults(contract, options):
         return {'event_type': 'Private', 'event_category': 'Event', 'status': 'Open',
                 'repeat_this_event': 0, 'send_reminder': 0, 'sync_with_google_calendar': 0,
                 'add_video_conferencing': 0, 'event_participants': [], 'notifications': []}
-    if contract.get('native_kind') in {'product', 'service'}:
-        return {'is_stock_item': int(options['is_stock_item']), 'is_fixed_asset': 0, 'auto_create_assets': 0,
-                'opening_stock': 0, 'standard_rate': 0, 'valuation_rate': 0, 'has_serial_no': 0, 'has_batch_no': 0,
-                'is_sales_item': 1, 'is_purchase_item': int(contract['native_kind'] == 'product')}
     return {}

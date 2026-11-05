@@ -9,13 +9,13 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Mapping
 
-_managed_target = ContextVar("hero_integration_managed_target", default=None)
+_managed_target = ContextVar("hero_integration_managed_target", default=())
 
 
 @contextmanager
 def managed_target_update(doctype: str, name: str, link_name: str):
     """Assign one inbound writer ownership of one link for one target save."""
-    token = _managed_target.set((doctype, name, link_name))
+    token = _managed_target.set((*_managed_target.get(), (doctype, name, link_name)))
     try:
         yield
     finally:
@@ -23,8 +23,7 @@ def managed_target_update(doctype: str, name: str, link_name: str):
 
 
 def managed_target_update_active(doctype: str, name: str | None) -> bool:
-    current = _managed_target.get()
-    return bool(current and current[0] == doctype and current[1] in (None, name))
+    return any(current[0] == doctype and current[1] in (None, name) for current in _managed_target.get())
 
 
 def protect_external_task_deadline(doc, method=None) -> None:
@@ -57,6 +56,49 @@ def field_hashes(values: Mapping[str, object]) -> dict[str, str]:
 def check_value(value: object) -> object:
     """A Check field is False/True on a new document but 0/1 once read back; compare both alike."""
     return int(value) if isinstance(value, bool) else value
+
+
+def _same_mapped_value(current, incoming):
+    """Compare native storage representations without treating text as numbers."""
+    from datetime import date, datetime
+    from decimal import Decimal, InvalidOperation
+    from numbers import Number
+
+    current, incoming = check_value(current), check_value(incoming)
+    if isinstance(current, (Number, Decimal)) or isinstance(incoming, (Number, Decimal)):
+        if not (isinstance(current, (Number, Decimal)) and isinstance(incoming, (Number, Decimal))):
+            return False
+        try:
+            left, right = Decimal(str(current)), Decimal(str(incoming))
+            return left.is_finite() and right.is_finite() and left == right
+        except (InvalidOperation, ValueError):
+            return False
+    if field_hashes({'value': current}) == field_hashes({'value': incoming}):
+        return True
+    if isinstance(current, (date, datetime)) or isinstance(incoming, (date, datetime)):
+        try:
+            if isinstance(current, datetime) or isinstance(incoming, datetime):
+                left = current if isinstance(current, datetime) else datetime.fromisoformat(str(current))
+                right = incoming if isinstance(incoming, datetime) else datetime.fromisoformat(str(incoming))
+            else:
+                left = current if isinstance(current, date) else date.fromisoformat(str(current))
+                right = incoming if isinstance(incoming, date) else date.fromisoformat(str(incoming))
+            return left == right
+        except (TypeError, ValueError):
+            return False
+    return False
+
+
+def new_mapped_field_conflicts(doc, values, knownfields) -> set[str]:
+    """New ownership never overwrites a differing occupied native field.
+
+    Existing baseline keys remain the responsibility of the normal three-way
+    comparison. Zero and False are occupied values, not missing defaults.
+    """
+    known = set(knownfields)
+    return {field for field, incoming in values.items() if field not in known
+            and (current := doc.get(field)) is not None and current != ''
+            and not _same_mapped_value(current, incoming)}
 
 
 def encode(hashes: Mapping[str, str]) -> str:
@@ -188,7 +230,7 @@ def observe_frappe_target_change(doc, method=None) -> None:
     for row in links:
         # The inbound writer owns this link's baseline in the same transaction.
         # Other links on the document still observe the change normally.
-        if _managed_target.get() == (doc.doctype, doc.name, row.name):
+        if (doc.doctype, doc.name, row.name) in _managed_target.get():
             continue
         baseline = decode(row.get("target_field_hashes"))
         if not baseline:

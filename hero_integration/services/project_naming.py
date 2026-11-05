@@ -153,3 +153,13 @@ def _required_text(value: object, field: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ProjectTitleValidationError(f"{field} is required for the ERPNext project title.")
     return " ".join(value.split())
+
+
+# Imported identifiers/titles are local presentation and never writeback sources.
+LOCAL_PROJECT_NAME_FIELDS = frozenset({'name', 'project_name', 'naming_series', 'custom_hero_project_number'})
+PROJECT_NAME_INPUTS = frozenset({'name', 'project_nr', 'project_title', 'display_id'})
+
+
+def is_local_project_name(source, input_path=''):
+    return source.get('doctype') == 'Project' and (
+        source.get('field') in LOCAL_PROJECT_NAME_FIELDS or input_path.split('.')[-1] in PROJECT_NAME_INPUTS)

@@ -263,7 +263,7 @@ class _SyncHeroTransport:
 
 
 def _start_migration(
-    action: str, dry_run: int | bool, scheduled: bool, graphql_service: str, source_instance: str = ""
+    action: str, dry_run: int | bool, scheduled: bool, graphql_service: str, source_instance: str = "", testing_configuration=None
 ) -> dict[str, str]:
     if action not in ACTIONS:
         frappe.throw(frappe._("Unsupported HERO migration action."))
@@ -273,7 +273,9 @@ def _start_migration(
         frappe.throw(frappe._("Run checkpoint schema is not installed; apply the reviewed app schema before queueing a run."))
     service, mapping = _approved_read_service(graphql_service)
     is_preview = bool(int(dry_run))
-    testing = _testing_preview_configuration() if is_preview else {"enabled": False, "max_actions": 0}
+    from hero_integration.services.migration_testing import configuration, run_metadata
+    frozen_testing = testing_configuration if testing_configuration is not None else configuration(frappe_module=frappe)
+    testing = {'enabled': bool(frozen_testing['testing_enabled']), 'max_actions': frozen_testing['testing_max_actions']}
     from hero_integration.services.migration import customer_dependency
 
     dependencies = (
@@ -297,6 +299,7 @@ def _start_migration(
             "mapping_revision": mapping.mapping_revision,
             "testing_enabled": int(testing["enabled"]),
             "testing_max_actions": testing["max_actions"],
+            **run_metadata(frozen_testing),
             # Bound at acceptance so Start/Update and history are scoped to the source from the first moment.
             **({"source_instance": source_instance} if source_instance else {}),
             **dependencies,
@@ -432,6 +435,8 @@ def resume_run(run_name: str) -> dict[str, str]:
         frappe.throw(frappe._("Only failed, cancelled, or blocked runs can resume."))
     from hero_integration.services.file_migration import RUN_ACTIONS, SourceBindingError, resume as resume_file_run
 
+    if _as_bool(getattr(run, "testing_enabled", 0)):
+        frappe.throw(frappe._("Testing imports cannot resume; start a new bounded run."))
     if getattr(run, "action", "") in RUN_ACTIONS:
         try:
             resume_file_run(run)
@@ -1510,6 +1515,8 @@ def frontend_mapping_list(search: str = "", start: int | str = 0, page_size: int
             | {"revision": int(_row_value(row, "mapping_revision", 0) or 0)}
             for row in frappe_rows if _row_value(row, "status") == "Active"
         ],
+        # Editable templates are personal drafts, never synthetic active mappings.
+        "builtin_mappings": [],
         "pagination": {
             "start": start, "page_size": page_size,
             "graphql_total": _active_mapping_count("HERO GraphQL Mapping", graphql_search if search else None, graphql_filters),
@@ -1730,6 +1737,45 @@ def _personal_draft_errors():
         frappe.throw(frappe._("MAPPING_DRAFT_INVALID: Invalid content or unavailable active definition."))
 
 
+def _new_mapping_snapshot(snapshot_name):
+    frappe.only_for("System Manager")
+    snapshot, schema = _validated_snapshot(_mapping_text(snapshot_name, "snapshot_name"))
+    snapshot.check_permission("read")
+    if snapshot.source_instance != _configured_source_instance():
+        frappe.throw(frappe._("The schema snapshot belongs to another configured HERO source."))
+    return snapshot, schema
+
+
+@frappe.whitelist(methods=["GET"])
+def mapping_draft_new_seed(snapshot_name: str, direction: str, operation_name: str, target_operation: str = ""):
+    """Build an unsaved picker form from the configured source's stored schema."""
+    _mapping_request_fields({"snapshot_name", "direction", "operation_name", "target_operation"})
+    snapshot, schema = _new_mapping_snapshot(snapshot_name)
+    from hero_integration.services.mapping_draft_creation import seed
+    from hero_integration.services.mapping_draft_service import MappingDraftError
+    try:
+        prepared = seed(schema, _mapping_text(direction, "direction"), _mapping_text(operation_name, "operation_name"),
+                        _mapping_text(target_operation, "target_operation", allow_empty=True))
+    except (MappingDraftError, ValueError) as error:
+        frappe.throw(translate_error(error, frappe._))
+    return {**prepared, "snapshot_name": snapshot.name, "schema_fingerprint": snapshot.schema_fingerprint,
+            "source_instance": snapshot.source_instance, "direction": direction, "operation_name": operation_name}
+
+
+@frappe.whitelist(methods=["POST"])
+def mapping_draft_new(snapshot_name: str, direction: str, operation_name: str, content_json: str):
+    """Save the first complete picker assignment as this actor's personal draft."""
+    _mapping_request_fields({"snapshot_name", "direction", "operation_name", "content_json"})
+    snapshot, schema = _new_mapping_snapshot(snapshot_name)
+    content = _personal_draft_json_object(content_json, "new mapping content", 131072)
+    from hero_integration.services.frappe_mapping_draft_storage import FrappeMappingDraftStorage
+    from hero_integration.services.mapping_draft_creation import create
+    with _personal_draft_errors():
+        draft = create(snapshot, schema, _mapping_text(direction, "direction"), _mapping_text(operation_name, "operation_name"),
+                       content, actor=frappe.session.user, site_scope=frappe.local.site, storage=FrappeMappingDraftStorage())
+    return {"draft": _personal_draft_result(draft)}
+
+
 @frappe.whitelist(methods=["POST"])
 def mapping_draft_create(definition_id: str):
     _mapping_request_fields({"definition_id"})
@@ -1748,7 +1794,7 @@ def mapping_draft_read(definition_id: str):
 
 @frappe.whitelist(methods=["GET"])
 def mapping_draft_list(direction: str, start: int | str = 0, page_size: int | str = 50):
-    """List only the current administrator's open, parentless definitions."""
+    """List the current administrator's open drafts, including current-definition drafts."""
     frappe.only_for("System Manager")
     _mapping_request_fields({"direction", "start", "page_size"})
     if direction not in {"QUERY_TO_FRAPPE", "FRAPPE_TO_MUTATION"}:
@@ -1768,14 +1814,38 @@ def mapping_draft_list(direction: str, start: int | str = 0, page_size: int | st
             context = json.loads(doc.new_definition_json or "null")
         except (TypeError, ValueError):
             continue
+        active_mapping = None
+        if context is None and doc.base_active_mapping:
+            parent = frappe.get_doc("HERO GraphQL Mapping", doc.base_active_mapping)
+            parent.check_permission("read")
+            if parent.definition_id != doc.definition_id:
+                continue
+            active_mapping = parent.name
+            context = {"site_scope": doc.site_scope, "definition_id": doc.definition_id,
+                "source_instance": parent.source_instance, "snapshot_name": parent.schema_snapshot,
+                "schema_fingerprint": parent.schema_fingerprint, "direction": parent.direction,
+                "operation_kind": parent.operation_kind, "operation_name": parent.operation_name}
         if (not isinstance(context, dict) or context.get("direction") != direction
                 or context.get("site_scope") != frappe.local.site
                 or context.get("definition_id") != doc.definition_id
                 or (context.get("operation_kind"), direction) not in {
                     ("QUERY", "QUERY_TO_FRAPPE"), ("MUTATION", "FRAPPE_TO_MUTATION")}):
             continue
-        items.append({key: context.get(key) for key in ("definition_id", "source_instance", "snapshot_name",
-            "schema_fingerprint", "direction", "operation_kind", "operation_name")})
+        item = {key: context.get(key) for key in ("definition_id", "source_instance", "snapshot_name",
+            "schema_fingerprint", "direction", "operation_kind", "operation_name")}
+        if active_mapping:
+            item["active_mapping"] = active_mapping
+        try:
+            content = json.loads(doc.content_json)
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(content, dict):
+            continue
+        operation = content.get("target_operation")
+        if isinstance(operation, str):
+            item["target_operation"] = operation
+        item["draft_revision"] = int(doc.content_revision or 0)
+        items.append(item)
     return {"items": items, "start": start, "page_size": page_size, "has_more": len(rows) == page_size}
 
 
@@ -1814,16 +1884,21 @@ def mapping_draft_enroll_portable_identity(definition_id: str, portable_id: str,
 
 @frappe.whitelist(methods=["GET"])
 def mapping_draft_exchange_export(source_instance: str, snapshot_name: str, direction: str,
-                                  format_version: str = "hero-personal-mapping-draft-exchange-v1") -> dict[str, str]:
-    """Export only the current administrator's OPEN drafts for one direction."""
+                                  format_version: str = "hero-personal-mapping-draft-exchange-v1",
+                                  drafts_only: int | bool | str = 0) -> dict[str, str]:
+    """Export mappings in one direction, optionally limiting portable files to own drafts."""
     frappe.only_for("System Manager")
-    _mapping_request_fields({"source_instance", "snapshot_name", "direction", "format_version"})
+    _mapping_request_fields({"source_instance", "snapshot_name", "direction", "format_version", "drafts_only"})
+    if type(drafts_only) not in (bool, int, str) or drafts_only not in (True, False, 0, 1, "0", "1", "true", "false"):
+        frappe.throw(frappe._("MAPPING_INPUT_INVALID: Invalid drafts_only."))
+    drafts_only = drafts_only in (True, 1, "1", "true")
     source_instance = _mapping_text(source_instance, "source_instance")
     snapshot_name = _mapping_text(snapshot_name, "snapshot_name")
     from hero_integration.services.mapping_draft_exchange import MappingDraftExchangeError, export_package
 
     try:
-        content = export_package(source_instance, snapshot_name, direction, format_version=format_version)
+        content = export_package(source_instance, snapshot_name, direction, format_version=format_version,
+                                 drafts_only=drafts_only)
     except MappingDraftExchangeError as error:
         frappe.throw(translate_error(error, frappe._))
     suffix = "query" if direction == "QUERY_TO_FRAPPE" else "mutation"
@@ -3182,7 +3257,7 @@ def preview_mapping_candidate(
 ) -> dict[str, object]:
     """Preview one suggested draft mapping without persisting a mapping or a document."""
     frappe.only_for("System Manager")
-    _validated_snapshot(snapshot_name)
+    snapshot, _schema = _validated_snapshot(snapshot_name)
     try:
         record = json.loads(source_record_json)
     except json.JSONDecodeError as error:
@@ -3199,7 +3274,7 @@ def preview_mapping_candidate(
     spec = MappingSpec(operation, source_path, target_doctype, target_field, contract["paths"][source_path])
     try:
         target = validate_draft_target(operation, spec.source_type, target_doctype, target_field, _FrappePickerMetadata())
-        value = transformed_value(spec, source_value(record, source_path))
+        value = transformed_value(spec, source_value(record, source_path), source_instance=getattr(snapshot, 'source_instance', None))
     except ValueError as error:
         frappe.throw(translate_error(error, frappe._))
     return {
@@ -3398,11 +3473,25 @@ def writeback_available(doctype: str, docname: str) -> dict[str, object]:
         fields=["name", "direction", "status", "mapping_json", "mapping_revision", "schema_snapshot", "schema_fingerprint", "source_instance"],
     )
     actions = []
+    from hero_integration.services.personal_mapping_content import unique_json_object
     for row in rows:
         try:
-            context = _writeback_context(row.name, document, mapping_row=row)
+            content = json.loads(row.mapping_json, object_pairs_hook=unique_json_object)
+            source = content.get('source') if isinstance(content, dict) else None
+            # Configured send/update profiles have their own dispatcher. This
+            # endpoint discovers the older, individual field actions only.
+            if (not isinstance(source, dict) or source.get('doctype') != doctype
+                    or 'usage' in content):
+                continue
+            previous_mute = frappe.flags.mute_messages
+            try:
+                frappe.flags.mute_messages = True
+                context = _writeback_context(row.name, document, mapping_row=row)
+            finally:
+                frappe.flags.mute_messages = previous_mute
         except Exception:
-            # Hide send actions for stale/ambiguous links; explain them on explicit preview.
+            # Ineligible actions stay hidden, including their queued Frappe
+            # dialogs. Explicit preview still reports every validation failure.
             continue
         actions.append({
             "mapping_name": row.name,
@@ -3785,12 +3874,12 @@ def project_send_preview(project: str, phase_id: str | int | None = None) -> dic
 
 
 @frappe.whitelist(methods=["POST"])
-def project_send(project: str, fingerprint: str, confirmed: int | str = 0, phase_id: str | int | None = None) -> dict:
-    """Send the previewed Project Notes/Phase to HERO once and verify them."""
+def project_send(project: str, fingerprint: str, confirmed: int | str = 0, phase_id: str | int | None = None, delivery=None) -> dict:
+    """Send the confirmed Project fields and activities once through native safeguards."""
     from hero_integration.services.project_send import ProjectSendError, send
 
     try:
-        return send(project, phase_id, fingerprint, confirmed)
+        return send(project, phase_id, fingerprint, confirmed, delivery=delivery)
     except ProjectSendError as error:
         frappe.throw(translate_error(error, frappe._))
 
@@ -3847,9 +3936,11 @@ def config_export(snapshot_name: str = "") -> dict[str, str]:
     """
     frappe.only_for("System Manager")
     from hero_integration.services.config_exchange import export_config
-
-    return {"filename": "hero-integration-config.json",
-            "content": export_config(snapshot_name or _config_snapshot(), _configured_source_instance())}
+    from hero_integration.services.mapping_import_context import resolve
+    with _simple_mapping_import_errors():
+        context = resolve(snapshot_name or _config_snapshot(), _configured_source_instance())
+        return {"filename": "hero-integration-config.json",
+                "content": export_config(context['snapshot_name'], _configured_source_instance())}
 
 
 @frappe.whitelist(methods=["POST"])
@@ -3927,3 +4018,138 @@ def snapshot_import_file(path: str) -> dict[str, object]:
     result = capture_from_file(path, "Administrator")
     frappe.db.commit()
     return {key: result.get(key) for key in ("status", "snapshot_name", "schema_fingerprint", "type_count")}
+
+
+# ---------------------------------------------------------------- JSON Mapping list and import
+
+@frappe.whitelist(methods=["GET"])
+def simple_mapping_state() -> dict[str, object]:
+    """Read-only list of active mappings for the configured HERO source."""
+    frappe.only_for("System Manager")
+    from hero_integration.services.simple_mapping import state
+    return state()
+
+
+
+@contextmanager
+def _simple_mapping_import_errors():
+    from hero_integration.services.mapping_draft_exchange import MappingDraftExchangeError
+    from hero_integration.services.schema_provisioning import SchemaProvisioningError
+    from hero_integration.services.mapping_only_exchange import MappingOnlyError
+    from hero_integration.services.mapping_snapshot_rebase import SnapshotRebaseError
+    from hero_integration.services.mapping_schema_compatibility import MappingSchemaCompatibilityError
+    from hero_integration.services.config_exchange import ConfigExchangeError
+    try:
+        with _personal_draft_errors():
+            yield
+    except (MappingDraftExchangeError, SchemaProvisioningError, MappingOnlyError, ConfigExchangeError, SnapshotRebaseError, MappingSchemaCompatibilityError) as error:
+        frappe.throw(translate_error(error, frappe._))
+
+
+@frappe.whitelist(methods=['GET'])
+def simple_mapping_export(snapshot_name: str = '', direction: str = 'QUERY_TO_FRAPPE'):
+    """Export only mapping definitions and their required field/query dependencies."""
+    frappe.only_for('System Manager')
+    _mapping_request_fields({'snapshot_name', 'direction'})
+    snapshot_name = _mapping_text(snapshot_name, 'snapshot_name', allow_empty=True) or _config_snapshot()
+    direction = _mapping_text(direction, 'direction')
+    with _simple_mapping_import_errors():
+        if direction == 'QUERY_TO_FRAPPE':
+            from hero_integration.services.mapping_only_exchange import export
+            return {'filename': 'hero-query-mappings.json', 'content': export(snapshot_name, _configured_source_instance())}
+        if direction == 'FRAPPE_TO_MUTATION':
+            from hero_integration.services.mapping_draft_exchange import export_package, PORTABLE_FORMAT_VERSION
+            from hero_integration.services.mapping_import_context import resolve
+            context = resolve(snapshot_name, _configured_source_instance())
+            return {'filename': 'hero-mutation-mappings.json', 'content': export_package(_configured_source_instance(),
+                context['snapshot_name'], direction, format_version=PORTABLE_FORMAT_VERSION)}
+        frappe.throw(frappe._('MAPPING_INPUT_INVALID: Invalid direction.'))
+
+
+@frappe.whitelist(methods=["POST"])
+def simple_mapping_import_preview(payload_json: str, snapshot_name: str, direction: str):
+    """Validate a direction-specific mapping import without loading settings."""
+    _mapping_request_fields({"payload_json", "snapshot_name", "direction"})
+    from hero_integration.services.simple_mapping_exchange import preview
+    with _simple_mapping_import_errors():
+        if direction == 'QUERY_TO_FRAPPE':
+            from hero_integration.services.mapping_only_exchange import preview as query_preview
+            return query_preview(payload_json, _mapping_text(snapshot_name, 'snapshot_name'), _configured_source_instance())
+        return preview(payload_json, _mapping_text(snapshot_name, "snapshot_name"),
+                       _mapping_text(direction, "direction"))
+
+
+@frappe.whitelist(methods=["POST"])
+def simple_mapping_import_apply(payload_json: str, snapshot_name: str, direction: str,
+                                expected_states_json: str = '[]', preview_fingerprint: str = '', confirmed=False):
+    """Import and publish the previewed mappings atomically; execution rights stay separate."""
+    _mapping_request_fields({"payload_json", "snapshot_name", "direction", "expected_states_json",
+                             "preview_fingerprint", "confirmed"})
+    if type(confirmed) not in (bool, int, str) or confirmed not in (True, 1, "1", "true"):
+        frappe.throw(frappe._("MAPPING_CONFIRMATION_REQUIRED: Explicit import confirmation is required."))
+    if not isinstance(expected_states_json, str) or len(expected_states_json.encode('utf-8')) > 131072:
+        frappe.throw(frappe._("MAPPING_INPUT_INVALID: Invalid expected states."))
+    try:
+        states = json.loads(expected_states_json)
+    except (TypeError, ValueError):
+        frappe.throw(frappe._("MAPPING_INPUT_INVALID: expected draft states must be JSON."))
+    from hero_integration.services.simple_mapping_exchange import apply
+    with _simple_mapping_import_errors():
+        if direction == 'QUERY_TO_FRAPPE':
+            if states != []:
+                frappe.throw(frappe._('MAPPING_INPUT_INVALID: Invalid expected states.'))
+            from hero_integration.services.mapping_only_exchange import apply as query_apply
+            return query_apply(payload_json, _mapping_text(snapshot_name, 'snapshot_name'), _configured_source_instance(),
+                _mapping_text(preview_fingerprint, 'preview_fingerprint'), confirmed=True)
+        return apply(payload_json, _mapping_text(snapshot_name, "snapshot_name"),
+                     _mapping_text(direction, "direction"), states,
+                     _mapping_text(preview_fingerprint, "preview_fingerprint"), confirmed=True)
+
+
+@frappe.whitelist(methods=["POST"])
+def mapped_update_preview(mapping_name: str, doctype: str, name: str) -> dict:
+    """Preview configured update fields using approved HERO readback only."""
+    from hero_integration.services.mapped_update_v2 import MappedUpdateError, preview
+    try:
+        return preview(mapping_name, doctype, name)
+    except ValueError as error:
+        frappe.throw(translate_error(error, frappe._))
+
+
+@frappe.whitelist(methods=["POST"])
+def mapped_update_send(mapping_name: str, doctype: str, name: str,
+                       fingerprint: str, confirmed: int | str = 0) -> dict:
+    """Send a confirmed mapped update once; all existing execution gates apply."""
+    from hero_integration.services.mapped_update_v2 import MappedUpdateError, send
+    try:
+        return send(mapping_name, doctype, name, fingerprint=fingerprint, confirmed=confirmed)
+    except ValueError as error:
+        frappe.throw(translate_error(error, frappe._))
+
+
+@frappe.whitelist(methods=['GET'])
+def project_logbook_candidates(project: str) -> dict:
+    from hero_integration.services.project_logbook_writeback import candidates
+    try:
+        return candidates(_mapping_text(project, 'project'))
+    except ValueError as error:
+        frappe.throw(translate_error(error, frappe._))
+
+
+@frappe.whitelist(methods=['GET'])
+def project_logbook_preview(comment: str, activity_doctype: str = 'Comment') -> dict:
+    from hero_integration.services.project_logbook_writeback import preview
+    try:
+        return preview(_mapping_text(comment, 'comment'), activity_doctype=_mapping_text(activity_doctype, 'activity_doctype'))
+    except ValueError as error:
+        frappe.throw(translate_error(error, frappe._))
+
+
+@frappe.whitelist(methods=['POST'])
+def project_logbook_send(comment: str, fingerprint: str, confirmed=False, activity_doctype: str = 'Comment') -> dict:
+    from hero_integration.services.project_logbook_writeback import send
+    try:
+        return send(_mapping_text(comment, 'comment'), activity_doctype=_mapping_text(activity_doctype, 'activity_doctype'),
+            fingerprint=_mapping_text(fingerprint, 'fingerprint'), confirmed=confirmed)
+    except ValueError as error:
+        frappe.throw(translate_error(error, frappe._))

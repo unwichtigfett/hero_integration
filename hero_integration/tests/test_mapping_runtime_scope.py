@@ -44,7 +44,7 @@ class TestMappingRuntimeScope(unittest.TestCase):
             with self.assertRaises(mapping_runtime.MappingPlanError):
                 mapping_runtime.active_mapping_plan('HeroCustomers', definition_ids=('version',), mapping_name='mapping-b')
 
-    def test_revoked_native_binding_blocks_previously_active_rule(self):
+    def test_unwritable_native_field_blocks_previously_active_rule(self):
         from hero_integration.services.direct_mapping import SOURCE_CONTRACTS
         from hero_integration.hero_integration.doctype.hero_frappe_mapping import hero_frappe_mapping as controller
 
@@ -69,9 +69,10 @@ class TestMappingRuntimeScope(unittest.TestCase):
                 with patch.object(fake, 'get_all', return_value=[shared]):
                     with self.assertRaises(mapping_runtime.MappingPlanError):
                         mapping_runtime.active_mapping_plan('HeroCustomers')
-            with patch.dict(SOURCE_CONTRACTS['HeroCustomers'], {'native_field_bindings': frozenset()}):
-                with self.assertRaises(mapping_runtime.MappingPlanError):
-                    mapping_runtime.active_mapping_plan('HeroCustomers', definition_ids=('fixture-rule',), mapping_name='fixture-mapping')
+            # A writable native field needs no hard-coded binding; a field that became read-only blocks the rule.
+            field.read_only = 1
+            with self.assertRaises(mapping_runtime.MappingPlanError):
+                mapping_runtime.active_mapping_plan('HeroCustomers', definition_ids=('fixture-rule',), mapping_name='fixture-mapping')
 
     def test_explicit_rule_from_other_snapshot_fails_closed(self):
         row = {'definition_id':'shared', 'personal_graphql_mapping':None, 'operation':'HeroCustomers',

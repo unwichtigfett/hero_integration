@@ -30,7 +30,7 @@ class TestAdoptionSchemaClosure(unittest.TestCase):
         create = schema_provisioning._create_custom_doctype
         def concurrent_schema_drift(definition, selected_relations):
             create(definition, selected_relations)
-            self.f.custom_fields[("Customer", field["fieldname"])]["label"] = "Different"
+            self.f.custom_fields[("Customer", field["fieldname"])]["options"] = "Different"
         with patch.object(schema_provisioning, "_create_custom_doctype", side_effect=concurrent_schema_drift), \
              patch.object(schema_provisioning, "_activate_selected_mappings", side_effect=AssertionError("MAPPING DML REACHED")) as mapping_dml:
             with self.assertRaisesRegex(schema_provisioning.SchemaProvisioningError, "reconciliation"):
@@ -68,7 +68,7 @@ class TestAdoptionSchemaClosure(unittest.TestCase):
         def current_read(query, values, as_dict=False):
             result = sql(query, values, as_dict=as_dict)
             if current["drift"] and "`tabCustom Field`" in query and tuple(values) == ("Customer", field["fieldname"]):
-                return [type(result[0])({**result[0], "label": "Different"})]
+                return [type(result[0])({**result[0], "options": "Different"})]
             return result
         with patch.object(self.f.db, "sql", side_effect=current_read), \
              patch.object(schema_provisioning, "_create_custom_doctype", side_effect=concurrent_schema_drift), \

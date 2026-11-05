@@ -13,6 +13,7 @@ AREAS = {'Customers': 'HeroCustomers', 'Projects': 'HeroProjectMatches',
 # Direct migrations (services.product_migration, services.file_transfer): their
 # query roots and the nested paths they read.
 DIRECT_AREAS = {
+    'Services': {'supply_services': ('positions', 'file_upload')},
     'Products': {'supply_product_versions': ('base_data.supply_catalog', 'sales_prices.supply_sales_price'),
                  'supply_products': ()},
     'Documents': {'FileUpload_FileUploads': ('edges.node',),

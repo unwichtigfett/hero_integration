@@ -48,7 +48,7 @@ class TestPortableRelease(unittest.TestCase):
             "docs/feature_matrix_1.0.md",
             "docs/portability_report_1.0.md",
             "docs/doctype_extensions_1.0.md",
-            "docs/mapping_matrix_1.0.md",
+            "docs/complete_json_mapping.md",
         }
 
         self.assertTrue(all((ROOT / filename).is_file() for filename in required))

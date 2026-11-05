@@ -708,6 +708,9 @@ class FrappeMappingDraftStorage:
                 raise DraftConflict('New-definition schema context changed.')
             snapshot.check_permission('read')
             value = _object(draft.content)
+            if context['direction'] == 'QUERY_TO_FRAPPE':
+                from hero_integration.services.mapping_draft_exchange import _validated_record_contexts
+                value = _validated_record_contexts(value, context['operation_name'], schema, strip=True)
             envelope = value.pop('_portable_exchange_schema', None)
             schema_values = {}
             if envelope is not None:
@@ -733,7 +736,10 @@ class FrappeMappingDraftStorage:
                         plan_from_definitions(context['operation_name'], specs, target_operation=operation)
                 except (ValueError, TypeError, KeyError) as error:
                     raise MappingDraftError('The query mapping is incomplete or incompatible with its schema.') from error
-                targets = [(spec.target_doctype, spec.target_field) for spec in specs if spec.purpose != 'Record Name']
+                from hero_integration.services import direct_operations as direct
+                targets = [direct.target_key(spec) if spec.operation in direct.OPERATIONS
+                           else (spec.target_doctype, spec.target_field)
+                           for spec in specs if spec.purpose != 'Record Name']
                 if len(targets) != len(set(targets)):
                     raise MappingDraftError('The published mapping contains duplicate target fields.')
                 active_content = dict(value)
@@ -741,12 +747,12 @@ class FrappeMappingDraftStorage:
             else:
                 from hero_integration.services.frappe_writeback import normalise_mapping
                 from hero_integration.api import _mapping_values_preserved
-                if value.get('additional_mappings') and value.get('usage') != 'SEND_TO_HERO':
+                if value.get('additional_mappings') and value.get('usage') not in {'SEND_TO_HERO', 'MAPPED_UPDATE_V2', 'PROJECT_LOGBOOK_V1'}:
                     raise MappingDraftError('First publication of multiple mutation assignments is not supported.')
-                if value.get('usage') != 'SEND_TO_HERO':
+                if value.get('usage') not in {'SEND_TO_HERO', 'MAPPED_UPDATE_V2', 'PROJECT_LOGBOOK_V1'}:
                     value.pop('additional_mappings', None)
                 try:
-                    active_content = (self._validate_configured_send(value, schema) if value.get('usage') == 'SEND_TO_HERO'
+                    active_content = (self._validate_configured_send(value, schema) if value.get('usage') in {'SEND_TO_HERO', 'MAPPED_UPDATE_V2', 'PROJECT_LOGBOOK_V1'}
                                       else normalise_mapping(value, schema))
                 except ValueError as error:
                     raise MappingDraftError('Mutation mapping is not approved for activation.') from error
@@ -945,6 +951,8 @@ class FrappeMappingDraftStorage:
             raise DraftConflict('Definition identity is already used by a mutation assignment.')
 
     def _complete_query_target_types(self, content):
+        from hero_integration.services.direct_operations import TRANSFORMS
+
         options = content.get('query_adapter')
         if not options:
             return content
@@ -959,8 +967,10 @@ class FrappeMappingDraftStorage:
             rule = rules.get(identity)
             if rule is None:
                 continue  # Canonical rule snapshots are loaded by the normal provenance path.
+            if rule.get('transformation') in TRANSFORMS:
+                continue  # Coded resolvers own their target type and accept no transform options.
             doctype, name = rule['target_doctype'], rule['target_field']
-            if (doctype, name) == ('Comment', 'creation'):
+            if doctype == 'Comment' and name in {'creation', 'modified'}:
                 field = None
                 target_type = 'Datetime'
             else:
@@ -981,6 +991,12 @@ class FrappeMappingDraftStorage:
         return content
 
     def _validate_configured_send(self, content, schema):
+        if content.get('usage') in {'MAPPED_UPDATE_V2', 'PROJECT_LOGBOOK_V1'}:
+            from hero_integration.services.personal_mapping_content import configured_mutation_helpers
+            normalise_mapping, validate_sources = configured_mutation_helpers(content['usage'])
+            normalized = normalise_mapping(content, schema)
+            validate_sources(normalized)
+            return normalized
         from hero_integration.services.mapped_send import normalise_send_mapping
         from hero_integration.services.frappe_mapping_catalog import FrappePickerMetadata, validate_send_mapping_sources
         normalized = normalise_send_mapping(content, schema)
@@ -1026,6 +1042,9 @@ class FrappeMappingDraftStorage:
         if value.get('native_task_onboarding') is not None:
             raise MappingDraftError('Imported content cannot grant native Task onboarding authority.')
         if definition['direction'] == 'QUERY_TO_FRAPPE':
+            if 'field_contexts' in value:
+                from hero_integration.services.mapping_draft_exchange import _validated_record_contexts
+                _validated_record_contexts(value, definition['operation_name'], schema)
             if value.get('additional_mappings'):
                 raise MappingDraftError('Additional query assignments require an active mapping definition.')
             identities = references(value)
@@ -1055,7 +1074,7 @@ class FrappeMappingDraftStorage:
                 except (TypeError, ValueError) as error:
                     raise MappingDraftError('New query field rule is incompatible with target metadata.') from error
         else:
-            if value.get('usage') == 'SEND_TO_HERO':
+            if value.get('usage') in {'SEND_TO_HERO', 'MAPPED_UPDATE_V2', 'PROJECT_LOGBOOK_V1'}:
                 candidate = dict(value)
                 candidate.pop('_portable_exchange_schema', None)
                 normalized = self._validate_configured_send(candidate, schema)
@@ -1288,7 +1307,7 @@ class FrappeMappingDraftStorage:
                 or self._definition.operation_name != 'tasks'
                 or scope['source_instance'] != self._definition.source_instance):
             raise MappingDraftError('Native Task onboarding is outside the current source and mapping.')
-        if value.get('usage') == 'SEND_TO_HERO':
+        if value.get('usage') in {'SEND_TO_HERO', 'MAPPED_UPDATE_V2', 'PROJECT_LOGBOOK_V1'}:
             if self._definition.direction != 'FRAPPE_TO_MUTATION':
                 raise MappingDraftError('Send to HERO configuration requires a Mutation mapping.')
             from hero_integration.api import _validated_snapshot
@@ -1376,7 +1395,7 @@ class FrappeMappingDraftStorage:
             raise DraftConflict('Mapping schema changed.')
         metadata = FrappePickerMetadata()
         existing = content if content is not None else json.loads(parent.mapping_json)
-        if existing.get('usage') == 'SEND_TO_HERO':
+        if existing.get('usage') in {'SEND_TO_HERO', 'MAPPED_UPDATE_V2', 'PROJECT_LOGBOOK_V1'}:
             self._validate_configured_send(existing, schema)
             return
         operation = existing.get('target_operation') or parent.operation_name
@@ -1542,7 +1561,7 @@ class FrappeMappingDraftStorage:
         holder = _query_adapter_publication.get()
         if holder is not None:
             holder['options'] = content.get('query_adapter')
-        if parent.direction == 'FRAPPE_TO_MUTATION' and content.get('usage') == 'SEND_TO_HERO':
+        if parent.direction == 'FRAPPE_TO_MUTATION' and content.get('usage') in {'SEND_TO_HERO', 'MAPPED_UPDATE_V2', 'PROJECT_LOGBOOK_V1'}:
             if 'field_rules' in content or 'field_rule_bases' in content:
                 raise MappingDraftError('Mutation mapping has unexpected Query field rules.')
             return self._validate_configured_send(content, schema), []
@@ -1571,6 +1590,9 @@ class FrappeMappingDraftStorage:
                 ({'object_type', 'schema_context'} & set(content['source'])) or
                 any('object_type' in item.get('source', {}) for item in additions)):
             raise MappingDraftError('Object-first Draft fields require an approved fetch and publication contract before activation.')
+        if content.get('query_adapter') and 'field_contexts' in content:
+            from hero_integration.services.mapping_draft_exchange import _validated_record_contexts
+            content = _validated_record_contexts(content, parent.operation_name, schema, strip=True)
         if content.get('field_contexts'):
             if not content.get('query_adapter') and not (self._approved_relationship_contexts(content, schema) or self._approved_task_contexts(content, schema)):
                 raise MappingDraftError('Object-first Draft fields require an approved fetch and publication contract before activation.')
@@ -1671,7 +1693,10 @@ class FrappeMappingDraftStorage:
             else:
                 validate_spec(specification, _FrappeMetadata())
             specifications.append(specification)
-        targets = [(spec.target_doctype, spec.target_field) for spec in specifications if spec.purpose != 'Record Name']
+        from hero_integration.services import direct_operations as direct
+        targets = [direct.target_key(spec) if spec.operation in direct.OPERATIONS
+                   else (spec.target_doctype, spec.target_field)
+                   for spec in specifications if spec.purpose != 'Record Name']
         if len(set(targets)) != len(targets):
             raise MappingDraftError('The published mapping contains duplicate target fields.')
         native_task = content.get('native_task_onboarding') is not None
@@ -1773,10 +1798,39 @@ class FrappeMappingDraftStorage:
             candidate = parent.as_dict()
             candidate.update(mapping_json=json.dumps(content, ensure_ascii=False, sort_keys=True),
                              mapping_revision=int(parent.mapping_revision) + 1, status='Active')
-            from_documents(SimpleNamespace(**values), SimpleNamespace(**candidate), snapshot)
+            try:
+                from_documents(SimpleNamespace(**values), SimpleNamespace(**candidate), snapshot)
+            except ValueError:
+                continue  # A newer native contract can require a different saved query.
             approved.append(service.name)
         if not approved:
-            raise MappingDraftError('A current approved read service is required for publication.')
+            # As for query adapters, publication may precede read approval.
+            # Prove the proposed native revision against an explicitly saved,
+            # actor-validated query without changing any execution permission.
+            candidates = f.db.sql('select * from `tabHERO GraphQL Service` where schema_snapshot=%s '
+                                  'and status=%s and modified_by=%s for update',
+                                  (parent.schema_snapshot, 'Validated', f.session.user), as_dict=True)
+            for row in candidates:
+                service = f.get_doc(dict(row, doctype='HERO GraphQL Service'))
+                service.check_permission('read')
+                if (getattr(service, 'modified_by', None) != f.session.user
+                        or getattr(service, 'status', None) != 'Validated'
+                        or getattr(service, 'schema_snapshot', None) != parent.schema_snapshot
+                        or getattr(service, 'schema_fingerprint', None) != parent.schema_fingerprint):
+                    continue
+                values = service.as_dict()
+                values.update(read_mapping=parent.name, execution_status='Approved',
+                              approved_service_revision=int(service.service_revision),
+                              approved_mapping_revision=int(parent.mapping_revision) + 1)
+                candidate = parent.as_dict()
+                candidate.update(mapping_json=json.dumps(content, ensure_ascii=False, sort_keys=True),
+                                 mapping_revision=int(parent.mapping_revision) + 1, status='Active')
+                try:
+                    from_documents(SimpleNamespace(**values), SimpleNamespace(**candidate), snapshot)
+                except ValueError:
+                    continue
+                return
+            raise MappingDraftError('A matching validated read service is required before publication.')
 
     def _publication_objects(self, created, content):
         objects = list(created)

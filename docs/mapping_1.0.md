@@ -1,5 +1,7 @@
 # Object- and relationship-oriented mapping
 
+See [configurable Products, Documents and Pictures mappings](configurable_direct_mappings.md) for direct-operation rules and setup.
+
 > **Architecture decision, not deployment evidence.** This records how mapping ownership and generated GraphQL operations should work. The [Feature matrix](feature_matrix_1.0.md) describes the current source implementation, and [Synchronization handoff](sync_handoff_1.0.md) tracks execution gates. Schema-derived operations remain drafts until their exact mapping/read/action approvals are satisfied.
 
 ## Decision
@@ -64,3 +66,22 @@ Previously approved stored Query services keep their reviewed-document
 contracts. Each one changes only when migrated individually through those
 gates. This amendment does not make generated requests executable. It does not
 mean that all existing execution paths are migrated.
+
+## JSON mapping workflow (2026-11-04)
+
+The graphical editor has been removed. The Mapping page contains read-only
+Query and Mutation lists, filtering, JSON import and JSON export. Mappings are
+maintained in JSON files. No source/target picker, inline field editing or new
+mapping wizard remains in the workspace or its loaded assets.
+
+Query configuration uses the existing complete configuration package and its
+preview/import/export workflow. Mutation files use `hero-personal-mapping-portable-v2` for the selected
+validated snapshot. Their preview checks publication blockers, including the
+active technical mutation contract. Confirmed import publishes the complete
+file in one transaction using the existing draft publisher. Import never grants permission to execute a
+HERO mutation. Source, schema, field types, identities and publication revisions
+remain checked by the owning services.
+
+Older sections describe historical design decisions; they do not restore a
+visual editing workflow. Backend draft and revision services remain available
+for checked JSON transfer and installation patches.

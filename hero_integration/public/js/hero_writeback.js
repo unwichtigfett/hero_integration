@@ -55,5 +55,5 @@
         });
     };
 
-    ["Customer", "Project"].forEach((doctype) => frappe.ui.form.on(doctype, {refresh: mount}));
+    frappe.ui.form.on("Customer", {refresh: mount});
 })();

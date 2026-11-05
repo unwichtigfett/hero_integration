@@ -190,7 +190,7 @@ class TestMappedCollectionsAndRelations(TestCase):
                    'logbook': {'path': 'histories', 'identity_path': 'id', 'limit': 20}}
         p = plan(project_rules(True), options, operation='HeroProjectMatches')
         comments, links = {}, []
-        def get_doc(*args):
+        def get_doc(*args, **kwargs):
             if isinstance(args[0], dict):
                 values = dict(args[0]); doctype = values['doctype']
                 if doctype == 'Comment':
@@ -206,8 +206,12 @@ class TestMappedCollectionsAndRelations(TestCase):
             return comments[args[1]]
         def get_all(doctype, filters, **kwargs):
             return [link for link in links if all(getattr(link, key) == value for key, value in filters.items())]
+        def locked_links(query, values, **kwargs):
+            keys = (['source_system', 'source_instance', 'source_type', 'target_doctype', 'target_name']
+                    if 'target_doctype=%s' in query else ['source_system', 'source_type', 'source_instance', 'source_id'])
+            return [link for link in links if all(getattr(link, key, None) == value for key, value in zip(keys, values))]
         fake = NS(get_doc=get_doc, get_all=get_all, has_permission=lambda *a, **kw: True,
-                  db=NS(exists=lambda dt, name: name in comments, set_value=lambda *a, **kw: None),
+                  db=NS(exists=lambda dt, name: name in comments, set_value=lambda *a, **kw: None, sql=locked_links),
                   utils=NS(escape_html=escape, now_datetime=lambda: '2025-01-02 00:00:00'))
         record = {'id': 42, '_hero_source_instance': 'source-a',
                   'histories': [{'id': 5, 'custom_text': '<p>Synthetic history</p>', 'created': '2025-01-01T00:00:00Z'}]}
@@ -428,7 +432,7 @@ class TestLegacyLogbookIdentityBridge(TestCase):
         def get_all(doctype, filters, **kwargs):
             rows = self.project_bindings if filters.get('source_type') == 'project' else self.links
             return [row for row in rows if all(getattr(row, key, None) == value for key, value in filters.items())]
-        def get_doc(*args):
+        def get_doc(*args, **kwargs):
             if isinstance(args[0], dict):
                 values = dict(args[0]); doc = NS(name='new-' + str(len(self.links)), **values)
                 def insert(**kwargs):
@@ -438,8 +442,12 @@ class TestLegacyLogbookIdentityBridge(TestCase):
                 return doc
             if args[0] == 'Project': return NS(name=args[1])
             return self.comment
+        def locked_links(query, values, **kwargs):
+            keys = (['source_system', 'source_instance', 'source_type', 'target_doctype', 'target_name']
+                    if 'target_doctype=%s' in query else ['source_system', 'source_type', 'source_instance', 'source_id'])
+            return [link for link in self.links if all(getattr(link, key, None) == value for key, value in zip(keys, values))]
         self.fake = NS(get_doc=get_doc, get_all=get_all, has_permission=lambda *a, **kwargs: True,
-            db=NS(exists=lambda dt, name: name == self.comment.name, set_value=lambda *a, **kwargs: self.updated.append(a)),
+            db=NS(exists=lambda dt, name: name == self.comment.name, set_value=lambda *a, **kwargs: self.updated.append(a), sql=locked_links),
             utils=NS(escape_html=escape, now_datetime=lambda: '2026-01-01 00:00:00'))
 
     def sync(self):

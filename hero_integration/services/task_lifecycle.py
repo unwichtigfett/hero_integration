@@ -10,7 +10,8 @@ from __future__ import annotations
 from datetime import date, datetime
 
 START, END, DONE, ASSIGNEE = "exp_start_date", "exp_end_date", "hero_done_on", "custom_hero_assignee"
-FIELDS = (START, END, DONE, ASSIGNEE)
+AUTHOR = "custom_hero_author"  # Link to the ERPNext User who created the task in HERO (matched by e-mail)
+FIELDS = (START, END, DONE, ASSIGNEE, AUTHOR)
 ASSIGNEE_FIELD = ASSIGNEE
 
 
@@ -24,9 +25,16 @@ def _day(value) -> str | None:
     return str(value)[:10]
 
 
-def source_values(record: dict, local_instant, directory: dict[int, str], today: date) -> dict:
-    """ERPNext-side values from a HERO task; a path HERO did not return stays omitted."""
+def source_values(record: dict, local_instant, directory: dict[int, str], today: date, user_for=None) -> dict:
+    """ERPNext-side values from a HERO task; a path HERO did not return stays omitted.
+
+    ``user_for`` ((HERO user id, e-mail) -> User or None) enables the Created By field."""
     values = {}
+    if user_for is not None and "author_user_id" in record:
+        author = record.get("author_user_id")
+        author = author if type(author) is int and author > 0 else None
+        email = directory.get(author) if author else None
+        values[AUTHOR] = user_for(author, email.strip().lower() if email else None) if author else None
     created = local_instant(record.get("created")) if "created" in record else None
     due = local_instant(record.get("due_date")) if "due_date" in record else None
     if "due_date" in record:
@@ -55,6 +63,7 @@ def target_values(task) -> dict:
         END: _day(task.get(END)),
         DONE: _day(task.get("completed_on")) if task.get("status") == "Completed" else None,
         ASSIGNEE: (task.get(ASSIGNEE) or None),
+        AUTHOR: (task.get(AUTHOR) or None),
     }
 
 
@@ -74,7 +83,7 @@ def decide(field, source_hash, target_hash, source_base, target_base, target_val
 
 def insert_values(values: dict) -> dict:
     """Task fields for a new task."""
-    fields = {field: values[field] for field in (START, END, ASSIGNEE) if values.get(field)}
+    fields = {field: values[field] for field in (START, END, ASSIGNEE, AUTHOR) if values.get(field)}
     if values.get(DONE):
         fields.update(status="Completed", completed_on=values[DONE])
     return fields
@@ -82,7 +91,7 @@ def insert_values(values: dict) -> dict:
 
 def apply(task, updates: dict) -> None:
     """Set the HERO values on the Task document (not saved)."""
-    for field in (START, END, ASSIGNEE):
+    for field in (START, END, ASSIGNEE, AUTHOR):
         if field in updates:
             task.set(field, updates[field])
     if DONE in updates:

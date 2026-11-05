@@ -1,0 +1,28 @@
+/* Read-only mapping list with JSON import and export. */
+.hero-integration-ui .hms { display: grid; gap: 18px; }
+.hero-integration-ui .hms-header { display: grid; gap: 10px; padding-bottom: 14px; border-bottom: 1px solid var(--border-color); }
+.hero-integration-ui .hms-title { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+.hero-integration-ui .hms-title h2 { margin: 0; font-size: clamp(24px, 2.6vw, 32px); }
+.hero-integration-ui .hms-tabs, .hero-integration-ui .hms-load { display: flex; gap: 8px; flex-wrap: wrap; align-items: end; }
+.hero-integration-ui .hms-load { margin-left: auto; }
+.hero-integration-ui .hms-header .hms-control { max-width: 460px; }
+.hero-integration-ui .hms-status:empty { display: none; }
+.hero-integration-ui .hms-status[data-kind="error"] { color: var(--red-500, #e5484d); }
+.hero-integration-ui .hms-status[data-kind="success"] { color: var(--green-500, #30a46c); }
+.hero-integration-ui .hms h3 { margin: 0 0 10px; font-size: 18px; }
+.hero-integration-ui .hms-control { display: grid; gap: 4px; font-size: 12px; }
+.hero-integration-ui .hms-list { border: 1px solid var(--border-color); }
+.hero-integration-ui .hms-list-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--border-color); }
+.hero-integration-ui .hms-list-head h3 { margin: 0; }
+.hero-integration-ui .hms-filters { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--border-color); }
+.hero-integration-ui .hms-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.hero-integration-ui .hms-table-wrap { max-height: 520px; overflow: auto; }
+.hero-integration-ui .hms-table { margin: 0; }
+.hero-integration-ui .hms-badge { display: inline-block; border: 1px solid currentColor; border-radius: 999px; padding: 1px 10px; font-size: 12px; }
+.hero-integration-ui .hms-active { color: var(--green-500, #30a46c); }
+.hero-integration-ui .hms-inactive { color: var(--text-muted); }
+.hero-integration-ui .hms-file { display: none; }
+@media (max-width: 900px) {
+  .hero-integration-ui .hms-filters { grid-template-columns: 1fr; }
+  .hero-integration-ui .hms-load { margin-left: 0; width: 100%; }
+}

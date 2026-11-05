@@ -62,6 +62,47 @@
             : uiText(state);
     }
 
+    const packageAreaLabels = Object.freeze({HeroCustomers: "Customers", HeroProjectMatches: "Projects",
+        HeroCalendarEvents: "Calendar", HeroTasks: "Tasks", HeroEmployees: "Employees", HeroProducts: "Products",
+        HeroServices: "Services", HeroDocuments: "Documents", HeroPictures: "Pictures"});
+    const packageAreas = (value) => [...new Set(value.replace_mappings && Array.isArray(value.replacement?.operations)
+        ? value.replacement.operations : (value.read_services || []).map(row => row.target_operation))];
+    const packageAreaSummary = (value) => {
+        const areas = packageAreas(value);
+        return format("Affected areas ({0}): {1}.", areas.length,
+            areas.map(area => Object.hasOwn(packageAreaLabels, area) ? uiText(packageAreaLabels[area]) : area).join(", "));
+    };
+    function packageReplacementSummary(value, imported = false) {
+        if (!value.replace_mappings) return "";
+        const replacement = value.replacement || {};
+        const message = imported
+            ? "Replaced: {0} field mappings and {1} GraphQL mappings. Previous versions remain in history."
+            : "Existing mappings in these areas will be replaced: {0} field mappings and {1} GraphQL mappings. Previous versions remain in history.";
+        return " " + format(message, replacement.field_mappings ?? 0, replacement.graphql_mappings ?? 0);
+    }
+    function packageMutationSummary(value, imported = false) {
+        const contracts = Array.isArray(value.mutation_contracts?.contracts) ? value.mutation_contracts.contracts : [];
+        const messages = [];
+        if (contracts.length) {
+            const active = contracts.filter(contract => contract.status === "Active").length;
+            messages.push(format(imported
+                ? "Mutation contracts imported: {0}; active: {1}."
+                : "Mutation contracts: {0}; requested active status: {1}.", contracts.length, active));
+        }
+        const drafts = value.mutation_mappings?.count;
+        if (Number.isInteger(drafts) && drafts > 0) {
+            messages.push(format(imported ? "Mutation mappings imported as drafts: {0}." : "Mutation mappings to import as drafts: {0}.", drafts));
+        }
+        if (!messages.length) return "";
+        messages.push(uiText(imported ? "No HERO operation was executed." : "No HERO operation will be executed."));
+        return " " + messages.join(" ");
+    }
+    function packageImportSummary(result) {
+        const approved = result.read_services.filter((row) => row.state !== "Unchanged").length;
+        return `${uiText("Imported")}: ${uiText("snapshot")} ${result.snapshot}, ${result.adopted} ${uiText("mapping entries")}, ` +
+            `${result.settings.length} ${uiText("settings")}, ${approved} ${uiText("read services approved")}. ` + packageAreaSummary(result) + packageReplacementSummary(result, true) + packageMutationSummary(result, true);
+    }
+
     function packagePreviewSummary(preview) {
         const counts = preview.mapping_package
             ? Object.entries(preview.mapping_package).filter(([, count]) => count).map(([state, count]) => `${packageState(state)} ${count}`).join(', ')
@@ -69,7 +110,7 @@
         const services = preview.read_services.map((row) => `${row.target_operation}: ${packageState(row.state)}`).join(', ');
         const settings = preview.settings.length ? preview.settings.map((key) => Object.hasOwn(packageSettingLabels, key) ? `${uiText(packageSettingLabels[key])} (${key})` : key).join(', ') : uiText('none');
         return `${uiText('Schema snapshot')}: ${packageState(preview.snapshot)}. ${uiText('Mappings')}: ${counts}. ` +
-            `${uiText('Read services')}: ${services}. ${uiText('Changed settings')}: ${settings}.`;
+            `${uiText('Read services')}: ${services}. ${uiText('Changed settings')}: ${settings}. ` + packageAreaSummary(preview) + packageReplacementSummary(preview) + packageMutationSummary(preview);
     }
 
     function node(tag, cls, text) {
@@ -241,7 +282,7 @@
         testingSave.type = "button";
         const testingCard = section("Testing", "testing", "",
             field("Enabled", testingEnabled),
-            field("Max. Actions", testingMaxActions, "When enabled, manual synchronization previews are limited to the configured number of HERO API requests and start with the newest available records. No business data is modified."),
+            field("Max. records per area", testingMaxActions, "Limits manually started previews and imports to this many records in each area. Imports write ERPNext data. Full Migration applies the limit separately to each area. The setting is fixed when the run starts; changing it affects new runs only."),
             column("hero-settings-actions", testingSave, testingStatus)
         );
 
@@ -561,9 +602,7 @@
                     showPackageState(uiText("Importing …"));
                     try {
                         const result = await platform.api("config_import", {payload_json: payload, confirmed: 1});
-                        const approved = result.read_services.filter((row) => row.state !== "Unchanged").length;
-                        showPackageState(`${uiText("Imported")}: ${uiText("snapshot")} ${result.snapshot}, ${result.adopted} ${uiText("mapping entries")}, ` +
-                            `${result.settings.length} ${uiText("settings")}, ${approved} ${uiText("read services approved")}.`, "success");
+                        showPackageState(packageImportSummary(result), "success");
                         load();
                     } catch (error) {
                         showPackageState(`${uiText("Import failed; the configuration was not activated.")} ${errorMessage(error)}`, "error");
@@ -588,5 +627,5 @@
         };
     }
 
-    window.hero_integration_settings_ui = Object.freeze({mount, packagePreviewSummary});
+    window.hero_integration_settings_ui = Object.freeze({mount, packagePreviewSummary, packageImportSummary});
 })();

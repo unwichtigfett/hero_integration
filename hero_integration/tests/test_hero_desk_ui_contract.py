@@ -14,7 +14,7 @@ TOOLS_JS = PACKAGE_ROOT / "public" / "js" / "hero_tools.js"
 OVERVIEW_JS = PACKAGE_ROOT / "public" / "js" / "hero_overview.js"
 OVERVIEW_CSS = PACKAGE_ROOT / "public" / "css" / "hero_overview.css"
 SETTINGS_JS = PACKAGE_ROOT / "public" / "js" / "hero_settings.js"
-MAPPING_EDITOR_JS = PACKAGE_ROOT / "public" / "js" / "hero_mapping_editor.js"
+MAPPING_LIST_JS = PACKAGE_ROOT / "public" / "js" / "hero_mapping_simple.js"
 MIGRATION_JS = PACKAGE_ROOT / "public" / "js" / "hero_migration.js"
 ADAPTER_CSS = PACKAGE_ROOT / "public" / "css" / "hero_adapter.css"
 UI_DOCUMENTATION = PACKAGE_ROOT.parent / "docs" / "ui_overview_1.0.md"
@@ -32,16 +32,11 @@ class TestHeroDeskUiContract(unittest.TestCase):
 
     def test_universal_mapping_frontend_uses_only_authorized_lifecycle_contracts(self):
         workspace = WORKSPACE_JS.read_text()
-        mapping = MAPPING_EDITOR_JS.read_text()
-        for contract in (
-            "isSystemManager", 'section === "mapping"', "frontend_mapping_list", "frontend_mapping_detail",
-            "Employee read-only view", "definition_id", "expected_generation", "expected_draft_revision",
-            "expected_active_revision", "unchanged", "mapping_draft_create", "mapping_draft_read",
-            "mapping_draft_save", "mapping_draft_discard", "mapping_draft_revisions",
-        ):
-            with self.subTest(contract=contract):
-                self.assertIn(contract, workspace + mapping)
-        self.assertNotIn('method: "frappe.client.get_list"', mapping)
+        mapping = MAPPING_LIST_JS.read_text()
+        self.assertIn('hero_integration_mapping_simple.mount', workspace)
+        self.assertIn('simple_mapping_state', mapping)
+        self.assertNotIn('mapping_draft_new', mapping)
+        self.assertNotIn('simple_mapping_create', mapping)
         migration = MIGRATION_JS.read_text()
         # The technical Pending Sync area left the Synchronization page; its plan is resolved on the server.
         for removed in ("pending_sync", "Pending Sync", "Load approved plan", "runtime_plan_status", "Source instance'"):
@@ -126,7 +121,9 @@ class TestHeroDeskUiContract(unittest.TestCase):
         source = SETTINGS_JS.read_text()
         for contract in (
             "Testing", "testingEnabled", "testingMaxActions", "testing_enabled", "testing_max_actions",
-            "manual synchronization previews are limited", "No business data is modified.",
+            "Max. records per area", "Imports write ERPNext data.",
+            "Full Migration applies the limit separately to each area.",
+            "changing it affects new runs only.",
             "Save Testing Settings", "workspace_testing_settings_save",
         ):
             with self.subTest(contract=contract):
@@ -212,88 +209,12 @@ class TestHeroDeskUiContract(unittest.TestCase):
         for forbidden in ("auto_domain", "hero_connector", "process_core_shell", "semantic variable", "state machine"):
             self.assertNotIn(forbidden, source.lower())
 
-    def test_mapping_editor_bounds_collections_and_preserves_server_identity(self):
-        source = MAPPING_EDITOR_JS.read_text()
-        for contract in ("graphql_total", "frappe_total", "Active Mappings", "Total definitions / field rules", "offset >= 10000",
-                         "definition_id: active.definition_id", "mapping_type: kind, name: item.name", "page_size: 20"):
-            self.assertIn(contract, source)
-        for excluded in ("import_mapping_json", "runtime_plan_approve"):
-            self.assertNotIn(excluded, source)
 
-    def test_schema_explorer_is_admin_only_and_reads_saved_schema(self):
-        source = MAPPING_EDITOR_JS.read_text()
-        explorer = source.split("function renderSchemaExplorer()", 1)[1].split("function renderList()", 1)[0]
-        for contract in ("if (!admin) return", "analysis_status === 'Validated'", "schema_snapshot_list",
-                         "schema_operation_catalog", "leaveWorkspace", "hero_tool: 'graph'",
-                         "epoch === viewEpoch", "section[0].isConnected", "tab === viewTab",
-                         "hero-mapping-picker-resume", "loadSnapshots(name, operation)",
-                         "Retry saved schema",
-                         "readSnapshotPages((args) => rpc('schema_snapshot_list', args)", "snapshot list could not be loaded completely",
-                         "previously selected snapshot is not available in this result"):
-            self.assertIn(contract, explorer)
-        for forbidden in ("workspace_schema_refresh", "mapping_suggestions", "Legacy synthetic record preview", "Show field suggestions"):
-            self.assertNotIn(forbidden, explorer)
-        self.assertIn("explorer.append(snapshot, operations, info, limitNotice, details)", explorer)
 
-    def test_mapping_page_offers_no_import_or_export(self):
-        # Import/export lives on the Settings page (Configuration package) only.
-        source = MAPPING_EDITOR_JS.read_text()
-        listing = source.split("function renderList()", 1)[1].split("function renderPersonalDraftList()", 1)[0]
-        self.assertNotIn("function renderListExchange()", source)
-        for removed in ("Load / Save mappings", "Saved field mapping package", "portable v2", "adopt_mapping_package",
-                        "mapping_draft_exchange", "export_mapping_json"):
-            self.assertNotIn(removed, source)
-        detail = source.split("function renderDetail()", 1)[1].split("function renderContext(", 1)[0]
-        for view in (listing, detail):
-            self.assertIn("renderMappingsTable(body)", view)
-            self.assertNotIn("renderListExchange()", view)
-        context = source.split("function renderWorkspaceContext()", 1)[1].split("function inheritFromParent(", 1)[0]
-        self.assertNotIn("renderDefinitionChooser(header)", context)
 
-    def test_shared_writeback_save_is_scoped_and_conflict_guarded(self):
-        source = MAPPING_EDITOR_JS.read_text()
-        explorer = source.split("function renderSchemaExplorer()", 1)[1].split("function renderList()", 1)[0]
-        for contract in ("if (!admin) return", "sharedWritebackDraftAccess(doc, row, name, frappe.session?.user)",
-                         "reviewedWritebackEditable(doc.mapping_json, catalog)", "showSharedEditor", "if (consumed || locked() || !currentLegacy(serial, name)) return",
-                         "sharedWritebackRequest({doc, row, actor:frappe.session?.user", "rpc('graphql_mapping_save', args, true)",
-                         "No retry was made", "Your inputs are kept", "Only the last editor can change this shared draft"):
-            self.assertIn(contract, explorer)
-        for contract in ('mapping_name:doc?.name || ""', 'expected_revision:doc?.mapping_revision || 0',
-                         'direction:"FRAPPE_TO_MUTATION"', 'activate:0', 'Only a current shared draft',
-                         'sharedDirty || model?.dirty', 'reviewedWritebackEditable'):
-            self.assertIn(contract, source)
-        self.assertNotIn('activate:1', explorer)
 
-    def test_schema_explorer_shows_no_package_import_or_export(self):
-        source = MAPPING_EDITOR_JS.read_text()
-        explorer = source.split("function renderSchemaExplorer()", 1)[1].split("function renderList()", 1)[0]
-        for removed in ("text('Saved field mapping package')", "fileInput, exportPackage", "text('Complete configuration')"):
-            self.assertNotIn(removed, explorer)
-        self.assertIn("Import/export lives on the Settings page (Configuration package)", explorer)
-        settings = (PACKAGE_ROOT / "public" / "js" / "hero_settings.js").read_text()
-        for contract in ('section("Configuration package"', 'platform.api("config_export"', 'platform.api("config_import_preview"',
-                         'platform.api("config_import", {payload_json: payload, confirmed: 1})', "frappe.confirm("):
-            self.assertIn(contract, settings)
-        self.assertIn('type: write ? "POST" : "GET"', source)
 
-    def test_mapping_editor_has_explicit_save_and_lossless_local_undo(self):
-        source = MAPPING_EDITOR_JS.read_text()
-        for contract in ("class DraftState", "parseContent(JSON.stringify(value))", "this.undo.push", "this.undo.pop",
-                         "mapping_draft_save", "Save and leave", "Discard changes", "Continue editing",
-                         "TimestampMismatchError", "Check saved draft", "beforeunload"):
-            self.assertIn(contract, source)
-        self.assertNotIn("setInterval", source)
-        self.assertNotIn("setTimeout(save", source)
 
-    def test_mapping_editor_uses_existing_catalogs_and_scoped_table_details(self):
-        source = MAPPING_EDITOR_JS.read_text()
-        for contract in ("mapping_target_catalog", "mapping_target_catalog_page", "schema_operation_catalog",
-                         "hero-mapping-rule-details", "hero-mapping-row-detail", "hero-mapping-table",
-                         'format("Search {0}", shownLabel)', "My saved revisions — read only"):
-            self.assertIn(contract, source)
-        catalog_loader = source.split('const getFieldCatalog =', 1)[1].split('const page =', 1)[0]
-        self.assertNotIn('"Customer"', catalog_loader)
-        self.assertNotIn('"Project"', catalog_loader)
 
     def test_polling_and_synchronization_controls_are_visible_without_a_new_page(self):
         settings = SETTINGS_JS.read_text()
@@ -398,14 +319,13 @@ class TestHeroDeskUiContract(unittest.TestCase):
         self.assertIn("border:2px solid var(--pc-border)", tools_css)
 
     def test_remaining_workspaces_use_scoped_grouping_surfaces(self):
-        mapping = MAPPING_EDITOR_JS.read_text()
+        mapping = MAPPING_LIST_JS.read_text()
         migration = MIGRATION_JS.read_text()
         workspace_css = WORKSPACE_CSS.read_text()
         settings = SETTINGS_JS.read_text()
 
         for contract in (
             "hero-unified-content", "hero-unified-api-navigation",
-            "hero-mapping-section",
         ):
             with self.subTest(contract=contract):
                 self.assertIn(contract, workspace_css)
@@ -419,17 +339,17 @@ class TestHeroDeskUiContract(unittest.TestCase):
                 self.assertIn(contract, settings)
         self.assertIn("hero-sync-panel", migration)
         self.assertIn("hero-sync-cards", migration)
-        self.assertIn("Field mapping details", mapping)
+        self.assertIn("hms-list", mapping)
 
     def test_hero_owned_ui_strings_use_frappe_translation(self):
         self.assertIn('text: (value, context) => __(String(value), null, context || null)', WORKSPACE_JS.read_text())
-        for source_path in (TOOLS_JS, SETTINGS_JS, MAPPING_EDITOR_JS, MIGRATION_JS):
+        for source_path in (TOOLS_JS, SETTINGS_JS, MAPPING_LIST_JS, MIGRATION_JS):
             with self.subTest(source=source_path.name):
                 self.assertIn("hero_integration_i18n", source_path.read_text())
 
     def test_native_page_rpc_and_visual_mapping_failures_are_not_routed_to_legacy_or_rendered_as_objects(self):
         workspace = WORKSPACE_JS.read_text()
-        mapping = MAPPING_EDITOR_JS.read_text()
+        mapping = MAPPING_LIST_JS.read_text()
         for contract in (
             "nativeMethods", '"workspace_context"', '"integration_overview"', "errorMessage(error)",
             "HERO workspace request failed", "HERO interface assets could not be loaded",
@@ -437,14 +357,14 @@ class TestHeroDeskUiContract(unittest.TestCase):
         ):
             with self.subTest(contract=contract):
                 self.assertIn(contract, workspace)
-        for contract in ("errorText(error)", "Your changes have been kept", "request !== epoch", "disposed"):
+        for contract in ("failure(error)", "role: \"status\""):
             self.assertIn(contract, mapping)
 
     def test_styles_are_packaged_with_the_app(self):
         self.assertTrue(WORKSPACE_CSS.is_file())
         for asset in ("hero_tools.css", "hero_adapter.css", "hero_overview.css", "hero_settings.css", "hero_sync.css"):
             self.assertTrue((PACKAGE_ROOT / "public" / "css" / asset).is_file())
-        self.assertTrue(MAPPING_EDITOR_JS.is_file())
+        self.assertTrue(MAPPING_LIST_JS.is_file())
         self.assertTrue(MIGRATION_JS.is_file())
         pyproject = PACKAGE_ROOT.parent / "pyproject.toml"
         self.assertIn('"**/*.css"', pyproject.read_text())

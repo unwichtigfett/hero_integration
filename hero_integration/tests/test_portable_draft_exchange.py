@@ -583,11 +583,14 @@ class TestPortableDraftExchange(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'incomplete or differs'):
                 FrappeMappingDraftStorage(target)._first_publication_schema(imported.new_definition,
                     {key:value for key,value in imported.content.items() if key != '_portable_exchange_schema'}, invalid_envelope)
+            # A relabelled field is still the same schema (labels are display only).
             target.schema_fields[('Customer','custom_hero_email')]['label'] = 'Changed'
+            original_options = target.schema_fields[('Customer','custom_hero_email')].get('options')
+            target.schema_fields[('Customer','custom_hero_email')]['options'] = 'Changed'
             with self.assertRaisesRegex(ValueError, 'MAPPING_DRAFT_INVALID'):
                 api.mapping_draft_publish(IDENTITY, imported.generation, imported.content_revision, 0, 0, confirmed=True)
             self.assertEqual(target.active, [])
-            target.schema_fields[('Customer','custom_hero_email')]['label'] = 'Email'
+            target.schema_fields[('Customer','custom_hero_email')]['options'] = original_options
             relation_field = target.schema_fields.pop(('Customer','custom_hero_related'))
             with self.assertRaisesRegex(ValueError, 'MAPPING_DRAFT_INVALID'):
                 api.mapping_draft_publish(IDENTITY, imported.generation, imported.content_revision, 0, 0, confirmed=True)
@@ -620,10 +623,11 @@ class TestPortableDraftExchange(unittest.TestCase):
                 exchange.export_package('source-C', 'snapshot-C', 'QUERY_TO_FRAPPE',
                                         format_version=exchange.PORTABLE_FORMAT_VERSION)
             target.schema_fields[('Customer','custom_hero_related')]['options'] = 'Customer'
+            # Labels are display only: a relabelled field still exports with its declared schema.
             target.schema_fields[('Customer','custom_hero_email')]['label'] = 'Changed'
-            with self.assertRaisesRegex(exchange.MappingDraftExchangeError, 'schema provenance is invalid'):
-                exchange.export_package('source-C', 'snapshot-C', 'QUERY_TO_FRAPPE',
-                                        format_version=exchange.PORTABLE_FORMAT_VERSION)
+            relabelled = json.loads(exchange.export_package('source-C', 'snapshot-C', 'QUERY_TO_FRAPPE',
+                                                            format_version=exchange.PORTABLE_FORMAT_VERSION))
+            self.assertEqual(relabelled['schema'], package['schema'])
             target.schema_fields[('Customer','custom_hero_email')]['label'] = 'Email'
             row = target.get_doc('HERO GraphQL Mapping', target.active[0]['name'])
             object.__setattr__(row, 'before', PublicationDocument(target, target.active[0], False))
