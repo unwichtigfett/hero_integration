@@ -187,7 +187,8 @@ class TestFileOffsetPaging(_FileFixture):
     def test_saved_offset_resumes_and_filtered_pages_advance(self):
         read = replace(rt.builtin_read("HeroDocuments"), page_size=2)
         rows = [_row(i, category="images") for i in range(6)] + [_row()]
-        state = self.run_slice(rows, read=read, saved={"source_instance": "source-a", "offset": 2}, dry_run=False,
+        state = self.run_slice(rows, read=read, saved={"source_instance": "source-a", "offset": 2,
+                                                     "mapping": read.mapping_version}, dry_run=False,
                                downloader=_Download())
         self.assertEqual([variables["offset"] for _, variables in self.client.calls], [2, 4, 6])
         self.assertEqual((state["offset"], state["counts"]["added"]), (7, 1))
@@ -196,12 +197,41 @@ class TestFileOffsetPaging(_FileFixture):
     def test_foreign_finished_and_legacy_states_restart_at_zero(self):
         for saved in ({"source_instance": "source-b", "offset": 900},
                       {"source_instance": "source-a", "offset": 900, "done": True},
+                      {"source_instance": "source-a", "offset": 900},
                       {"source_instance": "source-a", "cursor": "legacy"}):
             with self.subTest(saved=saved):
                 state = self.run_slice([], saved={**saved, "counts": {"added": 10}})
                 self.assertEqual(self.client.calls[0][1]["offset"], 0)
                 self.assertNotIn("added", state["counts"])
                 self.assertNotIn("cursor", state)
+
+    def test_mapping_change_restarts_before_old_offset_and_remaps_without_download(self):
+        old_read, new_read = rt.builtin_read('HeroDocuments'), _own_read()
+        row = _row(title='Mapped.pdf', section='Roof')
+        self.run_slice([row], read=old_read, downloader=_Download())
+        checkpoint = {'source_instance': 'source-a', 'offset': 200, 'mapping': old_read.mapping_version,
+                      'counts': {'added': 200}, 'done': False}
+        state = self.run_slice([row], read=new_read, saved=checkpoint)
+        self.assertEqual(self.client.calls[0][1]['start'], 0)
+        self.assertEqual(state['mapping'], new_read.mapping_version)
+        self.assertEqual(state['counts']['updated'], 1)
+        self.assertNotIn('added', state['counts'])
+        self.assertTrue(state['done'])
+        link = next(row for row in self.db.committed['HERO Integration Link'].values() if row['source_id'] == '7')
+        self.assertEqual(self.db.committed['File'][link['target_name']]['custom_hero_section'], 'Roof')
+
+    def test_frozen_test_checkpoint_mapping_change_still_blocks_before_fetch(self):
+        old_read, new_read = rt.builtin_read('HeroDocuments'), _own_read()
+        checkpoint = {'source_instance': 'source-a', 'offset': 2, 'mapping': old_read.mapping_version,
+                      'testing_record_limit': 5, 'counts': {'added': 2}}
+        with patch('hero_integration.services.migration_testing.test_state', return_value=checkpoint), \
+             patch('hero_integration.services.migration_testing.save_test_state') as save, \
+             self.assertRaisesRegex(ValueError, 'frozen testing context changed'):
+            self.run_slice([], read=new_read, record_limit=5, run_name='test-run')
+        self.assertEqual(self.client.calls, [])
+        self.assertEqual(checkpoint['offset'], 2)
+        self.assertEqual(checkpoint['mapping'], old_read.mapping_version)
+        save.assert_not_called()
 
     def test_stop_keeps_current_offset_and_time_budget_saves_next_page(self):
         read = replace(rt.builtin_read("HeroDocuments"), page_size=1)

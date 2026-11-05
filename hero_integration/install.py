@@ -12,6 +12,10 @@ ERPNext_VERSION_CONSTRAINT = ">=16.0.0-dev,<17.0.0"
 DISPLAY_PROPERTIES = frozenset({"label"})
 
 HERO_CUSTOM_FIELDS = {
+    "Task": [
+        {"fieldname": "custom_hero_author", "label": "Created By", "fieldtype": "Link", "options": "User",
+         "read_only": 1, "no_copy": 1, "insert_after": "exp_end_date"},
+    ],
     "Comment": [
         {"fieldname":"custom_hero_project", "label":"Source Project", "fieldtype":"Link", "options":"Project",
          "read_only":1, "no_copy":1, "hidden":1},

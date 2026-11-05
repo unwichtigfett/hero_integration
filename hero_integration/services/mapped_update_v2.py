@@ -491,7 +491,8 @@ def _canonical(ctx,item,remote):
         if ctx.content['area']=='HeroCalendarEvents':
             from hero_integration.services.native_projections import values
             options=json.loads(ctx.read.mapping.mapping_json).get('native_options')
-            return values({'native_kind':'event'},remote,ctx.hero_id,ctx.proof.source_instance,options,
+            from hero_integration.services.query_mapping import event_record
+            return values({'native_kind':'event'},event_record(ctx.query_plan, remote),ctx.hero_id,ctx.proof.source_instance,options,
                 lookup=lambda *_args:None,allow_partial=False)[rule.target_field]
         raise MappedUpdateError('This native projection lacks a reversible baseline.')
     if getattr(ctx.query_plan,'adapter_options',None) is not None:
@@ -560,7 +561,7 @@ def _project_notes_baseline(ctx, item, remote, canonical, source, target):
     return present
 
 
-def _wire(ctx,item,doc,value,remote):
+def _wire(ctx,item,doc,value,remote,*,event_all_day=MISSING):
     resolver=item['resolver'];opts=item['options']
     if value is None or value=='':
         policy=opts.get('null','OMIT')
@@ -614,7 +615,8 @@ def _wire(ctx,item,doc,value,remote):
         if resolver=='EVENT_TIME':
             config=json.loads(ctx.read.mapping.mapping_json).get('native_options') or {}
             zone=ZoneInfo(config['target_timezone'])
-            if ctx.document.all_day:
+            is_all_day=ctx.document.all_day if event_all_day is MISSING else event_all_day
+            if is_all_day:
                 day=(value if isinstance(value,datetime) else datetime.fromisoformat(str(value))).date()
                 if item['source']['field']=='ends_on' and config['all_day_end']=='exclusive': day+=timedelta(days=1)
                 return datetime.combine(day,time.min).replace(tzinfo=ZoneInfo(config['source_timezone'])).isoformat()
@@ -667,6 +669,14 @@ def _baseline_matches(ctx,item,remote,canonical):
 def _remote_wire(ctx,item,doc,remote):
     canonical=_canonical(ctx,item,remote)
     if item['resolver']=='BARCODE': return canonical
+    if item['resolver']=='EVENT_TIME':
+        bindings=[entry for entry in ctx.content['assignments'] if entry['input_path']=='calendar_event.all_day']
+        if len(bindings)!=1:
+            raise MappedUpdateError('Event time updates require start, end and all-day bindings together.')
+        all_day=_canonical(ctx,bindings[0],remote)
+        if type(all_day) not in (bool,int) or all_day not in (0,1):
+            raise MappedUpdateError('A configured value is incompatible with its HERO input type.')
+        return _wire(ctx,item,doc,canonical,remote,event_all_day=bool(all_day))
     return _wire(ctx,item,doc,canonical,remote)
 
 
@@ -704,7 +714,7 @@ def _prepare(ctx,client,*,preview_only=False):
             raise MappedUpdateError('The related HERO identity is invalid.')
         _put(inputs,copy['input_path'],_typed(observed,_input_type(schema,operation,copy['input_path'])))
         copied.append(copy)
-    changes=[];conflicts=[];checks=[];states=[];assigned={}
+    changes=[];conflicts=[];checks=[];states=[];assigned={};evaluated={}
     for item in ctx.content['assignments']:
         from hero_integration.services.project_naming import is_local_project_name
         if is_local_project_name(item['source'], item['input_path']):
@@ -736,6 +746,7 @@ def _prepare(ctx,client,*,preview_only=False):
         previous=_remote_wire(ctx,item,doc,remote)
         checks.append({'id':item['id'],'value':wire})
         assigned[item['input_path']]=wire
+        evaluated[item['input_path']]=(item,doc,local,wire,previous,canonical)
         if _same(previous,wire): continue
         change={'id':item['id'],'field':item['input_path'],'source_doctype':doc.doctype,
             'source_field':item['source']['field'],'label':frappe.get_meta(doc.doctype).get_field(item['source']['field']).label,
@@ -748,6 +759,13 @@ def _prepare(ctx,client,*,preview_only=False):
     if ctx.content['area']=='HeroCalendarEvents' and selected&{'calendar_event.start','calendar_event.end','calendar_event.all_day'}:
         needed={'calendar_event.start','calendar_event.end','calendar_event.all_day'}
         if not needed<=assigned.keys(): raise MappedUpdateError('Event time updates require start, end and all-day bindings together.')
+        for path in needed:
+            item,doc,local,wire,previous,canonical=evaluated[path]
+            if not _baseline_matches(ctx,item,remote,canonical) and not any(c['id']==item['id'] for c in conflicts):
+                conflicts.append({'id':item['id'],'field':path,'source_doctype':doc.doctype,
+                    'source_field':item['source']['field'],
+                    'label':frappe.get_meta(doc.doctype).get_field(item['source']['field']).label,
+                    'hero':None if previous is MISSING else previous,'new':wire,'local':local,'canonical_remote':canonical})
         selected|=needed
     for path in selected:
         parts=path.split('.');owner=inputs

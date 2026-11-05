@@ -388,8 +388,11 @@ def transfer(phase: str, *, source_instance: str | None = None, client=None, dow
         validate_checkpoint(state, record_limit, source_instance=source_instance, mapping=read.mapping_version)
         if state.get('done'):
             return state
-    if state.get("done") or state.get("source_instance") != source_instance or "offset" not in state:
-        state = {}  # new pass (or another source's cursor); unchanged files are skipped by their link
+    if (state.get("done") or state.get("source_instance") != source_instance or "offset" not in state
+            or state.get("mapping") != read.mapping_version):
+        # An offset belongs to its approved mapping: changed filters or field
+        # selections require every row to be reconsidered under the new version.
+        state = {}  # unchanged content is skipped by its link, without another download
     state.pop("cursor", None)
     state.setdefault("offset", 0)
     state["source_instance"] = source_instance

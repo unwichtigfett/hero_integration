@@ -290,3 +290,12 @@ The deployment migration removes the two global uniqueness constraints from
 legacy User person-ID observation fields; source-bound Integration Links retain
 their unique source keys. A product rollback also discards both master caches so
 subsequent records can recreate masters rolled back with the failed record.
+
+Calendar writebacks interpret remote times with the remote all-day flag. Any
+write of the start/end/all-day group verifies all three remote baselines before
+sending, including members whose wire value is unchanged. Field aliases retain
+the same semantics. Query replacement checks native parents after compatible
+snapshot rebinding and remaps explicit mutation rule references to the actual
+published rules in that area. File checkpoints restart on a mapping change;
+scalar and collection price rules must use distinct ERPNext price lists. The
+read-only Task author User link is provisioned on installation and upgrade.
