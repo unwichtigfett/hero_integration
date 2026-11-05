@@ -53,7 +53,7 @@ steps:
           sleep 10
         done
         [ "$$found" = "$$expected" ] || { echo 'GitHub branch did not reach this Forgejo commit'; exit 1; }
-        ssh -T -o BatchMode=yes -o ServerAliveInterval=30 root@100.90.177.57 update
+        ssh -T -o BatchMode=yes -o ServerAliveInterval=30 root@100.90.177.57 "update:blank:$$expected"
 
   - name: install-test
     depends_on: [wait-github]
