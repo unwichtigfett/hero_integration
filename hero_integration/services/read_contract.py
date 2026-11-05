@@ -133,6 +133,7 @@ def from_documents(service, mapping, snapshot) -> ReadContract:
             CUSTOMER_CONTRACT_V2,
             CUSTOMER_CONTRACT_V3,
             CUSTOMER_CONTRACT_V4,
+            CUSTOMER_CONTRACT_V5,
             PROJECT_CONTRACT_V1,
             customer_query,
             project_query,
@@ -148,7 +149,7 @@ def from_documents(service, mapping, snapshot) -> ReadContract:
             legal_form_definition = "customer-company-legal-form"
             salutation_definition = "customer-salutation"
             selected_literals = _customer_selected_literals(definition_ids, mapping)
-            if customer_contract_version == CUSTOMER_CONTRACT_V4:
+            if customer_contract_version in (CUSTOMER_CONTRACT_V4, CUSTOMER_CONTRACT_V5):
                 if line2_definition not in selected_literals or salutation_definition not in selected_literals:
                     raise ReadContractError("Customer V4 requires the selected line_2 and salutation bindings.")
                 if legal_form_definition in selected_literals:
@@ -260,8 +261,11 @@ def _common_contract(service, mapping, snapshot) -> tuple[ReadContract, Mapping[
     target = config.get("target_operation")
     records_path, identity_path = config.get("records_path"), config.get("identity_path")
     definition_ids, variables, page_size = config.get("mapping_definition_ids"), config.get("variables", {}), config.get("page_size", 100)
-    if target not in {"HeroCustomers", "HeroProjectMatches", "HeroLookup", *PROJECTIONS}:
+    from hero_integration.services.direct_operations import OPERATIONS as DIRECT_OPERATIONS
+    if target not in {"HeroCustomers", "HeroProjectMatches", "HeroLookup", *PROJECTIONS, *DIRECT_OPERATIONS}:
         raise ReadContractError("The selected target adapter is not supported.")
+    if target in DIRECT_OPERATIONS and not (config.get("query_adapter") or {}).get("version") == 2:
+        raise ReadContractError("Products, Documents and Pictures require a versioned Query adapter.")
     if not isinstance(records_path, str) or not records_path or not isinstance(identity_path, str) or not identity_path:
         raise ReadContractError("The selected read mapping requires record and external identity paths.")
     if (not isinstance(definition_ids, list) or (not definition_ids and target != "HeroLookup")

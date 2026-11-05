@@ -28,7 +28,7 @@ def synchronize_primary_contact(customer, source_values: dict[str, object]) -> N
     or change shared Contacts."""
     values = {
         field: _text(source_values.get(field))
-        for field in ("first_name", "last_name", "email_id", "mobile_no", "salutation")
+        for field in ("first_name", "last_name", "email_id", "mobile_no", "salutation", "phone", "designation")
     }
     if not any(values.values()):
         return
@@ -39,7 +39,7 @@ def synchronize_primary_contact(customer, source_values: dict[str, object]) -> N
         raise HomePhoneConflict("The Customer primary Contact is shared or not linked to this Customer.")
 
     changed = False
-    for field in ("first_name", "last_name", "salutation"):
+    for field in ("first_name", "last_name", "salutation", "designation"):
         if values[field] and _field_value(contact, field) != values[field]:
             _set_field(contact, field, values[field])
             changed = True
@@ -48,6 +48,9 @@ def synchronize_primary_contact(customer, source_values: dict[str, object]) -> N
     ) or changed
     changed = _set_primary_child(
         contact, "phone_nos", "phone", "is_primary_mobile_no", values["mobile_no"]
+    ) or changed
+    changed = _set_primary_child(
+        contact, "phone_nos", "phone", "is_primary_phone", values["phone"]
     ) or changed
     if changed:
         contact.save()
@@ -59,12 +62,14 @@ def primary_contact_values(customer, fields: set[str]) -> dict[str, object]:
     contact = _primary_contact(customer)
     if contact is None or not _is_exclusive_customer_contact(contact, customer.name):
         return result
-    for field in {"first_name", "last_name", "salutation"} & fields:
+    for field in {"first_name", "last_name", "salutation", "designation"} & fields:
         result[field] = _text(_field_value(contact, field))
     if "email_id" in fields:
         result["email_id"] = _primary_child_value(contact, "email_ids", "email_id", "is_primary")
     if "mobile_no" in fields:
         result["mobile_no"] = _primary_child_value(contact, "phone_nos", "phone", "is_primary_mobile_no")
+    if "phone" in fields:
+        result["phone"] = _primary_child_value(contact, "phone_nos", "phone", "is_primary_phone")
     return result
 
 

@@ -179,8 +179,9 @@ class TestMappedSendTransport(_TransportFixture):
         from hero_integration.services import customer_send, project_send, task_send
         for module, name in ((customer_send, 'Customer'), (project_send, 'Project'), (task_send, 'Task')):
             with patch.object(ms, 'preview', side_effect=ms.MappedSendError('No active profile')), \
-                    patch.object(module, 'legacy_preview') as legacy, self.assertRaises(ValueError):
-                module.preview('TEST-1')
+                    patch.object(module, 'legacy_preview') as legacy, \
+                    patch('hero_integration.services.project_delivery._access'), self.assertRaises(ValueError):
+                module.preview('TEST-1', client=Mock())
             legacy.assert_not_called()
 
 
@@ -188,7 +189,7 @@ class TestNativeSendWrappers(TestCase):
     def test_public_preview_and_send_delegate_to_the_grouped_configured_runtime(self):
         from hero_integration.services import customer_send, project_send, task_send
         client, mutation = object(), object()
-        for module, doctype in ((customer_send, 'Customer'), (project_send, 'Project'), (task_send, 'Task')):
+        for module, doctype in ((customer_send, 'Customer'), (task_send, 'Task')):
             with patch.object(ms, 'preview', return_value={'configured': True}) as preview, \
                     patch.object(ms, 'send', return_value={'status': 'SENT'}) as send, \
                     patch.object(module, 'legacy_preview') as legacy_preview, \
@@ -623,7 +624,8 @@ class TestMappedTaskAssignee(_TransportFixture):
             MappingSpec('HeroTasks', 'target_user_id', 'ToDo', 'allocated_to', 'int|null',
                         transformation='Link Map', definition_id='user-rule'))
         options = {'transform_options': {'user-rule': {'map': {'7': 'old@example.invalid', '8': 'new@example.invalid'}}}}
-        def transform(spec, value, all_options):
+        def transform(spec, value, all_options, *, source_instance=None):
+            self.assertEqual(source_instance, self.ctx.proof.source_instance)
             self.assertIs(all_options, options)
             return all_options['transform_options'][spec.definition_id]['map'][str(value)] if spec.transformation == 'Link Map' else value
         user = NS(name='new@example.invalid', get=lambda field: 'new@example.invalid' if field == 'email' else None)

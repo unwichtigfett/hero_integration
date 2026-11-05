@@ -19,7 +19,7 @@ SOURCE_CONTRACTS = {
             "last_name": "string|null", "full_name": "string|null", "email": "string|null",
             "phone_mobile": "string|null", "phone_home": "string|null",
             "company_name": "string|null", "category": "string|null", "type": "string|null",
-            "company_legal_form": "string|null",
+            "company_legal_form": "string|null", "source": "string|null",
             "is_contact_person": "boolean|null", "is_deleted": "boolean|null",
             "address.id": "int|null", "address.street": "string|null", "address.zipcode": "string|null",
             "address.city": "string|null", "address.line_2": "string|null", "address.country.code": "string|null",
@@ -34,6 +34,8 @@ SOURCE_CONTRACTS = {
             "partner_notes": "string|null", "customer.title": "string", "customer.full_name": "string",
             "address.full_address": "string|null", "display_id": "string|null", "created": "string|null",
             "modified": "string|null",
+            "name": "string|null", "partner_source": "string|null", "partner.email": "string|null",
+            "partner_id": "int|null",
         },
     },
 }
@@ -63,11 +65,28 @@ TRANSFORM_IDENTITY = "Identity"
 TRANSFORM_TRIM = "Trim"
 TRANSFORM_POSITIVE_INT_TO_TEXT = "Positive Int To Text"
 TRANSFORM_CUSTOMER_TYPE = "Customer Type From Company Name"
+# HERO says itself whether a customer is private or commercial; this is the native Customer Type.
+TRANSFORM_HERO_CUSTOMER_TYPE = "Customer Type From HERO Type"
+HERO_CUSTOMER_TYPES = {"commercial": "Company", "private": "Individual"}
+# A HERO person (by e-mail) as the enabled ERPNext User with that e-mail; no match stays empty.
+TRANSFORM_USER_BY_EMAIL = "User By Email"
+# A HERO partner (person) as the ERPNext User that carries its partner ID (set by the people sync).
+TRANSFORM_USER_BY_PARTNER = "User By Partner ID"
+USER_BINDINGS = {
+    ("HeroProjectMatches", "partner.email", "Project", "custom_hero_project_manager"): TRANSFORM_USER_BY_EMAIL,
+    ("HeroProjectMatches", "partner_id", "Project", "custom_hero_project_manager"): TRANSFORM_USER_BY_PARTNER,
+}
+# HERO plain text in a native Text Editor field (inverse: task_send.plain_text).
+TRANSFORM_PLAIN_TEXT_HTML = "Plain Text To HTML"
+NOTES_BINDING = ("partner_notes", "Project", "notes", TRANSFORM_PLAIN_TEXT_HTML)
+# Older mapping revisions keep their app field; new revisions use the native notes.
+LEGACY_NOTES_BINDING = ("partner_notes", "Project", "custom_hero_partner_notes", TRANSFORM_TRIM)
 TRANSFORM_HERO_CUSTOMER_LINK = "HERO Customer Link"
 TRANSFORM_CONFIRMED_COMPANY = "Confirmed ERPNext Company"
 TRANSFORMATIONS = {
     TRANSFORM_IDENTITY, TRANSFORM_TRIM, TRANSFORM_POSITIVE_INT_TO_TEXT,
-    TRANSFORM_CUSTOMER_TYPE, TRANSFORM_HERO_CUSTOMER_LINK, TRANSFORM_CONFIRMED_COMPANY,
+    TRANSFORM_CUSTOMER_TYPE, TRANSFORM_HERO_CUSTOMER_TYPE, TRANSFORM_HERO_CUSTOMER_LINK, TRANSFORM_CONFIRMED_COMPANY,
+    TRANSFORM_PLAIN_TEXT_HTML, TRANSFORM_USER_BY_EMAIL, TRANSFORM_USER_BY_PARTNER,
 }
 TRANSFORMATIONS.update({'JSON Value', 'Scalar Text', 'HERO Project Link'})
 TRANSFORMATIONS.update({'Native Adapter', 'Nonempty String ID'})
@@ -76,7 +95,14 @@ TRANSFORMATIONS.add(TRANSFORM_SALUTATION)
 # Map HERO titles to Frappe Salutations; unknown values preserve the Contact value.
 SALUTATION_TABLE = {"herr": "Herr", "frau": "Frau", "familie": "Familie", "eheleute": "Eheleute", "dr.": "Dr", "dr": "Dr"}
 
-ALLOWED_TARGET_TYPES = {"Data", "Small Text", "Int", "Float", "Currency", "Check", "Date", "Datetime", "Link"}
+ALLOWED_TARGET_TYPES = {"Data", "Small Text", "Int", "Float", "Currency", "Percent", "Check", "Date", "Datetime", "Time",
+                        "Link"}
+# A value that names an existing record of the Link's DocType; anything else stays empty.
+TRANSFORM_EXISTING_RECORD = "Existing Record"
+TRANSFORM_SAFE_HTML = "Safe HTML"
+TRANSFORMATIONS.update({TRANSFORM_EXISTING_RECORD, TRANSFORM_SAFE_HTML})
+# Longer plain-text and choice fields (the picker offers them too).
+PLAIN_TEXT_TYPES = frozenset({"Text", "Long Text", "Code", "Select"})
 # Read-only HERO observation fields that are not text: (operation, path, field, transform) -> fieldtype.
 NATIVE_TYPED_OBSERVATIONS = {
     ("HeroProjectMatches", "volume", "custom_hero_volume", "Identity"): "Currency",  # euros
@@ -163,7 +189,7 @@ def validate_spec(spec: MappingSpec, metadata) -> None:
     _validate_binding(spec, metadata)
 
 
-def transformed_value(spec: MappingSpec, value: object) -> object | None:
+def transformed_value(spec: MappingSpec, value: object, *, source_instance=None) -> object | None:
     # Authoritative business identifiers are never trimmed by a generic text rule.
     if (spec.target_doctype, spec.target_field, spec.source_path) in {
         ("Customer", "custom_hero_customer_number", "nr"),
@@ -190,7 +216,60 @@ def transformed_value(spec: MappingSpec, value: object) -> object | None:
         return json.dumps(value, allow_nan=False)
     if spec.transformation == TRANSFORM_CUSTOMER_TYPE:
         return "Company" if isinstance(value, str) and value.strip() else "Individual"
+    if spec.transformation == TRANSFORM_HERO_CUSTOMER_TYPE:
+        return hero_customer_type(value)
+    if spec.transformation == TRANSFORM_PLAIN_TEXT_HTML:
+        return plain_text_html(value)
+    if spec.transformation == TRANSFORM_SAFE_HTML:
+        if not isinstance(value, str) or not value.strip():
+            return None
+        from frappe.utils.html_utils import sanitize_html
+        return sanitize_html(value)
+    if spec.transformation == TRANSFORM_EXISTING_RECORD:
+        return existing_record(spec.target_doctype, spec.target_field, value)
+    if spec.transformation == TRANSFORM_USER_BY_EMAIL:
+        return user_by_email(value)
+    if spec.transformation == TRANSFORM_USER_BY_PARTNER:
+        from hero_integration.integrations.hero_people import user_by_partner
+        return user_by_partner(value, source_instance=source_instance)
     return value
+
+
+def existing_record(doctype: str, fieldname: str, value: object) -> str | None:
+    """``value`` when it names an existing record of the Link field's DocType, else None."""
+    if not isinstance(value, (str, int)) or isinstance(value, bool) or not str(value).strip():
+        return None
+    import frappe
+
+    field = frappe.get_meta(doctype).get_field(fieldname)
+    target = getattr(field, "options", None) if field else None
+    name = str(value).strip()
+    return name if target and frappe.db.exists(target, name) else None
+
+
+def user_by_email(value: object) -> str | None:
+    """The one enabled ERPNext User with this e-mail, else None."""
+    if not isinstance(value, str) or "@" not in value:
+        return None
+    import frappe
+
+    rows = frappe.db.sql("SELECT name FROM `tabUser` WHERE enabled=1 AND LOWER(email)=%s LIMIT 2",
+                         (value.strip().lower(),))
+    return rows[0][0] if len(rows) == 1 else None
+
+
+def plain_text_html(value: object) -> str | None:
+    """``a\nb`` -> ``<p>a<br>b</p>``; empty text stays empty."""
+    from html import escape
+
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return "<p>" + escape(value.strip()).replace("\r\n", "\n").replace("\n", "<br>") + "</p>"
+
+
+def hero_customer_type(value: object) -> str:
+    """HERO ``commercial`` is a Company; ``private`` and anything else is an Individual."""
+    return HERO_CUSTOMER_TYPES.get(value.strip().lower(), "Individual") if isinstance(value, str) else "Individual"
 
 
 class _Missing:
@@ -242,7 +321,10 @@ def _validate_binding(spec: MappingSpec, metadata) -> None:
         _require(spec, target_doctype=SOURCE_CONTRACTS[spec.operation]['target_doctype'], target_field=target, transformation=TRANSFORM_TRIM)
         return
     if spec.purpose == PURPOSE_CUSTOMER_TYPE:
-        _require(spec, "company_name", "string|null", "Customer", "customer_type", TRANSFORM_CUSTOMER_TYPE)
+        if spec.transformation == TRANSFORM_HERO_CUSTOMER_TYPE:
+            _require(spec, "type", "string|null", "Customer", "customer_type", TRANSFORM_HERO_CUSTOMER_TYPE)
+        else:
+            _require(spec, "company_name", "string|null", "Customer", "customer_type", TRANSFORM_CUSTOMER_TYPE)
         return
     if spec.purpose == PURPOSE_CUSTOMER_CONTACT:
         if spec.operation != "HeroCustomers" or spec.target_doctype != "Customer":
@@ -280,12 +362,22 @@ def _validate_custom_field(spec: MappingSpec, metadata) -> None:
     contract = SOURCE_CONTRACTS[spec.operation]
     if spec.target_doctype != contract["target_doctype"]:
         raise DirectMappingError("A field mapping may only write its operation target DocType.")
-    if spec.source_path == "partner_notes" and (
-        spec.target_doctype != "Project"
-        or spec.target_field != "custom_hero_partner_notes"
-        or spec.transformation != TRANSFORM_TRIM
-    ):
-        raise DirectMappingError("HERO partner notes may only map explicitly to Project.custom_hero_partner_notes.")
+    binding = (spec.source_path, spec.target_doctype, spec.target_field, spec.transformation)
+    if spec.source_path == "partner_notes" and binding != LEGACY_NOTES_BINDING or spec.transformation == TRANSFORM_PLAIN_TEXT_HTML:
+        if binding != NOTES_BINDING:
+            raise DirectMappingError("HERO partner notes may only map to the native Project notes (Plain Text To HTML).")
+        field = metadata.field("Project", "notes")
+        if field is None or field.fieldtype != "Text Editor" or field.read_only or spec.relation:
+            raise DirectMappingError("ERPNext Project.notes must be an editable Text Editor field.")
+        return
+    user_key = (spec.operation, spec.source_path, spec.target_doctype, spec.target_field)
+    if spec.transformation in (TRANSFORM_USER_BY_EMAIL, TRANSFORM_USER_BY_PARTNER) or user_key in USER_BINDINGS:
+        if USER_BINDINGS.get(user_key) != spec.transformation or spec.relation:
+            raise DirectMappingError("A HERO person maps only to its reviewed User field.")
+        field = metadata.field(spec.target_doctype, spec.target_field)
+        if field is None or field.fieldtype != "Link" or (field.options or "") != "User":
+            raise DirectMappingError("The responsible person field must link to User.")
+        return
     protected = SYSTEM_FIELDS | PROTECTED_FIELDS[spec.target_doctype] | RESERVED_TARGET_FIELDS[spec.target_doctype]
     if spec.target_field in protected:
         raise DirectMappingError("Identity, Company, status, and standard bindings are protected.")
@@ -299,6 +391,9 @@ def _validate_custom_field(spec: MappingSpec, metadata) -> None:
         ('HeroProjectMatches', 'display_id', 'custom_hero_display_id', 'Trim'),
         ('HeroProjectMatches', 'created', 'custom_hero_source_created', 'Trim'),
         ('HeroProjectMatches', 'modified', 'custom_hero_source_modified', 'Trim'),
+        ('HeroProjectMatches', 'name', 'custom_hero_designation', 'Trim'),
+        ('HeroProjectMatches', 'partner_source', 'custom_hero_lead_source', 'Trim'),
+        ('HeroCustomers', 'source', 'custom_hero_lead_source', 'Trim'),
     }
     key = (spec.operation, spec.source_path, spec.target_field, spec.transformation)
     is_native = key in native or key in NATIVE_TYPED_OBSERVATIONS
@@ -306,20 +401,39 @@ def _validate_custom_field(spec: MappingSpec, metadata) -> None:
     allowed_types = (allowed_types,) if isinstance(allowed_types, str) else allowed_types
     if is_native and (field is None or field.fieldtype not in allowed_types):
         raise DirectMappingError('Native HERO observation field has an incompatible type.')
-    if field is None or field.fieldtype not in ALLOWED_TARGET_TYPES or (field.read_only and not is_native):
+    _require_compatible_source(spec)
+    # The app's own fields are read-only for users but written by the import.
+    app_field = spec.target_field.startswith("custom_hero_") and bool(getattr(field, "is_custom_field", False))
+    text_editor = field is not None and field.fieldtype == "Text Editor"
+    if (field is None or (field.fieldtype not in ALLOWED_TARGET_TYPES | PLAIN_TEXT_TYPES and not text_editor)
+            or (field.read_only and not (is_native or app_field))):
         raise DirectMappingError("Target field is not a writable supported Frappe field.")
-    if not getattr(field, "is_custom_field", False):
-        binding = (spec.source_path, spec.source_type, spec.target_doctype,
-                   spec.target_field, field.fieldtype, spec.transformation)
-        allowed_native = (
-            binding in contract.get("native_field_bindings", frozenset())
-            and not spec.relation
-            and not any(getattr(field, key, None) for key in ("hidden", "fetch_from", "is_virtual"))
-        )
-        if not allowed_native:
-            raise DirectMappingError("A site-specific mapping requires an approved native field or a Custom Field.")
-    if field.fieldtype == "Link":
-        raise DirectMappingError("Link targets require an approved entity resolver.")
+    if spec.relation or any(getattr(field, key, None) for key in ("fetch_from", "is_virtual")) or (
+            getattr(field, "hidden", 0) and not app_field):
+        raise DirectMappingError("Target field is filled automatically or hidden; map its source record instead.")
+    if text_editor and spec.transformation not in {TRANSFORM_PLAIN_TEXT_HTML, TRANSFORM_SAFE_HTML}:
+        raise DirectMappingError("Formatted text needs the Plain Text To HTML or Safe HTML transformation.")
+    if spec.transformation in {TRANSFORM_PLAIN_TEXT_HTML, TRANSFORM_SAFE_HTML} and not text_editor:
+        raise DirectMappingError("HTML transformations only target formatted text fields.")
+    if field.fieldtype == "Link" and (spec.transformation != TRANSFORM_EXISTING_RECORD or not (field.options or "")):
+        raise DirectMappingError("A Link target needs the Existing Record transformation.")
+    if spec.transformation == TRANSFORM_EXISTING_RECORD and field.fieldtype != "Link":
+        raise DirectMappingError("Existing Record only targets Link fields.")
+
+
+# Source kinds a transformation accepts (others are rejected before anything is written).
+_SOURCE_KINDS = {
+    TRANSFORM_TRIM: {"string"}, TRANSFORM_PLAIN_TEXT_HTML: {"string"}, TRANSFORM_SAFE_HTML: {"string"},
+    TRANSFORM_EXISTING_RECORD: {"string", "int"}, TRANSFORM_USER_BY_EMAIL: {"string"},
+    TRANSFORM_USER_BY_PARTNER: {"int"}, TRANSFORM_POSITIVE_INT_TO_TEXT: {"int"},
+    "Scalar Text": {"int", "float", "boolean"},
+}
+
+
+def _require_compatible_source(spec: MappingSpec) -> None:
+    kinds = _SOURCE_KINDS.get(spec.transformation)
+    if kinds and (spec.source_type or "").split("|")[0] not in kinds:
+        raise DirectMappingError("The transformation does not accept this HERO source type.")
 
 
 def _require(

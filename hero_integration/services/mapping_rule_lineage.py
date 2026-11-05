@@ -97,9 +97,17 @@ def reserved_customer_semantics(row):
     return (row.get('source_path') or '') in {spec[0] for spec in _CUSTOMER_LEGACY.values()}
 
 
-def validate_customer_scope(row, mapping):
-    if (row.get('status') != 'Active' or row.get('operation') != 'HeroCustomers'
-            or row.get('schema_snapshot') != mapping.schema_snapshot
+def validate_customer_scope(row, mapping, *, historical=False):
+    # A retired predecessor proves provenance; it does not authorize execution.
+    # Only the selected leaf must remain Active after replacement cleanup.
+    statuses = {'Active', 'Disabled'} if historical else {'Active'}
+    same_snapshot = row.get('schema_snapshot') == mapping.schema_snapshot
+    if (historical and not same_snapshot and getattr(mapping, 'source_instance', None)
+            and row.get('schema_fingerprint') == mapping.schema_fingerprint):
+        from hero_integration.services.mapping_snapshot_rebase import snapshots_equivalent
+        same_snapshot = snapshots_equivalent(row.get('schema_snapshot'), mapping.schema_snapshot, getattr(mapping, 'source_instance', None))
+    if (row.get('status') not in statuses or row.get('operation') != 'HeroCustomers'
+            or not same_snapshot
             or row.get('schema_fingerprint') != mapping.schema_fingerprint
             or (row.get('personal_graphql_mapping') or '') not in ('', mapping.name)):
         raise ValueError('Customer rule is outside the approved mapping context.')
@@ -137,8 +145,8 @@ def customer_legacy_literals(selected_ids, mapping, lookup_definition, lookup_po
             continue  # Unscoped legacy roots keep their explicitly selected identities.
         leaf = row
         visited, logical_id = set(), None
-        for _ in range(100):
-            validate_customer_scope(row, mapping)
+        for depth in range(100):
+            validate_customer_scope(row, mapping, historical=depth > 0)
             version = canonical_uuid(row.get('portable_definition_id'))
             if version in visited:
                 raise ValueError('Customer rule lineage contains a cycle.')

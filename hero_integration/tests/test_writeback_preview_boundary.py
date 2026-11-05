@@ -325,3 +325,71 @@ class TestMutationReservationBoundary(unittest.TestCase):
                                       mapping_revision=1, request_fingerprint='synthetic')
         audit.insert.assert_called_once_with(ignore_permissions=True)
         commit.assert_not_called()
+
+
+class TestWritebackActionDiscovery(unittest.TestCase):
+    def setUp(self):
+        self.messages = ['existing message']
+        self.flags = SimpleNamespace(mute_messages=False)
+        self.document = SimpleNamespace(doctype='Customer', name='CUST-1')
+        def throw(message):
+            if not self.flags.mute_messages:
+                self.messages.append(message)
+            raise ValueError(message)
+        self.frappe = SimpleNamespace(only_for=lambda role: None, has_permission=lambda *a, **kw: True,
+            get_doc=lambda *a: self.document, flags=self.flags, throw=throw, _=lambda text: text)
+
+    def row(self, name, content):
+        return SimpleNamespace(name=name, mapping_json=json.dumps(content))
+
+    def available(self, rows, context):
+        self.frappe.get_all = lambda *a, **kw: rows
+        with patch.object(api, 'frappe', self.frappe), patch.object(api, '_writeback_context', side_effect=context) as check:
+            result = api.writeback_available('Customer', 'CUST-1')
+        return result, check
+
+    def test_configured_profiles_foreign_doctypes_and_malformed_json_do_not_enter_legacy_context(self):
+        rows = [self.row('new', {'usage': 'MAPPED_UPDATE_V2', 'source': {'doctype': 'Customer'}, 'assignments': []}),
+                self.row('send', {'usage': 'SEND_TO_HERO', 'source': {'doctype': 'Customer', 'field': 'customer_name'}}),
+                self.row('foreign', {'source': {'doctype': 'Project', 'field': 'notes'}}),
+                self.row('array', []), self.row('invalid-source', {'source': []}),
+                SimpleNamespace(name='invalid-json', mapping_json='{'),
+                SimpleNamespace(name='duplicate-keys', mapping_json='{"source":{},"source":{"doctype":"Customer"}}')]
+        result, check = self.available(rows, AssertionError('Wrong dispatcher'))
+        check.assert_not_called()
+        self.assertEqual(result, {'actions': []})
+        self.assertEqual(self.messages, ['existing message'])
+        self.assertFalse(self.flags.mute_messages)
+
+    def test_stale_legacy_action_cannot_queue_dialogs_and_valid_action_remains_available(self):
+        content = {'source': {'doctype': 'Customer', 'field': 'email_id'},
+                   'target': {'operation': 'update_contact', 'field': 'email'}}
+        def context(name, document, **kw):
+            if name == 'stale':
+                self.frappe.throw('The active writeback mapping is no longer safe.')
+            return {'mapping': content}
+        for previous in (False, True):
+            self.flags.mute_messages = previous
+            result, check = self.available([self.row('stale', content), self.row('valid', content)], context)
+            self.assertEqual(check.call_count, 2)
+            self.assertEqual([row['mapping_name'] for row in result['actions']], ['valid'])
+            self.assertEqual(self.messages, ['existing message'])
+            self.assertIs(self.flags.mute_messages, previous)
+
+    def test_explicit_preview_still_reports_validation_errors(self):
+        with patch.object(api, 'frappe', self.frappe), \
+             patch.object(api, '_writeback_context', side_effect=lambda *a, **kw: self.frappe.throw('Validation blocked')):
+            with self.assertRaisesRegex(ValueError, 'Validation blocked'):
+                api.writeback_preview('stale', 'Customer', 'CUST-1')
+        self.assertEqual(self.messages, ['existing message', 'Validation blocked'])
+        self.assertFalse(self.flags.mute_messages)
+
+    def test_discovery_permission_failure_is_not_muted_or_hidden(self):
+        def deny(role):
+            self.frappe.throw('Permission denied')
+        self.frappe.only_for = deny
+        with patch.object(api, 'frappe', self.frappe), patch.object(api, '_writeback_context') as check:
+            with self.assertRaisesRegex(ValueError, 'Permission denied'):
+                api.writeback_available('Customer', 'CUST-1')
+        check.assert_not_called()
+        self.assertEqual(self.messages, ['existing message', 'Permission denied'])

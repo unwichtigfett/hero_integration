@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import io
 import os
 import shutil
@@ -94,34 +95,11 @@ class TestDownloader(unittest.TestCase):
         self.assertEqual(len(opener.requests), 2)
 
 
-class _Client:
-    def __init__(self, pages):
-        self.pages, self.calls = pages, []
-
-    def query(self, document, variables):
-        self.calls.append(variables)
-        return {"FileUpload_FileUploads": self.pages[variables.get("after")]}
-
-
 def _page(nodes, end, more):
     return {"edges": [{"node": n} for n in nodes], "pageInfo": {"endCursor": end, "hasNextPage": more}}
 
 
 class TestListingAndTargets(unittest.TestCase):
-    def test_documents_phase_drops_images_and_follows_cursor(self):
-        client = _Client({None: _page([{"id": 1, "category": "invoice"}, {"id": 2, "category": "images"}], "c1", True),
-                          "c1": _page([{"id": 3, "category": None}], "c2", False)})
-        pages = list(ft.list_pages(client, "documents"))
-        self.assertEqual([[r["id"] for r in rows] for rows, _ in pages], [[1], [3]])
-        self.assertEqual(pages[-1][1], "c2")
-        self.assertIsNone(client.calls[0]["filters"])
-        self.assertNotIn("after", client.calls[0])
-
-    def test_images_phase_filters_on_hero_side_and_resumes(self):
-        client = _Client({"c5": _page([{"id": 9, "category": "images"}], "c6", False)})
-        list(ft.list_pages(client, "images", "c5"))
-        self.assertEqual(client.calls[0]["filters"], {"category": {"equals": "images"}})
-
     def test_target_prefers_project_then_customer(self):
         projects, customers = {"10": "PV-1-H"}, {"77": "KD-00001"}
         self.assertEqual(ft.resolve_target({"file_upload_matches": [{"project_match_id": 10}]}, projects, customers),
@@ -202,7 +180,8 @@ class _Doc(SimpleNamespace):
 def _fake_frappe(db, root):
     return SimpleNamespace(
         db=db, flags=SimpleNamespace(), log_error=lambda **k: None,
-        get_doc=lambda values: _Doc(_db=db, _values=values, flags=SimpleNamespace()),
+        get_doc=lambda values, name=None, **kwargs: _Doc(_db=db, _values=values, flags=SimpleNamespace())
+        if isinstance(values, dict) else SimpleNamespace(**db.data[values][name]),
         get_all=lambda doctype, filters, fields, limit_page_length=0: [
             SimpleNamespace(name=name, **{field: row.get(field) for field in fields if field != "name"})
             for name, row in db.data.get(doctype, {}).items() if db._match(row, filters)],
@@ -230,7 +209,14 @@ class _FileFixture(unittest.TestCase):
         frappe_patch = patch.object(ft, "frappe", _fake_frappe(self.db, self.root))
         frappe_patch.start()
         self.addCleanup(frappe_patch.stop)
+        read_patch = patch.object(ft.direct_runtime, "resolve_read", side_effect=lambda op, source: ft.direct_runtime.builtin_read(op))
+        read_patch.start()
+        self.addCleanup(read_patch.stop)
         self.link = SimpleNamespace(name="L1", target_name="F1", source_payload_hash="old")
+        self.db.data['File']['F1']['file_name'] = 'Angebot.pdf'
+        self.db.data['HERO Integration Link']['L1']['target_field_hashes'] = ft._target_baseline('F1', {'file_name': 'Angebot.pdf'})
+        self.db.data['HERO Integration Link']['L1']['target_payload_hash'] = hashlib.md5(b'old').hexdigest()
+        self.db.commit()
 
     def path(self, name):
         return os.path.join(self.root, "files", name)
@@ -249,7 +235,7 @@ class TestReplaceKeepsAValidFile(_FileFixture):
     ROW = {"id": 5, "uuid": "u5", "filename": "Angebot.pdf", "modified": "2", "size": 3}
 
     def replace(self):
-        return ft.commit_file(self.ROW, 3, "md5", self.download(), ("Project", "PROJECT-A"),
+        return ft.commit_file(self.ROW, 3, hashlib.md5(b'new').hexdigest(), self.download(), ("Project", "PROJECT-A"),
                               "Home/HERO/Dokumente", self.link, "source-a")
 
     def assert_points_at_existing_file(self):
@@ -318,7 +304,7 @@ class TestSourceAndTargetBinding(_FileFixture):
             def fetch(inner, url, target, size):
                 with open(target, "wb") as handle:
                     handle.write(b"pdf")
-                return 3, "md5"
+                return 3, hashlib.md5(b'pdf').hexdigest()
 
         state = self.run_transfer([row], {"u7": {"uuid": "u7", "file_upload_matches": [{"project_match_id": 42}]}},
                                   instance="source-b", downloader=_Download())
@@ -338,7 +324,8 @@ class TestSourceAndTargetBinding(_FileFixture):
         self.db.data["HERO Integration Link"]["L1"]["source_payload_hash"] = ft.source_hash(row)
         self.db.commit()
         with patch.object(ft, "_known_files", return_value={
-                "5": SimpleNamespace(name="L1", target_name="F1", source_payload_hash=ft.source_hash(row))}):
+                "5": SimpleNamespace(name="L1", target_name="F1", source_payload_hash=ft.source_hash(row),
+                                     target_field_hashes=ft.field_hashes(ft.mapped_values(ft.direct_runtime.builtin_read("HeroDocuments"), row)))}):
             state = self.run_transfer([row], {"u5": {"uuid": "u5", "file_upload_matches": [{"project_match_id": 42}]}})
         self.assertEqual((state["counts"].get("relinked"), state["counts"].get("unchanged")), (1, None))
         self.assertEqual((self.current_file()["attached_to_doctype"], self.current_file()["attached_to_name"],
@@ -349,7 +336,8 @@ class TestSourceAndTargetBinding(_FileFixture):
         row = {"id": 5, "uuid": "u5", "filename": "Angebot.pdf", "modified": "1", "size": 3,
                "downloadUrl": URL, "category": "offer"}
         with patch.object(ft, "_known_files", return_value={
-                "5": SimpleNamespace(name="L1", target_name="F1", source_payload_hash=ft.source_hash(row))}):
+                "5": SimpleNamespace(name="L1", target_name="F1", source_payload_hash=ft.source_hash(row),
+                                     target_field_hashes=ft.field_hashes(ft.mapped_values(ft.direct_runtime.builtin_read("HeroDocuments"), row)))}):
             state = self.run_transfer([row], {"u5": {"uuid": "u5", "file_upload_matches": [{"project_match_id": 99}]}})
         self.assertEqual(state["counts"].get("unchanged"), 1)
         self.assertIsNone(self.current_file()["attached_to_name"])

@@ -50,6 +50,7 @@ class TestFullMigrationChain(unittest.TestCase):
 
         self.no_events = False
         self.addCleanup(patch.stopall)
+        patch("frappe.utils.synchronization.filelock", return_value=contextlib.nullcontext()).start()
         patch.object(fm, "frappe", fake).start()
         patch.object(fm, "_start_step", side_effect=start_step).start()
         patch.object(fm, "_enqueue", side_effect=self.queued.append).start()
@@ -59,6 +60,16 @@ class TestFullMigrationChain(unittest.TestCase):
         child = fm._full("FULL")["child"]
         self.db.runs[child]["state"] = state
         fm.advance_full("FULL")
+
+    def test_new_full_run_keeps_services_after_product_links_and_before_files(self):
+        steps = [fm.EMPLOYEE_ACTION, *fm.FULL_STEPS[:4], fm.SERVICE_ACTION, *fm.FULL_STEPS[4:]]
+        fm._save_full("FULL", {"step": 0, "child": "", "notes": [], "steps": steps})
+        fm.advance_full("FULL")
+        for _ in steps:
+            self.finish_current()
+        self.assertEqual(self.started, steps)
+        self.assertEqual(self.started.index(fm.SERVICE_ACTION), self.started.index(fm.PRODUCT_ACTION) + 1)
+        self.assertEqual(self.db.runs["FULL"]["state"], "Completed")
 
     def test_steps_run_one_after_another_and_complete(self):
         fm.advance_full("FULL")
@@ -115,6 +126,18 @@ class TestFileSlice(unittest.TestCase):
                          ("client", "downloader"))
         return db.runs["R"], queued
 
+    def test_employee_action_dispatches_to_employee_importer(self):
+        db=_DB();db.runs['R']={'state':'Running'}
+        fake=SimpleNamespace(db=db,log_error=lambda **k:None)
+        lock=SimpleNamespace(filelock=lambda *a,**k:contextlib.nullcontext())
+        with patch.object(fm,'frappe',fake),patch.object(fm,'now_datetime',lambda:'now'), \
+                patch.dict('sys.modules',{'frappe.utils.synchronization':lock}), \
+                patch('hero_integration.services.file_transfer._client_and_downloader',return_value=('c','d','default')), \
+                patch('hero_integration.services.employee_migration.sync_employees',return_value={'done':True,'counts':{'added':1}}) as importer:
+            fm._file_slice(SimpleNamespace(name='R',action=fm.EMPLOYEE_ACTION),SimpleNamespace(source_instance='default'))
+        self.assertEqual(importer.call_args.kwargs['run_name'],'R')
+        self.assertEqual(db.runs['R']['state'],'Completed')
+
     def test_unfinished_phase_queues_the_next_slice(self):
         run, queued = self.run_slice({"done": False, "counts": {"added": 3, "unchanged": 2}})
         self.assertEqual(queued, ["R"])
@@ -124,6 +147,27 @@ class TestFileSlice(unittest.TestCase):
     def test_finished_phase_completes_and_failures_mark_conflicts(self):
         run, queued = self.run_slice({"done": True, "counts": {"added": 1, "failed": 2}})
         self.assertEqual((run["state"], queued), ("Completed With Conflicts", []))
+
+    def test_counts_are_written_after_every_page_while_the_slice_runs(self):
+        db = _DB()
+        db.runs["R"] = {"state": "Running"}
+        seen = []
+
+        def transfer(phase, **kwargs):
+            kwargs["progress"]({"added": 200})
+            seen.append(dict(db.runs["R"]))  # the run already shows the first page
+            kwargs["progress"]({"added": 300, "unchanged": 100})
+            seen.append(dict(db.runs["R"]))
+            return {"done": False, "counts": {"added": 300, "unchanged": 100}}
+
+        fake = SimpleNamespace(db=db, log_error=lambda **k: None)
+        lock = SimpleNamespace(filelock=lambda *a, **k: contextlib.nullcontext())
+        with patch.object(fm, "frappe", fake), patch.object(fm, "_enqueue"), patch.object(fm, "now_datetime", lambda: "now"), \
+                patch.dict("sys.modules", {"frappe.utils.synchronization": lock}), \
+                patch("hero_integration.services.file_transfer._client_and_downloader", return_value=("c", "d", "s")), \
+                patch("hero_integration.services.file_transfer.transfer", side_effect=transfer):
+            fm._file_slice(SimpleNamespace(name="R", action="Document Migration"), SimpleNamespace(source_instance="s"))
+        self.assertEqual([(row["created_records"], row["processed"]) for row in seen], [(200, 200), (300, 400)])
 
     def test_disk_pause_blocks_the_run(self):
         run, _ = self.run_slice({"done": False, "last_error": "Not enough free disk space; transfer paused.", "counts": {}})
@@ -156,10 +200,11 @@ class TestSourceBinding(unittest.TestCase):
             def insert(self, **kwargs):
                 created.append(self)
 
-        fake = SimpleNamespace(get_doc=lambda values: _Run(name="RUN-1", **values),
+        fake = SimpleNamespace(get_single=lambda dt: SimpleNamespace(testing_enabled=0), get_doc=lambda values: _Run(name="RUN-1", **values),
                                db=SimpleNamespace(set_default=lambda *a: None, commit=lambda: None))
         with patch.object(fm, "frappe", fake), patch.object(fm, "_configuration", return_value=_config()), \
-                patch.object(fm, "_enqueue"), patch("hero_integration.services.file_transfer.reset_phase"):
+                patch.object(fm, "_enqueue"), patch.object(fm.direct_runtime, "resolve_read"), \
+                patch("hero_integration.services.file_transfer.reset_phase"):
             fm.start("Document Migration")
         self.assertEqual((created[0].source_instance, created[0].source_binding_revision), ("source-a", 3))
         with patch.object(fm, "frappe", fake), patch.object(fm, "_configuration", return_value=_config(confirmed=False)), \
@@ -186,6 +231,46 @@ class TestSourceBinding(unittest.TestCase):
         self.assertIn("another HERO source", db.runs["R"]["error_message"])
 
 
+class TestMappingReadiness(unittest.TestCase):
+    def test_missing_mapping_blocks_before_run_insert(self):
+        with patch.object(fm, "confirmed_configuration", return_value=_config()), \
+                patch.object(fm.direct_runtime, "resolve_read", side_effect=ValueError("approve mapping")), \
+                patch.object(fm.frappe, "get_doc") as insert:
+            for action in (*fm.DIRECT_OPERATIONS, fm.FULL_ACTION):
+                with self.subTest(action=action), self.assertRaisesRegex(ValueError, "approve mapping"):
+                    fm.start(action)
+            insert.assert_not_called()
+
+    def test_resume_preserves_blocked_run_when_mapping_is_unapproved(self):
+        run = SimpleNamespace(action="Picture Migration", state="Blocked")
+        with patch.object(fm, "bound_configuration", return_value=_config()), \
+                patch.object(fm.direct_runtime, "resolve_read", side_effect=ValueError("approve mapping")), \
+                self.assertRaisesRegex(ValueError, "approve mapping"):
+            fm.resume(run)
+        self.assertEqual(run.state, "Blocked")
+
+    def test_scope_and_service_come_from_the_selected_mapping(self):
+        from dataclasses import replace
+        template = fm.direct_runtime.builtin_read("HeroProducts")
+        read = replace(template, origin="approved-reader", mapping="current-mapping")
+        fake = SimpleNamespace(get_all=lambda *a, **kw: [], db=SimpleNamespace(exists=lambda *a: False))
+        with patch.object(fm, "frappe", fake), patch.object(fm.direct_runtime, "resolve_read", return_value=read):
+            products = next(row for row in fm.page_areas([], "source-a") if row["key"] == "products")
+        self.assertEqual(products["service"], {"service": "approved-reader", "mapping": "current-mapping"})
+        item = next(row for row in products["scope"]["objects"] if row["doctype"] == "Item")
+        self.assertIn("custom_hero_manufacturer_nr", item["fields"])
+        self.assertEqual(products["scope"]["field_count"], len(read.plan.definitions) - 1)  # two price lists, one field
+
+    def test_page_marks_direct_and_full_areas_blocked(self):
+        fake = SimpleNamespace(get_all=lambda *a, **kw: [], db=SimpleNamespace(exists=lambda *a: False))
+        with patch.object(fm, "frappe", fake), \
+                patch.object(fm.direct_runtime, "resolve_read", side_effect=ValueError("approve mapping")):
+            rows = {row["key"]: row for row in fm.page_areas([], "source-a")}
+        for key in ("employees", "products", "services", "documents", "pictures", "full"):
+            self.assertFalse(rows[key]["ready"])
+            self.assertEqual(rows[key]["blocker"], "approve mapping")
+
+
 class TestEveryStartPathIsSourceBound(unittest.TestCase):
     """The older file_transfer entry points share the bound run path."""
 
@@ -203,13 +288,13 @@ class TestEveryStartPathIsSourceBound(unittest.TestCase):
         def throw(message, *args, **kwargs):
             raise RuntimeError(message)
 
-        self.fake = SimpleNamespace(only_for=lambda *a: None, throw=throw, _=lambda text: text,
+        self.fake = SimpleNamespace(get_single=lambda dt: SimpleNamespace(testing_enabled=0), only_for=lambda *a: None, throw=throw, _=lambda text: text,
                                     get_doc=lambda values: _Run(name="RUN-1", **values),
                                     db=SimpleNamespace(exists=lambda *a, **k: None, set_default=lambda *a: None,
                                                        commit=lambda: None),
                                     log_error=lambda **kwargs: self.queued.append(("logged", kwargs)))
         for target in (patch.object(api, "frappe", self.fake), patch.object(ft, "frappe", self.fake),
-                       patch.object(fm, "frappe", self.fake),
+                       patch.object(fm, "frappe", self.fake), patch.object(fm.direct_runtime, "resolve_read"),
                        patch.object(fm, "_enqueue", side_effect=lambda name: self.queued.append(name)),
                        patch("hero_integration.services.file_transfer.reset_phase")):
             target.start()

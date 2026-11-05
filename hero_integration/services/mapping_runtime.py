@@ -107,7 +107,7 @@ class MappingPlan:
 
     def source_identity(self, record: dict[str, object]) -> str:
         definition = self._one(PURPOSE_SOURCE_IDENTITY)
-        value = transformed_value(definition, source_value(record, definition.source_path))
+        value = transformed_value(definition, source_value(record, definition.source_path), source_instance=record.get('_hero_source_instance'))
         if not isinstance(value, str) or not value:
             raise MappingPlanError("Source identity is missing or invalid.")
         return value
@@ -187,9 +187,9 @@ class MappingPlan:
                         values.missing.add(definition.target_field)
                     continue
                 if project_name:
-                    transformed = project_title(record) if project_title is not None else transformed_value(definition, value)
+                    transformed = project_title(record) if project_title is not None else transformed_value(definition, value, source_instance=record.get('_hero_source_instance'))
                 else:
-                    transformed = transformed_value(definition, value)
+                    transformed = transformed_value(definition, value, source_instance=record.get('_hero_source_instance'))
                 if not projection and not definition.source_path.startswith('current_project_match_status.') and (transformed is None or transformed == ""):
                     if definition.target_field not in values:
                         values.empty.add(definition.target_field)
@@ -210,7 +210,7 @@ class MappingPlan:
                     values[definition.target_field] = native_value(definition.target_field)
                 except KeyError:
                     if not (allow_partial and (self.target_operation or self.operation) == 'HeroCalendarEvents'
-                            and definition.target_field in {'starts_on', 'ends_on', 'all_day', 'custom_hero_original_start', 'custom_hero_original_end'}):
+                            and definition.target_field in {'starts_on', 'ends_on', 'all_day', 'status', 'custom_hero_original_start', 'custom_hero_original_end'}):
                         raise
             elif definition.purpose == 'Project Relation':
                 if value is None:
@@ -240,7 +240,7 @@ class MappingPlan:
         definitions = self._with_purpose(PURPOSE_CUSTOMER_HOME_PHONE)
         if not definitions:
             return None
-        value = transformed_value(definitions[0], source_value(record, definitions[0].source_path))
+        value = transformed_value(definitions[0], source_value(record, definitions[0].source_path), source_instance=record.get('_hero_source_instance'))
         return value if isinstance(value, str) else None
 
     def has_home_phone(self) -> bool:
@@ -300,8 +300,11 @@ class MappingPlan:
 
 def plan_from_definitions(operation: str, definitions: list[MappingSpec] | tuple[MappingSpec, ...], *, target_operation: str = "", native_task: bool = False, adapter_options=None) -> MappingPlan:
     target_operation = target_operation or operation
-    if target_operation not in {"HeroCustomers", "HeroProjectMatches", *PROJECTIONS}:
+    from hero_integration.services.direct_operations import OPERATIONS as DIRECT_OPERATIONS
+    if target_operation not in {"HeroCustomers", "HeroProjectMatches", *PROJECTIONS, *DIRECT_OPERATIONS}:
         raise MappingPlanError("The selected target adapter is not supported.")
+    if target_operation in DIRECT_OPERATIONS and not adapter_options:
+        raise MappingPlanError("Products, Documents and Pictures are mapped only through a versioned Query adapter.")
     selected = tuple(sorted((item for item in definitions if item.operation == target_operation), key=lambda item: (item.priority, item.definition_id, item.source_path)))
     if not selected:
         raise MappingPlanError("No active mapping definitions exist for this operation.")

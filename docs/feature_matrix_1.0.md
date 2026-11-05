@@ -33,4 +33,4 @@
 
 **Implemented** means a path exists in source, not that it is activated. **Tested** refers to a named test, revision and environment. **Approved** means an actor authorized specific mapping/service/action revisions. **Verified** means the intended behavior was observed on the actual target runtime.
 
-The [mapping matrix](mapping_matrix_1.0.md) preserves a historical four-domain baseline; its counts are not a live registry query. See [synchronization handoff](sync_handoff_1.0.md) for execution prerequisites.
+The [JSON mapping guide](complete_json_mapping.md) describes the current import and export contracts for all nine migration areas. See [synchronization handoff](sync_handoff_1.0.md) for execution prerequisites.

@@ -100,6 +100,9 @@ def normalise_send_mapping(content, schema):
                 or not isinstance(target, dict) or set(target) - {'operation', 'argument', 'input_type', 'field', 'field_path', 'graphql_type'}
                 or not _path(target.get('field'))):
             raise MappedSendError('Send requires exact Frappe sources and scalar mutation input paths.')
+        from hero_integration.services.project_naming import is_local_project_name
+        if is_local_project_name(source, target['field']):
+            raise MappedSendError('Project naming is local to ERPNext and cannot be sent to HERO.')
         try:
             normalized = normalise_draft_mapping({k: item[k] for k in ('source', 'target', 'transformation') if k in item}, schema, temporal=True)
         except (ValueError, TypeError, KeyError) as error:
@@ -321,8 +324,9 @@ def _profile_name(rows, doctype, mode):
             content = json.loads(row.mapping_json, object_pairs_hook=unique_json_object)
         except (TypeError, ValueError) as error:
             raise MappedSendError('An active mutation mapping cannot be inspected safely.') from error
-        if (is_send_mapping(content) and content.get('source', {}).get('doctype') == doctype
-                and content.get('send_options', {}).get('mode') == mode):
+        if ((is_send_mapping(content) and content.get('send_options', {}).get('mode') == mode
+                or content.get('usage') == 'MAPPED_UPDATE_V2' and mode == 'UPDATE')
+                and content.get('source', {}).get('doctype') == doctype):
             candidates.append(row.name)
     if len(candidates) != 1:
         raise MappedSendError('Exactly one active Send to HERO mapping is required for this document and source.')
@@ -351,7 +355,11 @@ def _load_context(doctype, name):
     if (snapshot.analysis_status != 'Validated' or getattr(snapshot, 'execution_contract_status', '') == 'Blocked'
             or mapping.schema_fingerprint != snapshot.schema_fingerprint or snapshot.source_instance != source):
         raise MappedSendError('The Send mapping no longer matches its executable schema and source.')
-    content = normalise_send_mapping(json.loads(mapping.mapping_json, object_pairs_hook=unique_json_object), json.loads(snapshot.snapshot_json))
+    raw_content = json.loads(mapping.mapping_json, object_pairs_hook=unique_json_object)
+    if raw_content.get('usage') == 'MAPPED_UPDATE_V2':
+        from hero_integration.services.mapped_update_v2 import _load_context as load_update
+        return load_update(mapping.name, doctype, name)
+    content = normalise_send_mapping(raw_content, json.loads(snapshot.snapshot_json))
     from hero_integration.services.frappe_mapping_catalog import FrappePickerMetadata, validate_send_mapping_sources
     validate_send_mapping_sources(content, FrappePickerMetadata())
     if (mapping.status != 'Active' or mapping.source_instance != source
@@ -436,6 +444,11 @@ def _read_rows(ctx, plan, client):
 
 
 def _read_record(ctx, client):
+    if ctx.document.doctype == 'Project':
+        from hero_integration.services.mapped_update_v2 import _read_record as read_project
+        reader = SimpleNamespace(**{**vars(ctx), 'raw_schema': json.loads(ctx.snapshot.snapshot_json),
+            'content': {**ctx.content, 'area': 'HeroProjectMatches', 'identity': {'read_path': ctx.content['send_options']['read_identity_path']}}})
+        return read_project(reader, client)
     rows = _read_rows(ctx, ctx.read, client)
     path = ctx.content['send_options']['read_identity_path']
     if path != ctx.read.contract.identity_path:
@@ -697,10 +710,21 @@ def _baseline_remote(ctx, item, setting, observed, *, record=None):
     options = getattr(plan, 'adapter_options', None)
     if options is not None:
         from hero_integration.services.query_mapping import transform
-        return transform(rule, observed, options)
+        return transform(rule, observed, options, source_instance=ctx.proof.source_instance)
+    if rule.operation == 'HeroTasks' and rule.transformation == 'Native Adapter':
+        from hero_integration.services.direct_mapping import validate_native_task_rule
+        validate_native_task_rule(rule)
+        if rule.source_path == 'comment':
+            from hero_integration.services.native_projections import _html, _text
+            if observed is None or isinstance(observed, str) and not observed.strip():
+                return None  # Native intake deliberately leaves an empty description unset.
+            return _html(_text(observed, 'Task comment'))
+        if rule.source_path == 'target_project_match_id':
+            from hero_integration.services.migration import _project_name_for_source
+            return _project_name_for_source(observed, ctx.proof.source_instance)
     if rule.transformation in {'Native Adapter', 'HERO Project Link'}:
         raise MappedSendError('This native Query binding needs a verified canonical Send baseline resolver.')
-    return transformed_value(rule, observed)
+    return transformed_value(rule, observed, source_instance=ctx.proof.source_instance)
 
 
 def _baseline_link(ctx, item):
@@ -769,6 +793,9 @@ def _prepare(ctx, client, phase_id=None):
     options = ctx.content['send_options']
     phases = []
     for identity, item in assignments(ctx.content):
+        from hero_integration.services.project_naming import is_local_project_name
+        if is_local_project_name(item['source'], item['target']['field']):
+            raise MappedSendError('Project naming is local to ERPNext and cannot be sent to HERO.')
         setting = options['assignments'][identity]
         value = _resolve(ctx, item, setting, remote, client, phase_id)
         if setting['resolver'] == 'PHASE':
@@ -837,6 +864,12 @@ def preview(doctype, name, *, phase_id=None, client=None):
     from hero_integration.client.graphql import HeroGraphQLClient
     from hero_integration.services.writeback_source import validate_source
     ctx = _load_context(doctype, name)
+    if ctx.content.get('usage') == 'MAPPED_UPDATE_V2':
+        if phase_id not in (None, '', 0, '0'):
+            raise MappedSendError('The selected phase identity is invalid.')
+        from hero_integration.services.mapped_update_v2 import preview as preview_update
+        result = preview_update(ctx.mapping.name, doctype, name, client=client)
+        return {**result, doctype.lower(): name, 'phases': [], 'hero': {'phase_id': None}}
     config = validate_source(ctx.proof)
     client = client or HeroGraphQLClient(config.endpoint, lambda: config.api_token, config.timeout_seconds, max_retries=0)
     remote, changes, conflicts, _variables, fingerprint, phases = _prepare(ctx, client, phase_id)
@@ -881,6 +914,7 @@ def _apply_phase_source(ctx, changes, after):
         current.set(item['source']['field'], _baseline_remote(ctx, item, setting, _at(after, setting['read_path']), record=after))
     with managed_target_update(current.doctype, current.name, ctx.link.name):
         current.save()
+    ctx.project_stamp_receipt = {'before': str(ctx.document.modified), 'after': str(current.modified)}
     for change, item in phases:
         change['local'] = current.get(item['source']['field'])
 
@@ -924,6 +958,12 @@ def send(doctype, name, *, fingerprint='', confirmed=0, phase_id=None, client=No
     from hero_integration.services.writeback_source import validate_source
     _assert_mutation_execution_released()
     ctx = _load_context(doctype, name)
+    if ctx.content.get('usage') == 'MAPPED_UPDATE_V2':
+        if phase_id not in (None, '', 0, '0'):
+            raise MappedSendError('The selected phase identity is invalid.')
+        from hero_integration.services.mapped_update_v2 import send as send_update
+        return send_update(ctx.mapping.name, doctype, name, fingerprint=fingerprint, confirmed=confirmed,
+                           client=client, mutation_client=mutation_client)
     config = validate_source(ctx.proof)
     client = client or HeroGraphQLClient(config.endpoint, lambda: config.api_token, config.timeout_seconds, max_retries=0)
     before, changes, conflicts, variables, current, _phases = _prepare(ctx, client, phase_id)
@@ -986,7 +1026,8 @@ def send(doctype, name, *, fingerprint='', confirmed=0, phase_id=None, client=No
         raise MappedSendError('Sending to HERO could not be confirmed; no automatic retry was performed.') from None
     _finalize_mutation(audit, 'Succeeded', 'Mapped fields were sent once and verified by approved Query readback.')
     return {'status': 'SENT', 'hero_id': ctx.hero_id, 'changes': [c['label'] for c in changes],
-        'correlation_id': audit.correlation_id}
+        'correlation_id': audit.correlation_id,
+        **({'project_stamp_receipt': ctx.project_stamp_receipt} if hasattr(ctx, 'project_stamp_receipt') else {})}
 
 
 def _acknowledge_updated_fields(ctx, changes, after):

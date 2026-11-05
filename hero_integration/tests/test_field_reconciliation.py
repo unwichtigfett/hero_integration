@@ -208,7 +208,7 @@ class TestManagedTargetOwnership(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "interrupted"):
                 with managed_target_update("Task", "inner", "link-inner"):
                     self.assertTrue(managed_target_update_active("Task", "inner"))
-                    self.assertFalse(managed_target_update_active("Task", "outer"))
+                    self.assertTrue(managed_target_update_active("Task", "outer"))
                     raise ValueError("interrupted")
             self.assertTrue(managed_target_update_active("Task", "outer"))
             self.assertFalse(managed_target_update_active("Task", "inner"))

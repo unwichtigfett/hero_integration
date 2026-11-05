@@ -38,6 +38,9 @@ CUSTOMER_CONTRACT_V3 = "v3"
 CUSTOMER_CONTRACT_V4 = "v4"
 # V4 adds salutation title to V2 without the legal form.
 CUSTOMER_QUERY_V4 = CUSTOMER_QUERY_V2.replace("id nr first_name last_name full_name ", "id nr title first_name last_name full_name ")
+CUSTOMER_CONTRACT_V5 = "v5"
+# V5 also reads the lead source (owner decision 2026-11-03).
+CUSTOMER_QUERY_V5 = CUSTOMER_QUERY_V4.replace(" category type ", " category type source ")
 PROJECT_QUERY_V1 = """
 query HeroProjectMatches($first: Int!, $offset: Int!, $orderBy: String!) {
   project_matches(first: $first, offset: $offset, orderBy: $orderBy) {
@@ -64,6 +67,7 @@ CUSTOMER_SELECTED_PATHS = (
 CUSTOMER_SELECTED_PATHS_V2 = (*CUSTOMER_SELECTED_PATHS, "address.line_2")
 CUSTOMER_SELECTED_PATHS_V3 = (*CUSTOMER_SELECTED_PATHS_V2, "company_legal_form")
 CUSTOMER_SELECTED_PATHS_V4 = (*CUSTOMER_SELECTED_PATHS_V2, "title")
+CUSTOMER_SELECTED_PATHS_V5 = (*CUSTOMER_SELECTED_PATHS_V4, "source")
 PROJECT_SELECTED_PATHS = (
     "id", "customer_id", "project_id", "project_title", "project_nr", "project_type", "partner_notes",
     "customer.title", "customer.full_name", "address.full_address", "display_id", "created", "modified",
@@ -77,6 +81,23 @@ PROJECT_CONTRACT_V3 = "v3"
 # V3 also reads the project volume in euros.
 PROJECT_QUERY_V3 = PROJECT_QUERY_V2.replace("    measure { short name }\n", "    measure { short name }\n    volume\n")
 PROJECT_SELECTED_PATHS_V3 = (*PROJECT_SELECTED_PATHS_V2, "volume")
+PROJECT_CONTRACT_V4 = "v4"
+# V4 also reads the designation, the lead source, the responsible partner and the assigned users
+# (owner decision 2026-11-03).
+PROJECT_QUERY_V4 = PROJECT_QUERY_V3.replace(
+    "    volume\n",
+    "    volume\n    name partner_source\n    partner { email }\n    project_match_assignments { user { email } }\n",
+)
+PROJECT_SELECTED_PATHS_V4 = (*PROJECT_SELECTED_PATHS_V3, "name", "partner_source", "partner.email",
+                             "project_match_assignments")
+PROJECT_CONTRACT_V5 = "v5"
+# V5 identifies people by HERO id instead of e-mail: partner_id and the assignees' user_id.
+PROJECT_QUERY_V5 = PROJECT_QUERY_V3.replace(
+    "    volume\n",
+    "    volume\n    name partner_source partner_id\n    project_match_assignments { user_id }\n",
+)
+PROJECT_SELECTED_PATHS_V5 = (*PROJECT_SELECTED_PATHS_V3, "name", "partner_source", "partner_id",
+                             "project_match_assignments")
 
 
 def project_query(contract_version: str) -> str:
@@ -88,6 +109,10 @@ def project_query(contract_version: str) -> str:
         return PROJECT_QUERY_V2
     if contract_version == PROJECT_CONTRACT_V3:
         return PROJECT_QUERY_V3
+    if contract_version == PROJECT_CONTRACT_V4:
+        return PROJECT_QUERY_V4
+    if contract_version == PROJECT_CONTRACT_V5:
+        return PROJECT_QUERY_V5
     raise ValueError("Unsupported Project read-contract version.")
 
 
@@ -102,6 +127,8 @@ def customer_query(contract_version: str) -> str:
         return CUSTOMER_QUERY_V3
     if contract_version == CUSTOMER_CONTRACT_V4:
         return CUSTOMER_QUERY_V4
+    if contract_version == CUSTOMER_CONTRACT_V5:
+        return CUSTOMER_QUERY_V5
     raise ValueError("Unsupported Customer read-contract version.")
 
 
@@ -165,7 +192,7 @@ class HeroSource:
         if len(records) > self.page_size:
             raise ValueError("HERO response exceeds the approved page size.")
         annotated = tuple(
-            {**row, "_hero_source_instance": self.source_instance} if self.source_instance != "default" else dict(row)
+            {**row, "_hero_source_instance": self.source_instance}
             for row in records
         )
         # Only an empty page ends an offset scan: a short page can be a server
@@ -270,6 +297,11 @@ class GraphQLServiceSource:
             raise ReadContractError('Read offset is invalid or exceeds the reviewed run bound.')
         if operation != self.contract.target_operation:
             return SourcePage((), None)
+        from hero_integration.services.direct_operations import OPERATIONS
+        direct = OPERATIONS.get(operation, {})
+        unpaged = bool(direct.get('unpaged'))
+        if unpaged and (offset != 0 or self.contract.variables):
+            raise ReadContractError('A nonpaginated employee read requires its single approved request.')
         lookup = self.contract.target_operation == 'HeroLookup'
         one_shot_lookup = False
         lookup_bound = None
@@ -310,16 +342,40 @@ class GraphQLServiceSource:
             from hero_integration.graphql_protocol.graphql_result_decoder import decode_graphql_result
             from hero_integration.graphql_protocol.transport import Response
             decode_graphql_result(request, Response(True, json.dumps({'data': data}), True))
-        records = value_at(data, self.contract.records_path)
+        if unpaged:
+            from hero_integration.services.employee_migration import (
+                _records as employee_records, EmployeeMigrationBlocked, MAX_RECORDS,
+            )
+            try:
+                records = employee_records(data, self.contract.records_path)
+            except EmployeeMigrationBlocked as error:
+                raise ReadContractError(str(error)) from error
+        elif direct.get('record_prefix') == 'edges.node':
+            from hero_integration.services.direct_runtime import DirectRead, records as direct_records
+            # Preserve the saved reader's fail-closed shape checks before using
+            # the direct adapter, which otherwise treats absent lists as empty.
+            path = self.contract.records_path
+            edges = value_at(data, path[:-len('.node')] if path.endswith('.edges.node') else path)
+            if not isinstance(edges, list):
+                raise ReadContractError('The selected result path is not a list of objects.')
+            try:
+                records = direct_records(DirectRead(operation, None, self.service.query_document, path), data)
+            except ValueError as error:
+                raise ReadContractError('The selected result path is not a list of objects.') from error
+        else:
+            records = value_at(data, self.contract.records_path)
         if not isinstance(records, list) or not all(isinstance(row, dict) for row in records):
             raise ReadContractError("The selected result path is not a list of objects.")
-        bound = lookup_bound if one_shot_lookup else self.contract.page_size
+        bound = MAX_RECORDS if unpaged else lookup_bound if one_shot_lookup else self.contract.page_size
         if len(records) > bound:
             raise ReadContractError('Response exceeds the approved lookup bound.' if lookup else 'Response exceeds the approved page size.')
         for row in records:
             value_at(row, self.contract.identity_path)
+        if operation == 'HeroProjectMatches' and self.query_adapter.get('logbook', {}).get('offset_variable'):
+            from hero_integration.services.project_logbook import complete_mapped_histories
+            records = complete_mapped_histories(self, records, variables)
         annotated = tuple({**row, "_hero_source_instance": self.source_instance} for row in records)
-        if one_shot_lookup:
+        if one_shot_lookup or unpaged:
             return SourcePage(annotated, None)
         # Only an empty page ends an offset scan (see HeroSource._page).
         return SourcePage(annotated, offset + len(records) if records else None)

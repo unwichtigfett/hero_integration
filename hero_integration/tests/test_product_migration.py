@@ -8,6 +8,9 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from hero_integration.services import product_migration as pm
+from hero_integration.services import direct_runtime
+
+BUILTIN = direct_runtime.builtin_read("HeroProducts")
 
 ROW = {
     "product_id": "FSRmFpZSMAA", "nr": "PV-1001", "base_price": 145.55, "list_price": 199, "is_deleted": False,
@@ -20,7 +23,7 @@ ROW = {
 
 class TestMapping(unittest.TestCase):
     def test_article_fields(self):
-        values = pm.item_values(ROW)
+        values = pm.item_values(ROW, BUILTIN)
         self.assertEqual((values["item_code"], values["item_name"], values["item_group"], values["stock_uom"]),
                          ("PV-1001", "MODUL: AXIpremium", "Eigene Artikel", "Stk"))
         self.assertEqual((values["brand"], values["barcode"], values["disabled"]), ("AXITEC", "4260463020058", 0))
@@ -28,7 +31,7 @@ class TestMapping(unittest.TestCase):
 
     def test_fallbacks(self):
         values = pm.item_values({"product_id": "X1", "nr": "", "is_deleted": True, "base_price": 0, "list_price": 12.5,
-                                 "base_data": {"name": "", "unit_type": ""}})
+                                 "base_data": {"name": "", "unit_type": ""}}, BUILTIN)
         self.assertEqual((values["item_code"], values["item_name"], values["stock_uom"]), ("X1", "X1", "Stk"))
         self.assertEqual((values["item_group"], values["brand"], values["disabled"]), ("Ohne Katalog", None, 1))
         self.assertEqual((values["buying"], values["selling"]), (None, 12.5))
@@ -53,8 +56,53 @@ class _Client:
 
 
 class TestPaging(unittest.TestCase):
+    def test_rollback_discards_supplier_and_other_master_caches_before_next_article(self):
+        saved, documents, created, accepted = {}, {}, [], []
+
+        def get_doc(values):
+            doctype = values['doctype']
+            name = f'SUP-{len(created) + 1}' if doctype == 'Supplier' else values['uom_name']
+
+            def insert(**kwargs):
+                documents[doctype, name] = dict(values)
+                created.append((doctype, name))
+                return document
+
+            document = SimpleNamespace(name=name, insert=insert)
+            return document
+
+        def get_value(doctype, filters, field):
+            return next((name for (kind, name), values in documents.items()
+                         if kind == doctype and all(values.get(key) == value for key, value in filters.items())), None)
+
+        fake = SimpleNamespace(
+            db=SimpleNamespace(get_default=saved.get, set_default=lambda key, value: saved.__setitem__(key, value),
+                               exists=lambda doctype, name: (doctype, name) in documents,
+                               get_value=get_value, commit=lambda: None, rollback=documents.clear),
+            get_doc=get_doc, utils=SimpleNamespace(now_datetime=lambda: 'now'), log_error=lambda **kwargs: None)
+
+        def import_article(row, link, masters, instance, **kwargs):
+            masters.ensure('UOM', 'Stk', uom_name='Stk')
+            supplier = masters.supplier('New supplier')
+            if row['product_id'] == 'P0':
+                raise ValueError('First article validation fails after its masters were inserted')
+            # The second article must not use either master rolled back with P0.
+            self.assertIn(('UOM', 'Stk'), documents)
+            self.assertIn(('Supplier', supplier), documents)
+            accepted.append((row['product_id'], supplier))
+            return 'added'
+
+        with patch.object(pm, 'frappe', fake), patch.object(pm, '_links', return_value={}), \
+                patch.object(pm, 'upsert', side_effect=import_article):
+            state = pm.sync_products(_Client(2), source_instance='source-a', read=BUILTIN)
+        self.assertEqual(state['counts'], {'requests': 1, 'failed': 1, 'added': 1})
+        self.assertEqual(len(accepted), 1)
+        self.assertEqual(len([entry for entry in created if entry[0] == 'Supplier']), 2)
+        self.assertEqual(len([entry for entry in created if entry[0] == 'UOM']), 2)
+        self.assertTrue(state['done'])
+
     def test_rejected_page_is_read_in_halves(self):
-        rows = pm.fetch_page(_Client(1000, reject_above=250), 0)
+        rows = pm.fetch_page(_Client(1000, reject_above=250), 0, read=BUILTIN)
         self.assertEqual(len(rows), 500)
         self.assertEqual(rows[0]["product_id"], "P0")
         self.assertEqual(rows[-1]["product_id"], "P499")
@@ -67,8 +115,8 @@ class TestPaging(unittest.TestCase):
             utils=SimpleNamespace(now_datetime=lambda: "now"), log_error=lambda **k: None)
         client = _Client(1200)
         with patch.object(pm, "frappe", fake), patch.object(pm, "_links", return_value={}) as links, \
-                patch.object(pm, "upsert", side_effect=lambda row, link, m, instance: seen.append(row["product_id"]) or "added"):
-            state = pm.sync_products(client, source_instance="source-a")
+                patch.object(pm, "upsert", side_effect=lambda row, link, m, instance, **kw: seen.append(row["product_id"]) or "added"):
+            state = pm.sync_products(client, source_instance="source-a", read=BUILTIN)
         links.assert_called_once_with("source-a")
         self.assertEqual(len(seen), 1200)
         self.assertEqual([offset for _, offset in client.calls], [0, 500, 1000])
@@ -166,7 +214,7 @@ class TestManagedPrices(unittest.TestCase):
                                target_field_hashes=json.dumps({"prices": {pm.SELLING: {"name": "P1", "rate": 98, "uom": "Stk"}}}))
         with patch.object(pm, "frappe", fake), patch.object(pm, "owned_digest", return_value="x"):
             result = pm.upsert({**ROW, "base_price": None, "sales_prices": [], "list_price": 100}, link,
-                               pm._Masters(), "source-a")
+                               pm._Masters(), "source-a", read=BUILTIN)
         self.assertEqual(result, "conflict")
         self.assertEqual(db.prices["P1"]["price_list_rate"], 98)
         self.assertEqual([write[0] for write in db.writes], ["HERO Integration Link"])
@@ -179,7 +227,7 @@ class TestManagedPrices(unittest.TestCase):
         link = SimpleNamespace(name="L1", target_name="PV-1001", source_payload_hash="old", target_payload_hash="",
                                target_field_hashes="")
         with patch.object(pm, "frappe", fake), patch.object(pm, "owned_digest", return_value="x"):
-            result = pm.upsert({**ROW, "base_price": None}, link, pm._Masters(), "source-a")
+            result = pm.upsert({**ROW, "base_price": None}, link, pm._Masters(), "source-a", read=BUILTIN)
         self.assertEqual(result, "conflict")
         self.assertEqual(db.writes[0][0], "HERO Integration Link")
         self.assertEqual(db.writes[0][2]["sync_status"], "Conflict")
@@ -196,7 +244,7 @@ class TestManagedPrices(unittest.TestCase):
         client = _Client(10)
         with patch.object(pm, "frappe", SimpleNamespace(db=db, utils=SimpleNamespace(now_datetime=lambda: "now"))), \
                 patch.object(pm, "_links", return_value={}), patch.object(pm, "upsert", return_value="added"):
-            pm.sync_products(client, source_instance="source-a")
+            pm.sync_products(client, source_instance="source-a", read=BUILTIN)
         self.assertEqual(client.calls[0], (pm.PAGE_SIZE, 0))
 
 

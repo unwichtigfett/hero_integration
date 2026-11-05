@@ -259,8 +259,10 @@ class TestMappingExchange(unittest.TestCase):
         from hero_integration.services.projection_contracts import CONTRACTS, STATUS_PATHS
         # Address consumes Country. This V1 fixture excludes separately selected
         # Customer V2/V3 bindings and the Project V3 volume binding.
-        native_relation_paths = {"HeroCustomers": {"address.country.code", "address.line_2", "company_legal_form", "title"},
-                                 "HeroProjectMatches": {"volume"}}
+        # Customer V5 source and Project V4 name/source/partner are later contract bindings too.
+        native_relation_paths = {"HeroCustomers": {"address.country.code", "address.line_2", "company_legal_form", "title",
+                                                   "source"},
+                                 "HeroProjectMatches": {"volume", "name", "partner_source", "partner.email", "partner_id"}}
         legacy = {operation: set(contract['paths']) for operation, contract in SOURCE_CONTRACTS.items() if operation not in CONTRACTS}
         legacy['HeroProjectMatches'] -= set(STATUS_PATHS)
         for operation, excluded in native_relation_paths.items():

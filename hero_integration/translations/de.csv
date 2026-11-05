@@ -110,7 +110,7 @@ Actor,Ausführender Benutzer
 Adapter configuration JSON,Adapterkonfiguration als JSON
 Adapter configuration must be an object.,Die Adapterkonfiguration muss ein Objekt sein.
 Add existing field rule,Vorhandene Feldregel hinzufügen
-Add field mapping,Feld-Mapping hinzufügen
+Add field mapping,Mapping hinzufügen
 Add mapping to draft,Mapping zum Entwurf hinzufügen
 Additional local changes are not saved.,Weitere lokale Änderungen sind nicht gespeichert.
 Additional source field is not approved.,Das zusätzliche Quellfeld ist nicht freigegeben.
@@ -1030,6 +1030,8 @@ Mutation usage,Mutation-Verwendung
 Mutation variable type does not match its schema argument.,Der Mutation-Variablentyp stimmt nicht mit seinem Schema-Argument überein.
 Mutation variables must be a JSON object.,Mutation-Variablen müssen ein JSON-Objekt sein.
 My new personal drafts,Meine neuen persönlichen Entwürfe
+My personal drafts,Meine persönlichen Entwürfe
+Personal drafts are visible only to their owner. Deployment drafts belong to Administrator.,Persönliche Entwürfe sind nur für ihren Eigentümer sichtbar. Deployment-Entwürfe gehören Administrator.
 My saved revisions,Meine gespeicherten Revisionen
 My saved revisions — read only,Meine gespeicherten Revisionen — schreibgeschützt
 Name,Name
@@ -2288,7 +2290,6 @@ value,Wert
 {0} results,{0} Treffer
 {0} usages,{0} Verwendungen
 {0} was changed in HERO since the last import and is not overwritten.,{0} wurde seit dem letzten Import in HERO geändert und wird nicht überschrieben.
-"{0} {1} is imported from HERO and cannot be deleted here. Change it in HERO, reject it in its HERO Integration Link while it awaits review, or use the HERO data purge.","{0} {1} wurde aus HERO importiert und kann hier nicht gelöscht werden. Ändern Sie den Datensatz in HERO, lehnen Sie ihn während der Prüfung in seiner HERO-Integrationsverknüpfung ab oder verwenden Sie die HERO-Datenbereinigung."
 {0} {1}? This migrates the object fields of the active mapping for {2} from HERO into Frappe.,{0}: {1}? Dies migriert die Objektfelder des aktiven Mappings für {2} von HERO nach Frappe.
 {0} · {1} ({2}),{0} · {1} ({2})
 {0} · {1} direct usages · list view for GraphQL base scalar,{0} · {1} direkte Verwendungen · Listenansicht für GraphQL-Basis-Skalar
@@ -2877,3 +2878,802 @@ The record has no open conflict.,Der Datensatz hat keinen offenen Konflikt.
 "The rules of the run that processed this record can no longer be reconstructed.","Die Regeln des Laufs, der diesen Datensatz verarbeitet hat, lassen sich nicht mehr rekonstruieren."
 Not started,Noch nicht gestartet
 Run,Lauf
+Built-in,Standard (eingebaut)
+Built-in mapping: used until an own mapping for this operation is activated. Create one from a saved read query (API & Schema) with target operation {0}.,"Eingebautes Mapping: gilt, bis für diese Operation ein eigenes Mapping aktiviert ist. Lege es aus einer gespeicherten Lese-Abfrage (API & Schema) mit der Zieloperation {0} an."
+"Products, Documents and Pictures are mapped only through a versioned Query adapter.","Artikel, Dokumente und Bilder werden nur über einen versionierten Query-Adapter gemappt."
+"Products, Documents and Pictures require a versioned Query adapter.","Artikel, Dokumente und Bilder benötigen einen versionierten Query-Adapter."
+Each price list may be fed by one rule only.,Jede Preisliste darf nur von einer Regel befüllt werden.
+An Item Price rule must name its price list (Standard Buying or Standard Selling).,Eine Artikelpreis-Regel muss ihre Preisliste nennen (Standard Buying oder Standard Selling).
+Only Item Price rules name a relation.,Nur Artikelpreis-Regeln nennen eine Beziehung.
+Coded HERO resolvers take no transform options.,Fest eingebaute HERO-Umwandlungen haben keine Optionen.
+HeroProducts,HeroProducts
+HeroDocuments,HeroDocuments
+HeroPictures,HeroPictures
+Price list,Preisliste
+Choose a price list,Preisliste auswählen
+HERO Item Group,HERO-Artikelgruppe
+HERO UOM,HERO-Mengeneinheit
+HERO Brand,HERO-Marke
+HERO EAN Barcode,HERO-EAN-Barcode
+HERO Price,HERO-Preis
+HERO Default Sales Price,HERO-Standardverkaufspreis
+Standard Buying,Standard-Einkauf
+Standard Selling,Standard-Verkauf
+The identity of this HERO object is fixed: {0} → HERO Integration Link.source_id.,Die Identität dieses HERO-Objekts ist festgelegt: {0} → HERO Integration Link.source_id.
+{0} may only feed {1}.{2}.,{0} darf nur {1}.{2} befüllen.
+{0}.{1} requires its coded HERO resolver.,{0}.{1} benötigt seine fest eingebaute HERO-Umwandlung.
+The identity of this HERO object is fixed: {0}.,Die Identität dieses HERO-Objekts ist festgelegt: {0}.
+Unknown HERO resolver:,Unbekannte HERO-Umwandlung:
+Unknown HERO resolver: {0},Unbekannte HERO-Umwandlung: {0}
+Unknown direct operation:,Unbekannter direkter Vorgang:
+Unknown direct operation: {0},Unbekannter direkter Vorgang: {0}
+HERO returned an invalid record list for {0}.,HERO hat eine ungültige Datensatzliste für {0} zurückgegeben.
+The identity of this HERO object is fixed: product_id.,Die Identität dieses HERO-Objekts ist festgelegt: product_id.
+The identity of this HERO object is fixed: product_id → HERO Integration Link.source_id.,Die Identität dieses HERO-Objekts ist festgelegt: product_id → HERO Integration Link.source_id.
+The identity of this HERO object is fixed: id.,Die Identität dieses HERO-Objekts ist festgelegt: id.
+The identity of this HERO object is fixed: id → HERO Integration Link.source_id.,Die Identität dieses HERO-Objekts ist festgelegt: id → HERO Integration Link.source_id.
+HERO Item Group may only feed Item.item_group.,HERO Item Group darf nur Item.item_group befüllen.
+Item.item_group requires its coded HERO resolver.,Item.item_group benötigt seine fest eingebaute HERO-Umwandlung.
+HERO UOM may only feed Item.stock_uom.,HERO UOM darf nur Item.stock_uom befüllen.
+Item.stock_uom requires its coded HERO resolver.,Item.stock_uom benötigt seine fest eingebaute HERO-Umwandlung.
+HERO Brand may only feed Item.brand.,HERO Brand darf nur Item.brand befüllen.
+Item.brand requires its coded HERO resolver.,Item.brand benötigt seine fest eingebaute HERO-Umwandlung.
+HERO EAN Barcode may only feed Item.barcodes.,HERO EAN Barcode darf nur Item.barcodes befüllen.
+Item.barcodes requires its coded HERO resolver.,Item.barcodes benötigt seine fest eingebaute HERO-Umwandlung.
+HERO Price may only feed Item Price.price_list_rate.,HERO Price darf nur Item Price.price_list_rate befüllen.
+Item Price.price_list_rate requires its coded HERO resolver.,Item Price.price_list_rate benötigt seine fest eingebaute HERO-Umwandlung.
+HERO Default Sales Price may only feed Item Price.price_list_rate.,HERO Default Sales Price darf nur Item Price.price_list_rate befüllen.
+HERO returned an invalid record list for HeroProducts.,HERO hat eine ungültige Datensatzliste für HeroProducts zurückgegeben.
+HERO returned an invalid record list for HeroDocuments.,HERO hat eine ungültige Datensatzliste für HeroDocuments zurückgegeben.
+HERO returned an invalid record list for HeroPictures.,HERO hat eine ungültige Datensatzliste für HeroPictures zurückgegeben.
+Target operation,Zieloperation
+Lookup,Nachschlagen
+Item code {0} is already used by an ERPNext Item without this HERO article's link. Approve to link that Item to the HERO article; decline to keep them apart (the article is not imported).,Die Artikelnummer {0} ist schon von einem ERPNext-Artikel ohne Verknüpfung zu diesem HERO-Artikel belegt. Freigeben verknüpft diesen Artikel mit dem HERO-Artikel; Ablehnen hält sie getrennt (der HERO-Artikel wird nicht importiert).
+HERO Manufacturer Part No,HERO Hersteller-Artikelnummer
+HERO Category Group,HERO-Kategorie als Artikelgruppe
+HERO Supplier,HERO-Lieferant
+Appointment Color,Terminfarbe
+Appointment Type,Terminart
+Appointment Type Code,Terminart-Code
+Category ID,Kategorie-ID
+Creation,Erstellt
+Customer Category,Kundenkategorie
+Customer Full Name,Vollständiger Kundenname
+Customer Number,Kundennummer
+Customer Title,Kundentitel
+Deleted,Gelöscht
+External Deadline,Externe Frist
+Is Contact Person,Ist Ansprechpartner
+Manufacturer Part No,Hersteller-Artikelnummer
+Modified,Geändert
+Original End,Ursprüngliches Ende
+Original Start,Ursprünglicher Beginn
+Partner ID,Partner-ID
+Partners,Partner
+Project Address,Projektadresse
+Project ID,Projekt-ID
+Project Kind,Projektart (Quelle)
+Project Nr.,Projekt-Nr.
+Project Number,Projektnummer
+Project Reference,Projektreferenz
+Provider,Anbieter
+Read Only,Schreibgeschützt
+Recurring,Wiederkehrend
+Resources,Ressourcen
+Responsible,Zuständig
+Source Created,Erstellt (Quelle)
+Source Key,Quellschlüssel
+Source Modified,Geändert (Quelle)
+Status Code,Statuscode
+Status Created,Status erstellt
+Status ID,Status-ID
+Status Modified,Status geändert
+Status Name,Statusname
+Status Short Name,Status-Kurzname
+Status Step ID,Statusschritt-ID
+Supplier Part No,Lieferanten-Artikelnummer
+Customer Type From HERO Type,Kundentyp aus HERO-Typ
+Plain Text To HTML,Klartext zu HTML
+Project Designation,Bezeichnung
+Project Responsible,Projektverantwortlicher
+User By Email,Benutzer per E-Mail
+User By Partner ID,Benutzer per Partner-ID
+Service Migration,Leistungsmigration
+HeroServices,HeroServices
+Services,Leistungen
+Service Price,Leistungspreis
+Service Calculation,Leistungskalkulation
+Internal Identifier,Interne Kennung
+Fixed Price,Festpreis
+Default Quantity,Vorgabemenge
+Calculated Time (Minutes),Kalkulierte Arbeitszeit (Minuten)
+Source Tax Rate,Steuersatz im Quellsystem
+Component Type,Positionsart
+Material,Material
+Labor,Arbeit
+Unit,Einheit
+Source Cost Rate,Kostenansatz im Quellsystem
+Hourly Billing Rate,Verrechnungsstundensatz
+Markup,Aufschlag
+Resolution,Zuordnung
+Linked,Verknüpft
+Unresolved,Zuordnung offen
+Additional Source Data,Weitere Quelldaten
+Import services with selling prices and material/labor calculations.,Leistungen mit Verkaufspreisen sowie Material- und Arbeitskalkulation importieren.
+Non-stock articles. Local edits require review; unresolved material references remain visible.,Nicht lagergeführte Artikel. Lokale Änderungen erfordern eine Prüfung; offene Materialzuordnungen bleiben sichtbar.
+Service prices require Standard Selling.,Leistungspreise benötigen Standard Selling.
+Service calculation contains an invalid number.,Die Leistungskalkulation enthält eine ungültige Zahl.
+Service article number is empty or too long.,Die Leistungsartikelnummer ist leer oder zu lang.
+Service article name exceeds the ERPNext limit.,Der Leistungsartikelname überschreitet die ERPNext-Längengrenze.
+A service unit is required.,Eine Leistungseinheit ist erforderlich.
+Install the service mapping schema before starting migration.,Vor dem Start der Migration das Leistungsmapping-Schema installieren.
+An enabled Standard Selling price list with currency is required.,Eine aktive Preisliste Standard Selling mit Währung ist erforderlich.
+Service migration requires a validated source schema.,Die Leistungsmigration benötigt ein validiertes Quellschema.
+The service composition query differs from the validated source schema.,Die Abfrage der Leistungsbestandteile weicht vom validierten Quellschema ab.
+Service source identity has several bindings.,Die Quellidentität der Leistung hat mehrere Bindungen.
+The service binding target is missing or has another type.,Das Ziel der Leistungsbindung fehlt oder hat einen anderen Typ.
+The service article or activity type was edited locally; review the conflict.,Der Leistungsartikel oder die Tätigkeitsart wurde lokal geändert; den Konflikt prüfen.
+Service tax rate requires one unambiguous Item Tax Template in the ERPNext company.,Der Leistungssteuersatz benötigt eine eindeutig passende Artikelsteuervorlage im ERPNext-Unternehmen.
+A labor group identity is required.,Eine Lohngruppenidentität ist erforderlich.
+The labor group binding requires review.,Die Lohngruppenbindung muss geprüft werden.
+Labor group name is invalid or too long.,Der Lohngruppenname ist ungültig oder zu lang.
+An existing activity type requires an explicit labor group binding.,Eine vorhandene Tätigkeitsart benötigt eine ausdrückliche Lohngruppenbindung.
+Service composition is missing or exceeds its bound.,Die Leistungszusammensetzung fehlt oder überschreitet ihre Grenze.
+Unknown service component type or identity.,Unbekannte Art oder Identität eines Leistungsbestandteils.
+The service attachment was changed locally.,Der Leistungsanhang wurde lokal geändert.
+The service binding requires review.,Die Leistungsbindung muss geprüft werden.
+Service article number is already used; bind the existing article explicitly.,Die Leistungsartikelnummer ist bereits vergeben; den vorhandenen Artikel ausdrücklich verknüpfen.
+A changed service article number requires an explicit rename.,Eine geänderte Leistungsartikelnummer benötigt eine ausdrückliche Umbenennung.
+An existing selling price requires explicit review before adoption.,Ein vorhandener Verkaufspreis muss vor der Übernahme ausdrücklich geprüft werden.
+"Service source, schema, company or mapping changed; start a new run.","Leistungsquelle, Schema, Unternehmen oder Mapping wurde geändert; einen neuen Lauf starten."
+HERO returned invalid or duplicate service identities.,HERO hat ungültige oder doppelte Leistungsidentitäten zurückgegeben.
+Service pagination changed or repeated; start a new run.,Die Leistungsseiten wurden geändert oder wiederholt; einen neuen Lauf starten.
+HERO returned an incomplete service composition list.,HERO hat eine unvollständige Liste der Leistungsbestandteile zurückgegeben.
+Service changed between its record and composition reads; retry the slice.,Die Leistung wurde zwischen den beiden Abfragen geändert; den Abschnitt erneut ausführen.
+Service validation failed; check the error log.,Die Leistungsprüfung ist fehlgeschlagen; das Fehlerprotokoll prüfen.
+Item,Artikel
+Activity Type,Tätigkeitsart
+Quantity,Menge
+Unit Price,Einzelpreis
+Labor group billing rates differ between service calculations; review the mapping.,Die Verrechnungsstundensätze der Lohngruppe weichen zwischen Leistungskalkulationen ab; das Mapping prüfen.
+Service selling price currency must match the ERPNext company currency.,Die Verkaufspreiswährung der Leistung muss der ERPNext-Unternehmenswährung entsprechen.
+"Run all migrations one after another: projects with contacts, events, tasks, products, services, documents, pictures.","Alle Migrationen nacheinander ausführen: Projekte mit Kontakten, Termine, Aufgaben, Artikel, Leistungen, Dokumente und Bilder."
+Employees,Mitarbeiter
+Employee Migration,Mitarbeitermigration
+"Run all migrations one after another: employees, projects with contacts, events, tasks, products, documents, pictures.","Alle Migrationen nacheinander ausführen: Mitarbeiter, Projekte mit Kontakten, Termine, Aufgaben, Artikel, Dokumente und Bilder."
+The HERO schema has no supported employee query.,Das HERO-Schema enthält keine unterstützte Mitarbeiterabfrage.
+The HERO employee query does not validate against its source schema.,Die HERO-Mitarbeiterabfrage ist für ihr Quellschema nicht gültig.
+Install the HERO employee schema before starting the migration.,Vor dem Start der Migration das HERO-Mitarbeiterschema installieren.
+A validated HERO schema snapshot is required for employee migration.,Die Mitarbeitermigration benötigt einen validierten HERO-Schema-Snapshot.
+HERO returned an invalid or oversized employee list.,HERO hat eine ungültige oder zu große Mitarbeiterliste zurückgegeben.
+HERO returned missing or duplicate employee identities.,HERO hat fehlende oder doppelte Mitarbeiteridentitäten zurückgegeben.
+HERO employee binding is ambiguous.,Die HERO-Mitarbeiterbindung ist mehrdeutig.
+The HERO employee binding target is unavailable.,Das Ziel der HERO-Mitarbeiterbindung ist nicht verfügbar.
+The HERO employee binding requires review.,Die HERO-Mitarbeiterbindung muss geprüft werden.
+The imported employee or user was changed in ERPNext; review the conflict.,Der importierte Mitarbeiter oder Benutzer wurde in ERPNext geändert; den Konflikt prüfen.
+Existing ERPNext employee or user values differ; review before linking.,Vorhandene ERPNext-Mitarbeiter- oder Benutzerwerte weichen ab; vor dem Verknüpfen prüfen.
+The HERO employee has no user identity; review before importing.,Der HERO-Mitarbeiter hat keine Benutzeridentität; vor dem Import prüfen.
+The ERPNext user login email differs from HERO.,Die Anmelde-E-Mail des ERPNext-Benutzers weicht von HERO ab.
+The ERPNext user is already bound to another HERO identity.,Der ERPNext-Benutzer ist bereits mit einer anderen HERO-Identität verknüpft.
+HERO employee first name and status are required.,Vorname und Status des HERO-Mitarbeiters sind erforderlich.
+HERO employee status would change ERPNext login access; review the user first.,Der HERO-Mitarbeiterstatus würde den ERPNext-Anmeldezugriff ändern; zuerst den Benutzer prüfen.
+The ERPNext employee user relation is ambiguous or changed.,Die ERPNext-Mitarbeiter-Benutzerbeziehung ist mehrdeutig oder wurde geändert.
+The ERPNext employee is already bound to another HERO identity.,Der ERPNext-Mitarbeiter ist bereits mit einer anderen HERO-Identität verknüpft.
+The ERPNext employee middle name requires review before importing the HERO name.,Der zweite Vorname des ERPNext-Mitarbeiters muss vor dem Import des HERO-Namens geprüft werden.
+"Employee source schema, company or mapping changed; start a new run.","Quellschema, Unternehmen oder Mitarbeitermapping wurde geändert; einen neuen Lauf starten."
+The HERO employee list changed; start a new run to reconcile it.,Die HERO-Mitarbeiterliste wurde geändert; zur Abstimmung einen neuen Lauf starten.
+Employee validation failed.,Die Mitarbeiterprüfung ist fehlgeschlagen.
+HERO employee identity must be a positive integer.,Die HERO-Mitarbeiteridentität muss eine positive ganze Zahl sein.
+HERO employee record must be an object.,Der HERO-Mitarbeiterdatensatz muss ein Objekt sein.
+HERO employee user_id differs from user.id.,user_id des HERO-Mitarbeiters weicht von user.id ab.
+HERO employee text fields must be strings or null.,HERO-Mitarbeitertextfelder müssen Zeichenketten oder null sein.
+HERO employee status requires an explicit mapping.,Der HERO-Mitarbeiterstatus benötigt ein ausdrückliches Mapping.
+HERO full_name differs from the computed Employee name.,HERO full_name weicht vom berechneten Mitarbeiternamen ab.
+HERO user locale requires an installed ERPNext language.,Das HERO-Benutzergebietsschema benötigt eine installierte ERPNext-Sprache.
+A valid employee login email is required.,Eine gültige Anmelde-E-Mail des Mitarbeiters ist erforderlich.
+Import employees from HERO into your ERPNext company.,Mitarbeiter aus HERO in dein ERPNext-Unternehmen importieren.
+Joining date 2026-01-01. New active users receive only the Employee role; local changes require review.,Eintritt am 01.01.2026. Neue aktive Benutzer erhalten nur die Rolle Mitarbeiter; lokale Änderungen erfordern eine Prüfung.
+Role,Rolle
+Account Type,Kontotyp
+Role in Source System,Rolle im Quellsystem
+Last Login in Source System,Letzte Anmeldung im Quellsystem
+Created in Source System,Im Quellsystem erstellt
+Modified in Source System,Im Quellsystem geändert
+Company of your business,Unternehmen deines Betriebs
+Use the confirmed ERPNext Company. The HERO customer ID is not copied into Company.,Das bestätigte eigene ERPNext-Unternehmen verwenden. Die Kunden-ID aus HERO wird nicht als Unternehmen übernommen.
+One confirmed Company per Project,Ein bestätigtes Unternehmen je Projekt
+Employee Status,Mitarbeiterstatus
+Employee Language,Benutzersprache
+HeroEmployees,Mitarbeiter
+"Affected areas ({0}): {1}.","Betroffene Bereiche ({0}): {1}."
+Existing mappings in these areas will be replaced: {0} field mappings and {1} GraphQL mappings. Previous versions remain in history.,Bestehende Mappings in diesen Bereichen werden ersetzt: {0} Feldmappings und {1} GraphQL-Mappings. Bisherige Versionen bleiben im Verlauf erhalten.
+Replaced: {0} field mappings and {1} GraphQL mappings. Previous versions remain in history.,Ersetzt: {0} Feldmappings und {1} GraphQL-Mappings. Bisherige Versionen bleiben im Verlauf erhalten.
+Native replacement requires its current source-bound mapping.,Zum Ersetzen wird das aktuelle native Mapping der zugeordneten Quelle benötigt.
+Native replacement contains a duplicate target field.,Das native Ersatzmapping enthält ein Zielfeld mehrfach.
+Native replacement changes a target-owned reader contract: {0},Das native Ersatzmapping verändert eine lokal festgelegte Lesevorgabe: {0}
+Export snapshot belongs to another HERO source.,Der Snapshot für den Export gehört zu einer anderen HERO-Quelle.
+replace_mappings must be a boolean.,replace_mappings muss ein boolescher Wert sein.
+Replacement requires a mapping package.,Zum Ersetzen wird ein Mapping-Paket benötigt.
+Replacement requires an explicit field mapping package.,Zum Ersetzen wird ein Paket mit ausdrücklich festgelegten Feldmappings benötigt.
+Replacement package contains unselected field rules.,Das Ersatzpaket enthält nicht ausgewählte Feldregeln.
+Replacement cannot change the configured HERO source instance.,Beim Ersetzen darf die konfigurierte HERO-Quellinstanz nicht geändert werden.
+Packaged schema fingerprint does not match its content.,Der Schema-Fingerabdruck des Pakets stimmt nicht mit seinem Inhalt überein.
+Replacement schema contains invalid or conflicting declarations.,Das Ersatzschema enthält ungültige oder widersprüchliche Definitionen.
+The native read service belongs to another snapshot.,Der native Leseservice gehört zu einem anderen Snapshot.
+Native mapping replacement requires one current source-bound parent: {0},Zum Ersetzen des nativen Mappings wird genau eine aktuelle übergeordnete Mapping-Definition der zugeordneten Quelle benötigt: {0}
+Approved readers use different schema versions; reconcile before export.,Freigegebene Leseservices verwenden unterschiedliche Schemaversionen. Gleichen Sie diese vor dem Export ab.
+Replacement field identities are missing or duplicated.,Kennungen von Ersatzfeldregeln fehlen oder kommen mehrfach vor.
+Replacement field rules are incomplete.,Die Ersatzfeldregeln sind unvollständig.
+"Replacement readers require a complete, unique field-rule selection.",Ersatzleseservices benötigen eine vollständige und eindeutige Auswahl von Feldregeln.
+Replacement field rules cross an operation boundary.,Ersatzfeldregeln überschreiten die Grenze eines Vorgangs.
+Replacement snapshot belongs to another or unvalidated HERO source.,Der Ersatzsnapshot gehört zu einer anderen oder nicht validierten HERO-Quelle.
+Created schema belongs to another HERO source.,Das erstellte Schema gehört zu einer anderen HERO-Quelle.
+Replacement query does not match its schema: {0},Die Ersatzabfrage passt nicht zu ihrem Schema: {0}
+Replacement mapping contains duplicate field targets.,Das Ersatzmapping enthält doppelte Feldziele.
+A mapping changed during replacement; preview again.,Ein Mapping wurde während des Ersetzens geändert. Rufen Sie die Vorschau erneut auf.
+Native Task replacement cannot introduce or change onboarding authority.,Beim Ersetzen des nativen Aufgabenmappings darf die Berechtigung zur Ersteinrichtung weder neu erteilt noch geändert werden.
+A replacement reader points to another mapping area.,Ein Ersatzleseservice verweist auf einen anderen Mapping-Bereich.
+An approved mapping field rule is unavailable for export.,Eine freigegebene Mapping-Feldregel ist für den Export nicht verfügbar.
+Native replacement contains unsupported configuration fields.,Das native Ersatzmapping enthält nicht unterstützte Konfigurationsfelder.
+Mapping actions,Mapping-Aktionen
+Import mapping JSON,Mapping-JSON importieren
+Import JSON,JSON importieren
+Export drafts,Entwürfe exportieren
+JSON exchanges your saved drafts for this direction. Active mappings and execution permissions remain unchanged.,JSON überträgt Ihre gespeicherten Entwürfe für diese Richtung. Aktive Mappings und Ausführungsrechte bleiben unverändert.
+Exporting drafts…,Entwürfe werden exportiert…
+Invalid draft export response.,Die Antwort zum Entwurfsexport ist ungültig.
+Saved drafts exported. Unsaved edits are not included.,Gespeicherte Entwürfe exportiert. Ungespeicherte Änderungen sind nicht enthalten.
+Mapping JSON is too large. Configuration packages belong under Settings > Configuration package.,Die Mapping-JSON ist zu groß. Konfigurationspakete importieren Sie unter Einstellungen > Konfigurationspaket.
+The file is not valid JSON.,Die Datei enthält kein gültiges JSON.
+This is a configuration package. Import it under Settings > Configuration package.,Dies ist ein Konfigurationspaket. Importieren Sie es unter Einstellungen > Konfigurationspaket.
+Checking mapping JSON…,Mapping-JSON wird geprüft…
+"{0} drafts: {1} new, {2} replaced, {3} unchanged, {4} removed. Only your drafts are changed; nothing is activated.","{0}-Entwürfe: {1} neu, {2} ersetzt, {3} unverändert, {4} entfernt. Nur Ihre Entwürfe werden geändert; nichts wird aktiviert."
+Import mappings,Mappings importieren
+Import as drafts,Als Entwürfe importieren
+Importing mappings as drafts…,Mappings werden als Entwürfe importiert…
+Unexpected draft import result.,Unerwartetes Ergebnis des Entwurfsimports.
+Mappings imported as drafts. Nothing was activated.,Mappings als Entwürfe importiert. Nichts wurde aktiviert.
+"Choose an operation, then select source and target fields. Save keeps a draft; activation is a separate step.",Wählen Sie einen Vorgang und anschließend Quell- und Zielfeld. Speichern legt einen Entwurf an; die Aktivierung erfolgt separat.
+Loading mapping fields…,Mapping-Felder werden geladen…
+Choose a target operation for this query.,Wählen Sie einen Zielvorgang für diese Abfrage.
+Invalid new mapping draft response.,Die Antwort zum neuen Mapping-Entwurf ist ungültig.
+"New mapping. Choose source and target fields, then save the draft.",Neues Mapping. Wählen Sie Quell- und Zielfeld und speichern Sie den Entwurf.
+Unsaved mapping,Ungespeichertes Mapping
+Discard new mapping,Neues Mapping verwerfen
+Saving new mapping draft…,Neuer Mapping-Entwurf wird gespeichert…
+Mapping saved as a draft. Nothing was activated.,Mapping als Entwurf gespeichert. Nichts wurde aktiviert.
+Save status is uncertain. Reload the mapping list before creating another draft; your local inputs are kept.,"Der Speicherstatus ist unklar. Laden Sie die Mapping-Liste neu, bevor Sie einen weiteren Entwurf erstellen; Ihre lokalen Eingaben bleiben erhalten."
+The schema snapshot belongs to another configured HERO source.,Der Schema-Snapshot gehört zu einer anderen konfigurierten HERO-Quelle.
+Portable Query record path does not match its operation.,Der Datensatzpfad des Query-Mappings passt nicht zur Operation.
+Choose Query or Mutation mapping direction.,Wählen Sie die Mapping-Richtung Query oder Mutation.
+The selected operation is absent from this schema snapshot.,Der gewählte Vorgang ist in diesem Schema-Snapshot nicht vorhanden.
+Mutation mappings cannot select a Query adapter.,Mutation-Mappings können keinen Query-Adapter auswählen.
+This Query has no supported document mapping adapter.,Für diese Query ist kein unterstützter Dokument-Mapping-Adapter verfügbar.
+The selected mapping area does not match this Query.,Der gewählte Mapping-Bereich passt nicht zu dieser Query.
+Draft-only export must be an explicit Boolean.,Der Export ausschließlich von Entwürfen muss ausdrücklich als boolescher Wert angegeben werden.
+MAPPING_INPUT_INVALID: Invalid drafts_only.,MAPPING_INPUT_INVALID: Ungültiger Wert für drafts_only.
+Advanced,Erweitert
+Mapping settings,Mapping-Einstellungen
+Refresh saved nodes,Gespeicherte Knoten aktualisieren
+Object field context does not match the selected record and saved schema.,Der Objektfeld-Kontext passt nicht zum ausgewählten Datensatz und zum gespeicherten Schema.
+New query field rule is incomplete.,Die neue Query-Feldregel ist unvollständig.
+Existing Record,Vorhandener Datensatz
+"System field: the import sets it through its fixed purpose (name, identity, relation).","Systemfeld: Der Import setzt es über seinen festen Zweck (Name, Identität, Verknüpfung)."
+Filled automatically from a linked record; map the linked record instead.,Wird automatisch aus einem verknüpften Datensatz gefüllt; mappe stattdessen den verknüpften Datensatz.
+Hidden field: it cannot be a mapping target.,Ausgeblendetes Feld: Es kann kein Mapping-Ziel sein.
+Read-only field: ERPNext calculates it.,Schreibgeschütztes Feld: ERPNext berechnet es.
+Unsupported field type.,Nicht unterstützter Feldtyp.
+Link field: use the 'Existing Record' transformation (the value must name an existing linked record).,Verknüpfungsfeld: Umwandlung „Vorhandener Datensatz“ verwenden (der Wert muss einen bestehenden verknüpften Datensatz benennen).
+Formatted text: use 'Plain Text To HTML' or 'Safe HTML'.,Formatierter Text: „Klartext zu HTML“ oder „Sicheres HTML“ verwenden.
+"App field: written by the import, read-only for users.","App-Feld: vom Import geschrieben, für Benutzer schreibgeschützt."
+Direct adapter target; activation requires the registry and mapping validation.,Ziel des direkten Adapters; die Aktivierung erfordert Registrierung und Mapping-Prüfung.
+Target field is filled automatically or hidden; map its source record instead.,Das Zielfeld wird automatisch gefüllt oder ist ausgeblendet; mappe stattdessen den Quelldatensatz.
+Formatted text needs the Plain Text To HTML or Safe HTML transformation.,Formatierter Text braucht die Umwandlung „Klartext zu HTML“ oder „Sicheres HTML“.
+HTML transformations only target formatted text fields.,HTML-Umwandlungen sind nur für formatierte Textfelder.
+A Link target needs the Existing Record transformation.,Ein Verknüpfungsfeld braucht die Umwandlung „Vorhandener Datensatz“.
+Existing Record only targets Link fields.,„Vorhandener Datensatz“ ist nur für Verknüpfungsfelder.
+The transformation does not accept this HERO source type.,Die Umwandlung akzeptiert diesen HERO-Quelltyp nicht.
+choose snapshot,Snapshot wählen
+enter operation,Operation wählen
+fixed,fest
+enter object,Objekt wählen
+Main record,Hauptdatensatz
+enter field,Feld wählen
+Source,Quelle
+Mapped to,Gemappt auf
+Not mapped,Nicht gemappt
+No area with configurable field rules.,Kein Bereich mit konfigurierbaren Feldregeln.
+enter app,App wählen
+enter DocType,DocType wählen
+Create,Erstellen
+Already written by,Bereits beschrieben von
+Creating mapping …,Mapping wird erstellt …
+Mapping is active.,Mapping ist aktiv.
+Select inactive mappings to activate.,Wähle inaktive Mappings zum Aktivieren.
+Select active mappings to delete.,Wähle aktive Mappings zum Löschen.
+"Identity, name and relation rules cannot be removed here.","Identitäts-, Namens- und Verknüpfungsregeln können hier nicht entfernt werden."
+Activating …,Wird aktiviert …
+Deleting …,Wird gelöscht …
+Mappings activated.,Mappings aktiviert.
+Mappings deleted.,Mappings gelöscht.
+All,Alle
+search mapping,Mapping suchen
+type,Typ
+Activate,Aktivieren
+No mappings.,Keine Mappings.
+Active Send Mappings,Aktive Sende-Mappings
+Filter,Filter
+Send mappings (ERPNext → HERO) are created under Advanced.,Sende-Mappings (ERPNext → HERO) werden unter „Erweitert“ angelegt.
+Configuration imported.,Konfiguration importiert.
+Mapping Import,Mapping-Import
+Choose File,Datei wählen
+Object,Objekt
+Inactive,Inaktiv
+The request failed.,Die Anfrage ist fehlgeschlagen.
+Node,Knoten
+Query,Query
+Mutation,Mutation
+GraphQL Schema Snapshot,GraphQL-Schema-Snapshot
+DocType,DocType
+Type,Typ
+HERO,HERO
+Rules of this area are fixed; use the advanced editor.,Die Regeln dieses Bereichs sind fest; nutze den erweiterten Editor.
+This area has no active read mapping.,Dieser Bereich hat kein aktives Lese-Mapping.
+The HERO field is not read by this area's approved query.,Das HERO-Feld wird von der freigegebenen Abfrage dieses Bereichs nicht gelesen.
+The ERPNext field does not exist.,Das ERPNext-Feld existiert nicht.
+An active rule already writes this ERPNext field; remove it first.,Eine aktive Regel beschreibt dieses ERPNext-Feld bereits; entferne sie zuerst.
+Only inactive field rules of this area can be activated.,Nur inaktive Feldregeln dieses Bereichs können aktiviert werden.
+You have an unpublished draft of this mapping; publish or discard it under Advanced first.,Du hast einen unveröffentlichten Entwurf dieses Mappings; veröffentliche oder verwirf ihn zuerst unter „Erweitert“.
+Select at least one mapping.,Wähle mindestens ein Mapping.
+"Creating send mappings (ERPNext → HERO) follows; sending to HERO is switched off.",Das Anlegen von Sende-Mappings (ERPNext → HERO) folgt; das Senden an HERO ist ausgeschaltet.
+Areas in the file,Bereiche in der Datei
+The file contains no mapping areas.,Die Datei enthält keine Mapping-Bereiche.
+Existing mappings in these areas will be replaced.,Bestehende Mappings in diesen Bereichen werden ersetzt.
+field mappings,Feldmappings
+GraphQL mappings,GraphQL-Mappings
+Mutation mappings,Mutation-Mappings
+Replace,Ersetzen
+No HERO operation will be executed.,Es wird kein HERO-Vorgang ausgeführt.
+Checking mapping file …,Mapping-Datei wird geprüft …
+The mapping file exceeds the permitted size.,Die Mapping-Datei überschreitet die zulässige Größe.
+Import a Mutation mapping JSON file in this tab. Configuration packages belong in Query.,Importieren Sie hier eine JSON-Datei mit Mutation-Mappings. Konfigurationspakete gehören in den Tab Query.
+Import a configuration package in Query. Mutation mapping files belong in Mutation.,Importieren Sie unter Query ein Konfigurationspaket. Dateien mit Mutation-Mappings gehören in den Tab Mutation.
+The Mutation mappings cannot be activated.,Die Mutation-Mappings können nicht aktiviert werden.
+Import and activate these Mutation mappings? No HERO operation will be executed.,Diese Mutation-Mappings importieren und aktivieren? Es wird kein HERO-Vorgang ausgeführt.
+Loading mappings …,Mappings werden geladen …
+Unexpected mapping import result.,Unerwartetes Ergebnis des Mapping-Imports.
+Mutation mappings imported and activated. No HERO operation was executed.,Mutation-Mappings importiert und aktiviert. Es wurde kein HERO-Vorgang ausgeführt.
+Mappings loaded and active.,Mappings geladen und aktiv.
+Import failed.,Import fehlgeschlagen.
+Import cancelled.,Import abgebrochen.
+The file cannot be loaded.,Die Datei kann nicht geladen werden.
+Exporting mapping JSON…,Mapping-JSON wird exportiert…
+Invalid mapping export response.,Ungültige Antwort beim Mapping-Export.
+Mapping JSON exported.,Mapping-JSON exportiert.
+mappings,Mappings
+Export JSON,JSON exportieren
+HERO Mappings,HERO-Mappings
+Source App,Quell-App
+Query JSON imports and exports the full configuration package. Edit mappings in the JSON file.,Query-JSON importiert und exportiert das vollständige Konfigurationspaket. Bearbeiten Sie Mappings in der JSON-Datei.
+Mutation JSON contains mappings for the selected snapshot. Import validates and activates mappings; it does not execute HERO operations.,Mutation-JSON enthält Mappings für den ausgewählten Snapshot. Der Import prüft und aktiviert Mappings; er führt keine HERO-Vorgänge aus.
+MAPPING_CONFIRMATION_REQUIRED: Explicit import confirmation is required.,MAPPING_CONFIRMATION_REQUIRED: Bestätigen Sie den Import ausdrücklich.
+MAPPING_INPUT_INVALID: Invalid expected states.,MAPPING_INPUT_INVALID: Ungültige erwartete Mapping-Stände.
+A readable name for the mapping list. It never replaces the technical node identity.,Ein lesbarer Name für die Mapping-Liste. Die technische Knotenidentität bleibt erhalten.
+This historic action is intentionally unavailable in the native workspace. Use JSON mapping import or saved read-only service definitions.,Diese frühere Aktion ist im Workspace nicht verfügbar. Verwenden Sie den JSON-Mapping-Import oder gespeicherte Lese-Services.
+Query mappings must be imported as a configuration package.,Query-Mappings müssen als Konfigurationspaket importiert werden.
+Current draft warnings require separate review before import.,Die Warnungen des aktuellen Entwurfs müssen vor dem Import geprüft werden.
+Mutation mapping imports cannot provision document fields.,Der Import von Mutation-Mappings darf keine Dokumentfelder anlegen.
+Explicit import and publication confirmation is required.,Bestätigen Sie den Import und die Veröffentlichung ausdrücklich.
+Mutation import has unresolved publication blockers.,Der Mutation-Import enthält noch ungeklärte Veröffentlichungshindernisse.
+Mutation import preview changed; preview again before importing.,Die Vorschau des Mutation-Imports hat sich geändert. Erstellen Sie vor dem Import eine neue Vorschau.
+Approved readback exceeded the bounded page limit.,Die freigegebene Rückabfrage hat die festgelegte Seitengrenze überschritten.
+Mutation input paths overlap.,Eingabepfade der Mutation überschneiden sich.
+Mutation input path is absent from the saved schema.,Der Eingabepfad der Mutation fehlt im gespeicherten Schema.
+Invalid mapped update configuration.,Ungültige Konfiguration der gemappten Aktualisierung.
+Unsupported mapped update area.,Dieser Bereich wird für gemappte Aktualisierungen nicht unterstützt.
+Mapped update source and operation namespaces differ.,Quelle und Operation der gemappten Aktualisierung gehören zu unterschiedlichen Bereichen.
+Mapped update requires an explicit approved read service.,Die gemappte Aktualisierung benötigt einen ausdrücklich freigegebenen Lesedienst.
+Mutation identity must remain server-owned and distinct from source identity.,Die Mutationsidentität muss serververwaltet und von der Quellidentität getrennt bleiben.
+Read identity is outside this native namespace.,Die Leseidentität liegt außerhalb dieses nativen Bereichs.
+Mutation identity must use its verified Int or ID input.,Die Mutationsidentität muss den nachgewiesenen Eingabetyp Int oder ID verwenden.
+Mapped updates require a bounded list of explicit assignments.,Gemappte Aktualisierungen benötigen eine begrenzte Liste ausdrücklicher Zuordnungen.
+Required unchanged input members must have proven readback bindings.,Erforderliche unveränderte Eingabefelder benötigen nachgewiesene Rückabfragebindungen.
+Address changes require a server-owned related address identity.,Adressänderungen benötigen eine serververwaltete Identität der verknüpften Adresse.
+Exactly one native source binding is required.,Genau eine native Quellbindung ist erforderlich.
+The native binding requires synchronization or conflict review.,Die native Bindung muss synchronisiert oder auf Konflikte geprüft werden.
+"The active mapping, snapshot and confirmed source no longer agree.","Aktives Mapping, Schema-Snapshot und bestätigte Quelle stimmen nicht mehr überein."
+The selected document is outside this mapping namespace.,Das ausgewählte Dokument liegt außerhalb des Mappingbereichs.
+Approved readback and native source identity differ.,Freigegebene Rückabfrage und native Quellidentität unterscheiden sich.
+Exactly one active schema-bound mutation contract is required.,"Genau ein aktiver, an das Schema gebundener Mutationsvertrag ist erforderlich."
+The approved mutation contract or service changed.,Der freigegebene Mutationsvertrag oder Dienst wurde geändert.
+A deleted HERO record cannot be updated.,Ein gelöschter HERO-Datensatz kann nicht aktualisiert werden.
+Readonly or recurring HERO events require their separate provider/recurrence workflow.,Schreibgeschützte oder wiederkehrende HERO-Termine benötigen den eigenen Anbieter- oder Wiederholungsablauf.
+The source file category differs from the mapped native area.,Die Kategorie der Quelldatei unterscheidet sich vom gemappten Bereich.
+Product version and base-data identities were not proven by the readback.,Die Rückabfrage hat die Identitäten der Artikelversion und ihrer Basisdaten nicht nachgewiesen.
+Partner and User identities do not match in the saved readback.,Mitarbeiter- und Benutzeridentitäten stimmen in der gespeicherten Rückabfrage nicht überein.
+Managed sales-price collection binding is ambiguous.,Die Bindung der verwalteten Verkaufspreissammlung ist nicht eindeutig.
+Approved readback omitted its managed sales-price collection.,Die freigegebene Rückabfrage enthält die verwaltete Verkaufspreissammlung nicht.
+Managed sales-price row identity is not unique in approved readback.,Die Zeilenidentität des verwalteten Verkaufspreises ist in der freigegebenen Rückabfrage nicht eindeutig.
+Only the proven default HERO sales-price list can use the scalar default-price update.,Nur die nachgewiesene Standard-Verkaufspreisliste in HERO kann über das einzelne Standardpreisfeld aktualisiert werden.
+The managed remote sales price is not a nonnegative number.,Der verwaltete entfernte Verkaufspreis ist keine nichtnegative Zahl.
+Each outgoing field requires one matching approved Query binding.,Jedes ausgehende Feld benötigt genau eine passende freigegebene Query-Bindung.
+The approved readback omitted a canonical field.,Die freigegebene Rückabfrage enthält ein erforderliches Vergleichsfeld nicht.
+This native projection lacks a reversible baseline.,Für diese native Projektion fehlt eine umkehrbare Vergleichsbasis.
+Approved readback did not prove the mutation record identity.,Die freigegebene Rückabfrage hat die Identität des Mutationsdatensatzes nicht nachgewiesen.
+The mapped update preview changed; review and confirm it again.,Die Vorschau der gemappten Aktualisierung wurde geändert; bitte erneut prüfen und bestätigen.
+Mutation input path is not a scalar object member.,Der Eingabepfad der Mutation bezeichnet kein skalares Objektfeld.
+A configured value is incompatible with its HERO input type.,Ein konfigurierter Wert passt nicht zu seinem HERO-Eingabetyp.
+Invalid mapped update assignment.,Ungültige Feldzuordnung für die gemappte Aktualisierung.
+"Invalid mapped update source, path or resolver.","Ungültige Quelle, ungültiger Pfad oder ungültige Auflösung für die gemappte Aktualisierung."
+Source is outside the verified native relations.,Die Quelle liegt außerhalb der nachgewiesenen nativen Beziehungen.
+A source field must have one unambiguous mutation target.,Ein Quellfeld muss genau ein eindeutiges Mutationsziel haben.
+"Identity, account, lifecycle and observed system fields cannot be reversed.","Identitäts-, Konto-, Lebenszyklus- und beobachtete Systemfelder können nicht umgekehrt werden."
+Relationship inputs require an explicit verified Link resolver.,Beziehungseingaben benötigen eine ausdrücklich geprüfte Link-Auflösung.
+The relationship resolver is outside its reviewed identity namespace.,Die Beziehungsauflösung liegt außerhalb ihres geprüften Identitätsbereichs.
+Price updates require an explicit managed native price list.,Preisaktualisierungen benötigen eine ausdrücklich verwaltete native Preisliste.
+Item Price requires the managed-price resolver.,Artikelpreise benötigen die Auflösung für verwaltete Preise.
+Barcode selection requires the native Item barcode table.,Die Barcodeauswahl benötigt die native Barcode-Tabelle des Artikels.
+Event time conversion requires a native Event time field.,Die Umrechnung von Terminzeiten benötigt ein natives Terminzeitfeld.
+Updates require scalar inputs; relationship lists need a separate reviewed adapter.,Aktualisierungen benötigen skalare Eingaben; Beziehungslisten benötigen einen gesondert geprüften Adapter.
+Temporal mutation inputs require an explicit timezone resolver.,Zeitbezogene Mutationseingaben benötigen eine ausdrückliche Zeitzonenauflösung.
+Datetime updates require an explicit IANA timezone.,Datums- und Zeitaktualisierungen benötigen eine ausdrückliche IANA-Zeitzone.
+A source condition must be an explicit local-field equality.,Eine Quellbedingung muss ein ausdrücklicher Gleichheitsvergleich mit einem lokalen Feld sein.
+Missing and null value policies must be explicit.,Der Umgang mit fehlenden und leeren Werten muss ausdrücklich festgelegt sein.
+Required readback fields cannot grant arbitrary mutation inputs.,Erforderliche Rückabfragefelder dürfen keine beliebigen Mutationseingaben freigeben.
+"The mapped native source is protected, absent or not editable.","Die gemappte native Quelle ist geschützt, fehlt oder ist nicht bearbeitbar."
+A native Link source requires a reviewed identity or explicit value resolver.,Eine native Link-Quelle benötigt eine geprüfte Identitätsauflösung oder ausdrückliche Wertzuordnung.
+Only reviewed Item master names may map to textual HERO master fields.,Nur geprüfte Artikelstammdatennamen dürfen textuellen HERO-Stammdatenfeldern zugeordnet werden.
+The approved readback query changed.,Die freigegebene Rückabfrage wurde geändert.
+Readback pagination did not advance.,Die Rückabfrage ist bei der Seitennavigation nicht vorangekommen.
+The remote relation has no unique native identity.,Die entfernte Beziehung hat keine eindeutige native Identität.
+Employee canonical values require review.,Die Vergleichswerte des Mitarbeiters müssen geprüft werden.
+The local value has no explicit reverse mapping.,Für den lokalen Wert fehlt eine ausdrückliche Rückzuordnung. (Mapping)
+A single native barcode must be selected unambiguously.,Ein einzelner nativer Barcode muss eindeutig ausgewählt werden.
+The related HERO identity is invalid.,Die verknüpfte HERO-Identität ist ungültig.
+A required unchanged input member is missing from approved readback.,Ein erforderliches unverändertes Eingabefeld fehlt in der freigegebenen Rückabfrage.
+"Event time updates require start, end and all-day bindings together.","Terminzeitänderungen benötigen gemeinsam die Zuordnungen für Beginn, Ende und Ganztägigkeit."
+The native document changed during Send; reconcile the remote result.,Das native Dokument wurde während des Sendens geändert; bitte das entfernte Ergebnis abgleichen.
+The native identity or baseline changed during Send; reconcile the remote result.,Die native Identität oder Vergleichsbasis wurde während des Sendens geändert; bitte das entfernte Ergebnis abgleichen.
+The mapped update authority or payload changed after reservation.,Die Berechtigung oder Nutzlast der gemappten Aktualisierung wurde nach der Reservierung geändert.
+HERO did not confirm the separately proven mutation identity.,HERO hat die gesondert nachgewiesene Mutationsidentität nicht bestätigt.
+The mutation identity changed during readback.,Die Mutationsidentität wurde während der Rückabfrage geändert.
+Assignment identities must be unique canonical UUIDs.,Zuordnungsidentitäten müssen eindeutige UUIDs in kanonischer Schreibweise sein.
+Value Map requires explicit scalar pairs.,Eine Wertzuordnung benötigt ausdrückliche skalare Wertepaare.
+Only Value Map accepts a conversion table.,Nur eine Wertzuordnung akzeptiert eine Umwandlungstabelle.
+The approved readback omitted its identity.,Die freigegebene Rückabfrage enthält ihre Identität nicht.
+The bound HERO record was not found in the approved readback.,Der gebundene HERO-Datensatz wurde in der freigegebenen Rückabfrage nicht gefunden.
+HERO did not retain the configured mapped field value.,HERO hat den konfigurierten gemappten Feldwert nicht beibehalten.
+Readback identity is ambiguous.,Die Rückabfrageidentität ist nicht eindeutig.
+The related Address identity differs from HERO.,Die Identität der verknüpften Adresse unterscheidet sich von HERO.
+The employee has no safe native User relation.,Der Mitarbeiter hat keine sichere native Benutzerbeziehung.
+The native User does not match the partner user identity.,Der native Benutzer stimmt nicht mit der Benutzeridentität des Mitarbeiters überein.
+The employee User relation is not unique.,Die Benutzerbeziehung des Mitarbeiters ist nicht eindeutig.
+Unsupported native source relation.,Diese native Quellbeziehung wird nicht unterstützt.
+A protected related identity changed during Send.,Eine geschützte verknüpfte Identität wurde während des Sendens geändert.
+The imported price has no managed baseline identity.,Der importierte Preis hat keine verwaltete Vergleichsidentität.
+"The managed price dimensions, currency or unit changed.","Die Dimensionen, Währung oder Einheit des verwalteten Preises wurden geändert."
+The managed sales price requires conflict review.,Der verwaltete Verkaufspreis muss auf Konflikte geprüft werden.
+Native relations require a bounded explicit list.,"Native Beziehungen benötigen eine begrenzte, ausdrückliche Liste."
+An approved native relation source field is absent.,Ein freigegebenes Quellfeld einer nativen Beziehung fehlt.
+A native relation text field has an incompatible source value.,Ein Textfeld der nativen Beziehung hat einen inkompatiblen Quellwert.
+Native relations require the approved source instance.,Native Beziehungen benötigen die freigegebene Quellinstanz.
+Native relations require the imported parent record before writes.,Native Beziehungen benötigen vor Schreibzugriffen den importierten übergeordneten Datensatz.
+Native relation has ambiguous source bindings.,Die Quellbindungen der nativen Beziehung sind nicht eindeutig.
+Bank name and BIC do not prove one existing institution.,Bankname und BIC weisen nicht genau ein bestehendes Institut nach.
+Native relation must be an object.,Eine native Beziehung muss ein Objekt sein.
+Native relation kinds must be supported and unique.,Native Beziehungstypen müssen unterstützt und eindeutig sein.
+Native relation identity or options are invalid.,Identität oder Optionen der nativen Beziehung sind ungültig.
+Native relation fields must explicitly select supported source paths.,Die Felder der nativen Beziehung müssen unterstützte Quellpfade ausdrücklich auswählen.
+"Bank account relations require explicit IBAN, bank name and BIC paths.","Bankkontobeziehungen benötigen ausdrückliche Pfade für IBAN, Bankname und BIC."
+"Project address requires native address fields, country code and an explicit Project link.","Projektadressen benötigen native Adressfelder, einen Ländercode und eine ausdrückliche Projektverknüpfung."
+Native relation crosses its approved parent type.,Die native Beziehung überschreitet ihren freigegebenen übergeordneten Typ.
+An approved native relation identity is absent.,Eine freigegebene Identität einer nativen Beziehung fehlt.
+A populated native relation needs a stable source identity.,Eine befüllte native Beziehung benötigt eine stabile Quellidentität.
+Native relation binding has a missing or incompatible target.,Das Ziel der nativen Beziehungsbindung fehlt oder ist inkompatibel.
+Bank account ownership differs from the mapped Customer.,Das Bankkonto gehört nicht zum gemappten Kunden.
+An existing IBAN requires explicit account reconciliation; no account was adopted.,Eine bestehende IBAN benötigt einen ausdrücklichen Kontenabgleich; es wurde kein Konto übernommen.
+Address country code must resolve to exactly one ERPNext Country.,Der Ländercode der Adresse muss genau einem ERPNext-Land entsprechen.
+Bank account requires a valid IBAN and an explicit bank name.,Das Bankkonto benötigt eine gültige IBAN und einen ausdrücklichen Banknamen.
+Bank BIC has an invalid format.,Die BIC der Bank hat ein ungültiges Format.
+"Project address requires street, city and an explicit country code.","Die Projektadresse benötigt Straße, Stadt und einen ausdrücklichen Ländercode."
+Configured Project address field must be a native Address link.,Das konfigurierte Projektadressfeld muss eine native Adressverknüpfung sein.
+Existing Project address is locally owned and requires reconciliation.,Die bestehende Projektadresse wird lokal verwaltet und muss abgeglichen werden.
+Native collection rows require a stable source identity.,Zeilen nativer Sammlungen benötigen eine stabile Quellidentität.
+Native collection paths or options are invalid.,Pfade oder Optionen der nativen Sammlung sind ungültig.
+Native collection fields must explicitly select supported source paths.,Die Felder der nativen Sammlung müssen unterstützte Quellpfade ausdrücklich auswählen.
+An approved native collection source field is absent.,Ein freigegebenes Quellfeld einer nativen Sammlung fehlt.
+Native collection crosses its approved parent type.,Die native Sammlung überschreitet ihren freigegebenen übergeordneten Typ.
+Native collections require the approved source instance.,Native Sammlungen benötigen die freigegebene Quellinstanz.
+Native collection must be a bounded list of records.,Eine native Sammlung muss eine begrenzte Liste von Datensätzen sein.
+Native collection has ambiguous source bindings.,Die Quellbindungen der nativen Sammlung sind nicht eindeutig.
+Source price-list binding differs from the configured ERPNext list.,Die Quellpreislistenbindung unterscheidet sich von der konfigurierten ERPNext-Preisliste.
+The explicitly bound ERPNext price list does not exist.,Die ausdrücklich gebundene ERPNext-Preisliste existiert nicht.
+The approved price-list currency is absent from ERPNext.,Die freigegebene Preislistenwährung fehlt in ERPNext.
+"Managed price lookup requires item, price list and source instance.","Die Suche nach verwalteten Preisen benötigt Artikel, Preisliste und Quellinstanz."
+Managed price rate-change policy must be an explicit Boolean.,Die Zulässigkeit von Preisänderungen muss ausdrücklich als boolescher Wert festgelegt sein.
+Managed price lookup must resolve to exactly one source-bound price.,Die Suche nach verwalteten Preisen muss genau einen quellgebundenen Preis ergeben.
+Native collection kind is unsupported.,Dieser native Sammlungstyp wird nicht unterstützt.
+"Customer addresses require explicit identity, deletion, country and primary-address paths.","Kundenadressen benötigen ausdrückliche Pfade für Identität, Löschstatus, Land und Hauptadresse."
+Sales prices require explicit source price-list bindings.,Verkaufspreise benötigen ausdrückliche Bindungen der Quellpreislisten.
+One product contains multiple prices for the same bound price list.,Ein Artikel enthält mehrere Preise für dieselbe gebundene Preisliste.
+"Configured price list must be enabled, selling-only and use the approved currency.","Die konfigurierte Preisliste muss aktiviert sein, ausschließlich für den Verkauf gelten und die freigegebene Währung verwenden."
+Native collection binding has a missing or incompatible target.,Das Ziel der nativen Sammlungsbindung fehlt oder ist inkompatibel.
+Bound customer address does not belong to the mapped Customer.,Die gebundene Kundenadresse gehört nicht zum gemappten Kunden.
+Sales prices require the mapped Item stock unit.,Verkaufspreise benötigen die gemappte Lagereinheit des Artikels.
+Bound Item Price belongs to another item or price list.,Der gebundene Artikelpreis gehört zu einem anderen Artikel oder einer anderen Preisliste.
+An existing ERPNext item price requires explicit source reconciliation.,Ein bestehender ERPNext-Artikelpreis benötigt einen ausdrücklichen Quellenabgleich.
+Created price-list identity differs from the explicit binding.,Die Identität der erstellten Preisliste unterscheidet sich von der ausdrücklichen Bindung.
+Managed sales price changed locally or has additional dimensions.,Der verwaltete Verkaufspreis wurde lokal geändert oder hat zusätzliche Dimensionen.
+"Price-list bindings require an explicit name, currency and creation decision.","Preislistenbindungen benötigen einen ausdrücklichen Namen, eine Währung und eine Entscheidung zur Neuanlage."
+Two source price lists cannot write the same ERPNext price list.,Zwei Quellpreislisten dürfen nicht dieselbe ERPNext-Preisliste beschreiben.
+Customer address deletion state must be an explicit Boolean.,Der Löschstatus einer Kundenadresse muss ein ausdrücklicher boolescher Wert sein.
+Customer address fields must contain text or null.,Kundenadressfelder müssen Text oder null enthalten.
+Customer addresses require an explicit country code.,Kundenadressen benötigen einen ausdrücklichen Ländercode.
+Customer addresses require street and city.,Kundenadressen benötigen Straße und Stadt.
+A source sales price list has no explicit ERPNext binding.,Eine Quellverkaufspreisliste hat keine ausdrückliche ERPNext-Bindung.
+Sales price must be a finite nonnegative number.,"Ein Verkaufspreis muss eine endliche, nichtnegative Zahl sein."
+Duplicate native collection identities contain conflicting values.,Doppelte Identitäten in der nativen Sammlung enthalten widersprüchliche Werte.
+Sales-price preview requires the mapped Item and its native unit.,Die Verkaufspreisvorschau benötigt den gemappten Artikel und seine native Einheit.
+An existing customer address requires explicit source reconciliation.,Eine bestehende Kundenadresse benötigt einen ausdrücklichen Quellenabgleich.
+Multi-source mappings require explicit unique source paths.,"Mappings aus mehreren Quellen benötigen ausdrückliche, eindeutige Quellpfade."
+"Customer Display Name requires company, full, first and last name paths.","Der Kundenanzeigename benötigt Pfade für Firma, vollständigen Namen, Vor- und Nachnamen."
+Country Code requires an explicit two-letter country code.,Der Ländercode muss ausdrücklich aus zwei Buchstaben bestehen.
+Country code must resolve to exactly one native Country.,Der Ländercode muss genau einem nativen Land entsprechen.
+User identity must be a positive integer.,Die Benutzeridentität muss eine positive ganze Zahl sein.
+Mapped customer name components must be text.,Die gemappten Bestandteile des Kundennamens müssen Text sein.
+Mapped update readback source does not match the target snapshot.,Die Rückabfragequelle der gemappten Aktualisierung passt nicht zum Ziel-Snapshot.
+Mapped updates require the Mutation direction.,Gemappte Aktualisierungen benötigen die Richtung Mutation.
+Mapped update requires exactly one approved target read service for its area.,Die gemappte Aktualisierung benötigt genau einen freigegebenen Lesedienst auf dem Zielsystem für ihren Bereich.
+Mapped update identity differs from its approved target read service.,Die Identität der gemappten Aktualisierung unterscheidet sich vom freigegebenen Lesedienst auf dem Zielsystem.
+An explicit Query rule identity is not selected by the target read service.,Eine ausdrückliche Query-Regelidentität ist im Lesedienst des Zielsystems nicht ausgewählt.
+Combined mutation mappings require a replacement configuration package.,Zusammengefasste Mutationsmappings benötigen ein Konfigurationspaket zum Ersetzen.
+An active mapped update already owns this area and HERO source.,Für diesen Bereich und diese HERO-Quelle besteht bereits eine aktive gemappte Aktualisierung.
+Mapped update differs from the selected mutation operation.,Die gemappte Aktualisierung unterscheidet sich von der ausgewählten Mutationsoperation.
+Native relation changed locally; review before replacing mapped fields.,Die native Beziehung wurde lokal geändert; vor dem Ersetzen gemappter Felder bitte prüfen.
+Logbook comment changed locally; review mapped values.,Der Logbuchkommentar wurde lokal geändert; bitte die gemappten Werte prüfen.
+Native collection changed locally; review before replacing mapped fields.,Die native Sammlung wurde lokal geändert; vor dem Ersetzen gemappter Felder bitte prüfen.
+HERO project page bound reached; logbook import is incomplete.,Die Seitengrenze für HERO-Projekte wurde erreicht; der Logbuchimport ist unvollständig.
+HERO returned an invalid logbook response.,HERO hat eine ungültige Logbuchantwort geliefert.
+HERO returned an invalid project/history collection.,HERO hat eine ungültige Projekt- oder Verlaufssammlung geliefert.
+HERO returned missing or repeated logbook identities.,HERO hat fehlende oder wiederholte Logbuchidentitäten geliefert.
+A HERO source instance is required.,Eine HERO-Quellinstanz ist erforderlich.
+Logbook metadata requires one proven Comment binding.,Logbuchmetadaten benötigen genau eine nachgewiesene Kommentarbindung.
+Paginated logbook requires one Project and source revalidation.,Ein seitenweises Logbuch benötigt genau ein Projekt und eine erneute Quellenprüfung.
+Logbook page bound reached; Project import is incomplete.,Die Seitengrenze des Logbuchs wurde erreicht; der Projektimport ist unvollständig.
+Mapped logbook context field is absent from its source response.,Ein gemapptes Logbuch-Kontextfeld fehlt in der Quellantwort.
+HERO history page bound reached; logbook import is incomplete.,Die Seitengrenze des HERO-Verlaufs wurde erreicht; der Logbuchimport ist unvollständig.
+Logbook page is not a collection.,Die Logbuchseite ist keine Sammlung.
+Read approval changed before logbook transport.,Die Lesefreigabe wurde vor der Logbuchübertragung geändert.
+Read approval changed during logbook transport.,Die Lesefreigabe wurde während der Logbuchübertragung geändert.
+Logbook pagination lost its parent Project.,Bei der Seitennavigation des Logbuchs ging das übergeordnete Projekt verloren.
+Existing logbook context is not an object; review before enrichment.,Der bestehende Logbuchkontext ist kein Objekt; vor der Ergänzung bitte prüfen.
+HERO history pagination repeated an identity; completion cannot be confirmed.,Die Seitennavigation des HERO-Verlaufs hat eine Identität wiederholt; der Abschluss kann nicht bestätigt werden.
+HERO project pagination repeated an identity.,Die Seitennavigation der HERO-Projekte hat eine Identität wiederholt.
+Mapped logbook visibility is absent or invalid.,Die gemappte Sichtbarkeit des Logbuchs fehlt oder ist ungültig.
+Logbook pagination repeated or omitted an identity.,Die Seitennavigation des Logbuchs hat eine Identität wiederholt oder ausgelassen.
+HERO history pagination lost its parent Project.,Bei der Seitennavigation des HERO-Verlaufs ging das übergeordnete Projekt verloren.
+An existing logbook binding has a missing or different Project target.,Das Projektziel einer bestehenden Logbuchbindung fehlt oder weicht ab.
+Mapped update was not verified; no automatic retry. Check HERO before another submission.,Die gemappte Aktualisierung wurde nicht bestätigt; es erfolgt keine automatische Wiederholung. Vor erneutem Senden bitte HERO prüfen.
+Mapped update was sent once and verified by approved Query readback.,Die gemappte Aktualisierung wurde einmal gesendet und durch die freigegebene Query-Rückabfrage bestätigt.
+Mapping field {0}.{1}: {2},Mapping-Feld {0}.{1}: {2}
+Target metadata has ambiguous property overrides.,Die Zielmetadaten enthalten mehrdeutige Eigenschaftsanpassungen.
+Target metadata override has an invalid numeric value.,Eine Anpassung der Zielmetadaten enthält einen ungültigen Zahlenwert.
+Mutation input and verified readback must refer to the same HERO field.,Mutationseingabe und geprüfte Rückabfrage müssen dasselbe HERO-Feld betreffen.
+Prepared Mutation mappings,Vorbereitete Mutation-Mappings
+Mutation drafts require separate contract approval before activation.,Mutation-Entwürfe benötigen vor der Aktivierung eine gesonderte Vertragsfreigabe.
+Query mappings active. Mutation mappings prepared for separate contract approval.,Query-Mappings sind aktiv. Mutation-Mappings sind für die gesonderte Vertragsfreigabe vorbereitet.
+Project logbook changes require review.,Änderungen im Projektlogbuch müssen geprüft werden.
+Mapped item prices changed locally; review before updating.,Gemappte Artikelpreise wurden lokal geändert; vor der Aktualisierung ist eine Prüfung erforderlich.
+Configuration mutation mappings must contain at most nine update areas.,Die Mutation-Mappings der Konfiguration dürfen höchstens neun Aktualisierungsbereiche enthalten.
+Every mutation area requires its unique Query mapping in the same file.,Jeder Mutation-Bereich benötigt sein eindeutiges Query-Mapping in derselben Datei.
+Prepared mutation mappings have unresolved draft import conflicts.,Vorbereitete Mutation-Mappings enthalten ungelöste Konflikte beim Entwurfsimport.
+The filtered portable export requires mapped Mutation updates.,Der gefilterte portable Export benötigt gemappte Mutation-Aktualisierungen.
+Project customer dependency requires a service name.,Die Kundenabhängigkeit eines Projekts benötigt einen Service-Namen.
+Native Task onboarding requires an explicit Task source scope.,Die Einrichtung nativer Aufgaben benötigt einen ausdrücklich festgelegten Aufgaben-Quellbereich.
+Unsupported native read contract version.,Nicht unterstützte Version des nativen Lesevertrags.
+Customer Display Name,Kunden-Anzeigename
+Coalesce,Ersten vorhandenen Wert verwenden
+Country Code,Ländercode
+HERO User Link,Benutzerverknüpfung
+A customer Contact has ambiguous primary communication rows.,Ein Kundenkontakt besitzt mehrdeutige primäre Kommunikationszeilen.
+A nested customer contact must explicitly be a contact person.,Ein zugeordneter Kundenkontakt muss ausdrücklich ein Ansprechpartner sein.
+An existing customer contact requires explicit source reconciliation.,Ein vorhandener Kundenkontakt benötigt einen ausdrücklichen Abgleich mit der Quelle.
+Bound contact is shared or does not belong to the mapped Customer.,Der verknüpfte Kontakt wird gemeinsam verwendet oder gehört nicht zum gemappten Kunden.
+Contact salutations require an explicit text-to-Salutation table.,Kontaktanreden benötigen eine ausdrückliche Zuordnungstabelle von Text zu Anrede.
+Customer contact fields must contain text or null.,Felder eines Kundenkontakts müssen Text oder null enthalten.
+Customer contacts require at least one native name component.,Kundenkontakte benötigen mindestens einen nativen Namensbestandteil.
+"Customer contacts require explicit parent identity, person and deletion paths.","Kundenkontakte benötigen ausdrücklich festgelegte Pfade für Kundenidentität, Personenkennzeichen und Löschstatus."
+Existing primary contact differs from the verified source person.,Der vorhandene primäre Kontakt weicht vom geprüften Ansprechpartner der Quelle ab.
+Nested contact parent identity differs from the mapped Customer.,Die Kundenidentität des zugeordneten Kontakts weicht vom gemappten Kunden ab.
+Primary contact reuse requires the exact imported Customer identity.,Die Wiederverwendung des primären Kontakts benötigt die genaue Identität des importierten Kunden.
+Source contact salutation has no explicit native binding.,Für die Anrede des Quellkontakts besteht keine ausdrückliche native Zuordnung.
+The explicitly bound native Salutation does not exist.,Die ausdrücklich zugeordnete native Anrede existiert nicht.
+Portable export usage changed while locks were acquired.,Der Verwendungszweck des portablen Exports hat sich während der Sperrung geändert.
+Portable schema provenance cannot be edited.,Der Herkunftsnachweis des portablen Schemas kann nicht bearbeitet werden.
+Country Code may only bind the native Address country.,Ländercodes dürfen nur dem nativen Länderfeld einer Adresse zugeordnet werden.
+Customer Display Name may only bind the native customer name.,Der Kunden-Anzeigename darf nur dem nativen Kundennamen zugeordnet werden.
+Event status requires its native lifecycle adapter.,Der Terminstatus benötigt seinen nativen Lebenszyklusadapter.
+JSON fields require an explicit JSON Value transformation.,JSON-Felder benötigen eine ausdrücklich festgelegte JSON-Value-Transformation.
+Logbook context must contain unique selected child paths.,Der Logbuchkontext muss eindeutige ausgewählte Unterpfade enthalten.
+Logbook cursor variable must be exclusive to its child collection.,Die Logbuch-Cursorvariable darf ausschließlich ihre untergeordnete Sammlung steuern.
+Logbook page bound requires an offset variable.,Die Seitengrenze des Logbuchs benötigt eine Offsetvariable.
+Logbook pagination requires an explicit offset variable and page bound.,Die Logbuch-Paginierung benötigt eine ausdrücklich festgelegte Offsetvariable und Seitengrenze.
+Logbook pagination requires one Project and its approved zero-based child offset.,"Die Logbuch-Paginierung benötigt ein einzelnes Projekt und den freigegebenen, bei null beginnenden Unterseitenoffset."
+Logbook visibility must be an explicit child path.,Die Logbuchsichtbarkeit muss über einen ausdrücklich festgelegten Unterpfad ausgewählt werden.
+Mapped JSON output requires an explicit JSON serialization.,Die gemappte JSON-Ausgabe benötigt eine ausdrückliche JSON-Serialisierung.
+Mapped JSON source must contain finite JSON values.,Die gemappte JSON-Quelle darf nur endliche JSON-Werte enthalten.
+"Mapped child selections cannot contain named fragments, aliases or directives.","Gemappte Unterauswahlen dürfen keine benannten Fragmente, Aliasse oder Direktiven enthalten."
+Mapped inline fragment does not belong to its source type.,Das gemappte Inline-Fragment gehört nicht zu seinem Quelltyp.
+Mapped inline fragments require an unconditional explicit type.,Gemappte Inline-Fragmente benötigen einen bedingungslosen ausdrücklichen Typ.
+Mapped typename must be a plain scalar selection.,Der gemappte Typname muss als einfacher Skalar ausgewählt werden.
+Native relation does not belong to the selected migration area.,Die native Beziehung gehört nicht zum ausgewählten Migrationsbereich.
+Partner identity may only bind the Project manager.,Die Partneridentität darf nur dem Projektleiter zugeordnet werden.
+User identity may only bind the native Task assignee.,Die Benutzeridentität darf nur dem nativen Aufgabenempfänger zugeordnet werden.
+Import mapping files here. Configuration packages belong in Settings.,Hier werden Mapping-Dateien importiert. Konfigurationspakete gehören in die Einstellungen.
+The Query mapping package is incomplete or has a different schema identity.,Das Query-Mapping-Paket ist unvollständig oder gehört zu einem anderen Schema.
+The selected mapping schema belongs to another HERO source.,Das ausgewählte Mapping-Schema gehört zu einer anderen HERO-Quelle.
+Select a validated snapshot matching the mapping file schema.,"Wähle einen validierten Snapshot, der zum Schema der Mapping-Datei passt."
+Explicit mapping import confirmation is required.,Der Mapping-Import muss ausdrücklich bestätigt werden.
+The mapping import preview changed; preview the file again.,Die Mapping-Importvorschau hat sich geändert. Prüfe die Datei erneut.
+The mapping file is not valid JSON.,Die Mapping-Datei enthält kein gültiges JSON.
+"Mapping files cannot contain settings, credentials or contract configuration.","Mapping-Dateien dürfen keine Einstellungen, Zugangsdaten oder Vertragskonfiguration enthalten."
+Mutation contract scope must explicitly select the mapped-update resolver.,Der Geltungsbereich des Mutationsvertrags muss ausdrücklich den Resolver für gemappte Aktualisierungen auswählen.
+Mutation contract areas do not match their registered update operation.,Die Bereiche des Mutationsvertrags passen nicht zur registrierten Aktualisierungsoperation.
+Mutation contract mapping identities must be unique.,Die Mapping-Identitäten des Mutationsvertrags müssen eindeutig sein.
+Mutation contract query must be bounded GraphQL text.,Die Abfrage des Mutationsvertrags muss GraphQL-Text innerhalb der zulässigen Länge sein.
+Mutation contract validation requires the accompanying update mappings.,Die Prüfung des Mutationsvertrags benötigt die zugehörigen Aktualisierungs-Mappings.
+Configuration mutation contracts must be a list of at most eight registered updates.,Die Mutationsverträge der Konfiguration müssen eine Liste mit höchstens acht registrierten Aktualisierungen sein.
+Mutation contract snapshot must match the validated target source and schema.,Der Snapshot des Mutationsvertrags muss zur validierten Zielquelle und zum Zielschema passen.
+Mutation service or saved contract changed before explicit local approval.,Der Mutations-Service oder der gespeicherte Vertrag wurde vor der ausdrücklichen lokalen Freigabe geändert.
+Explicit local mutation contract import confirmation is required.,Der lokale Import des Mutationsvertrags muss ausdrücklich bestätigt werden.
+Mutation contract import has unresolved conflicts; no contract was written.,Der Import des Mutationsvertrags enthält ungelöste Konflikte. Es wurde kein Vertrag geschrieben.
+Existing mutation contracts cannot be exported without reconciliation.,Bestehende Mutationsverträge müssen vor dem Export abgeglichen werden.
+Mutation contract mapping identities must be canonical UUIDs.,Die Mapping-Identitäten des Mutationsvertrags müssen kanonische UUIDs sein.
+Mutation contract must be one schema-valid variable-only update selecting its id.,"Der Mutationsvertrag muss eine einzelne schemagültige Aktualisierung mit Variablen sein, die ausschließlich ihre ID auswählt."
+Mutation contract mappings have duplicate areas or incompatible operation scopes.,Die Mappings des Mutationsvertrags enthalten doppelte Bereiche oder unvereinbare Operationsbereiche.
+Invalid or duplicate portable mutation contract.,Ungültiger oder doppelter portabler Mutationsvertrag.
+Several mutation services or contracts require explicit reconciliation.,Mehrere Mutations-Services oder Verträge müssen ausdrücklich abgeglichen werden.
+An existing mutation contract has no matching service.,Für einen bestehenden Mutationsvertrag fehlt der passende Service.
+Mutation contract does not exactly cover its accompanying mapping identities and arguments.,Der Mutationsvertrag deckt die zugehörigen Mapping-Identitäten und Argumente nicht exakt ab.
+Password fields cannot be transferred in configuration packages.,Passwortfelder dürfen nicht in Konfigurationspaketen übertragen werden.
+Configuration import cannot change the locally confirmed HERO source.,Der Konfigurationsimport darf die lokal bestätigte HERO-Quelle nicht ändern.
+Mutation contracts require a replacement configuration package.,Mutationsverträge benötigen ein Konfigurationspaket zum Ersetzen der vorhandenen Konfiguration.
+Mutation contract configuration has conflicts.,Die Konfiguration der Mutationsverträge enthält Konflikte.
+The active mutation contract does not authorize this mapping identity and area.,Der aktive Mutationsvertrag gibt diese Mapping-Identität und diesen Bereich nicht frei.
+Configuration packages belong in Settings. Import a mapping JSON file here.,Konfigurationspakete gehören in die Einstellungen. Importiere hier eine Mapping-JSON-Datei.
+Import a Mutation mapping JSON file in this tab. Query mapping files belong in Query.,Importiere in diesem Reiter eine Mutations-Mapping-JSON-Datei. Query-Mapping-Dateien gehören in den Reiter Query.
+Import a Query mapping JSON file in this tab. Mutation mapping files belong in Mutation.,Importiere in diesem Reiter eine Query-Mapping-JSON-Datei. Mutations-Mapping-Dateien gehören in den Reiter Mutation.
+Import and activate these Query mappings? No HERO operation will be executed.,Diese Query-Mappings importieren und aktivieren? Es wird keine HERO-Operation ausgeführt.
+Query mappings imported and activated. No HERO operation was executed.,Query-Mappings wurden importiert und aktiviert. Es wurde keine HERO-Operation ausgeführt.
+Mutation contracts: {0}; requested active status: {1}.,Mutationsverträge: {0}; gewünschter Status Aktiv: {1}.
+Mutation contracts imported: {0}; active: {1}.,Mutationsverträge importiert: {0}; aktiv: {1}.
+Mutation mappings to import as drafts: {0}.,Als Entwürfe zu importierende Mutations-Mappings: {0}.
+Mutation mappings imported as drafts: {0}.,Als Entwürfe importierte Mutations-Mappings: {0}.
+The existing mutation service differs from the imported definition.,Der bestehende Mutations-Service weicht von der importierten Definition ab.
+The existing mutation contract differs from the imported definition.,Der bestehende Mutationsvertrag weicht von der importierten Definition ab.
+Import cannot silently downgrade an approved mutation contract.,Der Import darf einen freigegebenen Mutationsvertrag nicht ohne ausdrückliche Entscheidung zurückstufen.
+Invalid Project logbook mutation configuration.,Ungültige Konfiguration der Projektlogbuch-Mutation.
+Project logbook mapping requires the native activity content and an explicit plain-text conversion.,Das Projektlogbuch-Mapping benötigt den nativen Aktivitätstext und eine ausdrückliche Umwandlung in Klartext.
+Activity assignment identity must be a canonical UUID.,Die Identität der Aktivitätszuordnung muss eine kanonische UUID sein.
+The saved HERO schema does not support the approved Project logbook inputs and response.,Das gespeicherte HERO-Schema unterstützt die freigegebenen Projektlogbuch-Eingaben und die Antwort nicht.
+The native Project activity fields are missing or incompatible.,Die nativen Felder der Projektaktivität fehlen oder sind nicht kompatibel.
+This activity was already submitted or has an uncertain logbook result; reconcile it before continuing.,Diese Aktivität wurde bereits übermittelt oder ihr Logbuchergebnis ist unklar. Kläre das Ergebnis vor dem Fortfahren.
+The Project logbook reservation is ambiguous; reconciliation is required.,Die Reservierung für das Projektlogbuch ist mehrdeutig und muss abgeglichen werden.
+The Project has an unconfirmed outbound logbook activity; reconcile it before importing its logbook.,Für das Projekt gibt es eine ausgehende Logbuchaktivität mit unbestätigtem Ergebnis. Kläre sie vor dem Logbuchimport.
+Only a nonempty local comment on a Project can be sent to the HERO logbook.,Nur ein nicht leerer lokaler Kommentar zu einem Projekt kann ins HERO-Logbuch übertragen werden.
+The activity changed its Project or content; review it again.,Projekt oder Inhalt der Aktivität wurden geändert. Prüfe sie erneut.
+Imported or already linked logbook activities cannot be submitted again.,Importierte oder bereits verknüpfte Logbuchaktivitäten können nicht erneut übermittelt werden.
+Exactly one active Project logbook mutation mapping is required.,Genau ein aktives Mutations-Mapping für das Projektlogbuch ist erforderlich.
+"The active logbook mapping, snapshot and confirmed HERO source no longer agree.","Aktives Logbuch-Mapping, Snapshot und bestätigte HERO-Quelle stimmen nicht mehr überein."
+Logbook sending requires one synchronized Project binding without source conflicts.,Die Logbuchübertragung benötigt eine eindeutige synchronisierte Projektverknüpfung ohne Quellkonflikte.
+The Project binding has an invalid HERO identity.,Die Projektverknüpfung enthält eine ungültige HERO-Identität.
+Logbook sending requires the approved Project reader including its logbook.,Die Logbuchübertragung benötigt den freigegebenen Projekt-Leseservice einschließlich Logbuch.
+The logbook mapping has no valid portable identity.,Das Logbuch-Mapping besitzt keine gültige portable Identität.
+The approved Project readback omitted its logbook.,In der freigegebenen Projekt-Rückleseantwort fehlt das Logbuch.
+The activity must contain nonempty text within the permitted length.,Die Aktivität muss nicht leeren Text innerhalb der zulässigen Länge enthalten.
+The approved Project query must explicitly select the logbook readback fields.,Die freigegebene Projektabfrage muss die zum Rücklesen benötigten Logbuchfelder ausdrücklich auswählen.
+The activity preview changed; review and confirm it again.,Die Aktivitätsvorschau wurde geändert. Prüfe und bestätige sie erneut.
+The returned HERO logbook identity is already bound; reconcile the activity.,Die zurückgegebene HERO-Logbuchidentität ist bereits verknüpft. Gleiche die Aktivität ab.
+HERO did not confirm the created logbook activity through the approved Project reader.,HERO hat die angelegte Logbuchaktivität über den freigegebenen Projekt-Leseservice nicht bestätigt.
+The created logbook entry belongs to another HERO Project.,Der angelegte Logbucheintrag gehört zu einem anderen HERO-Projekt.
+HERO did not confirm a new logbook identity.,HERO hat keine neue Logbuchidentität bestätigt.
+The local activity changed during sending; reconcile the created logbook entry.,Die lokale Aktivität wurde während der Übertragung geändert. Gleiche den angelegten Logbucheintrag ab.
+The logbook activity could not be confirmed; no automatic retry was performed. Reconcile the Project logbook reservation.,Die Logbuchaktivität konnte nicht bestätigt werden. Es erfolgte kein automatischer Neuversuch. Kläre die Reservierung für das Projektlogbuch.
+Projects with outbound logbook activities require the approved mapped Project logbook importer.,Projekte mit ausgehenden Logbuchaktivitäten benötigen den freigegebenen Projektlogbuch-Import über das Mapping.
+Invalid project logbook mapping scope.,Ungültiger Geltungsbereich des Projektlogbuch-Mappings.
+Invalid project logbook assignment.,Ungültige Zuordnung für das Projektlogbuch.
+Configuration mutation mappings must contain at most ten supported profiles.,Die Mutations-Mappings der Konfiguration dürfen höchstens zehn unterstützte Profile enthalten.
+Configuration mutation contracts must be a list of at most nine registered operations.,Die Mutationsverträge der Konfiguration müssen eine Liste mit höchstens neun registrierten Operationen sein.
+Mutation contract scope must explicitly select its registered resolver.,Der Geltungsbereich des Mutationsvertrags muss ausdrücklich den registrierten Resolver auswählen.
+Mutation contract areas do not match their registered operation.,Die Bereiche des Mutationsvertrags passen nicht zu seiner registrierten Operation.
+An active Project logbook mapping already owns this HERO source.,Für diese HERO-Quelle gibt es bereits ein aktives Projektlogbuch-Mapping.
+Project logbook,Projektlogbuch
+Send activity to HERO,Aktivität ins HERO-Logbuch übertragen
+Activity,Aktivität
+The project changed. Save it and reopen the activity preview.,Das Projekt wurde geändert. Speichere es und öffne die Aktivitätsvorschau erneut.
+This adds one entry to the HERO project logbook.,Hiermit wird ein Eintrag im HERO-Projektlogbuch angelegt.
+Choose an activity to preview.,Wähle eine Aktivität für die Vorschau aus.
+Loading activity preview …,Aktivitätsvorschau wird geladen …
+Invalid activity preview.,Ungültige Aktivitätsvorschau.
+Sending activity to HERO …,Aktivität wird ins HERO-Logbuch übertragen …
+Unexpected activity send result.,Unerwartetes Ergebnis der Aktivitätsübertragung.
+Activity sent to HERO.,Aktivität wurde ins HERO-Logbuch übertragen.
+The activity could not be confirmed as sent. Reopen the activity list before trying again.,Die Übertragung der Aktivität konnte nicht bestätigt werden. Öffne die Aktivitätsliste vor einem erneuten Versuch neu.
+Loading project activities …,Projektaktivitäten werden geladen …
+Invalid activity list.,Ungültige Aktivitätsliste.
+No eligible project activities are available.,Es sind keine geeigneten Projektaktivitäten vorhanden.
+Choose an activity.,Wähle eine Aktivität aus.
+Invalid automatic Project activity source configuration.,Ungültige Quellkonfiguration für automatische Projektaktivitäten.
+Unsupported Project activity document type.,Nicht unterstützter Dokumenttyp für Projektaktivitäten.
+Only a native activity on a Project can be sent to the HERO logbook.,Nur eine native Aktivität zu einem Projekt kann ins HERO-Logbuch übertragen werden.
+The automatic Project activity contains invalid change data.,Die automatische Projektaktivität enthält ungültige Änderungsdaten.
+The mapping does not include automatic Project change activities.,Das Mapping enthält keine automatischen Projektänderungsaktivitäten.
+This automatic activity type is not selected by the logbook mapping.,Dieser automatische Aktivitätstyp ist im Logbuch-Mapping nicht ausgewählt.
+The approved logbook readback returned missing or repeated activity identities.,Die freigegebene Logbuch-Rückleseantwort enthält fehlende oder wiederholte Aktivitätsidentitäten.
+Choose an activity,Aktivität auswählen
+Added,Hinzugefügt
+Removed,Entfernt
+Snapshot rebinding requires intact validated schemas of the same HERO source.,Der Snapshot-Wechsel benötigt unveränderte validierte Schemata derselben HERO-Quelle.
+Mapping snapshot bindings changed; preview the import again.,Die Snapshot-Zuordnungen der Mappings wurden geändert. Prüfe den Import erneut.
+Unselected active field rules require reconciliation before snapshot rebinding.,Nicht ausgewählte aktive Feldregeln müssen vor dem Snapshot-Wechsel abgeglichen werden.
+Unsupported snapshot binding document.,Nicht unterstütztes Dokument für eine Snapshot-Zuordnung.
+Snapshot rebinding found a reader outside the selected mapping graph.,Beim Snapshot-Wechsel wurde ein Leseservice außerhalb der ausgewählten Mapping-Abhängigkeiten gefunden.
+Snapshot rebinding found ambiguous active mapping or service scopes.,Beim Snapshot-Wechsel wurden mehrdeutige aktive Mapping- oder Service-Zuordnungen gefunden.
+Snapshot rebinding found a mutation outside its approved readback graph.,Beim Snapshot-Wechsel wurde eine Mutation außerhalb ihrer freigegebenen Rücklese-Abhängigkeiten gefunden.
+Snapshot rebinding requires one existing active contract per mutation operation.,Der Snapshot-Wechsel benötigt genau einen vorhandenen aktiven Vertrag je Mutationsoperation.
+Snapshot rebinding found an invalid mutation service or contract.,Beim Snapshot-Wechsel wurde ein ungültiger Mutations-Service oder Vertrag gefunden.
+Snapshot rebinding found a changed mutation contract fingerprint.,Beim Snapshot-Wechsel wurde ein geänderter Fingerabdruck eines Mutationsvertrags gefunden.
+Snapshot rebinding cannot cross different HERO endpoints.,Ein Snapshot-Wechsel zwischen unterschiedlichen HERO-Endpunkten ist nicht zulässig.
+The saved HERO schemas differ. Review the schema changes before importing mappings.,Die gespeicherten HERO-Schemata unterscheiden sich. Prüfe die Schemaänderungen vor dem Mapping-Import.
+Open Query drafts contain snapshot-bound rule baselines. Reconcile these drafts before rebinding snapshots.,Offene Query-Entwürfe enthalten an Snapshots gebundene Regelbaselines. Gleiche diese Entwürfe vor dem Snapshot-Wechsel ab.
+Snapshot rebinding changed since preview; preview the import again.,Die Snapshot-Zuordnungen haben sich seit der Vorschau geändert. Prüfe den Import erneut.
+Snapshot rebinding requires exactly one approved reader per active Query mapping.,Der Snapshot-Wechsel benötigt genau einen freigegebenen Leseservice je aktivem Query-Mapping.
+Snapshot rebinding found an incompatible Project logbook contract scope.,Beim Snapshot-Wechsel wurde ein unvereinbarer Geltungsbereich des Projektlogbuch-Vertrags gefunden.
+A private parentless draft must be rebound by its owner before switching snapshots.,Ein persönlicher Entwurf ohne aktive Definition muss vor dem Snapshot-Wechsel durch seinen Eigentümer abgeglichen werden.
+An open draft has an incompatible snapshot context.,Ein offener Entwurf besitzt einen unvereinbaren Snapshot-Kontext.
+The confirmed HERO source changed during snapshot rebinding.,Die bestätigte HERO-Quelle wurde während des Snapshot-Wechsels geändert.
+Used mapping schema dependencies changed: {0},Verwendete Schema-Abhängigkeiten des Mappings wurden geändert: {0}
+Multiple approved schema contexts require separate mapping imports.,Mehrere freigegebene Schema-Kontexte benötigen getrennte Mapping-Importe.
+Project naming is local to ERPNext and cannot be sent to HERO.,Die Projektbenennung bleibt lokal in ERPNext und darf nicht an HERO gesendet werden.
+Project naming stays in ERPNext and is not sent to HERO.,Die Projektbenennung bleibt in ERPNext und wird nicht an HERO gesendet.
+The Project send preview changed; open it again.,Die Projektvorschau hat sich geändert. Öffne sie erneut.
+The approved Project reader cannot be narrowed to its bound identity.,Die freigegebene Projektabfrage lässt sich nicht sicher auf das verknüpfte Projekt begrenzen.
+Loading Project changes and logbook activities …,Projektänderungen und Logbucheinträge werden geladen …
+Sending Project changes and logbook activities …,Projektänderungen und Logbucheinträge werden gesendet …
+Project changes and activities sent to HERO.,Projektänderungen und Logbucheinträge wurden an HERO gesendet.
+Sending stopped. Confirmed changes remain sent; review the result before sending again.,Versand gestoppt. Bestätigte Änderungen wurden übertragen. Prüfe das Ergebnis vor einem erneuten Versand.
+Sending could not be confirmed. Review the result before sending again.,Der Versand konnte nicht bestätigt werden. Prüfe das Ergebnis vor einem erneuten Versand.
+The project changed. Save it and reopen the preview.,Das Projekt hat sich geändert. Speichere es und öffne die Vorschau erneut.
+The request failed. Reopen the preview to try again.,Die Anfrage ist fehlgeschlagen. Öffne die Vorschau für einen neuen Versuch erneut.
+Invalid Project send preview.,Ungültige Projektvorschau.
+Change history,Änderungsverlauf
+Comment,Kommentar
+Delivery successful,Sendung erfolgreich
+The saved logbook receipt cannot be reconciled automatically.,Die gespeicherte Logbuchbestätigung konnte nicht automatisch abgeglichen werden.
+Max. records per area,Max. Datensätze je Bereich
+Testing Max. Records per Area,Testlimit: Datensätze je Bereich
+Limits manually started previews and imports to this many records in each area. Imports write ERPNext data. Full Migration applies the limit separately to each area. The setting is fixed when the run starts; changing it affects new runs only.,Begrenzt manuell gestartete Vorschauen und Importe auf diese Anzahl Datensätze je Bereich. Importe schreiben ERPNext-Daten. Bei der Gesamtmigration gilt das Limit für jeden Bereich einzeln. Die Einstellung wird beim Start festgelegt; Änderungen gelten nur für neue Läufe.
+Limits manually started previews and imports per area. Imports write ERPNext data. It never starts work by itself.,Begrenzt manuell gestartete Vorschauen und Importe je Bereich. Importe schreiben ERPNext-Daten. Startet selbst keine Verarbeitung.
+"1 through 100 records per area, fixed when the run starts. Full Migration applies this limit separately to each area.",1 bis 100 Datensätze je Bereich; wird beim Start festgelegt. Bei der Gesamtmigration gilt dieses Limit für jeden Bereich einzeln.
+Frozen record limit per area for this run. Legacy testing previews used this field as a HERO request limit.,Beim Start festgelegtes Datensatzlimit je Bereich für diesen Lauf. Ältere Testvorschauen verwendeten dieses Feld als Limit für HERO-Anfragen.
+{0} · up to {1} records per area,{0} · bis zu {1} Datensätze je Bereich
+{0} · {1}/{2} processed · {3} received,{0} · {1}/{2} verarbeitet · {3} empfangen
+Testing record limit must be between 1 and 100.,Das Testlimit muss zwischen 1 und 100 Datensätzen liegen.
+The frozen testing record limit changed; start a new run.,Das beim Start festgelegte Testlimit wurde geändert; starten Sie einen neuen Lauf.
+Testing migration requires a run-bound checkpoint.,Die Testmigration benötigt einen an den Lauf gebundenen Prüfpunkt.
+Testing imports cannot resume; start a new bounded run.,Testimporte können nicht fortgesetzt werden; starten Sie einen neuen begrenzten Lauf.
+The frozen testing context changed; start a new run.,Der beim Start festgelegte Testkontext wurde geändert; starten Sie einen neuen Lauf.
+Saved contact communication differs from the mapped source value.,Die gespeicherten Kontaktdaten unterscheiden sich vom gemappten Quellwert.
+A nonpaginated employee read requires its single approved request.,Eine Mitarbeiterabfrage ohne Seiteneinteilung darf nur einmal mit der genehmigten Anfrage ausgeführt werden.
+An explicit Query rule identity is not selected by its imported area.,Eine ausdrücklich referenzierte Query-Regel gehört nicht zur importierten Bereichsauswahl.
+The published Query rule selection is incomplete.,Die veröffentlichte Query-Regelauswahl ist unvollständig.
+An explicit Query rule identity has no unique equivalent in its published area.,Für eine ausdrücklich referenzierte Query-Regel gibt es im veröffentlichten Bereich keine eindeutige Entsprechung.
+The linked Item no longer exists in ERPNext; review the binding before importing.,Der verknüpfte Artikel existiert in ERPNext nicht mehr; prüfen Sie vor dem Import die Bindung.
+"{0} project assignee(s) could not be resolved to an active, source-bound ERPNext user; existing assignments were preserved and require review.","{0} Projektbearbeiter konnten keinem aktiven, mit der Quelle verknüpften ERPNext-Benutzer zugeordnet werden; bestehende Zuweisungen wurden beibehalten und müssen geprüft werden."
+HERO supplier article number must be text or null.,Die HERO-Lieferantenartikelnummer muss Text oder null sein.
+The imported file target requires review before synchronization.,Das Ziel der importierten Datei muss vor der Synchronisierung geprüft werden.
+The imported file content is unavailable and requires review.,Der Inhalt der importierten Datei ist nicht verfügbar und muss geprüft werden.
+The imported file has no verified target baseline and requires review.,Für die importierte Datei fehlt eine bestätigte Zielbasis; sie muss geprüft werden.
+The imported file was changed locally and requires review.,Die importierte Datei wurde lokal geändert und muss geprüft werden.
+A newly mapped file field already contains a local value and requires review.,Ein neu zugeordnetes Dateifeld enthält bereits einen lokalen Wert und muss geprüft werden.
+Newly mapped employee or user fields contain different local values; review before importing.,Neu zugeordnete Mitarbeiter- oder Benutzerfelder enthalten abweichende lokale Werte; bitte vor dem Import prüfen.

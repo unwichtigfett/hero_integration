@@ -50,15 +50,26 @@ class TestInstallContract(unittest.TestCase):
         self.assertEqual(len(environment.create_calls), 1)
         fields, update = environment.create_calls[0]
         self.assertFalse(update)
-        self.assertEqual(sum(map(len, fields.values())), 9)
+        self.assertEqual(sum(map(len, fields.values())), 32)
         self.assertEqual(
             {row["fieldname"] for rows in fields.values() for row in rows},
             {
                 "custom_hero_source_id", "custom_hero_customer_number", "custom_hero_customer_category",
-                "custom_hero_customer_type", "custom_hero_related_project_id", "custom_hero_display_id",
-                "custom_hero_source_created", "custom_hero_source_modified",
+                "custom_hero_related_project_id", "custom_hero_display_id",
+                "custom_hero_source_created", "custom_hero_source_modified", "custom_hero_manufacturer_nr",
+                "custom_hero_lead_source", "custom_hero_designation", "custom_hero_project_manager",
+                "custom_hero_partner_id", "custom_hero_user_id", "custom_hero_project", "custom_hero_logbook_context",
+                "custom_hero_author",
+                *{field["fieldname"] for field in install.SERVICE_ITEM_FIELDS},
+                *{field for fields in install.OBSERVATIONS.values() for field, _ in fields},
             },
         )
+
+        # A different label is not a conflict: the app gives its fields plain labels itself.
+        environment.custom_fields[("Customer", "custom_hero_customer_number")]["label"] = "HERO Customer Number"
+        environment.call(install.after_migrate)
+        self.assertEqual(len(environment.create_calls), 1)
+        self.assertEqual(environment.relabel_calls, 3)
 
         environment.custom_fields[("Customer", "custom_hero_customer_number")]["fieldtype"] = "Int"
         with self.assertRaisesRegex(RuntimeError, "conflicts with the HERO schema \\(fieldtype\\)"):
@@ -76,6 +87,32 @@ class TestInstallContract(unittest.TestCase):
         install = locked.load()
         with self.assertRaisesRegex(RuntimeError, "Project.notes must remain editable"):
             locked.call(install.before_install)
+
+    def test_task_author_is_provisioned_on_migrate_even_when_assignee_already_exists(self):
+        environment = _InstallEnvironment(apps=['frappe', 'erpnext'], version='16.35.0')
+        install = environment.load()
+        environment.custom_fields[('Task', 'custom_hero_assignee')] = {'fieldtype': 'Data'}
+        environment.call(install.after_migrate)
+        author = environment.custom_fields[('Task', 'custom_hero_author')]
+        self.assertEqual((author['fieldtype'], author['options'], author['read_only'], author['label']),
+                         ('Link', 'User', 1, 'Created By'))
+        self.assertEqual(author['no_copy'], 1)
+        self.assertNotIn('HERO', author['label'])
+        environment.call(install.after_migrate)
+        self.assertEqual(len(environment.create_calls), 1)
+
+    def test_task_author_patch_uses_the_same_idempotent_conflict_checking_owner(self):
+        from hero_integration.patches.v0_3 import task_author_field
+        environment = _InstallEnvironment(apps=['frappe', 'erpnext'], version='16.35.0')
+        install = environment.load()
+        with mock.patch.dict(sys.modules, {'hero_integration.install': install}):
+            environment.call(task_author_field.execute)
+            environment.call(task_author_field.execute)
+        self.assertEqual(len(environment.create_calls), 1)
+        environment.custom_fields[('Task', 'custom_hero_author')]['options'] = 'Employee'
+        with self.assertRaisesRegex(RuntimeError, 'conflicts with the HERO schema'):
+            environment.call(install.after_migrate)
+        self.assertEqual(len(environment.create_calls), 1)
 
     def test_install_and_migrate_refuse_missing_project_notes_before_creating_fields(self):
         for hook in ("after_install", "after_migrate"):
@@ -109,6 +146,7 @@ class _InstallEnvironment:
                          if doctypes is None else doctypes)
         self.custom_fields: dict[tuple[str, str], dict[str, object]] = {}
         self.create_calls: list[tuple[dict[str, list[dict[str, object]]], bool]] = []
+        self.relabel_calls = 0
         self.project_notes = project_notes
         self.project_notes_read_only = project_notes_read_only
 
@@ -150,9 +188,12 @@ class _InstallEnvironment:
 
     def call(self, function):
         # Theme lifecycle has its own metadata tests; this fixture owns ERPNext fields.
-        with mock.patch.dict(sys.modules, self.modules), \
-                mock.patch("hero_integration.services.desk_theme.ensure_navy_theme"):
-            return function()
+        with mock.patch("hero_integration.services.desk_theme.ensure_navy_theme"), \
+                mock.patch("hero_integration.integrations.field_labels.relabel_fields") as relabel, \
+                mock.patch.dict(sys.modules, self.modules):
+            result = function()
+            self.relabel_calls += relabel.call_count
+            return result
 
     def exists(self, doctype, filters):
         if doctype == "DocType":

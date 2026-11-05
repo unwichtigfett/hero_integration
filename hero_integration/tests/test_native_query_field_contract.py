@@ -44,9 +44,12 @@ class TestNativeQueryFieldContract(unittest.TestCase):
         validate_spec(replace(self.spec, source_path='company_name'), Metadata())
         validate_spec(replace(self.spec, target_field='custom_hero_test'), Metadata())
 
-    def test_not_a_global_native_field_or_source_grant(self):
+    def test_system_missing_incompatible_or_related_targets_fail_closed(self):
+        # Writable native fields are configurable; system fields, unknown fields, type-incompatible
+        # transformations and relations stay rejected.
+        validate_spec(replace(self.spec, source_path='nr'), Metadata())
         for spec in (replace(self.spec, target_field='name'),
-                     replace(self.spec, target_field='missing'), replace(self.spec, source_path='nr'),
+                     replace(self.spec, target_field='missing'),
                      replace(self.spec, transformation='Scalar Text'), replace(self.spec, relation='unexpected')):
             with self.subTest(spec=spec), self.assertRaises(DirectMappingError):
                 validate_spec(spec, Metadata())
@@ -58,10 +61,9 @@ class TestNativeQueryFieldContract(unittest.TestCase):
         with patch.dict(SOURCE_CONTRACTS['HeroCustomers'], {'native_field_bindings': extended}):
             validate_spec(replace(self.spec, source_path='first_name', target_field='website'), Metadata())
 
-    def test_no_unreviewed_production_approval(self):
+    def test_writable_native_fields_need_no_hardcoded_binding(self):
         with patch.dict(SOURCE_CONTRACTS['HeroCustomers'], {'native_field_bindings': frozenset()}):
-            with self.assertRaises(DirectMappingError):
-                validate_spec(self.spec, Metadata())
+            validate_spec(self.spec, Metadata())
 
     def test_unavailable_readonly_calculated_or_wrong_type_fails_closed(self):
         for attrs in ({'read_only': 1}, {'hidden': 1}, {'fetch_from': 'customer_group.group_name'},

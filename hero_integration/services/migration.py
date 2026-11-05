@@ -218,8 +218,9 @@ def execute_run(run_name: str) -> None:
         validate_run_mappings(run)
         config = get_configuration()
         source = _source_for_run(run, config)
-        if _testing_preview_enabled(run):
-            testing_source = TestingPreviewSource(source, int(run.testing_max_actions or 0))
+        if bool(int(getattr(run, 'testing_enabled', 0) or 0)):
+            from hero_integration.services.migration_testing import RecordLimitedSource, record_limit
+            testing_source = RecordLimitedSource(source, record_limit(run))
             source = testing_source
         _process_requested_phases(run, source, checkpoint=lambda: _checkpoint_transaction(run, claim_started_on))
         run.reload()
@@ -342,7 +343,7 @@ def _source_for_run(run, config):
         return current
     source = GraphQLServiceSource(HeroGraphQLClient(
         config.endpoint, lambda: config.api_token, config.timeout_seconds,
-        max_retries=0 if _testing_preview_enabled(run) else 2,
+        max_retries=0 if bool(int(getattr(run, 'testing_enabled', 0) or 0)) else 2,
         requests_per_minute=_request_rate(),
     ), service, contract, getattr(snapshot, "source_instance", "") or config.source_instance,
        revalidate=revalidate_generated)
@@ -596,9 +597,11 @@ def _refresh_project_phases(run, source) -> None:
 
 
 def _refresh_project_logbook(run, source) -> None:
-    """Add new HERO logbook entries to the Project activity (read-only, outside the checkpoint)."""
+    """Run the legacy global logbook pass only for unrestricted Execute imports."""
     if getattr(source, "query_adapter", None):
         return  # v2 collections are processed from the approved Project row
+    if bool(int(getattr(run, "testing_enabled", 0) or 0)):
+        return  # this legacy pass cannot restrict writes to the run's selected Projects
     client = getattr(source, "client", None)
     if getattr(run, "mode", "Preview") != "Execute" or client is None or not hasattr(source, "project_status_steps"):
         return  # Preview and test doubles never read or write the logbook
@@ -606,7 +609,7 @@ def _refresh_project_logbook(run, source) -> None:
 
     try:
         emails = source.user_emails() if hasattr(source, "user_emails") else {}
-        sync_logbook(client, emails)
+        sync_logbook(client, emails, source_instance=source.source_instance)
     except Exception:
         frappe.db.rollback()
         frappe.log_error(title="HERO project logbook refresh failed")
@@ -761,13 +764,16 @@ def _persist_testing_result(run, source: TestingPreviewSource) -> None:
         run.testing_executed_actions = source.executed_actions
         run.testing_records_received = source.records_received
         run.testing_status = status
-        run.testing_results_json = json.dumps(source.results, ensure_ascii=False, sort_keys=True)
+        from hero_integration.services.migration_testing import RecordLimitedSource
+        results = {'record_limit': source.maximum, 'areas': source.results} if isinstance(source, RecordLimitedSource) else source.results
+        run.testing_results_json = json.dumps(results, ensure_ascii=False, sort_keys=True)
         run.save()
     except Exception:
         frappe.log_error(title="HERO testing preview metadata could not be recorded")
 
 
 def _migrate_customer(record: dict[str, object], run) -> Result:
+    from hero_integration.services.query_mapping import IncompleteMappedAddress
     try:
         plan = _mapping_plan_for_run(run, "HeroCustomers")
         source_id = plan.source_identity(record)
@@ -785,7 +791,7 @@ def _migrate_customer(record: dict[str, object], run) -> Result:
                 address = address_values(plan, record)
             else:
                 address = _customer_primary_address(record, plan.customer_primary_address_line2(record))
-        except IncompleteAddress as error:
+        except (IncompleteAddress, IncompleteMappedAddress) as error:
             # The Customer is still imported; an incomplete address is skipped, as if HERO had none.
             address, address_note = None, f" {error} It was not imported."
         if not getattr(plan, 'adapter_options', None) and address is not None and not address.get("country_code"):
@@ -795,7 +801,7 @@ def _migrate_customer(record: dict[str, object], run) -> Result:
         document_name, name_note = _document_name(
             customer_document_name, record, "customer number", internal_prefix="HERO-CUSTOMER",
         )
-    except MappingPlanError as error:
+    except (MappingPlanError, ValueError) as error:
         return Result("BLOCKED_RECORD", str(error))
     # A v2 query plan needs no lifecycle rule; its validated canonical
     # ``is_deleted`` flag decides on its own.
@@ -846,6 +852,7 @@ def _migrate_customer(record: dict[str, object], run) -> Result:
         required_on_create=("customer_type",),
         document_name=document_name,
     )
+    result = _sync_mapped_relations(plan, record, result, run)
     note = email_note + phone_note + address_note + (name_note if _creates(result) else "")
     if note and result.code != "BLOCKED_RECORD":
         from dataclasses import replace
@@ -871,7 +878,7 @@ def _drop_invalid_email(values) -> str:
 
 
 _PHONE_NUMBER = re.compile(r"\+?\d[\d \-().]*\d")
-_PHONE_LABELS = {"mobile_no": "mobile phone", "hero_phone_home": "home phone"}
+_PHONE_LABELS = {"mobile_no": "mobile phone", "hero_phone_home": "home phone", "phone": "phone"}
 
 
 def _phone_number(value):
@@ -901,6 +908,16 @@ def _clean_customer_phones(values, home_phone):
             missing = getattr(values, "missing", None)
             if missing is not None:
                 missing.add("mobile_no")
+    if "phone" in values:
+        main_phone, original = _phone_number(values["phone"])
+        if original:
+            originals["phone"] = original
+            if main_phone:
+                values["phone"] = main_phone
+            else:
+                values.pop("phone", None)
+                if hasattr(values, "missing"):
+                    values.missing.add("phone")
     home, original = _phone_number(home_phone)
     if original:
         originals["hero_phone_home"] = original
@@ -1407,11 +1424,25 @@ def _task_lifecycle_source(record) -> dict:
     except Exception:  # offline runner without System Settings
         today = date.today()
     # Never guess an assignee without the Task field or without the HERO user list.
-    emails = _task_user_emails() if 'target_user_id' in record and _task_has_assignee_field() else None
-    values = task_lifecycle.source_values(record, _external_task_deadline, emails or {}, today)
-    if emails is None:
+    wants_assignee = 'target_user_id' in record and _task_has_assignee_field()
+    wants_author = 'author_user_id' in record and _task_has_field(task_lifecycle.AUTHOR)
+    emails = _task_user_emails() if wants_assignee or wants_author else None
+    def user_for(hero_user_id, email):
+        # The HERO user ID stored by the people sync identifies the person; the e-mail is the fallback.
+        from hero_integration.integrations.hero_people import user_by_hero_user
+        return user_by_hero_user(hero_user_id, source_instance=record.get('_hero_source_instance')) or (task_lifecycle._user_for(email, frappe) if email else None)
+    user_for = user_for if wants_author and emails is not None else None
+    values = task_lifecycle.source_values(record, _external_task_deadline, emails or {}, today, user_for=user_for)
+    if emails is None or not wants_assignee:
         values.pop(task_lifecycle.ASSIGNEE, None)
     return values
+
+
+def _task_has_field(fieldname) -> bool:
+    try:
+        return bool(frappe.get_meta('Task').has_field(fieldname))
+    except Exception:
+        return False
 
 
 def _task_has_assignee_field() -> bool:
@@ -1478,7 +1509,6 @@ def _migrate_projection(record, run, plan) -> Result:
                 from hero_integration.services.query_mapping import event_record
                 native_record = event_record(plan, record)
             native_values = native_resolve(contract, native_record, source_id, instance, options, lookup=_native_lookup,
-                                          item_link=lambda identity: _item_name_for_source(identity, instance),
                                           allow_partial=bool(existing), review=review)
             if contract.get('native_kind') == 'event' and options['target_timezone'] != frappe.db.get_single_value('System Settings', 'time_zone'):
                 raise MappingPlanError('Configured event target timezone differs from the native System Settings timezone.')
@@ -1513,13 +1543,6 @@ def _native_lookup(doctype, name):
     document = frappe.get_doc(doctype, name)
     frappe.has_permission(doctype, 'read', doc=document, throw=True)
     return document
-
-
-def _item_name_for_source(identity, instance):
-    link = _link('Documents_SupplyProduct', identity, instance)
-    if not link or link.target_doctype != 'Item':
-        raise MappingPlanError('Product version has no verified native Item binding.')
-    return _native_lookup('Item', link.target_name).name
 
 
 def _projection_target_values(target, values, contract):
@@ -1659,12 +1682,50 @@ def _migrate_project(record: dict[str, object], run) -> Result:
         review_reason=" ".join(review) or None,
         creation_values=None if getattr(plan, 'adapter_options', None) else _project_creation_values(record, values.get("company")),
     )
-    if getattr(plan, 'adapter_options', None) and result.target_name and result.code in {'CREATED', 'UPDATED', 'SKIPPED', 'CONVERGED', 'OBSERVED'}:
+    unresolved_assignees = False
+    if (run.mode != 'Preview' and result.target_name and 'project_match_assignments' in record
+            and result.code in {'CREATED', 'UPDATED', 'SKIPPED', 'CONVERGED'}):
+        from hero_integration.integrations.project_assignments import sync as sync_assignees
+        assignees = sync_assignees(result.target_name, record)
+        if assignees["unmatched"]:
+            from dataclasses import replace
+            unresolved_assignees = True
+            result = replace(result, detail=(result.detail or "") + ' ' + frappe._(
+                '{0} project assignee(s) could not be resolved to an active, source-bound ERPNext user; existing assignments were preserved and require review.'
+            ).format(assignees['unmatched']))
+    if (getattr(plan, 'adapter_options', None)
+            and (result.target_name or run.mode == 'Preview')
+            and result.code in {'CREATED', 'UPDATED', 'SKIPPED', 'CONVERGED', 'OBSERVED', 'PREVIEW_OK'}):
         from hero_integration.services.project_logbook import sync_mapped_entries
-        sync_mapped_entries(plan, record, result.target_name, preview=run.mode == 'Preview')
+        logbook_conflicts = []
+        sync_mapped_entries(plan, record, result.target_name or '', preview=run.mode == 'Preview', conflicts=logbook_conflicts)
+        if logbook_conflicts:
+            from dataclasses import replace
+            result = replace(result, code='CONFLICT', detail=(result.detail or '') + ' Project logbook changes require review.')
+    result = _sync_mapped_relations(plan, record, result, run)
     if name_note and _creates(result):
         from dataclasses import replace
         result = replace(result, detail=(result.detail or "") + name_note)
+    if unresolved_assignees and result.code in {'CREATED', 'UPDATED', 'SKIPPED', 'CONVERGED', 'OBSERVED'}:
+        from dataclasses import replace
+        result = replace(result, code='CONFLICT')
+    return result
+
+
+def _sync_mapped_relations(plan, record, result, run):
+    """Run declared native relationships inside the record transaction."""
+    if not getattr(plan, 'adapter_options', None) or not plan.adapter_options.get('native_relations'):
+        return result
+    if result.code not in {'CREATED', 'UPDATED', 'SKIPPED', 'CONVERGED', 'OBSERVED', 'PREVIEW_OK'}:
+        return result
+    from dataclasses import replace
+    from hero_integration.services.mapped_relations import sync
+    try:
+        counts = sync(plan, record, plan.target_doctype, result.target_name or '', preview=run.mode == 'Preview')
+    except ValueError as error:
+        return replace(result, code='CONFLICT', detail=(result.detail or '') + ' ' + str(error))
+    if counts.get('conflicts'):
+        return replace(result, code='CONFLICT', detail=(result.detail or '') + ' Native relationship changes require review.')
     return result
 
 
@@ -2283,6 +2344,9 @@ def _synchronize_customer_relations(customer, contact_values, home_phone, addres
     synchronize_home_phone(customer, home_phone)
     if address is not None:
         _synchronize_customer_address(customer, address, source_instance, mapping_version)
+        from hero_integration.services.primary_address import fill_primary_address
+
+        fill_primary_address(customer.name, source_instance)
 
 
 def _synchronize_customer_address(customer, address: dict[str, object], source_instance: str, mapping_version: str) -> None:

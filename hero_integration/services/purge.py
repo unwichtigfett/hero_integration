@@ -20,6 +20,8 @@ OWN_REFERENCES = {
     "Customer": {"HERO Integration Link", "Contact", "Address"},
 }
 COMMIT_EVERY = 200
+# Employee migration adopts local accounts/personnel records, never disposable targets.
+PRESERVED_TARGETS = frozenset({"Employee", "User"})
 
 
 def purge_hero_data(dry_run: int | bool = 1, confirm: str = "", include_history: int | bool = 0) -> dict:
@@ -51,7 +53,8 @@ def purge_hero_data(dry_run: int | bool = 1, confirm: str = "", include_history:
 
     report = {"dry_run": dry_run, "deleted": {}, "kept": {}, "missing": {}, "links_removed": 0, "examples_kept": []}
     if dry_run:
-        report["would_delete"] = {doctype: len(by_doctype[doctype]) for doctype in doctypes}
+        report["would_delete"] = {doctype: len(by_doctype[doctype]) for doctype in doctypes if doctype not in PRESERVED_TARGETS}
+        report["kept"] = {doctype: len(by_doctype[doctype]) for doctype in doctypes if doctype in PRESERVED_TARGETS}
         report["links"] = len(links)
         return report
 
@@ -81,6 +84,9 @@ _last_reference = ""
 def _delete_target(doctype: str, name: str) -> str:
     """Delete one bound target unless something else references it."""
     global _last_reference
+    if doctype in PRESERVED_TARGETS:
+        _last_reference = "Local employee and login records are retained by the HERO purge."
+        return "kept"
     if not name or not frappe.db.exists(doctype, name):
         return "missing"
     from hero_integration.services.migration import _references_besides_hero
@@ -91,12 +97,9 @@ def _delete_target(doctype: str, name: str) -> str:
         return "kept"
     frappe.db.savepoint("hero_purge")
     try:
-        # Only our own binding (and, for a Customer, its own Contacts and
-        # Addresses) still points here; Frappe's link check would refuse.
-        from hero_integration.services.guards import bound_target_deletion
-
-        with bound_target_deletion():
-            frappe.delete_doc(doctype, name, force=True)
+        # Non-owned references were checked above. Customer Contacts and
+        # Addresses may still point here and are handled by the purge.
+        frappe.delete_doc(doctype, name, force=True)
     except Exception as error:  # a validation hook refused; keep and report
         frappe.db.rollback(save_point="hero_purge")
         _last_reference = f"{type(error).__name__}: {error}"[:200]

@@ -68,7 +68,7 @@ def validate_projection_record(operation, record, *, allow_partial=False):
         }.get(kind, False)
         if not valid:
             raise ValueError('Projection response has an incompatible field: ' + path)
-        binding = contract['bindings'][path]
+        binding = contract['bindings'].get(path, {})  # natively bound paths (e.g. is_done -> status) have none
         if 'object_selection' in binding and (not isinstance(value, dict) or set(value) != set(binding['object_selection'])):
             raise ValueError('Projection nested object has an invalid selection.')
         if 'selection' in binding:

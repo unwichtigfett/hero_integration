@@ -15,11 +15,17 @@ import json
 import frappe
 from frappe.utils import now_datetime
 
+from hero_integration.services import direct_runtime
+
 FILE_ACTIONS = {"Document Migration": "documents", "Picture Migration": "images"}
 PRODUCT_ACTION = "Product Migration"
+SERVICE_ACTION = "Service Migration"
+EMPLOYEE_ACTION = "Employee Migration"
 FULL_ACTION = "Full Migration"
-SLICE_ACTIONS = frozenset(FILE_ACTIONS) | {PRODUCT_ACTION}
+SLICE_ACTIONS = frozenset(FILE_ACTIONS) | {PRODUCT_ACTION, SERVICE_ACTION, EMPLOYEE_ACTION}
 RUN_ACTIONS = SLICE_ACTIONS | {FULL_ACTION}
+DIRECT_OPERATIONS = {EMPLOYEE_ACTION: "HeroEmployees", PRODUCT_ACTION: "HeroProducts", SERVICE_ACTION: "HeroServices",
+                     "Document Migration": "HeroDocuments", "Picture Migration": "HeroPictures"}
 # Project Migration processes the referenced contacts first in the same run.
 FULL_STEPS = ("Project Migration", "Schedule Migration", "Projection Migration", "Product Migration",
               "Document Migration", "Picture Migration")
@@ -62,27 +68,51 @@ def bound_configuration(run):
 
 # ---------------------------------------------------------------- starting
 
+def require_mappings(action: str, instance: str, *, steps=None) -> dict:
+    """Check all required direct readers before creating or resuming a run."""
+    operations = ([DIRECT_OPERATIONS.get(step) for step in steps] if steps is not None else DIRECT_OPERATIONS.values()) \
+        if action == FULL_ACTION else [DIRECT_OPERATIONS.get(action)]
+    reads = {}
+    for operation in operations:
+        if operation:
+            reads[operation] = direct_runtime.resolve_read(operation, instance)
+    return reads
+
+
 def start(action: str, parent: str = "") -> str:
     """Create and queue a file or full run; returns the run name."""
     if action not in RUN_ACTIONS:
         raise ValueError("Unknown file migration action.")
     config = confirmed_configuration()
+    from hero_integration.services.migration_testing import configuration, run_metadata
+    parent_run = frappe.get_doc('HERO Integration Run', parent) if parent else None
+    require_mappings(action, config.source_instance)
+    if action == EMPLOYEE_ACTION:
+        from hero_integration.services.employee_migration import preflight
+
+        preflight(config.source_instance)
+    if action == SERVICE_ACTION:
+        from hero_integration.services.service_migration import preflight
+
+        preflight(config.source_instance)
     if parent:
         bound_configuration(frappe.get_doc("HERO Integration Run", parent))  # a chain never switches sources
+    testing = configuration(parent_run, frappe_module=frappe)
     run = frappe.get_doc({"doctype": "HERO Integration Run", "action": action, "mode": "Execute", "state": "Queued",
                           "source_instance": config.source_instance,
-                          "source_binding_revision": int(config.source_binding_revision or 0)})
+                          "source_binding_revision": int(config.source_binding_revision or 0), **testing, **run_metadata(testing)})
     run.insert(ignore_permissions=True)
-    if action in FILE_ACTIONS:
+    if action in FILE_ACTIONS and not testing["testing_enabled"]:
         from hero_integration.services.file_transfer import reset_phase
 
         reset_phase(FILE_ACTIONS[action])
-    elif action == PRODUCT_ACTION:
+    elif action == PRODUCT_ACTION and not testing["testing_enabled"]:
         from hero_integration.services.product_migration import reset
 
         reset()
-    else:
-        _save_full(run.name, {"step": 0, "child": "", "notes": []})
+    elif action == FULL_ACTION:
+        _save_full(run.name, {"step": 0, "child": "", "notes": [],
+                              "steps": [EMPLOYEE_ACTION, *FULL_STEPS[:4], SERVICE_ACTION, *FULL_STEPS[4:]]})
     if parent:
         frappe.db.set_default(CHILD_KEY.format(run.name), parent)
     _enqueue(run.name)
@@ -91,7 +121,12 @@ def start(action: str, parent: str = "") -> str:
 
 def resume(run) -> None:
     """Continue a failed, cancelled or blocked file/full run where it stopped."""
-    bound_configuration(run)
+    from hero_integration.services.migration_testing import record_limit
+    if record_limit(run) is not None:
+        raise SourceBindingError('Testing imports cannot resume; start a new bounded run.')
+    config = bound_configuration(run)
+    steps = _full(run.name).get("steps", list(FULL_STEPS)) if run.action == FULL_ACTION else None
+    require_mappings(run.action, config.source_instance, steps=steps)
     run.state, run.error_message, run.finished_on = "Queued", "", None
     run.save(ignore_permissions=True)
     if run.action == FULL_ACTION:
@@ -154,33 +189,65 @@ def _file_slice(run, config) -> None:
     def cancelled() -> bool:
         return frappe.db.get_value("HERO Integration Run", run.name, "state") == "Cancelled"
 
+    def progress(counts: dict) -> None:
+        # Called after every page, so the Synchronization page shows the counts while the slice runs.
+        frappe.db.set_value("HERO Integration Run", run.name, run_counts(counts))
+        frappe.db.commit()
+
+    from hero_integration.services.migration_testing import record_limit, persist
+    maximum = record_limit(run)
     client, downloader, instance = _client_and_downloader(config)
-    if run.action == PRODUCT_ACTION:
+    if run.action == SERVICE_ACTION:
+        from hero_integration.services.service_migration import sync_services
+
+        with filelock("hero_service_migration", timeout=5):
+            state = sync_services(client, source_instance=instance, run_name=run.name, downloader=downloader,
+                                  should_stop=cancelled, progress=progress, verify_source=lambda: bound_configuration(run),
+                                  record_limit=maximum, continue_on_conflict=True)
+    elif run.action == EMPLOYEE_ACTION:
+        from hero_integration.services.employee_migration import sync_employees
+
+        with filelock("hero_employee_migration", timeout=5):
+            state = sync_employees(client, source_instance=instance, run_name=run.name,
+                                   should_stop=cancelled, progress=progress, verify_source=lambda: bound_configuration(run),
+                                   record_limit=maximum, continue_on_conflict=True)
+    elif run.action == PRODUCT_ACTION:
         from hero_integration.services.product_migration import sync_products
 
         with filelock("hero_product_migration", timeout=5):
-            state = sync_products(client, source_instance=instance, should_stop=cancelled)
+            state = sync_products(client, source_instance=instance, should_stop=cancelled, progress=progress,
+                                  record_limit=maximum, run_name=run.name)
     else:
         with filelock("hero_file_transfer", timeout=5):
             state = transfer(FILE_ACTIONS[run.action], source_instance=instance, client=client,
-                             downloader=downloader, should_stop=cancelled)
+                             downloader=downloader, should_stop=cancelled, progress=progress,
+                             record_limit=maximum, run_name=run.name)
     counts = state.get("counts") or {}
-    skipped = counts.get("unchanged", 0) + sum(v for k, v in counts.items() if k.startswith("skipped_"))
+    if maximum is not None:
+        persist(run.name, DIRECT_OPERATIONS[run.action], state)
     problems = counts.get("failed", 0) + counts.get("conflict", 0)
-    values = {"created_records": counts.get("added", 0) + counts.get("updated", 0), "skipped_records": skipped,
-              "conflict_records": problems, "error_message": summary(counts)}
-    values["processed"] = values["created_records"] + skipped + values["conflict_records"]
-    frappe.db.set_value("HERO Integration Run", run.name, values)
+    frappe.db.set_value("HERO Integration Run", run.name, run_counts(counts))
     frappe.db.commit()
     if state.get("stopped"):
         return  # cancelled by the user; the run keeps its Cancelled state
     if state.get("last_error"):
-        _finish(run.name, "Blocked", f"{state['last_error']} {summary(counts)}")
+        detail = (f"{state['blocked_source_id']}: " if state.get("blocked_source_id") else "") + state["last_error"]
+        _finish(run.name, "Blocked", f"{detail} {summary(counts)}")
     elif not state.get("done"):
         _enqueue(run.name)
         frappe.db.commit()
     else:
         _finish(run.name, "Completed With Conflicts" if problems else "Completed", summary(counts))
+
+
+def run_counts(counts: dict) -> dict:
+    """Run fields for the counts of a product or file pass."""
+    skipped = counts.get("unchanged", 0) + sum(v for k, v in counts.items() if k.startswith("skipped_"))
+    problems = counts.get("failed", 0) + counts.get("conflict", 0)
+    values = {"created_records": counts.get("added", 0), "skipped_records": skipped,
+              "conflict_records": problems, "error_message": summary(counts)}
+    values["processed"] = values["created_records"] + counts.get("updated", 0) + skipped + values["conflict_records"]
+    return values
 
 
 def summary(counts: dict) -> str:
@@ -211,14 +278,27 @@ def on_run_finished(run_name: str) -> None:
 
 def advance_full(run_name: str) -> None:
     """Check the current child; start the next step or finish the Full Migration."""
+    from frappe.utils.synchronization import filelock
+
+    with filelock('hero_full_migration_' + run_name, timeout=30):
+        # Refresh after acquiring the lock: another worker may have advanced or
+        # finished the chain while this worker was waiting.
+        frappe.db.rollback()
+        if frappe.db.get_value('HERO Integration Run', run_name, 'state') not in ACTIVE:
+            return
+        _advance_full_locked(run_name)
+
+
+def _advance_full_locked(run_name: str) -> None:
     state = _full(run_name)
+    steps = state.get("steps") or FULL_STEPS  # preserve pre-upgrade run checkpoints
     while True:
         child = state.get("child")
         if child:
             child_state = frappe.db.get_value("HERO Integration Run", child, "state")
             if child_state in ACTIVE:
                 return  # the child advances the chain when it finishes
-            step = FULL_STEPS[state["step"]]
+            step = steps[state["step"]]
             if child_state not in SUCCESS:
                 _save_full(run_name, state)
                 _finish(run_name, "Blocked", f"{step} ({child}) ended as {child_state}. Continue this run to retry the step.")
@@ -226,12 +306,12 @@ def advance_full(run_name: str) -> None:
             if child_state == "Completed With Conflicts":
                 state["notes"].append(f"{step}: conflicts in {child}")
             state.update(step=state["step"] + 1, child="")
-        if state["step"] >= len(FULL_STEPS):
+        if state["step"] >= len(steps):
             _save_full(run_name, state)
             notes = "; ".join(state["notes"])
             _finish(run_name, "Completed With Conflicts" if notes else "Completed", notes or "All steps completed.")
             return
-        action = FULL_STEPS[state["step"]]
+        action = steps[state["step"]]
         child = _start_step(action, run_name)
         if not child:
             state["notes"].append(f"{action}: skipped, no approved read service")
@@ -240,7 +320,7 @@ def advance_full(run_name: str) -> None:
         state["child"] = child
         _save_full(run_name, state)
         frappe.db.set_value("HERO Integration Run", run_name, {
-            "resume_phase": action, "error_message": f"Step {state['step'] + 1}/{len(FULL_STEPS)}: {action} ({child})"})
+            "resume_phase": action, "error_message": f"Step {state['step'] + 1}/{len(steps)}: {action} ({child})"})
         frappe.db.commit()
         return
 
@@ -250,6 +330,7 @@ def _start_step(action: str, parent: str) -> str:
         return start(action, parent=parent)
     from hero_integration import api
     from hero_integration.services.sync_page import BY_RUN_ACTION
+    from hero_integration.services.migration_testing import configuration
 
     item = BY_RUN_ACTION[action]
     instance = bound_configuration(frappe.get_doc("HERO Integration Run", parent)).source_instance
@@ -257,7 +338,9 @@ def _start_step(action: str, parent: str) -> str:
     if not services:
         return ""
     result = api._start_migration(action=action, dry_run=0, scheduled=False,
-                                  graphql_service=services[0]["service"], source_instance=instance)
+                                  graphql_service=services[0]["service"], source_instance=instance,
+                                  testing_configuration=configuration(
+                                      frappe.get_doc('HERO Integration Run', parent)))
     frappe.db.set_default(CHILD_KEY.format(result["run"]), parent)
     return result["run"]
 
@@ -281,6 +364,12 @@ def active_child(run_name: str) -> str:
 # ---------------------------------------------------------------- Synchronization page
 
 AREA_TEXT = {
+    "employees": ("Employees", EMPLOYEE_ACTION, EMPLOYEE_ACTION,
+                  "Import employees into your ERPNext company.",
+                  "Joining date 2026-01-01. New active users receive only the Employee role; local changes require review."),
+    "services": ("Services", SERVICE_ACTION, SERVICE_ACTION,
+                 "Import services with selling prices and material/labor calculations.",
+                 "Non-stock articles. Local edits require review; unresolved material references remain visible."),
     "products": ("Products", "Product Migration", PRODUCT_ACTION,
                  "Import all HERO articles (own articles and supplier catalogs) as ERPNext Items with prices.",
                  "Item code, name, description, unit, catalog as Item Group, manufacturer as Brand, EAN, purchase "
@@ -292,34 +381,33 @@ AREA_TEXT = {
                  "Transfer HERO project pictures as private files.",
                  "All HERO pictures, attached to their Project. Unchanged files are skipped."),
     "full": ("Everything", "Full Migration", FULL_ACTION,
-             "Run all migrations one after another: projects with contacts, events, tasks, products, documents, pictures.",
+             "Run all migrations one after another: projects with contacts, events, tasks, products, services, documents, pictures.",
              "Each step is its own run in the history. A stopped step blocks the chain; continue the run to retry it."),
 }
 AREA_KEYS = {key: text[2] for key, text in AREA_TEXT.items()}
-_FILE_FIELDS = ["file_name", "attached_to_doctype", "attached_to_name", "folder"]
-SCOPE = {
-    "products": [{"doctype": "Item", "fields": ["item_code", "item_name", "description", "item_group", "stock_uom",
-                                                "brand", "barcodes", "disabled"]},
-                 {"doctype": "Item Price", "fields": ["price_list", "price_list_rate"]}],
-    "documents": [{"doctype": "File", "fields": _FILE_FIELDS}],
-    "pictures": [{"doctype": "File", "fields": _FILE_FIELDS}],
-}
 
 
 def page_areas(active: list[dict], instance: str) -> list[dict]:
+    from hero_integration.services.sync_page import mapping_scope
+
     rows = []
     for key, (label, action_label, action, description, note) in AREA_TEXT.items():
         executed = {"action": action, "mode": "Execute", "source_instance": instance}
         last = frappe.get_all("HERO Integration Run", filters={**executed, "state": ["in", list(SUCCESS)]},
                               fields=["finished_on"], order_by="finished_on desc", limit_page_length=1)
         running = next((row for row in active if row.get("action") == action), None)
-        objects = SCOPE.get(key, [])
+        blocker, read = "", None
+        try:
+            read = require_mappings(action, instance).get(DIRECT_OPERATIONS.get(action))
+        except Exception as exc:
+            blocker = str(exc) or "The mapping and read service could not be validated."
         rows.append({
             "key": key, "label": label, "action_label": action_label, "description": description, "scope_note": note,
-            "scope": {"object_count": len(objects), "field_count": sum(len(o["fields"]) for o in objects), "objects": objects},
+            "scope": mapping_scope([spec.__dict__ for spec in read.plan.definitions] if read else []),
             "button": "Update" if frappe.db.exists("HERO Integration Run", executed) else "Start",
             "last_successful": last[0]["finished_on"] if last else None,
-            "running_run": running["name"] if running else "", "ready": True, "blocker": "", "service": None,
+            "running_run": running["name"] if running else "", "ready": not blocker, "blocker": blocker,
+            "service": {"service": read.origin, "mapping": read.mapping} if read else None,
             "sync_enabled": False, "polled": False, "kind": "full" if key == "full" else "direct",
             "confirm": f"{action_label}: {description}",
         })

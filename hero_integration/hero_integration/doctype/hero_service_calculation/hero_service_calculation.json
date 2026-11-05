@@ -1,0 +1,104 @@
+{
+  "doctype": "DocType",
+  "name": "HERO Service Calculation",
+  "module": "HERO Integration",
+  "istable": 1,
+  "editable_grid": 0,
+  "fields": [
+    {
+      "fieldname": "component_type",
+      "fieldtype": "Select",
+      "label": "Component Type",
+      "options": "Material\nLabor",
+      "read_only": 1,
+      "in_list_view": 1
+    },
+    {
+      "fieldname": "source_id",
+      "fieldtype": "Data",
+      "label": "Source ID",
+      "read_only": 1
+    },
+    {
+      "fieldname": "item_code",
+      "fieldtype": "Link",
+      "label": "Item",
+      "options": "Item",
+      "read_only": 1,
+      "in_list_view": 1
+    },
+    {
+      "fieldname": "activity_type",
+      "fieldtype": "Link",
+      "label": "Activity Type",
+      "options": "Activity Type",
+      "read_only": 1,
+      "in_list_view": 1
+    },
+    {
+      "fieldname": "description",
+      "fieldtype": "Small Text",
+      "label": "Description",
+      "read_only": 1
+    },
+    {
+      "fieldname": "uom",
+      "fieldtype": "Data",
+      "label": "Unit",
+      "read_only": 1
+    },
+    {
+      "fieldname": "quantity",
+      "fieldtype": "Float",
+      "label": "Quantity",
+      "read_only": 1,
+      "in_list_view": 1
+    },
+    {
+      "fieldname": "unit_price",
+      "fieldtype": "Currency",
+      "label": "Unit Price",
+      "read_only": 1
+    },
+    {
+      "fieldname": "cost_price",
+      "fieldtype": "Currency",
+      "label": "Source Cost Rate",
+      "read_only": 1
+    },
+    {
+      "fieldname": "hourly_rate",
+      "fieldtype": "Currency",
+      "label": "Hourly Billing Rate",
+      "read_only": 1
+    },
+    {
+      "fieldname": "markup",
+      "fieldtype": "Percent",
+      "label": "Markup",
+      "read_only": 1
+    },
+    {
+      "fieldname": "time_minutes",
+      "fieldtype": "Float",
+      "label": "Calculated Time (Minutes)",
+      "read_only": 1
+    },
+    {
+      "fieldname": "resolution",
+      "fieldtype": "Select",
+      "label": "Resolution",
+      "options": "Linked\nUnresolved",
+      "read_only": 1,
+      "in_list_view": 1
+    },
+    {
+      "fieldname": "metadata",
+      "fieldtype": "Code",
+      "label": "Additional Source Data",
+      "options": "JSON",
+      "read_only": 1
+    }
+  ],
+  "permissions": []
+}

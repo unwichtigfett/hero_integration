@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from hero_integration.services import project_send as ps
 from hero_integration.services.change_detection import decode, encode, field_hashes
+from hero_integration.services.direct_mapping import plain_text_html
 
 SCHEMA = json.dumps({"data": {"__schema": {"types": [
     {"kind": "INPUT_OBJECT", "name": "ProjectMatchInput",
@@ -54,8 +55,9 @@ class _Hero:
 class _Frappe:
     def __init__(self, local_notes="Old note", baseline_notes="Old note", roles=("HERO Writeback",)):
         self.roles = roles
-        self.project = {"name": "PV-1-H", ps.NOTES_FIELD: local_notes}
-        hashes = encode(field_hashes({ps.NOTES_FIELD: baseline_notes}))
+        # Native Notes hold HTML; HERO partner_notes is plain text.
+        self.project = {"name": "PV-1-H", ps.NOTES_FIELD: plain_text_html(local_notes)}
+        hashes = encode(field_hashes({ps.NOTES_FIELD: plain_text_html(baseline_notes)}))
         self.link = SimpleNamespace(name="LINK-1", source_id="501", source_instance="default",
                                     sync_status="Synchronized", source_field_hashes=hashes, target_field_hashes=hashes)
         self.set_values = []
@@ -135,7 +137,8 @@ class TestProjectSend(unittest.TestCase):
         self.assertEqual(project_update["custom_hero_phase"], "Montage")  # the step, as HERO shows it
         link_update = next(values for doctype, values in fake.set_values if doctype == "HERO Integration Link")
         self.assertEqual(decode(link_update["source_field_hashes"])[ps.NOTES_FIELD],
-                         field_hashes({ps.NOTES_FIELD: "New note"})[ps.NOTES_FIELD])
+                         field_hashes({ps.NOTES_FIELD: "<p>New note</p>"})[ps.NOTES_FIELD])
+        self.assertEqual(project_update[ps.NOTES_FIELD], "<p>New note</p>")
 
     def test_nothing_is_sent_when_switched_off_or_preview_is_stale(self):
         hero = _Hero()

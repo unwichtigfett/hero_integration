@@ -70,6 +70,17 @@ class TestSchemaProvisioning(unittest.TestCase):
         with self.assertRaisesRegex(mapping_exchange.MappingExchangeError, "bulk adoption"):
             mapping_exchange.import_json("SYNTHETIC", json.dumps(package()))
 
+    def test_currency_schema_is_preserved_and_reimported_without_type_conversion(self):
+        schema = package()["schema"]
+        schema["custom_fields"][0]["fieldtype"] = "Currency"
+        first = schema_provisioning.provision_schema(schema)
+        self.assertIn("Customer.custom_hero_schema_value", first["created"]["custom_fields"])
+        self.assertEqual(self.frappe.get_meta("Customer").get_field("custom_hero_schema_value").fieldtype, "Currency")
+        self.assertEqual(schema_provisioning.provision_schema(schema)["status"], "UNCHANGED")
+        schema["custom_fields"][0]["fieldtype"] = "Float"
+        states = schema_provisioning.preview_schema(schema)["items"]
+        self.assertEqual(next(row["state"] for row in states if row["id"] == "field:customer-schema-value"), "Conflict")
+
     def test_confirmed_bulk_adoption_provisions_schema_before_mapping_activation(self):
         preview = schema_provisioning.preview_package("SYNTHETIC", json.dumps(package()))
         selected = [item["id"] for item in preview["items"] if item["selectable"]]
@@ -122,6 +133,27 @@ class TestSchemaProvisioning(unittest.TestCase):
         field = next(item for item in repeated["items"] if item["id"] == "field:customer-schema-value")
         self.assertEqual(field["state"], "Unchanged")
         self.assertEqual(self.frappe.custom_fields[("Customer", "custom_hero_schema_value")]["read_only"], 1)
+
+    def test_matching_readonly_overlay_is_proven_but_conflicting_or_duplicate_overrides_block(self):
+        draft = package()
+        field = draft['schema']['custom_fields'][0]
+        field['read_only'] = 1
+        self.frappe.custom_fields[(field['doctype'], field['fieldname'])] = dict(field, read_only=0)
+        definitions = schema_provisioning._definitions({'custom_doctypes': [], 'custom_fields': [field], 'relations': []})
+        original = self.frappe.sql
+        setter = _Row(doctype_or_field='DocField', field_name=field['fieldname'], property='read_only', value='1')
+        for value, duplicate, accepted in [('1', False, True), ('0', False, False), ('1', True, False)]:
+            setter['value'] = value
+            def sql(query, args, **kwargs):
+                if '`tabProperty Setter`' in query:
+                    return [setter, setter] if duplicate else [setter]
+                return original(query, args, **kwargs)
+            with self.subTest(value=value, duplicate=duplicate), patch.object(self.frappe.db, 'sql', side_effect=sql):
+                if accepted:
+                    schema_provisioning._recheck_required_schema_current(definitions, {field['id']})
+                else:
+                    with self.assertRaises(schema_provisioning.SchemaProvisioningError):
+                        schema_provisioning._recheck_required_schema_current(definitions, {field['id']})
 
     def test_schema_and_mapping_export_can_fill_a_fresh_site_checklist(self):
         preview = schema_provisioning.preview_package("SYNTHETIC", json.dumps(package()))

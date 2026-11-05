@@ -174,7 +174,7 @@ class TestFrappeMappingCatalog(unittest.TestCase):
         self.assertFalse(next(item for item in result["doctypes"] if item["doctype"] == "Acme Settings")["selectable"])
         self.assertFalse(next(item for item in result["doctypes"] if item["doctype"] == "Denied Record")["selectable"])
 
-    def test_foreign_standard_and_custom_fields_are_draft_only_and_links_stay_blocked(self):
+    def test_foreign_fields_are_draft_only_links_need_existing_record_and_tables_stay_blocked(self):
         target_fields = fields(self.metadata, app_name="acme_app", doctype="Acme Case")
 
         subject = next(item for item in target_fields if item.path == "subject")
@@ -185,8 +185,8 @@ class TestFrappeMappingCatalog(unittest.TestCase):
         self.assertTrue(custom.selectable)
         self.assertFalse(subject.activation_allowed)
         self.assertIn("Draft proposal", subject.reason)
-        self.assertFalse(link.selectable)
-        self.assertIn("resolver", link.reason)
+        self.assertTrue(link.selectable)
+        self.assertIn("Existing Record", link.reason)
         self.assertFalse(children.selectable)
 
     def test_draft_validation_uses_type_and_permission_without_opening_an_active_write_path(self):
