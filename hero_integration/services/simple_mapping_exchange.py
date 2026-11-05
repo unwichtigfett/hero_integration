@@ -214,12 +214,14 @@ def _target_mutations(payload, snapshot, direction, *, persist=False, existing_c
             # Native edit invalidates the old active revision. Native activation
             # then requires this actor and a validated target Mutation Contract.
             changed.append(parent.name)
-            parent.schema_snapshot = snapshot.name
-            parent.mapping_json = json.dumps(item['content'], ensure_ascii=False)
-            parent.status = 'Draft'
-            parent.save()
-            parent.status = 'Active'
-            parent.save()
+            from hero_integration.services.mapping_draft_access import configuration_import_mapping
+            with configuration_import_mapping(parent):
+                parent.schema_snapshot = snapshot.name
+                parent.mapping_json = json.dumps(item['content'], ensure_ascii=False)
+                parent.status = 'Draft'
+                parent.save()
+                parent.status = 'Active'
+                parent.save()
         yield
     finally:
         if not persist:

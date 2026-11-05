@@ -71,6 +71,73 @@ test('list has no visual editor and exports only Query mappings via GET', async 
     assert.equal(app.calls.some(call=>call.type==='POST'),false);
 });
 
+test('mapping activation is offered to managers in both tabs only', async () => {
+    const app = await setup();
+    assert.ok(app.button('Activate Mappings'));
+    await app.click('Mutation');
+    assert.ok(app.button('Activate Mappings'));
+    const employee = await setup({}, false);
+    assert.equal(employee.button('Activate Mappings'), undefined);
+});
+
+test('saved mappings are listed and require confirmation before publication', async () => {
+    const draft = {definition_id:'def-1', state:'OPEN', generation:2, content_revision:3,
+        base_active_revision:4, reconciliation_revision:1, warning_fingerprint:'', warnings:[]};
+    const app = await setup({
+        mapping_draft_list: () => ({items:[{definition_id:'def-1', snapshot_name:'snapshot', operation_name:'contacts', active_mapping:'active', active_revision:4}], has_more:false}),
+        mapping_draft_read: () => ({draft}),
+        mapping_draft_publish: () => ({name:'active'}),
+    });
+    await app.click('Activate Mappings');
+    assert.match(app.confirmations[0].message, /contacts/);
+    assert.equal(app.calls.some(call => call.method === 'mapping_draft_publish'), false);
+    await app.confirmations[0].accept();
+    const request = app.calls.find(call => call.method === 'mapping_draft_publish');
+    assert.equal(request.type, 'POST');
+    assert.equal(request.args.expected_active_revision, 4);
+    assert.equal(request.args.expected_draft_revision, 3);
+    assert.equal(request.args.confirmed, 1);
+});
+
+test('failed activation reports partial result instead of success', async () => {
+    const draft = {definition_id:'def-1', state:'OPEN', generation:1, content_revision:1,
+        base_active_revision:1, reconciliation_revision:0};
+    const app = await setup({
+        mapping_draft_list: () => ({items:[{definition_id:'def-1', snapshot_name:'snapshot', operation_name:'contacts', active_mapping:'active', active_revision:1}], has_more:false}),
+        mapping_draft_read: () => ({draft}),
+        mapping_draft_publish: () => { throw new Error('Mapping changed'); },
+    });
+    await app.click('Activate Mappings');
+    await app.confirmations[0].accept();
+    assert.match(app.host.textContent, /Activation stopped.*0\/1.*Mapping changed/);
+});
+
+test('changed mapping requires individual conflict choice and saves reconciliation before activation', async () => {
+    const draft = {definition_id:'def-1', state:'OPEN', generation:1, content_revision:2,
+        base_active_revision:3, reconciliation_revision:0, content_json:'{"field":"draft"}', warnings:[]};
+    const app = await setup({
+        mapping_draft_list: () => ({items:[{definition_id:'def-1', snapshot_name:'snapshot', operation_name:'contacts', active_mapping:'active', active_revision:4}], has_more:false}),
+        mapping_draft_read: () => ({draft}),
+        mapping_draft_reconcile_preview: () => ({items:[{identifier:'field',state:'CONFLICT',active_json:'"active"',draft_json:'"draft"'}, {identifier:'other',state:'ACTIVE_ONLY'}]}),
+        mapping_draft_reconcile_apply: () => ({result_content_json:'{"field":"draft"}', reconciliation_json:'proof'}),
+        mapping_draft_save: () => ({draft:{...draft, reconciliation_revision:1}}),
+        mapping_draft_publish: () => ({name:'active'}),
+    });
+    await app.click('Activate Mappings');
+    const activation = app.confirmations[0].accept();
+    await app.flush();
+    assert.match(app.confirmations[1].message, /active.*draft/s);
+    assert.equal(app.calls.some(call => call.method === 'mapping_draft_publish'), false);
+    app.confirmations[1].accept();
+    await activation;
+    const reconcile = app.calls.find(call => call.method === 'mapping_draft_reconcile_apply');
+    assert.deepEqual(JSON.parse(reconcile.args.conflict_choices_json), {field:'DRAFT'});
+    assert.deepEqual(JSON.parse(reconcile.args.accepted_suggestions_json), {items:['other']});
+    const publish = app.calls.find(call => call.method === 'mapping_draft_publish');
+    assert.equal(publish.args.expected_active_revision, 4);
+    assert.equal(publish.args.expected_reconciliation_revision, 1);
+});
+
 test('Mutation export includes active mappings and uses only configured source snapshots', async () => {
     const app=await setup({schema_snapshot_list:()=>[{...snapshot,name:'foreign',configured_source:false,creation:'9999'},snapshot]});
     await app.click('Mutation'); await app.click('Export JSON');

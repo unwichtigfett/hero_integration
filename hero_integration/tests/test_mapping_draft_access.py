@@ -52,6 +52,31 @@ class TestPersonalMappingAccess(unittest.TestCase):
         self.assertEqual(access.personal_mapping_query(doctype="Invalid`Table"), "1=0")
         self.frappe.db.escape.assert_not_called()
 
+    def test_configuration_import_exception_is_limited_to_one_document_and_scope(self):
+        class Document:
+            name = 'mapping'
+            def __init__(self):
+                self.previous = SimpleNamespace(status='Active', modified_by='owner', name='mapping',
+                    get=lambda field: {'definition_id': 'definition', 'mapping_json': 'old'}.get(field))
+            def is_new(self): return False
+            def get_doc_before_save(self): return self.previous
+            def get(self, field): return {'mapping_json': 'new'}.get(field)
+
+        self.frappe.db.exists = Mock(return_value=True)
+        self.frappe.PermissionError = PermissionError
+        self.frappe.throw = Mock(side_effect=lambda message, *args: (_ for _ in ()).throw(PermissionError(message)))
+        first, second = Document(), Document()
+        with patch('hero_integration.services.frappe_mapping_draft_storage._fresh_definition_candidates', return_value=[object()]), \
+             patch('hero_integration.services.frappe_mapping_draft_storage.is_personal_publication', return_value=False):
+            with self.assertRaises(PermissionError):
+                access.protect_managed_mapping(first)
+            with access.configuration_import_mapping(first):
+                access.protect_managed_mapping(first)
+                with self.assertRaises(PermissionError):
+                    access.protect_managed_mapping(second)
+            with self.assertRaises(PermissionError):
+                access.protect_managed_mapping(first)
+
     def test_personal_documents_require_owner_and_manager_role(self):
         for doctype in ("HERO Mapping Draft", "HERO Mapping Revision"):
             with self.subTest(doctype=doctype):

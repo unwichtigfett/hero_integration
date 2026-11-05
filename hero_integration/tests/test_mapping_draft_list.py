@@ -10,7 +10,7 @@ from hero_integration import api
 class TestMappingDraftList(unittest.TestCase):
     def setUp(self):
         self.parent = SimpleNamespace(name="ACTIVE", definition_id="definition", source_instance="source",
-            schema_snapshot="snapshot", schema_fingerprint="fingerprint", direction="QUERY_TO_FRAPPE",
+            schema_snapshot="snapshot", schema_fingerprint="fingerprint", mapping_revision=7, direction="QUERY_TO_FRAPPE",
             operation_kind="QUERY", operation_name="contacts", check_permission=Mock())
         self.draft = SimpleNamespace(name="DRAFT", definition_id="definition", site_scope="site",
             owner_user="Administrator", state="OPEN", new_definition_json="", base_active_mapping="ACTIVE",
@@ -36,6 +36,7 @@ class TestMappingDraftList(unittest.TestCase):
         self.assertEqual(len(result["items"]), 1)
         item = result["items"][0]
         self.assertEqual(item["active_mapping"], "ACTIVE")
+        self.assertEqual(item["active_revision"], 7)
         self.assertEqual(item["draft_revision"], 4)
         self.assertEqual(item["target_operation"], "HeroCustomers")
         self.parent.check_permission.assert_called_once_with("read")
