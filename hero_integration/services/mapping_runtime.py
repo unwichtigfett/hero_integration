@@ -326,6 +326,19 @@ def plan_from_definitions(operation: str, definitions: list[MappingSpec] | tuple
 
 
 def active_mapping_plan(operation: str, *, definition_ids: tuple[str, ...] = (), target_operation: str = "", mapping_name: str = "", native_task: bool = False, lock_rules: bool = False) -> MappingPlan:
+    from hero_integration.services.read_contract import page_read_cache
+    cache = page_read_cache() if not lock_rules else None
+    key = ('plan', operation, tuple(definition_ids), target_operation, mapping_name, native_task)
+    if cache is not None and key in cache:
+        return cache[key]
+    plan = _active_mapping_plan(operation, definition_ids=definition_ids, target_operation=target_operation,
+        mapping_name=mapping_name, native_task=native_task, lock_rules=lock_rules)
+    if cache is not None:
+        cache[key] = plan
+    return plan
+
+
+def _active_mapping_plan(operation: str, *, definition_ids: tuple[str, ...] = (), target_operation: str = "", mapping_name: str = "", native_task: bool = False, lock_rules: bool = False) -> MappingPlan:
     import frappe
 
     if definition_ids and (not mapping_name or len(set(definition_ids)) != len(definition_ids)):
@@ -335,14 +348,20 @@ def active_mapping_plan(operation: str, *, definition_ids: tuple[str, ...] = (),
     adapter_options = {}
     if lock_rules and not native_task:
         raise MappingPlanError('Locking rule reads are restricted to the native Task contract.')
+    filters = {"operation": target_operation or operation, "status": "Active"}
+    if definition_ids:
+        filters["definition_id"] = ["in", list(definition_ids)]
+    has_column = getattr(getattr(frappe, 'db', None), 'has_column', None)
+    lineage_fields = ['portable_definition_id', 'portable_lineage_json', 'schema_manifest', 'schema_dependencies'] \
+        if callable(has_column) and has_column('HERO Frappe Mapping', 'portable_lineage_json') else []
     rows = frappe.get_all(
         "HERO Frappe Mapping",
-        filters={"operation": target_operation or operation, "status": "Active"},
+        filters=filters,
         fields=[
             "operation", "source_path", "source_type", "target_doctype", "target_field", "purpose",
             "transformation", "relation", "priority", "definition_id", "personal_graphql_mapping",
             "schema_snapshot", "schema_fingerprint",
-        ],
+        ] + lineage_fields,
         order_by="priority asc, creation asc",
     ) if not lock_rules else []
     if lock_rules:
@@ -350,7 +369,8 @@ def active_mapping_plan(operation: str, *, definition_ids: tuple[str, ...] = (),
             current = frappe.db.sql(
                 'select operation, source_path, source_type, target_doctype, target_field, purpose, '
                 'transformation, relation, priority, definition_id, personal_graphql_mapping, '
-                'schema_snapshot, schema_fingerprint, status from `tabHERO Frappe Mapping` '
+                'schema_snapshot, schema_fingerprint, status' +
+                (', ' + ', '.join(lineage_fields) if lineage_fields else '') + ' from `tabHERO Frappe Mapping` '
                 'where definition_id=%s for update', (identity,), as_dict=True)
             if len(current) != 1 or current[0]['status'] != 'Active' or current[0]['operation'] != (target_operation or operation):
                 raise MappingPlanError('A selected active Task rule is unavailable or changed.')
@@ -383,13 +403,11 @@ def active_mapping_plan(operation: str, *, definition_ids: tuple[str, ...] = (),
         if any(row.get('schema_snapshot') != mapping.schema_snapshot or row.get('schema_fingerprint') != mapping.schema_fingerprint for row in rows):
             raise MappingPlanError('Selected rule snapshot does not match the approved read mapping.')
         scoped = [row for row in rows if row.get('personal_graphql_mapping')]
-        has_column = getattr(frappe.db, 'has_column', None) if scoped else None
-        if scoped and callable(has_column) and has_column('HERO Frappe Mapping', 'portable_lineage_json'):
+        if scoped and lineage_fields:
             from hero_integration.services.mapping_rule_lineage import parse_lineage, semantic_fingerprint
             from hero_integration.services.personal_mapping_content import RULE_FIELDS
             for row in scoped:
-                metadata = frappe.db.get_value('HERO Frappe Mapping', {'definition_id':row['definition_id']},
-                                               ['portable_definition_id', 'portable_lineage_json', 'schema_manifest', 'schema_dependencies'], as_dict=True)
+                metadata = row
                 if metadata and not metadata.get('portable_lineage_json'):
                     continue  # Pre-lineage scoped revisions retain their explicit legacy binding.
                 try:
@@ -401,7 +419,7 @@ def active_mapping_plan(operation: str, *, definition_ids: tuple[str, ...] = (),
                         raise ValueError
                 except (ValueError, TypeError, AttributeError):
                     raise MappingPlanError('Scoped rule lineage is missing or inconsistent; reconcile the revision.') from None
-    definitions = [MappingSpec(**{k: v for k, v in row.items() if k not in {'personal_graphql_mapping', 'schema_snapshot', 'schema_fingerprint'}}) for row in rows]
+    definitions = [MappingSpec(**{key: row[key] for key in MappingSpec.__dataclass_fields__}) for row in rows]
     # Recheck native Field grants against the currently installed server
     # contract before executing a previously approved mapping revision.
     # Revoking a binding must not leave an executable stale rule behind.

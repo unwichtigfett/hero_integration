@@ -709,42 +709,56 @@ def sync_page_conflicts(start: int | str = 0, page_size: int | str = 8) -> dict[
 
     start = _mapping_int(start, "start", 0, 2147483647)
     page_size = _mapping_int(page_size, "page_size", 1, 50)
-    filters = {"sync_status": ["in", ["Conflict", "Pending Review"]], "source_instance": _configured_source_instance()}
+    instance = _configured_source_instance()
+    filters = {"sync_status": ["in", ["Conflict", "Pending Review"]], "source_instance": instance}
     labels = {item.source_type: item.label for item in AREAS}
+    link_count = frappe.db.count("HERO Integration Link", filters)
     links = frappe.get_all("HERO Integration Link", filters=filters,
                            fields=["name", "source_type", "source_id", "target_doctype", "target_name", "conflict_detail", "sync_status", "modified"],
-                           order_by="modified desc", limit_page_length=0)
+                           order_by="modified desc, name desc", limit_start=start,
+                           limit_page_length=min(page_size, link_count - start)) if start < link_count else []
     for row in links:
         row["area"] = labels.get(row["source_type"], row["source_type"])
         row["kind"] = "link"
-    rows = links + _unlinked_import_failures(AREAS)
-    return {"start": start, "page_size": page_size, "total": len(rows), "rows": rows[start:start + page_size]}
+    failures, failure_count = _unlinked_import_failures(AREAS, instance,
+        start=max(0, start - link_count), page_size=page_size - len(links))
+    return {"start": start, "page_size": page_size, "total": link_count + failure_count, "rows": links + failures}
 
 
-def _unlinked_import_failures(areas) -> list[dict[str, object]]:
-    """Records of the latest finished Execute run per area that have no Integration Link at all."""
+def _unlinked_import_failures(areas, instance, *, start=0, page_size=8) -> tuple[list[dict[str, object]], int]:
+    """Count each area's latest source-bound failures; load only the requested slice."""
     from hero_integration.services.conflict_notifications import NOT_IMPORTED_RESULTS
 
-    result = []
+    result, total, offset = [], 0, start
     for item in areas:
         runs = frappe.db.sql("""SELECT r.name FROM `tabHERO Integration Run` r
-            WHERE r.action=%s AND r.mode='Execute' AND r.state NOT IN ('Queued', 'Running')
+            WHERE r.action=%s AND r.mode='Execute' AND r.source_instance=%s AND r.state NOT IN ('Queued', 'Running')
               AND EXISTS (SELECT 1 FROM `tabHERO Integration Record` x WHERE x.run=r.name AND x.source_type=%s)
-            ORDER BY r.creation DESC LIMIT 1""", (item.run_action, item.source_type))
+            ORDER BY r.creation DESC, r.name DESC LIMIT 1""", (item.run_action, instance, item.source_type))
         if not runs:
             continue
-        records = frappe.db.sql("""SELECT x.name, x.source_type, x.source_id, x.result, x.detail, x.creation, x.run
-            FROM `tabHERO Integration Record` x
+        where = """FROM `tabHERO Integration Record` x
             WHERE x.run=%s AND x.source_type=%s AND x.result IN %s
               AND NOT EXISTS (SELECT 1 FROM `tabHERO Integration Link` l
-                              WHERE l.source_type=x.source_type AND l.source_id=x.source_id)
-            ORDER BY x.creation DESC""", (runs[0][0], item.source_type, tuple(NOT_IMPORTED_RESULTS)), as_dict=True)
+                              WHERE l.source_type=x.source_type AND l.source_id=x.source_id AND l.source_instance=%s)"""
+        args = (runs[0][0], item.source_type, tuple(NOT_IMPORTED_RESULTS), instance)
+        count = frappe.db.sql("SELECT COUNT(*) " + where, args)[0][0]
+        total += count
+        if offset >= count:
+            offset -= count
+            continue
+        remaining = page_size - len(result)
+        if remaining <= 0:
+            continue
+        records = frappe.db.sql("SELECT x.name, x.source_type, x.source_id, x.result, x.detail, x.creation, x.run " + where +
+            " ORDER BY x.creation DESC, x.name DESC LIMIT %s OFFSET %s", (*args, remaining, offset), as_dict=True)
+        offset = 0
         for record in records:
             result.append({"name": record.name, "source_type": record.source_type, "source_id": record.source_id,
                            "target_doctype": "", "target_name": "", "conflict_detail": record.detail or record.result,
                            "sync_status": "Not imported", "modified": record.creation, "area": item.label,
                            "kind": "record", "run": record.run})
-    return result
+    return result, total
 
 
 def _sync_area(key: str):
@@ -2496,14 +2510,18 @@ def runtime_plan_approve(plan_key: str, expected_revision: int | str) -> dict[st
 @frappe.whitelist()
 def workspace_graph(snapshot_name: str, start: int = 0, page_size: int = 200, node_id: str = "") -> dict[str, object]:
     frappe.only_for("System Manager")
-    snapshot, schema = _validated_snapshot(snapshot_name)
+    snapshot, schema, graph = _validated_snapshot(snapshot_name, with_graph=True)
     from hero_integration.services.workspace_compat import graph_projection, node_projection
 
     if node_id:
-        result = node_projection(schema, node_id)
+        result = node_projection(schema, node_id, graph=graph)
         result["schema_fingerprint"] = result.pop("fingerprint", snapshot.schema_fingerprint)
         return result
-    projection = graph_projection(schema)
+    projection = graph_projection(schema, graph=graph)
+    # Every edge travels once; the browser starts with page zero and verifies
+    # complete edge coverage after collecting all node pages.
+    if int(start or 0) > 0:
+        projection["edges"] = []
     nodes = projection.pop("nodes")
     result = _page(projection, nodes, start, page_size)
     result["nodes"] = result.pop("rows")
@@ -3795,7 +3813,7 @@ class _FrappeMetadata:
         return frappe.get_meta(doctype).get_field(fieldname)
 
 
-def _validated_snapshot(snapshot_name: str, *, for_update=False):
+def _validated_snapshot(snapshot_name: str, *, for_update=False, with_graph=False):
     snapshot = (frappe.get_doc("HERO GraphQL Schema Snapshot", snapshot_name, for_update=True) if for_update
                 else frappe.get_doc("HERO GraphQL Schema Snapshot", snapshot_name))
     if snapshot.analysis_status != "Validated":
@@ -3803,9 +3821,10 @@ def _validated_snapshot(snapshot_name: str, *, for_update=False):
     from hero_integration.services.graphql_graph import analyze_snapshot
 
     schema = json.loads(snapshot.snapshot_json)
-    if analyze_snapshot(schema).fingerprint != snapshot.schema_fingerprint:
+    graph = analyze_snapshot(schema)
+    if graph.fingerprint != snapshot.schema_fingerprint:
         frappe.throw(frappe._("Stored GraphQL schema fingerprint is stale."))
-    return snapshot, schema
+    return (snapshot, schema, graph) if with_graph else (snapshot, schema)
 
 
 def _existing_mappings(schema_fingerprint: str, operation: str | None = None) -> list[dict[str, object]]:

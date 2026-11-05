@@ -37,9 +37,9 @@ def schema_projection(snapshot: object, *, search: str = "", kind: str = "") -> 
     }
 
 
-def graph_projection(snapshot: object) -> dict[str, Any]:
+def graph_projection(snapshot: object, *, graph: GraphView | None = None) -> dict[str, Any]:
     """Project every saved graph node and edge; pagination is applied by API only."""
-    graph = analyze_snapshot(snapshot)
+    graph = graph if graph is not None else analyze_snapshot(snapshot)
     nodes = [
         {**node, "node_id": node["id"], "name": node["label"]}
         for node in graph.nodes
@@ -63,9 +63,9 @@ def graph_counts(graph: GraphView) -> dict[str, int]:
     }
 
 
-def node_projection(snapshot: object, node_id: str) -> dict[str, Any]:
+def node_projection(snapshot: object, node_id: str, *, graph: GraphView | None = None) -> dict[str, Any]:
     """Return a node and its direct navigable relations from saved schema data."""
-    graph = graph_projection(snapshot)
+    graph = graph_projection(snapshot, graph=graph)
     nodes = {node["node_id"]: node for node in graph["nodes"]}
     node = nodes.get(node_id)
     if not node:

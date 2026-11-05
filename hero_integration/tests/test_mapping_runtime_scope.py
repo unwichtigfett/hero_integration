@@ -15,6 +15,7 @@ def lineage_db(row):
                'predecessor_id':'a16b15fa-7ca8-4722-b63c-ac60cc46629a',
                'content_hash':semantic_fingerprint(row['operation'], row['schema_fingerprint'],
                                                     {key:row.get(key) for key in RULE_FIELDS})}
+    row.update(portable_definition_id=revision, portable_lineage_json=json.dumps(payload))
     return SimpleNamespace(has_column=lambda *_: True, get_value=lambda *_args, **_kwargs:
                            {'portable_definition_id':revision, 'portable_lineage_json':json.dumps(payload)})
 
@@ -168,3 +169,27 @@ class TestMappingRuntimeScope(unittest.TestCase):
         with patch.dict(sys.modules, {'frappe':fake}), patch.object(controller, '_FrappeMetadata'):
             with self.assertRaisesRegex(mapping_runtime.MappingPlanError, 'lineage is missing or inconsistent'):
                 mapping_runtime.active_mapping_plan('HeroCustomers', definition_ids=('version',), mapping_name='mapping-a')
+
+    def test_selected_rules_are_filtered_and_lineage_is_read_in_the_same_query(self):
+        from unittest.mock import Mock
+        from hero_integration.hero_integration.doctype.hero_frappe_mapping import hero_frappe_mapping as controller
+        row = {'definition_id':'selected', 'personal_graphql_mapping':'map', 'operation':'HeroCustomers',
+               'source_path':'nr', 'source_type':'string|null', 'target_doctype':'Customer', 'target_field':'custom_hero_nr',
+               'purpose':'Field', 'transformation':'Trim', 'relation':'', 'priority':5,
+               'schema_snapshot':'snapshot', 'schema_fingerprint':'fingerprint'}
+        db = lineage_db(row)
+        db.get_value = Mock(side_effect=AssertionError('per-rule lineage query'))
+        def rows(doctype, **kwargs):
+            self.assertEqual(kwargs['filters']['definition_id'], ['in', ['selected']])
+            self.assertTrue({'portable_definition_id','portable_lineage_json','schema_manifest','schema_dependencies'} <= set(kwargs['fields']))
+            return [row]
+        fake = SimpleNamespace(db=db, get_all=Mock(side_effect=rows), get_doc=lambda *_: SimpleNamespace(
+            status='Active', direction='QUERY_TO_FRAPPE', schema_snapshot='snapshot', schema_fingerprint='fingerprint',
+            mapping_json=json.dumps({'target_operation':'HeroCustomers','mapping_definition_ids':['selected']})))
+        metadata = SimpleNamespace(field=lambda *_: SimpleNamespace(is_custom_field=True))
+        with patch.dict(sys.modules, {'frappe':fake}), patch.object(controller,'_FrappeMetadata',return_value=metadata), \
+             patch.object(mapping_runtime,'plan_from_definitions',side_effect=lambda operation, values, **kwargs: values):
+            plan = mapping_runtime.active_mapping_plan('HeroCustomers', definition_ids=('selected',), mapping_name='map')
+        self.assertEqual(len(plan),1)
+        self.assertEqual(fake.get_all.call_count,1)
+        db.get_value.assert_not_called()

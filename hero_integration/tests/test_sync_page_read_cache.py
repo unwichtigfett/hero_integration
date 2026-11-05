@@ -62,3 +62,16 @@ class TestSyncPageReadCache(unittest.TestCase):
                 api.sync_page_state()
         fake.only_for.assert_called_once_with('System Manager')
         self.assertIsNone(contracts.page_read_cache())
+
+    def test_status_reuses_plans_but_execution_and_locking_reads_do_not(self):
+        from hero_integration.services import mapping_runtime
+        with patch.object(mapping_runtime, '_active_mapping_plan', return_value=object()) as build:
+            with contracts.reuse_page_reads():
+                mapping_runtime.active_mapping_plan('HeroProducts', definition_ids=('one',), mapping_name='map')
+                mapping_runtime.active_mapping_plan('HeroProducts', definition_ids=('one',), mapping_name='map')
+                self.assertEqual(build.call_count, 1)
+                for _ in range(2):
+                    mapping_runtime.active_mapping_plan('HeroTasks', native_task=True, lock_rules=True)
+                self.assertEqual(build.call_count, 3)
+            mapping_runtime.active_mapping_plan('HeroProducts', definition_ids=('one',), mapping_name='map')
+            self.assertEqual(build.call_count, 4)

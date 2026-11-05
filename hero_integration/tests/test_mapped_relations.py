@@ -71,7 +71,7 @@ class TestNativeRelations(TestCase):
 
     def test_bank_account_import_is_native_and_repeated_without_duplicates(self):
         self.assertEqual(self.sync(BANK, self.bank_record)['created'], 1)
-        self.assertEqual(self.sync(BANK, self.bank_record)['updated'], 1)
+        self.assertEqual(self.sync(BANK, self.bank_record)['unchanged'], 1)
         account = self.docs('Bank Account')[0]
         self.assertEqual((account.party_type, account.party, account.is_company_account, account.is_default), ('Customer', 'C1', 0, 0))
         self.assertEqual(account.iban, 'DE89370400440532013000')
@@ -98,7 +98,7 @@ class TestNativeRelations(TestCase):
     def test_missing_bic_is_reusable_only_through_its_owned_account(self):
         self.bank_record['accounting']['bic'] = None
         self.sync(BANK, self.bank_record)
-        self.assertEqual(self.sync(BANK, self.bank_record)['updated'], 1)
+        self.assertEqual(self.sync(BANK, self.bank_record)['unchanged'], 1)
         self.assertEqual(len(self.docs('Bank')), 1)
 
     def test_local_account_change_is_retained_and_foreign_party_blocks(self):
@@ -152,3 +152,11 @@ class TestNativeRelations(TestCase):
         with self.assertRaises(ValueError):
             mr.prepare(NS(adapter_options={'native_relations': [BANK]}), self.bank_record, 'Project', 'P1')
         self.assertEqual(mr.required_paths([ADDRESS]), {'address.id', 'address.street', 'address.line_2', 'address.city', 'address.zipcode', 'address.country.code'})
+
+    def test_identical_bank_values_update_link_version_without_native_save(self):
+        self.sync(BANK, self.bank_record)
+        with patch.object(Doc, 'save', side_effect=AssertionError('unnecessary native save')), patch.object(mr, 'frappe', self.site):
+            result = mr.sync(NS(adapter_options={'native_relations': [BANK]}, mapping_version='next-version'),
+                self.bank_record, 'Customer', 'C1')
+        self.assertEqual(result['unchanged'], 1)
+        self.assertEqual(self.docs('HERO Integration Link')[0].mapping_version, 'next-version')

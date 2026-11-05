@@ -104,7 +104,7 @@ def _app(doctype: str) -> str:
     from frappe.modules.utils import get_module_app
 
     try:
-        return get_module_app(frappe.db.get_value("DocType", doctype, "module")) or ""
+        return get_module_app(frappe.db.get_value("DocType", doctype, "module", cache=True)) or ""
     except Exception:
         return ""
 
