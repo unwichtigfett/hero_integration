@@ -657,8 +657,10 @@ def _baseline_matches(ctx,item,remote,canonical):
         return field in state.get('values',{}) and _json(state['values'][field])==_json(canonical)
     if area=='HeroEmployees': return field in state and str(state[field] or '')==str(canonical or '')
     if area in {'HeroDocuments','HeroPictures'}:
-        from hero_integration.services.file_transfer import field_hashes,mapped_values
-        return state==json.loads(field_hashes(mapped_values(SimpleNamespace(plan=ctx.query_plan),remote)))
+        from hero_integration.services.file_transfer import value_hash,mapped_values
+        values=mapped_values(SimpleNamespace(plan=ctx.query_plan),remote)
+        return (state.get('version')==2 and field in state.get('mapped_fields',[]) and field in values
+                and isinstance(state.get('target'),dict) and state['target'].get(field)==value_hash(values[field]))
     source_base=decode(link.source_field_hashes) or {}
     key=_baseline_key(ctx,item)
     if _native_project_notes(ctx,item):
@@ -847,8 +849,11 @@ def _acknowledge(ctx,prepared,after):
             state.setdefault('values',{})[field]=value
         elif area=='HeroEmployees': state[field]=str(change['local'] or '')
         elif area in {'HeroDocuments','HeroPictures'}:
-            from hero_integration.services.file_transfer import field_hashes,mapped_values
-            data['target_field_hashes']=json.loads(field_hashes(mapped_values(SimpleNamespace(plan=ctx.query_plan),after)))
+            from hero_integration.services.file_transfer import field_hashes,mapped_values,value_hash
+            if state.get('version')!=2 or field not in state.get('mapped_fields',[]) or not isinstance(state.get('target'),dict):
+                raise MappedUpdateError('The imported file has no verified target baseline and requires review.')
+            state['target'][field]=value_hash(change['local'])
+            state['fields']=json.loads(field_hashes(mapped_values(SimpleNamespace(plan=ctx.query_plan),after)))['fields']
         else:
             key=_baseline_key(ctx,item)
             data['source_field_hashes'][key]=send_helpers._hash(canonical)

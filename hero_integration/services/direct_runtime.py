@@ -135,9 +135,9 @@ def records(read: DirectRead, data) -> list[dict]:
     unwrap = ""
     if path.endswith(".edges.node"):
         path, unwrap = path[:-len(".node")], "node"
-    value = lookup(data or {}, path)
-    if value is MISSING or value is None:
-        return []
+    # Only an explicit list proves the page shape; missing/null data must never
+    # look like the empty page that marks an import as complete.
+    value = lookup(data, path)
     if not isinstance(value, list) or not all(isinstance(row, dict) for row in value):
         raise ValueError("HERO returned an invalid record list for " + read.operation + ".")
     if unwrap:

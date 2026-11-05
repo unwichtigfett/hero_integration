@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import io
 import os
 import shutil
@@ -179,7 +180,8 @@ class _Doc(SimpleNamespace):
 def _fake_frappe(db, root):
     return SimpleNamespace(
         db=db, flags=SimpleNamespace(), log_error=lambda **k: None,
-        get_doc=lambda values: _Doc(_db=db, _values=values, flags=SimpleNamespace()),
+        get_doc=lambda values, name=None, **kwargs: _Doc(_db=db, _values=values, flags=SimpleNamespace())
+        if isinstance(values, dict) else SimpleNamespace(**db.data[values][name]),
         get_all=lambda doctype, filters, fields, limit_page_length=0: [
             SimpleNamespace(name=name, **{field: row.get(field) for field in fields if field != "name"})
             for name, row in db.data.get(doctype, {}).items() if db._match(row, filters)],
@@ -211,6 +213,10 @@ class _FileFixture(unittest.TestCase):
         read_patch.start()
         self.addCleanup(read_patch.stop)
         self.link = SimpleNamespace(name="L1", target_name="F1", source_payload_hash="old")
+        self.db.data['File']['F1']['file_name'] = 'Angebot.pdf'
+        self.db.data['HERO Integration Link']['L1']['target_field_hashes'] = ft._target_baseline('F1', {'file_name': 'Angebot.pdf'})
+        self.db.data['HERO Integration Link']['L1']['target_payload_hash'] = hashlib.md5(b'old').hexdigest()
+        self.db.commit()
 
     def path(self, name):
         return os.path.join(self.root, "files", name)
@@ -229,7 +235,7 @@ class TestReplaceKeepsAValidFile(_FileFixture):
     ROW = {"id": 5, "uuid": "u5", "filename": "Angebot.pdf", "modified": "2", "size": 3}
 
     def replace(self):
-        return ft.commit_file(self.ROW, 3, "md5", self.download(), ("Project", "PROJECT-A"),
+        return ft.commit_file(self.ROW, 3, hashlib.md5(b'new').hexdigest(), self.download(), ("Project", "PROJECT-A"),
                               "Home/HERO/Dokumente", self.link, "source-a")
 
     def assert_points_at_existing_file(self):
@@ -298,7 +304,7 @@ class TestSourceAndTargetBinding(_FileFixture):
             def fetch(inner, url, target, size):
                 with open(target, "wb") as handle:
                     handle.write(b"pdf")
-                return 3, "md5"
+                return 3, hashlib.md5(b'pdf').hexdigest()
 
         state = self.run_transfer([row], {"u7": {"uuid": "u7", "file_upload_matches": [{"project_match_id": 42}]}},
                                   instance="source-b", downloader=_Download())

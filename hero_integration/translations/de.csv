@@ -3671,3 +3671,8 @@ An explicit Query rule identity has no unique equivalent in its published area.,
 The linked Item no longer exists in ERPNext; review the binding before importing.,Der verknüpfte Artikel existiert in ERPNext nicht mehr; prüfen Sie vor dem Import die Bindung.
 "{0} project assignee(s) could not be resolved to an active, source-bound ERPNext user; existing assignments were preserved and require review.","{0} Projektbearbeiter konnten keinem aktiven, mit der Quelle verknüpften ERPNext-Benutzer zugeordnet werden; bestehende Zuweisungen wurden beibehalten und müssen geprüft werden."
 HERO supplier article number must be text or null.,Die HERO-Lieferantenartikelnummer muss Text oder null sein.
+The imported file target requires review before synchronization.,Das Ziel der importierten Datei muss vor der Synchronisierung geprüft werden.
+The imported file content is unavailable and requires review.,Der Inhalt der importierten Datei ist nicht verfügbar und muss geprüft werden.
+The imported file has no verified target baseline and requires review.,Für die importierte Datei fehlt eine bestätigte Zielbasis; sie muss geprüft werden.
+The imported file was changed locally and requires review.,Die importierte Datei wurde lokal geändert und muss geprüft werden.
+A newly mapped file field already contains a local value and requires review.,Ein neu zugeordnetes Dateifeld enthält bereits einen lokalen Wert und muss geprüft werden.
