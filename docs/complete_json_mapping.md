@@ -329,3 +329,9 @@ conflicts rather than implicit permission to overwrite. File writebacks advance
 only confirmed field evidence. Setup folders survive individual-record rollbacks.
 Direct readers reject missing/null record paths; only an actual empty list ends
 a scan.
+
+Expanding existing product, service, Employee or User mappings does not authorize
+replacement of previously unmanaged local values. New ownership requires an
+empty destination or a semantically equal value; zero and False are occupied
+values, and textual identifiers are not coerced to numbers. This check precedes
+all related writes.
