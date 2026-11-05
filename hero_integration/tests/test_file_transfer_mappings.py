@@ -15,8 +15,8 @@ from hero_integration.tests.test_file_transfer import URL, _FileFixture, _NoDown
 
 
 class _Client:
-    def __init__(self, rows):
-        self.rows, self.calls, self.details = rows, [], []
+    def __init__(self, rows, page_cap=None):
+        self.rows, self.calls, self.details, self.page_cap = rows, [], [], page_cap
 
     def query(self, document, variables):
         if "uuids" in variables:
@@ -26,6 +26,8 @@ class _Client:
         self.calls.append((document, dict(variables)))
         offset = variables.get("offset", variables.get("start"))
         size = variables.get("first", variables.get("limit"))
+        if self.page_cap:
+            size = min(size, self.page_cap)
         return {"FileUpload_FileUploads": {"edges": [{"node": row} for row in self.rows[offset:offset + size]]}}
 
 
@@ -178,8 +180,8 @@ class TestFileMappingImport(_FileFixture):
         self.assertNotEqual(ft.value_hash(False), ft.value_hash(None))
         self.assertNotEqual(ft.value_hash(True), ft.value_hash('1'))
 
-    def run_slice(self, rows, *, read=None, saved=None, phase="documents", downloader=None, **kwargs):
-        self.client = _Client(rows)
+    def run_slice(self, rows, *, read=None, saved=None, phase="documents", downloader=None, page_cap=None, **kwargs):
+        self.client = _Client(rows, page_cap=page_cap)
         read = read or rt.builtin_read(ft.OPERATION[phase])
         self.saved_states = []
         with patch.object(ft.direct_runtime, "resolve_read", return_value=read) as resolve, \
@@ -446,11 +448,14 @@ class TestFileMappingImport(_FileFixture):
         with open(ft._disk_path(original_url), 'rb') as stream:
             original_bytes = stream.read()
         self.db.data['HERO Integration Link']['PA'] = project_link
+        self.db.data['HERO Integration Link']['OUTSIDE'] = {'source_type': 'project', 'source_id': '99',
+            'source_instance': 'source-a', 'target_doctype': 'Project', 'target_name': 'PROJECT-OUTSIDE'}
         self.db.commit()
         read = rt.builtin_read('HeroDocuments')
         pending = SimpleNamespace(operation='HeroDocuments', source_instance='source-a', source_id='7',
             mapping_version=read.mapping_version, record_json=json.dumps({'row': row,
-                'detail': {'file_upload_matches': [{'project_match_id': 42}]}}))
+                'detail': {'file_upload_matches': [{'project_match_id': 99}, {'project_match_id': 42}]},
+                'scope': {'project_ids': ['42'], 'customer_ids': []}}))
         with patch.object(deferred, 'frappe', ft.frappe), \
              patch.object(rt, 'resolve_read', return_value=read), \
              patch.object(ft, '_folder', return_value='Home/HERO/Dokumente'), \
@@ -466,6 +471,31 @@ class TestFileMappingImport(_FileFixture):
             with self.assertRaises(ft.FileConflict): deferred._resolve_file(pending)
         self.assertEqual(downloader.calls, 1)
 
+    def test_file_initially_attached_to_customer_moves_when_its_project_arrives(self):
+        from hero_integration.services import deferred_references as deferred
+        project_link = self.db.data['HERO Integration Link'].pop('PA')
+        self.db.data['HERO Integration Link']['CUSTOMER'] = {'source_type': 'customer', 'source_id': '50',
+            'source_instance': 'source-a', 'target_doctype': 'Customer', 'target_name': 'CUSTOMER-A'}
+        self.db.commit()
+        row, downloader = _row(), _Download()
+        detail = {'file_upload_matches': [{'project_match_id': 42}],
+                  'customer_document': {'project_match_id': 42, 'contact_id': 50}}
+        with patch.object(ft, 'details', return_value={'u7': detail}):
+            self.run_slice([row], downloader=downloader)
+        file, link = self.imported()
+        self.assertEqual((file['attached_to_doctype'], file['attached_to_name']), ('Customer', 'CUSTOMER-A'))
+        self.db.data['HERO Integration Link']['PA'] = project_link
+        self.db.commit()
+        read = rt.builtin_read('HeroDocuments')
+        pending = SimpleNamespace(operation='HeroDocuments', source_instance='source-a', source_id='7',
+            mapping_version=read.mapping_version, record_json=json.dumps({'row': row, 'detail': detail}))
+        with patch.object(deferred, 'frappe', ft.frappe), patch.object(rt, 'resolve_read', return_value=read), \
+             patch.object(ft, '_folder', return_value='Home/HERO/Dokumente'):
+            self.assertEqual(deferred._resolve_file(pending), 'UPDATED')
+        current = self.db.data['File'][link['target_name']]
+        self.assertEqual((current['attached_to_doctype'], current['attached_to_name']), ('Project', 'PROJECT-A'))
+        self.assertEqual(downloader.calls, 1)
+
 
 class TestFileOffsetPaging(_FileFixture):
     run_slice = TestFileMappingImport.run_slice
@@ -477,9 +507,39 @@ class TestFileOffsetPaging(_FileFixture):
         state = self.run_slice(rows, read=read, saved={"source_instance": "source-a", "offset": 2,
                                                      "mapping": read.mapping_version}, dry_run=False,
                                downloader=_Download())
-        self.assertEqual([variables["offset"] for _, variables in self.client.calls], [2, 4, 6])
+        self.assertEqual([variables["offset"] for _, variables in self.client.calls], [2, 4, 6, 7])
         self.assertEqual((state["offset"], state["counts"]["added"]), (7, 1))
         self.assertEqual(self.client.details, ["u7"])
+
+    def test_short_server_pages_do_not_lose_later_files(self):
+        read = replace(rt.builtin_read('HeroDocuments'), page_size=10)
+        state = self.run_slice([_row(7), _row(8), _row(9)], read=read, page_cap=1, downloader=_Download())
+        self.assertEqual(state['counts']['added'], 3)
+        self.assertEqual([variables['offset'] for _, variables in self.client.calls], [0, 1, 2, 3])
+        self.assertEqual(self.client.details, ['u7', 'u8', 'u9'])
+
+    def test_repeated_page_stops_before_a_second_download(self):
+        row = _row(7)
+        downloader = _Download()
+        with patch.object(ft.direct_runtime, 'fetch_page', return_value=[row]), \
+             self.assertRaisesRegex(ft.TransferError, 'repeated a file page'):
+            self.run_slice([row], downloader=downloader)
+        self.assertEqual(downloader.calls, 1)
+
+    def test_related_sample_imports_all_matching_files_beyond_anchor_limit(self):
+        rows = [_row(7), _row(8), _row(9)]
+        details = {f'u{i}': {'uuid': f'u{i}', 'file_upload_matches': [{'project_match_id': project}],
+                            'file_upload_links': [], 'customer_document': None}
+                   for i, project in ((7, 42), (8, 99), (9, 42))}
+        sample = {'version': 1, 'project_ids': ['42'], 'customer_ids': [], 'user_ids': []}
+        with patch('hero_integration.services.migration_testing.test_state', return_value={}), \
+             patch('hero_integration.services.migration_testing.save_test_state'), \
+             patch('hero_integration.services.deferred_references.remember_file'), \
+             patch.object(ft, 'details', return_value=details):
+            result = self.run_slice(rows, record_limit=1, run_name='test', cohort=sample, downloader=_Download())
+        self.assertEqual(result['counts']['added'], 2)
+        self.assertEqual(result['testing_records_received'], 3)
+        self.assertTrue(result['done'])
 
     def test_foreign_finished_and_legacy_states_restart_at_zero(self):
         for saved in ({"source_instance": "source-b", "offset": 900},

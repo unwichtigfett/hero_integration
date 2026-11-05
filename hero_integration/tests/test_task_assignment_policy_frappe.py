@@ -4,6 +4,7 @@ import os
 import unittest
 import threading
 from types import SimpleNamespace
+from uuid import uuid4
 
 import frappe
 
@@ -18,7 +19,8 @@ class TestTaskAssignmentPolicyFrappe(unittest.TestCase):
             self.skipTest('Requires explicit isolated site identity')
         self.company = frappe.get_all('Company', pluck='name', limit=1)[0]
         gender = frappe.get_all('Gender', pluck='name', limit=1)[0]
-        self.user = frappe.get_doc({'doctype': 'User', 'email': 'task32b-policy@example.invalid', 'first_name': 'Synthetic',
+        self.nonce = uuid4().hex[:12]
+        self.user = frappe.get_doc({'doctype': 'User', 'email': f'task32b-policy-{self.nonce}@example.invalid', 'first_name': 'Synthetic',
                                     'enabled': 1, 'send_welcome_email': 0}).insert()
         frappe.get_doc({'doctype': 'Employee', 'first_name': 'Synthetic', 'gender': gender,
                         'date_of_birth': '1990-01-01', 'date_of_joining': '2020-01-01',
@@ -27,12 +29,33 @@ class TestTaskAssignmentPolicyFrappe(unittest.TestCase):
             site_scope=frappe.local.site, source_instance='fixture-policy32b', object_type='User',
             external_object_id='990001', target_app='frappe', target_doctype='User', target_name=self.user.name,
             mapping_definition_id='fixture-user-32b', mapping_revision=1)
+        self.fixture_binding = binding.identity_key
         self.payload = {'source_instance': 'fixture-policy32b', 'issuer': 'Administrator', 'company': self.company,
                         'user_bindings': [binding.identity_key], 'allow_initial': True, 'allow_transfer': False}
 
     def tearDown(self):
         frappe.set_user('Administrator')
         frappe.db.rollback()
+        fixture = getattr(self, '_committed_fixture', None)
+        if fixture:
+            task = fixture['task']
+            frappe.db.delete('HERO Integration Record', {'target_doctype': 'Task', 'target_name': task})
+            frappe.db.delete('HERO Task Assignment State', {'task_name': task})
+            frappe.db.delete('ToDo', {'reference_type': 'Task', 'reference_name': task})
+            frappe.db.delete('HERO Integration Link', {'source_key': 'HERO:default:Task:990003', 'target_name': task})
+            frappe.db.delete('Task', {'name': task})
+            frappe.db.delete('Project', {'name': fixture['project']})
+            frappe.db.delete('HERO Task Assignment Policy', {'name': fixture['policy']})
+            for binding in fixture['bindings']:
+                frappe.db.delete('HERO Object Binding', {'name': binding})
+            for doctype in ('HERO GraphQL Service', 'HERO GraphQL Mapping', 'HERO Frappe Mapping'):
+                frappe.db.delete(doctype, {'schema_snapshot': fixture['snapshot']})
+            frappe.db.delete('HERO GraphQL Schema Snapshot', {'name': fixture['snapshot']})
+            for user in fixture['users']:
+                frappe.db.delete('Employee', {'user_id': user})
+                frappe.db.delete('User', {'name': user})
+            frappe.db.set_single_value('System Settings', 'disable_document_sharing', fixture['sharing'])
+            frappe.db.commit()
 
     def test_managed_create_approve_revoke_and_tampering(self):
         name = task_assignment_policy_create(json.dumps(self.payload))['name']
@@ -63,6 +86,7 @@ class TestTaskAssignmentPolicyFrappe(unittest.TestCase):
         self.user.reload()
         self.user.add_roles('System Manager', 'Projects User')
         self.payload['issuer'] = self.user.name
+        self.payload['native_effects'] = {'date_rule': 'LOCAL_TODAY', 'allow_notifications': False, 'allow_follow': False}
         name = task_assignment_policy_create(json.dumps(self.payload))['name']
         task_assignment_policy_approve(name, 1)
         settings = frappe.get_single('System Settings')
@@ -92,12 +116,16 @@ class TestTaskAssignmentPolicyFrappe(unittest.TestCase):
                                                                     'target_name': result.target_name, 'correlation_id': todos[0].name}))
         _record_task_assignment_pending(run, record, result.target_name, 'fixture-policy32b')
         self.assertEqual(frappe.db.count('ToDo', {'reference_type': 'Task', 'reference_name': result.target_name, 'status': 'Open'}), 1)
-        self.assertEqual(frappe.db.count('HERO Integration Record', {'technical_action': 'task_assignment_review', 'target_name': result.target_name}), 0)
+        review = frappe.get_all('HERO Integration Record', filters={'technical_action': 'task_assignment_review',
+                                'target_name': result.target_name}, fields=['result', 'detail'])
+        self.assertEqual(len(review), 1)
+        self.assertEqual((review[0].result, json.loads(review[0].detail)['decision']), ('SKIPPED', 'KEEP'))
         local = frappe.get_doc('ToDo', todos[0].name)
         local.description = 'Local instruction to the same recipient'
         local.save()
         _record_task_assignment_pending(run, record, result.target_name, 'fixture-policy32b')
-        self.assertTrue(frappe.db.exists('HERO Integration Record', {'technical_action': 'task_assignment_review', 'target_name': result.target_name}))
+        self.assertTrue(frappe.db.exists('HERO Integration Record', {'technical_action': 'task_assignment_review',
+                                                                    'target_name': result.target_name, 'result': 'CONFLICT'}))
 
     def test_policy_does_not_grant_recipient_task_access(self):
         from hero_integration.services.migration import _migrate_native_task, _record_task_assignment_pending
@@ -125,13 +153,14 @@ class TestTaskAssignmentPolicyFrappe(unittest.TestCase):
     def test_z_registered_intake_committed_independent_readback(self):
         from hero_integration.api import graphql_mapping_save, workspace_service_save, workspace_service_validate, approve_read_service
         from hero_integration.services.migration import _process_projection
-        from hero_integration.services.projection_contracts import CONTRACTS, approved_query
+        from hero_integration.services.projection_contracts import approved_query
+        from hero_integration.tests.projection_schema_fixture import insert_projection_snapshot
         self.user.reload(); self.user.add_roles('System Manager', 'Projects User')
         user_binding = BindingRegistryService(FrappeBindingStorage()).create_or_resolve_object_binding(
             site_scope=frappe.local.site, source_instance='default', object_type='User', external_object_id='990001',
             target_app='frappe', target_doctype='User', target_name=self.user.name,
             mapping_definition_id='fixture-user-default32b', mapping_revision=1)
-        recipient = frappe.get_doc({'doctype': 'User', 'email': 'task32b-recipient@example.invalid',
+        recipient = frappe.get_doc({'doctype': 'User', 'email': f'task32b-recipient-{self.nonce}@example.invalid',
             'first_name': 'Synthetic', 'enabled': 1, 'send_welcome_email': 0}).insert()
         gender = frappe.get_all('Gender', pluck='name', limit=1)[0]
         frappe.get_doc({'doctype': 'Employee', 'first_name': 'Synthetic', 'gender': gender,
@@ -146,12 +175,12 @@ class TestTaskAssignmentPolicyFrappe(unittest.TestCase):
         self.payload['user_bindings'] = [user_binding.identity_key, second_binding.identity_key]
         self.payload['allow_transfer'] = True
         self.payload['issuer'] = self.user.name
+        self.payload['native_effects'] = {'date_rule': 'LOCAL_TODAY', 'allow_notifications': True, 'allow_follow': True}
         policy = task_assignment_policy_create(json.dumps(self.payload))['name']
         task_assignment_policy_approve(policy, 1)
-        settings = frappe.get_single('System Settings'); settings.disable_document_sharing = 1; settings.save()
-        source = frappe.get_all('HERO GraphQL Schema Snapshot', filters={'schema_fingerprint': CONTRACTS['HeroTasks']['fingerprint'],
-            'analysis_status': 'Validated', 'source_instance': 'default'}, pluck='name')[0]
-        snapshot = frappe.get_doc('HERO GraphQL Schema Snapshot', source)
+        settings = frappe.get_single('System Settings'); old_sharing = settings.disable_document_sharing
+        settings.disable_document_sharing = 1; settings.save()
+        snapshot = insert_projection_snapshot()
         rules = [
             ('id', 'int', 'HERO Integration Link', 'source_id', 'Source Identity', 'Positive Int To Text'),
             ('title', 'string|null', 'Task', 'subject', 'Record Name', 'Trim'),
@@ -200,6 +229,9 @@ class TestTaskAssignmentPolicyFrappe(unittest.TestCase):
         run.resume_record_index = 0
         _process_projection(run, source)
         task_name, recipient, binding_name = link.target_name, self.user.name, self.payload['user_bindings'][0]
+        self._committed_fixture = {'task': task_name, 'project': project.name, 'policy': policy,
+            'bindings': [self.fixture_binding, user_binding.identity_key, second_binding.identity_key], 'snapshot': snapshot.name,
+            'users': [self.user.name, second_binding.target_name], 'sharing': old_sharing}
         frappe.db.commit()
         initial = []
         def initial_readback():
@@ -216,7 +248,7 @@ class TestTaskAssignmentPolicyFrappe(unittest.TestCase):
         _process_projection(run, source)
         run.resume_record_index = 0
         _process_projection(run, source)
-        recipient, binding_name = second_binding.target_name, second_binding.identity_key
+        recipient, binding_name = self.user.name, user_binding.identity_key
         frappe.db.commit()
         readback = []
         def independent():
@@ -224,10 +256,10 @@ class TestTaskAssignmentPolicyFrappe(unittest.TestCase):
             try:
                 link2 = frappe.get_doc('HERO Integration Link', {'source_key': 'HERO:default:Task:990003'})
                 todos = frappe.get_all('ToDo', filters={'reference_type': 'Task', 'reference_name': task_name, 'status': 'Open'}, fields=['name', 'allocated_to'])
-                records = frappe.get_all('HERO Integration Record', filters={'target_name': task_name, 'technical_action': 'task_assignment_transferred'}, fields=['correlation_id'])
+                records = frappe.get_all('HERO Integration Record', filters={'target_name': task_name, 'technical_action': 'task_assignment_review'}, fields=['detail'])
                 states = frappe.get_all('HERO Task Assignment State', filters={'task_name': task_name}, fields=['todo', 'user_binding', 'state'])
                 readback.append((link2.target_name == task_name, frappe.db.exists('Task', task_name) is not None,
-                    len(todos) == 1 and todos[0].allocated_to == recipient, len(records) == 1 and records[0].correlation_id == todos[0].name,
+                    len(todos) == 1 and todos[0].allocated_to == recipient, any('PENDING_SOURCE_ORDER' in row.detail for row in records),
                     frappe.get_doc('HERO Task Assignment Policy', policy).state == 'APPROVED',
                     frappe.db.exists('HERO Object Binding', binding_name) is not None,
                     not frappe.db.exists('DocShare', {'share_doctype': 'Task', 'share_name': task_name, 'user': recipient}),

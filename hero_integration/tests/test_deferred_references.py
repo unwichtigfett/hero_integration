@@ -64,6 +64,26 @@ class TestDeferredObservation(TestCase):
         self.assertEqual(next(iter(self.store.values())).status, 'Waiting')
         self.assertNotEqual(deferred.key('source-a', 'project', '5'), deferred.key('source-b', 'project', '5'))
 
+    def test_arrived_dependency_does_not_hide_an_independent_conflict(self):
+        deps = [('project', '5')]
+        deferred.save('run', 'source-a', 'HeroTasks', '7', 'plan', {'id': 7}, deps)
+        pending = self.store[deferred.key('source-a', 'HeroTasks', '7')]
+        self.ready.add(('source-a', 'project', '5'))
+        deferred.save('run-2', 'source-a', 'HeroTasks', '7', 'plan', {'id': 7}, deps, result_code='CONFLICT')
+        self.assertEqual(pending.status, 'Conflict')
+        self.assertTrue(pending.record_json)
+
+    def test_available_bindings_do_not_hide_a_still_pending_assignment(self):
+        deps = [('User', '5')]
+        self.ready.add(('source-a', 'User', '5'))
+        deferred.save('run', 'source-a', 'HeroTasks', '7', 'plan', {'id': 7}, deps, result_code='PENDING_REVIEW')
+        pending = self.store[deferred.key('source-a', 'HeroTasks', '7')]
+        self.assertEqual(pending.status, 'Conflict')
+        self.assertTrue(pending.record_json)
+        deferred.save('run-2', 'source-a', 'HeroTasks', '7', 'plan', {'id': 7}, deps, result_code='SKIPPED')
+        self.assertEqual(pending.status, 'Resolved')
+        self.assertEqual(pending.record_json, '')
+
     def test_preview_and_replays_do_not_create_more_observations(self):
         with patch.object(deferred, 'save') as save:
             deferred.remember(NS(mode='Preview'), 'project', {}, NS())
@@ -82,6 +102,22 @@ class TestDeferredObservation(TestCase):
             'project_match_assignments': [{'user_id': 3}, {'user_id': True}, {'user_id': 4}]}
         self.assertEqual(deferred.references(NS(definitions=definitions), record),
             [('User', '3'), ('User', '4'), ('customer', '1'), ('partner', '2')])
+
+    def test_secondary_address_waits_for_its_own_source_binding(self):
+        relation = {'kind': 'customer_addresses', 'collection_path': 'addresses',
+                    'identity_path': 'location.id', 'primary_identity_path': 'primary.id', 'deleted_path': 'deleted'}
+        plan = NS(definitions=[], adapter_options={'native_relations': [relation]})
+        record = {'primary': {'id': 1}, 'addresses': [
+            {'deleted': False, 'location': {'id': 1}}, {'deleted': False, 'location': {'id': 2}},
+            {'deleted': True, 'location': {'id': 3}}]}
+        deps = deferred.references(plan, record)
+        self.assertEqual(deps, [('customer_address', '2')])
+        deferred.save('run', 'source-a', 'HeroCustomers', '7', 'plan', record, deps)
+        pending = self.store[deferred.key('source-a', 'HeroCustomers', '7')]
+        self.assertEqual(pending.status, 'Waiting')
+        self.ready.add(('source-a', 'customer_address', '2'))
+        deferred.save('run-2', 'source-a', 'HeroCustomers', '7', 'plan', record, deps, result_code='SKIPPED')
+        self.assertEqual(pending.status, 'Resolved')
 
     def test_deletion_or_rejection_cancels_the_old_observation_before_dependency_arrives(self):
         for code in ('SKIPPED_SOURCE_DELETED', 'SKIPPED_REJECTED'):
@@ -116,9 +152,33 @@ class TestDeferredObservation(TestCase):
         self.assertEqual({(d['source_type'], d['source_id']) for d in pending.dependencies},
                          {('project', '1'), ('project', '2'), ('customer', '3')})
         self.ready.add(('source-a', 'customer', '3'))
+        self.assertFalse(deferred.dependencies_ready('source-a', 'HeroDocuments',
+            [('project', '1'), ('project', '2'), ('customer', '3')]))
+        self.ready.add(('source-a', 'project', '2'))
         self.assertTrue(deferred.dependencies_ready('source-a', 'HeroDocuments',
             [('project', '1'), ('project', '2'), ('customer', '3')]))
         self.assertFalse(deferred.dependencies_ready('source-a', 'HeroTasks', [('project', '1'), ('customer', '3')]))
+
+    def test_test_file_observation_keeps_only_selected_attachment_dependencies(self):
+        read = NS(plan=NS(source_identity=lambda row:'7'), mapping_version='plan')
+        detail = {'file_upload_matches': [{'project_match_id': 1}, {'project_match_id': 2}],
+                  'file_upload_links': [{'customer_id': 3}]}
+        cohort = {'project_ids': ['2'], 'customer_ids': [], 'version': 1}
+        with patch.object(deferred, 'installed', return_value=True):
+            deferred.remember_file('run', 'source-a', 'HeroDocuments', read, {'id': 7}, detail, cohort=cohort)
+        pending = self.store[deferred.key('source-a', 'HeroDocuments', '7')]
+        self.assertEqual([(d['source_type'], d['source_id']) for d in pending.dependencies], [('project', '2')])
+        self.assertEqual(json.loads(pending.record_json)['scope'], {'project_ids': ['2'], 'customer_ids': []})
+
+    def test_many_assignees_stop_reading_when_one_missing_identity_decides_readiness(self):
+        deps = [('User', str(i)) for i in range(1, 201)]
+        with patch.object(deferred, 'available', side_effect=lambda source, kind, identity: identity != '2') as lookup:
+            self.assertFalse(deferred.dependencies_ready('source-a', 'HeroProjectMatches', deps))
+        self.assertEqual(lookup.call_count, 2)
+        projects = [('project', str(i)) for i in range(1, 201)]
+        with patch.object(deferred, 'available', side_effect=lambda source, kind, identity: identity == '2') as lookup:
+            self.assertTrue(deferred.dependencies_ready('source-a', 'HeroDocuments', projects))
+        self.assertEqual(lookup.call_count, 2)
 
     def test_generic_document_writes_are_rejected(self):
         with self.assertRaises(PermissionError): deferred.assert_owned_write()
@@ -155,12 +215,58 @@ class TestDeferredReplay(TestCase):
         self.assertEqual(self.fake.db.set_value.call_args.args[2]['record_json'], '')
         self.assertFalse(deferred._replaying.get())
 
+    def test_full_reconciliation_pages_by_source_and_keeps_failures_visible(self):
+        rows = [NS(name='a'), NS(name='b')]
+        db = NS(sql=Mock(return_value=rows), commit=Mock(), rollback=Mock(), set_value=Mock())
+        fake = NS(db=db, session=NS(user='Administrator'), set_user=Mock(), log_error=Mock())
+        with patch.object(deferred, 'frappe', fake), patch.object(deferred, 'installed', return_value=True), \
+                patch.object(deferred, 'resolve_one', side_effect=[None, ValueError('changed')]):
+            cursor, more = deferred.reconcile_source_page('source-a', 'previous', limit=2)
+        self.assertEqual((cursor, more), ('b', True))
+        self.assertEqual(db.sql.call_args.args[1], ('source-a', 'previous', 2))
+        self.assertEqual(db.rollback.call_count, 1)
+        self.assertEqual(db.set_value.call_args.args[1], 'b')
+        self.assertEqual(db.set_value.call_args.args[2]['status'], 'Conflict')
+        self.assertEqual(fake.set_user.call_count, 2)
+
+    def test_test_sweep_never_replays_unrelated_origin_runs(self):
+        db = NS(sql=Mock(return_value=[]))
+        fake = NS(db=db, session=NS(user='Administrator'))
+        with patch.object(deferred, 'frappe', fake), patch.object(deferred, 'installed', return_value=True):
+            self.assertEqual(deferred.reconcile_source_page('source-a', origin_runs=[]), ('', False))
+            db.sql.assert_not_called()
+            deferred.reconcile_source_page('source-a', 'after', limit=3, origin_runs=['RUN-1', 'RUN-2'])
+        self.assertIn('origin_run IN %s', db.sql.call_args.args[0])
+        self.assertEqual(db.sql.call_args.args[1], ('source-a', 'after', ('RUN-1', 'RUN-2'), 3))
+
     def test_missing_dependency_or_cancelled_run_never_writes_native_data(self):
         with patch.object(deferred, 'available', return_value=False): deferred.resolve_one('pending')
         self.apply.assert_not_called()
         self.run.state = 'Cancelled'
         with self.assertRaises(ValueError): deferred.resolve_one('pending')
         self.apply.assert_not_called()
+
+    def test_newly_bound_project_assignee_is_added_without_waiting_for_other_users(self):
+        record = {'id': 7, '_hero_source_instance': 'source-a', 'project_match_assignments': [
+            {'user_id': 11}, {'user_id': 12}]}
+        self.pending.record_json = json.dumps(record)
+        self.pending.dependencies = [NS(source_type='User', source_id='11'), NS(source_type='User', source_id='12')]
+        project = NS(name='PROJECT-7')
+        link = NS(target_doctype='Project', target_name='PROJECT-7', sync_status='Synchronized',
+                  mapping_version='plan', source_payload_hash='source-hash')
+        self.fake.get_doc = lambda dt, name, **kw: self.pending if dt == deferred.MAIN else self.run if dt == 'HERO Integration Run' else project
+        self.fake.db.exists = Mock(return_value=True)
+        self.fake.has_permission = Mock()
+        with patch.object(deferred, 'available', side_effect=lambda source, kind, value: value == '11'), \
+             patch.object(migration, '_link', return_value=link), patch.object(migration, '_digest', return_value='source-hash'), \
+             patch('hero_integration.integrations.project_assignments.sync') as sync:
+            deferred.resolve_one('pending', dependency=('User', '11'))
+            sync.assert_called_once_with('PROJECT-7', {**record, 'project_match_assignments': [{'user_id': 11}]},
+                                         allow_removals=False)
+            link.source_payload_hash = 'changed-source'
+            deferred.resolve_one('pending', dependency=('User', '11'))
+            self.assertEqual(sync.call_count, 1)
+        self.assertEqual(self.pending.status, 'Waiting')
 
     def test_mapping_change_does_not_reinterpret_a_saved_record(self):
         self.plan.mapping_version = 'changed'
@@ -275,5 +381,5 @@ class TestDeferredWakeups(TestCase):
              patch.object(deferred.time, 'monotonic', side_effect=[0, 1, 121]), \
              patch.object(deferred, 'resolve_one') as resolve:
             deferred.resolve_dependency('source-a', 'project', '7')
-        resolve.assert_called_once_with('a')
+        resolve.assert_called_once_with('a', dependency=('project', '7'))
         self.assertEqual(fake.enqueue.call_args.kwargs['after'], 'a')

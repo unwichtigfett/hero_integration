@@ -16,6 +16,88 @@ from hero_integration.tests import test_service_migration as service_fixtures
 
 
 class TestMigrationRecordLimits(unittest.TestCase):
+    def test_related_project_sample_keeps_all_distinct_assignees_and_customers(self):
+        plan = SimpleNamespace(source_identity=lambda row: str(row['id']), definitions=[
+            SimpleNamespace(transformation='HERO Customer Link', purpose='Customer Relation', source_path='customer_id')])
+        rows = [{'id': 10, 'customer_id': 20, 'project_match_assignments': [{'user_id': i} for i in range(1, 201)], 'is_deleted': False},
+                {'id': 11, 'customer_id': 20, 'project_match_assignments': [{'user_id': 1}], 'is_deleted': False},
+                {'id': 12, 'customer_id': 99, 'project_match_assignments': [], 'is_deleted': False}]
+        cohort = testing.project_cohort(rows, plan, 2)
+        self.assertEqual(cohort['project_ids'], ['10', '11'])
+        self.assertEqual(cohort['customer_ids'], ['20'])
+        self.assertEqual(len(cohort['user_ids']), 200)
+        self.assertNotIn('99', cohort['customer_ids'])
+
+    def test_anchor_selection_uses_approved_pages_and_stops_at_project_limit(self):
+        plan = SimpleNamespace(source_identity=lambda row: str(row['id']), definitions=[
+            SimpleNamespace(transformation='HERO Customer Link', purpose='Customer Relation', source_path='customer_id')])
+        read = SimpleNamespace(plan=plan)
+        rows = [{'id': 10, 'customer_id': 20, 'project_match_assignments': [{'user_id': 30}], 'is_deleted': False},
+                {'id': 11, 'customer_id': 21, 'project_match_assignments': [], 'is_deleted': False}]
+        with patch('hero_integration.services.direct_runtime.fetch_page', side_effect=[[rows[0]], [rows[1]]]) as fetch:
+            cohort = testing.prepare_project_cohort(object(), read, 2)
+        self.assertEqual(cohort['project_ids'], ['10', '11'])
+        self.assertEqual(cohort['customer_ids'], ['20', '21'])
+        self.assertEqual(cohort['user_ids'], ['30'])
+        self.assertEqual([call.args[2] for call in fetch.call_args_list], [0, 1])
+
+    def test_anchor_selection_rejects_missing_assignee_information(self):
+        plan = SimpleNamespace(source_identity=lambda row: str(row['id']), definitions=[])
+        with self.assertRaisesRegex(ValueError, 'omits its assignee'):
+            testing.project_cohort([{'id': 1}], plan, 1)
+
+    def test_discovery_adds_task_users_and_event_partners_for_selected_projects(self):
+        cohort = {'project_ids': ['10'], 'user_ids': ['1'], 'partner_ids': [], 'task_ids': [], 'event_ids': []}
+        testing.collect_related_projection(cohort, 'HeroTasks', [
+            {'id': 3, 'target_project_match_id': 10, 'author_user_id': 2, 'target_user_id': 3},
+            {'id': 4, 'target_project_match_id': 11, 'author_user_id': 99, 'target_user_id': 99}])
+        testing.collect_related_projection(cohort, 'HeroCalendarEvents', [
+            {'id': 5, 'project_match_id': 10, 'partners': [{'id': 8}, {'id': 9}]}])
+        self.assertEqual(cohort['task_ids'], ['3'])
+        self.assertEqual(cohort['event_ids'], ['5'])
+        self.assertEqual(cohort['user_ids'], ['1', '2', '3'])
+        self.assertEqual(cohort['partner_ids'], ['8', '9'])
+        with self.assertRaisesRegex(ValueError, 'repeated'):
+            testing.collect_related_projection(cohort, 'HeroTasks', [
+                {'id': 3, 'target_project_match_id': 10, 'author_user_id': 2, 'target_user_id': 3}])
+
+    def test_related_project_source_scans_past_unrelated_pages_and_keeps_all_matches(self):
+        source = SimpleNamespace(contract=SimpleNamespace(target_operation='HeroTasks'), projection=Mock(side_effect=[
+            SourcePage(({'id': 1, 'target_project_match_id': 99},), 1),
+            SourcePage(({'id': 2, 'target_project_match_id': 10}, {'id': 3, 'target_project_match_id': 10}), 3),
+            SourcePage(({'id': 4, 'target_project_match_id': 10},), 4), SourcePage((), None)]))
+        cohort = {'version': 1, 'project_ids': ['10'], 'customer_ids': [], 'user_ids': []}
+        selected = testing.RelatedProjectSource(source, 1, cohort)
+        empty = selected.projection(0)
+        self.assertEqual(empty, SourcePage((), 1))
+        first = selected.projection(empty.next_offset)
+        second = selected.projection(first.next_offset)
+        end = selected.projection(second.next_offset)
+        self.assertEqual([row['id'] for row in first.records + second.records], [2, 3, 4])
+        self.assertEqual(end, SourcePage((), None))
+        self.assertEqual([c.args[0] for c in source.projection.call_args_list], [0, 1, 3, 4])
+        self.assertEqual(selected.results['HeroTasks']['received'], 4)
+
+    def test_related_project_source_fails_on_repeated_source_page(self):
+        source = SimpleNamespace(contract=SimpleNamespace(target_operation='HeroTasks'), projection=Mock(side_effect=[
+            SourcePage(({'id': 1, 'target_project_match_id': 99},), 1),
+            SourcePage(({'id': 1, 'target_project_match_id': 99},), 2)]))
+        cohort = {'version': 1, 'project_ids': ['10'], 'customer_ids': [], 'user_ids': []}
+        selected = testing.RelatedProjectSource(source, 1, cohort)
+        self.assertEqual(selected.projection(0), SourcePage((), 1))
+        with self.assertRaisesRegex(ValueError, 'repeated a page'):
+            selected.projection(1)
+
+    def test_related_sample_rejects_changed_task_assignee_before_import(self):
+        original = {'id': 2, 'target_project_match_id': 10, 'author_user_id': 4, 'target_user_id': 5}
+        cohort = {'version': 1, 'project_ids': ['10'], 'customer_ids': [], 'user_ids': [], 'partner_ids': [],
+                  'task_ids': [], 'event_ids': []}
+        testing.collect_related_projection(cohort, 'HeroTasks', [original])
+        source = SimpleNamespace(contract=SimpleNamespace(target_operation='HeroTasks'), projection=Mock(
+            return_value=SourcePage(({**original, 'target_user_id': 6},), None)))
+        with self.assertRaisesRegex(ValueError, 'changed its relationships'):
+            testing.RelatedProjectSource(source, 1, cohort).projection(0)
+
     def employee_fixture(self):
         fixture = employee_fixtures.TestEmployeeResume()
         fixture.setUp()
@@ -62,6 +144,17 @@ class TestMigrationRecordLimits(unittest.TestCase):
         self.assertEqual(testing.processed(second['counts']), 5)
         self.assertNotIn('last_error', second)
         self.assertEqual(second['testing_records_received'], 26)
+
+    def test_related_employee_sample_includes_users_beyond_the_independent_limit(self):
+        fixture = self.employee_fixture()
+        fixture.client.query = Mock(return_value={'partners': [
+            {'id': i, 'user_id': i + 100, 'user': {'id': i + 100}} for i in range(1, 8)]})
+        with patch.object(employees, 'upsert', return_value='updated') as write:
+            state = fixture.run_import(record_limit=2, continue_on_conflict=True,
+                                       cohort_user_ids=['102', '105', '107', '999'])
+        self.assertEqual([call.args[0]['id'] for call in write.call_args_list], [1, 2, 5, 7])
+        self.assertEqual(state['testing_missing_user_ids'], ['999'])
+        self.assertTrue(state['done'])
 
     def test_employee_slices_share_frozen_selection_and_remaining_budget(self):
         fixture = self.employee_fixture()
@@ -115,6 +208,46 @@ class TestMigrationRecordLimits(unittest.TestCase):
         self.assertEqual(write.call_count, 5)
         self.assertEqual(fetch.call_count, 1)
         self.assertEqual(set(saved), {('test-run', 'HeroProducts')})
+
+    def test_product_test_requests_only_remaining_records(self):
+        saved = {}
+        client = Mock()
+        client.query.side_effect = lambda _query, variables: {
+            'supply_product_versions': [{'product_id': f'P{i}'} for i in range(variables['offset'],
+                                         variables['offset'] + variables['first'])]}
+        fake = SimpleNamespace(db=SimpleNamespace(commit=Mock(), rollback=Mock()), log_error=Mock())
+        with patch.object(products, 'frappe', fake), \
+             patch.object(testing, 'test_state', side_effect=lambda *args: copy.deepcopy(saved)), \
+             patch.object(testing, 'save_test_state', side_effect=lambda _run, _op, state: saved.update(copy.deepcopy(state))), \
+             patch.object(products, '_links', return_value={}), patch.object(products, '_Masters'), \
+             patch.object(products, 'upsert', return_value='added'):
+            result = products.sync_products(client, source_instance='source',
+                                             read=products.runtime.builtin_read('HeroProducts'),
+                                             record_limit=5, run_name='test-run')
+        self.assertEqual(client.query.call_args.args[1]['first'], 5)
+        self.assertEqual(result['testing_records_received'], 5)
+
+    def test_product_pending_price_keeps_import_count_and_emits_review(self):
+        from hero_integration.services.file_migration import run_counts
+        saved = {}
+        fake = SimpleNamespace(db=SimpleNamespace(commit=Mock(), rollback=Mock(), get_value=Mock(return_value='ITEM-1')),
+                               log_error=Mock())
+        def imported(_row, _link, _masters, _source, **kwargs):
+            kwargs['relation_warnings'].append('Native collection rows require a stable source identity.')
+            return 'added'
+        with patch.object(products, 'frappe', fake), \
+             patch.object(testing, 'test_state', return_value={}), \
+             patch.object(testing, 'save_test_state', side_effect=lambda _run, _op, state: saved.update(copy.deepcopy(state))), \
+             patch.object(products, '_links', return_value={}), patch.object(products, '_Masters'), \
+             patch.object(products, 'fetch_page', return_value=[{'product_id': 'P1'}]), \
+             patch.object(products, 'upsert', side_effect=imported), \
+             patch('hero_integration.services.integration_events.record_output') as output:
+            state = products.sync_products(Mock(), source_instance='source', read=products.runtime.builtin_read('HeroProducts'),
+                                           record_limit=1, run_name='test-run')
+        self.assertEqual((state['counts']['added'], state['counts']['pending_review']), (1, 1))
+        self.assertEqual((run_counts(state['counts'])['processed'], run_counts(state['counts'])['created_records']), (1, 1))
+        self.assertEqual(output.call_args.kwargs['result'], 'PENDING_REVIEW')
+        self.assertEqual(output.call_args.kwargs['target_name'], 'ITEM-1')
 
     def test_child_inherits_parent_limit_without_rereading_changed_settings(self):
         owner = SimpleNamespace(get_single=Mock(side_effect=AssertionError('child must use frozen parent')))

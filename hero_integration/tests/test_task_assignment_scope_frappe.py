@@ -20,7 +20,7 @@ class TestTaskAssignmentScope(unittest.TestCase):
             'technical_action': 'task_assignment_review'}, fields=['detail'])
         self.assertTrue(any('no verified project' in row.detail for row in event))
 
-    def test_project_company_allows_distinct_recipient_and_transfer(self):
+    def test_project_company_allows_initial_assignment_but_holds_unordered_transfer(self):
         company = frappe.get_all('Company', pluck='name', limit=1)[0]
         frappe.set_user('Administrator')
         project = frappe.get_doc({'doctype': 'Project', 'project_name': 'scope-' + self._testMethodName,
@@ -52,6 +52,9 @@ class TestTaskAssignmentScope(unittest.TestCase):
         _record_task_assignment_pending(self.run, row, self.task, self.source)
         self.assertEqual(frappe.db.count('ToDo', {'reference_type': 'Task', 'reference_name': self.task, 'status': 'Open'}), 1)
         _record_task_assignment_pending(self.run, {**self.record, 'target_user_id': 991003}, self.task, self.source)
-        self.assertEqual(self.state().state_revision, 2)
-        self.assertEqual(frappe.get_doc('ToDo', state.todo).status, 'Cancelled')
-        self.assertEqual(frappe.get_doc('ToDo', self.state().todo).allocated_to, self.users[2])
+        self.assertEqual(self.state().state_revision, 1)
+        self.assertEqual(frappe.get_doc('ToDo', state.todo).status, 'Open')
+        self.assertEqual(frappe.get_doc('ToDo', self.state().todo).allocated_to, self.users[1])
+        details = frappe.get_all('HERO Integration Record', filters={'technical_action': 'task_assignment_review',
+                                 'target_name': self.task}, pluck='detail')
+        self.assertTrue(any('PENDING_SOURCE_ORDER' in detail for detail in details))

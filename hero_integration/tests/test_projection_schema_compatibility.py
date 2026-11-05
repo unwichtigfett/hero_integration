@@ -7,32 +7,7 @@ import unittest
 from graphql import build_schema, introspection_from_schema
 
 from hero_integration.services import projection_contracts as pc
-
-_GRAPHQL = {'int': 'Int', 'string': 'String', 'boolean': 'Boolean'}
-_NESTED = {
-    'resources': ('CompanyResource', 'id: Int name: String type: String type_id: Int'),
-    'partners': ('Partner', 'id: Int full_name: String'),
-}
-
-
-def _sdl(*, drop=(), retype=None):
-    """A synthetic schema that offers exactly what the reviewed projections read."""
-    retype = retype or {}
-    types, roots = [], []
-    for name in pc.CONTRACTS:
-        contract = pc.CONTRACTS[name]
-        fields = []
-        for path, source_type in contract['paths'].items():
-            if (contract['type'], path) in drop:
-                continue
-            if path in _NESTED:
-                fields.append(f'{path}: [{_NESTED[path][0]}]')
-            else:
-                fields.append(f"{path}: {retype.get((contract['type'], path), _GRAPHQL[source_type.split('|')[0]])}")
-        types.append(f"type {contract['type']} {{ {' '.join(fields)} }}")
-        roots.append(f"{contract['root']}(first: Int, offset: Int, orderBy: String): [{contract['type']}]")
-    types += [f'type {name} {{ {fields} }}' for name, fields in _NESTED.values()]
-    return 'type Query { ' + ' '.join(roots) + ' } ' + ' '.join(types)
+from hero_integration.tests.projection_schema_fixture import projection_sdl as _sdl
 
 
 def _snapshot(sdl, fingerprint=''):

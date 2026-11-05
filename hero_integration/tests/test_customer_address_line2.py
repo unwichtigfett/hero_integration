@@ -66,11 +66,19 @@ def verify_saved_snapshot_binding() -> dict[str, object]:
 
     from hero_integration.services.mapping_suggestions import source_fields
 
-    snapshot = frappe.get_doc("HERO GraphQL Schema Snapshot", "2b55ter0bc")
-    fields = source_fields("HeroCustomers", json.loads(snapshot.snapshot_json), "address.line_2")
-    selected = [field for field in fields if field.path == "address.line_2" and field.selectable]
-    if len(selected) != 1 or selected[0].fieldtype != "String":
-        raise AssertionError("Saved snapshot does not expose one selectable Customer.address.line_2 String field.")
+    snapshot = None
+    selected = []
+    for name in frappe.get_all("HERO GraphQL Schema Snapshot", filters={"analysis_status": "Validated"},
+                               pluck="name", order_by="creation desc"):
+        candidate = frappe.get_doc("HERO GraphQL Schema Snapshot", name)
+        fields = source_fields("HeroCustomers", json.loads(candidate.snapshot_json), "address.line_2")
+        matches = [field for field in fields if field.path == "address.line_2" and field.selectable
+                   and field.fieldtype == "String"]
+        if len(matches) == 1:
+            snapshot, selected = candidate, matches
+            break
+    if snapshot is None:
+        raise AssertionError("No validated snapshot exposes a selectable Customer.address.line_2 String field.")
     target = frappe.get_meta("Address").get_field("address_line2")
     if not target or target.fieldtype != "Data" or target.reqd or target.read_only:
         raise AssertionError("Address.address_line2 is not an optional writable Data field.")
@@ -93,17 +101,18 @@ def verify_persisted_drafts(
 
     from hero_integration.services.read_contract import ReadContractError, from_documents
 
-    snapshot = frappe.get_doc("HERO GraphQL Schema Snapshot", "2b55ter0bc")
     v1_service = frappe.get_doc("HERO GraphQL Service", "HERO-GQL-00080")
     v1_mapping = frappe.get_doc("HERO GraphQL Mapping", "HERO-GQL-MAP-00079")
-    v1_contract = from_documents(v1_service, v1_mapping, snapshot)
+    v1_snapshot = frappe.get_doc("HERO GraphQL Schema Snapshot", v1_service.schema_snapshot)
+    v1_contract = from_documents(v1_service, v1_mapping, v1_snapshot)
     draft_service = frappe.get_doc("HERO GraphQL Service", service_name)
     draft_mapping = frappe.get_doc("HERO GraphQL Mapping", mapping_name)
+    draft_snapshot = frappe.get_doc("HERO GraphQL Schema Snapshot", draft_service.schema_snapshot)
     draft_definition = frappe.get_doc(
         "HERO Frappe Mapping", {"definition_id": LINE2_DEFINITION_ID}
     )
     try:
-        from_documents(draft_service, draft_mapping, snapshot)
+        from_documents(draft_service, draft_mapping, draft_snapshot)
     except ReadContractError as error:
         rejected_reason = str(error)
     else:

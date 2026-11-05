@@ -329,6 +329,36 @@ class TestMappedMetadataExceptions(TestCase):
 
 
 class TestMappedAssignmentAdmission(TestCase):
+    def test_invalid_assignee_does_not_block_task_and_is_reported_separately(self):
+        from hero_integration.services import migration
+        assignment = rule('assignee', 'target_user_id', 'ToDo', 'allocated_to', kind='int|null', transform='HERO User Link')
+        p = plan(task_rules() + [assignment])
+        record = {'id': 42, 'title': 'Synthetic', '_hero_source_instance': 'source-a',
+                  'target_user_id': 0, 'is_deleted': False}
+        with patch.object(migration, '_upsert', return_value=migration.Result('CREATED', '', 'Task', 'T1')) as upsert, \
+             patch.object(migration, 'record_output') as output:
+            result = migration._migrate_mapped_task(record, NS(mode='Execute', name='RUN'), p,
+                {'confirmed': True, 'source_instance': 'source-a', 'source_type': 'Task'})
+        self.assertEqual(result.code, 'CREATED')
+        self.assertEqual(upsert.call_args.args[3], {'subject': 'Synthetic'})
+        self.assertEqual(output.call_args.kwargs['result'], 'PENDING_REVIEW')
+        self.assertEqual(output.call_args.kwargs['target_name'], 'T1')
+
+    def test_missing_project_does_not_block_valid_task_when_reference_can_be_deferred(self):
+        from hero_integration.services import migration
+        project = rule('project', 'target_project_match_id', 'Task', 'project', kind='int|null',
+                       purpose='Project Relation', transform='HERO Project Link', relation='HERO Project Link')
+        p = plan(task_rules() + [project])
+        record = {'id': 42, 'title': 'Synthetic', '_hero_source_instance': 'source-a',
+                  'target_project_match_id': 7, 'is_deleted': False}
+        with patch.object(migration, '_link', return_value=None), \
+             patch('hero_integration.services.deferred_references.installed', return_value=True), \
+             patch.object(migration, '_upsert', return_value=migration.Result('CREATED', '', 'Task', 'T1')) as upsert:
+            result = migration._migrate_mapped_task(record, NS(mode='Execute'), p,
+                {'confirmed': True, 'source_instance': 'source-a', 'source_type': 'Task'})
+        self.assertEqual(result.code, 'CREATED')
+        self.assertEqual(upsert.call_args.args[3], {'subject': 'Synthetic'})
+
     def test_explicit_recipient_must_match_the_existing_guarded_user_binding(self):
         from hero_integration.services import migration
         assignment = rule('assignee', 'target_user_id', 'ToDo', 'allocated_to', kind='int|null', transform='Link Map')

@@ -32,12 +32,14 @@ def _write_scope():
     finally:
         _writing.reset(token)
 OPERATIONS = {'customer': 'HeroCustomers', 'project': 'HeroProjectMatches', 'Task': 'HeroTasks', 'CalendarEvent': 'HeroCalendarEvents'}
-TARGETS = {'customer': 'Customer', 'project': 'Project', 'User': 'User', 'partner': 'Employee'}
+TARGETS = {'customer': 'Customer', 'project': 'Project', 'User': 'User', 'partner': 'Employee',
+           'customer_address': 'Address'}
 
 
-def installed():
-    db = getattr(frappe, 'db', None)
-    return bool(db and getattr(db, 'table_exists', lambda _: False)(MAIN))
+def installed(frappe_module=None):
+    db = getattr(frappe_module if frappe_module is not None else frappe, 'db', None)
+    exists = getattr(db, 'table_exists', lambda _: False)
+    return bool(db and exists(MAIN) and exists(CHILD))
 
 
 def key(source, kind, identity):
@@ -58,6 +60,20 @@ def references(plan, record):
         value = row.get('user_id') if isinstance(row, dict) else None
         if type(value) is int and value > 0:
             result.add(('User', str(value)))
+    for relation in (getattr(plan, 'adapter_options', None) or {}).get('native_relations', []):
+        if relation.get('kind') != 'customer_addresses':
+            continue
+        rows = lookup(record, relation.get('collection_path', ''))
+        if not isinstance(rows, list):
+            continue
+        primary = lookup(record, relation.get('primary_identity_path', ''))
+        for row in rows:
+            if not isinstance(row, dict) or lookup(row, relation.get('deleted_path', '')) is not False:
+                continue
+            value = lookup(row, relation.get('identity_path', ''))
+            if (type(value) in (int, str) and str(value).strip()
+                    and (type(value) is not int or value > 0) and str(value) != str(primary)):
+                result.add(('customer_address', str(value).strip()))
     return sorted(result)
 
 
@@ -110,10 +126,11 @@ def remember(run, source_type, record, result):
         invalidate(_source_instance(record), operation, identity)
         return
     save(run.name, _source_instance(record), operation, identity, plan.mapping_version,
-         record, references(plan, record))
+         record, references(plan, record),
+         result_code='PENDING_REVIEW' if getattr(result, 'pending_relation', False) else result.code)
 
 
-def remember_file(run_name, source, operation, read, record, detail):
+def remember_file(run_name, source, operation, read, record, detail, *, cohort=None):
     if not run_name or _replaying.get() or not installed():
         return
     document = (detail or {}).get('customer_document') or {}
@@ -123,8 +140,13 @@ def remember_file(run_name, source, operation, read, record, detail):
     customers = [document.get('contact_id')] + [row.get('customer_id') for row in links]
     deps = [('project', str(v)) for v in projects if type(v) is int and v > 0]
     deps += [('customer', str(v)) for v in customers if type(v) is int and v > 0]
+    observation = {'row': record, 'detail': detail}
+    if cohort is not None:
+        project_ids, customer_ids = set(cohort['project_ids']), set(cohort['customer_ids'])
+        deps = [(kind, identity) for kind, identity in deps if identity in (project_ids if kind == 'project' else customer_ids)]
+        observation['scope'] = {'project_ids': sorted(project_ids), 'customer_ids': sorted(customer_ids)}
     save(run_name, source, operation, read.plan.source_identity(record), read.mapping_version,
-         {'row': record, 'detail': detail}, sorted(set(deps)))
+         observation, sorted(set(deps)))
 
 
 def invalidate(source, operation, identity):
@@ -136,23 +158,42 @@ def invalidate(source, operation, identity):
 
 
 def dependencies_ready(source, operation, dependencies):
-    candidates = [available(source, kind, identity) for kind, identity in dependencies]
+    """Stop as soon as the required all/any condition is decided.
+
+    A project may have hundreds of assignees. Missing one is enough to
+    postpone its complete replay, while a file can attach to any one of its
+    eligible targets. Avoid querying every remaining binding in either case.
+    """
+    if not dependencies:
+        return True
     if operation in {'HeroDocuments', 'HeroPictures'}:
-        return not candidates or any(candidates)
-    return all(candidates)
+        # A Customer can serve as a temporary attachment, but must not erase
+        # a pending Project reference that should take precedence later.
+        projects = [(kind, identity) for kind, identity in dependencies if kind == 'project']
+        candidates = projects or dependencies
+        return any(available(source, kind, identity) for kind, identity in candidates)
+    return all(available(source, kind, identity) for kind, identity in dependencies)
 
 
-def save(run_name, source, operation, identity, version, record, dependencies):
+def save(run_name, source, operation, identity, version, record, dependencies, *, result_code=None):
     name = key(source, operation, identity)
     ready = dependencies_ready(source, operation, dependencies)
     exists = frappe.db.exists(MAIN, name)
-    if ready:
+    if ready and result_code != 'PENDING_REVIEW':
         if exists:
-            frappe.db.set_value(MAIN, name, {'status': 'Resolved', 'record_json': '', 'detail': ''})
+            successful = result_code is None or result_code in {
+                'CREATED', 'UPDATED', 'SKIPPED', 'CONVERGED', 'OBSERVED', 'UNCHANGED'
+            }
+            if successful:
+                frappe.db.set_value(MAIN, name, {'status': 'Resolved', 'record_json': '', 'detail': ''})
+            else:
+                frappe.db.set_value(MAIN, name, {'status': 'Conflict',
+                    'detail': 'Native reconciliation requires review: ' + result_code})
         return
     doc = frappe.get_doc(MAIN, name, for_update=True) if exists else frappe.get_doc({'doctype': MAIN, 'identity_key': name})
     doc.update({'source_instance': source, 'operation': operation, 'source_id': str(identity),
-        'origin_run': run_name, 'mapping_version': version, 'status': 'Waiting', 'detail': '',
+        'origin_run': run_name, 'mapping_version': version, 'status': 'Conflict' if ready else 'Waiting',
+        'detail': 'Relationship requires review.' if ready else '',
         'record_json': json.dumps(_private_observation(record), ensure_ascii=False),
         'dependencies': [{'dependency_key': key(source, kind, value), 'source_type': kind, 'source_id': value}
                          for kind, value in dependencies]})
@@ -211,6 +252,37 @@ def recover_pending():
         frappe.db.set_value(MAIN, row.name, 'last_checked', frappe.utils.now_datetime(), update_modified=False)
 
 
+def reconcile_source_page(source, after='', limit=BATCH, *, origin_runs=None):
+    """Recheck one stable page at the end of a full migration.
+
+    Still-missing dependencies remain Waiting for the normal binding wakeup.
+    Each completed reconciliation is committed independently, as in the worker.
+    """
+    if not installed():
+        raise RuntimeError('Pending relationship storage is not installed.')
+    if origin_runs is not None and not origin_runs:
+        return after, False
+    origin_clause = ' AND origin_run IN %s' if origin_runs is not None else ''
+    params = ((source, after, tuple(origin_runs), limit) if origin_runs is not None else (source, after, limit))
+    rows = frappe.db.sql('''SELECT name FROM `tabHERO Pending Reference`
+        WHERE source_instance=%s AND status='Waiting' AND name>%s''' + origin_clause +
+        ' ORDER BY name LIMIT %s', params, as_dict=True)
+    actor = frappe.session.user
+    for row in rows:
+        try:
+            resolve_one(row.name)
+            frappe.db.commit()
+        except Exception:
+            frappe.db.rollback()
+            frappe.db.set_value(MAIN, row.name, {'status': 'Conflict',
+                'detail': 'Deferred relationship validation failed; refresh the original source record.'})
+            frappe.db.commit()
+            frappe.log_error(title='Pending HERO relationship failed', message='Reference ' + row.name)
+        finally:
+            frappe.set_user(actor)
+    return (rows[-1].name if rows else after), len(rows) == limit
+
+
 def resolve_dependency(source, kind, identity, after=''):
     """One bounded keyset page per job; no retry loop or upstream collection read."""
     if not installed() or kind not in TARGETS:
@@ -226,7 +298,7 @@ def resolve_dependency(source, kind, identity, after=''):
         if time.monotonic() >= deadline:
             break
         try:
-            resolve_one(row.name)
+            resolve_one(row.name, dependency=(kind, str(identity)))
             frappe.db.commit()
         except Exception:
             frappe.db.rollback()
@@ -241,10 +313,14 @@ def resolve_dependency(source, kind, identity, after=''):
         _enqueue_dependency(source, kind, identity, after=last, enqueue_after_commit=True)
 
 
-def resolve_one(name):
+def resolve_one(name, *, dependency=None):
     pending = frappe.get_doc(MAIN, name, for_update=True)
-    if pending.status != 'Waiting' or not dependencies_ready(pending.source_instance, pending.operation,
+    if pending.status != 'Waiting':
+        return
+    if not dependencies_ready(pending.source_instance, pending.operation,
             [(row.source_type, row.source_id) for row in pending.dependencies]):
+        if pending.operation == 'HeroProjectMatches' and dependency and dependency[0] == 'User':
+            _resolve_available_project_assignee(pending, dependency[1])
         return
     from hero_integration.services import migration as m
     from hero_integration.client.settings import get_configuration
@@ -298,17 +374,80 @@ def resolve_one(name):
                 scope = m._projection_task_scope(run, plan, mapping, source.source_instance, source.source_instance)
                 result = m._migrate_projection_record(record, run, plan, scope)
             code = result.code
+            pending_detail = ''
+            if getattr(result, 'pending_relation', False) and code in {
+                    'CREATED', 'UPDATED', 'SKIPPED', 'CONVERGED', 'OBSERVED', 'UNCHANGED'}:
+                code = 'PENDING_REVIEW'
+                pending_detail = 'A related assignment or address still requires review.'
+            if (pending.operation == 'HeroTasks' and result.target_name
+                    and code in {'CREATED', 'UPDATED', 'SKIPPED', 'CONVERGED', 'OBSERVED', 'UNCHANGED'}):
+                from hero_integration.services.direct_mapping import MISSING, lookup
+                assignment = next((rule for rule in getattr(plan, 'definitions', ())
+                                   if getattr(rule, 'target_doctype', None) == 'ToDo'
+                                   and getattr(rule, 'target_field', None) == 'allocated_to'), None)
+                raw = lookup(record, assignment.source_path) if assignment else MISSING
+                if raw is not MISSING and raw is not None:
+                    decision = m._plan_task_assignment(run, {**record, 'target_user_id': raw},
+                                                       result.target_name, pending.source_instance)
+                    if decision.action in {'BLOCKED', 'PENDING_IDENTITY', 'CONFLICT'}:
+                        code = 'CONFLICT' if decision.action == 'CONFLICT' else 'PENDING_REVIEW'
+                        pending_detail = decision.detail
             from hero_integration.services.integration_events import record_output
             record_output(run=run.name, source_type={'HeroCustomers': 'customer', 'HeroProjectMatches': 'project', 'HeroTasks': 'Task',
                 'HeroCalendarEvents': 'CalendarEvent'}[pending.operation], source_id=pending.source_id,
-                result=code, action='hero_to_frappe', detail='Deferred relationship reconciliation: ' + (result.detail or ''),
+                result=code, action='hero_to_frappe', detail='Deferred relationship reconciliation: ' + (pending_detail or result.detail or ''),
                 target_doctype=result.target_doctype, target_name=result.target_name)
         success = code in {'CREATED', 'UPDATED', 'SKIPPED', 'CONVERGED', 'OBSERVED', 'UNCHANGED'}
+        needs_review = code == 'PENDING_REVIEW'
+        # Dependencies are already present here. Do not repeatedly replay an
+        # authority/invalid-identity hold on every scheduler recovery cycle.
         frappe.db.set_value(MAIN, name, {'status': 'Resolved' if success else 'Conflict',
             'record_json': '' if success else pending.record_json,
-            'detail': '' if success else 'Native reconciliation requires review: ' + code})
+            'detail': '' if success else 'Assignment remains pending; review its source identity and authority.' if needs_review
+                      else 'Native reconciliation requires review: ' + code})
     finally:
         _replaying.reset(token)
+
+
+def _resolve_available_project_assignee(pending, user_id):
+    """Add one newly bound assignee while keeping other relationships pending.
+
+    Never remove assignments in this partial pass. Reuse only the exact last
+    source observation acknowledged by the existing Project link.
+    """
+    if not available(pending.source_instance, 'User', user_id):
+        return
+    from hero_integration.services import migration as m
+    from hero_integration.client.settings import get_configuration
+    from hero_integration.integrations.project_assignments import sync
+    run = frappe.get_doc('HERO Integration Run', pending.origin_run)
+    if run.owner != 'Administrator' and not frappe.db.get_value('User', run.owner, 'enabled'):
+        raise PermissionError('The original migration actor is inactive.')
+    frappe.set_user(run.owner)
+    frappe.only_for('System Manager')
+    if run.mode == 'Preview' or run.state in {'Cancelled', 'Failed'}:
+        raise ValueError('The original migration does not permit deferred writes.')
+    config = get_configuration(fresh=True)
+    if config.source_instance != pending.source_instance:
+        raise ValueError('The configured source changed.')
+    m.validate_run_mappings(run)
+    m._source_for_run(run, config)
+    plan = m._mapping_plan_for_run(run, pending.operation)
+    record = json.loads(pending.record_json)
+    if (plan.mapping_version != pending.mapping_version or str(plan.source_identity(record)) != pending.source_id
+            or m._source_instance(record) != pending.source_instance):
+        raise ValueError('The deferred Project mapping or source identity changed.')
+    link = m._link('project', pending.source_id, pending.source_instance)
+    if (not link or link.target_doctype != 'Project' or link.sync_status != 'Synchronized'
+            or link.mapping_version != pending.mapping_version or link.source_payload_hash != m._digest(record)
+            or not frappe.db.exists('Project', link.target_name)):
+        return
+    project = frappe.get_doc('Project', link.target_name)
+    frappe.has_permission('Project', 'write', doc=project, throw=True)
+    assignments = [row for row in record.get('project_match_assignments') or []
+                   if isinstance(row, dict) and type(row.get('user_id')) is int and str(row['user_id']) == user_id]
+    if assignments:
+        sync(link.target_name, {**record, 'project_match_assignments': assignments}, allow_removals=False)
 
 
 def _resolve_file(pending):
@@ -329,6 +468,13 @@ def _resolve_file(pending):
         raise ValueError('The imported file observation changed.')
     projects = files._bindings('project', 'Project', pending.source_instance)
     customers = files._bindings('customer', 'Customer', pending.source_instance)
+    if 'scope' in observation:
+        scope = observation['scope']
+        if (not isinstance(scope, dict) or not isinstance(scope.get('project_ids'), list)
+                or not isinstance(scope.get('customer_ids'), list)):
+            raise ValueError('The deferred file test scope is invalid.')
+        projects = {key: value for key, value in projects.items() if key in scope['project_ids']}
+        customers = {key: value for key, value in customers.items() if key in scope['customer_ids']}
     target = files.resolve_target(detail, projects, customers)
     if not target[0]:
         raise ValueError('The file attachment is still unresolved.')

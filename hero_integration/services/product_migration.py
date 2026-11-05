@@ -172,13 +172,14 @@ def _conflict(link, source: str, detail: str) -> str:
     return "conflict"
 
 
-def upsert(row: dict, link, masters: _Masters, source_instance: str, read=None) -> str:
+def upsert(row: dict, link, masters: _Masters, source_instance: str, read=None, *, relation_warnings=None) -> str:
     """Create or update one Item; returns added, updated, unchanged or conflict."""
     read = read or runtime.resolve_read(OPERATION, source_instance)
     values = item_values(row, read)
     owned = values.pop("owned")
     source = digest({**values, "mapping": read.mapping_version})
     relations = (getattr(read.plan, 'adapter_options', None) or {}).get('native_relations')
+    relation_pending = ''
     status, detail = (getattr(link, "sync_status", "") or "", getattr(link, "conflict_detail", "") or "") if link else ("", "")
     if status == "Rejected":
         return "skipped_rejected"  # declined: HERO changes to this article are not imported
@@ -221,11 +222,14 @@ def upsert(row: dict, link, masters: _Masters, source_instance: str, read=None) 
             return _conflict(link, source, f"{error} The newer HERO article was not applied.")
         if relations:
             from hero_integration.services.mapped_relations import sync
+            from hero_integration.services.mapped_collection_relations import MissingCollectionIdentity
             try:
                 checks = sync(read.plan, {**row, '_hero_source_instance': source_instance}, 'Item', item.name, preview=True)
+            except MissingCollectionIdentity as error:
+                relation_pending = str(error)
             except ValueError as error:
                 return _conflict(link, source, str(error))
-            if checks.get('conflicts'):
+            if not relation_pending and checks.get('conflicts'):
                 return _conflict(link, source, 'Mapped item prices changed locally; review before updating.')
     fields = {key: values[key] for key in owned}
     if item is None:
@@ -252,13 +256,20 @@ def upsert(row: dict, link, masters: _Masters, source_instance: str, read=None) 
             item.name, price_list, values[key], item.stock_uom, None)
         if plan is not None:
             prices[price_list] = apply_price(item.name, price_list, plan)
-    if relations:
+    if relations and not relation_pending:
         from hero_integration.services.mapped_relations import sync
-        counts = sync(read.plan, {**row, '_hero_source_instance': source_instance}, 'Item', item.name)
+        from hero_integration.services.mapped_collection_relations import MissingCollectionIdentity
+        try:
+            counts = sync(read.plan, {**row, '_hero_source_instance': source_instance}, 'Item', item.name)
+        except MissingCollectionIdentity as error:
+            relation_pending = str(error)
+            counts = {}
         if counts.get('conflicts'):
             return _conflict(link, source, 'Mapped item prices changed locally; review before updating.') if link else 'conflict'
-    link_values = {"sync_status": "Synchronized", "target_name": item.name, "source_payload_hash": source,
-                   "target_payload_hash": owned_digest(item, owned), "conflict_detail": "",
+    if relation_pending and relation_warnings is not None:
+        relation_warnings.append(relation_pending)
+    link_values = {"sync_status": "Pending Review" if relation_pending else "Synchronized", "target_name": item.name, "source_payload_hash": source,
+                   "target_payload_hash": owned_digest(item, owned), "conflict_detail": relation_pending,
                    "target_field_hashes": json.dumps({"prices": prices, "fields": owned_field_digests(item, owned),
                                                      **({"supplier": supplier_baseline} if supplier_baseline else {})},
                                                      sort_keys=True),
@@ -460,7 +471,12 @@ def sync_products(client=None, *, source_instance: str | None = None, time_budge
         if should_stop and should_stop():
             state["stopped"] = True
             break
-        received = fetch_page(client, offset, read.page_size, read)
+        page_size = min(read.page_size, record_limit - processed(counts)) if record_limit is not None else read.page_size
+        received = fetch_page(client, offset, page_size, read)
+        fingerprint = hashlib.sha256(json.dumps(received, sort_keys=True, separators=(',', ':'),
+                                                 default=str).encode()).hexdigest() if received else ''
+        if fingerprint and state.get('last_page_fingerprint') == fingerprint:
+            raise ValueError('HERO repeated a product page; pagination cannot safely continue.')
         rows = bounded_rows(state, received, record_limit)
         counts["requests"] = counts.get("requests", 0) + 1
         for row in rows:
@@ -469,7 +485,15 @@ def sync_products(client=None, *, source_instance: str | None = None, time_budge
                 counts["skipped_no_id"] = counts.get("skipped_no_id", 0) + 1
                 continue
             try:
-                result = upsert(row, links.get(key), masters, source_instance, read=read)
+                warnings = []
+                result = upsert(row, links.get(key), masters, source_instance, read=read, relation_warnings=warnings)
+                if warnings and run_name:
+                    from hero_integration.services.integration_events import record_output
+                    target_name = frappe.db.get_value('HERO Integration Link',
+                        {'source_type': SOURCE_TYPE, 'source_instance': source_instance, 'source_id': key}, 'target_name')
+                    record_output(run=run_name, source_type=SOURCE_TYPE, source_id=key, result='PENDING_REVIEW',
+                        action='product_relation_review', target_doctype='Item', target_name=target_name,
+                        detail='Article imported; a related price requires a stable source identity.')
                 frappe.db.commit()
             except Exception as error:
                 frappe.db.rollback()
@@ -477,13 +501,21 @@ def sync_products(client=None, *, source_instance: str | None = None, time_budge
                 result = "failed"
                 frappe.log_error(title="HERO product migration failed",
                                  message=f"HERO article {key} ({row.get('nr')}): {error}")
+                if run_name:
+                    from hero_integration.services.integration_events import record_output
+                    record_output(run=run_name, source_type=SOURCE_TYPE, source_id=key, result='BLOCKED_RECORD',
+                        action='product_import_failed', detail=f'Article import failed ({type(error).__name__}); see Error Log.')
             counts[result] = counts.get(result, 0) + 1
+            if result != 'failed' and warnings:
+                counts['pending_review'] = counts.get('pending_review', 0) + 1
         offset += len(rows)
         state["offset"] = offset
+        if received:
+            state['last_page_fingerprint'] = fingerprint
         if record_limit is not None and processed(counts) >= record_limit:
             state.update(done=True, testing_limit_reached=True)
             break
-        if len(received) < read.page_size:
+        if not received:
             state.update(done=True, offset=0)
             break
         save(state)

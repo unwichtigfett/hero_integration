@@ -47,6 +47,23 @@ CONFLICT_RESULTS = ("CONFLICT", "SKIPPED_AMBIGUOUS", "BLOCKED_RECORD")
 POLLING_PERIOD_DAYS = 30
 
 
+def manual_prerequisite(instance: str, frappe_module) -> str:
+    """Return the first unfinished onboarding area for this HERO source."""
+    for key, action in (("employees", "Employee Migration"), ("contacts", "Customer Migration")):
+        rows = frappe_module.get_all(
+            "HERO Integration Run",
+            filters={"action": action, "mode": "Execute", "source_instance": instance},
+            fields=["state"], order_by="creation desc, name desc", limit_page_length=1,
+        )
+        if not rows or rows[0]["state"] not in SUCCESS_STATES:
+            return key
+    return ""
+
+
+def manual_allowed(key: str, prerequisite: str) -> bool:
+    return not prerequisite or key == prerequisite
+
+
 def area(key: str) -> SyncArea:
     try:
         return BY_KEY[str(key or "").strip().lower()]

@@ -161,6 +161,29 @@ def resolve_target(detail: dict, projects: dict, customers: dict) -> tuple[str |
     return None, None
 
 
+def belongs_to_test_cohort(detail: dict, cohort: dict) -> bool:
+    """Test membership from the explicit file relationship detail response."""
+    if not isinstance(detail, dict) or any(key not in detail for key in
+            ('file_upload_matches', 'file_upload_links', 'customer_document')):
+        raise TransferError('File detail omits the relationships required for the related test sample.')
+    matches, links, document = detail['file_upload_matches'], detail['file_upload_links'], detail['customer_document']
+    if (matches is not None and (not isinstance(matches, list) or any(not isinstance(row, dict) for row in matches)) or
+            links is not None and (not isinstance(links, list) or any(not isinstance(row, dict) for row in links)) or
+            document is not None and not isinstance(document, dict)):
+        raise TransferError('File relationship details have an invalid shape.')
+    matches, links, document = matches or [], links or [], document or {}
+    if (any('project_match_id' not in row for row in matches) or
+            any('project_match_id' not in row or 'customer_id' not in row for row in links) or
+            document and ('project_match_id' not in document or 'contact_id' not in document)):
+        raise TransferError('File relationship detail omits an identity required for the related test sample.')
+    projects = {str(value) for value in cohort['project_ids']}
+    customers = {str(value) for value in cohort['customer_ids']}
+    project_values = [row.get('project_match_id') for row in matches + links] + [document.get('project_match_id')]
+    customer_values = [row.get('customer_id') for row in links] + [document.get('contact_id')]
+    return any(str(value) in projects for value in project_values if value is not None) or any(
+        str(value) in customers for value in customer_values if value is not None)
+
+
 def skip_reason(row: dict, detail: dict | None) -> str | None:
     if detail is None:
         return "no_detail"
@@ -181,11 +204,15 @@ def source_hash(row: dict) -> str:
 # ---------------------------------------------------------------- Frappe side
 
 def _bindings(source_type: str, doctype: str, source_instance: str) -> dict[str, str]:
-    """HERO id → Frappe name, only for links of this HERO source (ids repeat across sources)."""
-    return dict(frappe.db.sql("""SELECT source_id, target_name FROM `tabHERO Integration Link`
-        WHERE source_type=%s AND target_doctype=%s AND source_instance=%s AND IFNULL(target_name, '') != ''
-          AND sync_status NOT IN ('Pending Review', 'Rejected', 'Source Deleted')""",
-                              (source_type, doctype, source_instance)))
+    """Only uniquely bound HERO identities are eligible as attachment targets."""
+    rows = frappe.db.sql("""SELECT source_id, target_doctype, target_name, sync_status FROM `tabHERO Integration Link`
+        WHERE source_type=%s AND source_instance=%s AND source_system='HERO'""", (source_type, source_instance))
+    grouped = {}
+    for identity, target_type, target, status in rows:
+        grouped.setdefault(identity, []).append((target_type, target, status))
+    return {identity: bindings[0][1] for identity, bindings in grouped.items()
+            if len(bindings) == 1 and bindings[0][0] == doctype and bindings[0][1]
+            and bindings[0][2] in ('Synchronized', 'Conflict')}
 
 
 def _known_files(source_instance: str) -> dict[str, dict]:
@@ -562,7 +589,7 @@ def reset_phase(phase: str) -> None:
 
 def transfer(phase: str, *, source_instance: str | None = None, client=None, downloader=None, dry_run: bool = False,
              time_budget: int = TIME_BUDGET_SECONDS, min_free: int = MIN_FREE_BYTES, should_stop=None,
-             progress=None, record_limit=None, run_name=None) -> dict:
+             progress=None, record_limit=None, run_name=None, cohort=None) -> dict:
     """Process one phase from its saved offset until done or the time budget ends.
 
     ``source_instance`` is the HERO source the client reads from; every lookup,
@@ -576,6 +603,8 @@ def transfer(phase: str, *, source_instance: str | None = None, client=None, dow
         raise TransferError("A HERO source instance is required.")
     if phase not in OPERATION:
         raise TransferError(f"Unknown phase {phase!r}; use one of {PHASES}.")
+    if cohort is not None and (record_limit is None or dry_run or not isinstance(cohort, dict) or cohort.get('version') != 1):
+        raise TransferError('Related file selection requires a frozen test run.')
     operation = OPERATION[phase]
     read = direct_runtime.resolve_read(operation, source_instance)
     from hero_integration.services.migration_testing import bounded_rows, processed, test_state, save_test_state, validate_checkpoint
@@ -583,6 +612,10 @@ def transfer(phase: str, *, source_instance: str | None = None, client=None, dow
     save = (lambda value: save_test_state(run_name, operation, value)) if record_limit is not None else (lambda value: _save_state(phase, value))
     if record_limit is not None:
         validate_checkpoint(state, record_limit, source_instance=source_instance, mapping=read.mapping_version)
+        if cohort is not None:
+            fingerprint = hashlib.sha256(json.dumps(cohort, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+            if state.get('testing_cohort_fingerprint', fingerprint) != fingerprint:
+                raise TransferError('The frozen related project sample changed; start a new run.')
         if state.get('done'):
             return state
     if (state.get("done") or state.get("source_instance") != source_instance or "offset" not in state
@@ -594,9 +627,16 @@ def transfer(phase: str, *, source_instance: str | None = None, client=None, dow
     state.setdefault("offset", 0)
     state["source_instance"] = source_instance
     state["mapping"] = read.mapping_version
+    if cohort is not None:
+        state['testing_cohort_fingerprint'] = fingerprint
+        state['testing_record_limit'] = record_limit
     counts = state.setdefault("counts", {})
     projects = _bindings("project", "Project", source_instance)
     customers = _bindings("customer", "Customer", source_instance)
+    if cohort is not None:
+        project_ids, customer_ids = set(cohort['project_ids']), set(cohort['customer_ids'])
+        projects = {key: value for key, value in projects.items() if key in project_ids}
+        customers = {key: value for key, value in customers.items() if key in customer_ids}
     known = _known_files(source_instance)
     if not dry_run:
         allow_unlimited_attachments()
@@ -618,19 +658,33 @@ def transfer(phase: str, *, source_instance: str | None = None, client=None, dow
         counts[key] = counts.get(key, 0) + amount
 
     while True:
-        if record_limit is not None and processed(counts) >= record_limit:
+        if record_limit is not None and cohort is None and processed(counts) >= record_limit:
             state.update(testing_limit_reached=True)
             break
         page = direct_runtime.fetch_page(client, read, state["offset"])
         bump("requests")
         if not page:
             break
-        rows = bounded_rows(state, [row for row in page if direct_runtime.belongs(operation, row)], record_limit)
+        identities = [direct_runtime.identity(read, row) for row in page]
+        if len(set(identities)) != len(identities):
+            raise TransferError("HERO returned duplicate file identities in a page.")
+        page_fingerprint = hashlib.sha256(json.dumps(identities, separators=(',', ':')).encode()).hexdigest()
+        if state.get('last_page_fingerprint') == page_fingerprint:
+            raise TransferError("HERO repeated a file page; pagination cannot safely continue.")
+        candidates = [row for row in page if direct_runtime.belongs(operation, row)]
+        if cohort is None:
+            rows = bounded_rows(state, candidates, record_limit)
+            found = details(client, rows) if rows else {}
+        else:
+            state['testing_records_received'] = int(state.get('testing_records_received', 0)) + len(page)
+            found = details(client, candidates) if candidates else {}
+            if any(row.get('uuid') not in found for row in candidates):
+                raise TransferError('File detail is missing; related test selection cannot be completed.')
+            rows = [row for row in candidates if belongs_to_test_cohort(found[row['uuid']], cohort)]
         # Unchanged content is not downloaded again, but its target may have
         # become resolvable since (e.g. projects imported after the documents).
         todo = [(row, known.get(direct_runtime.identity(read, row))) for row in rows]
-        found = details(client, rows) if rows else {}
-        bump("requests", -(-len(rows) // DETAIL_BATCH))
+        bump("requests", -(-len(candidates if cohort is not None else rows) // DETAIL_BATCH))
         for index, (row, link) in enumerate(todo):
             if should_stop and index % 25 == 0 and should_stop():
                 state["stopped"] = True
@@ -653,7 +707,7 @@ def transfer(phase: str, *, source_instance: str | None = None, client=None, dow
             try:
                 if not dry_run:
                     from hero_integration.services.deferred_references import remember_file
-                    remember_file(run_name, source_instance, operation, read, row, detail)
+                    remember_file(run_name, source_instance, operation, read, row, detail, cohort=cohort)
                 reconciled = reconcile_legacy_file(link, read, row, target, folders[bool(target[0])], source_instance, dry_run=dry_run)
                 if reconciled:
                     bump(reconciled)
@@ -729,12 +783,11 @@ def transfer(phase: str, *, source_instance: str | None = None, client=None, dow
                 frappe.log_error(title="HERO file transfer failed",
                                  message=f"HERO file {row.get('id')} ({row.get('filename')}): {error}")
         state["offset"] += len(page)
+        state['last_page_fingerprint'] = page_fingerprint
         if not dry_run:
             save(state)
             if progress:
                 progress(counts)
-        if len(page) < read.page_size:
-            break
         if time.monotonic() > deadline:
             return state
     state.update(done=True)

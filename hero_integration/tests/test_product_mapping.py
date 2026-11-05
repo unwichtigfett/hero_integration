@@ -78,6 +78,28 @@ class _Frappe:
 
 
 class TestOwnMapping(unittest.TestCase):
+    def test_missing_price_identity_keeps_article_and_recovers_on_later_import(self):
+        from hero_integration.services.mapped_collection_relations import MissingCollectionIdentity
+
+        read = replace(BUILTIN, plan=replace(BUILTIN.plan, adapter_options={'version': 2, 'native_relations': [{'kind': 'sales_prices'}]}))
+        fake = _Frappe()
+        warnings = []
+        with patch.object(pm, 'frappe', fake), \
+             patch('hero_integration.services.mapped_relations.sync', side_effect=MissingCollectionIdentity('Native collection rows require a stable source identity.')):
+            self.assertEqual(pm.upsert(ROW, None, pm._Masters(), 'default', read=read, relation_warnings=warnings), 'added')
+        self.assertEqual(len(warnings), 1)
+        created = fake.links[-1][1]
+        self.assertEqual(created['sync_status'], 'Pending Review')
+        self.assertIn('stable source identity', created['conflict_detail'])
+        self.assertIn('PV-1001', fake.items)
+
+        link = SimpleNamespace(name='LINK', **created)
+        with patch.object(pm, 'frappe', fake), \
+             patch('hero_integration.services.mapped_relations.sync', return_value={'conflicts': 0}):
+            self.assertEqual(pm.upsert(ROW, link, pm._Masters(), 'default', read=read), 'updated')
+        updated = fake.links[-1][2]
+        self.assertEqual((updated['sync_status'], updated['conflict_detail']), ('Synchronized', ''))
+
     def test_article_code_follows_the_selected_source_and_is_not_a_rename(self):
         original = next(spec for spec in BUILTIN.plan.definitions if spec.target_field == "item_code")
         alternative = replace(original, definition_id="code-alternative", source_path="internal_identifier")
@@ -195,7 +217,7 @@ class TestProgress(unittest.TestCase):
                 patch.object(pm, "_links", return_value={}), patch.object(pm, "upsert", return_value="added"):
             pm.sync_products(Client(), source_instance="default", read=BUILTIN,
                              progress=lambda counts: reports.append(counts.get("added")))
-        self.assertEqual(reports, [500, 1000])  # the last, short page ends the pass and is reported by the run
+        self.assertEqual(reports, [500, 1000, 1200])  # the next empty page proves the source is exhausted
 
 
 SUPPLIER_ROW = {**ROW, "supply_operator": {"name": "Krannich Solar"},

@@ -36,7 +36,10 @@ class TestNativeTaskDeadline(unittest.TestCase):
         self.assertEqual(created.code, 'CREATED')
         task = frappe.get_doc('Task', created.target_name)
         self.assertTrue(task.get('custom_hero_due_date'))
-        self.assertFalse(task.exp_end_date)
+        # The legacy lifecycle intentionally also projects the due *day* to
+        # ERPNext's end date; the separate field retains the precise instant.
+        self.assertEqual(str(task.exp_end_date)[:10], '2026-10-29')
+        self.assertEqual(str(task.get('custom_hero_due_date'))[:19], '2026-10-29 09:30:00')
         link = frappe.get_doc('HERO Integration Link', {'source_key': 'HERO:deadline37-fixture:Task:839371'})
         baseline = decode(link.source_field_hashes)['custom_hero_due_date']
         old = task.get('custom_hero_due_date')
@@ -58,7 +61,8 @@ class TestNativeTaskDeadline(unittest.TestCase):
         self.assertEqual(link.sync_status, 'Conflict')
 
     def test_project_uses_existing_binding_and_null_preserves_it(self):
-        project = frappe.get_doc({'doctype': 'Project', 'project_name': 'Synthetic Task Project 37'}).insert()
+        project = frappe.get_doc({'doctype': 'Project', 'project_name': 'Synthetic Task Project 37',
+                                  'company': frappe.db.get_single_value('Global Defaults', 'default_company')}).insert()
         frappe.get_doc({'doctype': 'HERO Integration Link', 'source_system': 'HERO', 'source_type': 'project',
             'source_id': '839372', 'source_instance': 'deadline37-fixture', 'target_doctype': 'Project',
             'target_name': project.name, 'sync_status': 'Synchronized', 'source_payload_hash': 'fixture',

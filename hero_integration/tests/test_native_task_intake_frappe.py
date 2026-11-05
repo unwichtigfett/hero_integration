@@ -29,7 +29,7 @@ class TestNativeTaskEmptyTitleOffline(TestCase):
         fake = SimpleNamespace(db=SimpleNamespace(sql=lambda *args, **kwargs: self.fail('unexpected identity lookup')))
         with patch.object(migration, 'frappe', fake), patch.object(migration, 'record_output') as output:
             migration._record_task_assignment_pending(SimpleNamespace(name='synthetic'), record, 'TASK', 'source')
-        self.assertEqual(output.call_args.kwargs['result'], 'CONFLICT')
+        self.assertEqual(output.call_args.kwargs['result'], 'PENDING_REVIEW')
         self.assertIn('source author was not included', output.call_args.kwargs['detail'])
 
     def test_empty_title_keeps_subject_and_updates_independent_description(self):
@@ -183,6 +183,19 @@ class TestNativeTaskIntake(TestCase):
 
     def tearDown(self):
         frappe.db.rollback()
+        snapshot_name = getattr(self, '_committed_test_snapshot', None)
+        if snapshot_name:
+            # The independent-connection check commits; remove only this test's
+            # records so a later test can publish its own active mappings.
+            task_name = getattr(self, '_committed_test_task', None)
+            if task_name:
+                frappe.db.delete('HERO Integration Record', {'target_doctype': 'Task', 'target_name': task_name})
+                frappe.db.delete('HERO Integration Link', {'source_key': 'HERO:default:Task:982012', 'target_name': task_name})
+                frappe.db.delete('Task', {'name': task_name})
+            for doctype in ('HERO GraphQL Service', 'HERO GraphQL Mapping', 'HERO Frappe Mapping'):
+                frappe.db.delete(doctype, {'schema_snapshot': snapshot_name})
+            frappe.db.delete('HERO GraphQL Schema Snapshot', {'name': snapshot_name})
+            frappe.db.commit()
 
     def apply(self, record):
         return _migrate_native_task(record, self.run, _Plan(), self.scope)
@@ -287,10 +300,9 @@ class TestNativeTaskIntake(TestCase):
         self.assertFalse(frappe.db.exists('HERO Integration Link', {'source_key': 'HERO:fixture-task32a:Task:982011'}))
 
     def test_optional_comment_rule_is_a_valid_native_binding(self):
-        snapshot = frappe.get_all('HERO GraphQL Schema Snapshot', filters={
-            'schema_fingerprint': CONTRACTS['HeroTasks']['fingerprint'],
-            'analysis_status': 'Validated', 'source_instance': 'default'}, pluck='name')[0]
-        rule = frappe.get_doc({'doctype': 'HERO Frappe Mapping', 'schema_snapshot': snapshot,
+        from hero_integration.tests.projection_schema_fixture import insert_projection_snapshot
+        snapshot = insert_projection_snapshot()
+        rule = frappe.get_doc({'doctype': 'HERO Frappe Mapping', 'schema_snapshot': snapshot.name,
             'operation': 'HeroTasks', 'source_path': 'comment', 'source_type': 'string|null',
             'target_doctype': 'Task', 'target_field': 'description', 'purpose': 'Native Binding',
             'transformation': 'Native Adapter', 'definition_id': 'task32a-native-comment',
@@ -298,11 +310,9 @@ class TestNativeTaskIntake(TestCase):
         self.assertEqual(rule.status, 'Active')
 
     def test_registered_projection_reaches_native_task_with_saved_contract(self):
-        snapshots = frappe.get_all('HERO GraphQL Schema Snapshot', filters={
-            'schema_fingerprint': CONTRACTS['HeroTasks']['fingerprint'],
-            'analysis_status': 'Validated', 'source_instance': 'default'}, pluck='name')
-        self.assertEqual(len(snapshots), 1)
-        snapshot = frappe.get_doc('HERO GraphQL Schema Snapshot', snapshots[0])
+        from hero_integration.tests.projection_schema_fixture import insert_projection_snapshot
+        snapshot = insert_projection_snapshot()
+        self._committed_test_snapshot = snapshot.name
         from hero_integration.api import graphql_mapping_save, workspace_service_save, workspace_service_validate, approve_read_service
         specs = [
             MappingSpec('HeroTasks', 'id', 'HERO Integration Link', 'source_id', 'int', 'Source Identity', 'Positive Int To Text', definition_id='task32a-native-id'),
@@ -376,6 +386,7 @@ class TestNativeTaskIntake(TestCase):
         self.assertEqual(frappe.get_doc('Task', link.target_name).subject, 'Full path synthetic 32A')
         self.assertFalse(frappe.get_doc('Task', link.target_name).description)
         task_name = link.target_name
+        self._committed_test_task = task_name
         baseline = (link.source_field_hashes, link.target_field_hashes)
         run.resume_record_index = 0
         _process_projection(run, source)

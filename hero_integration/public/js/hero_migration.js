@@ -102,6 +102,8 @@
     function testingSummary(run) {
         const result = testingResults(run);
         if (Number.isInteger(result?.record_limit) && result.record_limit > 0) {
+            if (result.selection === 'related_projects') return format('{0} · up to {1} selected projects and related records',
+                tr(run.testing_status || 'PENDING'), number(result.record_limit));
             return format('{0} · up to {1} records per area',
                 tr(run.testing_status || 'PENDING'), number(result.record_limit));
         }
@@ -113,6 +115,11 @@
         const result = testingResults(run);
         if (!result) return [["Testing results", tr("Results unavailable")]];
         if (Number.isInteger(result.record_limit) && result.record_limit > 0) {
+            if (result.selection === 'related_projects') return Object.entries(result.areas || {}).map(([name, area]) => [name,
+                format('{0} · {1} processed · {2} received · {3} related identities unresolved', tr(area?.status || 'PENDING'),
+                    number(area?.processed), number(area?.received), number((area?.missing_related || 0) +
+                        (area?.missing_related_users || 0) + (area?.ambiguous_related_users || 0) +
+                        (area?.missing_related_partners || 0)))]);
             return Object.entries(result.areas || {}).map(([name, area]) => [name,
                 format('{0} · {1}/{2} processed · {3} received', tr(area?.status || 'PENDING'),
                     number(area?.processed), number(result.record_limit), number(area?.received))]);
@@ -138,7 +145,7 @@
     function mount(page) {
         page.main.empty().addClass("hero-integration-ui");
         const host = page.main.get(0);
-        const state = {data: null, view: "migration", tab: "history", runsStart: 0, conflictsStart: 0, selectedRun: "", selectedArea: "contacts", selectedConflict: null, selectedConflicts: new Set(), busy: false, timer: null, destroyed: false, runs: null, conflicts: null, detail: null};
+        const state = {data: null, view: "migration", tab: "history", runsStart: 0, conflictsStart: 0, pendingStart: 0, selectedRun: "", selectedArea: "contacts", selectedConflict: null, selectedConflicts: new Set(), busy: false, timer: null, destroyed: false, runs: null, conflicts: null, pending: null, detail: null};
 
         const notice = el("div", {class: "hero-sync-notice", role: "status", "aria-live": "polite"});
         const head = el("header", {class: "hero-sync-panel hero-sync-head", "data-views": "migration"},
@@ -187,10 +194,11 @@
             const cards = actionAreas().map((area) => {
                 const running = Boolean(area.running_run);
                 const blockedByOther = Boolean(activeRun) && !running;
+                const waiting = Boolean(state.data.manual_prerequisite) && area.key !== state.data.manual_prerequisite;
                 const button = el("button", {type: "button", class: "hero-sync-action", "data-area": area.key,
-                    disabled: (running || blockedByOther || !area.ready || state.busy) || undefined,
-                    title: running ? tr("This area is running.") : blockedByOther ? format("Run {0} is still in progress.", activeRun.name) : area.ready ? "" : tr(area.blocker),
-                    onclick: () => startArea(area)}, tr(running ? "Running …" : area.button));
+                    disabled: (waiting || running || blockedByOther || !area.ready || state.busy) || undefined,
+                    title: waiting ? tr("Migrate Employees first and Contacts second") : running ? tr("This area is running.") : blockedByOther ? format("Run {0} is still in progress.", activeRun.name) : area.ready ? "" : tr(area.blocker),
+                    onclick: () => startArea(area)}, tr(waiting ? "Waiting" : running ? "Running …" : state.data.manual_prerequisite ? "Start" : area.button));
                 const scope = area.scope || {};
                 return el("article", {class: `hero-sync-card ${state.selectedArea === area.key ? "is-selected" : ""}`, "data-area": area.key},
                     el("button", {type: "button", class: "hero-sync-card-title", title: tr("Show function details"), onclick: () => { state.selectedArea = area.key; state.tab = "details"; renderManual(); renderWork(); }},
@@ -205,11 +213,12 @@
             });
             put(manual, 
                 el("div", {class: "hero-sync-section-head"}, el("h3", {id: "hero-sync-manual-title", text: tr("Manual Actions")}), el("span", {text: tr("Start or update migrations for individual data areas")})),
+                state.data.manual_prerequisite ? el("p", {class: "hero-sync-error", role: "status", text: tr("Migrate Employees first and Contacts second")}) : null,
                 el("div", {class: "hero-sync-cards"}, cards));
         }
 
         function startArea(area) {
-            const verb = area.button === "Start" ? "Start" : "Update";
+            const verb = state.data.manual_prerequisite || area.button === "Start" ? "Start" : "Update";
             const question = area.confirm
                 ? format("{0} {1}? {2}", tr(verb), tr(area.action_label), tr(area.description))
                 : format("{0} {1}? This migrates the object fields of the active mapping for {2} from HERO into Frappe.", tr(verb), tr(area.action_label), tr(area.label));
@@ -294,7 +303,7 @@
         }
 
         // --- Lower work area -----------------------------------------------------------
-        const TABS = [["history", "Runtime History"], ["details", "Function Details"], ["conflicts", "Conflicts"]];
+        const TABS = [["history", "Runtime History"], ["details", "Function Details"], ["pending", "Pending relationships"], ["conflicts", "Conflicts"]];
         function renderWork() {
             const tabs = el("div", {class: "hero-sync-tabs", role: "tablist"}, TABS.map(([key, label]) =>
                 el("button", {type: "button", role: "tab", class: "hero-sync-tab", "aria-selected": state.tab === key ? "true" : "false",
@@ -302,6 +311,7 @@
             const main = el("div", {class: "hero-sync-work-main"}), side = el("aside", {class: "hero-sync-work-side", "aria-live": "polite"});
             if (state.tab === "history") renderHistory(main, side);
             else if (state.tab === "details") renderDetails(main, side);
+            else if (state.tab === "pending") renderPending(main, side);
             else renderConflicts(main, side);
             put(work, tabs, el("div", {class: "hero-sync-work-body"}, main, side));
         }
@@ -382,6 +392,8 @@
                 outcomes.length ? el("div", {class: "hero-sync-chips"}, outcomes.map(([code, count]) => el("span", {class: "hero-sync-chip", text: `${tr(code)}: ${number(count)}`}))) : null,
                 run.conflicts?.length ? el("div", {class: "hero-sync-detail-list"}, el("h5", {text: tr("Conflicts in this run")}),
                     el("ul", {}, run.conflicts.map((item) => el("li", {text: `${item.source_type} ${item.source_id}: ${diagnostic(item.detail || item.result)}`})))) : null,
+                run.pending_reviews?.length ? el("div", {class: "hero-sync-detail-list"}, el("h5", {text: tr("Pending reviews in this run")}),
+                    el("ul", {}, run.pending_reviews.map((item) => el("li", {text: `${item.source_type} ${item.source_id}: ${diagnostic(item.detail || item.result)}`})))) : null,
                 actions);
         }
 
@@ -413,7 +425,7 @@
                     ? el("div", {class: "hero-sync-scope"}, area.scope.objects.map((object) => el("div", {class: "hero-sync-scope-object"},
                         el("strong", {text: `${object.doctype} · ${plural(object.fields.length, "field", "fields")}`}),
                         el("div", {class: "hero-sync-chips"}, object.fields.map((field) => el("span", {class: "hero-sync-chip", text: field}))))))
-                    : el("p", {class: "hero-sync-hint", text: tr(area.kind === "full" ? "Runs Project, Event, Task, Product, Document and Picture Migration in this order." : "No active mapping rules exist for this area. Create and activate them under Mapping.")}));
+                    : el("p", {class: "hero-sync-hint", text: tr(area.kind === "full" ? "Runs Employees, Contacts, Projects, Events, Tasks, Documents, Pictures, Products and Services in this order." : "No active mapping rules exist for this area. Create and activate them under Mapping.")}));
             add(side, 
                 el("h4", {text: tr("Prerequisites")}),
                 el("dl", {class: "hero-sync-facts"},
@@ -423,6 +435,23 @@
                     el("dt", {text: tr("Last successful")}), el("dd", {text: formatDateTime(area.last_successful)}),
                     el("dt", {text: tr("Automatic sync")}), el("dd", {text: tr(area.kind ? "Manual start only" : area.sync_enabled ? (area.polled ? "On · read by polling" : "On") : "Off")})),
                 area.blocker ? el("p", {class: "hero-sync-error", text: tr(area.blocker)}) : null);
+        }
+
+        function renderPending(main, side) {
+            const data = state.pending;
+            add(main, el("h3", {text: tr("Pending relationships")}));
+            if (!data) { add(main, el("p", {text: tr("Loading …")})); return; }
+            if (!data.available) { add(main, el("p", {class: "hero-sync-error", text: tr("Pending relationship storage is not installed.")})); return; }
+            if (!data.rows.length) { add(main, el("p", {class: "hero-sync-hint", text: tr("No pending relationships.")})); return; }
+            add(main, el("div", {class: "hero-sync-table-wrap"}, el("table", {class: "hero-sync-table"},
+                el("thead", {}, el("tr", {}, ["Area", "HERO ID", "Status", "Related HERO IDs", "Details"].map(label => el("th", {scope: "col", text: tr(label)})))),
+                el("tbody", {}, data.rows.map(row => el("tr", {},
+                    el("td", {text: row.operation}), el("td", {class: "hero-sync-mono", text: row.source_id}),
+                    el("td", {text: tr(row.display_status)}),
+                    el("td", {text: (row.dependencies || []).map(dep => `${dep.source_type}: ${dep.source_id}`).join(", ")}),
+                    el("td", {text: row.detail ? diagnostic(row.detail) : "—"})))))),
+                pager(data.start, data.total, data.rows.length, start => { state.pendingStart = Math.max(0, start); loadPending(); }));
+            add(side, el("p", {class: "hero-sync-hint", text: tr("Relationships are rechecked when their source records arrive. Resolved entries disappear from this list.")}));
         }
 
         async function decideConflicts(rows, decision) {
@@ -545,9 +574,15 @@
             catch (error) { state.conflicts = {start: 0, total: 0, rows: []}; say(error.message, "error"); }
             if (state.tab === "conflicts") renderWork();
         }
+        async function loadPending() {
+            try { state.pending = await call("sync_page_pending_relationships", {start: state.pendingStart, page_size: PAGE_SIZE}); }
+            catch (error) { state.pending = null; say(error.message, "error"); }
+            if (state.tab === "pending") renderWork();
+        }
         function loadTab() {
             if (state.tab === "history") return loadRuns();
             if (state.tab === "conflicts") return loadConflicts();
+            if (state.tab === "pending") return loadPending();
             return Promise.resolve();
         }
 

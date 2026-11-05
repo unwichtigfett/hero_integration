@@ -48,7 +48,8 @@ class TestProjectionRuntime(unittest.TestCase):
         plan = plan_from_definitions("HeroTasks", definitions("HeroTasks"))
         row = record()
         row["target_project_match_id"] = 4
-        with patch.object(migration, "_link", return_value=None), patch.object(
+        with patch('hero_integration.services.deferred_references.installed', return_value=False), \
+                patch.object(migration, "_link", return_value=None), patch.object(
             migration, "_upsert"
         ) as write:
             result = migration._migrate_projection(row, SimpleNamespace(mode="Execute"), plan)
@@ -126,3 +127,25 @@ class TestProjectionRuntime(unittest.TestCase):
             self.assertEqual(apply({"subject": "new", "location": "source edit"}).code, "CONFLICT")
             self.assertEqual(apply({"subject": "new"}, "v2").code, "CONFLICT")
             self.assertEqual(target.saves, 1)
+
+    def test_event_mapping_republication_requires_unchanged_field_evidence(self):
+        from hero_integration.services.change_detection import encode, field_hashes
+
+        original = {'subject': 'Appointment', 'location': 'Office'}
+        link = SimpleNamespace(name='LINK', target_doctype='Event', target_name='EV-1', mapping_version='old',
+            source_field_hashes=encode(field_hashes(original)), target_field_hashes=encode(field_hashes(original)))
+        target = SimpleNamespace(name='EV-1', get=lambda field: original.get(field))
+        fake = SimpleNamespace(db=SimpleNamespace(exists=lambda *args: True), get_doc=lambda *args: target)
+        with patch.object(migration, 'frappe', fake), patch.object(migration, '_target_available', return_value=True), \
+             patch.object(migration, '_link', return_value=link), patch.object(migration, '_observe_link'), \
+             patch.object(migration, '_save_link') as save:
+            def apply(values, mode='Execute'):
+                return migration._upsert('CalendarEvent', '9', {'id': 9}, values, 'Event', 'custom_hero_key',
+                                         'new', SimpleNamespace(mode=mode), preserve_omitted=True)
+            self.assertEqual(apply({'subject': 'Changed'}).code, 'CONFLICT')
+            self.assertEqual(apply({'subject': 'Appointment', 'description': 'New field'}).code, 'CONFLICT')
+            self.assertEqual(apply({'subject': 'Appointment'}, 'Preview').code, 'PREVIEW_OK')
+            self.assertEqual(link.mapping_version, 'old')
+            self.assertEqual(apply({'subject': 'Appointment'}).code, 'SKIPPED')
+            self.assertEqual(link.mapping_version, 'new')
+            save.assert_called_once_with(link)
