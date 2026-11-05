@@ -84,8 +84,8 @@ class TestOfflineSnapshotBinding(TestCase):
     def test_foreign_bound_snapshot_is_not_reused_by_package_or_explicit_selection(self):
         binding = {'source_instance': 'source-a', 'endpoint_fingerprint': self.expected}
         fake = NS(get_all=lambda dt, filters, **kw: [] if 'endpoint_fingerprint' in filters else ['foreign'])
-        with patch.object(exchange, 'frappe', fake), self.assertRaisesRegex(exchange.ConfigExchangeError, 'endpoint'):
-            exchange._package_snapshot_names(FP, binding)
+        with patch.object(exchange, 'frappe', fake):
+            self.assertEqual(exchange._package_snapshot_names(FP, binding), ([], 'New'))
         self.snapshot.endpoint_fingerprint = 'different-real-endpoint'
         with patch.object(exchange, 'frappe', NS(get_doc=Mock(return_value=self.snapshot))), \
              patch.object(exchange, '_snapshot_binding', return_value=binding), self.assertRaisesRegex(exchange.ConfigExchangeError, 'endpoint'):

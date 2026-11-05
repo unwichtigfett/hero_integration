@@ -132,7 +132,7 @@ class TestMappingConfirmationConcurrency(TestMappingOnlyWorkflow):
 
 
 class TestSnapshotRebaseAfterDDL(TestMappingOnlyWorkflow):
-    def test_rebase_is_atomic_with_mapping_writes_after_provisioning_ddl(self):
+    def test_target_check_is_atomic_after_ddl_without_rebinding_old_graph(self):
         events=[]
         def prepare(*a,**kw):
             events.append('rebase' if kw.get('apply') else 'plan')
@@ -147,5 +147,5 @@ class TestSnapshotRebaseAfterDDL(TestMappingOnlyWorkflow):
              patch('hero_integration.services.mapping_snapshot_rebase.prepare',side_effect=prepare):
             with self.assertRaisesRegex(ValueError,'publication failed'):
                 mapping.apply(json.dumps(package()),'snapshot','source','proof',confirmed=True)
-        self.assertEqual(events,['ddl','post-ddl-savepoint','plan','rebase','mapping-write'])
+        self.assertEqual(events,['ddl','post-ddl-savepoint','mapping-write'])
         self.fake.db.rollback.assert_called_once_with(save_point=self.fake.db.savepoint.call_args.args[0])

@@ -97,7 +97,7 @@ class TestReplacementRebaseOrder(unittest.TestCase):
                   'records_path': 'customers', 'identity_path': 'id', 'page_size': 100}
         self.item = {'target_operation': 'HeroCustomers', 'mapping': config, 'query': 'query Q { id }'}
         self.payload = {'read_services': [self.item], 'mapping_package': {'schema': {}}, 'settings': {}}
-        self.snapshot = Row(name='new-snapshot', schema_fingerprint='same-fingerprint')
+        self.snapshot = Row(name='new-snapshot', schema_fingerprint='same-fingerprint', snapshot_json=json.dumps({'__schema': {}}))
         self.parent = Row(name='parent', schema_snapshot='old-snapshot', mapping_revision=1,
                           mapping_json=json.dumps(config))
         self.reader = Row(name='reader', query_document=self.item['query'], read_mapping='parent',
@@ -149,10 +149,13 @@ class TestReplacementRebaseOrder(unittest.TestCase):
 
     def test_combined_import_passes_remapped_payload_to_mutation_draft_import(self):
         remapped = {**self.payload, 'mutation_mappings': [{'content': {'query_rule_id': 'published'}}]}
-        with patch.object(exchange, '_remap_mutation_rules', return_value=remapped) as convert:
+        from contextlib import nullcontext
+        with patch.object(exchange, '_remap_mutation_rules', return_value=remapped) as convert, \
+             patch('hero_integration.services.simple_mapping_exchange._target_mutations', side_effect=lambda *a, **kw:nullcontext()):
             exchange._replace_config('new-snapshot', self.payload, 'source', before_mapping_write=self.rebase)
         self.assertIs(convert.call_args.args[2]['HeroCustomers'], self.parent)
         self.save_mutations.assert_called_once_with(remapped, 'source', 'new-snapshot')
+        self.assertEqual(remapped['schema_snapshot'], {'schema_fingerprint': 'same-fingerprint', 'schema': {'__schema': {}}})
 
 
 if __name__ == '__main__':

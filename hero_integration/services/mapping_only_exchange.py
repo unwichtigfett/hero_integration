@@ -145,7 +145,6 @@ def _apply_current(payload, snapshot_name, source_instance, fingerprint, *, conf
     rebase_savepoint = None
     def verify_current(locked_snapshot):
         nonlocal rebase_savepoint
-        from hero_integration.services.mapping_snapshot_rebase import prepare
         from uuid import uuid4
         # Provisioning may commit DDL implicitly. Start the atomic metadata
         # transition only here, after all schema DDL has completed.
@@ -153,9 +152,6 @@ def _apply_current(payload, snapshot_name, source_instance, fingerprint, *, conf
         frappe.db.savepoint(rebase_savepoint)
         if compatibility_check is not None:
             compatibility_check()
-        plan = prepare(snapshot_name, source_instance)
-        if plan['needs_rebase']:
-            prepare(snapshot_name, source_instance, apply=True, expected_fingerprint=plan['fingerprint'])
         if (locked_snapshot.name != snapshot.name
                 or _target_state(source_instance, operations, lock=True) != observed):
             raise MappingOnlyError('The mapping import preview changed; preview the file again.')
@@ -171,11 +167,9 @@ def _apply_current(payload, snapshot_name, source_instance, fingerprint, *, conf
 
 
 def preview(payload, snapshot_name, source_instance):
-    from hero_integration.services.mapping_snapshot_rebase import preview_target
     from hero_integration.services.mapping_import_context import resolve
     context = resolve(snapshot_name, source_instance, payload)
-    with preview_target(context['snapshot_name'], source_instance):
-        result = _preview_current(context['payload'], context['snapshot_name'], source_instance)
+    result = _preview_current(context['payload'], context['snapshot_name'], source_instance)
     return {**result, 'validated_against_snapshot': snapshot_name}
 
 

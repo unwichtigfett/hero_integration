@@ -1,5 +1,7 @@
 """Confirmed JSON Mutation import through the existing draft publication gates."""
+from contextlib import contextmanager
 from copy import deepcopy
+import json
 import hmac
 from uuid import uuid4
 
@@ -129,11 +131,10 @@ def _apply_current(payload, snapshot_name, direction, expected_states, preview_f
 
 
 def preview(payload, snapshot_name, direction):
-    from hero_integration.services.mapping_snapshot_rebase import preview_target
     snapshot, _schema = _context(snapshot_name, direction)
     from hero_integration.services.mapping_import_context import resolve
     context = resolve(snapshot_name, snapshot.source_instance, payload)
-    with preview_target(context['snapshot_name'], snapshot.source_instance):
+    with _target_mutations(context['payload'], snapshot, direction):
         result = _preview_current(context['payload'], context['snapshot_name'], direction)
     return {**result, 'validated_against_snapshot': snapshot_name}
 
@@ -146,7 +147,6 @@ def apply(payload, snapshot_name, direction, expected_states, preview_fingerprin
         raise MappingDraftError('Mutation import has unresolved publication blockers.')
     if not isinstance(preview_fingerprint, str) or not hmac.compare_digest(preview_fingerprint, checked['preview_fingerprint']):
         raise MappingDraftError('Mutation import preview changed; preview again before importing.')
-    from hero_integration.services.mapping_snapshot_rebase import prepare
     snapshot, _schema = _context(snapshot_name, direction)
     savepoint = 'hero_snapshot_mapping_import_' + uuid4().hex
     frappe.db.savepoint(savepoint)
@@ -154,11 +154,75 @@ def apply(payload, snapshot_name, direction, expected_states, preview_fingerprin
         from hero_integration.services.mapping_import_context import resolve
         context = resolve(snapshot_name, snapshot.source_instance, payload)
         actual = context['snapshot_name']
-        plan = prepare(actual, snapshot.source_instance)
-        if plan['needs_rebase']:
-            prepare(actual, snapshot.source_instance, apply=True, expected_fingerprint=plan['fingerprint'])
-        result = _apply_current(context['payload'], actual, direction, expected_states, preview_fingerprint, confirmed=True)
+        with _target_mutations(context['payload'], snapshot, direction, persist=True):
+            result = _apply_current(context['payload'], actual, direction, expected_states, preview_fingerprint, confirmed=True)
         return {**result, 'snapshot_name': actual, 'validated_against_snapshot': snapshot_name}
     except Exception:
         frappe.db.rollback(save_point=savepoint)
         raise
+
+
+@contextmanager
+def _target_mutations(payload, snapshot, direction, *, persist=False, existing_content=None):
+    """Republish imported mutation identities in the selected local context.
+
+    Preview rolls back native saves; apply owns the enclosing import savepoint.
+    Only definitions explicitly present in the file can move. Their identities
+    and history survive, and native saves revalidate against the target schema
+    and contracts instead of carrying an old approval across endpoints.
+    """
+    frappe.only_for('System Manager')
+    package = exchange._parse_portable(payload, direction)
+    if any(package.get('schema', {}).values()):
+        raise MappingDraftError('Mutation mapping imports cannot provision document fields.')
+    point = 'hero_mutation_target_' + uuid4().hex
+    frappe.db.savepoint(point)
+    changed = []
+    try:
+        selected, scopes = [], {(snapshot.source_instance, snapshot.name, direction)}
+        for item in sorted(package['mappings'], key=lambda row: row['definition_id']):
+            matches = frappe.get_all('HERO GraphQL Mapping',
+                filters={'portable_definition_id': item['definition_id']}, pluck='name', limit_page_length=2)
+            if not matches:
+                continue
+            if len(matches) != 1:
+                raise MappingDraftError('Portable identity is ambiguous on this site.')
+            parent = frappe.get_doc('HERO GraphQL Mapping', matches[0])
+            scope = (parent.source_instance, parent.schema_snapshot, parent.direction)
+            selected.append((item, parent.name, scope))
+            scopes.add(scope)
+        for scope in sorted(scopes):
+            exchange._lock_context(*scope)
+        parents = []
+        for item, name, scope in selected:
+            parent = frappe.get_doc('HERO GraphQL Mapping', name, for_update=True)
+            if (parent.source_instance, parent.schema_snapshot, parent.direction) != scope:
+                raise MappingDraftError('Mapping context changed; preview the import again.')
+            if parent.schema_snapshot == snapshot.name:
+                continue
+            if (parent.source_instance != snapshot.source_instance or parent.direction != direction
+                    or parent.operation_kind != item['operation_kind'] or parent.operation_name != item['operation_name']):
+                raise MappingDraftError('Portable identity belongs to a different target context.')
+            parent.check_permission('write')
+            if existing_content is not None:
+                if parent.status != 'Active':
+                    raise MappingDraftError('Existing inactive mutation requires review before switching schema contexts.')
+                item['content'] = existing_content(parent, item)
+            parents.append((parent, item))
+        exchange._bind_mapped_update_readbacks(package, snapshot.source_instance, snapshot.name)
+        for parent, item in parents:
+            # Native edit invalidates the old active revision. Native activation
+            # then requires this actor and a validated target Mutation Contract.
+            changed.append(parent.name)
+            parent.schema_snapshot = snapshot.name
+            parent.mapping_json = json.dumps(item['content'], ensure_ascii=False)
+            parent.status = 'Draft'
+            parent.save()
+            parent.status = 'Active'
+            parent.save()
+        yield
+    finally:
+        if not persist:
+            frappe.db.rollback(save_point=point)
+        for name in changed:
+            frappe.clear_document_cache('HERO GraphQL Mapping', name)
