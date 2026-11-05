@@ -258,3 +258,27 @@ therefore show each area's processed count and received count separately:
 although HERO returned 26. The run-list column **Created / processed** is not
 a progress fraction against the total HERO inventory. Older test-preview runs
 retain their historical HERO-request-budget display.
+
+### Update safeguards and compatible snapshot rebinding
+
+HERO person IDs resolve through synchronized Integration Links of the selected
+source instance. Partner IDs follow the native Employee-to-User relation; user
+IDs use their source-bound User link. Legacy ID fields alone are not identity
+proof. The source context also applies when comparing writeback baselines.
+
+Product updates protect the managed supplier row, including its supplier part
+number. Local changes require reconciliation before any item or price write.
+Old links without that baseline may adopt an existing row only when it exactly
+matches the incoming supplier part number. Unmapped supplier rows remain local.
+Without a stock-unit mapping, updates use the Item's current unit for price
+validation.
+
+Contacts with one shared primary phone/mobile row are split when the mapped
+numbers diverge. Unmapped numbers remain unchanged, and saved communication
+values are checked before confirming synchronization. Calendar native status
+bindings retain their selected completion flag through the event adapter.
+
+Compatible schema rebinding validates existing `SEND_TO_HERO` and legacy field
+writebacks using their respective validators, including their source fields,
+mutation documents and contracts. Those profiles do not need conversion to a
+new mapping format merely to accept an equivalent schema snapshot.

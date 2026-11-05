@@ -107,7 +107,7 @@ class MappingPlan:
 
     def source_identity(self, record: dict[str, object]) -> str:
         definition = self._one(PURPOSE_SOURCE_IDENTITY)
-        value = transformed_value(definition, source_value(record, definition.source_path))
+        value = transformed_value(definition, source_value(record, definition.source_path), source_instance=record.get('_hero_source_instance'))
         if not isinstance(value, str) or not value:
             raise MappingPlanError("Source identity is missing or invalid.")
         return value
@@ -187,9 +187,9 @@ class MappingPlan:
                         values.missing.add(definition.target_field)
                     continue
                 if project_name:
-                    transformed = project_title(record) if project_title is not None else transformed_value(definition, value)
+                    transformed = project_title(record) if project_title is not None else transformed_value(definition, value, source_instance=record.get('_hero_source_instance'))
                 else:
-                    transformed = transformed_value(definition, value)
+                    transformed = transformed_value(definition, value, source_instance=record.get('_hero_source_instance'))
                 if not projection and not definition.source_path.startswith('current_project_match_status.') and (transformed is None or transformed == ""):
                     if definition.target_field not in values:
                         values.empty.add(definition.target_field)
@@ -240,7 +240,7 @@ class MappingPlan:
         definitions = self._with_purpose(PURPOSE_CUSTOMER_HOME_PHONE)
         if not definitions:
             return None
-        value = transformed_value(definitions[0], source_value(record, definitions[0].source_path))
+        value = transformed_value(definitions[0], source_value(record, definitions[0].source_path), source_instance=record.get('_hero_source_instance'))
         return value if isinstance(value, str) else None
 
     def has_home_phone(self) -> bool:

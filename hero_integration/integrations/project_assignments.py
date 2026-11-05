@@ -44,7 +44,7 @@ def sync(project: str, record: dict, frappe_api=None) -> dict:
     from hero_integration.services.task_lifecycle import _user_for
     from hero_integration.services.task_assignment_state import managed_assignment
 
-    users = {key: (user_by_hero_user(key[1]) if key[0] == "id" else _user_for(key[1], frappe_api)) for key in found}
+    users = {key: (user_by_hero_user(key[1], source_instance=record.get('_hero_source_instance')) if key[0] == "id" else _user_for(key[1], frappe_api)) for key in found}
     wanted = {user for user in users.values() if user}
     title = frappe_api.db.get_value("Project", project, "project_name") or project
     open_todos = frappe_api.get_all("ToDo", filters={"reference_type": "Project", "reference_name": project,

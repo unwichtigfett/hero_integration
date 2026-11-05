@@ -350,6 +350,11 @@ def apply(plan, item, prepared, parent_doctype, parent_name, parent):
             if field in prepared['values']:_set_contact_value(document,field,prepared['values'][field])
     if existed: document.save()
     else: document.insert()
+    if target == 'Contact':
+        for field in ('email_id', 'phone', 'mobile_no'):
+            expected = prepared['values'].get(field)
+            if expected and _contact_value(document, field) != expected:
+                raise ValueError('Saved contact communication differs from the mapped source value.')
     prepared['document'] = document
     evidence = _evidence(plan, item['values'], _observed(prepared))
     if link:
@@ -407,5 +412,15 @@ def _set_contact_value(document,field,value):
     if not value:return  # Empty remote data does not erase native communication rows.
     rows=[row for row in document.get(table,[]) if getattr(row,primary_key,False)]
     if len(rows)>1:raise ValueError('A customer Contact has ambiguous primary communication rows.')
-    if rows:setattr(rows[0],value_key,value)
-    else:document.append(table,{value_key:value,primary_key:1})
+    if rows:
+        row = rows[0]
+        other_primary = {'phone': 'is_primary_mobile_no', 'mobile_no': 'is_primary_phone'}.get(field)
+        if other_primary and getattr(row, other_primary, False) and getattr(row, value_key, None) != value:
+            # A shared row represents two independently mapped numbers. Keep
+            # the other number and move only this field's primary flag.
+            setattr(row, primary_key, 0)
+            document.append(table, {value_key: value, primary_key: 1})
+        else:
+            setattr(row, value_key, value)
+    else:
+        document.append(table, {value_key: value, primary_key: 1})

@@ -624,7 +624,8 @@ class TestMappedTaskAssignee(_TransportFixture):
             MappingSpec('HeroTasks', 'target_user_id', 'ToDo', 'allocated_to', 'int|null',
                         transformation='Link Map', definition_id='user-rule'))
         options = {'transform_options': {'user-rule': {'map': {'7': 'old@example.invalid', '8': 'new@example.invalid'}}}}
-        def transform(spec, value, all_options):
+        def transform(spec, value, all_options, *, source_instance=None):
+            self.assertEqual(source_instance, self.ctx.proof.source_instance)
             self.assertIs(all_options, options)
             return all_options['transform_options'][spec.definition_id]['map'][str(value)] if spec.transformation == 'Link Map' else value
         user = NS(name='new@example.invalid', get=lambda field: 'new@example.invalid' if field == 'email' else None)

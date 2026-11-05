@@ -111,11 +111,12 @@ def _validate_group(mappings, readers, contracts, services, snapshots):
     from hero_integration.services.config_mutation_contracts import _query, _scope
     from hero_integration.services.graphql_contract import parse_mutation
     from hero_integration.services.mapped_update_v2 import _validate_contract_scope
-    from graphql import build_client_schema
+    from graphql import build_client_schema, parse, validate
 
     by_name = {row.name: row for row in mappings}
     service_by_name = {row.name: row for row in services}
     read_counts, scopes, read_contracts = {}, set(), {}
+    legacy_contracts, configured_contracts = set(), set()
     for service in readers:
         mapping = by_name.get(service.read_mapping)
         if mapping is None:
@@ -134,6 +135,43 @@ def _validate_group(mappings, readers, contracts, services, snapshots):
                 _fail('Snapshot rebinding requires exactly one approved reader per active Query mapping.')
             continue
         content = json.loads(mapping.mapping_json)
+        usage = content.get('usage')
+        if usage not in {'MAPPED_UPDATE_V2', 'PROJECT_LOGBOOK_V1'}:
+            from hero_integration.services.frappe_mapping_catalog import (
+                FrappePickerMetadata, validate_send_mapping_sources, validate_draft_writeback_source,
+            )
+            schema = json.loads(snapshots[mapping.schema_snapshot].snapshot_json)
+            if usage == 'SEND_TO_HERO':
+                from hero_integration.services.mapped_send import normalise_send_mapping
+                content = normalise_send_mapping(content, schema)
+                validate_send_mapping_sources(content, FrappePickerMetadata())
+                options = content['send_options']
+                key = (mapping.direction, usage, content['source']['doctype'], options['mode'])
+                reader = service_by_name.get(options['read_service'])
+                readback = read_contracts.get(options['read_service'])
+                area = {'Customer': 'HeroCustomers', 'Project': 'HeroProjectMatches', 'Task': 'HeroTasks'}[content['source']['doctype']]
+                if (reader is None or reader.schema_snapshot != mapping.schema_snapshot or readback is None
+                        or readback.target_operation != area or readback.identity_path != options['read_identity_path']):
+                    _fail('Snapshot rebinding found a mutation outside its approved readback graph.')
+            else:
+                from hero_integration.services.frappe_writeback import normalise_mapping
+                content = normalise_mapping(content, schema)
+                source = content['source']
+                validate_draft_writeback_source(source['doctype'], source['field'], FrappePickerMetadata())
+                key = (mapping.direction, 'FIELD_WRITEBACK', source['doctype'], source['field'])
+            if (mapping.direction != 'FRAPPE_TO_MUTATION' or mapping.operation_kind != 'MUTATION'
+                    or mapping.operation_name != content['target']['operation']
+                    or mapping.schema_fingerprint != snapshots[mapping.schema_snapshot].schema_fingerprint):
+                _fail('Snapshot rebinding found an invalid mutation service or contract.')
+            if key in scopes:
+                _fail('Snapshot rebinding found ambiguous active mapping or service scopes.')
+            scopes.add(key)
+            matches = [row for row in contracts if row.operation_name == mapping.operation_name
+                       and row.schema_snapshot == mapping.schema_snapshot]
+            if len(matches) != 1:
+                _fail('Snapshot rebinding requires one existing active contract per mutation operation.')
+            legacy_contracts.add(matches[0].name)
+            continue
         normalise, validate_sources = configured_mutation_helpers(content.get('usage'))
         content = normalise(content, json.loads(snapshots[mapping.schema_snapshot].snapshot_json))
         validate_sources(content)
@@ -152,6 +190,7 @@ def _validate_group(mappings, readers, contracts, services, snapshots):
         if len(matches) != 1:
             _fail('Snapshot rebinding requires one existing active contract per mutation operation.')
         contract = matches[0]
+        configured_contracts.add(contract.name)
         if content['usage'] == 'MAPPED_UPDATE_V2':
             _validate_contract_scope(mapping, content, contract)
         else:
@@ -166,11 +205,17 @@ def _validate_group(mappings, readers, contracts, services, snapshots):
                 or contract.schema_fingerprint != snapshot.schema_fingerprint
                 or service.schema_fingerprint != snapshot.schema_fingerprint):
             _fail('Snapshot rebinding found an invalid mutation service or contract.')
-        _scope(json.loads(contract.mapping_json), contract.operation_name)
-        _query(service.query_document, contract.operation_name,
-               build_client_schema({'__schema': normalize_schema(json.loads(snapshot.snapshot_json))}))
+        schema = build_client_schema({'__schema': normalize_schema(json.loads(snapshot.snapshot_json))})
+        if contract.name in legacy_contracts and contract.name not in configured_contracts:
+            # Older approved contracts do not declare the newer resolver scope.
+            # Retain their own parser and validate the entire saved query against the schema.
+            if not isinstance(json.loads(contract.mapping_json), dict) or validate(schema, parse(service.query_document)):
+                _fail('Snapshot rebinding found an invalid mutation service or contract.')
+        else:
+            _scope(json.loads(contract.mapping_json), contract.operation_name)
+            _query(service.query_document, contract.operation_name, schema)
         parsed = parse_mutation(service.query_document)
-        if contract.contract_fingerprint != parsed.fingerprint:
+        if contract.contract_fingerprint != parsed.fingerprint or parsed.root_field != contract.operation_name:
             _fail('Snapshot rebinding found a changed mutation contract fingerprint.')
 
 

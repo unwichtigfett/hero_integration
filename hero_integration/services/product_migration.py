@@ -198,12 +198,15 @@ def upsert(row: dict, link, masters: _Masters, source_instance: str, read=None) 
     baseline_fields = tuple((_link_baseline(link).get("fields") or {}).keys()) or OWNED
     if item is not None and link.target_payload_hash and owned_digest(item, baseline_fields) != link.target_payload_hash:
         return _conflict(link, source, "The Item was changed in ERPNext; the newer HERO article was not applied.")
+    supplier_baseline = _link_baseline(link).get("supplier")
+    if item is not None and not _supplier_unchanged(item, values["supplier"], supplier_baseline):
+        return _conflict(link, source, "The Item was changed in ERPNext; the newer HERO article was not applied.")
     managed = _managed_prices(link) if item is not None else {}
     plans = {}
     if item is not None:
         try:  # decide every price before anything is written
             for price_list, key in PRICE_LISTS:
-                plans[price_list] = plan_price(item.name, price_list, values[key], values["stock_uom"],
+                plans[price_list] = plan_price(item.name, price_list, values[key], values.get("stock_uom") or item.stock_uom,
                                                managed.get(price_list))
         except PriceConflict as error:
             return _conflict(link, source, f"{error} The newer HERO article was not applied.")
@@ -223,7 +226,7 @@ def upsert(row: dict, link, masters: _Masters, source_instance: str, read=None) 
     if item is None:
         item = frappe.get_doc({"doctype": "Item", "item_code": values["item_code"], "is_stock_item": 0, **fields})
         _set_barcode(item, values["barcode"])
-        _set_supplier(item, values["supplier"], masters)
+        supplier_baseline = _set_supplier(item, values["supplier"], masters) or supplier_baseline
         item.insert(ignore_permissions=True)
         result = "added"
     else:
@@ -231,7 +234,7 @@ def upsert(row: dict, link, masters: _Masters, source_instance: str, read=None) 
                      if value is not None or key not in REQUIRED_FALLBACKS})  # never blank a required field
         if not item.get("barcodes"):
             _set_barcode(item, values["barcode"])
-        _set_supplier(item, values["supplier"], masters)
+        supplier_baseline = _set_supplier(item, values["supplier"], masters) or supplier_baseline
         item.save(ignore_permissions=True)
         result = "updated"
     prices = dict(managed)
@@ -247,7 +250,8 @@ def upsert(row: dict, link, masters: _Masters, source_instance: str, read=None) 
             return _conflict(link, source, 'Mapped item prices changed locally; review before updating.') if link else 'conflict'
     link_values = {"sync_status": "Synchronized", "target_name": item.name, "source_payload_hash": source,
                    "target_payload_hash": owned_digest(item, owned), "conflict_detail": "",
-                   "target_field_hashes": json.dumps({"prices": prices, "fields": owned_field_digests(item, owned)},
+                   "target_field_hashes": json.dumps({"prices": prices, "fields": owned_field_digests(item, owned),
+                                                     **({"supplier": supplier_baseline} if supplier_baseline else {})},
                                                      sort_keys=True),
                    "mapping_version": f"{MAPPING_VERSION}:{read.mapping_version}"[:140],
                    "last_synced_on": frappe.utils.now_datetime()}
@@ -275,7 +279,34 @@ def _code_taken(link, row: dict, code: str, source_instance: str, read) -> str:
     return "conflict"
 
 
-def _set_supplier(item, supplier: dict | None, masters: _Masters) -> None:
+def _supplier_unchanged(item, supplier: dict | None, baseline) -> bool:
+    """Check only the managed supplier row, without creating masters or changing Item.
+
+    Old links without a supplier baseline may adopt an existing row only when it
+    already equals the incoming value. Otherwise its ownership cannot be proved.
+    Unrelated suppliers are never part of this comparison.
+    """
+    if not supplier or not supplier.get("supplier"):
+        return True
+    rows = item.get("supplier_items") or []
+    if baseline:
+        if not isinstance(baseline, dict) or not baseline.get("supplier"):
+            return False
+        managed = [row for row in rows if row.get("supplier") == baseline["supplier"]]
+        if len(managed) != 1 or (managed[0].get("supplier_part_no") or None) != baseline.get("supplier_part_no"):
+            return False
+    name = frappe.db.get_value("Supplier", {"supplier_name": supplier["supplier"]}, "name")
+    destination = [row for row in rows if row.get("supplier") == name] if name else []
+    if not destination:
+        return True
+    if len(destination) != 1:
+        return False
+    if baseline and name == baseline["supplier"]:
+        return True
+    return (destination[0].get("supplier_part_no") or None) == (supplier.get("supplier_part_no") or None)
+
+
+def _set_supplier(item, supplier: dict | None, masters: _Masters) -> dict | None:
     """Keep one Item Supplier row for the HERO supplier; other rows stay as they are."""
     if not supplier or not supplier.get("supplier"):
         return
@@ -287,8 +318,9 @@ def _set_supplier(item, supplier: dict | None, masters: _Masters) -> None:
                     row["supplier_part_no"] = part
                 else:
                     row.supplier_part_no = part
-            return
+            return {"supplier": name, "supplier_part_no": row.get("supplier_part_no") or None}
     item.append("supplier_items", {"supplier": name, "supplier_part_no": part})
+    return {"supplier": name, "supplier_part_no": part or None}
 
 
 def _set_barcode(item, code: str | None) -> None:

@@ -192,7 +192,7 @@ class HeroSource:
         if len(records) > self.page_size:
             raise ValueError("HERO response exceeds the approved page size.")
         annotated = tuple(
-            {**row, "_hero_source_instance": self.source_instance} if self.source_instance != "default" else dict(row)
+            {**row, "_hero_source_instance": self.source_instance}
             for row in records
         )
         # Only an empty page ends an offset scan: a short page can be a server

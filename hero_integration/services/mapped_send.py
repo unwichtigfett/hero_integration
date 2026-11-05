@@ -710,7 +710,7 @@ def _baseline_remote(ctx, item, setting, observed, *, record=None):
     options = getattr(plan, 'adapter_options', None)
     if options is not None:
         from hero_integration.services.query_mapping import transform
-        return transform(rule, observed, options)
+        return transform(rule, observed, options, source_instance=ctx.proof.source_instance)
     if rule.operation == 'HeroTasks' and rule.transformation == 'Native Adapter':
         from hero_integration.services.direct_mapping import validate_native_task_rule
         validate_native_task_rule(rule)
@@ -724,7 +724,7 @@ def _baseline_remote(ctx, item, setting, observed, *, record=None):
             return _project_name_for_source(observed, ctx.proof.source_instance)
     if rule.transformation in {'Native Adapter', 'HERO Project Link'}:
         raise MappedSendError('This native Query binding needs a verified canonical Send baseline resolver.')
-    return transformed_value(rule, observed)
+    return transformed_value(rule, observed, source_instance=ctx.proof.source_instance)
 
 
 def _baseline_link(ctx, item):

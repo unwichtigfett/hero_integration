@@ -26,6 +26,39 @@ def event():
 
 
 class TestNativeProjections(unittest.TestCase):
+    def test_v2_selected_status_reaches_native_event_creation_and_update(self):
+        from hero_integration.tests.test_query_mapping_v2 import rule, plan
+        operation = 'HeroCalendarEvents'
+        rules = [
+            rule('id', 'id', 'Event', 'custom_hero_source_id', operation=operation,
+                 kind='int', purpose='Source Identity', transform='Positive Int To Text'),
+            rule('title', 'title', 'Event', 'subject', operation=operation, purpose='Record Name'),
+            rule('start', 'start', 'Event', 'starts_on', operation=operation, transform='Native Adapter'),
+            rule('end', 'end', 'Event', 'ends_on', operation=operation, transform='Native Adapter'),
+            rule('all', 'all_day', 'Event', 'all_day', operation=operation, kind='boolean', transform='Native Adapter'),
+            rule('done', 'is_done', 'Event', 'status', operation=operation, kind='boolean', transform='Native Adapter'),
+        ]
+        selected = plan(rules, operation=operation)
+        fake = SimpleNamespace(
+            get_doc=lambda *args: SimpleNamespace(mapping_json=json.dumps({'native_options': EVENT_OPTIONS})),
+            db=SimpleNamespace(get_single_value=lambda *args: 'UTC'))
+        for existing in (None, SimpleNamespace(target_doctype='Event', target_name='EV-1', sync_status='Synchronized')):
+            for done, expected in ((True, 'Completed'), (False, 'Open')):
+                with self.subTest(existing=bool(existing), done=done):
+                    row = event(); row.update(is_done=done, deleted=False)
+                    with patch.object(migration, 'frappe', fake), patch.object(migration, '_link', return_value=existing), \
+                         patch.object(migration, '_native_lookup', return_value={'event_type': 'Private'}), \
+                         patch.object(migration, '_upsert', return_value=migration.Result('PREVIEW_OK', 'test')) as write:
+                        result = migration._migrate_projection(row, SimpleNamespace(mode='Preview', graphql_mapping='M'), selected)
+                    self.assertEqual(result.code, 'PREVIEW_OK', result)
+                    self.assertEqual(write.call_args.args[3]['status'], expected)
+
+        from hero_integration.services.query_mapping import event_record
+        unselected = plan(rules[:-1], operation=operation)
+        self.assertNotIn('is_done', event_record(unselected, {**event(), 'is_done': True}))
+        missing = event(); missing.pop('is_done', None)
+        self.assertNotIn('is_done', event_record(selected, missing))
+
     def test_native_identity_key_binds_source_type_and_exact_identity(self):
         key = key_for("source-a", "product", "0022")
         self.assertEqual(key, key_for("source-a", "product", "0022"))

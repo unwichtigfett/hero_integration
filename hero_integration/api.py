@@ -3257,7 +3257,7 @@ def preview_mapping_candidate(
 ) -> dict[str, object]:
     """Preview one suggested draft mapping without persisting a mapping or a document."""
     frappe.only_for("System Manager")
-    _validated_snapshot(snapshot_name)
+    snapshot, _schema = _validated_snapshot(snapshot_name)
     try:
         record = json.loads(source_record_json)
     except json.JSONDecodeError as error:
@@ -3274,7 +3274,7 @@ def preview_mapping_candidate(
     spec = MappingSpec(operation, source_path, target_doctype, target_field, contract["paths"][source_path])
     try:
         target = validate_draft_target(operation, spec.source_type, target_doctype, target_field, _FrappePickerMetadata())
-        value = transformed_value(spec, source_value(record, source_path))
+        value = transformed_value(spec, source_value(record, source_path), source_instance=getattr(snapshot, 'source_instance', None))
     except ValueError as error:
         frappe.throw(translate_error(error, frappe._))
     return {

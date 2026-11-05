@@ -189,7 +189,7 @@ def validate_spec(spec: MappingSpec, metadata) -> None:
     _validate_binding(spec, metadata)
 
 
-def transformed_value(spec: MappingSpec, value: object) -> object | None:
+def transformed_value(spec: MappingSpec, value: object, *, source_instance=None) -> object | None:
     # Authoritative business identifiers are never trimmed by a generic text rule.
     if (spec.target_doctype, spec.target_field, spec.source_path) in {
         ("Customer", "custom_hero_customer_number", "nr"),
@@ -231,7 +231,7 @@ def transformed_value(spec: MappingSpec, value: object) -> object | None:
         return user_by_email(value)
     if spec.transformation == TRANSFORM_USER_BY_PARTNER:
         from hero_integration.integrations.hero_people import user_by_partner
-        return user_by_partner(value)
+        return user_by_partner(value, source_instance=source_instance)
     return value
 
 
