@@ -3730,3 +3730,5 @@ Mutation mappings imported and activated: {0}.,Importierte und aktivierte Mutati
 MAPPING_INPUT_INVALID: Invalid delete_after.,MAPPING_INPUT_INVALID: Ungültiger Wert für delete_after.
 Replaced drafts and their history will be deleted.,Ersetzte Entwürfe und ihre Historie werden gelöscht.
 Activated drafts and their history will be deleted.,Aktivierte Entwürfe und ihre Historie werden gelöscht.
+{0} deleted HERO users are retained as historical references; no accounts were created for them.,{0} gelöschte HERO-Benutzer bleiben als historische Referenzen erhalten; für sie wurden keine Benutzerkonten angelegt.
+{0} · {1} processed · {2} received · {3} related identities unresolved · {4} historical users,{0} · {1} verarbeitet · {2} empfangen · {3} zugehörige Identitäten nicht aufgelöst · {4} historische Benutzer

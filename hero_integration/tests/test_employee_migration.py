@@ -139,6 +139,20 @@ class TestEmployeeWrites(unittest.TestCase):
 
 
 class TestEmployeeRecordList(unittest.TestCase):
+    def test_historical_ids_require_consistent_deleted_source_records(self):
+        rows = [
+            {'id': 1, 'status': 'deleted', 'user_id': 101, 'user': {'id': 101}},
+            {'id': 2, 'status': 'deleted', 'user_id': 102, 'user': {'id': 103}},
+            {'id': 3, 'status': 'deleted', 'user_id': 104, 'user': {'id': 104}},
+            {'id': 4, 'status': 'active', 'user_id': 104, 'user': {'id': 104}},
+        ]
+        client = SimpleNamespace(query=Mock(return_value={'company': {'partners': rows}}))
+        users, partners = em._historical_identities(client, 'company.partners',
+                                                     {'101', '102', '103', '104', '105'}, {'1', '2'})
+        self.assertEqual(users, ['101'])
+        self.assertEqual(partners, ['1'])
+        self.assertIn('show_deleted: true', client.query.call_args.args[0])
+
     def test_nested_and_direct_lists_and_empty_list(self):
         self.assertEqual(em._records({'partners':[{'id':2},{'id':1}]}, 'partners'), [{'id':1},{'id':2}])
         self.assertEqual(em._records({'company':{'partners':[]}}, 'company.partners'), [])
@@ -176,6 +190,27 @@ class TestEmployeeResume(unittest.TestCase):
 
     def run_import(self, **kwargs):
         return em.sync_employees(self.client, source_instance='source', run_name='run-1', **kwargs)
+
+    def test_deleted_related_users_are_reported_without_provisioning(self):
+        self.client.query = Mock(side_effect=[
+            {'partners': [{'id': 1, 'user_id': 10, 'user': {'id': 10}}]},
+            {'partners': [{'id': 1, 'status': 'active', 'user_id': 10, 'user': {'id': 10}},
+                          {'id': 2, 'status': 'deleted', 'user_id': 20, 'user': {'id': 20}}]},
+        ])
+        with patch.object(em, 'upsert', return_value='updated') as write:
+            state = self.run_import(record_limit=1, cohort_user_ids=['10', '20', '30'], cohort_partner_ids=[])
+        self.assertEqual(state['testing_historical_user_ids'], ['20'])
+        self.assertEqual(state['testing_missing_user_ids'], ['30'])
+        self.assertEqual(write.call_count, 1)
+        self.assertEqual(write.call_args.args[0]['id'], 1)
+
+    def test_unavailable_historical_lookup_keeps_users_unresolved(self):
+        from hero_integration.client.graphql import HeroClientError
+        self.client.query = Mock(side_effect=[{'partners': [{'id': 1}]}, HeroClientError('unavailable')])
+        with patch.object(em, 'upsert', return_value='updated'):
+            state = self.run_import(record_limit=1, cohort_user_ids=['20'], cohort_partner_ids=[])
+        self.assertEqual(state['testing_missing_user_ids'], ['20'])
+        self.assertTrue(state['testing_historical_audit_unavailable'])
 
     def test_failure_rolls_back_and_is_retryable_without_recounting_successes(self):
         with patch.object(em, 'upsert', side_effect=['added',em.EmployeeMigrationBlocked('Review')]) as write:

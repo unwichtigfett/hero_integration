@@ -73,7 +73,9 @@ def persist(run_name, operation, state):
         'processed': processed(counts), 'received': state.get('testing_records_received', 0), 'status': status,
         'missing_related_users': len(state.get('testing_missing_user_ids', [])),
         'ambiguous_related_users': len(state.get('testing_ambiguous_user_ids', [])),
-        'missing_related_partners': len(state.get('testing_missing_partner_ids', []))}}}
+        'missing_related_partners': len(state.get('testing_missing_partner_ids', [])),
+        'historical_related_users': len(state.get('testing_historical_user_ids', [])),
+        'historical_related_partners': len(state.get('testing_historical_partner_ids', []))}}}
     if state.get('testing_cohort_fingerprint') or 'testing_cohort_user_ids' in state:
         result['selection'] = 'related_projects'
     frappe.db.set_value('HERO Integration Run', run_name, {
@@ -331,8 +333,9 @@ class RelatedProjectSource(RecordLimitedSource):
                     raise ValueError('A selected test record changed its relationships; start a new test run.')
             self.found.setdefault(operation, set()).update(str(row.get('id') if selected is not None else row.get(field)) for row in rows)
             prior['processed'] += len(rows)
-            if page.next_offset is None:
-                expected = selected if selected is not None else allowed if operation in {'HeroCustomers', 'HeroProjectMatches'} else set()
+            expected = selected if selected is not None else allowed if operation in {'HeroCustomers', 'HeroProjectMatches'} else set()
+            all_found = bool(expected) and expected <= self.found[operation]
+            if page.next_offset is None or all_found:
                 missing = len(expected - self.found[operation])
                 prior['missing_related'] = missing
                 prior['status'] = 'BLOCKED' if missing else 'COMPLETED'
@@ -340,7 +343,7 @@ class RelatedProjectSource(RecordLimitedSource):
                     self.status = 'BLOCKED'
             else:
                 prior['status'] = ''
-            return SourcePage(rows, page.next_offset)
+            return SourcePage(rows, None if all_found else page.next_offset)
 
     def customers(self, offset=0):
         return self._related_page('HeroCustomers', self.source.customers, offset, field='id',
