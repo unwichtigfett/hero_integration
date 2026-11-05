@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 from dataclasses import replace
 from types import SimpleNamespace
@@ -36,7 +37,7 @@ class _Download:
         self.calls += 1
         with open(target, "wb") as stream:
             stream.write(b"pdf")
-        return 3, "md5"
+        return 3, hashlib.md5(b'pdf').hexdigest()
 
 
 def _row(identity=7, **values):
@@ -57,6 +58,47 @@ def _own_read():
 
 
 class TestFileMappingImport(_FileFixture):
+    def test_first_file_conflict_preserves_new_folders_for_following_file(self):
+        self.db.data['HERO Integration Link']['L1'].pop('target_field_hashes', None)
+        self.db.commit()
+        folders = []
+        def folder(*parts):
+            name = 'Home/' + '/'.join(parts)
+            self.db.data['File'][name] = {'is_folder': 1, 'file_name': parts[-1]}
+            folders.append(name)
+            return name
+        insert = self.db.insert
+        def checked_insert(values):
+            if values['doctype'] == 'File' and values.get('file_url'):
+                self.assertIn(values['folder'], self.db.data['File'], 'Folder was rolled back by the previous conflict')
+            return insert(values)
+        with patch.object(ft, '_state', return_value={}), patch.object(ft, '_save_state'), \
+             patch.object(ft, 'allow_unlimited_attachments'), patch.object(ft, '_folder', side_effect=folder), \
+             patch.object(self.db, 'insert', side_effect=checked_insert):
+            state = ft.transfer('documents', source_instance='source-a', client=_Client([_row(5), _row(7)]),
+                                downloader=_Download(), min_free=0)
+        self.assertEqual(state['counts']['conflict'], 1)
+        self.assertEqual(state['counts']['added'], 1)
+        self.assertEqual(state['counts'].get('failed', 0), 0)
+        self.assertTrue(all(name in self.db.committed['File'] for name in folders))
+        self.assertEqual(self.db.committed['HERO Integration Link']['L1']['sync_status'], 'Conflict')
+        self.assertEqual(self.imported()[0]['folder'], folders[0])
+
+    def test_boolean_file_values_match_native_check_integer_baselines(self):
+        from hero_integration.services import mapped_update_v2 as update
+        item = {'id': 'check', 'source': {'doctype': 'File', 'field': 'custom_checked'}, 'resolver': 'FIELD'}
+        for source, native in ((True, 1), (False, 0)):
+            with self.subTest(source=source):
+                self.assertEqual(ft.value_hash(source), ft.value_hash(native))
+                state = {'version': 2, 'mapped_fields': ['custom_checked'],
+                         'target': {'custom_checked': ft.value_hash(native)}}
+                ctx = SimpleNamespace(content={'area': 'HeroDocuments'}, query_plan=None,
+                    source_links={'check': SimpleNamespace(target_field_hashes=json.dumps(state))})
+                with patch.object(ft, 'mapped_values', return_value={'custom_checked': source}):
+                    self.assertTrue(update._baseline_matches(ctx, item, {}, source))
+        self.assertNotEqual(ft.value_hash(False), ft.value_hash(None))
+        self.assertNotEqual(ft.value_hash(True), ft.value_hash('1'))
+
     def run_slice(self, rows, *, read=None, saved=None, phase="documents", downloader=None, **kwargs):
         self.client = _Client(rows)
         read = read or rt.builtin_read(ft.OPERATION[phase])
@@ -169,15 +211,138 @@ class TestFileMappingImport(_FileFixture):
         self.assertEqual(self.saved_states, [])
         mkdir.assert_not_called()
 
-    def test_missing_digest_is_upgraded_without_downloading(self):
+    def test_missing_digest_requires_review_without_downloading_or_rebaselining(self):
         row = _row()
         self.run_slice([row], downloader=_Download())
         link_name = next(name for name, link in self.db.data["HERO Integration Link"].items() if link["source_id"] == "7")
         self.db.data["HERO Integration Link"][link_name].pop("target_field_hashes")
         self.db.commit()
         state = self.run_slice([row])
-        self.assertEqual(state["counts"]["updated"], 1)
-        self.assertIn("target_field_hashes", self.imported()[1])
+        self.assertEqual(state['counts']['conflict'], 1)
+        self.assertNotIn('target_field_hashes', self.imported()[1])
+        self.assertEqual(self.imported()[1]['sync_status'], 'Conflict')
+
+    def test_local_file_changes_block_metadata_relink_and_content_replacement(self):
+        for change in ('filename', 'attachment', 'folder', 'blob', 'new_mapping_field'):
+            for source_changed in (False, True):
+                with self.subTest(change=change, source_changed=source_changed):
+                    row = _row(title='Mapped.pdf', section='Roof')
+                    self.run_slice([row], downloader=_Download())
+                    file, link = self.imported()
+                    target = self.db.data['File'][link['target_name']]
+                    if change == 'filename': target['file_name'] = 'My local name.pdf'
+                    elif change == 'attachment': target['attached_to_name'] = 'LOCAL-PROJECT'
+                    elif change == 'folder': target['folder'] = 'Home/Local'
+                    elif change == 'new_mapping_field': target['custom_hero_section'] = 'Local section'
+                    else:
+                        with open(ft._disk_path(target['file_url']), 'wb') as stream: stream.write(b'local content')
+                    self.db.commit()
+                    before = copy.deepcopy(target)
+                    baseline = link['target_field_hashes']
+                    if source_changed: row['modified'] = '2'
+                    state = self.run_slice([row], read=_own_read())  # forbids any download
+                    self.assertEqual(state['counts']['conflict'], 1)
+                    current, current_link = self.imported()
+                    self.assertEqual(current, before)
+                    self.assertEqual(current_link['target_field_hashes'], baseline)
+                    self.assertEqual(current_link['sync_status'], 'Conflict')
+                    if change == 'blob':
+                        self.assertEqual(open(ft._disk_path(current['file_url']), 'rb').read(), b'local content')
+                    # Isolate each case while retaining the fixture's unrelated source bindings.
+                    self.db.data['File'].pop(link['target_name'])
+                    self.db.data['HERO Integration Link'].pop(next(name for name, value in self.db.data['HERO Integration Link'].items()
+                        if value.get('source_id') == '7'))
+                    self.db.commit()
+
+    def test_legacy_locally_renamed_file_is_not_adopted_as_baseline(self):
+        row = _row()
+        self.run_slice([row], downloader=_Download())
+        file, link = self.imported()
+        self.db.data['File'][link['target_name']]['file_name'] = 'Locally renamed.pdf'
+        link_name = next(name for name, value in self.db.data['HERO Integration Link'].items() if value.get('source_id') == '7')
+        self.db.data['HERO Integration Link'][link_name]['target_field_hashes'] = ft.field_hashes({'file_name': row['filename']})
+        self.db.commit()
+        before = copy.deepcopy(self.db.committed['File'])
+        state = self.run_slice([row])
+        self.assertEqual(state['counts']['conflict'], 1)
+        self.assertEqual(self.db.committed['File'], before)
+
+    def test_preview_reports_local_file_conflict_without_database_writes(self):
+        row = _row()
+        self.run_slice([row], downloader=_Download())
+        _, link = self.imported()
+        self.db.data['File'][link['target_name']]['file_name'] = 'Local.pdf'
+        self.db.commit()
+        before = copy.deepcopy(self.db.committed)
+        state = self.run_slice([row], dry_run=True)
+        self.assertEqual(state['counts']['conflict'], 1)
+        self.assertEqual(self.db.committed, before)
+
+    def test_partial_outgoing_ack_preserves_unsent_metadata_and_attachment_baselines(self):
+        from hero_integration.services import mapped_update_v2 as update
+        from unittest.mock import patch
+        read = _own_read()
+        row = _row(title='Imported.pdf', section='Roof')
+        self.run_slice([row], read=read, downloader=_Download())
+        file, link = self.imported()
+        link_name = next(name for name, value in self.db.data['HERO Integration Link'].items() if value.get('source_id') == '7')
+        original = json.loads(link['target_field_hashes'])
+        target = self.db.data['File'][link['target_name']]
+        target.update(file_name='Sent.pdf', custom_hero_section='Unsent local edit', attached_to_name='LOCAL')
+        self.db.commit()
+        assignment = {'id': 'name', 'source': {'doctype': 'File', 'field': 'file_name'}, 'resolver': 'FIELD'}
+        native_link = SimpleNamespace(name=link_name, source_field_hashes='', **link)
+        ctx = SimpleNamespace(content={'area': 'HeroDocuments', 'assignments': [assignment]},
+                              source_links={'name': native_link}, query_plan=read.plan)
+        self.assertTrue(update._baseline_matches(ctx, assignment, row, 'Imported.pdf'))
+        self.assertFalse(update._baseline_matches(ctx, assignment, {**row, 'title': 'Remote edit.pdf'}, 'Remote edit.pdf'))
+        with patch.object(update, 'frappe', ft.frappe), patch.object(update, '_canonical', return_value='Sent.pdf'):
+            update._acknowledge(ctx, SimpleNamespace(changes=[{'id': 'name', 'local': 'Sent.pdf'}]), {**row, 'title': 'Sent.pdf'})
+        self.db.commit()
+        acknowledged = json.loads(self.db.committed['HERO Integration Link'][link_name]['target_field_hashes'])
+        self.assertEqual(acknowledged['target']['file_name'], ft.value_hash('Sent.pdf'))
+        for field in set(original['target']) - {'file_name'}:
+            self.assertEqual(acknowledged['target'][field], original['target'][field])
+        state = self.run_slice([{**row, 'title': 'Sent.pdf'}], read=read)
+        self.assertEqual(state['counts']['conflict'], 1)
+        self.assertEqual(self.imported()[0]['custom_hero_section'], 'Unsent local edit')
+
+    def test_change_during_download_is_rechecked_before_blob_replacement(self):
+        row = _row()
+        self.run_slice([row], downloader=_Download())
+        file, link = self.imported()
+        old_url = file['file_url']
+        outer = self
+        class ChangedDuringDownload(_Download):
+            def fetch(self, url, target, size):
+                result = super().fetch(url, target, size)
+                outer.db.data['File'][link['target_name']]['file_name'] = 'Concurrent local rename.pdf'
+                outer.db.commit()
+                return result
+        state = self.run_slice([{**row, 'modified': '2'}], downloader=ChangedDuringDownload())
+        self.assertEqual(state['counts']['conflict'], 1)
+        file, _ = self.imported()
+        self.assertEqual(file['file_name'], 'Concurrent local rename.pdf')
+        self.assertEqual(file['file_url'], old_url)
+        self.assertTrue(ft.os.path.exists(ft._disk_path(old_url)))
+
+    def test_held_and_missing_native_targets_never_get_overwritten_or_recreated(self):
+        row = _row()
+        self.run_slice([row], downloader=_Download())
+        file, link = self.imported()
+        link_name = next(name for name, value in self.db.data['HERO Integration Link'].items() if value.get('source_id') == '7')
+        for status in ('Rejected', 'Pending Review', 'Source Deleted'):
+            self.db.data['HERO Integration Link'][link_name]['sync_status'] = status
+            self.db.commit()
+            state = self.run_slice([{**row, 'modified': '2'}])
+            self.assertEqual(state['counts']['conflict'], 1)
+            self.assertEqual(self.imported()[1]['sync_status'], status)
+        self.db.data['HERO Integration Link'][link_name]['sync_status'] = 'Synchronized'
+        self.db.data['File'].pop(link['target_name'])
+        self.db.commit()
+        state = self.run_slice([row])
+        self.assertEqual(state['counts']['conflict'], 1)
+        self.assertNotIn(link['target_name'], self.db.committed['File'])
 
 
 class TestFileOffsetPaging(_FileFixture):

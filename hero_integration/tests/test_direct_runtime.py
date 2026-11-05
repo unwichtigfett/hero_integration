@@ -89,6 +89,41 @@ class TestBuiltinReads(unittest.TestCase):
         with self.assertRaises(ValueError):
             rt.records(read, {"supply_product_versions": [1, 2]})
 
+    def test_only_an_explicit_empty_collection_finishes_a_direct_page(self):
+        for operation, path in (("HeroProducts", "supply_product_versions"),
+                                ("HeroServices", "supply_services"),
+                                ("HeroEmployees", "company.partners")):
+            read = rt.DirectRead(operation, None, "query", path)
+            valid = {"company": {"partners": []}} if "." in path else {path: []}
+            self.assertEqual(rt.records(read, valid), [])
+            invalid = [None, {}, [], "", 0, False, {"data": valid}, {"errors": []}]
+            invalid += [{"company": value} for value in (None, {}, [], "bad")]
+            invalid += [{path: value} for value in (None, {}, "bad", [None])]
+            if "." in path:
+                invalid += [{"company": {"partners": value}} for value in (None, {}, "bad", [None])]
+            for response in invalid:
+                with self.subTest(operation=operation, response=response), self.assertRaisesRegex(ValueError, "invalid record list"):
+                    rt.records(read, response)
+
+    def test_connection_requires_explicit_edges_and_object_nodes(self):
+        read = rt.DirectRead("HeroDocuments", None, "query", "files.edges.node")
+        self.assertEqual(rt.records(read, {"files": {"edges": []}}), [])
+        self.assertEqual(rt.records(read, {"files": {"edges": [{"node": {"id": 1}}]}}), [{"id": 1}])
+        responses = [None, {}, {"files": None}, {"files": {}}, {"files": []},
+                     {"files": {"edges": None}}, {"files": {"edges": {}}}]
+        responses += [{"files": {"edges": [edge]}} for edge in (None, {}, [], {"node": None}, {"node": []}, {"node": "bad"})]
+        for response in responses:
+            with self.subTest(response=response), self.assertRaisesRegex(ValueError, "invalid record list"):
+                rt.records(read, response)
+
+    def test_invalid_page_does_not_retry_as_smaller_or_complete_empty(self):
+        read = rt.DirectRead("HeroProducts", None, "query", "supply_product_versions",
+                             {"first": "$page_size", "offset": "$offset"}, 500)
+        client = _Client(lambda offset, first: {"supply_product_versions": None})
+        with self.assertRaisesRegex(ValueError, "invalid record list"):
+            rt.fetch_page(client, read, 0)
+        self.assertEqual(len(client.calls), 1)
+
     def test_approved_variable_names_are_respected(self):
         read = rt.DirectRead("HeroProducts", None, "q", "supply_product_versions", {"n": "$page_size", "o": "$offset",
                                                                                      "orderBy": "product_id"}, 100)

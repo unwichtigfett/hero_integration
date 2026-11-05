@@ -321,3 +321,11 @@ removal; it contributes to the assignment review count. For supplier part number
 missing data leaves both the native value and ownership proof unchanged. Explicit
 null or empty text clears only an already proven managed value. Nontext values
 are rejected instead of being interpreted as a deletion.
+
+File imports verify versioned per-field metadata, attachment context and actual
+blob digests before metadata updates, relinking or content replacement, including
+a locked recheck after downloads. Legacy links without this proof are review
+conflicts rather than implicit permission to overwrite. File writebacks advance
+only confirmed field evidence. Setup folders survive individual-record rollbacks.
+Direct readers reject missing/null record paths; only an actual empty list ends
+a scan.

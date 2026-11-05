@@ -26,6 +26,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
+from uuid import uuid4
 
 import frappe
 
@@ -54,6 +55,10 @@ DETAIL_QUERY = (
 
 
 class TransferError(RuntimeError):
+    pass
+
+
+class FileConflict(TransferError):
     pass
 
 
@@ -183,7 +188,8 @@ def _bindings(source_type: str, doctype: str, source_instance: str) -> dict[str,
 
 def _known_files(source_instance: str) -> dict[str, dict]:
     rows = frappe.get_all("HERO Integration Link", filters={"source_type": SOURCE_TYPE, "source_instance": source_instance},
-                          fields=["name", "source_id", "target_name", "source_payload_hash", "target_field_hashes"], limit_page_length=0)
+                          fields=["name", "source_id", "target_name", "source_payload_hash", "target_field_hashes",
+                                  "target_payload_hash", "mapping_version", "sync_status"], limit_page_length=0)
     return {row.source_id: row for row in rows}
 
 
@@ -236,7 +242,12 @@ def store(row: dict, size: int, md5: str, temp: str, target: tuple, folder: str,
     """Move the downloaded blob into place and create or update the File and its link (not committed)."""
     operation = "HeroPictures" if row.get("category") == "images" else "HeroDocuments"
     read = read or direct_runtime.resolve_read(operation, source_instance)
-    file_url = f"/private/files/hero-{row['id']}-{int(time.time())}-{safe_name(row.get('filename'))}"
+    try:
+        _assert_target_baseline(existing, mapped_values(read, row), lock=True)
+    except FileConflict:
+        _remove(temp)
+        raise
+    file_url = f"/private/files/hero-{row['id']}-{uuid4().hex}-{safe_name(row.get('filename'))}"
     os.replace(temp, _disk_path(file_url))
     try:
         return _record(row, size, md5, file_url, target, folder, existing, source_instance, read)
@@ -267,6 +278,90 @@ def field_hashes(values: dict) -> str:
     return json.dumps({"fields": digest})
 
 
+FILE_CONTEXT = ('file_url', 'file_size', 'content_hash', 'is_private', 'folder', 'creation',
+                'attached_to_doctype', 'attached_to_name', 'attached_to_field')
+
+
+def value_hash(value):
+    from hero_integration.services.change_detection import check_value
+    return hashlib.sha256(json.dumps(check_value(value), sort_keys=True, separators=(',', ':'), default=str).encode()).hexdigest()
+
+
+def _target_hash(name, fields, *, document=None):
+    names = sorted(set(fields) | set(FILE_CONTEXT))
+    values = ({field: getattr(document, field, None) for field in names} if document is not None
+              else frappe.db.get_value('File', name, names, as_dict=True))
+    if not values or not (values.get('file_url') or '').startswith('/private/files/'):
+        raise FileConflict('The imported file target requires review before synchronization.')
+    try:
+        digest = hashlib.sha256()
+        md5 = hashlib.md5(usedforsecurity=False)
+        with open(_disk_path(values['file_url']), 'rb') as stream:
+            while chunk := stream.read(CHUNK):
+                digest.update(chunk)
+                md5.update(chunk)
+    except OSError as error:
+        raise FileConflict('The imported file content is unavailable and requires review.') from error
+    return {**{field: value_hash(value) for field, value in values.items()},
+            '_blob_sha256': digest.hexdigest(), '_blob_md5': md5.hexdigest()}
+
+
+def _target_baseline(name, fields):
+    return json.dumps({**json.loads(field_hashes(fields)), 'version': 2,
+                       'mapped_fields': sorted(fields), 'target': _target_hash(name, fields)})
+
+
+def _assert_target_baseline(existing, fields, *, lock=False):
+    if not existing:
+        return
+    if not frappe.db.exists('File', existing.target_name):
+        raise FileConflict('The imported file target requires review before synchronization.')
+    target = None
+    if lock:
+        link = frappe.get_doc('HERO Integration Link', existing.name, for_update=True)
+        if link.target_name != existing.target_name:
+            raise FileConflict('The imported file target requires review before synchronization.')
+        target = frappe.get_doc('File', existing.target_name, for_update=True)
+        raw = getattr(link, 'target_field_hashes', None)
+        status, content_hash = getattr(link, 'sync_status', None), getattr(link, 'target_payload_hash', None)
+    else:
+        raw = frappe.db.get_value('HERO Integration Link', existing.name, 'target_field_hashes')
+        status = frappe.db.get_value('HERO Integration Link', existing.name, 'sync_status')
+        content_hash = frappe.db.get_value('HERO Integration Link', existing.name, 'target_payload_hash')
+    if status in {'Conflict', 'Pending Review', 'Rejected', 'Source Deleted'}:
+        raise FileConflict('The imported file target requires review before synchronization.')
+    try:
+        baseline = json.loads(raw or '{}')
+        names = baseline.get('mapped_fields')
+        valid = (baseline.get('version') == 2 and isinstance(names, list) and bool(names)
+                 and all(isinstance(name, str) for name in names) and len(set(names)) == len(names)
+                 and isinstance(baseline.get('target'), dict))
+    except (ValueError, TypeError, AttributeError):
+        valid = False
+    if not valid:
+        raise FileConflict('The imported file has no verified target baseline and requires review.')
+    current_hashes = _target_hash(existing.target_name, names, document=target)
+    if current_hashes != baseline.get('target') or current_hashes['_blob_md5'] != content_hash:
+        raise FileConflict('The imported file was changed locally and requires review.')
+    additions = set(fields) - set(names)
+    if additions:
+        current = ({name: getattr(target, name, None) for name in additions} if target is not None
+                   else frappe.db.get_value('File', existing.target_name, sorted(additions), as_dict=True) or {})
+        if any(current.get(name) not in (None, '', fields[name]) for name in additions):
+            raise FileConflict('A newly mapped file field already contains a local value and requires review.')
+
+
+def _record_conflict(existing, reason, *, dry_run=False):
+    if not dry_run:
+        frappe.db.rollback()
+        status = frappe.db.get_value('HERO Integration Link', existing.name, 'sync_status')
+        values = {'conflict_detail': str(reason)}
+        if status not in {'Pending Review', 'Rejected', 'Source Deleted'}:
+            values['sync_status'] = 'Conflict'
+        frappe.db.set_value('HERO Integration Link', existing.name, values)
+        frappe.db.commit()
+
+
 def _record(row, size, md5, file_url, target, folder, existing, source_instance, read=None) -> StoredFile:
     operation = "HeroPictures" if row.get("category") == "images" else "HeroDocuments"
     read = read or direct_runtime.resolve_read(operation, source_instance)
@@ -274,6 +369,7 @@ def _record(row, size, md5, file_url, target, folder, existing, source_instance,
     doctype, name = target
     old_url = None
     if existing and frappe.db.exists("File", existing.target_name):
+        _assert_target_baseline(existing, fields, lock=True)
         old_url = frappe.db.get_value("File", existing.target_name, "file_url")
         # The old blob stays until the commit succeeded (see commit_file).
         frappe.db.set_value("File", existing.target_name, {"file_url": file_url, "file_size": size, "content_hash": md5,
@@ -291,7 +387,7 @@ def _record(row, size, md5, file_url, target, folder, existing, source_instance,
     if created:
         frappe.db.set_value("File", file_name, {"creation": created}, update_modified=False)
     values = {"sync_status": "Synchronized", "target_name": file_name, "source_payload_hash": source_hash(row),
-              "target_payload_hash": md5, "target_field_hashes": field_hashes(fields),
+              "target_payload_hash": md5, "target_field_hashes": _target_baseline(file_name, fields),
               "mapping_version": read.mapping_version, "last_synced_on": frappe.utils.now_datetime()}
     if existing:
         frappe.db.set_value("HERO Integration Link", existing.name, values)
@@ -310,6 +406,7 @@ def relink(existing, target: tuple, folder: str) -> bool:
     current = frappe.db.get_value("File", existing.target_name, list(wanted), as_dict=True) or {}
     if all((current.get(key) or "") == value for key, value in wanted.items()):
         return False
+    _assert_target_baseline(existing, {}, lock=True)
     frappe.db.set_value("File", existing.target_name, wanted)
     return True
 
@@ -405,6 +502,10 @@ def transfer(phase: str, *, source_instance: str | None = None, client=None, dow
         allow_unlimited_attachments()
     folders = {} if dry_run else {
         True: _folder(ROOT_FOLDER, PHASE_FOLDER[phase]), False: _folder(ROOT_FOLDER, PHASE_FOLDER[phase], UNASSIGNED_FOLDER)}
+    if not dry_run:
+        # Folder setup belongs to the transfer, not the first file's transaction.
+        # A per-file conflict rollback must not invalidate these cached references.
+        frappe.db.commit()
     partial_dir = frappe.get_site_path("private", "files", ".hero-partial")
     if not dry_run:
         os.makedirs(partial_dir, exist_ok=True)
@@ -442,20 +543,29 @@ def transfer(phase: str, *, source_instance: str | None = None, client=None, dow
                 bump("unchanged" if unchanged else f"skipped_{reason}")
                 continue
             target = resolve_target(detail, projects, customers)
+            fields = mapped_values(read, row)
+            try:
+                _assert_target_baseline(link, fields, lock=not dry_run and unchanged)
+            except FileConflict as error:
+                _record_conflict(link, error, dry_run=dry_run)
+                bump('conflict')
+                continue
             if unchanged:
                 try:
-                    fields = mapped_values(read, row)
-                    hashes = field_hashes(fields)
-                    changed = getattr(link, "target_field_hashes", None) != hashes
+                    hashes = json.loads(field_hashes(fields))['fields']
+                    baseline = json.loads(frappe.db.get_value('HERO Integration Link', link.name, 'target_field_hashes'))
+                    changed = baseline.get('fields') != hashes
                     if dry_run:
                         bump("would_update" if changed else "unchanged")
                         continue
+                    moved = relink(link, target, folders[bool(target[0])])
                     if changed:
                         frappe.db.set_value("File", link.target_name, fields)
+                    if changed or moved:
                         frappe.db.set_value("HERO Integration Link", link.name, {
-                            "target_field_hashes": hashes, "mapping_version": read.mapping_version,
-                            "last_synced_on": frappe.utils.now_datetime()})
-                    moved = relink(link, target, folders[bool(target[0])])
+                            "target_field_hashes": _target_baseline(link.target_name, fields),
+                            "mapping_version": read.mapping_version, "sync_status": "Synchronized",
+                            "conflict_detail": '', "last_synced_on": frappe.utils.now_datetime()})
                     frappe.db.commit()
                     if moved:
                         bump("relinked")
@@ -463,6 +573,9 @@ def transfer(phase: str, *, source_instance: str | None = None, client=None, dow
                         bump("updated")
                     else:
                         bump("unchanged")
+                except FileConflict as error:
+                    _record_conflict(link, error)
+                    bump('conflict')
                 except Exception as error:
                     frappe.db.rollback()
                     bump("failed")
@@ -485,6 +598,10 @@ def transfer(phase: str, *, source_instance: str | None = None, client=None, dow
                 commit_file(row, size, md5, temp, target, folders[bool(target[0])], link, source_instance, read)
                 bump("updated" if link else "added")
                 bump("bytes", size)
+            except FileConflict as error:
+                _remove(temp)
+                _record_conflict(link, error)
+                bump('conflict')
             except Exception as error:
                 frappe.db.rollback()
                 _remove(temp)
