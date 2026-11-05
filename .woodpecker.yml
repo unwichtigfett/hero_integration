@@ -57,7 +57,7 @@ steps:
 
   - name: install-test
     depends_on: [wait-github]
-    image: frappe-ci:py314   # prebuilt image on the CI server (see docs/ci_installtest_1.0.md)
+    image: frappe-ci:py314   # prebuilt image on the CI server
     volumes:
       - /srv/hero-ci:/hero-ci:ro
     environment:
