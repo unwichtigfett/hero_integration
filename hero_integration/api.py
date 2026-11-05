@@ -792,14 +792,17 @@ def _sync_area_read_services(instance: str) -> dict[str, list[dict[str, str]]]:
     rows = frappe.get_all("HERO GraphQL Service", filters={"execution_status": "Approved", "status": "Validated"},
                           fields=["name", "read_mapping", "schema_snapshot", "modified"], order_by="modified desc",
                           limit_page_length=500)
+    from hero_integration.services.schema_refresh import local_snapshot_binding
+    binding = local_snapshot_binding() if rows else None
     for row in rows:
         if not row.get("read_mapping") or not row.get("schema_snapshot"):
             continue
         mapping = frappe.db.get_value("HERO GraphQL Mapping", row["read_mapping"], ["status", "mapping_json"], as_dict=True)
-        snapshot = frappe.db.get_value("HERO GraphQL Schema Snapshot", row["schema_snapshot"], ["source_instance", "creation"], as_dict=True)
+        snapshot = frappe.db.get_value("HERO GraphQL Schema Snapshot", row["schema_snapshot"], ["source_instance", "endpoint_fingerprint", "creation"], as_dict=True)
         if not mapping or mapping.get("status") != "Active" or not snapshot:
             continue
-        if (snapshot.get("source_instance") or "default") != instance:
+        if ((snapshot.get("source_instance") or "default") != instance or binding['source_instance'] != instance
+                or snapshot.get('endpoint_fingerprint') != binding['endpoint_fingerprint']):
             continue
         try:
             target = json.loads(mapping.get("mapping_json") or "{}").get("target_operation")
@@ -856,14 +859,17 @@ def _file_areas(active: list[dict[str, object]], instance: str) -> list[dict[str
     return page_areas(active, instance)
 
 
-def _direct_area_records() -> dict[str, int]:
-    """Articles and files brought over by Product, Document and Picture Migration."""
+def _direct_area_records(instance: str) -> dict[str, int]:
+    """Linked direct imports, including employees and services, for the configured source."""
     from hero_integration.services.file_transfer import PHASE_FOLDER, ROOT_FOLDER
 
     files = lambda phase: frappe.db.count("File", {"folder": ["like", f"Home/{ROOT_FOLDER}/{PHASE_FOLDER[phase]}%"],
                                                    "is_folder": 0})
-    return {"products": frappe.db.count("HERO Integration Link", {"source_type": "supply_product"}),
-            "documents": files("documents"), "pictures": files("images")}
+    records = {key: frappe.db.count('HERO Integration Link', {'source_type': source_type,
+        'source_instance': instance, 'target_doctype': doctype, 'sync_status': ['!=', 'Source Deleted']})
+        for key, source_type, doctype in (('products', 'supply_product', 'Item'),
+            ('employees', 'partner', 'Employee'), ('services', 'supply_service', 'Item'))}
+    return {**records, "documents": files("documents"), "pictures": files("images")}
 
 
 def _sync_metrics(instance: str) -> dict[str, object]:
@@ -878,7 +884,7 @@ def _sync_metrics(instance: str) -> dict[str, object]:
         })
         for item in AREAS
     }
-    records.update(_direct_area_records())
+    records.update(_direct_area_records(instance))
     from hero_integration.services.polling import execution_summary
 
     since = add_days(now_datetime(), -POLLING_PERIOD_DAYS)
@@ -4025,7 +4031,8 @@ def config_import_file(path: str, snapshot_name: str = "", dry_run: int = 1) -> 
 
 
 def _config_snapshot() -> str:
-    names = frappe.get_all("HERO GraphQL Schema Snapshot", filters={"analysis_status": "Validated"},
+    from hero_integration.services.schema_refresh import local_snapshot_binding
+    names = frappe.get_all("HERO GraphQL Schema Snapshot", filters={**local_snapshot_binding(), "analysis_status": "Validated"},
                            order_by="creation desc", pluck="name", limit_page_length=1)
     if not names:
         frappe.throw(frappe._("No validated HERO schema snapshot exists; refresh the HERO schema first."))

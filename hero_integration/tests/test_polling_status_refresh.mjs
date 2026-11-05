@@ -83,3 +83,17 @@ test('detached pages stop refreshing even before teardown', async () => {
     assert.equal(app.calls.length, previous);
     assert.equal(app.timers.size, 0);
 });
+
+
+test('States includes employees and services, including a zero service count', async () => {
+    const app = setup(); await flush();
+    const area = (key, label) => ({key, label, action_label: label, ready: false, kind: 'direct',
+        description: '', scope_note: '', blocker: 'Pending approval', scope: {objects: [], object_count: 0, field_count: 0}});
+    app.data.file_areas = [area('employees', 'Employees'), area('services', 'Services')];
+    app.data.metrics.records = {employees: 5, services: 0};
+    await app.tick();
+    const metric = label => app.host.querySelectorAll('div').find(el => el.className === 'hero-sync-metric' && el.children[0].textContent === label)?.children[1].textContent;
+    assert.equal(metric('Employees'), '5');
+    assert.equal(metric('Services'), '0');
+    app.view.destroy();
+});
