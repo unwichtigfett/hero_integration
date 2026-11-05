@@ -74,10 +74,6 @@ def selling_price(row: dict) -> float | None:
     return direct.resolve("HERO Default Sales Price", row.get("sales_prices"), row)
 
 
-def _price(value) -> float | None:
-    return direct.price(value)
-
-
 def barcode_type(code: str) -> str:
     """EAN only when the check digit is valid; ERPNext rejects an invalid typed barcode."""
     if not code.isdigit() or len(code) not in (8, 13):

@@ -250,10 +250,6 @@ def _offline_configuration():
         return SimpleNamespace(endpoint=SimpleNamespace(url="https://offline.invalid/graphql"), source_instance=instance)
 
 
-def _client_error_message(error) -> str:
-    return str(_client_error(error))
-
-
 def _client_error(error) -> SchemaRefreshError:
     if getattr(error, "code", "") in {"HTTP_401", "HTTP_403"}:
         return SchemaRefreshError("HERO rejected the API token. Check the token and save again.")

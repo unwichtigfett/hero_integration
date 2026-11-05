@@ -120,8 +120,8 @@ class TestSchemaRefreshRecording(unittest.TestCase):
 
         for code in ("HTTP_401", "HTTP_403"):
             with self.subTest(code=code):
-                message = schema_refresh._client_error_message(HeroClientError("HERO request failed.", code=code))
-                self.assertIn("rejected the API token", message)
+                message = schema_refresh._client_error(HeroClientError("HERO request failed.", code=code))
+                self.assertIn("rejected the API token", str(message))
 
     def test_compatibility_query_is_attempted_only_after_graphql_error(self):
         from hero_integration.client.graphql import HeroClientError
