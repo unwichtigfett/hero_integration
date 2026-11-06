@@ -99,23 +99,56 @@ checks in branch protection for both branches. Workflow files request the
 checks but cannot enforce GitHub branch protection; that setting is
 outside this repository and must be verified separately.
 
-## Former persistent test site
+## Test-site update on GitHub push
 
-The persistent test site and its update timer are stopped. The release pipeline
-uses disposable install tests and does not update or reset the former site.
-The host updater scripts are retained for recovery and are not pipeline steps.
+A GitHub-backed Woodpecker repository is required for a GitHub `hero_int_dev`
+push to start the test-site updater through its dedicated, restricted SSH secret.
+The step verifies GitHub `hero_int_dev` is still at the exact pipeline commit
+before requesting an update. If it has moved, it fails safely. The former
+twice-daily VPS update timer is disabled. Each pipeline update reinstalls the dedicated test database, including
+repeated runs of the same commit. It retains users, login password hashes,
+role assignments and role/module profiles. User API keys and API secrets are
+cleared; encrypted API credentials are not restored. Business records, HERO
+configuration, custom schema, user defaults, record permissions and uploaded
+files are discarded. The dedicated test queue is cleared while workers are
+stopped, including deferred jobs, so old work cannot refill the database.
+Installed apps and their standard installation data remain;
+the setup wizard starts fresh. The CI configuration package is never restored
+onto this site.
+
+Pipeline resets create **no database dumps, site archives, Docker backup images
+or backup volumes**. The identity snapshot lives only in container-local RAM
+(`/dev/shm/frappe-test-users.json`) and is removed on success. A failed reset
+retains that small identity snapshot and leaves maintenance enabled and workers
+stopped for manual recovery. Preserve the failed backend container until its
+identities have been recovered; replacing it loses the RAM snapshot.
+
+The source of the host updater is `ci/frappe-test-update.py`; it invokes
+`ci/reset-test-site.py` inside the backend. On the test server, install both into
+`/srv/frappe-test-ctl/` with the same filenames, owned by root, mode `0600`.
+The `update` action of `/usr/local/sbin/frappe-test` must execute
+`python3 /srv/frappe-test-ctl/frappe-test-update.py` instead of its old embedded
+Python updater. Keep the existing shared lock and forced SSH command.
+The workflow sends `update:blank:<commit>` through the restricted SSH key; an
+outdated pipeline cannot reset a later development head. The legacy SSH request
+`update` also resets, so existing deployed workflows inherit the policy.
+The twice-daily local timer is disabled; updates run from the GitHub pipeline.
+This step depends on the successful isolated install test; a failed release test gate prevents the update.
 
 ## Release chain: hero_int_dev → hero_int_1.0
 
 A push to GitHub `hero_int_dev` runs these Woodpecker steps once the GitHub
-repository has been connected and its release secret configured in Woodpecker.
-Each step starts only when the previous one succeeded:
+repository has been connected and its secrets configured in Woodpecker. Until
+that external setup is complete, GitHub Actions runs but the Woodpecker test-site
+update and release promotion do not run. Each
+step starts only when the previous one succeeded:
 
 1. `wait-github` waits up to 50 minutes for the GitHub Actions checks
    `package` and `install-test` of the same commit (`ci/wait-github-checks.sh`).
    A failed or missing check stops the chain.
 2. `install-test` runs the bench install test.
-3. `promote` (`ci/promote-release.sh`) releases the tested commit:
+3. `update-test-site` updates the code and resets the test site, retaining users.
+4. `promote` (`ci/promote-release.sh`) releases the tested commit:
    - it adds a release commit `Release <version> [skip ci]` on top of it that
      changes only the version in `hero_integration/__init__.py` and
      `pyproject.toml` (next patch version; a version raised by hand on

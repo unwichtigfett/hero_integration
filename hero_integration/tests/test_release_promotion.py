@@ -207,8 +207,7 @@ class TestWoodpeckerChain(unittest.TestCase):
 
         steps = {step["name"]: step for step in yaml.safe_load((ROOT / ".woodpecker.yml").read_text())["steps"]}
         self.assertEqual(steps["install-test"]["depends_on"], ["wait-github"])
-        self.assertEqual(steps["promote"]["depends_on"], ["install-test"])
-        self.assertNotIn("update-test-site", steps)
+        self.assertEqual(steps["promote"]["depends_on"], ["install-test", "update-test-site"])
         self.assertEqual(steps["promote"]["when"], [{"event": "push", "branch": "hero_int_dev"}])
         self.assertEqual(steps["promote"]["environment"]["GITHUB_TOKEN"], {"from_secret": "github_release_token"})
         self.assertNotIn("FORGEJO_REMOTE", steps["promote"]["environment"])
