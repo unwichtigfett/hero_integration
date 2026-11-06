@@ -1,5 +1,5 @@
 # Release chain for a push to hero_int_dev:
-#   GitHub CI (package, install-test) -> Woodpecker install test -> test-site update
+#   GitHub CI (package, install-test) -> Woodpecker install test
 #   -> promote: raise the patch version, fast-forward hero_int_1.0, tag v<version>.
 # Any failure stops the chain; hero_int_1.0 then keeps its state.
 # Release commits carry "[skip ci]", so the promotion push starts no new pipeline.
@@ -28,33 +28,6 @@ steps:
       - apk add --no-cache -q curl jq
       - sh ci/wait-github-checks.sh
 
-  # Push only: the dedicated key is restricted to the test-site updater.
-  - name: update-test-site
-    depends_on: [install-test]
-    image: alpine:3.22.2@sha256:4b7ce07002c69e8f3d704a9c5d6fd3053be500b7f1c69fc0d80990c2ad8dd412
-    when:
-      - event: push
-        branch: hero_int_dev
-    environment:
-      SSH_KEY:
-        from_secret: hero_site_update_key
-    commands:
-      - apk add --no-cache -q openssh-client git
-      - install -d -m 700 ~/.ssh
-      - echo "100.90.177.57 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICoj1r6d6+za2IdYIKkBGDddbAEGCvZPF2gl0MpfplRj" > ~/.ssh/known_hosts
-      - (umask 077; printf '%s\n' "$${SSH_KEY}" > ~/.ssh/id_ed25519)
-      - |
-        expected="$${CI_COMMIT_SHA}"
-        printf '%s\n' "$$expected" | grep -Eq '^[0-9a-f]{40}$' || { echo 'Invalid commit'; exit 1; }
-        found=''
-        for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
-          found="$$(git ls-remote https://github.com/unwichtigfett/hero_integration.git refs/heads/hero_int_dev | cut -f1 || true)"
-          [ "$$found" = "$$expected" ] && break
-          sleep 10
-        done
-        [ "$$found" = "$$expected" ] || { echo 'GitHub branch did not reach this pipeline commit'; exit 1; }
-        ssh -T -o BatchMode=yes -o ServerAliveInterval=30 root@100.90.177.57 "update:blank:$$expected"
-
   - name: install-test
     depends_on: [wait-github]
     image: frappe-ci:py314   # prebuilt image on the CI server
@@ -72,7 +45,7 @@ steps:
 
   # Push to hero_int_dev only, after every earlier gate succeeded.
   - name: promote
-    depends_on: [install-test, update-test-site]
+    depends_on: [install-test]
     image: alpine:3.22.2@sha256:4b7ce07002c69e8f3d704a9c5d6fd3053be500b7f1c69fc0d80990c2ad8dd412
     when:
       - event: push
