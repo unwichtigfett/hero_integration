@@ -100,6 +100,8 @@ doc_events["Project"] = {
     "on_update": "hero_integration.services.project_logbook_writeback.capture_project_activity",
 }
 doc_events["Task"] = {"validate": "hero_integration.services.change_detection.protect_external_task_deadline"}
+for _doctype in ("User", "Employee"):
+    doc_events[_doctype] = {"validate": "hero_integration.services.change_detection.protect_employee_source_observations"}
 doc_events["Version"] = {"before_insert": "hero_integration.services.project_logbook_writeback.mark_imported_project_version"}
 after_job = ["hero_integration.services.user_contact_retry.after_job"]
 

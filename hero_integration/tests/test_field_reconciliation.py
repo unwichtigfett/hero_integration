@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 
 from hero_integration.services.change_detection import (
     EMPTY_HASH, encode, field_hashes, managed_target_update, managed_target_update_active, next_baseline,
-    observe_frappe_target_change, protect_external_task_deadline, reconcile,
+    observe_frappe_target_change, protect_employee_source_observations, protect_external_task_deadline, reconcile,
 )
 from hero_integration.services.direct_mapping import MISSING, MappingSpec, lookup, source_value, transformed_value
 from hero_integration.tests.mapping_fixture import fixture_plan
@@ -271,6 +271,51 @@ class TestManagedTargetOwnership(unittest.TestCase):
 
 
 class TestGlobalObserverLifecycle(unittest.TestCase):
+    def test_employee_values_are_compared_as_values_and_real_edits_are_observed(self):
+        class Row(dict):
+            __getattr__ = dict.__getitem__
+
+        row = Row(name="person-link", source_type="User", source_id="42",
+                  target_field_hashes='{"phone":"123", "custom_hero_last_login":""}', observed_target_hash="")
+        saved_link = types.SimpleNamespace(save=Mock())
+        frappe = types.ModuleType("frappe")
+        frappe.flags = types.SimpleNamespace(in_migrate=False, in_uninstall=False)
+        frappe.get_all = Mock(return_value=[row])
+        frappe.get_doc = Mock(return_value=saved_link)
+        utils = types.ModuleType("frappe.utils")
+        utils.now_datetime = Mock(return_value="now")
+        drafts = types.ModuleType("hero_integration.services.frappe_mapping_draft_storage")
+        drafts.personal_publication_active = Mock(return_value=False)
+        events = types.ModuleType("hero_integration.services.integration_events")
+        events.record_output = Mock()
+        values = {"phone": "123", "custom_hero_last_login": None}
+        doc = types.SimpleNamespace(doctype="User", name="person", get=values.get)
+        with patch.dict(sys.modules, {"frappe": frappe, "frappe.utils": utils,
+                                     drafts.__name__: drafts, events.__name__: events}):
+            observe_frappe_target_change(doc)
+            events.record_output.assert_not_called()
+            values["phone"] = "456"
+            observe_frappe_target_change(doc)
+        self.assertEqual(events.record_output.call_args.kwargs["changed_fields"], ["phone"])
+
+    def test_source_observations_are_writable_only_by_the_inbound_adapter(self):
+        frappe = types.ModuleType("frappe")
+        frappe.flags = types.SimpleNamespace(in_migrate=False)
+        frappe._ = lambda value: value
+        frappe.PermissionError = PermissionError
+        frappe.throw = Mock(side_effect=lambda message, error: (_ for _ in ()).throw(error(message)))
+        old = {"custom_hero_last_login": "old"}
+        values = {"custom_hero_last_login": "new"}
+        doc = types.SimpleNamespace(doctype="User", name="person", get=values.get,
+                                    get_doc_before_save=lambda: old)
+        with patch.dict(sys.modules, {"frappe": frappe}):
+            with self.assertRaises(PermissionError):
+                protect_employee_source_observations(doc)
+            with managed_target_update("User", "person", "link"):
+                protect_employee_source_observations(doc)
+            values["custom_hero_last_login"] = "old"
+            protect_employee_source_observations(doc)
+
     def test_install_and_uninstall_guards_return_before_link_query(self):
         frappe = types.ModuleType("frappe")
         frappe.get_all = Mock(side_effect=AssertionError("link query during schema transition"))
@@ -317,6 +362,13 @@ class TestGlobalObserverLifecycle(unittest.TestCase):
         events.record_output.assert_called_once()
         self.assertEqual(events.record_output.call_args.kwargs["source_id"], "other")
         self.assertEqual(events.record_output.call_args.kwargs["changed_fields"], ["customer_name"])
+
+        events.record_output.reset_mock()
+        frappe.get_doc.reset_mock()
+        with patch.dict(sys.modules, modules), managed_target_update("Customer", "customer-1", None):
+            observe_frappe_target_change(doc)
+        frappe.get_doc.assert_not_called()
+        events.record_output.assert_not_called()
 
 
 if __name__ == "__main__":

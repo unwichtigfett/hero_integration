@@ -1980,6 +1980,7 @@ The declared GraphQL service kind does not match the document.,Die angegebene Gr
 The exact HERO mutation variables are not schema-valid.,Die genauen HERO-Mutation-Variablen sind nicht schemagültig.
 The exact mutation must be confirmed before execution.,Die genaue Mutation muss vor der Ausführung bestätigt werden.
 The external HERO deadline is managed by HERO Integration.,Der externe HERO-Termin wird von HERO Integration verwaltet.
+HERO source observations are managed by HERO Integration.,HERO-Quelldaten werden von HERO Integration verwaltet.
 The external record identity is server-owned and cannot be mapped.,Die externe Datensatzidentität wird vom Server verwaltet und darf nicht gemappt werden.
 The field rule is not selected by this mapping or its owned draft.,Die Feldregel ist nicht in diesem Mapping oder dessen eigenem Entwurf ausgewählt.
 The file cannot be imported.,Die Datei kann nicht importiert werden.

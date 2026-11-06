@@ -104,16 +104,18 @@ test('manual prerequisites expose only the allowed start button', async () => {
     const area = key => ({key, label: key, action_label: key, button: 'Start', ready: true,
         kind: 'direct', description: '', scope_note: '', blocker: '', scope: {objects: [], object_count: 0, field_count: 0}});
     app.data.areas = [area('contacts'), area('projects')];
-    app.data.file_areas = [area('employees')];
+    app.data.file_areas = [area('employees'), area('full')];
     app.data.manual_prerequisite = 'employees';
     await app.tick();
     const action = key => app.host.querySelectorAll('button').find(el => el.dataset.area === key && el.className === 'hero-sync-action');
     assert.equal(action('employees').disabled, undefined);
+    assert.equal(action('full').disabled, undefined);
     assert.equal(action('contacts').disabled, true);
     assert.equal(action('contacts').children[0], 'Waiting');
     assert.ok(app.host.querySelectorAll('p').some(el => el.textContent === 'Migrate Employees first and Contacts second'));
     app.data.manual_prerequisite = 'contacts'; await app.tick();
     assert.equal(action('contacts').disabled, undefined);
+    assert.equal(action('full').disabled, undefined);
     assert.equal(action('employees').disabled, true);
     app.data.manual_prerequisite = ''; await app.tick();
     assert.equal(action('projects').disabled, undefined);

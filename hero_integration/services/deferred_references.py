@@ -42,6 +42,13 @@ def installed(frappe_module=None):
     return bool(db and exists(MAIN) and exists(CHILD))
 
 
+def require_storage(frappe_module=None):
+    """Never accept an import that could silently lose deferred references."""
+    owner = frappe_module if frappe_module is not None else frappe
+    if not installed(owner):
+        owner.throw(owner._("Pending relationship storage is not installed."))
+
+
 def key(source, kind, identity):
     return sha256(json.dumps([source, kind, str(identity)], separators=(',', ':')).encode()).hexdigest()
 

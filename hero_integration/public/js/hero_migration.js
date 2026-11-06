@@ -194,7 +194,7 @@
             const cards = actionAreas().map((area) => {
                 const running = Boolean(area.running_run);
                 const blockedByOther = Boolean(activeRun) && !running;
-                const waiting = Boolean(state.data.manual_prerequisite) && area.key !== state.data.manual_prerequisite;
+                const waiting = Boolean(state.data.manual_prerequisite) && area.key !== "full" && area.key !== state.data.manual_prerequisite;
                 const button = el("button", {type: "button", class: "hero-sync-action", "data-area": area.key,
                     disabled: (waiting || running || blockedByOther || !area.ready || state.busy) || undefined,
                     title: waiting ? tr("Migrate Employees first and Contacts second") : running ? tr("This area is running.") : blockedByOther ? format("Run {0} is still in progress.", activeRun.name) : area.ready ? "" : tr(area.blocker),

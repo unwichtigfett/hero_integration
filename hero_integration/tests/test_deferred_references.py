@@ -25,6 +25,13 @@ class PendingDoc(NS):
 
 
 class TestDeferredObservation(TestCase):
+    def test_missing_storage_is_reported_before_a_run_is_accepted(self):
+        owner = NS(db=NS(table_exists=lambda name: name == deferred.MAIN), _=lambda message: message,
+                   throw=Mock(side_effect=ValueError('Pending relationship storage is not installed.')))
+        with self.assertRaisesRegex(ValueError, 'Pending relationship storage'):
+            deferred.require_storage(owner)
+        owner.throw.assert_called_once()
+
     def setUp(self):
         self.store, self.ready = {}, set()
         self.callbacks = []

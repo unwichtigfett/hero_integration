@@ -9,6 +9,23 @@ from unittest import mock
 
 
 class TestInstallContract(unittest.TestCase):
+    def test_migration_repairs_missing_pending_storage_and_is_idempotent(self):
+        environment = _InstallEnvironment(apps=['frappe', 'erpnext'], version='16.35.0')
+        environment.doctypes -= {'HERO Pending Dependency', 'HERO Pending Reference'}
+        install = environment.load()
+        environment.call(install.after_migrate)
+        self.assertEqual(environment.reload_calls, ['hero_pending_dependency', 'hero_pending_reference'])
+        environment.call(install.after_migrate)
+        self.assertEqual(len(environment.reload_calls), 2)
+
+    def test_migration_reports_a_missing_table_if_reload_does_not_repair_it(self):
+        environment = _InstallEnvironment(apps=['frappe', 'erpnext'], version='16.35.0')
+        environment.doctypes.remove('HERO Pending Dependency')
+        install = environment.load()
+        environment.modules['frappe'].reload_doc = mock.Mock()
+        with self.assertRaisesRegex(RuntimeError, 'Pending relationship storage is not installed'):
+            environment.call(install.after_migrate)
+
     def test_preinstalled_erpnext_guard_rejects_before_schema_writes(self):
         environment = _InstallEnvironment(apps=["frappe"], version="16.35.0")
         install = environment.load()
@@ -130,8 +147,10 @@ class _InstallEnvironment:
     def __init__(self, apps, version, doctypes=None, project_notes=True, project_notes_read_only=False):
         self.apps = apps
         self.version = version
-        self.doctypes = ({"Customer", "Contact", "Contact Email", "Contact Phone", "Address", "Project"}
+        self.doctypes = ({"Customer", "Contact", "Contact Email", "Contact Phone", "Address", "Project",
+                          "HERO Pending Dependency", "HERO Pending Reference"}
                          if doctypes is None else doctypes)
+        self.reload_calls = []
         self.custom_fields: dict[tuple[str, str], dict[str, object]] = {}
         self.create_calls: list[tuple[dict[str, list[dict[str, object]]], bool]] = []
         self.relabel_calls = 0
@@ -142,7 +161,12 @@ class _InstallEnvironment:
         frappe_module = types.ModuleType("frappe")
         frappe_module._ = lambda message: message
         frappe_module.get_installed_apps = lambda: self.apps
-        frappe_module.db = types.SimpleNamespace(exists=self.exists)
+        frappe_module.db = types.SimpleNamespace(exists=self.exists, table_exists=lambda name: name in self.doctypes)
+        def reload_doc(module, kind, name, force=False):
+            self.reload_calls.append(name)
+            self.doctypes.add({'hero_pending_dependency': 'HERO Pending Dependency',
+                               'hero_pending_reference': 'HERO Pending Reference'}[name])
+        frappe_module.reload_doc = reload_doc
         frappe_module.get_doc = self.get_doc
         frappe_module.get_meta = self.get_meta
         frappe_module.throw = lambda message: (_ for _ in ()).throw(RuntimeError(message))

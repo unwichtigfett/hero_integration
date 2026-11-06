@@ -42,6 +42,21 @@ def protect_external_task_deadline(doc, method=None) -> None:
         frappe.throw(frappe._('The external HERO deadline is managed by HERO Integration.'), frappe.PermissionError)
 
 
+def protect_employee_source_observations(doc, method=None) -> None:
+    """HERO observations are written by the inbound adapter, not local saves."""
+    del method
+    import frappe
+    from hero_integration.services.employee_mapping import OBSERVATIONS
+
+    if frappe.flags.in_migrate or managed_target_update_active(doc.doctype, doc.name):
+        return
+    previous = doc.get_doc_before_save()
+    for field, _label in OBSERVATIONS.get(doc.doctype, ()):
+        old = previous.get(field) if previous else None
+        if not _same_mapped_value(doc.get(field) or None, old or None):
+            frappe.throw(frappe._('HERO source observations are managed by HERO Integration.'), frappe.PermissionError)
+
+
 def field_hashes(values: Mapping[str, object]) -> dict[str, str]:
     """Hash normalised field values without retaining unrestricted payloads."""
 
@@ -233,20 +248,27 @@ def observe_frappe_target_change(doc, method=None) -> None:
         fields=["name", "source_type", "source_id", "target_field_hashes", "observed_target_hash"],
     )
     for row in links:
-        # The inbound writer owns this link's baseline in the same transaction.
-        # Other links on the document still observe the change normally.
-        if (doc.doctype, doc.name, row.name) in _managed_target.get():
+        # A specific owner suppresses only its link. A relation writer using
+        # None owns the target save itself, before a relation link is present.
+        if any(kind == doc.doctype and name in (None, doc.name) and owner in (None, row.name)
+               for kind, name, owner in _managed_target.get()):
             continue
         baseline = decode(row.get("target_field_hashes"))
         if not baseline:
             continue
+        employee_baseline = ((doc.doctype == "User" and row.source_type == "User") or
+                             (doc.doctype == "Employee" and row.source_type == "partner"))
+        if employee_baseline:
+            # Employee links predate the hashed baselines and store normalized
+            # source values; the employee importer still needs those values.
+            baseline = field_hashes(baseline)
         # ``hero_phone_home`` is a composite relation snapshot, not a field on
         # the target document.  Its lifecycle remains with the dedicated
         # relation resolver and must not produce a false Frappe field change.
         baseline = {field: value for field, value in baseline.items() if not field.startswith("hero_")}
         if not baseline:
             continue
-        current_values = {field: doc.get(field) for field in baseline}
+        current_values = {field: str(doc.get(field) or "") if employee_baseline else doc.get(field) for field in baseline}
         current_hashes = field_hashes(current_values)
         fields = changed_fields(baseline, current_hashes)
         if not fields:

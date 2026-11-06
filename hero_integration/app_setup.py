@@ -70,9 +70,12 @@ def verify_install() -> dict:
     missing += [f"project type {name}" for name in TRADE_CATALOG.values() if not frappe.db.exists("Project Type", name)]
     missing += [f"salutation {name}" for name in SALUTATIONS if not frappe.db.exists("Salutation", name)]
     for doctype in ("HERO Integration Settings", "HERO Integration Link", "HERO Integration Run", "HERO Frappe Mapping",
-                    "HERO GraphQL Service", "HERO GraphQL Mapping", "HERO GraphQL Schema Snapshot"):
+                    "HERO GraphQL Service", "HERO GraphQL Mapping", "HERO GraphQL Schema Snapshot",
+                    "HERO Pending Dependency", "HERO Pending Reference"):
         if not frappe.db.exists("DocType", doctype):
             missing.append(f"doctype {doctype}")
+        elif doctype.startswith("HERO Pending ") and not frappe.db.table_exists(doctype):
+            missing.append(f"table {doctype}")
     settings = frappe.get_single("HERO Integration Settings")
     unsafe = []
     if int(getattr(settings, "allow_graphql_mutation_execution", 0) or 0):
