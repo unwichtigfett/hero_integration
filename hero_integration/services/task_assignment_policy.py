@@ -28,7 +28,8 @@ def policy_write_active():
 
 def validate_policy_payload(payload, site_scope):
     expected = {'source_instance', 'issuer', 'company', 'user_bindings', 'allow_initial', 'allow_transfer'}
-    if (not isinstance(payload, dict) or set(payload) not in (expected, expected | {'native_effects'})
+    if (not isinstance(payload, dict) or not expected <= set(payload)
+            or set(payload) - expected - {'native_effects', 'silent_initial'}
             or not isinstance(site_scope, str) or not site_scope):
         raise PolicyError('Policy requires the exact authorized scope and actions.')
     for field in ('source_instance', 'issuer', 'company'):
@@ -47,6 +48,11 @@ def validate_policy_payload(payload, site_scope):
                 or effects['date_rule'] != 'LOCAL_TODAY'
                 or type(effects['allow_notifications']) is not bool or type(effects['allow_follow']) is not bool):
             raise PolicyError('Native effects require an explicit local date and boolean notification and follow decisions.')
+    if 'silent_initial' in payload:
+        if (type(payload['silent_initial']) is not bool or
+                payload['silent_initial'] and (payload['allow_transfer'] or payload.get('native_effects') != {
+                    'date_rule': 'LOCAL_TODAY', 'allow_notifications': False, 'allow_follow': False})):
+            raise PolicyError('Silent initial assignment requires explicit no-notification and no-follow effects.')
     return {**payload, 'user_bindings': sorted(bindings), 'site_scope': site_scope, 'source_type': 'Task'}
 
 
@@ -55,6 +61,8 @@ def _policy_input(value):
     result = {key: value[key] for key in keys}
     if 'native_effects' in value:
         result['native_effects'] = value['native_effects']
+    if 'silent_initial' in value:
+        result['silent_initial'] = value['silent_initial']
     return result
 
 

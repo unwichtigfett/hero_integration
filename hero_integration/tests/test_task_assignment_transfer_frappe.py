@@ -48,6 +48,9 @@ class TestTaskAssignmentTransfer(unittest.TestCase):
         payload = {'source_instance': self.source, 'issuer': self.users[0], 'company': company,
                    'user_bindings': bindings, 'allow_initial': True, 'allow_transfer': self._testMethodName != 'test_transfer_requires_policy',
                    'native_effects': {'date_rule': 'LOCAL_TODAY', 'allow_notifications': True, 'allow_follow': True}}
+        if self._testMethodName in {'test_competing_silent_initial_assignment', 'test_silent_initial_against_manual_assignment'}:
+            payload.update(silent_initial=True, allow_transfer=False, native_effects={
+                'date_rule': 'LOCAL_TODAY', 'allow_notifications': False, 'allow_follow': False})
         self.policy = task_assignment_policy_create(json.dumps(payload))['name']
         task_assignment_policy_approve(self.policy, 1)
         settings = frappe.get_single('System Settings'); settings.disable_document_sharing = 1; settings.save()
@@ -426,3 +429,34 @@ class TestTaskAssignmentTransfer(unittest.TestCase):
         thread = threading.Thread(target=independent); thread.start(); thread.join(timeout=20)
         self.assertFalse(thread.is_alive()); self.assertEqual(readback, [(1, 1)])
         print(f'CONCURRENT_INITIAL independent_connections=2 results={sorted(results)} readback=1', flush=True)
+
+    def test_competing_silent_initial_assignment(self):
+        self.test_competing_initial_assignment()
+
+    def test_silent_initial_against_manual_assignment(self):
+        row = {**self.record, 'id': 991012}
+        task = _migrate_native_task(row, self.run, _Plan(), self.scope).target_name
+        frappe.db.commit()
+        gate = threading.Barrier(2); results = []
+        def worker(manual):
+            frappe.init(site=os.environ['HERO_TEST_PRIVATE_SITE']); frappe.connect(); frappe.set_user(self.users[0])
+            try:
+                gate.wait(timeout=10)
+                if manual:
+                    from frappe.desk.form.assign_to import add
+                    add({'doctype': 'Task', 'name': task, 'assign_to': [self.users[0]]})
+                else:
+                    _record_task_assignment_pending(self.run, row, task, self.source)
+                frappe.db.commit(); results.append('OK')
+            except Exception as error:
+                frappe.db.rollback(); results.append(type(error).__name__)
+            finally: frappe.destroy()
+        with patch('frappe.desk.form.assign_to.notify_assignment'):
+            threads = [threading.Thread(target=worker, args=(manual,)) for manual in (False, True)]
+            for thread in threads: thread.start()
+            for thread in threads: thread.join(timeout=30)
+        self.assertFalse(any(thread.is_alive() for thread in threads))
+        self.assertIn(sorted(results), (['OK', 'OK'], ['OK', 'QueryDeadlockError']))
+        frappe.db.rollback()
+        self.assertEqual(frappe.db.count('ToDo', {'reference_type': 'Task', 'reference_name': task,
+                                                 'allocated_to': self.users[0], 'status': 'Open'}), 1)

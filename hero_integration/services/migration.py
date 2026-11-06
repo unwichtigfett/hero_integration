@@ -1199,8 +1199,10 @@ def _plan_task_assignment(run, record, task_name: str, source_instance: str) -> 
     if not policy:
         return decision('BLOCKED', 'PENDING_AUTHORITY: no current matching system assignment policy.', **details)
     details['policy'] = policy.name
+    policy_payload = json.loads(policy.policy_json)
+    silent_initial = policy_payload.get('silent_initial') is True
     task = frappe.get_doc('Task', task_name, for_update=True)
-    if not task_has_policy_company(task, policy):
+    if not silent_initial and not task_has_policy_company(task, policy):
         return decision('BLOCKED', 'PENDING_AUTHORITY: Task has no verified project in the policy company.', **details)
     if task.status in {'Completed', 'Cancelled'}:
         return decision('BLOCKED', 'PENDING_AUTHORITY: Task lifecycle does not permit assignment.', **details)
@@ -1210,7 +1212,7 @@ def _plan_task_assignment(run, record, task_name: str, source_instance: str) -> 
         return decision('BLOCKED', 'BLOCKED_PERMISSION: recipient has no Task read access; sharing is forbidden.', **details)
     if not frappe.has_permission('ToDo', 'create'):
         return decision('BLOCKED', 'BLOCKED_PERMISSION: integration actor cannot create ToDo.', **details)
-    if not frappe.get_system_settings('disable_document_sharing'):
+    if not silent_initial and not frappe.get_system_settings('disable_document_sharing'):
         return decision('BLOCKED', 'BLOCKED_PERMISSION: native assignment requires sharing disabled.', **details)
     from hero_integration.services.task_assignment_state import assignment_boundary_available
     if not assignment_boundary_available():
@@ -1230,6 +1232,10 @@ def _plan_task_assignment(run, record, task_name: str, source_instance: str) -> 
     active = [frappe.get_doc('ToDo', row.name, for_update=True) for row in history]
     active = [item for item in active if item.status == 'Open']
     details['existing'] = tuple(item.name for item in active)
+    if silent_initial and not state and active:
+        if any(item.allocated_to == recipient for item in active):
+            return decision('KEEP', 'Existing local assignment already includes the HERO recipient.', **details)
+        return decision('BLOCKED', 'PENDING_AUTHORITY: existing local assignments are preserved.', **details)
     if len(active) > 1:
         return decision('CONFLICT', 'Multiple open assignments require local review.', **details)
     if state:
@@ -1252,17 +1258,17 @@ def _plan_task_assignment(run, record, task_name: str, source_instance: str) -> 
         return decision('CONFLICT', 'PENDING_AUTHORITY: an existing local assignment is preserved.', **details)
     if history:
         return decision('BLOCKED', 'PENDING_AUTHORITY: historical assignments require local review.', **details)
-    effects = json.loads(policy.policy_json).get('native_effects')
+    effects = policy_payload.get('native_effects')
     if not effects:
         return decision('BLOCKED', 'POLICY_REQUIRED: approve local ToDo date and native notification/follow effects.',
                         proposed='CREATE', **details)
-    if recipient != frappe.session.user and not effects['allow_notifications']:
+    if not silent_initial and recipient != frappe.session.user and not effects['allow_notifications']:
         return decision('BLOCKED', 'POLICY_REQUIRED: native assignment notification is not authorized.',
                         proposed='CREATE', **details)
-    if frappe.get_cached_value('User', recipient, 'follow_assigned_documents') and not effects['allow_follow']:
+    if not silent_initial and frappe.get_cached_value('User', recipient, 'follow_assigned_documents') and not effects['allow_follow']:
         return decision('BLOCKED', 'POLICY_REQUIRED: native document following is not authorized.',
                         proposed='CREATE', **details)
-    return decision('CREATE', 'Authorized native initial assignment; local date is today.',
+    return decision('CREATE', 'Authorized initial assignment; local date is today.',
                     proposed='CREATE', date_rule=effects['date_rule'], **details)
 
 
@@ -1277,7 +1283,13 @@ def _execute_initial_task_assignment(run, record, task_name, source_instance, ob
     date = nowdate()
     try:
         with managed_assignment():
-            assign_to.add({'doctype': 'Task', 'name': task_name, 'assign_to': [current.recipient], 'date': date})
+            policy = frappe.get_doc('HERO Task Assignment Policy', current.policy, for_update=True)
+            if json.loads(policy.policy_json).get('silent_initial') is True:
+                frappe.get_doc({'doctype': 'ToDo', 'allocated_to': current.recipient, 'reference_type': 'Task',
+                    'reference_name': task_name, 'description': frappe._('Assignment for Task {0}').format(task_name),
+                    'priority': 'Medium', 'status': 'Open', 'date': date, 'assigned_by': frappe.session.user}).insert()
+            else:
+                assign_to.add({'doctype': 'Task', 'name': task_name, 'assign_to': [current.recipient], 'date': date})
             rows = frappe.get_all('ToDo', filters={'reference_type': 'Task', 'reference_name': task_name,
                                   'status': 'Open'}, fields=['name', 'allocated_to'], limit=2)
             if len(rows) != 1 or rows[0].allocated_to != current.recipient:
@@ -1288,7 +1300,6 @@ def _execute_initial_task_assignment(run, record, task_name, source_instance, ob
                     or str(todo.date) != str(date)):
                 raise RuntimeError('Native assignment does not match the approved Task, actor, recipient and date.')
             binding = frappe.get_doc('HERO Object Binding', current.binding, for_update=True)
-            policy = frappe.get_doc('HERO Task Assignment Policy', current.policy, for_update=True)
             link = _link('Task', str(record['id']), source_instance)
             frappe.get_doc({'doctype': 'HERO Task Assignment State', 'task_link': link.name,
                 'task_name': task_name, 'todo': todo.name, 'user_binding': binding.name,
