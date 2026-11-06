@@ -194,6 +194,37 @@ class TestTaskAssignmentPolicyFrappe(unittest.TestCase):
         self.assertTrue(frappe.db.exists('HERO Integration Link', {'source_instance': 'fixture-policy32b',
             'source_type': 'task_completed_assignment', 'source_id': '990006', 'target_name': todos[0].name}))
 
+    def test_mapped_completed_task_import_links_closed_assignee(self):
+        from hero_integration.services.migration import _migrate_mapped_task
+        from hero_integration.services.direct_mapping import MappingSpec
+        from hero_integration.services.mapping_runtime import plan_from_definitions
+        self.user.reload(); self.user.add_roles('Projects User')
+        self.payload['silent_initial'] = True
+        self.payload['native_effects'] = {'date_rule': 'LOCAL_TODAY', 'allow_notifications': False, 'allow_follow': False}
+        name = task_assignment_policy_create(json.dumps(self.payload))['name']
+        task_assignment_policy_approve(name, 1)
+        rules = [MappingSpec('HeroTasks', 'id', 'HERO Integration Link', 'source_id', 'int',
+                    'Source Identity', 'Positive Int To Text', definition_id='synthetic-id'),
+                 MappingSpec('HeroTasks', 'title', 'Task', 'subject', 'string|null',
+                    'Record Name', 'Trim', definition_id='synthetic-title'),
+                 MappingSpec('HeroTasks', 'target_user_id', 'ToDo', 'allocated_to', 'int|null',
+                    'Native Binding', 'HERO User Link', definition_id='synthetic-user')]
+        plan = plan_from_definitions('HeroTasks', rules, target_operation='HeroTasks', adapter_options={'version': 2})
+        run = SimpleNamespace(mode='Execute', mapping_revision=1, name=None)
+        scope = {'confirmed': True, 'source_instance': 'fixture-policy32b', 'source_type': 'Task'}
+        record = {'id': 990007, 'title': 'Synthetic mapped completed task', 'target_user_id': 0,
+                  'is_deleted': False, '_hero_source_instance': 'fixture-policy32b'}
+        created = _migrate_mapped_task(record, run, plan, scope)
+        task = frappe.get_doc('Task', created.target_name); task.status = 'Completed'; task.save()
+        record['target_user_id'] = 990001
+        updated = _migrate_mapped_task(record, run, plan, scope)
+        self.assertFalse(updated.pending_relation)
+        self.assertTrue(frappe.db.exists('ToDo', {'reference_type': 'Task', 'reference_name': task.name,
+            'allocated_to': self.user.name, 'status': 'Closed'}))
+        repeated = _migrate_mapped_task(record, run, plan, scope)
+        self.assertFalse(repeated.pending_relation)
+        self.assertEqual(frappe.db.count('ToDo', {'reference_type': 'Task', 'reference_name': task.name}), 1)
+
     def test_policy_does_not_grant_recipient_task_access(self):
         from hero_integration.services.migration import _migrate_native_task, _record_task_assignment_pending
         name = task_assignment_policy_create(json.dumps(self.payload))['name']
