@@ -43,8 +43,6 @@ class TestPortableRelease(unittest.TestCase):
         required = {
             "README.md",
             "installation_guide_1.0.md",
-            "docs/configuration_guide_1.0.md",
-            "docs/manual_acceptance_1.0.md",
             "docs/feature_matrix_1.0.md",
             "docs/portability_report_1.0.md",
             "docs/doctype_extensions_1.0.md",

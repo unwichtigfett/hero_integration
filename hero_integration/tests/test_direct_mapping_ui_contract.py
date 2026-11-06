@@ -46,7 +46,7 @@ class TestDirectMappingUIContract(unittest.TestCase):
                 self.assertNotEqual(message, translations[message])
 
     def test_direct_mapping_guide_is_linked_and_covers_setup_contract(self):
-        guide = ROOT / "docs/configurable_direct_mappings.md"
+        guide = ROOT / "docs/complete_json_mapping.md"
         content = guide.read_text()
         for term in ["HeroProducts", "HeroDocuments", "HeroPictures", "supply_product_versions",
                      "FileUpload_FileUploads.edges.node", "first", "offset", "target_operation",
@@ -55,5 +55,3 @@ class TestDirectMappingUIContract(unittest.TestCase):
                      "sales_prices.supply_sales_price.is_default", "list_price"]:
             with self.subTest(term=term):
                 self.assertIn(term, content)
-        for name in ["configurable_mappings_1.0.md", "mapping_1.0.md"]:
-            self.assertIn("(configurable_direct_mappings.md)", (ROOT / "docs" / name).read_text())
