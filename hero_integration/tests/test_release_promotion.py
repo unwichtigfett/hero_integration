@@ -52,8 +52,7 @@ class _Remotes:
         return git(bare, "rev-parse", ref)
 
     def promote(self, sha):
-        env = {**os.environ, **GIT_ENV, "COMMIT_SHA": sha, "FORGEJO_REMOTE": str(self.forgejo),
-               "GITHUB_REMOTE": str(self.github)}
+        env = {**os.environ, **GIT_ENV, "COMMIT_SHA": sha, "GITHUB_REMOTE": str(self.github)}
         return subprocess.run(["bash", str(PROMOTE)], env=env, text=True, capture_output=True)
 
 
@@ -64,12 +63,14 @@ class TestPromotion(unittest.TestCase):
         self.repo = _Remotes(Path(tmp))
         self.base = self.repo.head(self.repo.forgejo, "hero_int_1.0")
 
-    def test_tested_commit_is_released_with_the_next_patch_version_on_both_remotes(self):
+    def test_tested_commit_is_released_on_github_without_touching_forgejo(self):
         tested = self.repo.commit("feature")
         self.repo.push("hero_int_dev")
         result = self.repo.promote(tested)
         self.assertEqual(result.returncode, 0, result.stderr)
-        for bare in (self.repo.forgejo, self.repo.github):
+        self.assertEqual(self.repo.head(self.repo.forgejo, 'hero_int_dev'), tested)
+        self.assertEqual(self.repo.head(self.repo.forgejo, 'hero_int_1.0'), self.base)
+        for bare in (self.repo.github,):
             release = self.repo.head(bare, "hero_int_1.0")
             self.assertEqual(self.repo.head(bare, "hero_int_dev"), release)
             self.assertEqual(self.repo.head(bare, f"{release}^"), tested)
@@ -80,7 +81,6 @@ class TestPromotion(unittest.TestCase):
             pyproject = git(bare, "show", f"{release}:pyproject.toml")
             self.assertIn('version = "1.0.1"', pyproject)
             self.assertIn('target-version = "py310"', pyproject)
-        self.assertEqual(self.repo.head(self.repo.forgejo, "v1.0.1"), self.repo.head(self.repo.github, "v1.0.1"))
 
     def test_newer_dev_commit_leaves_the_installation_branch_unchanged(self):
         tested = self.repo.commit("feature")
@@ -117,15 +117,12 @@ class TestPromotion(unittest.TestCase):
         result = self.repo.promote(tested)
         self.assertEqual(result.returncode, 0, result.stderr)
 
-    def test_partial_push_is_reused_instead_of_creating_a_second_release(self):
+    def test_repeated_promotion_reuses_the_release_and_tag(self):
         tested = self.repo.commit("feature")
         self.repo.push("hero_int_dev")
         self.assertEqual(self.repo.promote(tested).returncode, 0)
-        release = self.repo.head(self.repo.forgejo, "hero_int_1.0")
-        tag = self.repo.head(self.repo.forgejo, "v1.0.1")
-        git(self.repo.github, "update-ref", "refs/heads/hero_int_dev", tested)
-        git(self.repo.github, "update-ref", "refs/heads/hero_int_1.0", self.base)
-        git(self.repo.github, "update-ref", "-d", "refs/tags/v1.0.1")
+        release = self.repo.head(self.repo.github, "hero_int_1.0")
+        tag = self.repo.head(self.repo.github, "v1.0.1")
         result = self.repo.promote(tested)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.repo.head(self.repo.github, "hero_int_1.0"), release)
@@ -145,9 +142,9 @@ class TestPromotion(unittest.TestCase):
                 for path, content in extra.items():
                     (self.repo.work / path).write_text(content)
                 git(self.repo.work, "commit", "-q", "-am", "Release 1.0.1 [skip ci]")
-                self.repo.push("hero_int_dev", remotes=(self.repo.forgejo,))
+                self.repo.push("hero_int_dev", remotes=(self.repo.github,))
                 result = self.repo.promote(tested)
-                git(self.repo.forgejo, "update-ref", "refs/heads/hero_int_dev", tested)  # reset for the next case
+                git(self.repo.github, "update-ref", "refs/heads/hero_int_dev", tested)  # reset for the next case
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("changes more than the version", result.stderr)
                 for bare in (self.repo.forgejo, self.repo.github):
@@ -213,6 +210,8 @@ class TestWoodpeckerChain(unittest.TestCase):
         self.assertEqual(steps["promote"]["depends_on"], ["install-test", "update-test-site"])
         self.assertEqual(steps["promote"]["when"], [{"event": "push", "branch": "hero_int_dev"}])
         self.assertEqual(steps["promote"]["environment"]["GITHUB_TOKEN"], {"from_secret": "github_release_token"})
+        self.assertNotIn("FORGEJO_REMOTE", steps["promote"]["environment"])
+        self.assertNotIn("FORGEJO_TOKEN", steps["promote"]["environment"])
 
 
 if __name__ == "__main__":

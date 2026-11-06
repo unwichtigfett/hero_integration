@@ -4,16 +4,14 @@
 # Runs only after GitHub CI and the Woodpecker install test succeeded for
 # COMMIT_SHA. It raises the patch version in a release commit on top of the
 # tested commit (only the two version lines change), tags it v<version> and
-# fast-forwards hero_int_dev and hero_int_1.0 to it on Forgejo and GitHub.
+# fast-forwards hero_int_dev and hero_int_1.0 to it on GitHub.
 # Nothing is ever force-pushed: if a branch moved, the push is rejected and
 # hero_int_1.0 keeps its state.
 #
 # Environment:
 #   COMMIT_SHA       tested commit (required)
-#   FORGEJO_REMOTE   e.g. https://hurensohn.tailbbed27.ts.net/unwichtigfett/hero_integration.git
 #   GITHUB_REMOTE    e.g. https://github.com/unwichtigfett/hero_integration.git
-#   FORGEJO_TOKEN, GITHUB_TOKEN   write tokens (optional for local paths)
-#   FORGEJO_USER     user for the Forgejo token (default unwichtigfett)
+#   GITHUB_TOKEN     write token (optional for local paths)
 set -Eeuo pipefail
 
 DEV=hero_int_dev
@@ -42,9 +40,8 @@ cd "$work"
 git config user.name "${RELEASE_AUTHOR_NAME:-unwichtigfett}"
 git config user.email "${RELEASE_AUTHOR_EMAIL:-95431041+unwichtigfett@users.noreply.github.com}"
 git config advice.detachedHead false
-git remote add forgejo "$(with_token "${FORGEJO_REMOTE:?FORGEJO_REMOTE is required}" "${FORGEJO_TOKEN:-}" "${FORGEJO_USER:-unwichtigfett}")"
 git remote add github "$(with_token "${GITHUB_REMOTE:?GITHUB_REMOTE is required}" "${GITHUB_TOKEN:-}")"
-REMOTES=(forgejo github)
+REMOTES=(github)
 
 for remote in "${REMOTES[@]}"; do
     git fetch -q --no-tags "$remote" "+refs/heads/$DEV:refs/r/$remote/dev" "+refs/heads/$REL:refs/r/$remote/rel"
@@ -58,7 +55,7 @@ is_release_of() {  # commit tested-sha
     [[ $(git rev-parse "$1^" 2>/dev/null) == "$2" ]] && [[ $(git log -1 --format=%s "$1") == "$RELEASE_PREFIX"* ]]
 }
 
-git cat-file -e "$sha^{commit}" 2>/dev/null || { echo "Commit $sha is not on $DEV of either remote." >&2; exit 1; }
+git cat-file -e "$sha^{commit}" 2>/dev/null || { echo "Commit $sha is not on GitHub $DEV." >&2; exit 1; }
 
 # A release commit already pushed to one remote (an earlier, interrupted run) is reused.
 release=''
@@ -79,7 +76,7 @@ done
 
 current=$(version_of "$sha")
 [[ -n $current ]] || { echo "No __version__ in $sha." >&2; exit 1; }
-released=$(newest "$(version_of refs/r/forgejo/rel)" "$(version_of refs/r/github/rel)")
+released=$(version_of refs/r/github/rel)
 
 # The only allowed release change: the two version lines of the tested commit.
 version_commit() {  # tested-sha version -> commit with exactly that change
