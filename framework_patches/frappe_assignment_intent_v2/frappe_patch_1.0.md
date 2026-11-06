@@ -7,6 +7,8 @@ Patch SHA-256: `1273a4d1ab9a803de4a1394c6366bc490f4dabd64f94bae392573806cf976969
 
 Compatibility requires three conditions: the exact base commit and base-file digest, an unchanged working tree for that file, and a successful `patch -p1 --dry-run < frappe-assignment-intent.patch` from the private Frappe root.
 
+The isolated acceptance suite also uses Frappe commit `2fcb9397a1f1da353b21e53d2f97ec56653acd02` with this same base file. Its tracked Python blob identities are recorded in `frappe-2fcb-python.manifest`. Container images without Git metadata may use `apply_checked.py`: it verifies each recorded Python file, checks the assignment module digest, verifies the patch applies cleanly, and checks the resulting digest. It refuses unknown source versions and accepts an already patched matching image. This pins the tested framework Python source; additional third-party hooks still require separate compatibility review.
+
 To apply, run `patch -p1 < frappe-assignment-intent.patch`. Verify the patched-file digest above. Run the relevant isolated acceptance before use.
 
 To roll back, check the patched-file digest. Run `patch -p1 -R --dry-run < frappe-assignment-intent.patch`, then `patch -p1 -R < frappe-assignment-intent.patch`. Verify the base-file digest.

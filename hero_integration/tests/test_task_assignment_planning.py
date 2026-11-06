@@ -63,6 +63,7 @@ class TestTaskAssignmentPlanning(unittest.TestCase):
             raise AssertionError(query)
         def get_doc(doctype, name, **kwargs):
             if doctype == 'Task': return self.task
+            if doctype == 'HERO Task Assignment Policy': return self.policy
             if doctype == 'HERO Task Assignment State': return self.state
             if doctype == 'ToDo': return next(x for x in self.todos if x.name == name)
             if doctype == 'HERO Object Binding': return NS(target_name='old@example.invalid', binding_revision=1, lifecycle='VALID')
@@ -117,6 +118,24 @@ class TestTaskAssignmentPlanning(unittest.TestCase):
         effects['allow_follow'] = True
         self.policy.policy_json = json.dumps({'native_effects': effects})
         self.assertEqual(self.plan().action, 'CREATE')
+
+    def test_silent_initial_assignment_does_not_require_sharing_or_project(self):
+        self.policy.policy_json = json.dumps({'silent_initial': True, 'native_effects': {
+            'date_rule': 'LOCAL_TODAY', 'allow_notifications': False, 'allow_follow': False}})
+        self.sharing_disabled = False
+        self.fake.get_cached_value = lambda *args: True
+        with patch.object(task_assignment_policy, 'task_has_policy_company', return_value=False):
+            self.assertEqual(self.plan().action, 'CREATE')
+        self.permission = False
+        self.assertIn('BLOCKED_PERMISSION', self.plan().detail)
+
+    def test_silent_initial_preserves_local_assignments(self):
+        self.policy.policy_json = json.dumps({'silent_initial': True, 'native_effects': {
+            'date_rule': 'LOCAL_TODAY', 'allow_notifications': False, 'allow_follow': False}})
+        self.todos = [NS(name='LOCAL', status='Open', allocated_to='other@example.invalid')]
+        self.assertEqual(self.plan().action, 'BLOCKED')
+        self.todos.append(NS(name='LOCAL2', status='Open', allocated_to=self.recipient.target_name))
+        self.assertEqual(self.plan().action, 'KEEP')
 
     def test_missing_null_invalid_and_unknown_users(self):
         for record, expected in [({'id': 7}, 'NO_OP'), ({'id': 7, 'target_user_id': None}, 'NO_OP'),

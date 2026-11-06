@@ -48,6 +48,15 @@ class TestTaskAssignmentPolicy(unittest.TestCase):
             with self.subTest(invalid=invalid), self.assertRaises(PolicyError):
                 validate_policy_payload({**self.payload, 'native_effects': invalid}, 'isolated.test')
 
+    def test_silent_policy_explicitly_forbids_transfer_and_side_effects(self):
+        effects = {'date_rule': 'LOCAL_TODAY', 'allow_notifications': False, 'allow_follow': False}
+        policy = {**self.payload, 'native_effects': effects, 'silent_initial': True}
+        self.assertTrue(validate_policy_payload(policy, 'isolated.test')['silent_initial'])
+        for change in ({'allow_transfer': True}, {'native_effects': {**effects, 'allow_notifications': True}},
+                       {'native_effects': {**effects, 'allow_follow': True}}, {'silent_initial': 1}):
+            with self.subTest(change=change), self.assertRaises(PolicyError):
+                validate_policy_payload({**policy, **change}, 'isolated.test')
+
     def test_policy_writes_deny_non_manager_before_document_access(self):
         frappe = types.ModuleType('frappe')
         frappe.only_for = Mock(side_effect=PermissionError('denied'))

@@ -3744,3 +3744,4 @@ A synchronized binding requires both successful synchronization baselines.,Eine 
 HERO Original Article Number,Ursprüngliche HERO-Artikelnummer
 A linked local Item was retained; changed HERO fields require review.,Ein verknüpfter lokaler Artikel wurde beibehalten; geänderte HERO-Felder müssen geprüft werden.
 The original HERO article number changed; the existing Item code was preserved.,Die ursprüngliche HERO-Artikelnummer wurde geändert; die vorhandene ERPNext-Artikelnummer wurde beibehalten.
+Assignment for Task {0},Zuweisung für Aufgabe {0}
