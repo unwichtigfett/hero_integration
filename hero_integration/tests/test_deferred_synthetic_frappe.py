@@ -679,6 +679,88 @@ class TestSyntheticDeferredMariaDB(TestCase):
         self.assertEqual(frappe.db.get_value(deferred.MAIN, pending, 'status'), 'Conflict')
         self.assertTrue(frappe.db.get_value(deferred.MAIN, pending, 'record_json'))
 
+    def _event_and_pending(self):
+        rules=[
+            MappingSpec('HeroCalendarEvents','id','HERO Integration Link','source_id','int','Source Identity','Positive Int To Text',definition_id='eid'),
+            MappingSpec('HeroCalendarEvents','title','Event','subject','string|null','Record Name','Trim',definition_id='etitle'),
+            MappingSpec('HeroCalendarEvents','start','Event','starts_on','string|null','Native Binding','Native Adapter',definition_id='estart'),
+            MappingSpec('HeroCalendarEvents','all_day','Event','all_day','boolean','Native Binding','Native Adapter',definition_id='eall'),
+            MappingSpec('HeroCalendarEvents','project_match_id','Event','custom_hero_project','int|null',
+                'Project Relation','HERO Project Link','HERO Project Link',definition_id='eproject')]
+        self.plan=plan_from_definitions('HeroCalendarEvents',rules,target_operation='HeroCalendarEvents',adapter_options={'version':2})
+        self.row={'id':50001,'title':'Synthetic event '+uuid4().hex[:10],'start':'2026-11-05T09:00:00Z',
+            'all_day':False,'deleted':False,'is_recurring':False,'project_match_id':20001,'_hero_source_instance':self.source}
+        from hero_integration.services.mapping_runtime import MappedValues
+        values=MappedValues({'subject':self.row['title'],'starts_on':'2026-11-05 09:00:00','all_day':0},missing={'custom_hero_project'})
+        result=migration._upsert('CalendarEvent','50001',self.row,values,'Event','subject',self.plan.mapping_version,
+            self.run,source_instance=self.source,creation_values={'event_type':'Private','send_reminder':0,
+                'sync_with_google_calendar':0,'add_video_conferencing':0})
+        self.assertEqual(result.code,'CREATED')
+        with patch.object(migration,'_mapping_plan_for_run',return_value=self.plan):
+            deferred.remember(self.run,'CalendarEvent',self.row,result)
+        pending=deferred.observation_key(self.source,'HeroCalendarEvents','50001',self.run.name)
+        return result.target_name,pending
+
+    def test_event_waits_then_only_binds_project_and_keeps_local_scalar_baseline(self):
+        event,pending=self._event_and_pending()
+        self._resolve(pending)
+        self.assertEqual(frappe.db.get_value(deferred.MAIN,pending,'status'),'Waiting')
+        link=migration._link('CalendarEvent','50001',self.source)
+        baseline=link.target_field_hashes
+        frappe.db.set_value('Event',event,'subject','Local event title')
+        project=self._project(20001)
+        with patch.object(migration,'_migrate_projection',side_effect=AssertionError('No full Event intake during binding')):
+            self._resolve(pending)
+        self.assertEqual(frappe.db.get_value(deferred.MAIN,pending,'status'),'Resolved')
+        target=frappe.get_doc('Event',event)
+        self.assertEqual(target.custom_hero_project,project.name)
+        self.assertEqual(target.subject,'Local event title')
+        import json
+        current=migration._link('CalendarEvent','50001',self.source)
+        self.assertEqual(json.loads(current.target_field_hashes)['subject'],json.loads(baseline)['subject'])
+
+    def test_event_binding_keeps_changed_privacy_as_review_conflict(self):
+        event,pending=self._event_and_pending()
+        self._project(20001)
+        frappe.db.set_value('Event',event,'send_reminder',1)
+        self._resolve(pending)
+        self.assertEqual(frappe.db.get_value(deferred.MAIN,pending,'status'),'Conflict')
+        self.assertFalse(frappe.get_doc('Event',event).custom_hero_project)
+
+    def test_full_binding_pass_resolves_event_after_project_stage_without_another_import(self):
+        event,pending=self._event_and_pending()
+        original=deferred.reconcile_source_page
+        stages=[]
+        def page(source,*args,operations=None,**kwargs):
+            stages.extend(operations or [])
+            if operations==('HeroProjectMatches',):
+                self._project(20001)
+            return original(source,*args,operations=operations,**kwargs)
+        state={}
+        with self._resolution_context(),patch.object(frappe.db,'commit'), \
+                patch.object(deferred,'reconcile_source_page',side_effect=page), \
+                patch.object(migration,'_migrate_projection',side_effect=AssertionError('No scalar Event replay')):
+            for _ in range(len(deferred.FINAL_RELATION_ORDER)+1):
+                done=deferred.reconcile_full_page(self.source,[self.run.name],state)
+        self.assertTrue(done)
+        self.assertLess(stages.index('HeroProjectMatches'),stages.index('HeroCalendarEvents'))
+        self.assertEqual(state['reconciliation_conflicts'],0)
+        self.assertEqual(frappe.db.get_value(deferred.MAIN,pending,'status'),'Resolved')
+        self.assertTrue(frappe.get_doc('Event',event).custom_hero_project)
+
+    def test_missing_event_project_is_waiting_until_full_final_assessment(self):
+        event,pending=self._event_and_pending()
+        state={}
+        with self._resolution_context(),patch.object(frappe.db,'commit'):
+            for _ in deferred.FINAL_RELATION_ORDER:
+                self.assertFalse(deferred.reconcile_full_page(self.source,[self.run.name],state))
+                self.assertEqual(frappe.db.get_value(deferred.MAIN,pending,'status'),'Waiting')
+            self.assertTrue(deferred.reconcile_full_page(self.source,[self.run.name],state))
+        self.assertEqual(state['reconciliation_conflicts'],1)
+        self.assertEqual(frappe.db.get_value(deferred.MAIN,pending,'status'),'Conflict')
+        self.assertTrue(frappe.db.get_value(deferred.MAIN,pending,'record_json'))
+        self.assertFalse(frappe.get_doc('Event',event).custom_hero_project)
+
     def test_event_mapping_change_reuses_only_unchanged_field_baselines(self):
         from hero_integration.services.change_detection import encode, field_hashes
 

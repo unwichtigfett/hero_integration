@@ -498,7 +498,7 @@ def _record_failure(name, error):
 
 
 @profiled('binding.reconcile_page')
-def reconcile_source_page(source, after='', limit=BATCH, *, origin_runs=None):
+def reconcile_source_page(source, after='', limit=BATCH, *, origin_runs=None, operations=None):
     """Recheck one stable page at the end of a full migration.
 
     Still-missing dependencies remain Waiting for the normal binding wakeup.
@@ -509,9 +509,15 @@ def reconcile_source_page(source, after='', limit=BATCH, *, origin_runs=None):
     if origin_runs is not None and not origin_runs:
         return after, False
     origin_clause = ' AND origin_run IN %s' if origin_runs is not None else ''
-    params = ((source, after, tuple(origin_runs), limit) if origin_runs is not None else (source, after, limit))
+    operation_clause = ' AND operation IN %s' if operations is not None else ''
+    if operations is not None and not operations:
+        return after, False
+    params = (source,after)
+    if origin_runs is not None: params += (tuple(origin_runs),)
+    if operations is not None: params += (tuple(operations),)
+    params += (limit,)
     rows = frappe.db.sql('''SELECT name FROM `tabHERO Pending Reference`
-        WHERE source_instance=%s AND status='Waiting' AND name>%s''' + origin_clause +
+        WHERE source_instance=%s AND status='Waiting' AND name>%s''' + origin_clause + operation_clause +
         ' ORDER BY name LIMIT %s', params, as_dict=True)
     actor = frappe.session.user
     for row in rows:
@@ -523,6 +529,47 @@ def reconcile_source_page(source, after='', limit=BATCH, *, origin_runs=None):
         finally:
             frappe.set_user(actor)
     return (rows[-1].name if rows else after), len(rows) == limit
+
+
+FINAL_RELATION_ORDER = ('HeroEmployees','HeroCustomers','HeroProjectMatches','HeroCalendarEvents',
+    'HeroTasks','HeroServices','HeroDocuments','HeroPictures')
+
+
+def reconcile_full_page(source, origin_runs, state):
+    """Advance one bounded dependency stage only after all scalar areas finished."""
+    if not origin_runs:
+        raise ValueError('Full relationship reconciliation requires its recorded child runs.')
+    if 'reconciliation_stage' not in state:
+        state['reconciliation_stage']=0
+        state['reconciliation_after']=''  # Older checkpoints used one global cursor.
+    stage = state['reconciliation_stage']
+    if type(stage) is not int or not 0<=stage<=len(FINAL_RELATION_ORDER):
+        raise ValueError('The full relationship reconciliation checkpoint is invalid.')
+    if stage<len(FINAL_RELATION_ORDER):
+        cursor,more=reconcile_source_page(source,state.get('reconciliation_after',''),
+            origin_runs=origin_runs,operations=(FINAL_RELATION_ORDER[stage],))
+        state['reconciliation_after']=cursor if more else ''
+        if not more: state['reconciliation_stage']=stage+1
+        return False
+    # Only the completed full import may classify genuinely unresolved bindings.
+    # Keep their frozen records for review/new observations; never invent a target.
+    after=state.get('reconciliation_final_after','')
+    rows=frappe.db.sql("""SELECT name FROM `tabHERO Pending Reference`
+        WHERE source_instance=%s AND origin_run IN %s AND status='Waiting' AND name>%s
+        ORDER BY name LIMIT %s""",(source,tuple(origin_runs),after,BATCH),as_dict=True)
+    for row in rows:
+        pending=frappe.get_doc(MAIN,row.name,for_update=True)
+        if pending.status=='Waiting' and pending.source_instance==source and pending.origin_run in origin_runs:
+            frappe.db.set_value(MAIN,row.name,{'status':'Conflict',
+                'detail':'Full import finished; required relationship bindings are missing or require review.'})
+        frappe.db.commit()
+    state['reconciliation_final_after']=rows[-1].name if rows else after
+    if len(rows)==BATCH:
+        return False
+    state['reconciliation_conflicts']=frappe.db.count(MAIN,{'source_instance':source,
+        'origin_run':['in',list(origin_runs)],'status':'Conflict'})
+    state['reconciliation_done']=True
+    return True
 
 
 @profiled('binding.dependency_page')
@@ -635,7 +682,7 @@ def resolve_one(name, *, dependency=None):
             _verify_origin_binding(pending, proof)
             from hero_integration.services.employee_migration import historical_user_scope
             with historical_user_scope(pending.source_instance, historical):
-                if (pending.operation in {'HeroTasks','HeroProjectMatches'} and
+                if (pending.operation in {'HeroTasks','HeroProjectMatches','HeroCalendarEvents'} and
                         (getattr(plan,'adapter_options',None) or {}).get('version')==2):
                     if pending.operation=='HeroTasks':
                         m._load_task_user_directory(None,pending.operation)
