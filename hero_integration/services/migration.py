@@ -1259,11 +1259,12 @@ def _plan_task_assignment(run, record, task_name: str, source_instance: str) -> 
     if len(active) > 1:
         return decision('CONFLICT', 'Multiple open assignments require local review.', **details)
     if state:
+        issuer = (getattr(state, 'owner', None) or frappe.session.user) if policy_payload.get('allow_all_system_managers') else frappe.session.user
         valid = (state.state == 'SYSTEM' and state.task_name == task_name
                  and state.policy == policy.name and int(state.policy_revision) == int(policy.policy_revision)
                  and int(state.mapping_revision) == int(run.mapping_revision) and len(active) == 1
                  and active[0].name == state.todo and str(active[0].modified) == str(state.todo_modified)
-                 and active[0].assigned_by == frappe.session.user)
+                 and active[0].assigned_by == issuer)
         if valid:
             old_binding = frappe.get_doc('HERO Object Binding', state.user_binding, for_update=True)
             valid = (active[0].allocated_to == old_binding.target_name

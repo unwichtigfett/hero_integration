@@ -188,9 +188,21 @@ class TestTaskAssignmentPolicyFrappe(unittest.TestCase):
         frappe.set_user(self.user.name)
         self.assertIsNone(approved_initial_policy('fixture-policy32b', binding.identity_key))
         frappe.set_user('Administrator')
-        user.reload(); user.add_roles('System Manager')
+        user.reload(); user.add_roles('System Manager', 'Projects User')
+        from hero_integration.services.migration import _migrate_native_task, _record_task_assignment_pending
+        class Plan:
+            mapping_version = 'policy-test'
+            definitions = (SimpleNamespace(source_path='id'), SimpleNamespace(source_path='title'))
+            def source_identity(self, record): return str(record['id'])
+        scope = {'confirmed': True, 'source_instance': 'fixture-policy32b', 'source_type': 'Task'}
+        run = SimpleNamespace(mode='Execute', mapping_revision=1, name=None)
+        row = {'id': 990099, 'title': 'Synthetic future assignee', 'target_user_id': 990099,
+               '_hero_source_instance': 'fixture-policy32b'}
+        task = _migrate_native_task(row, run, Plan(), scope).target_name
+        self.assertEqual(_record_task_assignment_pending(run, row, task, 'fixture-policy32b'), 'CREATE')
         frappe.set_user(user.name)
         self.assertEqual(approved_initial_policy('fixture-policy32b', binding.identity_key).name, name)
+        self.assertEqual(_record_task_assignment_pending(run, row, task, 'fixture-policy32b'), 'KEEP')
         frappe.set_user('Administrator')
         frappe.db.set_value('User', user.name, 'enabled', 0)
         with self.assertRaises(PolicyError):
