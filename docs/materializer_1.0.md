@@ -145,6 +145,14 @@ This snapshot only decides which jobs to enqueue; it is never passed to a writer
 or retained across recovery calls. `resolve_one` still checks dependencies and
 authority freshly within its own transaction. No native document saves, conflict
 checks or per-record commits have been removed.
+Failure handlers roll back and lock/re-read the committed reference state before
+marking a conflict. A successfully committed, superseded or independently reviewed
+observation is never reclassified by an exception from an after-commit callback.
+Error logs retain the exception type and bounded code-frame locations without
+exception values, local variables or source payloads. Generic source observations
+must be nonempty JSON objects before any realization writes; missing observations
+require a fresh import of the affected source record. They cannot be reconstructed
+from a target document or treated as empty successful input.
 Resolved observations clear their private source record while retaining dependency
 identities. Signed download URLs and credentials are excluded from stored records;
 service attachments refresh only the owning service identity, company and file

@@ -270,7 +270,7 @@ class TestDeferredReplay(TestCase):
 
     def test_full_reconciliation_pages_by_source_and_keeps_failures_visible(self):
         rows = [NS(name='a'), NS(name='b')]
-        db = NS(sql=Mock(return_value=rows), commit=Mock(), rollback=Mock(), set_value=Mock())
+        db = NS(sql=Mock(return_value=rows), commit=Mock(), rollback=Mock(), set_value=Mock(), get_value=Mock(return_value='Waiting'))
         fake = NS(db=db, session=NS(user='Administrator'), set_user=Mock(), log_error=Mock())
         with patch.object(deferred, 'frappe', fake), patch.object(deferred, 'installed', return_value=True), \
                 patch.object(deferred, 'resolve_one', side_effect=[None, ValueError('changed')]):
@@ -591,3 +591,53 @@ class TestRecoveryScheduling(TestCase):
         bulk.assert_called_once_with('a',{('project','1'),('project','2')})
         self.assertEqual(fake.db.set_value.call_count,5)
         fake.log_error.assert_not_called()
+
+
+class TestReferenceFailureState(TestCase):
+    def test_error_after_commit_cannot_reclassify_resolved_or_superseded_rows(self):
+        for status in ('Resolved','Conflict',None):
+            with self.subTest(status=status):
+                db=NS(rollback=Mock(),get_value=Mock(return_value=status),set_value=Mock(),commit=Mock())
+                fake=NS(db=db,log_error=Mock())
+                with patch.object(deferred,'frappe',fake):
+                    deferred._record_failure('reference',RuntimeError('PRIVATE_SOURCE_VALUE'))
+                db.set_value.assert_not_called()
+                db.commit.assert_not_called()
+                db.get_value.assert_called_once_with(deferred.MAIN,'reference','status',for_update=True)
+                diagnostic=json.loads(fake.log_error.call_args.kwargs['message'])
+                self.assertEqual(diagnostic['committed_status'],status)
+                self.assertNotIn('PRIVATE_SOURCE_VALUE',fake.log_error.call_args.kwargs['message'])
+
+    def test_waiting_failure_marks_conflict_without_replacing_observation(self):
+        db=NS(rollback=Mock(),get_value=Mock(return_value='Waiting'),set_value=Mock(),commit=Mock())
+        fake=NS(db=db,log_error=Mock())
+        with patch.object(deferred,'frappe',fake):
+            deferred._record_failure('reference',deferred.PendingObservationError('private'))
+        changes=db.set_value.call_args.args[2]
+        self.assertEqual(changes['status'],'Conflict')
+        self.assertIn('source observation',changes['detail'])
+        self.assertNotIn('record_json',changes)
+
+    def test_page_retains_committed_success_when_commit_callback_raises(self):
+        for page in ('source','dependency'):
+            with self.subTest(page=page):
+                stored={'status':'Waiting'}
+                def commit():
+                    stored['status']='Resolved'
+                    raise RuntimeError('callback failed after commit')
+                db=NS(sql=Mock(return_value=[NS(name='reference')]),commit=Mock(side_effect=commit),
+                    rollback=Mock(),get_value=Mock(side_effect=lambda *a,**kw:stored['status']),set_value=Mock())
+                fake=NS(db=db,session=NS(user='Administrator'),set_user=Mock(),log_error=Mock())
+                with patch.object(deferred,'frappe',fake),patch.object(deferred,'installed',return_value=True), \
+                        patch.object(deferred,'resolve_one'):
+                    if page=='source':deferred.reconcile_source_page('source')
+                    else:deferred.resolve_dependency('source','project','1')
+                self.assertEqual(stored['status'],'Resolved')
+                db.set_value.assert_not_called()
+                self.assertEqual(db.commit.call_count,1)
+
+    def test_invalid_observation_is_explicit_and_never_defaults_to_an_empty_record(self):
+        for payload in ('',None,'{broken','[]','null','{}'):
+            with self.subTest(payload=payload),self.assertRaises(deferred.PendingObservationError):
+                deferred._source_observation(NS(record_json=payload))
+        self.assertEqual(deferred._source_observation(NS(record_json='{"id":1}')),{'id':1})
