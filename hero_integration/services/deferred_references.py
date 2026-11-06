@@ -9,6 +9,8 @@ from contextvars import ContextVar
 from hashlib import sha256
 import json
 import time
+import traceback
+from pathlib import Path
 
 import frappe
 from hero_integration.services.performance import measured, profiled
@@ -18,6 +20,20 @@ CHILD = 'HERO Pending Dependency'
 BATCH = 50
 _replaying = ContextVar('hero_reference_replay', default=False)
 _writing = ContextVar('hero_pending_reference_write', default=False)
+
+
+class PendingObservationError(ValueError):
+    """The frozen source record cannot authorize a relationship write."""
+
+
+def _source_observation(pending):
+    try:
+        record = json.loads(pending.record_json)
+    except (TypeError, ValueError):
+        raise PendingObservationError('Saved source observation is missing or invalid; import the affected source record again.') from None
+    if not isinstance(record, dict) or not record:
+        raise PendingObservationError('Saved source observation is missing or invalid; import the affected source record again.')
+    return record
 
 
 def assert_owned_write():
@@ -458,6 +474,29 @@ def reconcile_completed_run(run_name, after=''):
         _enqueue_completed_run(run_name, cursor)
 
 
+def _record_failure(name, error):
+    """Re-read committed state before classifying a failed write or callback."""
+    diagnostic = {'reference': name, 'error_type': type(error).__name__,
+        'frames': [{'file': Path(frame.filename).name, 'function': frame.name, 'line': frame.lineno}
+            for frame in traceback.extract_tb(error.__traceback__)[-12:]]}
+    frappe.db.rollback()
+    # COMMIT can succeed before an after_commit callback raises. Another worker
+    # may also have superseded this observation after our rollback released locks.
+    status = frappe.db.get_value(MAIN, name, 'status', for_update=True)
+    diagnostic['committed_status'] = status
+    if status == 'Waiting':
+        detail = ('Saved source observation is missing or invalid; import the affected source record again.'
+            if isinstance(error, PendingObservationError) else
+            'Deferred relationship validation failed; see the reference error diagnostic.')
+        frappe.db.set_value(MAIN, name, {'status': 'Conflict', 'detail': detail})
+        frappe.db.commit()
+    else:
+        # Resolved, superseded, deleted and independently reviewed observations
+        # must retain their committed state and cleared/private source evidence.
+        frappe.db.rollback()
+    frappe.log_error(title='Pending HERO relationship failed', message=json.dumps(diagnostic, sort_keys=True))
+
+
 @profiled('binding.reconcile_page')
 def reconcile_source_page(source, after='', limit=BATCH, *, origin_runs=None):
     """Recheck one stable page at the end of a full migration.
@@ -479,12 +518,8 @@ def reconcile_source_page(source, after='', limit=BATCH, *, origin_runs=None):
         try:
             resolve_one(row.name)
             frappe.db.commit()
-        except Exception:
-            frappe.db.rollback()
-            frappe.db.set_value(MAIN, row.name, {'status': 'Conflict',
-                'detail': 'Deferred relationship validation failed; refresh the original source record.'})
-            frappe.db.commit()
-            frappe.log_error(title='Pending HERO relationship failed', message='Reference ' + row.name)
+        except Exception as error:
+            _record_failure(row.name, error)
         finally:
             frappe.set_user(actor)
     return (rows[-1].name if rows else after), len(rows) == limit
@@ -508,12 +543,8 @@ def resolve_dependency(source, kind, identity, after=''):
         try:
             resolve_one(row.name, dependency=(kind, str(identity)))
             frappe.db.commit()
-        except Exception:
-            frappe.db.rollback()
-            frappe.db.set_value(MAIN, row.name, {'status': 'Conflict',
-                'detail': 'Deferred relationship validation failed; refresh the original source record.'})
-            frappe.db.commit()
-            frappe.log_error(title='Pending HERO relationship failed', message='Reference ' + row.name)
+        except Exception as error:
+            _record_failure(row.name, error)
         finally:
             frappe.set_user(actor)
         last = row.name
@@ -533,6 +564,7 @@ def resolve_one(name, *, dependency=None):
     # Keep its observation intact until that exact run completed successfully.
     if run.state != 'Completed':
         return
+    record = _source_observation(pending) if pending.operation in OPERATIONS.values() else None
     first_attempt = not getattr(pending, 'realization_started', 1)
     if first_attempt:
         frappe.db.set_value(MAIN, name, 'realization_started', 1)
@@ -594,7 +626,6 @@ def resolve_one(name, *, dependency=None):
             plan = m._mapping_plan_for_run(run, pending.operation)
             if plan.mapping_version != pending.mapping_version:
                 raise ValueError('The approved mapping changed; refresh the source record before retrying.')
-            record = json.loads(pending.record_json)
             proof = record.pop('__hero_origin_binding', None)
             historical = record.pop('__hero_historical_users', [])
             if not isinstance(historical, list) or any(not isinstance(value, str) or not value.isdigit() or int(value) <= 0 for value in historical):
@@ -685,7 +716,7 @@ def _resolve_available_project_assignee(pending, user_id):
     m.validate_run_mappings(run)
     m._source_for_run(run, config)
     plan = m._mapping_plan_for_run(run, pending.operation)
-    record = json.loads(pending.record_json)
+    record = _source_observation(pending)
     proof = record.pop('__hero_origin_binding', None)
     record.pop('__hero_historical_users', None)
     if (plan.mapping_version != pending.mapping_version or str(plan.source_identity(record)) != pending.source_id

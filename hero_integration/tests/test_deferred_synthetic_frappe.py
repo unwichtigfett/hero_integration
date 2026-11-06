@@ -139,6 +139,23 @@ class TestSyntheticDeferredMariaDB(TestCase):
         frappe.db.delete('Project',{'name':project.name})
         self.assertFalse(deferred.available_many(self.source,demands)['project','20001'])
 
+    def test_missing_frozen_observation_is_rejected_before_target_or_attempt_writes(self):
+        task,pending=self._task_and_pending()
+        frappe.db.set_value(deferred.MAIN,pending,'record_json','')
+        self._project(20001)
+        with self.assertRaises(deferred.PendingObservationError):
+            self._resolve(pending)
+        self.assertFalse(frappe.get_doc('Task',task).project)
+        self.assertFalse(frappe.db.get_value(deferred.MAIN,pending,'realization_started'))
+        self.assertEqual(frappe.db.get_value(deferred.MAIN,pending,'status'),'Waiting')
+
+    def test_resolved_empty_observation_stays_terminal_without_replay(self):
+        task,pending=self._task_and_pending()
+        frappe.db.set_value(deferred.MAIN,pending,{'status':'Resolved','record_json':''})
+        self._resolve(pending)
+        self.assertEqual(frappe.db.get_value(deferred.MAIN,pending,'status'),'Resolved')
+        self.assertFalse(frappe.get_doc('Task',task).project)
+
     def test_task_is_created_without_project_and_linked_after_project_arrives(self):
         task_name, pending = self._task_and_pending()
         project = self._project(20001)

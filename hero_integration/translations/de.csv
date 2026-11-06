@@ -3766,3 +3766,5 @@ The operation cannot be materialized from the saved schema.,Die Operation kann n
 Mapped binding realization requires its successful originating area.,Die Realisierung der Mapping-Beziehungen erfordert den erfolgreichen Abschluss ihres Ursprungsbereichs.
 The imported binding target or mapping changed before realization.,Das importierte Beziehungsziel oder Mapping wurde vor der Realisierung geändert.
 Relationship-only updates require their imported target and realization service.,Reine Beziehungsaktualisierungen erfordern ihr importiertes Ziel und den zuständigen Realisierungsdienst.
+Saved source observation is missing or invalid; import the affected source record again.,Die gespeicherte Quellbeobachtung fehlt oder ist ungültig; den betroffenen Quelldatensatz erneut importieren.
+Deferred relationship validation failed; see the reference error diagnostic.,Die Prüfung der nachgelagerten Beziehung ist fehlgeschlagen; siehe Fehlerdiagnose der Referenz.
