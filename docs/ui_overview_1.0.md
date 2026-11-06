@@ -1,43 +1,13 @@
 # HERO Desk workspace
 
-The `hero-integration` Desk workspace has five views: **Overview**, **API & Schema**, **Mapping**, **Synchronisation** and **Settings**. API & Schema contains API Analyzer, Graph Viewer and GraphQL Services (Query / Mutation).
-
-## Mapping and target fields
-
-The editor requires an explicitly selected, saved and validated schema snapshot. It discovers installed apps, DocTypes and fields from the active site. Compatible targets are **Draft proposals**, not automatically active mappings or permission to write. Personal Drafts, revisions and Query/Mutation directions have separate authorization rules.
-
-## Query and Mutation execution
-
-| Action | Actual behavior |
-| --- | --- |
-| `workspace_context`, `workspace_schema`, `workspace_graph` | Read saved validated snapshot information. |
-| GraphQL service list/detail/save/validate/delete | Permission-checked **local** management of saved service definitions. |
-| `workspace_service_execute` | **Explicit read-only Query execution** for System Manager. Requires validated saved Query, matching revision/snapshot and checked variables. Mutations are rejected before transport; no migration or record acknowledgment occurs. |
-| `execute_graphql_service` | **Separate mutation endpoint** guarded by active contract, global switch, role/confirmation and one-shot audit/transport. A Mutation Draft alone cannot execute. |
-| Mapping Draft and exchange endpoints | Local changes with owner, CAS, snapshot and publication guards; no automatic runtime permission. |
-| Settings and synchronization endpoints | Perform only their specific allowed reads/configuration/run requests after server-side checks. |
-
-Old compatibility RPC names and the prior classification of every `execute_service` call as a HERO mutation are **not** a reliable account of the current code. Review the actual endpoints in [`hero_integration/api.py`](../hero_integration/api.py).
-
-## Polling status
-
-The Synchronisation view counts polling executions for the configured source over
-30 days. Each automatic area run has a start receipt linked to its Integration Run;
-its displayed outcome follows that run without changing the run or business records.
-Manual imports are excluded. Skipped ticks are shown separately and do not count as
-executions. Runs with conflicts and cancellations have separate counters; a completed
-run with conflicts can still advance the last-successful timestamp, as in the area cards.
-
-The open page refreshes local state every 30 seconds while idle and every 5 seconds
-while a run is active. Hidden browser tabs make no refresh requests. These requests
-never contact HERO. Historical runs without a polling receipt are not reclassified
-based on their execution time.
-
-Deployment requires DocType migration for the `Started` option and `run` link, plus
-updated frontend assets. A source checkout alone does not update a running container.
-
-## Acceptance boundary
-
-Source tests and earlier visual checks do not establish the behavior of the current deployed Desk UI. Verify the exact branch/commit, employee isolation, administrator controls, narrow layouts, Frappe permissions and browser runtime on the target site.
-
-Schema source payloads and credentials stay outside Git. Generated GraphQL Query documents do not bypass the active service/mapping and source-binding contracts.
+- Views: Overview, API & Schema, Mapping, Synchronisation and Settings.
+- Mapping Editor: selected validated schema, site metadata, personal drafts and explicit publication.
+- `workspace_context`, `workspace_schema`, `workspace_graph`: saved snapshot information.
+- `workspace_service_execute`: Explicit read-only Query execution for System Manager; validated service, matching snapshot and checked variables required. Mutations are rejected before transport.
+- `execute_graphql_service`: separate guarded Mutation endpoint with active contract and execution controls.
+- Synchronisation: area runs, relationship status, conflicts, checkpoints and polling receipts.
+- Polling status counts automatic executions separately from manual imports and skipped ticks.
+- Visible page refresh: every 30 seconds idle, every 5 seconds during a run; hidden tabs do not refresh.
+- Runtime changes require the matching app revision, site migrations and built frontend assets.
+- Source tests and earlier visual checks do not establish the behavior of the deployed UI; verify permissions, employee isolation and layouts on the target site.
+- Endpoint definitions and permission checks: [`api.py`](../hero_integration/api.py).

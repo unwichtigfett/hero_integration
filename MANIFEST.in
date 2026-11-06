@@ -2,6 +2,16 @@ include LICENSE
 include README.md
 include installation_guide_1.0.md
 recursive-include docs *.md
+exclude docs/ci_installtest_1.0.md
+exclude docs/code_review_remediation_1.0.md
+exclude docs/configurable_direct_mappings.md
+exclude docs/configurable_mappings_1.0.md
+exclude docs/configuration_guide_1.0.md
+exclude docs/manual_acceptance_1.0.md
+exclude docs/mapping_1.0.md
+exclude docs/run_checkpoints_1.0.md
+exclude docs/service_mapping.md
+exclude docs/sync_handoff_1.0.md
 recursive-include hero_integration *.json *.js *.txt
 recursive-include hero_integration *.css
 recursive-include hero_integration/translations *.csv

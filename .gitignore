@@ -15,6 +15,16 @@ docs/hardening-summary.md
 docs/mapping-delivery-coverage.md
 docs/personal-mapping-content.md
 docs/task-assignment-migration.md
+docs/ci_installtest_1.0.md
+docs/code_review_remediation_1.0.md
+docs/configurable_direct_mappings.md
+docs/configurable_mappings_1.0.md
+docs/configuration_guide_1.0.md
+docs/manual_acceptance_1.0.md
+docs/mapping_1.0.md
+docs/run_checkpoints_1.0.md
+docs/service_mapping.md
+docs/sync_handoff_1.0.md
 
 # Site configuration exports (pass to CI through a secret, never commit)
 ci/fixtures/
