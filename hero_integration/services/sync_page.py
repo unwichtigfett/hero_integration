@@ -61,7 +61,7 @@ def manual_prerequisite(instance: str, frappe_module) -> str:
 
 
 def manual_allowed(key: str, prerequisite: str) -> bool:
-    return not prerequisite or key == prerequisite
+    return key == "full" or not prerequisite or key == prerequisite
 
 
 def area(key: str) -> SyncArea:

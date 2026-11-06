@@ -202,6 +202,7 @@ def before_install() -> None:
 
 def after_install() -> None:
     ensure_hero_source_fields()
+    ensure_pending_reference_schema()
     ensure_employee_optional_fields()
     from hero_integration.app_setup import apply_form_layout, ensure_app_records
 
@@ -218,6 +219,7 @@ def after_install() -> None:
 
 def after_migrate() -> None:
     ensure_hero_source_fields()
+    ensure_pending_reference_schema()
     ensure_employee_optional_fields()
     from hero_integration.app_setup import ensure_app_records
 
@@ -230,6 +232,16 @@ def after_migrate() -> None:
         from hero_integration.integrations.app_references import ensure_reference_fields
 
         ensure_reference_fields()
+
+
+def ensure_pending_reference_schema() -> None:
+    """Repair missing app-owned DocTypes during the normal site migration."""
+    for name, module in (("HERO Pending Dependency", "hero_pending_dependency"),
+                         ("HERO Pending Reference", "hero_pending_reference")):
+        if not frappe.db.exists("DocType", name) or not frappe.db.table_exists(name):
+            frappe.reload_doc("hero_integration", "doctype", module, force=True)
+        if not frappe.db.exists("DocType", name) or not frappe.db.table_exists(name):
+            frappe.throw(frappe._("Pending relationship storage is not installed."))
 
 
 def _reference_apps_installed() -> bool:

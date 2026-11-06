@@ -275,6 +275,9 @@ def _start_migration(
         frappe.throw(frappe._("An explicitly approved GraphQL service is required for a new migration run."))
     if not frappe.get_meta("HERO Integration Run").has_field("checkpoint_contract_json"):
         frappe.throw(frappe._("Run checkpoint schema is not installed; apply the reviewed app schema before queueing a run."))
+    if not bool(int(dry_run)):
+        from hero_integration.services.deferred_references import require_storage
+        require_storage(frappe)
     service, mapping = _approved_read_service(graphql_service)
     is_preview = bool(int(dry_run))
     from hero_integration.services.migration_testing import configuration, run_metadata

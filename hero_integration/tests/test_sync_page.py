@@ -38,6 +38,8 @@ class TestAreas(unittest.TestCase):
         runs['Customer Migration'] = 'Completed'
         self.assertEqual(sync_page.manual_prerequisite('source-a', owner), '')
         self.assertTrue(sync_page.manual_allowed('employees', 'employees'))
+        self.assertTrue(sync_page.manual_allowed('full', 'employees'))
+        self.assertTrue(sync_page.manual_allowed('full', 'contacts'))
         self.assertFalse(sync_page.manual_allowed('contacts', 'employees'))
         self.assertFalse(sync_page.manual_allowed('tasks', 'contacts'))
         self.assertTrue(sync_page.manual_allowed('tasks', ''))
@@ -183,6 +185,16 @@ class TestSyncSwitchApi(unittest.TestCase):
 
 
 class TestAreaStart(unittest.TestCase):
+    def test_missing_pending_storage_blocks_execute_before_creating_run(self):
+        fake = SimpleNamespace(get_meta=lambda name: SimpleNamespace(has_field=lambda field: True),
+                               db=SimpleNamespace(table_exists=lambda name: False),
+                               _=lambda text: text,
+                               throw=lambda message: (_ for _ in ()).throw(ValueError(message)))
+        with patch.object(api, 'frappe', fake), patch.object(api, '_approved_read_service') as read:
+            with self.assertRaisesRegex(ValueError, 'Pending relationship storage is not installed'):
+                api._start_migration('Customer Migration', False, False, 'SERVICE')
+        read.assert_not_called()
+
     def start(self, services, existing_runs=False):
         fake = _Frappe(_settings(hero_source_instance="main"), existing_runs)
         with patch.object(api, "frappe", fake), patch.object(api, "_configured_source_instance", return_value="main"), \

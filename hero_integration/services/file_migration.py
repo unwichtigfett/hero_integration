@@ -206,6 +206,9 @@ def start(action: str, parent: str = "") -> str:
     from hero_integration.services.migration_testing import configuration, run_metadata
     parent_run = frappe.get_doc('HERO Integration Run', parent) if parent else None
     require_mappings(action, config.source_instance)
+    if action in FILE_ACTIONS or action == FULL_ACTION:
+        from hero_integration.services.deferred_references import require_storage
+        require_storage(frappe)
     if action == EMPLOYEE_ACTION:
         from hero_integration.services.employee_migration import preflight
 

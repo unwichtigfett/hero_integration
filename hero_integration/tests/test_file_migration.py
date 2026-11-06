@@ -5,7 +5,7 @@ from __future__ import annotations
 import contextlib
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from hero_integration.services import file_migration as fm
 
@@ -363,7 +363,7 @@ class TestSourceBinding(unittest.TestCase):
                 created.append(self)
 
         fake = SimpleNamespace(get_single=lambda dt: SimpleNamespace(testing_enabled=0), get_doc=lambda values: _Run(name="RUN-1", **values),
-                               db=SimpleNamespace(set_default=lambda *a: None, commit=lambda: None))
+                               db=SimpleNamespace(set_default=lambda *a: None, commit=lambda: None, table_exists=lambda name: True))
         with patch.object(fm, "frappe", fake), patch.object(fm, "_configuration", return_value=_config()), \
                 patch.object(fm, "_enqueue"), patch.object(fm.direct_runtime, "resolve_read"), \
                 patch("hero_integration.services.file_transfer.reset_phase"):
@@ -394,6 +394,15 @@ class TestSourceBinding(unittest.TestCase):
 
 
 class TestMappingReadiness(unittest.TestCase):
+    def test_missing_pending_storage_blocks_file_run_before_insert(self):
+        fake = SimpleNamespace(db=SimpleNamespace(table_exists=lambda name: False), _=lambda text: text,
+                               throw=lambda message: (_ for _ in ()).throw(ValueError(message)), get_doc=Mock())
+        with patch.object(fm, 'frappe', fake), patch.object(fm, 'confirmed_configuration', return_value=_config()), \
+                patch.object(fm, 'require_mappings', return_value={}):
+            with self.assertRaisesRegex(ValueError, 'Pending relationship storage is not installed'):
+                fm.start('Document Migration')
+        fake.get_doc.assert_not_called()
+
     def test_missing_mapping_blocks_before_run_insert(self):
         with patch.object(fm, "confirmed_configuration", return_value=_config()), \
                 patch.object(fm.direct_runtime, "resolve_read", side_effect=ValueError("approve mapping")), \
@@ -452,7 +461,7 @@ class TestEveryStartPathIsSourceBound(unittest.TestCase):
 
         self.fake = SimpleNamespace(get_single=lambda dt: SimpleNamespace(testing_enabled=0), only_for=lambda *a: None, throw=throw, _=lambda text: text,
                                     get_doc=lambda values: _Run(name="RUN-1", **values),
-                                    db=SimpleNamespace(exists=lambda *a, **k: None, set_default=lambda *a: None,
+                                    db=SimpleNamespace(exists=lambda *a, **k: None, table_exists=lambda name: True, set_default=lambda *a: None,
                                                        commit=lambda: None),
                                     log_error=lambda **kwargs: self.queued.append(("logged", kwargs)))
         for target in (patch.object(api, "frappe", self.fake), patch.object(ft, "frappe", self.fake),

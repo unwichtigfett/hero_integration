@@ -40,7 +40,7 @@ class TestDeletionHook(IntegrationTestCase):
         self.assertEqual(
             set(hero_integration.hooks.doc_events),
             # Project/Version: native activity handling; Helpdesk/CRM: ERPNext reference fields.
-            {*hero_integration.hooks._HERO_OWNED_DOCTYPES, "*", "Task", "ToDo", "Project", "Version",
+            {*hero_integration.hooks._HERO_OWNED_DOCTYPES, "*", "Task", "ToDo", "Project", "Version", "User", "Employee",
              "HD Ticket", "ERPNext HD Settings", "CRM Lead", "CRM Deal", "ERPNext CRM Settings"},
         )
         self.assertEqual(
@@ -51,6 +51,9 @@ class TestDeletionHook(IntegrationTestCase):
             hero_integration.hooks.doc_events["Task"]["validate"],
             "hero_integration.services.change_detection.protect_external_task_deadline",
         )
+        for doctype in ("User", "Employee"):
+            self.assertEqual(hero_integration.hooks.doc_events[doctype]["validate"],
+                             "hero_integration.services.change_detection.protect_employee_source_observations")
         self.assertEqual(
             hero_integration.hooks.doc_events["Version"],
             {"before_insert": "hero_integration.services.project_logbook_writeback.mark_imported_project_version"},
