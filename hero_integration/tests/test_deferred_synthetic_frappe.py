@@ -49,6 +49,13 @@ class TestSyntheticDeferredMariaDB(TestCase):
         fm._save_full(parent.name,{'steps':list(fm.NEW_FULL_STEPS),'step':2,'child':self.run.name,
             'completed_children':[],'notes':[]})
         started=[]
+        get_default=frappe.db.get_default
+        def stale_default(key,*args,**kwargs):
+            if key.startswith(fm.CHILD_KEY.split('{}')[0]):
+                return None
+            if key.startswith(fm.FULL_KEY.split('{}')[0]):
+                return '{"step":0,"child":"","notes":[]}'
+            return get_default(key,*args,**kwargs)
         def start_step(action,name):
             self.assertEqual((action,name),('Schedule Migration',parent.name))
             child=frappe.get_doc({'doctype':'HERO Integration Run','action':action,'mode':'Execute',
@@ -58,6 +65,7 @@ class TestSyntheticDeferredMariaDB(TestCase):
             return child.name
         try:
             with patch.object(frappe,'enqueue') as enqueue, \
+                    patch.object(frappe.db,'get_default',side_effect=stale_default), \
                     patch.object(fm,'bound_configuration',return_value=SimpleNamespace(source_instance=self.source)), \
                     patch.object(fm,'_start_step',side_effect=start_step):
                 fm.on_run_finished(self.run.name)
