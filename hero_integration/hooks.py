@@ -101,6 +101,7 @@ doc_events["Project"] = {
 }
 doc_events["Task"] = {"validate": "hero_integration.services.change_detection.protect_external_task_deadline"}
 doc_events["Version"] = {"before_insert": "hero_integration.services.project_logbook_writeback.mark_imported_project_version"}
+after_job = ["hero_integration.services.user_contact_retry.after_job"]
 
 # Requires the separately distributed Frappe assignment-intent v2 patch.
 assignment_intent_before = ["hero_integration.services.task_assignment_state.before_native_assignment"]
