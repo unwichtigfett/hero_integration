@@ -213,6 +213,14 @@ class TestSyntheticDeferredMariaDB(TestCase):
             'source_instance': self.source, 'source_id': '2'}, 'target_name'), address.name)
         self.assertEqual(frappe.db.get_value('Address', address.name, 'address_type'), 'Billing')
         self.assertEqual(frappe.db.get_value('Address', address.name, 'is_primary_address'), 1)
+        record['customer_addresses'][0]['address']['id'] = 4
+        self.assertNotEqual(migration._sync_mapped_relations(plan, record, result, self.run).code, 'CONFLICT')
+        stale = frappe.db.get_value('HERO Integration Link', {'source_type': 'customer_address',
+            'source_instance': self.source, 'source_id': '2'}, 'name')
+        frappe.db.set_value('HERO Integration Link', stale, 'target_payload_hash', 'stale')
+        record['customer_addresses'][0]['address']['id'] = 2
+        self.assertNotEqual(migration._sync_mapped_relations(plan, record, result, self.run).code, 'CONFLICT')
+        self.assertEqual(frappe.db.get_value('HERO Integration Link', stale, 'sync_status'), 'Synchronized')
         record['customer_addresses'][0]['address'].update(id=3, zipcode='54321')
         actual = migration._sync_mapped_relations(plan, record, result, self.run)
         self.assertFalse(actual.pending_relation)
@@ -230,6 +238,28 @@ class TestSyntheticDeferredMariaDB(TestCase):
         self._resolve(pending)
         self.assertEqual(frappe.get_doc('Task', task_name).project, local.name)
         self.assertEqual(frappe.db.get_value(deferred.MAIN, pending, 'status'), 'Conflict')
+
+    def test_matching_unbound_contact_keeps_its_local_last_name(self):
+        from hero_integration.services import mapped_relations
+        from hero_integration.tests.test_mapped_collection_relations import CONTACTS
+        customer = frappe.get_doc({'doctype': 'Customer', 'customer_name': 'Synthetic person ' + uuid4().hex[:10],
+            'customer_type': 'Individual', 'customer_group': 'Commercial', 'territory': 'Germany'}).insert()
+        contact = frappe.get_doc({'doctype': 'Contact', 'first_name': 'Example', 'last_name': 'Local Name',
+            'designation': 'Office', 'email_ids': [{'email_id': 'synthetic@example.invalid', 'is_primary': 1}],
+            'phone_nos': [{'phone': '+491234', 'is_primary_mobile_no': 1},
+                          {'phone': '+495678', 'is_primary_phone': 1}],
+            'links': [{'link_doctype': 'Customer', 'link_name': customer.name}]}).insert()
+        record = {'id': 100, '_hero_source_instance': self.source, 'contacts': [
+            {'id': 101, 'parent_customer_id': 100, 'is_contact_person': True, 'is_deleted': False,
+             'first_name': 'Example', 'last_name': 'Source Name', 'email': 'synthetic@example.invalid',
+             'phone_mobile': '+491234', 'phone_home': '+495678', 'title': None, 'position': 'Office'}]}
+        plan = SimpleNamespace(adapter_options={'native_relations': [CONTACTS]}, mapping_version='fixture')
+        self.assertEqual(mapped_relations.sync(plan, record, 'Customer', customer.name)['created'], 1)
+        self.assertEqual(mapped_relations.sync(plan, record, 'Customer', customer.name)['unchanged'], 1)
+        self.assertEqual(frappe.db.get_value('Contact', contact.name, 'last_name'), 'Local Name')
+        record['contacts'][0]['last_name'] = 'Changed Source Name'
+        self.assertEqual(mapped_relations.sync(plan, record, 'Customer', customer.name)['conflicts'], 1)
+        self.assertEqual(frappe.db.get_value('Contact', contact.name, 'last_name'), 'Local Name')
 
     def test_large_test_selection_uses_longtext_and_rejects_changed_content(self):
         from hero_integration.services import file_migration
