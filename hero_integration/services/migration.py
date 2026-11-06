@@ -2794,9 +2794,13 @@ def _migrate_mapped_task(record, run, plan, scope) -> Result:
             values['status'] = 'Completed'
     except (ValueError, MappingPlanError) as error:
         return Result('BLOCKED_RECORD', str(error))
+    from hero_integration.services.direct_mapping import MISSING, lookup
+    assignment_rule = next((spec for spec in plan.definitions if spec.target_doctype == 'ToDo'
+                            and spec.target_field == 'allocated_to'), None)
+    raw_assignee = lookup(record, assignment_rule.source_path) if assignment_rule else MISSING
     assignment_error = None
     try:
-        assignment = mapped_values(plan, record, target_doctype='ToDo')
+        assignment = {} if type(raw_assignee) is int and raw_assignee == 0 else mapped_values(plan, record, target_doctype='ToDo')
     except (ValueError, MappingPlanError) as error:
         # A bad or unresolved assignee is not evidence that the Task itself
         # is invalid. Keep any local assignment and report the relation apart.
@@ -2805,11 +2809,7 @@ def _migrate_mapped_task(record, run, plan, scope) -> Result:
         return Result('BLOCKED_RECORD', 'A mapped Task title is required for intake.')
     result = _upsert('Task', source_id, record, values, 'Task', 'subject', plan.mapping_version, run,
         source_instance=instance, required_on_create=('subject',))
-    from hero_integration.services.direct_mapping import MISSING, lookup
     from hero_integration.services.employee_migration import historical_users
-    assignment_rule = next((spec for spec in plan.definitions if spec.target_doctype == 'ToDo'
-                            and spec.target_field == 'allocated_to'), None)
-    raw_assignee = lookup(record, assignment_rule.source_path) if assignment_rule else MISSING
     if (type(raw_assignee) is int and str(raw_assignee) in historical_users(instance)
             and result.target_name and result.code in {'CREATED', 'UPDATED', 'SKIPPED', 'CONVERGED', 'OBSERVED'}):
         if run.mode != 'Preview':

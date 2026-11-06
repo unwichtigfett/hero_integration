@@ -336,7 +336,7 @@ class TestMappedAssignmentAdmission(TestCase):
         assignment = rule('assignee', 'target_user_id', 'ToDo', 'allocated_to', kind='int|null', transform='HERO User Link')
         p = plan(task_rules() + [assignment])
         record = {'id': 42, 'title': 'Synthetic', '_hero_source_instance': 'source-a',
-                  'target_user_id': 0, 'is_deleted': False}
+                  'target_user_id': -1, 'is_deleted': False}
         with patch.object(migration, '_upsert', return_value=migration.Result('CREATED', '', 'Task', 'T1')) as upsert, \
              patch.object(migration, 'record_output') as output:
             result = migration._migrate_mapped_task(record, NS(mode='Execute', name='RUN'), p,
