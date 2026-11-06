@@ -41,6 +41,52 @@ class TestSyntheticDeferredMariaDB(TestCase):
         frappe.db.rollback()
         frappe.clear_messages()
 
+    def test_project_completion_hands_off_to_one_event_child_without_an_extra_job(self):
+        from hero_integration.services import file_migration as fm
+        parent=frappe.get_doc({'doctype':'HERO Integration Run','action':fm.FULL_ACTION,'mode':'Execute',
+            'state':'Running','source_instance':self.source,'source_binding_revision':1}).insert()
+        frappe.db.set_default(fm.CHILD_KEY.format(self.run.name),parent.name)
+        fm._save_full(parent.name,{'steps':list(fm.NEW_FULL_STEPS),'step':2,'child':self.run.name,
+            'completed_children':[],'notes':[]})
+        started=[]
+        def start_step(action,name):
+            self.assertEqual((action,name),('Schedule Migration',parent.name))
+            child=frappe.get_doc({'doctype':'HERO Integration Run','action':action,'mode':'Execute',
+                'state':'Queued','source_instance':self.source,'source_binding_revision':1}).insert()
+            frappe.db.set_default(fm.CHILD_KEY.format(child.name),name)
+            started.append(child.name)
+            return child.name
+        try:
+            with patch.object(frappe,'enqueue') as enqueue, \
+                    patch.object(fm,'bound_configuration',return_value=SimpleNamespace(source_instance=self.source)), \
+                    patch.object(fm,'_start_step',side_effect=start_step):
+                fm.on_run_finished(self.run.name)
+                state=fm._full(parent.name)
+                self.assertEqual(state['step'],3)
+                self.assertEqual(state['child'],started[0])
+                self.assertEqual(state['completed_children'],[self.run.name])
+                self.assertEqual(frappe.db.get_value('HERO Integration Run',started[0],'state'),'Queued')
+                fm.on_run_finished(self.run.name)
+                self.assertEqual(len(started),1)
+                frappe.db.set_value('HERO Integration Run',parent.name,'state','Cancelled')
+                frappe.db.commit()
+                fm.on_run_finished(self.run.name)
+                self.assertEqual(len(started),1)
+                self.assertEqual(frappe.db.get_value('HERO Integration Run',parent.name,'state'),'Cancelled')
+                enqueue.assert_not_called()
+                frappe.db.set_value('HERO Integration Run',parent.name,'state','Running')
+                with patch.object(fm,'bound_configuration',side_effect=fm.SourceBindingError('Synthetic source changed')):
+                    fm.on_run_finished(self.run.name)
+                self.assertEqual(frappe.db.get_value('HERO Integration Run',parent.name,'state'),'Blocked')
+                self.assertEqual(frappe.db.get_value('HERO Integration Run',self.run.name,'state'),'Completed')
+                self.assertEqual(len(started),1)
+        finally:
+            frappe.db.rollback()
+            keys=[fm.FULL_KEY.format(parent.name)]+[fm.CHILD_KEY.format(name) for name in [self.run.name]+started]
+            frappe.db.delete('DefaultValue',{'parent':'__default','defkey':['in',keys]})
+            frappe.db.delete('HERO Integration Run',{'source_instance':self.source})
+            frappe.db.commit()
+
     def _task_and_pending(self):
         result = migration._migrate_mapped_task(self.row, self.run, self.plan, self.scope)
         self.assertEqual(result.code, 'CREATED')

@@ -236,13 +236,17 @@ class TestFullMigrationChain(unittest.TestCase):
         self.assertEqual([row['id'] for row in selected.records], [4])
         self.assertEqual(wrapper.projection(selected.next_offset), SourcePage((), None))
 
-    def test_a_finished_child_queues_its_parent(self):
+    def test_a_finished_child_continues_its_parent_without_a_handoff_job(self):
         self.db.defaults[fm.CHILD_KEY.format("RUN-9")] = "FULL"
-        fm.on_run_finished("RUN-9")
-        self.assertEqual(self.queued, ["FULL"])
-        self.db.runs["FULL"]["state"] = "Cancelled"
-        fm.on_run_finished("RUN-9")
-        self.assertEqual(self.queued, ["FULL"])
+        order=[]
+        with patch.object(self.db,'commit',side_effect=lambda:order.append('commit')), \
+                patch.object(fm,'execute',side_effect=lambda name:order.append(name)):
+            fm.on_run_finished("RUN-9")
+            self.assertEqual(order,['commit','FULL'])
+            self.db.runs["FULL"]["state"] = "Cancelled"
+            fm.on_run_finished("RUN-9")
+            self.assertEqual(order,['commit','FULL'])
+        self.assertEqual(self.queued, [])
 
 
 class TestFileSlice(unittest.TestCase):

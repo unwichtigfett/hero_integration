@@ -189,6 +189,39 @@ class TestLegacyCheckpoint(TestCase):
 
 
 class TestReplayAcceptance(TestCase):
+    def test_terminal_worker_retry_repairs_handoff_without_reimporting(self):
+        run=SimpleNamespace(name='RUN',state='Completed',owner='Administrator')
+        fake=SimpleNamespace(get_doc=lambda *a:run,set_user=mock.Mock())
+        with mock.patch.object(migration,'frappe',fake), \
+                mock.patch.object(migration,'_advance_full_migration') as advance, \
+                mock.patch.object(migration,'_claim_run') as claim, \
+                mock.patch.object(migration,'_source_for_run') as source:
+            migration.execute_run('RUN')
+        advance.assert_called_once_with('RUN')
+        claim.assert_not_called()
+        source.assert_not_called()
+
+    def test_cleanup_failure_after_durable_completion_still_notifies_parent(self):
+        run=SimpleNamespace(name='RUN',state='Queued',owner='Administrator',
+            started_on=datetime(2026,1,1),reload=lambda:None)
+        fake=SimpleNamespace(get_doc=lambda *a,**kw:run,set_user=lambda _:None,
+            db=SimpleNamespace(rollback=mock.Mock()))
+        def process(*args,**kwargs):run.state='Completed'
+        with mock.patch.object(migration,'frappe',fake), \
+                mock.patch.object(migration,'_claim_run',return_value=True), \
+                mock.patch.object(migration,'_assert_checkpoint_contract'), \
+                mock.patch.object(migration,'validate_run_mappings'), \
+                mock.patch.object(migration,'get_configuration'), \
+                mock.patch.object(migration,'_source_for_run'), \
+                mock.patch.object(migration,'_process_requested_phases',side_effect=process), \
+                mock.patch.object(migration,'_locked_active_run',side_effect=RuntimeError('cleanup interrupted')), \
+                mock.patch.object(migration,'_advance_full_migration') as advance:
+            with self.assertRaisesRegex(RuntimeError,'cleanup interrupted'):
+                migration.execute_run('RUN')
+        fake.db.rollback.assert_called_once()
+        advance.assert_called_once_with('RUN')
+        self.assertEqual(run.state,'Completed')
+
     def test_resume_replays_from_zero_without_rebinding_the_acknowledged_contract(self):
         from hero_integration import api
         run = SimpleNamespace(name='RUN', state='Failed', testing_enabled=0, checkpoint_contract_json='original',

@@ -440,8 +440,11 @@ def on_run_finished(run_name: str) -> None:
     notify_completed_run(run_name)
     parent = frappe.db.get_default(CHILD_KEY.format(run_name))
     if parent and frappe.db.get_value("HERO Integration Run", parent, "state") in ACTIVE:
-        _enqueue(parent)
+        # Publish the child's terminal state and release its reservation before
+        # the parent's locked transition. The next child still runs in its own
+        # queued job; the handoff itself must not depend on another notification.
         frappe.db.commit()
+        execute(parent)
 
 
 def advance_full(run_name: str) -> None:

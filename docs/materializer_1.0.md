@@ -179,6 +179,16 @@ Project logbook import.
 
 ## Full-import relationship completion
 
+A terminal mapping child commits its reservation cleanup and advances its active
+parent directly through the existing locked full-run executor. The next area
+still receives its own queued job; no extra queue notification is needed between
+the Project completion and Event creation. Duplicate notifications re-read the
+current child under the full-run lock, and cancelled parents remain stopped.
+Cleanup failures after a durable child completion still attempt this handoff;
+a retry of a terminal child repairs handoff without repeating scalar import.
+This removes a notification dependency but does not reconstruct the cause of a
+previously lost job or restart cancelled imports.
+
 Missing dependencies remain Waiting while areas are still being imported; ready
 relationships may be realized after their own successful origin run. Completeness
 is assessed only after every scalar area of the full import has finished. The
