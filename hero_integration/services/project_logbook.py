@@ -277,6 +277,32 @@ def _same_line_break_representation(source, observed):
     return normalize(left) == normalize(right)
 
 
+def _comment_snapshot(comment, selected):
+    """Baseline only approved fields, using their persisted native values."""
+    observed = {field: getattr(comment, field, None) for field in selected}
+    for field in ('creation','modified'):
+        if observed.get(field) is not None:
+            observed[field] = str(observed[field])
+    return observed
+
+
+def _native_comment_values(values, owner=None):
+    """Mirror Comment.validate normalization without changing source evidence."""
+    from frappe.utils.html_utils import sanitize_html
+    result = dict(values)
+    if 'content' in result:
+        result['content'] = sanitize_html(result['content'], always_sanitize=True,
+            disallowed_tags=['form','input','button'])
+    if 'comment_email' in result and not result['comment_email'] and owner:
+        result['comment_email'] = owner
+    return result
+
+
+def _same_import_representation(values, observed, comment):
+    expected = _native_comment_values(values, getattr(comment,'owner',None))
+    return expected == observed or _same_line_break_representation(expected, observed)
+
+
 def _local(value):
     from hero_integration.services.migration import _external_task_deadline
 
@@ -395,12 +421,12 @@ def sync_mapped_entries(plan, record, project, *, preview=False, conflicts=None)
             if config.get('context_paths') and link.mapping_version == 'project-logbook-v1':
                 _enrich_legacy_mapped_comment(comment, values)
             if config.get('context_paths') and link.mapping_version != 'project-logbook-v1':
-                observed = {field: getattr(comment, field, None) for field in values}
-                for field in ('creation', 'modified'):
-                    if observed.get(field) is not None: observed[field] = str(observed[field])
+                observed = _comment_snapshot(comment, values)
                 if _digest(observed) != link.target_payload_hash:
-                    if (link.source_payload_hash == _digest(values)
-                            and _same_line_break_representation(values, observed)):
+                    if (link.source_payload_hash == _digest(values) and (
+                            _same_line_break_representation(values, observed) or
+                            (link.target_payload_hash == link.source_payload_hash and
+                             _same_import_representation(values, observed, comment)))):
                         frappe.db.set_value('HERO Integration Link', link.name, {
                             'sync_status': 'Synchronized', 'conflict_detail': '',
                             'mapping_version': plan.mapping_version, 'target_payload_hash': _digest(observed),
@@ -416,11 +442,13 @@ def sync_mapped_entries(plan, record, project, *, preview=False, conflicts=None)
                 if (link.sync_status == 'Synchronized' and link.mapping_version == plan.mapping_version
                         and link.source_payload_hash == _digest(values)):
                     continue  # An unchanged entry needs no writes or timestamp churn.
-                frappe.db.set_value('Comment', comment.name, values, update_modified=False)
+                written = _native_comment_values(values, getattr(comment,'owner',None))
+                frappe.db.set_value('Comment', comment.name, written, update_modified=False)
+                persisted = _comment_snapshot(frappe.get_doc('Comment', comment.name), values)
                 frappe.db.set_value('HERO Integration Link', link.name, {
                     'sync_status': 'Synchronized', 'conflict_detail': '',
                     'mapping_version': plan.mapping_version, 'source_payload_hash': _digest(values),
-                    'target_payload_hash': _digest(values), 'last_synced_on': frappe.utils.now_datetime()}, update_modified=False)
+                    'target_payload_hash': _digest(persisted), 'last_synced_on': frappe.utils.now_datetime()}, update_modified=False)
             continue
         legacy = _legacy_identity_alias(project, parent, instance, identity)
         if legacy is not None:
@@ -437,17 +465,19 @@ def sync_mapped_entries(plan, record, project, *, preview=False, conflicts=None)
                 'source_payload_hash': legacy.source_payload_hash, 'target_payload_hash': legacy.target_payload_hash,
                 'last_synced_on': legacy.last_synced_on}).insert(ignore_permissions=True)
             continue
+        written = _native_comment_values(values)
         comment = frappe.get_doc({'doctype': 'Comment', 'comment_type': 'Info', 'reference_doctype': None if restricted else 'Project',
-                                  'reference_name': None if restricted else project, 'custom_hero_project': project, **{k: v for k, v in values.items() if k not in {'creation', 'modified'}}})
+                                  'reference_name': None if restricted else project, 'custom_hero_project': project, **{k: v for k, v in written.items() if k not in {'creation', 'modified'}}})
         comment.insert(ignore_permissions=True)
         dates = {key: values[key] for key in ('creation', 'modified') if values.get(key)}
         if dates:
             if 'creation' in dates and 'modified' not in dates: dates['modified'] = dates['creation']
             frappe.db.set_value('Comment', comment.name, dates, update_modified=False)
+        persisted = _comment_snapshot(frappe.get_doc('Comment', comment.name), values)
         link = frappe.get_doc({'doctype': 'HERO Integration Link', 'source_system': 'HERO', 'source_type': SOURCE_TYPE,
             'source_id': key, 'source_instance': instance, 'sync_status': 'Synchronized', 'target_doctype': 'Comment',
             'target_name': comment.name, 'mapping_version': plan.mapping_version,
-            'source_payload_hash': _digest(values), 'target_payload_hash': _digest(values),
+            'source_payload_hash': _digest(values), 'target_payload_hash': _digest(persisted),
             'last_synced_on': frappe.utils.now_datetime()}).insert(ignore_permissions=True)
         if restricted:
             frappe.db.set_value('Comment', comment.name, {'reference_doctype': 'HERO Integration Link',

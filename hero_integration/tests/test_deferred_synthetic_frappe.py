@@ -761,6 +761,71 @@ class TestSyntheticDeferredMariaDB(TestCase):
         self.assertTrue(frappe.db.get_value(deferred.MAIN,pending,'record_json'))
         self.assertFalse(frappe.get_doc('Event',event).custom_hero_project)
 
+    def _native_logbook_fixture(self):
+        from copy import deepcopy
+        from hero_integration.tests.test_project_logbook_mapped_complete import TestCompleteMappedLogbook
+        fixture=TestCompleteMappedLogbook();fixture.setUp()
+        project=self._project(20001)
+        record=deepcopy(fixture.record)
+        record.update(id=20001,_hero_source_instance=self.source)
+        record['histories'][0]['custom_text']='Project created through migration & ERPNext'
+        record['histories'][0]['user']['email']=''
+        return project,fixture.plan,record
+
+    def test_native_logbook_baseline_ignores_own_creation_defaults_and_unlinked_system_comments(self):
+        from hero_integration.services import project_logbook as lb
+        project,plan,record=self._native_logbook_fixture()
+        generated=frappe.get_doc({'doctype':'Comment','comment_type':'Created','reference_doctype':'Project',
+            'reference_name':project.name,'content':'Created by migration'}).insert(ignore_permissions=True)
+        self.assertEqual(lb.sync_mapped_entries(plan,record,project.name),1)
+        link=frappe.get_all('HERO Integration Link',filters={'source_instance':self.source,
+            'source_type':'project_history'},fields=['name','target_name','source_payload_hash','target_payload_hash'])[0]
+        comment=frappe.get_doc('Comment',link.target_name)
+        self.assertEqual(comment.comment_email,'Administrator')
+        self.assertIn('&amp;',comment.content)
+        self.assertNotEqual(link.source_payload_hash,link.target_payload_hash)
+        conflicts=[]
+        self.assertEqual(lb.sync_mapped_entries(plan,record,project.name,conflicts=conflicts),0)
+        self.assertEqual(conflicts,[])
+        self.assertTrue(frappe.db.exists('Comment',generated.name))
+        self.assertEqual(frappe.db.count('HERO Integration Link',{'source_instance':self.source,'source_type':'project_history'}),1)
+        record['histories'][0]['custom_text']='Changed in HERO & ERPNext'
+        lb.sync_mapped_entries(plan,record,project.name,conflicts=conflicts)
+        self.assertEqual(conflicts,[])
+        self.assertIn('Changed in HERO &amp; ERPNext',frappe.get_doc('Comment',comment.name).content)
+        lb.sync_mapped_entries(plan,record,project.name,conflicts=conflicts)
+        self.assertEqual(conflicts,[])
+
+    def test_old_pre_save_logbook_baseline_can_be_repaired_only_for_proven_native_defaults(self):
+        from hero_integration.services import project_logbook as lb
+        project,plan,record=self._native_logbook_fixture()
+        lb.sync_mapped_entries(plan,record,project.name)
+        link=frappe.get_all('HERO Integration Link',filters={'source_instance':self.source,
+            'source_type':'project_history'},fields=['name','target_name','source_payload_hash'])[0]
+        comment=frappe.get_doc('Comment',link.target_name)
+        before=(comment.content,comment.creation,comment.modified,comment.comment_email)
+        frappe.db.set_value('HERO Integration Link',link.name,{'target_payload_hash':link.source_payload_hash,'sync_status':'Conflict'})
+        original_text=record['histories'][0]['custom_text']
+        record['histories'][0]['custom_text']='Concurrent source change'
+        blocked=[]
+        lb.sync_mapped_entries(plan,record,project.name,conflicts=blocked)
+        self.assertEqual(blocked,[link.name])
+        self.assertEqual(frappe.get_doc('Comment',comment.name).content,before[0])
+        record['histories'][0]['custom_text']=original_text
+        conflicts=[]
+        original=frappe.db.set_value
+        with patch.object(frappe.db,'set_value',wraps=original) as writes:
+            lb.sync_mapped_entries(plan,record,project.name,conflicts=conflicts)
+        self.assertEqual(conflicts,[])
+        self.assertTrue(all(call.args[0]!='Comment' for call in writes.call_args_list))
+        comment.reload()
+        self.assertEqual((comment.content,comment.creation,comment.modified,comment.comment_email),before)
+        self.assertEqual(frappe.db.get_value('HERO Integration Link',link.name,'sync_status'),'Synchronized')
+        frappe.db.set_value('Comment',comment.name,'content','Real local edit')
+        lb.sync_mapped_entries(plan,record,project.name,conflicts=conflicts)
+        self.assertEqual(conflicts,[link.name])
+        self.assertEqual(frappe.get_doc('Comment',comment.name).content,'Real local edit')
+
     def test_event_mapping_change_reuses_only_unchanged_field_baselines(self):
         from hero_integration.services.change_detection import encode, field_hashes
 

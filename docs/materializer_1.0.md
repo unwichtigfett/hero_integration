@@ -160,6 +160,23 @@ identities. Signed download URLs and credentials are excluded from stored record
 service attachments refresh only the owning service identity, company and file
 metadata/URL before download. They do not reload the service calculation.
 
+## Imported Project logbook baselines
+
+Mapped logbook entries keep separate source and persisted Comment hashes. The
+target baseline is read after insertion or update, including native HTML
+sanitization, default comment email and mapped timestamps. Repeating an import
+therefore does not mistake its own native normalization for a local edit.
+Unbound system comments, including migration-created Project creation activity,
+are outside the source-scoped `project_history` comparison.
+
+An older pre-save baseline can be repaired without rewriting the Comment only
+when the source is unchanged, the original source and target hashes coincide,
+and every selected field matches the expected native representation. The existing
+narrow line-break equivalence remains supported. Actual local changes or an
+unprovable baseline still require review; outbound activity receipts retain their
+separate comparison rules. Relationship-only reconciliation does not replay the
+Project logbook import.
+
 ## Full-import relationship completion
 
 Missing dependencies remain Waiting while areas are still being imported; ready
