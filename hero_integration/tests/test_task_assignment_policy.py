@@ -57,6 +57,20 @@ class TestTaskAssignmentPolicy(unittest.TestCase):
             with self.subTest(change=change), self.assertRaises(PolicyError):
                 validate_policy_payload({**policy, **change}, 'isolated.test')
 
+    def test_dynamic_silent_policy_authorizes_source_bound_active_users_without_a_snapshot(self):
+        policy = {**self.payload, 'user_bindings': [], 'silent_initial': True,
+                  'allow_all_active_bound_users': True, 'native_effects': {
+                      'date_rule': 'LOCAL_TODAY', 'allow_notifications': False, 'allow_follow': False}}
+        self.assertTrue(validate_policy_payload(policy, 'isolated.test')['allow_all_active_bound_users'])
+        for change in ({'user_bindings': ['binding-1']}, {'silent_initial': False},
+                       {'allow_all_active_bound_users': 1}, {'allow_transfer': True}):
+            with self.subTest(change=change), self.assertRaises(PolicyError):
+                validate_policy_payload({**policy, **change}, 'isolated.test')
+        self.assertTrue(validate_policy_payload({**policy, 'allow_all_system_managers': True},
+                                                'isolated.test')['allow_all_system_managers'])
+        with self.assertRaises(PolicyError):
+            validate_policy_payload({**self.payload, 'allow_all_system_managers': True}, 'isolated.test')
+
     def test_policy_writes_deny_non_manager_before_document_access(self):
         frappe = types.ModuleType('frappe')
         frappe.only_for = Mock(side_effect=PermissionError('denied'))

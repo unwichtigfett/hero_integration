@@ -165,6 +165,37 @@ class TestTaskAssignmentPolicyFrappe(unittest.TestCase):
         self.assertEqual(frappe.db.count('ToDo', {'reference_type': 'Task', 'reference_name': task.target_name,
                                                  'status': 'Open'}), 1)
 
+    def test_dynamic_silent_policy_accepts_employee_bound_after_approval(self):
+        from hero_integration.services.task_assignment_policy import approved_initial_policy
+        self.payload.update(user_bindings=[], silent_initial=True, allow_all_active_bound_users=True, allow_all_system_managers=True,
+            native_effects={'date_rule': 'LOCAL_TODAY', 'allow_notifications': False, 'allow_follow': False})
+        name = task_assignment_policy_create(json.dumps(self.payload))['name']
+        task_assignment_policy_approve(name, 1)
+        user = frappe.get_doc({'doctype': 'User', 'email': f'future-{self.nonce}@example.invalid',
+            'first_name': 'Synthetic Future', 'enabled': 1, 'send_welcome_email': 0}).insert()
+        gender = frappe.get_all('Gender', pluck='name', limit=1)[0]
+        other_company = frappe.get_doc({'doctype': 'Company', 'company_name': 'Synthetic Future ' + self.nonce,
+            'abbr': 'F' + self.nonce[:6], 'default_currency': 'EUR', 'country': 'Germany'}).insert()
+        frappe.get_doc({'doctype': 'Employee', 'first_name': 'Synthetic Future', 'gender': gender,
+            'date_of_birth': '1990-01-01', 'date_of_joining': '2020-01-01', 'status': 'Active',
+            'company': other_company.name, 'user_id': user.name}).insert()
+        binding = BindingRegistryService(FrappeBindingStorage()).create_or_resolve_object_binding(
+            site_scope=frappe.local.site, source_instance='fixture-policy32b', object_type='User',
+            external_object_id='990099', target_app='frappe', target_doctype='User', target_name=user.name,
+            mapping_definition_id='fixture-future-user', mapping_revision=1)
+        frappe.db.set_value('User', self.user.name, 'enabled', 0)
+        self.assertEqual(approved_initial_policy('fixture-policy32b', binding.identity_key).name, name)
+        frappe.set_user(self.user.name)
+        self.assertIsNone(approved_initial_policy('fixture-policy32b', binding.identity_key))
+        frappe.set_user('Administrator')
+        user.reload(); user.add_roles('System Manager')
+        frappe.set_user(user.name)
+        self.assertEqual(approved_initial_policy('fixture-policy32b', binding.identity_key).name, name)
+        frappe.set_user('Administrator')
+        frappe.db.set_value('User', user.name, 'enabled', 0)
+        with self.assertRaises(PolicyError):
+            approved_initial_policy('fixture-policy32b', binding.identity_key)
+
     def test_silent_completed_assignment_is_closed_and_idempotent(self):
         from hero_integration.services.migration import _migrate_native_task, _record_task_assignment_pending
         self.user.reload(); self.user.add_roles('Projects User')
