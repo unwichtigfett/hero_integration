@@ -96,15 +96,15 @@ On both maintained branches, Woodpecker uses strict exit-code checks: offline te
 offline and site suites. No test-failure allowlist can make either gate pass.
 Repository administrators must require the successful package and install-test
 checks in branch protection for both branches. Workflow files request the
-checks but cannot enforce GitHub or Forgejo branch protection; that setting is
+checks but cannot enforce GitHub branch protection; that setting is
 outside this repository and must be verified separately.
 
-## Test-site update on Forgejo push
+## Test-site update on GitHub push
 
-A push to Forgejo `hero_int_dev` starts the test-site updater through a dedicated,
-restricted Woodpecker SSH secret. The step waits up to two minutes for GitHub
-`hero_int_dev` to reach the exact same commit before requesting an update. If the
-branches do not match, it fails safely; the twice-daily VPS check remains a
+A GitHub-backed Woodpecker repository is required for a GitHub `hero_int_dev`
+push to start the test-site updater through its dedicated, restricted SSH secret.
+The step verifies GitHub `hero_int_dev` is still at the exact pipeline commit
+before requesting an update. If it has moved, it fails safely; the twice-daily VPS check remains a
 fallback. Each pipeline update reinstalls the dedicated test database, including
 repeated runs of the same commit. It retains users, login password hashes,
 role assignments and role/module profiles. User API keys and API secrets are
@@ -138,7 +138,10 @@ This step depends on the successful isolated install test; a failed release test
 
 ## Release chain: hero_int_dev → hero_int_1.0
 
-A push to Forgejo `hero_int_dev` runs these Woodpecker steps in order. Each
+A push to GitHub `hero_int_dev` runs these Woodpecker steps once the GitHub
+repository has been connected and its secrets configured in Woodpecker. Until
+that external setup is complete, GitHub Actions runs but the Woodpecker test-site
+update and release promotion do not run. Each
 step starts only when the previous one succeeded:
 
 1. `wait-github` waits up to 50 minutes for the GitHub Actions checks
@@ -152,14 +155,13 @@ step starts only when the previous one succeeded:
      `pyproject.toml` (next patch version; a version raised by hand on
      `hero_int_dev` is released as it is, without an extra commit);
    - it tags `v<version>`;
-   - it fast-forwards `hero_int_dev` and `hero_int_1.0` on Forgejo and GitHub
-     to the release commit, both branches and the tag in one atomic push per
-     remote, never forced.
+   - it fast-forwards `hero_int_dev` and `hero_int_1.0` on GitHub to the
+     release commit, both branches and the tag in one atomic push, never forced.
 
 If any step fails, `hero_int_1.0` keeps its state. If `hero_int_dev` moved on
 in the meantime, the older pipeline promotes nothing; the newer commit's
 pipeline does. An interrupted promotion is completed by re-running the
-pipeline; it reuses the release commit and tag already pushed to one remote.
+pipeline; it reuses the release commit and tag already pushed to GitHub.
 `[skip ci]` keeps the promotion push from starting GitHub Actions or
 Woodpecker again.
 
@@ -170,7 +172,6 @@ Required Woodpecker secrets (repository settings, push events only):
 
 | Secret | Content |
 |---|---|
-| `forgejo_release_token` | Forgejo access token of `unwichtigfett` with repository write access |
 | `github_release_token` | GitHub fine-grained token for `unwichtigfett/hero_integration`, permission *Contents: Read and write* |
 
 The pipeline timeout of the Woodpecker repository must cover the GitHub wait

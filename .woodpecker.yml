@@ -52,7 +52,7 @@ steps:
           [ "$$found" = "$$expected" ] && break
           sleep 10
         done
-        [ "$$found" = "$$expected" ] || { echo 'GitHub branch did not reach this Forgejo commit'; exit 1; }
+        [ "$$found" = "$$expected" ] || { echo 'GitHub branch did not reach this pipeline commit'; exit 1; }
         ssh -T -o BatchMode=yes -o ServerAliveInterval=30 root@100.90.177.57 "update:blank:$$expected"
 
   - name: install-test
@@ -78,10 +78,7 @@ steps:
       - event: push
         branch: hero_int_dev
     environment:
-      FORGEJO_REMOTE: https://hurensohn.tailbbed27.ts.net/unwichtigfett/hero_integration.git
       GITHUB_REMOTE: https://github.com/unwichtigfett/hero_integration.git
-      FORGEJO_TOKEN:
-        from_secret: forgejo_release_token
       GITHUB_TOKEN:
         from_secret: github_release_token
     commands:
