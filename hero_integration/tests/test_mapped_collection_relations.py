@@ -132,6 +132,19 @@ class TestMappedCollectionRelations(TestCase):
         self.assertEqual(self.sync(ADDRESSES, alias)['created'], 1)
         self.assertEqual(len(self.docs('Address')), 2)
 
+    def test_matching_sibling_binding_reconciles_stale_address_baseline(self):
+        self.sync(ADDRESSES, self.address)
+        alias = deepcopy(self.address)
+        alias['customer_addresses'][1]['address']['id'] = 4
+        self.sync(ADDRESSES, alias)
+        old = next(link for link in self.docs('HERO Integration Link') if link.source_id == '2')
+        old.set('target_payload_hash', 'older-baseline')
+        self.assertEqual(self.sync(ADDRESSES, self.address)['unchanged'], 1)
+        self.assertEqual(old.sync_status, 'Synchronized')
+        native = self.docs('Address')[0]
+        native.set('city', 'Local edit')
+        self.assertEqual(self.sync(ADDRESSES, self.address)['conflicts'], 1)
+
     def test_missing_postcode_does_not_prove_a_separate_address(self):
         self.sync(ADDRESSES, self.address)
         alias = deepcopy(self.address)
@@ -273,6 +286,45 @@ class TestMappedCollectionRelations(TestCase):
             'links':[{'link_doctype':'Customer','link_name':'C1'}]}).insert()
         with self.assertRaisesRegex(ValueError,'reconciliation'):self.sync(CONTACTS,self.contacts)
         self.assertEqual(len(self.docs('Contact')),1)
+
+    def test_unique_contact_with_only_last_name_difference_keeps_local_value(self):
+        person = self.contacts['contacts'][0]
+        contact = Doc(self.site, {'doctype': 'Contact', 'name': 'existing', 'first_name': person['first_name'],
+            'last_name': 'Local Name', 'designation': person['position'],
+            'email_ids': [NS(email_id=person['email'], is_primary=1)],
+            'phone_nos': [NS(phone=person['phone_home'], is_primary_phone=1),
+                          NS(phone=person['phone_mobile'], is_primary_mobile_no=1)],
+            'links': [{'link_doctype': 'Customer', 'link_name': 'C1'}]}).insert()
+        self.assertEqual(self.sync(CONTACTS, self.contacts)['created'], 1)
+        self.assertEqual(contact.last_name, 'Local Name')
+        self.assertEqual(self.sync(CONTACTS, self.contacts)['unchanged'], 1)
+        self.assertEqual(contact.last_name, 'Local Name')
+        person['last_name'] = 'New Source Name'
+        self.assertEqual(self.sync(CONTACTS, self.contacts)['conflicts'], 1)
+        self.assertEqual(contact.last_name, 'Local Name')
+
+    def test_name_difference_requires_matching_phone_and_unbound_contact(self):
+        person = self.contacts['contacts'][0]
+        Doc(self.site, {'doctype': 'Contact', 'name': 'existing', 'first_name': person['first_name'],
+            'last_name': 'Local Name', 'designation': person['position'],
+            'email_ids': [NS(email_id=person['email'], is_primary=1)],
+            'phone_nos': [], 'links': [{'link_doctype': 'Customer', 'link_name': 'C1'}]}).insert()
+        with self.assertRaisesRegex(ValueError, 'reconciliation'):
+            self.sync(CONTACTS, self.contacts)
+
+    def test_contact_with_other_source_binding_is_not_reused(self):
+        person = self.contacts['contacts'][0]
+        Doc(self.site, {'doctype': 'Contact', 'name': 'existing', 'first_name': person['first_name'],
+            'last_name': 'Local Name', 'designation': person['position'],
+            'email_ids': [NS(email_id=person['email'], is_primary=1)],
+            'phone_nos': [NS(phone=person['phone_home'], is_primary_phone=1),
+                          NS(phone=person['phone_mobile'], is_primary_mobile_no=1)],
+            'links': [{'link_doctype': 'Customer', 'link_name': 'C1'}]}).insert()
+        Doc(self.site, {'doctype': 'HERO Integration Link', 'source_system': 'HERO', 'source_type': 'customer_contact',
+            'source_instance': 'other-source', 'source_id': '99', 'target_doctype': 'Contact',
+            'target_name': 'existing'}).insert()
+        with self.assertRaisesRegex(ValueError, 'reconciliation'):
+            self.sync(CONTACTS, self.contacts)
 
     def test_primary_contact_reuse_requires_exact_source_customer_identity(self):
         self.sync(CONTACTS,self.contacts);contact=self.docs('Contact')[0]

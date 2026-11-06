@@ -254,7 +254,7 @@ def _price_list(item):
 
 def preflight(item, parent_doctype, parent_name, parent=None):
     kind = item['config']['kind']; target = 'Address' if kind == 'customer_addresses' else 'Contact' if kind == 'customer_contacts' else 'Item Price'
-    link = _source_link(item); document = None
+    link = _source_link(item); document = None; adopted_last_name = False; changed_adopted_last_name = False
     if link:
         if link.target_doctype != target or not frappe.db.exists(target, link.target_name):
             raise ValueError('Native collection binding has a missing or incompatible target.')
@@ -270,6 +270,8 @@ def preflight(item, parent_doctype, parent_name, parent=None):
         values.update(country=countries[0].name, address_type=item['config']['address_type'])
         if document and not any(row.link_doctype == 'Customer' and row.link_name == parent_name for row in document.get('links', [])):
             raise ValueError('Bound customer address does not belong to the mapped Customer.')
+        if document:
+            values['address_type'] = document.address_type
         # Reuse only the user's approved exact duplicate: it must already be
         # bound to this source and belong exclusively to this Customer.
         if not document:
@@ -325,14 +327,43 @@ def preflight(item, parent_doctype, parent_name, parent=None):
                 if any(_contact_value(document,field)!=value for field,value in values.items()):
                     raise ValueError('Existing primary contact differs from the verified source person.')
             else:
-                # Equal email/name only detects a collision; it never proves source identity.
                 linked=_rows('Dynamic Link',{'parenttype':'Contact','link_doctype':'Customer','link_name':parent_name},('parent',),limit=0)
+                matches = []
                 for row in linked:
-                    candidate=frappe.get_doc('Contact',row.parent)
+                    candidate=frappe.get_doc('Contact',row.parent,for_update=True)
                     same_email=values.get('email_id') and _contact_value(candidate,'email_id')==values['email_id']
                     same_name=all(_contact_value(candidate,field)==values.get(field,'') for field in ('first_name','last_name'))
                     if same_email or same_name:
+                        matches.append(candidate)
+                if matches:
+                    candidate = matches[0]
+                    owners = candidate.get('links', [])
+                    phone_match = any(values.get(field) and _contact_value(candidate, field) == values[field]
+                                      for field in ('phone', 'mobile_no'))
+                    other_equal = all(_contact_value(candidate, field) == value for field, value in values.items()
+                                      if field != 'last_name')
+                    bound = _rows('HERO Integration Link', {'source_type': 'customer_contact',
+                        'target_doctype': 'Contact', 'target_name': candidate.name}, ('name',), limit=1)
+                    if (len(matches) != 1 or not values.get('first_name') or not values.get('email_id')
+                            or not values.get('last_name') or not _contact_value(candidate, 'last_name')
+                            or _contact_value(candidate, 'last_name') == values['last_name']
+                            or not phone_match or not other_equal or bound or len(owners) != 1
+                            or owners[0].link_doctype != 'Customer' or owners[0].link_name != parent_name):
                         raise ValueError('An existing customer contact requires explicit source reconciliation.')
+                    frappe.has_permission('Contact', 'write', doc=candidate, throw=True)
+                    document = candidate
+                    adopted_last_name = True
+        if document and link:
+            try:
+                baseline = json.loads(link.source_field_hashes or '{}')
+            except (TypeError, ValueError):
+                baseline = {}
+            marker = baseline.get('preserved_contact_last_name') if isinstance(baseline, dict) else None
+            if marker:
+                changed_adopted_last_name = marker != _hash(values.get('last_name'))
+                adopted_last_name = True
+        if adopted_last_name:
+            values['last_name'] = _contact_value(document, 'last_name')
     else:
         if parent is None:
             if not frappe.db.exists('Item', parent_name):
@@ -347,7 +378,9 @@ def preflight(item, parent_doctype, parent_name, parent=None):
         candidates = _rows('Item Price', {'item_code': parent_name, 'price_list': values['price_list'], 'uom': parent.stock_uom}, ('name', *PRICE_DIMENSIONS), limit=0)
         if any(row.name != (document.name if document else None) and not any(row.get(field) for field in PRICE_DIMENSIONS) for row in candidates):
             raise ValueError('An existing ERPNext item price requires explicit source reconciliation.')
-    return {'collection_kind': kind, 'document': document, 'link': link, 'values': values, 'price_list': price_list}
+    return {'collection_kind': kind, 'document': document, 'link': link, 'values': values, 'price_list': price_list,
+            'adopted_last_name': adopted_last_name, 'changed_adopted_last_name': changed_adopted_last_name,
+            'source_instance': item['source_instance'], 'source_values_hash': _hash(item['values'])}
 
 
 def _observed(prepared):
@@ -367,7 +400,24 @@ def _observed(prepared):
 
 
 def local_conflict(prepared):
-    return bool(prepared['document'] and prepared['link'] and _hash(_observed(prepared)) != prepared['link'].target_payload_hash)
+    document, link = prepared['document'], prepared['link']
+    if prepared.get('changed_adopted_last_name'):
+        return True
+    if not document or not link:
+        return False
+    observed_hash = _hash(_observed(prepared))
+    if observed_hash == link.target_payload_hash:
+        return False
+    if prepared['collection_kind'] == 'customer_addresses' and link.source_payload_hash == prepared['source_values_hash']:
+        siblings = _rows('HERO Integration Link', {'source_system': 'HERO', 'source_type': 'customer_address',
+            'source_instance': prepared['source_instance'], 'target_doctype': 'Address', 'target_name': document.name,
+            'sync_status': 'Synchronized'}, ('name',), limit=0)
+        for row in siblings:
+            sibling = frappe.get_doc('HERO Integration Link', row.name, for_update=True)
+            if (sibling.name != link.name and sibling.source_payload_hash == prepared['source_values_hash']
+                    and sibling.target_payload_hash == observed_hash):
+                return False
+    return True
 
 
 def _evidence(plan, values, observed):
@@ -378,8 +428,11 @@ def _evidence(plan, values, observed):
 def apply(plan, item, prepared, parent_doctype, parent_name, parent):
     document, link = prepared['document'], prepared['link']
     if local_conflict(prepared):
+        detail = ('HERO last name changed after binding; the preserved local name requires review.'
+                  if prepared.get('changed_adopted_last_name') else
+                  'Native collection changed locally; review before replacing mapped fields.')
         frappe.db.set_value('HERO Integration Link', link.name, {'sync_status': 'Conflict',
-            'conflict_detail': 'Native collection changed locally; review before replacing mapped fields.',
+            'conflict_detail': detail,
             'observed_source_hash': _hash(item['values']), 'observed_target_hash': _hash(_observed(prepared)),
             'last_observed_on': frappe.utils.now_datetime()}, update_modified=False)
         return 'conflicts'
@@ -421,6 +474,8 @@ def apply(plan, item, prepared, parent_doctype, parent_name, parent):
                 raise ValueError('Saved contact communication differs from the mapped source value.')
     prepared['document'] = document
     evidence = _evidence(plan, item['values'], _observed(prepared))
+    if prepared.get('adopted_last_name'):
+        evidence['source_field_hashes'] = json.dumps({'preserved_contact_last_name': _hash(item['values'].get('last_name'))})
     if link:
         frappe.db.set_value('HERO Integration Link', link.name, evidence, update_modified=False)
     else:
