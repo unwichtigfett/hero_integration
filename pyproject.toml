@@ -1,6 +1,6 @@
 [project]
 name = "hero_integration"
-version = "1.0.12"
+version = "1.0.13"
 description = "Native Frappe v16 integration for HERO"
 readme = "README.md"
 requires-python = ">=3.14,<3.15"
