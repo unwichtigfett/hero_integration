@@ -1,3 +1,4 @@
+from hero_integration.tests.saved_reader_fixture import isolate_saved_materialization
 """Identity filters retain the approved selection and all existing restrictions."""
 from unittest import TestCase
 from types import SimpleNamespace as NS
@@ -28,6 +29,9 @@ RAW = introspection_from_schema(SCHEMA)
 
 
 class TestCollectionIdentityReader(TestCase):
+    def setUp(self):
+        isolate_saved_materialization(self)
+
     def test_schema_bound_filters_keep_selection_and_other_arguments(self):
         for area, root, argument, path, identity in (
             ('HeroCustomers', 'contacts', 'ids', 'id', '7'),

@@ -336,7 +336,7 @@ def _load_context(doctype, name):
     from hero_integration.client.settings import get_configuration
     from hero_integration.services.personal_mapping_content import unique_json_object
     from hero_integration.services.writeback_source import capture_source
-    from hero_integration.services.graphql_contract import parse_mutation
+    from hero_integration.services.mutation_binding_contract import parse_mutation
     if not _roles():
         raise MappedSendError('Only System Managers and HERO Writeback users may send to HERO.')
     document = frappe.get_doc(doctype, name)
@@ -781,7 +781,7 @@ def _related_identity_values(ctx, remote, selected=None):
 
 def _prepare(ctx, client, phase_id=None):
     from hero_integration.services.change_detection import decode
-    from hero_integration.services.graphql_contract import validate_mutation
+    from hero_integration.services.mutation_binding_contract import validate_mutation
     from hero_integration.services.mapping_contract_v1 import MutationAdapter, MutationDraft, SnapshotAdapter, StoredSnapshot
     ctx.condition_values = []
     creating = ctx.content['send_options']['mode'] == 'CREATE'
@@ -987,8 +987,11 @@ def send(doctype, name, *, fingerprint='', confirmed=0, phase_id=None, client=No
                 raise MappedSendError('The local Task changed after its creation preview.')
         config = validate_source(ctx.proof)
         transport = mutation_client or HeroMutationClient(config.endpoint, lambda: config.api_token, config.timeout_seconds)
+        from hero_integration.services.mapping_contract_v1 import materialize_saved_mutation
+        request = materialize_saved_mutation(ctx.snapshot, ctx.service.query_document, variables,
+                                             request_scope=audit.correlation_id)
         attempted = True
-        returned = transport.execute_once(ctx.service.query_document, variables)
+        returned = transport.execute_once(request.document, request.variables)
         record = returned.get(ctx.mapping.operation_name) if isinstance(returned, dict) else None
         if creating and isinstance(record, dict):
             identity = record.get('id')

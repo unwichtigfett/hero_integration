@@ -39,7 +39,7 @@
       "hero_integration.tests.test_mapped_send.TestGroupedNestedSend.test_related_address_identity_must_be_proven_by_pre_read"
     ],
     "N-06 unchanged file reassignment": [
-      "hero_integration.tests.test_file_transfer.TestSourceAndTargetBinding.test_unchanged_unassigned_file_is_attached_once_its_project_exists",
+      "hero_integration.tests.test_file_transfer.TestSourceAndTargetBinding.test_unchanged_unassigned_file_waits_even_when_its_project_exists",
       "hero_integration.tests.test_file_transfer.TestSourceAndTargetBinding.test_unchanged_file_without_resolvable_target_stays_untouched"
     ],
     "writeback readback and source guard": [

@@ -1,3 +1,4 @@
+from hero_integration.tests.saved_reader_fixture import isolate_saved_materialization
 """Configured Mutation groups drive inputs; failed proofs cannot reach transport."""
 from copy import deepcopy
 import json
@@ -5,12 +6,12 @@ from types import SimpleNamespace as NS
 from unittest import TestCase
 from unittest.mock import Mock, patch
 
-from graphql import build_schema, introspection_from_schema
+from graphql import build_schema, introspection_from_schema, parse, print_ast
 
 from hero_integration.services import mapped_send as ms
 from hero_integration.services.change_detection import encode, field_hashes
 from hero_integration.services.direct_mapping import MappingSpec
-from hero_integration.services.graphql_contract import parse_mutation
+from hero_integration.services.mutation_binding_contract import parse_mutation
 from hero_integration.services.graphql_graph import analyze_snapshot
 
 SCHEMA = introspection_from_schema(build_schema('''
@@ -47,7 +48,7 @@ def context():
     return NS(document=_Doc(custom_notes='Expected'), content=ms.normalise_send_mapping(content(), SCHEMA),
         mapping=NS(name='MAP-1', operation_name='update_contact', mapping_revision=2),
         snapshot=NS(name='SNAP-1', snapshot_json=json.dumps(SCHEMA), schema_fingerprint=schema_fingerprint,
-                    analysis_status='Validated'),
+                    analysis_status='Validated', source_instance='source-a'),
         link=link, baseline_links={}, proof=NS(source_instance='source-a', fingerprint='source-proof'), hero_id=42, related={},
         service=NS(query_document=DOCUMENT), contract=NS(contract_fingerprint='contract-proof', contract_revision=3),
         parsed=parse_mutation(DOCUMENT), read=NS(service=NS(name='READ-1', query_document='approved-query'),
@@ -131,11 +132,21 @@ class _TransportFixture(TestCase):
 
 
 class TestMappedSendTransport(_TransportFixture):
+    def test_materialization_failure_prevents_the_single_transport_attempt(self):
+        fingerprint = self.preview()['fingerprint']
+        def reserve(**kwargs):
+            self.ctx.snapshot.schema_fingerprint = 'a' * 64
+            return NS(correlation_id='AUDIT-1')
+        with patch('hero_integration.api._reserve_mutation', side_effect=reserve), self.assertRaises(ms.MappedSendError):
+            self.send(fingerprint)
+        self.mutation.execute_once.assert_not_called()
+        self.assertEqual(self.statuses, ['Failed'])
+
     def test_configured_pair_drives_real_mutation_arguments_and_approved_service(self):
         fingerprint = self.preview()['fingerprint']
         with patch.object(ms, '_read_record', side_effect=[{'id': 42, 'remarks': 'Old'}, {'id': 42, 'remarks': 'Expected'}]):
             result = self.send(fingerprint)
-        self.mutation.execute_once.assert_called_once_with(DOCUMENT, {'input': {'id': 42, 'remarks': 'Expected'}})
+        self.mutation.execute_once.assert_called_once_with(print_ast(parse(DOCUMENT)), {'input': {'id': 42, 'remarks': 'Expected'}})
         self.assertEqual(result['status'], 'SENT')
         self.assertEqual(self.statuses, ['Succeeded'])
         self.assertEqual(len(self.writes), 1)
@@ -179,7 +190,7 @@ class TestMappedSendTransport(_TransportFixture):
         from hero_integration.services import customer_send, project_send, task_send
         for module, name in ((customer_send, 'Customer'), (project_send, 'Project'), (task_send, 'Task')):
             with patch.object(ms, 'preview', side_effect=ms.MappedSendError('No active profile')), \
-                    patch.object(module, 'legacy_preview') as legacy, \
+                    patch.object(module, 'legacy_preview', create=True) as legacy, \
                     patch('hero_integration.services.project_delivery._access'), self.assertRaises(ValueError):
                 module.preview('TEST-1', client=Mock())
             legacy.assert_not_called()
@@ -192,8 +203,8 @@ class TestNativeSendWrappers(TestCase):
         for module, doctype in ((customer_send, 'Customer'), (task_send, 'Task')):
             with patch.object(ms, 'preview', return_value={'configured': True}) as preview, \
                     patch.object(ms, 'send', return_value={'status': 'SENT'}) as send, \
-                    patch.object(module, 'legacy_preview') as legacy_preview, \
-                    patch.object(module, 'legacy_send') as legacy_send:
+                    patch.object(module, 'legacy_preview', create=True) as legacy_preview, \
+                    patch.object(module, 'legacy_send', create=True) as legacy_send:
                 extra = {'phase_id': 7} if doctype == 'Project' else {}
                 self.assertEqual(module.preview('DOC-1', client=client, **extra), {'configured': True})
                 self.assertEqual(module.send('DOC-1', fingerprint='proof', confirmed=1,
@@ -247,7 +258,7 @@ class TestGroupedNestedSend(_TransportFixture):
                    return_value=NS(definitions=(self.ctx.rule, address_rule))), \
                 patch.object(ms, '_read_record', side_effect=[before, after]):
             self.send(fingerprint)
-        self.mutation.execute_once.assert_called_once_with(DOCUMENT, {'input': {
+        self.mutation.execute_once.assert_called_once_with(print_ast(parse(DOCUMENT)), {'input': {
             'id': 42, 'remarks': 'Expected', 'address': {'id': 9, 'street': 'New Street'}}})
         self.assertEqual(self.statuses, ['Succeeded'])
 
@@ -269,7 +280,7 @@ class TestGroupedNestedSend(_TransportFixture):
             fingerprint = self.preview()['fingerprint']
         with patch.object(ms, '_read_record', side_effect=[before, after]):
             result = self.send(fingerprint)
-        self.mutation.execute_once.assert_called_once_with(DOCUMENT, {'input': {'id': 42, 'remarks': 'Expected'}})
+        self.mutation.execute_once.assert_called_once_with(print_ast(parse(DOCUMENT)), {'input': {'id': 42, 'remarks': 'Expected'}})
         self.assertEqual((result['status'], self.statuses), ('SENT', ['Succeeded']))
 
     def test_related_identity_is_selected_only_for_sent_nested_inputs(self):
@@ -333,6 +344,7 @@ class TestVerifiedPhaseApply(TestCase):
 
 class TestApprovedSendPagination(TestCase):
     def setUp(self):
+        isolate_saved_materialization(self)
         self.ctx = context()
         self.ctx.read.service.query_document = 'query Read($first:Int!,$offset:Int!){contacts(first:$first,offset:$offset){id remarks}}'
         self.ctx.read.contract = NS(target_operation='HeroCustomers', page_size=2, records_path='contacts',
@@ -423,7 +435,7 @@ class TestConfiguredProjectPhase(_TransportFixture):
                 patch.object(ms, '_read_record', side_effect=[before, after]):
             ms.send('Project', 'C1', phase_id=2, fingerprint=preview['fingerprint'], confirmed=1,
                     client=NS(), mutation_client=self.mutation)
-        self.mutation.execute_once.assert_called_once_with(document, {'input': {
+        self.mutation.execute_once.assert_called_once_with(print_ast(parse(document)), {'input': {
             'id': 42, 'current_project_match_status': {'step_id': 2}}})
         self.assertEqual(dict(current), {'custom_phase': 'New'})
         current.save.assert_called_once()
@@ -486,7 +498,7 @@ class TestConfiguredTaskCompletion(_TransportFixture):
                 patch.object(ms, '_baseline_remote', side_effect=lambda ctx, item, setting, observed, **kw: observed[:10] if observed else None), \
                 patch.object(ms, '_read_record', side_effect=[before, after]):
             ms.send('Task', 'C1', fingerprint=fingerprint, confirmed=1, client=NS(), mutation_client=self.mutation)
-        self.mutation.execute_once.assert_called_once_with(document, {'input': {'id': 42, 'done_date': '2026-11-02T12:00:00+00:00'}})
+        self.mutation.execute_once.assert_called_once_with(print_ast(parse(document)), {'input': {'id': 42, 'done_date': '2026-11-02T12:00:00+00:00'}})
         self.assertEqual(self.statuses, ['Succeeded'])
         self.assertIn(('Task', 'status'), ms.send_sources(self.ctx.content))
 
@@ -499,7 +511,7 @@ class TestConfiguredTaskCompletion(_TransportFixture):
         with patch.object(ms, '_baseline_remote', side_effect=lambda ctx, item, setting, observed, **kw: observed[:10] if observed else None), \
                 patch.object(ms, '_read_record', side_effect=[before, after]):
             ms.send('Task', 'C1', fingerprint=fingerprint, confirmed=1, client=NS(), mutation_client=self.mutation)
-        self.mutation.execute_once.assert_called_once_with(document, {'input': {'id': 42, 'done_date': ''}})
+        self.mutation.execute_once.assert_called_once_with(print_ast(parse(document)), {'input': {'id': 42, 'done_date': ''}})
         self.assertEqual(self.statuses, ['Succeeded'])
 
     def test_condition_changes_after_preview_and_during_transport_cannot_acknowledge(self):
@@ -643,7 +655,7 @@ class TestMappedTaskAssignee(_TransportFixture):
                 patch.object(ms, '_lookup', return_value=[('new@example.invalid', 8)]), \
                 patch.object(ms, '_read_record', side_effect=[before, after]):
             ms.send('Task', 'C1', fingerprint=fingerprint, confirmed=1, client=NS(), mutation_client=self.mutation)
-        self.mutation.execute_once.assert_called_once_with(document, {'input': {'id': 42, 'target_user_id': 8}})
+        self.mutation.execute_once.assert_called_once_with(print_ast(parse(document)), {'input': {'id': 42, 'target_user_id': 8}})
         values = self.writes[-1][0][2]
         expected = field_hashes({'ToDo.allocated_to': 'new@example.invalid'})
         self.assertEqual(json.loads(values['source_field_hashes']), expected)
@@ -923,7 +935,7 @@ class TestTaskCreate(_TransportFixture):
         self.assertTrue(preview['can_send'])
         with patch.object(ms, '_read_record', return_value=self.after):
             result = self.send(preview['fingerprint'])
-        self.mutation.execute_once.assert_called_once_with(self.ctx.service.query_document,
+        self.mutation.execute_once.assert_called_once_with(print_ast(parse(self.ctx.service.query_document)),
             {'input': {'title': 'Synthetic test task', 'target_project_match_id': 17}})
         self.assertEqual(result['hero_id'], 9001)
         self.assertEqual(len(self.created), 1)

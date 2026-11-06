@@ -8,8 +8,8 @@ from hero_integration.services import migration
 
 
 class TestProjectAssignmentReview(TestCase):
-    def run_project(self, unmatched, code='UPDATED'):
-        plan = NS(source_identity=lambda record: '7', mapping_version='version', adapter_options={'version': 2},
+    def run_project(self, unmatched, code='UPDATED', realizing=True):
+        plan = NS(definitions=[], source_identity=lambda record: '7', mapping_version='version', adapter_options={'version': 2},
                   values=lambda *args: {'project_name': 'Project', 'customer': 'Customer'})
         original = migration.Result(code, 'Native fields synchronized.', 'Project', 'P1')
         steps = []
@@ -28,8 +28,9 @@ class TestProjectAssignmentReview(TestCase):
                 patch.object(migration, '_upsert', return_value=original),
                 patch.object(migration, '_sync_mapped_relations', relations),
                 patch.object(migration, 'record_output', pending),
+                patch('hero_integration.services.deferred_references.realizing', return_value=realizing),
                 patch('hero_integration.integrations.project_assignments.sync',
-                      return_value={'added': 1, 'closed': 0, 'unmatched': unmatched}),
+                      side_effect=AssertionError('Assignments must be deferred') if not realizing else None, return_value={'added': 1, 'closed': 0, 'unmatched': unmatched}),
                 patch('hero_integration.services.project_logbook.sync_mapped_entries', logbook),
             ):
                 stack.enter_context(owner)
@@ -56,3 +57,10 @@ class TestProjectAssignmentReview(TestCase):
         pending.assert_not_called()
         self.assertEqual(result.code, 'UPDATED')
         self.assertEqual(result.detail, 'Native fields synchronized.')
+
+    def test_initial_import_does_not_realize_project_assignments(self):
+        with patch('hero_integration.integrations.project_assignments.sync') as sync:
+            result, pending = self.run_project(2, realizing=False)
+        sync.assert_not_called()
+        pending.assert_not_called()
+        self.assertEqual(result.code, 'UPDATED')

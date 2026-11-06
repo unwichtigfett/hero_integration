@@ -1,3 +1,4 @@
+from hero_integration.tests.saved_reader_fixture import isolate_saved_materialization
 """Mapping-owned native field selection, transforms and saved-query approval."""
 from dataclasses import replace
 import json
@@ -249,6 +250,31 @@ class TestMappedCollectionsAndRelations(TestCase):
 
 
 class TestMappedReadContractApproval(TestCase):
+    def test_active_mapping_automatically_projects_fields_without_changing_approval_document(self):
+        from unittest.mock import Mock
+        from hero_integration.services.read_contract import from_documents
+        from hero_integration.services.mapping_contract_v1 import StoredSnapshot
+        from hero_integration.sources.hero import GraphQLServiceSource
+        service,mapping,snapshot,config,p=self.context()
+        service.query_document=service.query_document.replace('id title is_deleted','id title is_deleted created due_date')
+        original=service.query_document
+        config['query_adapter_seal']=qm.seal_query(service,snapshot,config,p)
+        mapping.mapping_json=json.dumps(config)
+        with patch('hero_integration.services.mapping_runtime.active_mapping_plan',return_value=p):
+            contract=from_documents(service,mapping,snapshot)
+        self.assertEqual(set(contract.projection_paths),{'tasks.id','tasks.title','tasks.is_deleted'})
+        client=NS(query=Mock(return_value={'tasks':[{'id':1,'title':'Example','is_deleted':False,
+            'created':'2026-11-06T00:00:00Z'}]}))
+        source=GraphQLServiceSource(client,service,contract,'source-a',revalidate=lambda:contract)
+        stored=StoredSnapshot(snapshot.name,snapshot.snapshot_json,snapshot.schema_fingerprint,snapshot.source_instance)
+        with patch.object(source,'_stored_snapshot',return_value=stored):
+            self.assertEqual(source.projection(0).records[0]['id'],1)
+        wire=client.query.call_args.args[0]
+        self.assertNotIn('due_date',wire)
+        self.assertIn('created',wire)
+        self.assertIn('is_deleted',wire)
+        self.assertEqual(service.query_document,original)
+
     def context(self):
         service, snapshot, config = fixture()
         p = plan()
@@ -361,6 +387,27 @@ class TestMappedAssignmentAdmission(TestCase):
         self.assertEqual(result.code, 'CREATED')
         self.assertEqual(upsert.call_args.args[3], {'subject': 'Synthetic'})
 
+    def test_initial_import_never_calls_assignment_admission_or_writer(self):
+        from hero_integration.services import migration
+        assignment = rule('assignee', 'target_user_id', 'ToDo', 'allocated_to', kind='int|null', transform='Link Map')
+        options = {'version': 2, 'transform_options': {'assignee': {'map': {'7': 'synthetic@example.invalid'}, 'link_doctype': 'User'}}}
+        p = plan(task_rules() + [assignment], options)
+        record = {'id': 42, 'title': 'Synthetic', '_hero_source_instance': 'source-a', 'target_user_id': 7,
+                  'is_deleted': False}
+        with patch.object(qm, '_reference', side_effect=lambda dt, name: name), \
+             patch.object(migration, '_upsert', return_value=migration.Result('CREATED', '', 'Task', 'T1')), \
+             patch.object(migration, '_plan_task_assignment') as admission, \
+             patch.object(migration, '_record_task_assignment_pending') as writer, \
+             patch.object(migration, '_ack_mapped_assignment') as acknowledge:
+            result = migration._migrate_mapped_task(record, NS(mode='Execute'), p,
+                {'confirmed': True, 'source_instance': 'source-a', 'source_type': 'Task'})
+        self.assertEqual(result.code, 'CREATED')
+        admission.assert_not_called()
+        writer.assert_not_called()
+        acknowledge.assert_not_called()
+
+    # Exercise the relationship writer owned by the post-success service.
+    @patch('hero_integration.services.deferred_references.realizing', new=lambda: True)
     def test_explicit_recipient_must_match_the_existing_guarded_user_binding(self):
         from hero_integration.services import migration
         assignment = rule('assignee', 'target_user_id', 'ToDo', 'allocated_to', kind='int|null', transform='Link Map')
@@ -377,6 +424,8 @@ class TestMappedAssignmentAdmission(TestCase):
         self.assertEqual(result.code, 'CONFLICT')
         execute.assert_not_called()
 
+    # Exercise the relationship writer owned by the post-success service.
+    @patch('hero_integration.services.deferred_references.realizing', new=lambda: True)
     def test_matching_recipient_uses_existing_admission_and_execution_boundary(self):
         from hero_integration.services import migration
         assignment = rule('assignee', 'target_user_id', 'ToDo', 'allocated_to', kind='int|null', transform='Link Map')
@@ -728,6 +777,9 @@ class TestVerifiedMappedAssignmentBaseline(TestCase):
 
 
 class TestLookupPaginationBoundary(TestCase):
+    def setUp(self):
+        isolate_saved_materialization(self)
+
     def source(self, *, variables=None, records=None, page_size=1, maximum=5, materialized=None, role='LOOKUP', target='HeroLookup'):
         from hero_integration.services.read_contract import ReadContract
         from hero_integration.sources.hero import GraphQLServiceSource
@@ -785,9 +837,10 @@ class TestLookupPaginationBoundary(TestCase):
         self.assertEqual(len(calls), 1)
 
     def test_materialized_missing_offset_exception_is_restricted_to_lookup(self):
-        request = NS(variables={}, argument_bindings=())
+        request = NS(document="query", variables={}, argument_bindings=())
         source, contract, calls = self.source(materialized=request)
-        with patch('hero_integration.graphql_protocol.graphql_result_decoder.decode_graphql_result') as decode:
+        with patch('hero_integration.graphql_protocol.graphql_result_decoder.decode_graphql_result') as decode, \
+             patch.object(source,'_document_request',return_value=request):
             self.assertIsNone(source._page(0, 'HeroLookup').next_offset)
         decode.assert_called_once()
         source, contract, calls = self.source(materialized=request, target='HeroTasks')

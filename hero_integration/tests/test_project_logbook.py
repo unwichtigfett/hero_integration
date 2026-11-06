@@ -39,7 +39,7 @@ class TestProjectLogbook(unittest.TestCase):
                 return list((known or {}).items())
             return [('1', 'P-1' if instance == 'default' else 'B-1'), ('2', 'P-2')]
         fake = SimpleNamespace(db=SimpleNamespace(sql=sql, commit=lambda: commits.append(True)))
-        with patch.object(lb, 'frappe', fake), patch.object(lb, '_guard_legacy_outbound'), patch.object(lb, 'enrich_entry'), patch.object(lb, '_metadata', return_value={}), patch.object(lb, 'PAGE_SIZE', 25), patch.object(lb, 'add_entry', side_effect=lambda p,e,u,s: added.append((p,e['id'],s))):
+        with patch.object(lb, '_logbook_source', return_value=SimpleNamespace(_auxiliary_document=client.query)), patch.object(lb, 'frappe', fake), patch.object(lb, '_guard_legacy_outbound'), patch.object(lb, 'enrich_entry'), patch.object(lb, '_metadata', return_value={}), patch.object(lb, 'PAGE_SIZE', 25), patch.object(lb, 'add_entry', side_effect=lambda p,e,u,s: added.append((p,e['id'],s))):
             counts = lb.sync_logbook(client, {}, source_instance=instance, **options)
         return counts, added, commits
 

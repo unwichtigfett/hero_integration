@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from hero_integration.hero_integration.doctype.hero_integration_settings import hero_integration_settings as settings
 from hero_integration.hero_integration.doctype.hero_mutation_contract import hero_mutation_contract as contract
-from hero_integration.services.graphql_contract import GraphQLContractError
+from hero_integration.services.mutation_binding_contract import GraphQLContractError
 
 
 class TestControllerTranslations(unittest.TestCase):
@@ -39,18 +39,18 @@ class TestControllerTranslations(unittest.TestCase):
         from hero_integration.hero_integration.doctype.hero_graphql_service import hero_graphql_service as service_controller
         from hero_integration.services.mutation_draft import operation_kind
 
-        source = 'A draft must contain exactly one GraphQL operation.'
+        source = 'GraphQL document validation failed: {0}'
         def throw(message): raise ValueError(message)
         snapshot = SimpleNamespace(analysis_status='Validated', snapshot_json='{}', schema_fingerprint='fingerprint')
         fake = SimpleNamespace(only_for=lambda role: None, get_doc=lambda *_args: snapshot,
-                               _=lambda message: 'Genau eine GraphQL-Operation ist erforderlich.' if message == source else message,
+                               _=lambda message: 'GraphQL-Dokumentprüfung fehlgeschlagen: {0}' if message == source else message,
                                throw=throw)
-        with patch.object(api, 'frappe', fake), self.assertRaisesRegex(ValueError, '^Genau eine GraphQL-Operation'):
+        with patch.object(api, 'frappe', fake), self.assertRaisesRegex(ValueError, '^GraphQL-Dokumentprüfung fehlgeschlagen'):
             api._mutation_draft_call(operation_kind, 'not an operation')
         document = SimpleNamespace(schema_snapshot='SNAP-1', query_document='not an operation', is_new=lambda: True)
         with patch.object(service_controller, 'frappe', fake), \
              patch.object(service_controller, 'analyze_snapshot', return_value=SimpleNamespace(fingerprint='fingerprint')):
-            with self.assertRaisesRegex(ValueError, '^Genau eine GraphQL-Operation'):
+            with self.assertRaisesRegex(ValueError, '^GraphQL-Dokumentprüfung fehlgeschlagen'):
                 service_controller.HEROGraphQLService.validate(document)
 
     def test_query_service_read_only_error_is_translated(self):
@@ -63,7 +63,7 @@ class TestControllerTranslations(unittest.TestCase):
         fake = SimpleNamespace(only_for=lambda role: None, get_doc=lambda *_args: snapshot,
                                _=lambda message: 'HERO-GraphQL-Dokument ist ungültig.' if message == source else message,
                                throw=throw)
-        document = SimpleNamespace(schema_snapshot='SNAP-1', query_document='query Broken {', is_new=lambda: True)
+        document = SimpleNamespace(schema_snapshot='SNAP-1', query_document='query Broken { id }', is_new=lambda: True)
         with patch.object(service_controller, 'frappe', fake), \
              patch.object(service_controller, 'analyze_snapshot', return_value=SimpleNamespace(fingerprint='fingerprint')), \
              patch.object(graphql, 'assert_read_only', side_effect=graphql.HeroClientError(source)):

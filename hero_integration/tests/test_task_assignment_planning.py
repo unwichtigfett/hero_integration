@@ -195,7 +195,7 @@ class TestTaskAssignmentPlanning(unittest.TestCase):
         self.assertEqual(first['decision'], 'BLOCKED')
         self.assertEqual(first['local_date'], 'POLICY_REQUIRED')
 
-    def test_projection_invokes_same_admission_for_both_modes(self):
+    def test_projection_defers_execution_admission_and_keeps_preview(self):
         from hero_integration.services import read_contract
         run = NS(name='RUN', mode='Preview', mapping_revision=1, service_revision=1,
                  graphql_service='SERVICE', graphql_mapping='MAP', source_instance='source',
@@ -223,8 +223,7 @@ class TestTaskAssignmentPlanning(unittest.TestCase):
                 run.mode = mode
                 run.resume_offset = run.resume_record_index = 0
                 migration._process_projection(run, source)
-        self.assertEqual(len(output), 2)
-        self.assertEqual(json.loads(output[0]['detail']), json.loads(output[1]['detail']))
+        self.assertEqual(len(output), 1)
         self.assertEqual(json.loads(output[0]['detail'])['proposed'], 'CREATE')
 
     def test_authorized_execution_calls_native_adapter_and_records_provenance(self):

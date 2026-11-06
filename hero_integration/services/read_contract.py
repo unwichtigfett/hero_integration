@@ -31,6 +31,8 @@ class ReadContract:
     page_size: int
     materialized_request: object | None = None
     adapter_options: dict | None = None
+    projection_paths: tuple[str, ...] | None = None
+    projection_preserve_paths: tuple[str, ...] = ()
 
 
 def task_materialization(snapshot, config, plan):
@@ -97,7 +99,7 @@ def _from_documents(service, mapping, snapshot) -> ReadContract:
     if target == 'HeroLookup' and not config.get('query_adapter'):
         raise ReadContractError('Lookup services require an approved versioned Query adapter.')
     if config.get('query_adapter'):
-        from hero_integration.services.query_mapping import seal_query, seal_lookup_query
+        from hero_integration.services.query_mapping import seal_query, seal_lookup_query, required_source_paths
         try:
             if target == 'HeroLookup':
                 expected = seal_lookup_query(service, snapshot, config)
@@ -116,6 +118,17 @@ def _from_documents(service, mapping, snapshot) -> ReadContract:
             raise ReadContractError(str(error)) from error
         if config.get('query_adapter_seal') != expected:
             raise ReadContractError('Mapped query approval or selected field configuration changed.')
+        if target != 'HeroLookup':
+            prefix = contract.records_path + '.'
+            optional = {'id','created','modified','nr','is_deleted'}
+            optional |= {
+                'HeroProjectMatches':{'display_id','project_match_assignments'},
+                'HeroTasks':{'author_user_id','target_user_id','target_project_match_id'},
+                'HeroEmployees':{'user_id','user.id'},
+            }.get(target,set())
+            contract = replace(contract,
+                projection_paths=tuple(sorted(prefix+path for path in required_source_paths(plan))),
+                projection_preserve_paths=tuple(sorted(prefix+path for path in optional)))
         return contract
     records_path, identity_path = contract.records_path, contract.identity_path
     variables, definition_ids = contract.variables, contract.definition_ids

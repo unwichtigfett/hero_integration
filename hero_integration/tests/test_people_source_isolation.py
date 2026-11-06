@@ -158,10 +158,10 @@ class TestPeopleMappingSourceContext(unittest.TestCase):
                     resolve.assert_called_with(7, source_instance=source)
                 self.assertNotIn('custom_responsible', plan.values({'project_partner_id': 7}))
 
-    def test_legacy_reader_keeps_default_source_explicit_and_does_not_mutate_payload(self):
-        from hero_integration.sources.hero import HeroSource
+    def test_saved_reader_keeps_default_source_explicit_and_does_not_mutate_payload(self):
+        from hero_integration.tests.saved_reader_fixture import versioned_contract_source
         payload = {'project_matches': [{'id': 1, 'project_partner_id': 7}]}
-        source = HeroSource(SimpleNamespace(query=Mock(return_value=payload)))
+        source = versioned_contract_source(SimpleNamespace(query=Mock(return_value=payload)))
         page = source.projects()
         self.assertEqual(page.records[0]['_hero_source_instance'], 'default')
         self.assertNotIn('_hero_source_instance', payload['project_matches'][0])

@@ -133,6 +133,14 @@ def _project_path(
 
     key = path[index]
 
+    if key.startswith('@'):
+        typename = value.get('__typename')
+        if not isinstance(typename, str) or not typename:
+            raise GraphQLResultDecodeError('RESULT_RESPONSE_PATH_MISSING')
+        if typename != key[1:]:
+            return None, 0
+        return _project_path(value, path, index + 1)
+
     if key not in value:
         raise GraphQLResultDecodeError(
             "RESULT_RESPONSE_PATH_MISSING"
@@ -420,7 +428,9 @@ def decode_graphql_result(
         value, projection_depth = (
             _project_path(
                 payload,
-                binding.response_path,
+                (*binding.response_path[:2], *binding.selection_path)
+                if any(part.startswith('@') for part in binding.selection_path)
+                else binding.response_path,
             )
         )
 

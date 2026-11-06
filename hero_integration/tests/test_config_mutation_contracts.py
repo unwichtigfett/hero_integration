@@ -7,7 +7,7 @@ from unittest.mock import Mock, patch
 from uuid import uuid4
 
 from hero_integration.services import config_mutation_contracts as exchange
-from hero_integration.services.graphql_contract import parse_mutation
+from hero_integration.services.mutation_binding_contract import parse_mutation
 from hero_integration.tests.test_mapped_update_v2 import mapping, SCHEMA
 
 

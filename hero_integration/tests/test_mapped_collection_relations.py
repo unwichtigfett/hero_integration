@@ -61,7 +61,7 @@ class TestMappedCollectionRelations(TestCase):
                   source_identity=lambda record: str(record['id']))
         result = migration.Result('UPDATED', 'Customer imported.', 'Customer', 'C1')
         run = NS(mode='Execute', name='RUN')
-        with patch.object(relations, 'sync', side_effect=collection.IncompleteCustomerAddress('Country missing')), \
+        with patch('hero_integration.services.deferred_references.realizing', return_value=True), patch.object(relations, 'sync', side_effect=collection.IncompleteCustomerAddress('Country missing')), \
              patch.object(migration, 'record_output') as report:
             actual = migration._sync_mapped_relations(plan, {'id': 10}, result, run)
         self.assertEqual(actual.code, 'UPDATED')
@@ -423,3 +423,13 @@ class TestMappedCollectionRelations(TestCase):
         record['sales_prices'][0]['net_price_per_unit'] = 0
         with self.assertRaisesRegex(ValueError, 'stable source identity'):
             self.sync(PRICES, record)
+
+
+class TestRelationDeferral(TestCase):
+    def test_initial_import_keeps_native_relationship_writes_for_realizer(self):
+        from hero_integration.services import migration
+        plan = NS(adapter_options={'native_relations': [ADDRESSES]}, target_doctype='Customer')
+        result = migration.Result('UPDATED', 'Imported', 'Customer', 'C1')
+        with patch.object(relations, 'sync') as sync:
+            self.assertIs(migration._sync_mapped_relations(plan, {}, result, NS(mode='Execute')), result)
+        sync.assert_not_called()

@@ -140,7 +140,7 @@ printf 'GATE_PASSED\\n'
 
     def test_manual_no_hero_selection_cannot_pass_a_maintained_branch_gate(self):
         source = (ROOT / 'ci/github-install-test.sh').read_text().split('cd /tmp', 1)[0]
-        for branch in ('hero_int_dev', 'hero_int_1.0', 'diagnostic-feature'):
+        for branch in ('hero_int_dev', 'hero_int_1.0', 'hero_int_dev_opt', 'hero_int_opt', 'diagnostic-feature'):
             with self.subTest(branch=branch):
                 env = dict(os.environ, GITHUB_WORKSPACE=str(ROOT), DB_ROOT_PASSWORD='synthetic',
                            INSTALL_APPS='none', GITHUB_REF_NAME=branch, GITHUB_BASE_REF='')
@@ -150,10 +150,10 @@ printf 'GATE_PASSED\\n'
     def test_workflows_cover_both_maintained_branches(self):
         github = (ROOT / '.github/workflows/ci.yml').read_text()
         before_jobs = github.split('\njobs:', 1)[0]
-        self.assertIn('branches: [hero_int_dev, hero_int_1.0]', before_jobs)
+        self.assertIn('branches: [hero_int_dev, hero_int_1.0, hero_int_dev_opt, hero_int_opt]', before_jobs)
         self.assertIn('      - hero_int_1.0\n', before_jobs)
         woodpecker = (ROOT / '.woodpecker.yml').read_text()
-        self.assertIn('branch: [hero_int_dev, hero_int_1.0]', woodpecker)
+        self.assertIn('branch: [hero_int_dev, hero_int_1.0, hero_int_dev_opt, hero_int_opt]', woodpecker)
         update = woodpecker.split('  - name: update-test-site\n', 1)[1].split('  - name: install-test', 1)[0]
         self.assertIn('depends_on: [install-test]', update)
 

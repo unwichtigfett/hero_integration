@@ -1,3 +1,4 @@
+from hero_integration.tests.saved_reader_fixture import isolate_saved_materialization
 """Checkpoint fences reuse the existing run, mapping and lease authorities."""
 import json
 from datetime import datetime, timedelta
@@ -108,6 +109,9 @@ class TestCheckpointTransaction(TestCase):
 
 
 class TestReaderTransportFence(TestCase):
+    def setUp(self):
+        isolate_saved_materialization(self)
+
     def test_unconfirmed_or_stale_source_binding_blocks_client_construction(self):
         service = SimpleNamespace(schema_snapshot='snapshot')
         documents = {'HERO GraphQL Service': service, 'HERO GraphQL Mapping': object(),

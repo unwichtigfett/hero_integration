@@ -3746,3 +3746,23 @@ HERO Original Article Number,Ursprüngliche HERO-Artikelnummer
 A linked local Item was retained; changed HERO fields require review.,Ein verknüpfter lokaler Artikel wurde beibehalten; geänderte HERO-Felder müssen geprüft werden.
 The original HERO article number changed; the existing Item code was preserved.,Die ursprüngliche HERO-Artikelnummer wurde geändert; die vorhandene ERPNext-Artikelnummer wurde beibehalten.
 Assignment for Task {0},Zuweisung für Aufgabe {0}
+No approved read service is available for this area.,Für diesen Bereich ist kein freigegebener Lesedienst verfügbar.
+The approved reader belongs to another source.,Der freigegebene Lesedienst gehört zu einer anderen Quelle.
+The auxiliary read schema no longer matches its approved source.,Das Schema der Hilfsabfrage stimmt nicht mehr mit der freigegebenen Quelle überein.
+Read approval changed before auxiliary transport.,Die Lesefreigabe wurde vor der Hilfsabfrage geändert.
+Read approval changed during auxiliary transport.,Die Lesefreigabe wurde während der Hilfsabfrage geändert.
+Realization Started,Realisierung begonnen
+GraphQL query validation failed: {0},GraphQL-Abfrageprüfung fehlgeschlagen: {0}
+GraphQL document validation failed: {0},GraphQL-Dokumentprüfung fehlgeschlagen: {0}
+GraphQL mutation draft validation failed: {0},GraphQL-Mutationsentwurfprüfung fehlgeschlagen: {0}
+Mutation contract validation failed: {0},Mutationsvertragsprüfung fehlgeschlagen: {0}
+Mutation contract fragments must have unique names.,Fragmente des Mutationsvertrags müssen eindeutige Namen haben.
+A mutation contract must contain exactly one root field.,Ein Mutationsvertrag muss genau ein Wurzelfeld enthalten.
+A write binding requires an unaliased mutation root field.,Eine Schreibbindung erfordert ein Mutations-Wurzelfeld ohne Alias.
+Duplicate mutation argument {0}.,Doppeltes Mutationsargument {0}.
+Mutation contract arguments must be declared variables.,Argumente des Mutationsvertrags müssen deklarierte Variablen sein.
+Mutation contract fragments must be defined and acyclic.,Fragmente des Mutationsvertrags müssen definiert und zyklenfrei sein.
+The operation cannot be materialized from the saved schema.,Die Operation kann nicht aus dem gespeicherten Schema materialisiert werden.
+Mapped binding realization requires its successful originating area.,Die Realisierung der Mapping-Beziehungen erfordert den erfolgreichen Abschluss ihres Ursprungsbereichs.
+The imported binding target or mapping changed before realization.,Das importierte Beziehungsziel oder Mapping wurde vor der Realisierung geändert.
+Relationship-only updates require their imported target and realization service.,Reine Beziehungsaktualisierungen erfordern ihr importiertes Ziel und den zuständigen Realisierungsdienst.

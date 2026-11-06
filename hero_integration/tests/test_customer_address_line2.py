@@ -64,7 +64,7 @@ def verify_saved_snapshot_binding() -> dict[str, object]:
 
     import frappe
 
-    from hero_integration.services.mapping_suggestions import source_fields
+    from hero_integration.services.mapping_source_fields import source_fields
 
     snapshot = None
     selected = []

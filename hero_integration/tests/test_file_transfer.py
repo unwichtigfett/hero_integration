@@ -14,6 +14,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from hero_integration.services import file_transfer as ft
+from hero_integration.tests.saved_reader_fixture import isolate_direct_materialization
 
 
 class _Response(io.BytesIO):
@@ -41,6 +42,44 @@ class _Opener:
 
 
 URL = "https://login.hero-software.de/files/document/offer/abc.pdf/Angebot.pdf?cb=1&download=1"
+
+
+def test_file_details_materialize_against_approved_snapshot():
+    from hero_integration.services.graphql_graph import analyze_snapshot
+
+    scalar = lambda name: {'kind': 'SCALAR', 'name': name}
+    obj = lambda name: {'kind': 'OBJECT', 'name': name}
+    field = lambda name, type_: {'name': name, 'args': [], 'type': type_}
+    raw = {'__schema': {'queryType': {'name': 'Query'}, 'types': [
+        {'kind': 'OBJECT', 'name': 'Query', 'fields': [{'name': 'file_uploads',
+            'args': [{'name': 'uuids', 'type': {'kind': 'LIST', 'ofType': scalar('String')}},
+                     {'name': 'first', 'type': scalar('Int')}],
+            'type': {'kind': 'LIST', 'ofType': obj('File')}}]},
+        {'kind': 'OBJECT', 'name': 'File', 'fields': [field('id', scalar('Int')), field('uuid', scalar('String')),
+            field('is_deleted', scalar('Boolean')), field('file_upload_matches', obj('Match')),
+            field('file_upload_links', obj('Link')), field('customer_document', obj('Document'))]},
+        {'kind': 'OBJECT', 'name': 'Match', 'fields': [field('project_match_id', scalar('Int'))]},
+        {'kind': 'OBJECT', 'name': 'Link', 'fields': [field(name, scalar('String')) for name in
+            ('target', 'target_id', 'customer_id', 'project_match_id')]},
+        {'kind': 'OBJECT', 'name': 'Document', 'fields': [*[field(name, scalar('String')) for name in
+            ('id', 'nr', 'status_code', 'project_match_id', 'contact_id', 'localized_type')],
+            field('document_type', obj('DocumentType'))]},
+        {'kind': 'OBJECT', 'name': 'DocumentType', 'fields': [field('name', scalar('String'))]},
+        *({'kind': 'SCALAR', 'name': name} for name in ('String', 'Int', 'Boolean')),
+    ]}}
+    fingerprint = analyze_snapshot(raw).fingerprint
+    mapping = SimpleNamespace(status='Active', source_instance='source-a', schema_snapshot='snap', schema_fingerprint=fingerprint)
+    snapshot = SimpleNamespace(name='snap', snapshot_json=raw, schema_fingerprint=fingerprint,
+                               source_instance='source-a', analysis_status='Validated', execution_contract_status='Compatible')
+    fake = SimpleNamespace(get_doc=lambda doctype, name: mapping if doctype == 'HERO GraphQL Mapping' else snapshot)
+    with patch.object(ft, 'frappe', fake):
+        request = ft._detail_request(SimpleNamespace(mapping='mapped'), 'source-a', ['u1'])
+        assert 'u1' not in request.document
+        assert ['u1'] in request.variables.values()
+        assert ('customer_document', 'document_type', 'name') in {item.selection_path for item in request.result_bindings}
+        mapping.source_instance = 'other'
+        with unittest.TestCase().assertRaises(ft.TransferError):
+            ft._detail_request(SimpleNamespace(mapping='mapped'), 'source-a', ['u1'])
 
 
 class TestDownloader(unittest.TestCase):
@@ -192,6 +231,7 @@ def _fake_frappe(db, root):
 
 class _FileFixture(unittest.TestCase):
     def setUp(self):
+        isolate_direct_materialization(self)
         self.root = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.root)
         os.makedirs(os.path.join(self.root, "files"))
@@ -213,6 +253,16 @@ class _FileFixture(unittest.TestCase):
         read_patch = patch.object(ft.direct_runtime, "resolve_read", side_effect=lambda op, source: ft.direct_runtime.builtin_read(op))
         read_patch.start()
         self.addCleanup(read_patch.stop)
+        detail_patch = patch.object(ft, '_detail_request', side_effect=lambda read, source, uuids:
+            SimpleNamespace(document='materialized file detail', variables={'uuids': uuids, 'first': len(uuids)}))
+        detail_patch.start()
+        self.addCleanup(detail_patch.stop)
+        observation_patch = patch('hero_integration.services.deferred_references.remember_file')
+        self.observations = observation_patch.start()
+        self.addCleanup(observation_patch.stop)
+        storage_patch = patch('hero_integration.services.deferred_references.require_storage')
+        storage_patch.start()
+        self.addCleanup(storage_patch.stop)
         self.link = SimpleNamespace(name="L1", target_name="F1", source_payload_hash="old")
         self.db.data['File']['F1']['file_name'] = 'Angebot.pdf'
         self.db.data['HERO Integration Link']['L1']['target_field_hashes'] = ft._target_baseline('F1', {'file_name': 'Angebot.pdf'})
@@ -290,7 +340,11 @@ class TestSourceAndTargetBinding(_FileFixture):
                 patch.object(ft, "allow_unlimited_attachments"), \
                 patch.object(ft, "_folder", side_effect=lambda *parts: "Home/" + "/".join(parts)):
             return ft.transfer("documents", source_instance=instance, client=_ListClient(rows, details),
-                               downloader=downloader or _NoDownload(), min_free=0)
+                               downloader=downloader or _NoDownload(), min_free=0, run_name="synthetic-run")
+
+    def test_execute_requires_an_originating_run_before_transfer(self):
+        with self.assertRaisesRegex(ft.TransferError, 'originating integration run'):
+            ft.transfer('documents', source_instance='source-a', client=object(), downloader=object())
 
     def test_project_ids_resolve_only_within_the_run_source(self):
         projects = ft._bindings("project", "Project", "source-a")
@@ -334,13 +388,16 @@ class TestSourceAndTargetBinding(_FileFixture):
         link = next(row for row in self.db.committed["HERO Integration Link"].values() if row["source_id"] == "7")
         self.assertEqual(link["source_instance"], "source-b")
         file = next(row for name, row in self.db.committed["File"].items() if name != "F1")
-        self.assertEqual(file["attached_to_name"], "PROJECT-B")
+        self.assertIsNone(file["attached_to_name"])
+        observed = self.observations.call_args
+        self.assertEqual(observed.args[:3], ('synthetic-run', 'source-b', 'HeroDocuments'))
+        self.assertEqual(observed.args[5]['file_upload_matches'], [{'project_match_id': 42}])
 
     def test_known_files_of_another_source_are_not_reused(self):
         self.assertEqual(list(ft._known_files("source-a")), ["5"])
         self.assertEqual(ft._known_files("source-b"), {})
 
-    def test_unchanged_unassigned_file_is_attached_once_its_project_exists(self):
+    def test_unchanged_unassigned_file_waits_even_when_its_project_exists(self):
         row = {"id": 5, "uuid": "u5", "filename": "Angebot.pdf", "modified": "1", "size": 3,
                "downloadUrl": URL, "category": "offer"}
         self.db.data["HERO Integration Link"]["L1"]["source_payload_hash"] = ft.source_hash(row)
@@ -349,9 +406,9 @@ class TestSourceAndTargetBinding(_FileFixture):
                 "5": SimpleNamespace(name="L1", target_name="F1", source_payload_hash=ft.source_hash(row),
                                      target_field_hashes=ft.field_hashes(ft.mapped_values(ft.direct_runtime.builtin_read("HeroDocuments"), row)))}):
             state = self.run_transfer([row], {"u5": {"uuid": "u5", "file_upload_matches": [{"project_match_id": 42}]}})
-        self.assertEqual((state["counts"].get("relinked"), state["counts"].get("unchanged")), (1, None))
+        self.assertEqual((state["counts"].get("relinked"), state["counts"].get("unchanged")), (None, 1))
         self.assertEqual((self.current_file()["attached_to_doctype"], self.current_file()["attached_to_name"],
-                          self.current_file()["folder"]), ("Project", "PROJECT-A", "Home/HERO/Dokumente"))
+                          self.current_file()["folder"]), (None, None, "Home/HERO/Dokumente/Ohne Zuordnung"))
         self.assertEqual(self.current_file()["file_url"], "/private/files/old.pdf")
 
     def test_unchanged_file_without_resolvable_target_stays_untouched(self):
@@ -372,7 +429,7 @@ class TestSourceAndTargetBinding(_FileFixture):
             "FileUpload_FileUploads": _page([], "end", False)}
         with patch.object(ft, "_state", return_value=saved), patch.object(ft, "_save_state"), \
                 patch.object(ft, "allow_unlimited_attachments"), patch.object(ft, "_folder", return_value="Home/HERO"):
-            state = ft.transfer("documents", source_instance="source-a", client=client, downloader=_NoDownload())
+            state = ft.transfer("documents", source_instance="source-a", client=client, downloader=_NoDownload(), run_name="synthetic-run")
         self.assertNotIn("after", calls[0])
         self.assertEqual((state["source_instance"], state["counts"].get("added")), ("source-a", None))
 

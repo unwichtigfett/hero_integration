@@ -2,7 +2,7 @@ name: CI
 
 on:
   pull_request:
-    branches: [hero_int_dev, hero_int_1.0]
+    branches: [hero_int_dev, hero_int_1.0, hero_int_dev_opt, hero_int_opt]
   workflow_dispatch:
     inputs:
       install_apps:
@@ -20,6 +20,8 @@ on:
     branches:
       - hero_int_dev
       - hero_int_1.0
+      - hero_int_dev_opt
+      - hero_int_opt
 
 permissions:
   contents: read

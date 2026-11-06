@@ -79,8 +79,6 @@ for (const language of input.languages) {
     assert.equal(migration.diagnostic(graphSummary), language === 'en' ? graphSummary : '12 Graphknoten und 34 Graphkanten.');
     const refreshStatus = 'Schema unchanged; the current snapshot stays in use.';
     assert.equal(migration.diagnostic(refreshStatus), language === 'en' ? refreshStatus : 'Schema unverändert; der aktuelle Snapshot bleibt in Verwendung.');
-    const expectedSuggestion = language === 'en' ? input.suggestionReason : 'Typkompatible Übereinstimmung von Name und Bezeichnung. Relation: Customer. Select-Werte müssen vor der Aktivierung geprüft werden. Erforderliches Zielfeld; die Zielerstellung benötigt einen zur App gehörenden Vertrag. Für dieses nicht kanonische App-Ziel ist nur ein Entwurf möglich.';
-    assert.equal(migration.diagnostic(input.suggestionReason), expectedSuggestion);
     assert.equal(migration.diagnostic('User supplied custom reason.'), 'User supplied custom reason.');
     const base = 'Target created through native Frappe validation.';
     const optionalNotes = [

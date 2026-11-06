@@ -83,8 +83,16 @@ class TestProjectPhases(unittest.TestCase):
         client = SimpleNamespace(query=lambda document, variables: documents.append(document) or {
             "project_types": [{"id": 1, "project_status_steps": [{"id": 4730, "name": "ANG Nachfassung"}]},
                               {"id": 2, "project_status_steps": [{"id": 5, "name": "Neu"}, {"id": None}]}]})
-        source = GraphQLServiceSource(client, SimpleNamespace(), SimpleNamespace(), "default")
-        self.assertEqual(source.project_status_steps(), {4730: "ANG Nachfassung", 5: "Neu"})
+        from graphql import build_schema, introspection_from_schema
+        from hero_integration.services.graphql_graph import analyze_snapshot
+        from hero_integration.services.mapping_contract_v1 import SnapshotAdapter, StoredSnapshot
+        raw = introspection_from_schema(build_schema('type Query { project_types:[ProjectType] } '
+            'type ProjectType { id:Int project_status_steps:[Step] } type Step { id:Int name:String }'))
+        snapshot = SnapshotAdapter().adapt(StoredSnapshot('steps', raw, analyze_snapshot(raw).fingerprint, 'default'))
+        contract = SimpleNamespace()
+        source = GraphQLServiceSource(client, SimpleNamespace(), contract, "default", revalidate=lambda: contract)
+        with patch.object(source, '_auxiliary_snapshot', return_value=snapshot):
+            self.assertEqual(source.project_status_steps(), {4730: "ANG Nachfassung", 5: "Neu"})
         self.assertEqual(len(documents), 1)
         self.assertTrue(documents[0].startswith("query "))
 

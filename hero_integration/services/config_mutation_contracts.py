@@ -16,7 +16,7 @@ import frappe
 from graphql import build_client_schema, parse, print_ast, validate as validate_graphql
 from graphql.language.ast import FieldNode, OperationDefinitionNode, VariableNode
 
-from hero_integration.services.graphql_contract import parse_mutation
+from hero_integration.services.mutation_binding_contract import parse_mutation
 from hero_integration.services.graphql_graph import analyze_snapshot, normalize_schema
 from hero_integration.services.localized_error import LocalizedError
 from hero_integration.services.mapped_update_v2 import AREAS

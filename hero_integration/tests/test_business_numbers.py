@@ -363,6 +363,8 @@ class TestBusinessNumberMigration(FakeFrappeMigrationHarness, unittest.TestCase)
         self.assertEqual(self.frappe.projects[0]["custom_hero_display_id"], "0033")
         self.assertEqual(self.frappe.links[("project", "201")].target_name, "PV-0033-H")
 
+    # Exercise the relationship writer owned by the post-success service.
+    @mock.patch('hero_integration.services.deferred_references.realizing', new=lambda: True)
     def test_a_project_links_to_its_customer_by_the_customer_number(self):
         self.migrate_customer(self.customer(id=401, nr="2222"))
         self.migrate_project(self.project(customer_id=401))
@@ -378,6 +380,8 @@ class TestBusinessNumberMigration(FakeFrappeMigrationHarness, unittest.TestCase)
         self.assertEqual(self.frappe.links[("customer", "401")].target_name, "2222")
         self.assertNotIn(("customer", "401", "account-b"), self.frappe.links)
 
+    # Exercise the relationship writer owned by the post-success service.
+    @mock.patch('hero_integration.services.deferred_references.realizing', new=lambda: True)
     def test_equal_source_ids_keep_project_customer_relations_source_scoped(self):
         self.migrate_customer(self.customer(id=401, nr="2222"))
         self.migrate_customer(self.customer(id=401, nr="4444", full_name="Synthetic other customer",

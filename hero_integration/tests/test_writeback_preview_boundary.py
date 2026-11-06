@@ -34,7 +34,7 @@ class TestWritebackPreviewBoundary(unittest.TestCase):
         self.snapshot = SimpleNamespace(name='S1', schema_fingerprint='fp', source_instance='hero')
         self.link = SimpleNamespace(source_instance='hero', source_id='42', sync_status='Synchronized',
                                     source_payload_hash='abc', observed_source_hash='abc')
-        from hero_integration.services.graphql_contract import parse_mutation
+        from hero_integration.services.mutation_binding_contract import parse_mutation
         document = 'mutation Write($contact: CustomerInput!) { update_contact(contact: $contact) { id } }'
         self.service = SimpleNamespace(schema_snapshot='S1', schema_fingerprint='fp', query_document=document)
         self.contract = SimpleNamespace(name='contract', graphql_service='service', contract_revision=1,
@@ -244,7 +244,7 @@ class TestWritebackPreviewBoundary(unittest.TestCase):
 
 class TestTypedMutationPreview(unittest.TestCase):
     def setUp(self):
-        from hero_integration.services.graphql_contract import parse_mutation
+        from hero_integration.services.mutation_binding_contract import parse_mutation
         from hero_integration.tests.test_graphql_contract import SCHEMA
         document = 'mutation Change($input: CustomerInput!) { changeCustomer(input: $input) { id } }'
         self.service = SimpleNamespace(name='service', schema_snapshot='S1', schema_fingerprint='fp',
@@ -274,19 +274,16 @@ class TestTypedMutationPreview(unittest.TestCase):
         self.assertEqual(result['variables_validated'], ['input'])
         self.assertNotIn('Ada', json.dumps(result))
 
-    def test_optional_document_default_is_fingerprinted_but_not_returned_as_effective_value(self):
-        from hero_integration.services.graphql_contract import parse_mutation
-        schema = {"__schema": {"mutationType": {"name": "Mutation"}, "types": [
-            {"kind": "OBJECT", "name": "Mutation", "fields": [{"name": "changeCustomer",
-             "args": [{"name": "value", "type": {"kind": "SCALAR", "name": "Int"}}]}]},
-            {"kind": "SCALAR", "name": "Int"},
-        ]}}
+    def test_optional_document_default_is_fingerprinted_and_validated_as_effective_value(self):
+        from hero_integration.services.mutation_binding_contract import parse_mutation
+        from hero_integration.tests.test_graphql_contract import optional_default_schema
+        schema = optional_default_schema()
         self.snapshot.snapshot_json = json.dumps(schema)
         document = "mutation Change($value: Int = 7) { changeCustomer(value: $value) }"
         self.service.query_document = document
         self.contract.contract_fingerprint = parse_mutation(document).fingerprint
         first = self.preview({})
-        self.assertEqual(first["variables_validated"], [])
+        self.assertEqual(first["variables_validated"], ["value"])
         self.assertNotIn("value", first)
         self.assertNotIn(document, json.dumps(first))
         changed = document.replace("= 7", "= 8")

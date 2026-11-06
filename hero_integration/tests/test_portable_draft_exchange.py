@@ -883,15 +883,6 @@ class TestPortableDraftExchange(unittest.TestCase):
             self.assertFalse(result['activation'])
             reopened = FrappeMappingDraftStorage(target).service().open_draft(IDENTITY, target.session.user)
             self.assertEqual(reopened.content, content)
-            stored_plan = FrappeMappingDraftStorage(target).materialize_portable_draft(
-                IDENTITY, target.session.user, reopened.generation, reopened.content_revision, 0, 0)
-            self.assertEqual(stored_plan['execution_authority'], 'NONE')
-            if content.get('additional_mappings'):
-                self.assertEqual(len(stored_plan['input_paths']), 1 + len(content['additional_mappings']))
-            from hero_integration.services.mapping_draft_service import DraftConflict
-            with self.assertRaises(DraftConflict):
-                FrappeMappingDraftStorage(target).materialize_portable_draft(
-                    IDENTITY, target.session.user, reopened.generation, reopened.content_revision + 1, 0, 0)
             from hero_integration.services.mapping_contract_v1 import (
                 SnapshotAdapter, StoredSnapshot, QueryAdapter, QueryDraft, MutationAdapter, MutationDraft,
             )
@@ -1119,37 +1110,6 @@ class TestPortableDraftExchange(unittest.TestCase):
                                  confirmed=True, preview_fingerprint=preview['preview_fingerprint'])
             draft = FrappeMappingDraftStorage(target).service().open_draft(IDENTITY, target.session.user)
             self.assertEqual(draft.content, content)
-            plan = FrappeMappingDraftStorage(target).materialize_portable_draft(IDENTITY, target.session.user, 1, 1, 0, 0)
-            self.assertEqual(len(plan['input_paths']), 3)
-            target.throw = lambda message, *args: (_ for _ in ()).throw(ValueError(message))
-            target.TimestampMismatchError = ValueError
-            target.PermissionError = PermissionError
-            before = deepcopy((target.drafts, target.revisions, target.active, target.rules))
-            with patch.object(api, '_mapping_request_fields'), \
-                 patch('hero_integration.services.frappe_mapping_draft_storage.FrappeMappingDraftStorage',
-                       side_effect=lambda: FrappeMappingDraftStorage(target)):
-                samples = {'input.name':'', 'input.requiredLabel':'reviewed', 'input.contact.email':None}
-                preview = api.mapping_draft_materialize_plan(IDENTITY, 1, 1, 0, 0, sample_values_json=json.dumps(samples))
-                self.assertEqual(preview['variables'], {'input':{'name':'', 'requiredLabel':'reviewed', 'contact':{'email':None}}})
-                self.assertEqual(preview['execution_authority'], 'NONE')
-                samples.pop('input.contact.email')
-                preview = api.mapping_draft_materialize_plan(IDENTITY, 1, 1, 0, 0, sample_values_json=json.dumps(samples))
-                self.assertNotIn('contact', preview['variables']['input'])
-                with self.assertRaises(ValueError):
-                    api.mapping_draft_materialize_plan(IDENTITY, 1, 1, 0, 0,
-                        sample_values_json=json.dumps({'input.name':'', 'input.requiredLabel':None}))
-                with self.assertRaises(ValueError):
-                    api.mapping_draft_materialize_plan(IDENTITY, 1, 1, 0, 0,
-                        sample_values_json=json.dumps({'input.name':''}))
-                with self.assertRaises(ValueError):
-                    api.mapping_draft_materialize_plan(IDENTITY, 1, 1, 0, 0,
-                        sample_values_json=json.dumps({'input.requiredLabel':'ok', 'input.contact.email':[]}))
-                with self.assertRaises(ValueError):
-                    api.mapping_draft_materialize_plan(IDENTITY, 1, 1, 0, 0,
-                        sample_values_json=json.dumps({'input.requiredLabel':'ok', 'input.tags':[]}))
-                with self.assertRaises(ValueError):
-                    api.mapping_draft_materialize_plan(IDENTITY, 1, 1, 0, 0, sample_values_json=False)
-            self.assertEqual((target.drafts, target.revisions, target.active, target.rules), before)
             self.assertEqual(raw, exchange.export_package('source-B', 'snapshot-B', 'FRAPPE_TO_MUTATION',
                                                           format_version=exchange.PORTABLE_FORMAT_VERSION))
         existing = Fake('existing.test', 'source-C', 'snapshot-C')
@@ -1427,9 +1387,6 @@ class TestPortableDraftExchange(unittest.TestCase):
             saved = api.mapping_draft_save(IDENTITY, 1, 1, 0, json.dumps(updated))
             self.assertEqual(saved['draft']['content'], updated)
             self.assertEqual(service.open_draft(IDENTITY, fake.session.user).content, updated)
-            plan = api.mapping_draft_materialize_plan(IDENTITY, 1, 2, 0, 0)
-            self.assertEqual(plan['execution_authority'], 'NONE')
-            self.assertEqual(plan['selected_paths'], ['email'])
             fake.session.user = 'other@example.invalid'
             self.assertEqual(api.mapping_draft_list('QUERY_TO_FRAPPE')['items'], [])
 

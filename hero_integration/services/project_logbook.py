@@ -61,6 +61,11 @@ def _rows(value):
     return value
 
 
+def _logbook_source(client, source_instance):
+    from hero_integration.sources.hero import GraphQLServiceSource
+    return GraphQLServiceSource.approved(client, 'HeroProjectMatches', source_instance)
+
+
 def sync_logbook(client, user_emails: dict[int, str] | None = None, max_pages: int = 10000, *,
                  source_instance: str, max_history_pages: int = 200, progress=None, verify_source=None) -> dict:
     """Exhaust both nested collections; fail visibly if a bound/cursor is broken.
@@ -86,12 +91,13 @@ def sync_logbook(client, user_emails: dict[int, str] | None = None, max_pages: i
     counts = {"requests": 0, "added": 0, "known": 0, "without_project": 0, "projects": 0, "complete": False, "restricted": 0, "file_references": 0, "weather_entries": 0}
     seen_projects = set()
     metadata = _metadata(source_instance)
+    source = _logbook_source(client, source_instance)
 
     def request(document, variables):
         if verify_source:
             verify_source()
         counts['requests'] += 1
-        return _response(client.query(document, variables))
+        return _response(source._auxiliary_document(document, variables))
 
     def consume(row, seen):
         identity = str(row['id'])
@@ -532,7 +538,8 @@ def complete_mapped_histories(source, records, variables):
         if source.revalidate() != source.contract:
             raise ReadContractError('Read approval changed before logbook transport.')
         params = {**variables, variable: len(entries)}
-        data = source.client.query(source.service.query_document, params)
+        request = source._saved_request(params)
+        data = source.client.query(request.document, request.variables)
         if source.revalidate() != source.contract:
             raise ReadContractError('Read approval changed during logbook transport.')
         parents = value_at(data, source.contract.records_path)

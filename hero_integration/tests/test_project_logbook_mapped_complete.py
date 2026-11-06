@@ -1,3 +1,4 @@
+from hero_integration.tests.saved_reader_fixture import isolate_saved_materialization
 """Complete mapping-owned Project histories without new read services or duplicate Comments."""
 from types import SimpleNamespace as NS
 from unittest import TestCase
@@ -10,6 +11,9 @@ from hero_integration.tests.test_query_mapping_v2 import project_rules, plan, ru
 
 
 class TestMappedLogbookPagination(TestCase):
+    def setUp(self):
+        isolate_saved_materialization(self)
+
     def source(self, pages, **options):
         config = {'path': 'histories', 'identity_path': 'id', 'limit': 100,
                   'offset_variable': 'history_offset', 'max_pages': 5, **options}
@@ -22,6 +26,7 @@ class TestMappedLogbookPagination(TestCase):
             return {'project_matches': value}
         source = NS(contract=contract, service=NS(query_document='exact approved document'),
                     client=NS(query=query), revalidate=lambda: contract)
+        source._saved_request = lambda variables: NS(document=source.service.query_document, variables=variables)
         return source, calls
 
     def test_short_server_pages_are_exhausted_using_the_exact_approved_document(self):

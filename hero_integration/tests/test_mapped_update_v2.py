@@ -122,7 +122,7 @@ class TestMappedUpdateExecution(TestCase):
         import hero_integration.api as api
         ctx=SimpleNamespace(proof=object())
         prepared=SimpleNamespace(fingerprint='new',changes=[{}],conflicts=[])
-        with patch.object(api,'_assert_mutation_execution_released'),patch.object(update,'_load_context',return_value=ctx), \
+        with patch('hero_integration.services.mapping_contract_v1.materialize_saved_mutation', side_effect=lambda snapshot, document, variables, **kwargs: SimpleNamespace(document=document, variables=variables)), patch.object(api,'_assert_mutation_execution_released'),patch.object(update,'_load_context',return_value=ctx), \
              patch('hero_integration.services.writeback_source.validate_source'),patch.object(update,'_prepare',return_value=prepared), \
              patch.object(api,'_reserve_mutation') as reserve:
             with self.assertRaisesRegex(ValueError,'preview changed'):update.send('m','Task','t',client=Mock(),confirmed=True,fingerprint='old')
@@ -139,7 +139,7 @@ class TestMappedUpdateExecution(TestCase):
 
 class TestMappedUpdatePrepare(TestCase):
     def context(self,area):
-        from hero_integration.services.graphql_contract import parse_mutation
+        from hero_integration.services.mutation_binding_contract import parse_mutation
         content=mapping(area);op=content['target']['operation'];owner=content['source']['doctype']
         types={'HeroTasks':'TaskInput','HeroProducts':'VersionInput','HeroEmployees':'PartnerInput'}
         if owner=='File': document='mutation($key:Int,$value:String){update_file_upload(id:$key,filename:$value){id}}'
@@ -193,7 +193,7 @@ class TestMappedUpdatePrepare(TestCase):
         prepared=SimpleNamespace(fingerprint='x',changes=[{'label':'name'}],conflicts=[],variables={'input':{'id':7}},mutation_id=7)
         transport=Mock();transport.execute_once.return_value={'update_task':{'id':7}}
         audit=SimpleNamespace(correlation_id='audit')
-        with patch.object(api,'_assert_mutation_execution_released'),patch.object(update,'_load_context',return_value=ctx), \
+        with patch('hero_integration.services.mapping_contract_v1.materialize_saved_mutation', side_effect=lambda snapshot, document, variables, **kwargs: SimpleNamespace(document=document, variables=variables)), patch.object(api,'_assert_mutation_execution_released'),patch.object(update,'_load_context',return_value=ctx), \
              patch('hero_integration.services.writeback_source.validate_source'),patch.object(update,'_prepare',return_value=prepared), \
              patch.object(api,'_reserve_mutation',return_value=audit),patch.object(api,'_finalize_mutation') as finalize, \
              patch.object(update,'_read_record',side_effect=ValueError('unverified')),patch.object(update.frappe,'db',Mock()), \

@@ -55,6 +55,52 @@ def test_compile_typed_query_plan_from_cataloged_references():
     assert plan.request.mutation_safety_request is None
 
 
+def test_nested_field_arguments_are_validated_and_parameterized():
+    snapshot = StoredSnapshot('nested', RAW_SCHEMA, analyze_snapshot(RAW_SCHEMA).fingerprint, 'hero-primary')
+    registry = build_schema_registry(snapshot)
+    route = QueryRoutingRequest(
+        operation='searchCases', output_references=('hero.query.searchCases.requiresArgument.name',),
+        arguments={'filter': {'state': 'ACTIVE', 'ids': []}, 'offset': 0},
+        nested_arguments={'requiresArgument': {'id': 'owner-1'}},
+    )
+    router = MaterializerRouter()
+    plan = router.compile_query(snapshot, registry, route)
+    assert 'requiresArgument(id: $v3)' in plan.request.document
+    assert plan.request.variables['v3'] == 'owner-1'
+    assert router.compile_query(snapshot, registry, route) == plan
+    assert 'owner-1' not in plan.request.document
+    for nested in ({}, {'requiresArgument': {'id': None}},
+                   {'requiresArgument': {'id': 'x', 'unknown': 1}}, {'owner': {'id': 'x'}}):
+        with pytest.raises(MaterializerRoutingError):
+            router.compile_query(snapshot, registry, replace(route, nested_arguments=nested))
+
+
+def test_explicit_recursive_output_paths_are_resolved_beyond_discovery_limit():
+    snapshot = _stored()
+    registry = build_schema_registry(snapshot)
+    route = QueryRoutingRequest(operation='case', arguments={'id': '1'},
+        output_references=('hero.query.case.children.children.children.children.id',))
+    plan = MaterializerRouter().compile_query(snapshot, registry, route)
+    assert plan.request.document.count('children {') == 4
+    assert plan.selected_response_paths == (('data', 'case', 'children', 'children', 'children', 'children', 'id'),)
+    with pytest.raises(MaterializerRoutingError):
+        MaterializerRouter().compile_query(snapshot, registry,
+            replace(route, output_references=('hero.query.case.children.unknown.id',)))
+
+
+def test_router_accepts_schema_proven_union_fragment_and_rejects_other_types():
+    snapshot = _stored()
+    registry = build_schema_registry(snapshot)
+    route = QueryRoutingRequest(operation='search', arguments={'filter': {}},
+        output_references=('hero.query.search.@Case.id', 'hero.query.search.@Project.id'))
+    plan = MaterializerRouter().compile_query(snapshot, registry, route)
+    assert '... on Case' in plan.request.document
+    assert '... on Project' in plan.request.document
+    with pytest.raises(MaterializerRoutingError):
+        MaterializerRouter().compile_query(snapshot, registry,
+            replace(route, output_references=('hero.query.search.@Query.case',)))
+
+
 def _mapping_context(reference, direction):
     snapshot = StoredSnapshot('mapping-snapshot', RAW_SCHEMA, analyze_snapshot(RAW_SCHEMA).fingerprint, 'hero-primary')
     registry = build_schema_registry(snapshot)

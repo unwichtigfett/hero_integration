@@ -1,7 +1,9 @@
 """Versioned, finite HERO source contracts with explicit runtime controls."""
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from hero_integration.services.performance import measure, measured
+
+from collections.abc import Iterator
 from dataclasses import dataclass
 
 from hero_integration.client.graphql import HeroGraphQLClient
@@ -138,68 +140,6 @@ class SourcePage:
     next_offset: int | None
 
 
-class HeroSource:
-    def __init__(
-        self,
-        client: HeroGraphQLClient,
-        source_instance: str = "default",
-        *,
-        page_size: int = PAGE_SIZE,
-        filters: Mapping[str, Mapping[str, object]] | None = None,
-        pagination_strategy: str = "OFFSET",
-    ):
-        self.client = client
-        self.source_instance = source_instance.strip() if isinstance(source_instance, str) and source_instance.strip() else "default"
-        if not isinstance(page_size, int) or isinstance(page_size, bool) or not 1 <= page_size <= 1000:
-            raise ValueError("HERO page size must be between 1 and 1000.")
-        if pagination_strategy != "OFFSET":
-            # The fixed V1 contracts expose offsets only.  A cursor must not be
-            # fabricated from an offset-like value.
-            raise ValueError("The approved HERO V1 source contracts support OFFSET pagination only.")
-        self.page_size = page_size
-        self.filters = {str(key): dict(value) for key, value in (filters or {}).items() if isinstance(value, Mapping)}
-
-    def customers(self, offset: int = 0) -> SourcePage:
-        values = self.filters.get("HeroCustomers", {})
-        show_deleted = values.get("showDeleted", True)
-        if not isinstance(show_deleted, bool):
-            raise ValueError("HeroCustomers.showDeleted must be a boolean.")
-        return self._page(CUSTOMER_QUERY_V1, "contacts", offset, showDeleted=show_deleted)
-
-    def projects(self, offset: int = 0) -> SourcePage:
-        if self.filters.get("HeroProjectMatches"):
-            raise ValueError("HeroProjectMatches has no approved V1 filter variables.")
-        return self._page(PROJECT_QUERY_V1, "project_matches", offset)
-
-    @staticmethod
-    def testing_ordering(operation: str) -> dict[str, object]:
-        """Native V1 readers have no verified descending HERO order contract."""
-        return {
-            "verified": False,
-            "order": "id",
-            "reason": "The native V1 reader's id order is not evidence of newest-first ordering.",
-        }
-
-    def _page(self, query: str, root: str, offset: int, **extra: object) -> SourcePage:
-        if not isinstance(offset, int) or isinstance(offset, bool) or not 0 <= offset <= 10_000_000:
-            raise ValueError("HERO read offset is invalid or exceeds the reviewed run bound.")
-        data = self.client.query(query, {"first": self.page_size, "offset": offset, "orderBy": "id", **extra})
-        if not isinstance(data, dict):
-            raise ValueError(f"HERO {root} response does not match the V1 contract.")
-        records = data.get(root)
-        if not isinstance(records, list) or not all(isinstance(row, dict) for row in records):
-            raise ValueError(f"HERO {root} response does not match the V1 contract.")
-        if len(records) > self.page_size:
-            raise ValueError("HERO response exceeds the approved page size.")
-        annotated = tuple(
-            {**row, "_hero_source_instance": self.source_instance}
-            for row in records
-        )
-        # Only an empty page ends an offset scan: a short page can be a server
-        # page cap below the requested size, not the end of the dataset.
-        return SourcePage(annotated, offset + len(records) if records else None)
-
-
 class GraphQLServiceSource:
     """Read one approved saved service without creating a second mapper."""
     def __init__(self, client: HeroGraphQLClient, service, contract: ReadContract, source_instance: str, *, revalidate=None):
@@ -207,6 +147,82 @@ class GraphQLServiceSource:
         self.source_instance = source_instance.strip() or "default"
         self.query_adapter = getattr(contract, "adapter_options", None) or {}
         self.revalidate = revalidate
+
+    @classmethod
+    def approved(cls, client, operation, source_instance):
+        import frappe
+        from hero_integration import api
+        from hero_integration.services.read_contract import from_documents
+        candidates = api._sync_area_read_services(source_instance).get(operation) or []
+        if not candidates:
+            raise ReadContractError('No approved read service is available for this area.')
+        name = candidates[0]['service']
+        def documents():
+            service, mapping = api._approved_read_service(name)
+            snapshot = frappe.get_doc('HERO GraphQL Schema Snapshot', service.schema_snapshot)
+            if snapshot.source_instance != source_instance:
+                raise ReadContractError('The approved reader belongs to another source.')
+            return service, from_documents(service, mapping, snapshot)
+        service, contract = documents()
+        return cls(client, service, contract, source_instance, revalidate=lambda: documents()[1])
+
+    def _stored_snapshot(self):
+        import frappe
+        from hero_integration.services.mapping_contract_v1 import StoredSnapshot
+        snapshot = frappe.get_doc('HERO GraphQL Schema Snapshot', self.service.schema_snapshot)
+        if (snapshot.source_instance != self.source_instance
+                or snapshot.schema_fingerprint != self.service.schema_fingerprint
+                or getattr(snapshot, 'execution_contract_status', '') == 'Blocked'):
+            raise ReadContractError('The auxiliary read schema no longer matches its approved source.')
+        return StoredSnapshot(snapshot.name, snapshot.snapshot_json,
+            snapshot.schema_fingerprint, snapshot.source_instance, snapshot.analysis_status)
+
+    def _auxiliary_snapshot(self):
+        from hero_integration.services.mapping_contract_v1 import SnapshotAdapter
+        return SnapshotAdapter().adapt(self._stored_snapshot())
+
+    def _saved_request(self, variables):
+        from hero_integration.services.mapping_contract_v1 import materialize_saved_query
+        return materialize_saved_query(self._stored_snapshot(),self.service.query_document,variables,
+            selected_paths=getattr(self.contract,'projection_paths',None),
+            preserve_paths=getattr(self.contract,'projection_preserve_paths',()))
+
+    def _document_request(self, document, variables):
+        from hero_integration.services.mapping_contract_v1 import materialize_saved_query
+        return materialize_saved_query(self._stored_snapshot(), document, variables)
+
+    def _auxiliary_document(self, document, variables):
+        if not callable(self.revalidate) or self.revalidate() != self.contract:
+            raise ReadContractError('Read approval changed before auxiliary transport.')
+        request = self._document_request(document, variables)
+        try:
+            return self.client.query(request.document, request.variables)
+        finally:
+            if self.revalidate() != self.contract:
+                raise ReadContractError('Read approval changed during auxiliary transport.')
+
+    def _auxiliary_query(self, name, root, paths, arguments=None, nested_arguments=None):
+        from hero_integration.services.mapping_contract_v1 import QueryAdapter, QueryDraft
+        if not callable(self.revalidate) or self.revalidate() != self.contract:
+            raise ReadContractError('Read approval changed before auxiliary transport.')
+        snapshot = self._auxiliary_snapshot()
+        request = QueryAdapter().materialize(snapshot, QueryDraft(name, root, root, paths, arguments or {},
+            nested_arguments=nested_arguments))
+        data = self.client.query(request.document, request.variables)
+        if self.revalidate() != self.contract:
+            raise ReadContractError('Read approval changed during auxiliary transport.')
+        return data
+
+    def _auxiliary_batch(self, name, drafts):
+        from hero_integration.services.mapping_contract_v1 import QueryAdapter
+        if not callable(self.revalidate) or self.revalidate() != self.contract:
+            raise ReadContractError('Read approval changed before auxiliary transport.')
+        request = QueryAdapter().materialize_many(self._auxiliary_snapshot(), drafts, name)
+        try:
+            return self.client.query(request.document, request.variables)
+        finally:
+            if self.revalidate() != self.contract:
+                raise ReadContractError('Read approval changed during auxiliary transport.')
 
     def customers(self, offset: int = 0) -> SourcePage:
         if getattr(self, 'customer_source', None) is not None:
@@ -226,11 +242,11 @@ class GraphQLServiceSource:
         states: dict[int, str] = {}
         for start in range(0, len(wanted), 50):
             chunk = wanted[start:start + 50]
-            document = "query HeroProjectReferenceStates { " + " ".join(
-                f"p{value}: project_match(project_match_id: {value}) {{ id is_deleted project_nr }}" for value in chunk
-            ) + " }"
+            from hero_integration.services.mapping_contract_v1 import QueryDraft
             try:
-                data = self.client.query(document, {})
+                data = self._auxiliary_batch('HeroProjectReferenceStates', tuple(QueryDraft(
+                    'ProjectReference', f'p{value}', 'project_match', ('id', 'is_deleted', 'project_nr'),
+                    {'project_match_id': value}) for value in chunk))
             except HeroClientError as error:
                 data = getattr(error, "data", None) or {}
             data = data.get("data", data) if isinstance(data, dict) else {}
@@ -252,7 +268,8 @@ class GraphQLServiceSource:
         HERO shows the step of a project's current status as its status
         ("☎️ANG Nachfassung"), not the status group name ("Detailgespräch").
         """
-        data = self.client.query("query HeroProjectStatusSteps { project_types { id project_status_steps { id name } } }", {})
+        data = self._auxiliary_query('HeroProjectStatusSteps', 'project_types',
+            ('id', 'project_status_steps.id', 'project_status_steps.name'))
         data = data.get("data", data) if isinstance(data, dict) else {}
         steps = {}
         for project_type in (data.get("project_types") or []) if isinstance(data, dict) else []:
@@ -266,8 +283,8 @@ class GraphQLServiceSource:
 
         HERO has no user list; every user belongs to a partner of the company.
         """
-        data = self.client.query(
-            "query HeroUsers { company { partners(show_deleted: true) { user { id email } } } }", {})
+        data = self._auxiliary_query('HeroUsers', 'company', ('partners.user.id', 'partners.user.email'),
+            nested_arguments={'partners': {'show_deleted': True}})
         data = data.get("data", data) if isinstance(data, dict) else {}
         company = data.get("company") if isinstance(data, dict) else None
         users = {}
@@ -292,6 +309,7 @@ class GraphQLServiceSource:
             "reason": "The approved saved read contract does not prove newest-first ordering.",
         }
 
+    @measured('read.page')
     def _page(self, offset: int, operation: str) -> SourcePage:
         if not isinstance(offset, int) or isinstance(offset, bool) or not 0 <= offset <= 10_000_000:
             raise ReadContractError('Read offset is invalid or exceeds the reviewed run bound.')
@@ -317,8 +335,9 @@ class GraphQLServiceSource:
                 raise ReadContractError('A nonpaginated lookup can only read its approved single request.')
             if not one_shot_lookup and self.contract.page_size > lookup_bound:
                 raise ReadContractError('Lookup page size exceeds its approved record bound.')
-        if callable(self.revalidate) and self.revalidate() != self.contract:
-            raise ReadContractError('Read approval changed before transport.')
+        with measure('read.approval'):
+            if callable(self.revalidate) and self.revalidate() != self.contract:
+                raise ReadContractError('Read approval changed before transport.')
         request = getattr(self.contract, 'materialized_request', None)
         if request is not None:
             if not callable(self.revalidate):
@@ -334,9 +353,14 @@ class GraphQLServiceSource:
             for name, value in tuple(variables.items()):
                 if value == "$offset": variables[name] = offset
                 elif value == "$page_size": variables[name] = self.contract.page_size
-        data = self.client.query(self.service.query_document, variables)
-        if callable(self.revalidate) and self.revalidate() != self.contract:
-            raise ReadContractError('Read approval changed during transport.')
+        with measure('read.compile'):
+            wire = (self._saved_request(variables) if request is None else
+                    self._document_request(request.document, variables))
+        with measure('read.transport'):
+            data = self.client.query(wire.document, wire.variables)
+        with measure('read.approval'):
+            if callable(self.revalidate) and self.revalidate() != self.contract:
+                raise ReadContractError('Read approval changed during transport.')
         if request is not None:
             import json
             from hero_integration.graphql_protocol.graphql_result_decoder import decode_graphql_result
@@ -377,7 +401,7 @@ class GraphQLServiceSource:
         annotated = tuple({**row, "_hero_source_instance": self.source_instance} for row in records)
         if one_shot_lookup or unpaged:
             return SourcePage(annotated, None)
-        # Only an empty page ends an offset scan (see HeroSource._page).
+        # Only an empty page ends an offset scan.
         return SourcePage(annotated, offset + len(records) if records else None)
 
 

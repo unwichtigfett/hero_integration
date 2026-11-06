@@ -11,6 +11,7 @@ from hero_integration.services import direct_runtime as runtime
 from hero_integration.services import product_migration as pm
 from hero_integration.services.mapping_runtime import plan_from_definitions
 from hero_integration.tests.test_product_migration import ROW
+from hero_integration.tests.saved_reader_fixture import isolate_direct_materialization
 
 BUILTIN = runtime.builtin_read("HeroProducts")
 
@@ -188,6 +189,9 @@ class TestOwnMapping(unittest.TestCase):
 
 
 class TestSyncFollowsTheMapping(unittest.TestCase):
+    def setUp(self):
+        isolate_direct_materialization(self)
+
     def test_a_mapping_change_restarts_the_pass_and_reads_with_its_query(self):
         saved = {pm.STATE_KEY: json.dumps({"source_instance": "default", "mapping": "old", "offset": 500})}
         db = SimpleNamespace(get_default=saved.get, set_default=lambda k, v: saved.__setitem__(k, v),
@@ -209,6 +213,9 @@ class TestSyncFollowsTheMapping(unittest.TestCase):
 
 
 class TestProgress(unittest.TestCase):
+    def setUp(self):
+        isolate_direct_materialization(self)
+
     def test_progress_is_reported_after_every_page(self):
         saved, reports = {}, []
         db = SimpleNamespace(get_default=saved.get, set_default=lambda k, v: saved.__setitem__(k, v),

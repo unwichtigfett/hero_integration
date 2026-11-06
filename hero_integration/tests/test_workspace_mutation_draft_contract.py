@@ -10,10 +10,11 @@ from hero_integration.tests._frappe_test_import import load_api
 api = load_api()
 
 
-SCHEMA = {"__schema": {"mutationType": {"name": "Mutation"}, "types": [
-    {"name": "Mutation", "fields": [{"name": "changeCase", "type": {"kind": "OBJECT", "name": "Case"}}]},
-    {"name": "Case", "fields": []},
-]}}
+from pathlib import Path
+import json
+
+SCHEMA = json.loads((Path(__file__).with_name('fixtures') / 'mutation_draft_schema.json').read_text())
+
 PAYLOAD = {
     "name": "Change case draft",
     "operation_name": "ChangeCase",
@@ -21,7 +22,6 @@ PAYLOAD = {
     "query": "mutation ChangeCase { changeCase { id } }",
     "variables": {"api_token": "must-not-be-stored"},
 }
-
 
 class _Service:
     def __init__(self, name="HERO-GQL-00001", revision=1):

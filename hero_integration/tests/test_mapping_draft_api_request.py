@@ -123,6 +123,18 @@ class TestMappingDraftAPIRequest(unittest.TestCase):
     def rpc(self, user, method, payload=None, verb='GET', **kwargs):
         return self.request(user,PREFIX+method,verb,payload,**kwargs)
 
+    def revisions(self, user):
+        """Inspect retained audit records through native Frappe permissions."""
+        from hero_integration.services.mapping_draft_service import draft_key
+        key = draft_key(SITE, self.definition, self.users[user])
+        status, data = self.request(user, '/api/resource/HERO Mapping Revision', payload={
+            'fields':json.dumps(['name','actor','content_json','content_hash','generation','revision']),
+            'filters':json.dumps({'draft_key':key}), 'order_by':'generation desc, revision desc',
+            'limit_page_length':100})
+        self.assertEqual(status, 200, data)
+        rows = data['data']
+        return {'items':[{**row, 'content':json.loads(row['content_json'])} for row in rows], 'total':len(rows)}
+
     def create(self, user='a'):
         status,data=self.rpc(user,'mapping_draft_create',{'definition_id':self.definition},'POST')
         self.assertEqual(200,status,data)
@@ -176,15 +188,9 @@ class TestMappingDraftAPIRequest(unittest.TestCase):
             status,data=self.request('b','/api/resource/Version',payload={'fields':'["name","data"]','filters':json.dumps({'name':name})})
             self.assertEqual(200,status,data)
             self.assertEqual([],data['data'])
-        status,data=self.rpc('a','mapping_draft_revisions',{'definition_id':self.definition})
-        self.assertEqual(200,status,data)
-        self.assertEqual(1,data['message']['total'])
-        self.assertEqual(self.users['a'],data['message']['items'][0]['actor'])
-        status,data=self.rpc('a','mapping_draft_discard',{'definition_id':self.definition,'expected_generation':1,
-                              'expected_draft_revision':1,'confirmed':True},'POST')
-        self.assertEqual(200,status,data)
-        self.assertEqual('DISCARDED',data['message']['draft']['state'])
-        self.assertEqual(1,self.rpc('a','mapping_draft_revisions',{'definition_id':self.definition})[1]['message']['total'])
+        history = self.revisions('a')
+        self.assertEqual(1, history['total'])
+        self.assertEqual(self.users['a'], history['items'][0]['actor'])
 
     def test_cross_admin_ids_and_native_list_detail_are_private(self):
         a=self.create('a')
@@ -198,53 +204,22 @@ class TestMappingDraftAPIRequest(unittest.TestCase):
             status,data=self.request('b','/api/resource/'+doctype,payload={'fields':'["name"]','limit_page_length':100})
             self.assertEqual(200,status,data)
             self.assertNotIn(name,repr(data))
-        status,data=self.rpc('b','mapping_draft_revisions',{'definition_id':self.definition,'revision_name':a['key']+'-1-1'})
-        self.assertEqual(404,status,data)
         for field in ('actor','owner','owner_user','draft_key','ignore_permissions','flags'):
             args=self.save_args();args[field]=self.users['a']
             self.assertEqual(417,self.rpc('b','mapping_draft_save',args,'POST')[0])
         self.assertEqual(before,self.state())
 
-    def test_stale_save_discard_and_rejected_writes_preserve_state(self):
+    def test_stale_save_and_rejected_writes_preserve_state(self):
         self.create()
         self.rpc('a','mapping_draft_save',self.save_args(),'POST')
         before=self.state()
-        for method,args in (('mapping_draft_save',self.save_args()),('mapping_draft_discard',{
-            'definition_id':self.definition,'expected_generation':1,'expected_draft_revision':0,'confirmed':True})):
+        for method,args in (('mapping_draft_save',self.save_args()),):
             status,data=self.rpc('a',method,args,'POST')
             self.assertEqual(417,status,data)
             self.assertEqual('TimestampMismatchError',data['exc_type'])
             self.assertIn('MAPPING_DRAFT_CONFLICT',repr(data))
             self.assertEqual(before,self.state())
 
-    def test_employee_active_list_search_pagination_and_detail(self):
-        self.create()
-        self.assertEqual(200,self.rpc('a','mapping_draft_save',self.save_args(content={'record_path':'NOT_ACTIVE'}),'POST')[0])
-        status,data=self.rpc('employee','frontend_mapping_list',{'search':self.rows['draft']})
-        self.assertEqual(200,status,data)
-        self.assertEqual(0,data['message']['pagination']['graphql_total'])
-        self.assertEqual([],data['message']['graphql_mappings'])
-        status,data=self.rpc('employee','frontend_mapping_list',{'page_size':1,'start':0})
-        self.assertEqual(200,status,data)
-        self.assertLessEqual(len(data['message']['graphql_mappings']),1)
-        self.assertLessEqual(len(data['message']['frappe_mappings']),1)
-        first = data['message']
-        status,data=self.rpc('employee','frontend_mapping_list',{'page_size':1,'start':1})
-        self.assertEqual(200,status,data)
-        self.assertEqual(first['pagination']['graphql_total'],data['message']['pagination']['graphql_total'])
-        self.assertNotEqual(first['graphql_mappings'][0]['name'],data['message']['graphql_mappings'][0]['name'])
-        connect()
-        total = frappe.db.count('HERO GraphQL Mapping', {'status':'Active'})
-        frappe.destroy()
-        self.assertEqual(total,data['message']['pagination']['graphql_total'])
-        for kind,label in (('graphql','active'),('frappe','fieldactive')):
-            status,data=self.rpc('employee','frontend_mapping_detail',{'mapping_type':kind,'name':self.rows[label]})
-            self.assertEqual(200,status,data)
-            self.assertEqual('Active',data['message']['status'])
-            self.assertNotIn('SAMPLE_NOT_VISIBLE',repr(data))
-            self.assertNotIn('NOT_ACTIVE',repr(data))
-            for label in (('draft','disabled') if kind=='graphql' else ('fielddraft','fielddisabled')):
-                self.assertEqual(404,self.rpc('employee','frontend_mapping_detail',{'mapping_type':kind,'name':self.rows[label]})[0])
 
     def test_employee_guest_and_alternative_rpc_native_denials(self):
         draft=self.create()
@@ -253,16 +228,13 @@ class TestMappingDraftAPIRequest(unittest.TestCase):
         for user in ('employee',None):
             for method,verb,args in (
                 ('mapping_draft_create','POST',{'definition_id':self.definition}),
-                ('mapping_draft_read','GET',{'definition_id':self.definition}),
-                ('mapping_draft_revisions','GET',{'definition_id':self.definition}),
-                ('graphql_mapping_list','GET',{'snapshot_name':self.snapshot})):
+                ('mapping_draft_read','GET',{'definition_id':self.definition})):
                 self.assertIn(self.rpc(user,method,args,verb)[0],(403,401))
             for dt,name in (('HERO GraphQL Mapping',self.rows['active']),('HERO Mapping Draft',draft['key']),('HERO Mapping Revision',draft['key']+'-1-1')):
                 self.assertIn(self.request(user,'/api/resource/'+dt+'/'+name)[0],(403,401))
                 self.assertIn(self.request(user,'/api/method/frappe.client.get',payload={'doctype':dt,'name':name})[0],(403,401))
                 self.assertIn(self.request(user,'/api/method/frappe.client.get_value',payload={'doctype':dt,'filters':name,'fieldname':'name'})[0],(403,401))
                 self.assertIn(self.request(user,'/api/method/frappe.client.get_count',payload={'doctype':dt})[0],(403,401))
-        self.assertIn(self.rpc(None,'frontend_mapping_list')[0],(401,403))
         self.assertEqual(before,self.state())
 
     def test_role_revocation_denies_existing_own_draft(self):
@@ -291,8 +263,6 @@ class TestMappingDraftAPIRequest(unittest.TestCase):
         for verb in ('GET','PUT','DELETE'):
             self.assertEqual(403,self.rpc('a','mapping_draft_save',self.save_args(),verb)[0])
             self.assertEqual(403,self.rpc('a','mapping_draft_create',{'definition_id':self.definition},verb)[0])
-            self.assertEqual(403,self.rpc('a','mapping_draft_discard',{'definition_id':self.definition,
-                'expected_generation':1,'expected_draft_revision':0,'confirmed':True},verb)[0])
         self.assertEqual(400,self.rpc('a','mapping_draft_save',self.save_args(),'POST',csrf=False)[0])
         for raw in ('[]','{"source":{},"source":{}}','{"value":NaN}', 'x'*65537):
             args=self.save_args();args['mapping_json']=raw
@@ -300,8 +270,8 @@ class TestMappingDraftAPIRequest(unittest.TestCase):
         for invalid in (-1,True,1.5,'bad','9'*5000):
             args=self.save_args();args['expected_draft_revision']=invalid
             self.assertEqual(417,self.rpc('a','mapping_draft_save',args,'POST')[0])
-        for name in ('frontend_mapping_list','mapping_draft_read','mapping_draft_revisions'):
-            self.assertEqual(403,self.rpc('a',name,{'definition_id':self.definition} if name!='frontend_mapping_list' else {},'POST')[0])
+        for name in ('mapping_draft_read',):
+            self.assertEqual(403,self.rpc('a',name,{'definition_id':self.definition},'POST')[0])
         self.assertEqual(before,self.state())
 
     def test_legacy_and_native_write_cannot_change_managed_active_mapping(self):
@@ -329,21 +299,9 @@ class TestMappingDraftAPIRequest(unittest.TestCase):
         frappe.destroy()
         self.assertEqual(before,self.state())
 
-    def test_projected_identity_drives_personal_draft_roundtrip(self):
+    def test_known_definition_drives_personal_draft_roundtrip(self):
         before = self.state()
-        projected = {}
-        for actor in ('a', 'employee'):
-            status, data = self.rpc(actor, 'frontend_mapping_list', {'search': self.rows['active']})
-            self.assertEqual(200, status, data)
-            row = next(r for r in data['message']['graphql_mappings'] if r['name'] == self.rows['active'])
-            self.assertEqual(self.definition, row['definition_id'])
-            self.assertNotEqual(row['name'], row['definition_id'])
-            status, data = self.rpc(actor, 'frontend_mapping_detail', {'mapping_type': 'graphql', 'name': row['name']})
-            self.assertEqual(200, status, data)
-            self.assertEqual(row['definition_id'], data['message']['definition_id'])
-            projected[actor] = row['definition_id']
-        self.assertEqual(before, self.state(), 'list/detail must not write')
-        identity = projected['a']
+        identity = self.definition
         for other in (identity, self.definition + '2'):
             status, data = self.rpc('a', 'mapping_draft_read', {'definition_id': other})
             self.assertEqual((200, {'draft': None}), (status, data['message']))
@@ -363,14 +321,11 @@ class TestMappingDraftAPIRequest(unittest.TestCase):
         self.assertEqual(saved, data['message']['draft'])
         before = self.state()
         for method, verb, payload in (
-            ('mapping_draft_read', 'GET', {'definition_id': projected['employee']}),
-            ('mapping_draft_revisions', 'GET', {'definition_id': projected['employee']}),
-            ('mapping_draft_create', 'POST', {'definition_id': projected['employee']}),
+            ('mapping_draft_read', 'GET', {'definition_id': identity}),
+            ('mapping_draft_create', 'POST', {'definition_id': identity}),
             ('mapping_draft_save', 'POST', args),
-            ('mapping_draft_discard', 'POST', {'definition_id': projected['employee'], 'expected_generation': 1,
-                'expected_draft_revision': 1, 'confirmed': True}),
         ):
             self.assertEqual(403, self.rpc('employee', method, payload, verb)[0])
         self.assertEqual(before, self.state())
-        self.assertEqual(0, self.rpc('b', 'mapping_draft_revisions', {'definition_id': identity})[1]['message']['total'])
+        self.assertEqual(0, self.revisions('b')['total'])
         self.assertIsNone(self.rpc('a', 'mapping_draft_read', {'definition_id': self.rows['active2']})[1]['message']['draft'])

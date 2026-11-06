@@ -418,18 +418,56 @@ def _validate_native_spec(spec, adapter_options):
         raise ValueError('Event status requires its native lifecycle adapter.')
 
 
+def required_source_paths(plan, options=None):
+    """Shared read demand for approval validation and runtime field projection."""
+    options = options if options is not None else validate_query_adapter(plan.adapter_options, plan.definitions)
+    operation = plan.target_operation or plan.operation
+    required = {d.source_path for d in plan.definitions if d.purpose != 'Confirmed Company'}
+    from hero_integration.services.mapped_relations import required_paths
+    required.update(required_paths(options.get('native_relations', [])))
+    for d in plan.definitions:
+        required.update(options.get('transform_options',{}).get(d.definition_id,{}).get('source_paths',[]))
+        if d.target_doctype == 'Address':
+            required.add('address.id')
+        if d.transformation == 'Table Rows':
+            required.discard(d.source_path)
+            required |= {d.source_path + '.' + child for child in options.get('transform_options', {}).get(d.definition_id, {}).get('child_fields', {})}
+    if operation == 'HeroCustomers':
+        required |= {'is_deleted', 'is_contact_person'}
+    if operation == 'HeroTasks':
+        required.add('is_deleted')
+        if any(spec.target_doctype == 'ToDo' for spec in plan.definitions):
+            required.add('author_user_id')
+    if operation == 'HeroCalendarEvents':
+        required |= {'is_recurring', 'deleted'}
+    if operation == 'HeroProjectMatches':
+        required |= {'project_nr', 'project_type', 'customer.title', 'customer.full_name', 'address.full_address'}
+    if operation in direct.OPERATIONS:
+        required = (required - {d.source_path for d in plan.definitions
+                                if d.transformation == 'HERO Default Sales Price'}) | direct.required_paths(plan)
+    logbook = options.get('logbook')
+    if logbook:
+        path = logbook['path']
+        required.add(path + '.' + logbook['identity_path'])
+        required.update(logbook.get('heading_paths', []))
+        required.update(logbook.get('context_paths', []))
+        if logbook.get('visibility_path'):
+            required.add(logbook['visibility_path'])
+    return required
+
+
 def seal_query(service, snapshot, config, plan):
     """Prove a saved query selects its mapping and bind its exact approved document."""
-    from graphql import (build_client_schema, get_named_type, parse, validate,
+    from graphql import (get_named_type, parse, validate,
                          FieldNode, OperationDefinitionNode, VariableNode, IntValueNode)
-    from hero_integration.services.graphql_graph import normalize_schema
+    from hero_integration.services.graphql_schema_cache import compiled_schema
     options = validate_plan(plan)
     if options.get('read_service') and getattr(service, 'name', None) != options['read_service']:
         raise ValueError('Mapped query differs from its explicitly selected read service.')
     from hero_integration.services.mapping_contract_v1 import SnapshotAdapter, StoredSnapshot
     SnapshotAdapter().adapt(StoredSnapshot(snapshot.name, snapshot.snapshot_json, snapshot.schema_fingerprint, snapshot.source_instance, snapshot.analysis_status))
     raw = json.loads(snapshot.snapshot_json) if isinstance(snapshot.snapshot_json, str) else snapshot.snapshot_json
-    schema = build_client_schema({'__schema': normalize_schema(raw)})
+    schema = compiled_schema(raw).core
     document = parse(service.query_document)
     errors = validate(schema, document)
     if errors: raise ValueError('Mapped query does not validate against its saved schema.')
@@ -512,37 +550,10 @@ def seal_query(service, snapshot, config, plan):
         list_paths = {path[len(inner):] for path in list_paths if path.startswith(inner)}
         nodes = {path[len(inner):]: node for path, node in nodes.items() if path.startswith(inner)}
         leaf_types = {path[len(inner):]: kind for path, kind in leaf_types.items() if path.startswith(inner)}
-    required = {d.source_path for d in plan.definitions if d.purpose != 'Confirmed Company'}
-    from hero_integration.services.mapped_relations import required_paths
-    required.update(required_paths(options.get('native_relations', [])))
-    for d in plan.definitions:
-        required.update(options.get('transform_options',{}).get(d.definition_id,{}).get('source_paths',[]))
-        if d.target_doctype == 'Address':
-            required.add('address.id')
-        if d.transformation == 'Table Rows':
-            required.discard(d.source_path)
-            required |= {d.source_path + '.' + child for child in options.get('transform_options', {}).get(d.definition_id, {}).get('child_fields', {})}
-    if operation == 'HeroCustomers':
-        required |= {'is_deleted', 'is_contact_person'}
-    if operation == 'HeroTasks':
-        required.add('is_deleted')
-        if any(spec.target_doctype == 'ToDo' for spec in plan.definitions):
-            required.add('author_user_id')
-    if operation == 'HeroCalendarEvents':
-        required |= {'is_recurring', 'deleted'}
-    if operation == 'HeroProjectMatches':
-        required |= {'project_nr', 'project_type', 'customer.title', 'customer.full_name', 'address.full_address'}
-    if operation in direct.OPERATIONS:
-        required = (required - {d.source_path for d in plan.definitions
-                                if d.transformation == 'HERO Default Sales Price'}) | direct.required_paths(plan)
+    required = required_source_paths(plan, options)
     logbook = options.get('logbook')
     if logbook:
         path = logbook['path']
-        required.add(path + '.' + logbook['identity_path'])
-        required.update(logbook.get('heading_paths', []))
-        required.update(logbook.get('context_paths', []))
-        if logbook.get('visibility_path'):
-            required.add(logbook['visibility_path'])
         node = nodes.get(path)
         first = next((a.value for a in node.arguments if a.name.value == 'first'), None) if node else None
         amount = int(first.value) if isinstance(first, IntValueNode) else variables.get(first.name.value) if isinstance(first, VariableNode) else None
@@ -715,8 +726,8 @@ def address_values(plan, record):
 
 def seal_lookup_query(service, snapshot, config):
     """Approve a lookup service without adding any target writer."""
-    from graphql import build_client_schema, get_named_type, parse, validate, OperationDefinitionNode, FieldNode
-    from hero_integration.services.graphql_graph import normalize_schema
+    from graphql import get_named_type, parse, validate, OperationDefinitionNode, FieldNode
+    from hero_integration.services.graphql_schema_cache import compiled_schema
     from hero_integration.services.mapping_contract_v1 import SnapshotAdapter, StoredSnapshot
     options = validate_query_adapter(config.get('query_adapter'))
     if (config.get('target_operation') != 'HeroLookup' or config.get('mapping_definition_ids')
@@ -729,7 +740,7 @@ def seal_lookup_query(service, snapshot, config):
     SnapshotAdapter().adapt(StoredSnapshot(snapshot.name, snapshot.snapshot_json, snapshot.schema_fingerprint,
         snapshot.source_instance, snapshot.analysis_status))
     raw = json.loads(snapshot.snapshot_json) if isinstance(snapshot.snapshot_json, str) else snapshot.snapshot_json
-    schema = build_client_schema({'__schema': normalize_schema(raw)})
+    schema = compiled_schema(raw).core
     document = parse(service.query_document)
     if validate(schema, document): raise ValueError('Lookup query does not validate against its saved schema.')
     if (len(document.definitions) != 1 or not isinstance(document.definitions[0], OperationDefinitionNode)

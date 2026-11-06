@@ -1,3 +1,4 @@
+from hero_integration.tests.saved_reader_fixture import isolate_saved_materialization
 """Approved direct readbacks retain their collection shape and pagination contract."""
 from copy import deepcopy
 from dataclasses import replace
@@ -11,6 +12,9 @@ from hero_integration.sources.hero import GraphQLServiceSource
 
 
 class TestDirectReadback(TestCase):
+    def setUp(self):
+        isolate_saved_materialization(self)
+
     def context(self, area, path, *, page_size=2):
         variables = {} if area == 'HeroEmployees' else {'first': '$page_size', 'offset': '$offset'}
         contract = ReadContract('reader', 2, 'mapping', 3, area, path, 'id', (), variables, page_size,

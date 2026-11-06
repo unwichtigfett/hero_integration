@@ -16,6 +16,7 @@ class GraphQLSelectionPathSegment:
 
     protocol_node_id: str
     field_name: str
+    arguments: tuple[tuple[str, str], ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.protocol_node_id, str) or not self.protocol_node_id:
@@ -35,6 +36,7 @@ class GraphQLSelectionSegment:
     protocol_node_id: str
     field_name: str
     children: tuple[GraphQLSelectionSegment, ...] = ()
+    arguments: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +94,7 @@ class _SelectionNode:
     protocol_node_id: str
     field_name: str
     children: dict[str, _SelectionNode] = field(default_factory=dict)
+    arguments: tuple[tuple[str, str], ...] = ()
 
 
 def build_stable_selection_tree(
@@ -160,9 +163,10 @@ def _build_tree(
                 existing = _SelectionNode(
                     protocol_node_id=segment.protocol_node_id,
                     field_name=segment.field_name,
+                    arguments=segment.arguments,
                 )
                 current[segment.protocol_node_id] = existing
-            elif existing.field_name != segment.field_name:
+            elif existing.field_name != segment.field_name or existing.arguments != segment.arguments:
                 raise GraphQLSelectionSetError(
                     "One protocol node ID resolved to conflicting field names."
                 )
@@ -184,6 +188,7 @@ def _tree_paths(
             GraphQLSelectionPathSegment(
                 protocol_node_id=node.protocol_node_id,
                 field_name=node.field_name,
+                arguments=node.arguments,
             ),
         )
         if node.children:
@@ -203,6 +208,7 @@ def _freeze_children(
             protocol_node_id=node.protocol_node_id,
             field_name=node.field_name,
             children=_freeze_children(node.children),
+            arguments=node.arguments,
         )
         for node in (children[node_id] for node_id in sorted(children))
     )
@@ -237,10 +243,12 @@ def _render_segments(
 ) -> None:
     prefix = "  " * indent
     for segment in segments:
+        arguments = ", ".join(f"{name}: ${variable}" for name, variable in segment.arguments)
+        field = segment.field_name + (f"({arguments})" if arguments else "")
         if not segment.children:
-            lines.append(f"{prefix}{segment.field_name}")
+            lines.append(f"{prefix}{field}")
             continue
-        lines.append(f"{prefix}{segment.field_name} {{")
+        lines.append(f"{prefix}{field} {{")
         _render_segments(segment.children, lines, indent=indent + 1)
         lines.append(f"{prefix}}}")
 

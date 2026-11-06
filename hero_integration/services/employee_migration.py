@@ -18,7 +18,6 @@ from hero_integration.integrations.hero_people import _existing_user, PARTNER_FI
 from hero_integration.services.employee_mapping import preview
 from hero_integration.services import direct_runtime as runtime
 from hero_integration.services.file_migration import SourceBindingError
-from hero_integration.services.graphql_graph import normalize_schema
 
 JOINING_DATE = "2026-01-01"
 VERSION = "employee-migration-v2"
@@ -35,30 +34,6 @@ class EmployeeMigrationBlocked(SourceBindingError):
 
 def _digest(value):
     return sha256(json.dumps(value, sort_keys=True, default=str, ensure_ascii=False).encode()).hexdigest()
-
-
-def read_query(schema):
-    """Select the supported partners root from this source's validated schema."""
-    from graphql import build_client_schema, parse, validate
-
-    schema = build_client_schema({"__schema": normalize_schema(schema)})
-    if schema.query_type is None:
-        raise EmployeeMigrationBlocked("The HERO schema has no supported employee query.")
-    fields = schema.query_type.fields
-    if "partners" in fields:
-        path = "partners"
-    elif "company" in fields:
-        path = "company.partners"
-    else:
-        raise EmployeeMigrationBlocked("The HERO schema has no supported employee query.")
-    selection = "id user_id first_name last_name full_name email phone mobile role status account_type user { id email role locale last_login created modified }"
-    body = f"partners {{ {selection} }}"
-    if path == "company.partners":
-        body = f"company {{ {body} }}"
-    document = f"query HeroEmployees {{ {body} }}"
-    if validate(schema, parse(document)):
-        raise EmployeeMigrationBlocked("The HERO employee query does not validate against its source schema.")
-    return document, path
 
 
 def preflight(source_instance, read=None):
@@ -99,13 +74,30 @@ def historical_users(source_instance):
     return identities if source == source_instance else frozenset()
 
 
-def _historical_identities(client, path, wanted_users, wanted_partners):
+def _historical_request(read, source_instance, path):
+    from hero_integration.services.mapping_contract_v1 import QueryAdapter, QueryDraft
+    if path == 'partners':
+        draft = QueryDraft('HeroHistoricalEmployees', 'partners', 'partners',
+            ('id', 'status', 'user_id', 'user.id'), {'show_deleted': True})
+    elif path == 'company.partners':
+        draft = QueryDraft('HeroHistoricalEmployees', 'company', 'company',
+            ('partners.id', 'partners.status', 'partners.user_id', 'partners.user.id'), {},
+            nested_arguments={'partners': {'show_deleted': True}})
+    else:
+        raise EmployeeMigrationBlocked('The employee reader has no supported historical identity query.')
+    try:
+        validated = runtime.validated_snapshot(read, source_instance)
+        return QueryAdapter().materialize(validated, draft)
+    except ValueError as error:
+        raise EmployeeMigrationBlocked('The historical employee query cannot be materialized from the approved schema.') from error
+
+
+def _historical_identities(client, path, wanted_users, wanted_partners, *, read, source_instance):
     """Verify deleted source identities without provisioning local accounts."""
     if path not in ('partners', 'company.partners'):
         raise EmployeeMigrationBlocked('The employee reader has no supported historical identity query.')
-    selection = 'partners(show_deleted: true) { id status user_id user { id } }'
-    body = selection if path == 'partners' else 'company { ' + selection + ' }'
-    rows = _records(client.query('query HeroHistoricalEmployees { ' + body + ' }', {}), path)
+    request = _historical_request(read, source_instance, path)
+    rows = _records(client.query(request.document, request.variables), path)
     by_user = {}
     historical_partners = set()
     for row in rows:
@@ -250,16 +242,21 @@ def upsert(record, instance, company, languages, read=None):
             employee_values[name] = field["value"]
         elif target == "User" and name != "email":
             user_values[name] = field["value"]
-    employee_values.update(company=company, date_of_joining=JOINING_DATE, user_id=user_name)
+    from hero_integration.services.deferred_references import realizing
+    employee_values.update(company=company, date_of_joining=JOINING_DATE)
+    if realizing():
+        employee_values['user_id'] = user_name
     if not employee_values.get("first_name") or not employee_values.get("status"):
         raise EmployeeMigrationBlocked("HERO employee first name and status are required.")
     if bool(user.enabled) != (employee_values["status"] == "Active"):
         raise EmployeeMigrationBlocked("HERO employee status would change ERPNext login access; review the user first.")
     matches = frappe.get_all("Employee", filters={"user_id": user_name}, pluck="name", limit_page_length=2)
-    if len(matches) > 1 or (employee_link and matches != [employee_link.target_name]):
+    if len(matches) > 1 or (employee_link and matches and matches != [employee_link.target_name]):
         raise EmployeeMigrationBlocked("The ERPNext employee user relation is ambiguous or changed.")
     employee = frappe.get_doc("Employee", employee_link.target_name if employee_link else matches[0], for_update=True) if (employee_link or matches) else None
     if employee:
+        if employee.get('user_id') not in (None, '', user_name):
+            raise EmployeeMigrationBlocked('The ERPNext employee user relation is ambiguous or changed.')
         other_employees = frappe.get_all("HERO Integration Link", filters={"source_system": "HERO", "target_doctype": "Employee",
                                          "target_name": employee.name}, fields=["name"], limit_page_length=2)
         if any(row.name != (employee_link.name if employee_link else None) for row in other_employees):
@@ -282,7 +279,7 @@ def upsert(record, instance, company, languages, read=None):
             getattr(user_link, "mapping_version", "") == read.mapping_version and
             _values(employee, employee_values) == {key: str(value or "") for key, value in employee_values.items()} and
             _values(user, user_values) == {key: str(value or "") for key, value in user_values.items()}):
-        if _ensure_user_object_binding(read, instance, user_id, user_name):
+        if realizing() and _ensure_user_object_binding(read, instance, user_id, user_name):
             from hero_integration.services.deferred_references import binding_updated
             binding_updated(user_link)
         return "unchanged"
@@ -312,8 +309,82 @@ def upsert(record, instance, company, languages, read=None):
             employee.save(ignore_permissions=True)
     _write_link(user_link, instance, "User", user_id, user, user_values, record, read.mapping_version)
     _write_link(employee_link, instance, "partner", record["id"], employee, employee_values, record, read.mapping_version)
-    _ensure_user_object_binding(read, instance, user_id, user_name)
+    if realizing():
+        _ensure_user_object_binding(read, instance, user_id, user_name)
+        from hero_integration.services.deferred_references import binding_updated
+        binding_updated(_link(instance, 'User', user_id, 'User'))
     return "added" if is_new else "updated"
+
+
+def remember_relationships(run_name, instance, company, read, record):
+    """Retain the exact source and target identities before committing the row."""
+    from hero_integration.services.deferred_references import save
+    user_id = record.get('user_id') or (record.get('user') or {}).get('id')
+    employee = _link(instance, 'partner', record['id'], 'Employee')
+    user = _link(instance, 'User', user_id, 'User')
+    if not employee or not user:
+        raise EmployeeMigrationBlocked('Employee relationship observations require both imported identity links.')
+    save(run_name, instance, OPERATION, record['id'], read.mapping_version,
+        {'record':record, 'company':company, 'user_name':user.target_name, 'employee_name':employee.target_name,
+         'source_hash':_digest(record)}, [('User', str(user_id)), ('partner', str(record['id']))], defer_empty=True)
+
+
+def realize_relationships(pending):
+    """Recheck the saved import and realize only its own Employee/User relation."""
+    from hero_integration.services.deferred_references import available, realizing
+    if not realizing():
+        raise EmployeeMigrationBlocked('Employee relationships are owned by the post-success realization service.')
+    observation = json.loads(pending.record_json)
+    record = observation['record']
+    if str(record['id']) != pending.source_id:
+        raise EmployeeMigrationBlocked('The deferred employee source identity changed.')
+    read = runtime.resolve_read(OPERATION, pending.source_instance)
+    company, _snapshot, _document, _path = preflight(pending.source_instance, read=read)
+    if not read.mapping or read.mapping_version != pending.mapping_version or company != observation['company']:
+        raise EmployeeMigrationBlocked('The deferred employee mapping or company changed.')
+    user_id = record.get('user_id') or (record.get('user') or {}).get('id')
+    employee = _link(pending.source_instance, 'partner', record['id'], 'Employee')
+    user = _link(pending.source_instance, 'User', user_id, 'User')
+    if (not employee or not user or employee.target_name != observation['employee_name']
+            or user.target_name != observation['user_name']
+            or any(link.source_payload_hash != observation['source_hash'] or link.mapping_version != pending.mapping_version
+                   for link in (employee, user))):
+        raise EmployeeMigrationBlocked('The imported employee observation changed before relationship realization.')
+    employee_doc = frappe.get_doc('Employee',employee.target_name,for_update=True)
+    user_doc = frappe.get_doc('User',user.target_name,for_update=True)
+    _assert_unchanged(employee,employee_doc)
+    _assert_unchanged(user,user_doc)
+    if (employee_doc.user_id not in (None,'',user_doc.name) or
+            bool(user_doc.enabled) != (employee_doc.status=='Active')):
+        raise EmployeeMigrationBlocked('The ERPNext employee user relation or login access changed.')
+    identities = {PARTNER_FIELD:str(record['id']),USER_ID_FIELD:str(user_id)}
+    if any(user_doc.get(field) and str(user_doc.get(field)) != identity for field,identity in identities.items()):
+        raise EmployeeMigrationBlocked('Stored person identities differ from HERO.')
+    matches = frappe.get_all('Employee',filters={'user_id':user_doc.name},pluck='name',limit_page_length=2)
+    if matches and matches != [employee_doc.name]:
+        raise EmployeeMigrationBlocked('The ERPNext employee user relation is ambiguous or changed.')
+    for link,doc in ((employee,employee_doc),(user,user_doc)):
+        others = frappe.get_all('HERO Integration Link',filters={'source_system':'HERO',
+            'target_doctype':doc.doctype,'target_name':doc.name},pluck='name',limit_page_length=2)
+        if any(name != link.name for name in others):
+            raise EmployeeMigrationBlocked('The ERPNext employee or user is bound to another HERO identity.')
+    created = _ensure_user_object_binding(read,pending.source_instance,user_id,user_doc.name)
+    if employee_doc.user_id != user_doc.name:
+        from hero_integration.services.change_detection import managed_target_update
+        with managed_target_update('User',user_doc.name,user.name), \
+             managed_target_update('Employee',employee_doc.name,employee.name):
+            employee_doc.user_id = user_doc.name
+            employee_doc.save(ignore_permissions=True)
+        employee_doc.reload();user_doc.reload()
+        _write_link(employee,pending.source_instance,'partner',record['id'],employee_doc,
+                    {'user_id':user_doc.name},record,read.mapping_version)
+        _write_link(user,pending.source_instance,'User',user_id,user_doc,{},record,read.mapping_version)
+    elif created:
+        from hero_integration.services.deferred_references import binding_updated
+        binding_updated(user)
+    if not available(pending.source_instance, 'User', user_id):
+        raise EmployeeMigrationBlocked('The employee User object binding was not realized.')
+    return 'UPDATED'
 
 
 def sync_employees(client, *, source_instance, run_name, should_stop=None, progress=None, time_budget=1200, verify_source=None, record_limit=None, continue_on_conflict=False, cohort_user_ids=None, cohort_partner_ids=None):
@@ -339,8 +410,10 @@ def sync_employees(client, *, source_instance, run_name, should_stop=None, progr
     state = json.loads(raw) if raw else {"counts": {}, "done_ids": []}
     if state.get("stamp") and state["stamp"] != stamp:
         raise EmployeeMigrationBlocked("Employee source schema, company or mapping changed; start a new run.")
+    from hero_integration.services.deferred_references import require_storage
+    require_storage(frappe)
     state.update(stamp=stamp, done=False, stopped=False)
-    rows = _records(client.query(document, runtime.page_variables(read, 0)), path)
+    rows = _records({'rows': runtime.fetch_page(client, read, 0)}, 'rows')
     if record_limit is not None:
         if state.get('testing_record_limit') not in (None, record_limit):
             raise EmployeeMigrationBlocked('The frozen testing record limit changed; start a new run.')
@@ -386,7 +459,7 @@ def sync_employees(client, *, source_instance, run_name, should_stop=None, progr
                     try:
                         historical_users, historical_partners = _historical_identities(
                             client, path, set(state['testing_missing_user_ids']),
-                            set(state['testing_missing_partner_ids']))
+                            set(state['testing_missing_partner_ids']), read=read, source_instance=source_instance)
                     except (HeroClientError, EmployeeMigrationBlocked):
                         # Unknown identities remain unresolved if the source cannot prove deletion.
                         state['testing_historical_audit_unavailable'] = True
@@ -426,6 +499,7 @@ def sync_employees(client, *, source_instance, run_name, should_stop=None, progr
             verify_source()
         try:
             result = upsert(record, source_instance, company, languages, read=read)
+            remember_relationships(run_name, source_instance, company, read, record)
         except Exception as error:
             frappe.db.rollback()
             result = "conflict" if isinstance(error, EmployeeMigrationBlocked) else "failed"

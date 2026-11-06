@@ -14,6 +14,7 @@ from email.utils import parsedate_to_datetime
 from urllib.parse import urlsplit
 
 from hero_integration.graphql_protocol.graphql_response import strict_json_loads
+from hero_integration.services.performance import measure, measured
 
 
 # Upper bound for one HERO response body. The largest regular response, a full schema
@@ -64,19 +65,19 @@ def validate_endpoint(url: str, allowed_hosts: set[str]) -> HeroEndpoint:
 
 
 def assert_read_only(document: str) -> None:
-    """Parse exactly one Query operation, allowing fragments.
-    Fail closed without graphql-core; token checks cannot validate full documents."""
+    """Use the materializer AST boundary; only one Query may reach this client."""
+    from hero_integration.graphql_protocol.graphql_operation_materializer import (
+        GraphQLOperationMaterializer, GraphQLOperationMaterializationError,
+    )
     try:
-        from graphql import GraphQLError, parse
         from graphql.language import OperationDefinitionNode, OperationType
+        parsed = GraphQLOperationMaterializer.parse_document(document)
     except ImportError as error:
         raise HeroClientError("GraphQL query validation is unavailable.") from error
-    try:
-        parsed = parse(document)
-    except (GraphQLError, TypeError) as error:
+    except GraphQLOperationMaterializationError as error:
         raise HeroClientError("HERO GraphQL document is invalid.") from error
-    operations = [item for item in parsed.definitions if isinstance(item, OperationDefinitionNode)]
-    if len(operations) != 1 or operations[0].operation != OperationType.QUERY:
+    operation = next(item for item in parsed.definitions if isinstance(item, OperationDefinitionNode))
+    if operation.operation != OperationType.QUERY:
         raise HeroClientError("Only one HERO GraphQL query operation is allowed.")
 
 
@@ -116,9 +117,18 @@ class HeroGraphQLClient:
     def introspect(self, document: str, *, operation_name: str = "") -> dict[str, object]:
         """Execute fixed introspection through HTTPS, allowlist and redirect guards.
         The caller validates the complete response before saving it."""
-        assert_read_only(document)
-        return {"data": self._post(document, None, operation_name=operation_name)}
+        from hero_integration.graphql_protocol.graphql_operation_materializer import (
+            GraphQLOperationMaterializer, GraphQLOperationMaterializationError,
+        )
+        try:
+            request = GraphQLOperationMaterializer.materialize_introspection(document)
+        except ImportError as error:
+            raise HeroClientError("GraphQL query validation is unavailable.") from error
+        except GraphQLOperationMaterializationError as error:
+            raise HeroClientError("HERO schema introspection document is invalid.") from error
+        return {"data": self._post(request.document, None, operation_name=operation_name)}
 
+    @measured('hero.request')
     def _post(
         self,
         document: str,
@@ -174,14 +184,17 @@ class HeroGraphQLClient:
         for attempt in range(self.max_retries + 1):
             base = self.retry_backoff_seconds * (2**attempt)
             delay = base + random.uniform(0, base) if base else 0
-            self._await_rate_budget()
+            with measure('hero.rate_wait'):
+                self._await_rate_budget()
             try:
-                with opener.open(request, timeout=self.timeout) as response:
-                    # Read at most one byte past the bound, so an oversized body never fills memory.
-                    body = response.read(self.max_response_bytes + 1)
+                with measure('hero.http_attempt'):
+                    with opener.open(request, timeout=self.timeout) as response:
+                        # Read at most one byte past the bound, so an oversized body never fills memory.
+                        body = response.read(self.max_response_bytes + 1)
                 if len(body) > self.max_response_bytes:
                     raise HeroClientError("HERO response exceeds the size limit.", code="RESPONSE_TOO_LARGE")
-                payload = strict_json_loads(body.decode("utf-8"))
+                with measure('hero.json_decode'):
+                    payload = strict_json_loads(body.decode("utf-8"))
                 if not isinstance(payload, dict):
                     raise HeroClientError("HERO response is invalid.", code="INVALID_RESPONSE")
                 return payload
@@ -196,7 +209,8 @@ class HeroGraphQLClient:
                 raise HeroClientError("HERO response is invalid.", code="INVALID_RESPONSE") from exc
             if not retryable or attempt == self.max_retries:
                 raise HeroClientError("HERO request failed.", code=code) from None
-            time.sleep(delay)
+            with measure('hero.retry_wait'):
+                time.sleep(delay)
         raise HeroClientError("HERO request failed.")
 
 

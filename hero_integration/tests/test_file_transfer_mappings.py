@@ -74,6 +74,9 @@ class TestFileMappingImport(_FileFixture):
         name, link = next((name, link) for name, link in self.db.data["HERO Integration Link"].items()
                           if link["source_id"] == "7")
         file = self.db.data["File"][link["target_name"]]
+        # Legacy imports predate the deferred attachment service.
+        file.update(attached_to_doctype='Project', attached_to_name='PROJECT-A',
+                    folder='Home/HERO/' + ft.PHASE_FOLDER[phase])
         file["file_type"] = native_type
         link.update(target_field_hashes=ft.field_hashes(ft._mapped_source_values(read, row)),
             sync_status="Conflict", conflict_detail="Recheck requested: The imported file has no verified target baseline and requires review.")
@@ -157,13 +160,13 @@ class TestFileMappingImport(_FileFixture):
              patch.object(ft, 'allow_unlimited_attachments'), patch.object(ft, '_folder', side_effect=folder), \
              patch.object(self.db, 'insert', side_effect=checked_insert):
             state = ft.transfer('documents', source_instance='source-a', client=_Client([_row(5), _row(7)]),
-                                downloader=_Download(), min_free=0)
+                                downloader=_Download(), min_free=0, run_name="synthetic-run")
         self.assertEqual(state['counts']['conflict'], 1)
         self.assertEqual(state['counts']['added'], 1)
         self.assertEqual(state['counts'].get('failed', 0), 0)
         self.assertTrue(all(name in self.db.committed['File'] for name in folders))
         self.assertEqual(self.db.committed['HERO Integration Link']['L1']['sync_status'], 'Conflict')
-        self.assertEqual(self.imported()[0]['folder'], folders[0])
+        self.assertEqual(self.imported()[0]['folder'], folders[1])
 
     def test_boolean_file_values_match_native_check_integer_baselines(self):
         from hero_integration.services import mapped_update_v2 as update
@@ -190,7 +193,7 @@ class TestFileMappingImport(_FileFixture):
                 patch.object(ft, "allow_unlimited_attachments"), \
                 patch.object(ft, "_folder", side_effect=lambda *parts: "Home/" + "/".join(parts)):
             state = ft.transfer(phase, source_instance="source-a", client=self.client,
-                                downloader=downloader or _NoDownload(), min_free=0, **kwargs)
+                                downloader=downloader or _NoDownload(), min_free=0, run_name=kwargs.pop("run_name", "synthetic-run"), **kwargs)
         resolve.assert_called_once_with(ft.OPERATION[phase], "source-a")
         return state
 
@@ -234,6 +237,13 @@ class TestFileMappingImport(_FileFixture):
         read, downloader = _own_read(), _Download()
         row = _row(title="First.pdf", section="Roof")
         self.run_slice([row], read=read, downloader=downloader)
+        # Reproduce the attachment established by a completed earlier run.
+        file, link = self.imported()
+        file.update(attached_to_doctype='Project', attached_to_name='PROJECT-A', folder='Home/HERO/Dokumente')
+        self.db.data['File'][link['target_name']] = file
+        self.db.data['HERO Integration Link'][next(name for name, value in self.db.data['HERO Integration Link'].items()
+            if value.get('source_id') == '7')]['target_field_hashes'] = ft._target_baseline(link['target_name'], ft.mapped_values(read, row))
+        self.db.commit()
         row.update(modified="2", title="Second.pdf", section="Wall")
         state = self.run_slice([row], read=read, downloader=downloader)
         file, _ = self.imported()
@@ -471,7 +481,7 @@ class TestFileMappingImport(_FileFixture):
             with self.assertRaises(ft.FileConflict): deferred._resolve_file(pending)
         self.assertEqual(downloader.calls, 1)
 
-    def test_file_initially_attached_to_customer_moves_when_its_project_arrives(self):
+    def test_file_stays_unattached_until_its_project_arrives(self):
         from hero_integration.services import deferred_references as deferred
         project_link = self.db.data['HERO Integration Link'].pop('PA')
         self.db.data['HERO Integration Link']['CUSTOMER'] = {'source_type': 'customer', 'source_id': '50',
@@ -483,7 +493,7 @@ class TestFileMappingImport(_FileFixture):
         with patch.object(ft, 'details', return_value={'u7': detail}):
             self.run_slice([row], downloader=downloader)
         file, link = self.imported()
-        self.assertEqual((file['attached_to_doctype'], file['attached_to_name']), ('Customer', 'CUSTOMER-A'))
+        self.assertEqual((file['attached_to_doctype'], file['attached_to_name']), (None, None))
         self.db.data['HERO Integration Link']['PA'] = project_link
         self.db.commit()
         read = rt.builtin_read('HeroDocuments')

@@ -27,6 +27,8 @@ from hero_integration.services.mapping_contract_v1 import (
 from hero_integration.services.schema_registry import (
     SchemaField,
     SchemaOperation,
+    SchemaMember,
+    SchemaTypeReference,
     SchemaRegistry,
     SchemaRegistryError,
 )
@@ -45,6 +47,7 @@ class QueryRoutingRequest:
     revision: int = 1
     alias: str | None = None
     pagination_argument: str | None = None
+    nested_arguments: Mapping[str, Mapping[str, object]] | None = None
 
 
 @dataclass(frozen=True)
@@ -55,6 +58,7 @@ class MutationRoutingRequest:
     output_references: tuple[str, ...] = ()
     revision: int = 1
     alias: str | None = None
+    nested_arguments: Mapping[str, Mapping[str, object]] | None = None
 
 
 @dataclass(frozen=True)
@@ -97,7 +101,7 @@ class MaterializerRouter:
     """Compile B1 discovery references to sealed local-only materializer plans."""
 
     def compile_query_mappings(self, snapshot, registry, fields, definitions, *, operation, arguments,
-                               identity_reference, revision=1, alias=None, pagination_argument=None):
+                               identity_reference, revision=1, alias=None, pagination_argument=None, nested_arguments=None):
         """Compile validated mapping fields and an explicit record identity without a stored document.
 
         The result is a discovery plan only; approval and execution remain separate.
@@ -110,15 +114,17 @@ class MaterializerRouter:
             operation=operation, output_references=selected, arguments=arguments,
             identity_reference=identity_reference, revision=revision, alias=alias,
             pagination_argument=pagination_argument,
+            nested_arguments=nested_arguments,
         ))
 
     def compile_mutation_mappings(self, snapshot, registry, fields, definitions, *, operation, arguments,
-                                  output_references, revision=1, alias=None):
+                                  output_references, revision=1, alias=None, nested_arguments=None):
         """Compile mapped mutation inputs; the result carries no execution permission."""
         references = _mapping_references(definitions, registry, fields, operation, 'FRAPPE_TO_HERO')
         return self.compile_mutation(snapshot, registry, MutationRoutingRequest(
             operation=operation, input_references=references, arguments=arguments,
             output_references=output_references, revision=revision, alias=alias,
+            nested_arguments=nested_arguments,
         ))
 
     def compile_query(
@@ -131,7 +137,7 @@ class MaterializerRouter:
             raise TypeError("QueryRoutingRequest is required.")
         validated = _validated_context(snapshot, registry)
         operation = _operation(registry, "QUERY", route.operation)
-        fields = _output_fields(operation, route.output_references, "QUERY")
+        fields = _output_fields(registry, operation, route.output_references, "QUERY")
         _require_revision(route.revision)
         _require_mapping(route.arguments)
         alias = _alias(route.alias, operation.name)
@@ -143,6 +149,7 @@ class MaterializerRouter:
             alias,
             tuple(".".join(item.path) for item in fields),
             route.arguments,
+            nested_arguments=route.nested_arguments,
         )
         result_bindings = _bindings_for(fields, request)
         pagination_argument, pagination_variable = _pagination(
@@ -180,9 +187,9 @@ class MaterializerRouter:
         operation = _operation(registry, "MUTATION", route.operation)
         _require_revision(route.revision)
         _require_mapping(route.arguments)
-        input_ids = _input_reference_ids(operation, route.input_references)
+        input_ids = _input_reference_ids(registry, operation, route.input_references)
         _validate_mutation_inputs(operation, input_ids, route.arguments)
-        outputs = _output_fields(operation, route.output_references, "MUTATION")
+        outputs = _output_fields(registry, operation, route.output_references, "MUTATION")
         alias = _alias(route.alias, operation.name)
         request = _materialize(
             validated,
@@ -192,6 +199,7 @@ class MaterializerRouter:
             tuple(".".join(item.path) for item in outputs),
             route.arguments,
             request_scope=f"materializer-routing:{operation.name}",
+            nested_arguments=route.nested_arguments,
         )
         if request.mutation_safety_request is None:
             raise MaterializerRoutingError("Mutation plan has no sealed safety request.")
@@ -286,7 +294,7 @@ def _references(values: tuple[str, ...], allowed: Mapping[str, SchemaField], lab
 
 
 def _output_fields(
-    operation: SchemaOperation, values: tuple[str, ...], kind: str
+    registry: SchemaRegistry, operation: SchemaOperation, values: tuple[str, ...], kind: str
 ) -> tuple[SchemaField, ...]:
     prefix = f"hero.{kind.lower()}.{operation.name}" + (".result" if kind == "MUTATION" else "")
     allowed = {
@@ -296,10 +304,57 @@ def _output_fields(
         and item.source_fingerprint == operation.source_fingerprint
         and item.reference_id.startswith(prefix + ".")
     }
-    return _references(values, allowed, f"{kind.lower()} output")
+    if not isinstance(values, tuple) or any(not isinstance(item, str) for item in values) or len(values) != len(set(values)):
+        raise MaterializerRoutingError(f"Invalid {kind.lower()} output references.")
+    result = []
+    for reference in sorted(values):
+        field = allowed.get(reference)
+        if field is None:
+            if not reference.startswith(prefix + '.'):
+                raise MaterializerRoutingError(f"Unknown or incompatible {kind.lower()} output reference.")
+            path = tuple(reference[len(prefix) + 1:].split('.'))
+            member = _resolve_members(registry, operation.return_type, path, 'fields')
+            field = SchemaField(reference, path, member.type_ref, member.deprecated,
+                                member.deprecation_reason, operation_kind=kind,
+                                source_fingerprint=operation.source_fingerprint)
+        result.append(field)
+    return tuple(result)
 
 
-def _input_reference_ids(operation: SchemaOperation, values: tuple[str, ...]) -> tuple[str, ...]:
+def _resolve_members(registry, type_ref, path, attribute):
+    member = None
+    for name in path:
+        if attribute == 'fields' and name.startswith('@'):
+            try:
+                current = registry.type(type_ref.named_type)
+                target = registry.type(name[1:])
+            except SchemaRegistryError as error:
+                raise MaterializerRoutingError('Unknown or incompatible field reference.') from error
+            if current.kind not in {'UNION', 'INTERFACE'} or target.name not in current.possible_types or target.kind != 'OBJECT':
+                raise MaterializerRoutingError('Unknown or incompatible field reference.')
+            type_ref = SchemaTypeReference(target.name, target.name, target.kind, ())
+            member = SchemaMember(name, type_ref, False, '')
+            continue
+        if attribute == 'fields' and name == '__typename' and type_ref.named_kind in {'OBJECT', 'INTERFACE', 'UNION'}:
+            type_ref = SchemaTypeReference('String!', 'String', 'SCALAR', ('NON_NULL',))
+            member = SchemaMember(name, type_ref, False, '')
+            continue
+        if not name or type_ref.named_kind not in ({'INPUT_OBJECT'} if attribute == 'input_fields' else {'OBJECT', 'INTERFACE'}):
+            raise MaterializerRoutingError('Unknown or incompatible field reference.')
+        try:
+            current = registry.type(type_ref.named_type)
+        except SchemaRegistryError as error:
+            raise MaterializerRoutingError('Unknown or incompatible field reference.') from error
+        member = next((item for item in getattr(current, attribute) if item.name == name), None)
+        if member is None:
+            raise MaterializerRoutingError('Unknown or incompatible field reference.')
+        type_ref = member.type_ref
+    if member is None:
+        raise MaterializerRoutingError('Unknown or incompatible field reference.')
+    return member
+
+
+def _input_reference_ids(registry: SchemaRegistry, operation: SchemaOperation, values: tuple[str, ...]) -> tuple[str, ...]:
     prefix = f"hero.mutation.{operation.name}."
     allowed = {
         item.reference_id
@@ -315,8 +370,18 @@ def _input_reference_ids(operation: SchemaOperation, values: tuple[str, ...]) ->
     }
     if not isinstance(values, tuple) or any(not isinstance(item, str) for item in values):
         raise MaterializerRoutingError("Mutation input references must be a tuple of strings.")
-    if len(values) != len(set(values)) or any(item not in allowed for item in values):
+    if len(values) != len(set(values)):
         raise MaterializerRoutingError("Unknown or incompatible mutation input reference.")
+    for reference in values:
+        if reference in allowed:
+            continue
+        if not reference.startswith(prefix):
+            raise MaterializerRoutingError("Unknown or incompatible mutation input reference.")
+        path = reference[len(prefix):].split('.')
+        argument = next((item for item in operation.arguments if item.name == path[0]), None)
+        if argument is None or len(path) < 2:
+            raise MaterializerRoutingError("Unknown or incompatible mutation input reference.")
+        _resolve_members(registry, argument.type_ref, path[1:], 'input_fields')
     return tuple(sorted(values))
 
 
@@ -360,7 +425,11 @@ def _materialize(
     arguments: Mapping[str, object],
     *,
     request_scope: str | None = None,
+    nested_arguments: Mapping[str, Mapping[str, object]] | None = None,
 ) -> GraphQLOperationRequest:
+    if any(any(part.startswith('@') for part in path.split('.')) for path in paths):
+        from dataclasses import replace
+        validated = replace(validated, ir=validated.full_ir, ir_fingerprint=validated.full_ir_fingerprint)
     binding = GraphQLOperationBinding(
         binding_id=f"routing:{kind.value.lower()}:{operation.name}",
         schema_fingerprint=validated.ir_fingerprint,
@@ -374,6 +443,7 @@ def _materialize(
         return GraphQLOperationMaterializer().materialize(
             validated.ir, _proposal(validated, operation, kind), binding, arguments,
             request_scope=request_scope,
+            nested_arguments=nested_arguments,
         )
     except GraphQLOperationMaterializationError as error:
         raise MaterializerRoutingError(str(error)) from error

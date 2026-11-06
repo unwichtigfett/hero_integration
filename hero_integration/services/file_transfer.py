@@ -47,11 +47,12 @@ PHASE_FOLDER = {"documents": "Dokumente", "images": "Bilder"}
 UNASSIGNED_FOLDER = "Ohne Zuordnung"
 DELETED_DOCUMENT_STATUS = 1000
 
-DETAIL_QUERY = (
-    "query HeroFileDetails($uuids: [String!], $first: Int) { file_uploads(uuids: $uuids, first: $first) { "
-    "id uuid is_deleted file_upload_matches { project_match_id } "
-    "file_upload_links { target target_id customer_id project_match_id } "
-    "customer_document { id nr status_code project_match_id contact_id localized_type document_type { name } } } }"
+DETAIL_PATHS = (
+    'id', 'uuid', 'is_deleted', 'file_upload_matches.project_match_id',
+    'file_upload_links.target', 'file_upload_links.target_id', 'file_upload_links.customer_id',
+    'file_upload_links.project_match_id', 'customer_document.id', 'customer_document.nr',
+    'customer_document.status_code', 'customer_document.project_match_id', 'customer_document.contact_id',
+    'customer_document.localized_type', 'customer_document.document_type.name',
 )
 
 
@@ -136,12 +137,25 @@ class Downloader:
 
 # ---------------------------------------------------------------- listing
 
-def details(client, rows: list[dict]) -> dict[str, dict]:
+def _detail_request(read, source_instance, uuids):
+    """Compile file relationship reads against the area's approved source snapshot."""
+    from hero_integration.services.mapping_contract_v1 import QueryAdapter, QueryDraft
+
+    try:
+        validated = direct_runtime.validated_snapshot(read, source_instance, frappe_module=frappe)
+    except ValueError as error:
+        raise TransferError(str(error)) from error
+    return QueryAdapter().materialize(validated, QueryDraft('HeroFileDetails', 'file_uploads', 'file_uploads',
+        DETAIL_PATHS, {'uuids': uuids, 'first': len(uuids)}))
+
+
+def details(client, rows: list[dict], read, source_instance: str) -> dict[str, dict]:
     """Project/customer/document data per uuid, fetched in batches."""
     found = {}
     for start in range(0, len(rows), DETAIL_BATCH):
         uuids = [row["uuid"] for row in rows[start:start + DETAIL_BATCH]]
-        data = client.query(DETAIL_QUERY, {"uuids": uuids, "first": len(uuids)})
+        request = _detail_request(read, source_instance, uuids)
+        data = client.query(request.document, request.variables)
         for item in (data or {}).get("file_uploads") or []:
             found[item.get("uuid")] = item
     return found
@@ -606,6 +620,10 @@ def transfer(phase: str, *, source_instance: str | None = None, client=None, dow
     if cohort is not None and (record_limit is None or dry_run or not isinstance(cohort, dict) or cohort.get('version') != 1):
         raise TransferError('Related file selection requires a frozen test run.')
     operation = OPERATION[phase]
+    if not dry_run:
+        from hero_integration.services.deferred_references import require_storage
+        if not isinstance(run_name, str) or not run_name.strip():
+            raise TransferError('File migration requires its originating integration run.')
     read = direct_runtime.resolve_read(operation, source_instance)
     from hero_integration.services.migration_testing import bounded_rows, processed, test_state, save_test_state, validate_checkpoint
     state = {} if dry_run else test_state(run_name, operation) if record_limit is not None else _state(phase)
@@ -618,6 +636,8 @@ def transfer(phase: str, *, source_instance: str | None = None, client=None, dow
                 raise TransferError('The frozen related project sample changed; start a new run.')
         if state.get('done'):
             return state
+    if not dry_run:
+        require_storage(frappe)
     if (state.get("done") or state.get("source_instance") != source_instance or "offset" not in state
             or state.get("mapping") != read.mapping_version):
         # An offset belongs to its approved mapping: changed filters or field
@@ -674,10 +694,10 @@ def transfer(phase: str, *, source_instance: str | None = None, client=None, dow
         candidates = [row for row in page if direct_runtime.belongs(operation, row)]
         if cohort is None:
             rows = bounded_rows(state, candidates, record_limit)
-            found = details(client, rows) if rows else {}
+            found = details(client, rows, read, source_instance) if rows else {}
         else:
             state['testing_records_received'] = int(state.get('testing_records_received', 0)) + len(page)
-            found = details(client, candidates) if candidates else {}
+            found = details(client, candidates, read, source_instance) if candidates else {}
             if any(row.get('uuid') not in found for row in candidates):
                 raise TransferError('File detail is missing; related test selection cannot be completed.')
             rows = [row for row in candidates if belongs_to_test_cohort(found[row['uuid']], cohort)]
@@ -702,13 +722,16 @@ def transfer(phase: str, *, source_instance: str | None = None, client=None, dow
                         invalidate(source_instance, operation, direct_runtime.identity(read, row))
                 bump("unchanged" if unchanged else f"skipped_{reason}")
                 continue
-            target = resolve_target(detail, projects, customers)
+            resolved_target = resolve_target(detail, projects, customers)
+            # Files are imported privately without realizing a new attachment.
+            # The run-scoped observation retains every eligible target identity.
+            target = resolved_target if dry_run else (None, None)
             fields = mapped_values(read, row)
             try:
                 if not dry_run:
                     from hero_integration.services.deferred_references import remember_file
                     remember_file(run_name, source_instance, operation, read, row, detail, cohort=cohort)
-                reconciled = reconcile_legacy_file(link, read, row, target, folders[bool(target[0])], source_instance, dry_run=dry_run)
+                reconciled = reconcile_legacy_file(link, read, row, resolved_target, folders[bool(resolved_target[0])], source_instance, dry_run=dry_run)
                 if reconciled:
                     bump(reconciled)
                     if not dry_run:

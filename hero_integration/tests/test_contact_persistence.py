@@ -14,6 +14,43 @@ from hero_integration.integrations.erpnext.contact import (
 )
 
 
+class TestDeferredCustomerHooks(unittest.TestCase):
+    def test_only_the_owned_initial_import_suppresses_native_relationship_hooks(self):
+        from hero_integration.integrations.erpnext.contact import DeferredCustomerRelations
+        from hero_integration.services.change_detection import managed_target_update
+        from hero_integration.services import deferred_references
+
+        calls = []
+        class NativeCustomer:
+            name = 'C1'
+            def create_primary_contact(self): calls.append('contact')
+            def create_primary_address(self): calls.append('address')
+            def link_address_and_contact(self): calls.append('links')
+        class Customer(DeferredCustomerRelations, NativeCustomer):
+            pass
+        customer = Customer()
+        def invoke():
+            customer.create_primary_contact()
+            customer.create_primary_address()
+            customer.link_address_and_contact()
+        with managed_target_update('Customer', 'C1', 'fixture'):
+            invoke()
+            self.assertEqual(calls, [])
+            token = deferred_references._replaying.set(True)
+            try:
+                invoke()
+            finally:
+                deferred_references._replaying.reset(token)
+            self.assertEqual(calls, ['contact', 'address', 'links'])
+        calls.clear()
+        invoke()
+        self.assertEqual(calls, ['contact', 'address', 'links'])
+        calls.clear()
+        with managed_target_update('Customer', 'C2', 'other'):
+            invoke()
+        self.assertEqual(calls, ['contact', 'address', 'links'])
+
+
 class TestContactPersistence(unittest.TestCase):
     def test_home_phone_is_added_once_to_an_exclusive_customer_contact(self):
         customer = _Document(name="CUST-001", customer_primary_contact="CONT-001")

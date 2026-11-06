@@ -109,7 +109,7 @@ def _validate_group(mappings, readers, contracts, services, snapshots):
     from hero_integration.services.read_contract import from_documents
     from hero_integration.services.personal_mapping_content import configured_mutation_helpers
     from hero_integration.services.config_mutation_contracts import _query, _scope
-    from hero_integration.services.graphql_contract import parse_mutation
+    from hero_integration.services.mutation_binding_contract import parse_mutation
     from hero_integration.services.mapped_update_v2 import _validate_contract_scope
     from graphql import build_client_schema, parse, validate
 

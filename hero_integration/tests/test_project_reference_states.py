@@ -16,14 +16,23 @@ class _Client:
 
     def query(self, document, variables):
         self.documents.append(document)
-        data = {f"p{key}": value for key, value in self.rows.items() if f"project_match_id: {key})" in document}
+        data = {f"p{key}": value for key, value in self.rows.items() if key in variables.values()}
         if self.fail:
             raise HeroClientError("partial", code="GRAPHQL_ERRORS", details=("Project not found.",), data=data)
         return {"data": data}
 
 
 def _source(client):
-    return GraphQLServiceSource(client, SimpleNamespace(), SimpleNamespace(), "default")
+    from graphql import build_schema, introspection_from_schema
+    from hero_integration.services.graphql_graph import analyze_snapshot
+    from hero_integration.services.mapping_contract_v1 import StoredSnapshot, SnapshotAdapter
+    raw = introspection_from_schema(build_schema('type Query { project_match(project_match_id:Int):Project } '
+        'type Project { id:Int is_deleted:Boolean project_nr:String }'))
+    snapshot = SnapshotAdapter().adapt(StoredSnapshot('projects', raw, analyze_snapshot(raw).fingerprint, 'default'))
+    contract = SimpleNamespace()
+    source = GraphQLServiceSource(client, SimpleNamespace(), contract, "default", revalidate=lambda: contract)
+    source._auxiliary_snapshot = lambda: snapshot
+    return source
 
 
 class TestProjectReferenceStates(unittest.TestCase):

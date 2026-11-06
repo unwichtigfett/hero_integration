@@ -290,7 +290,7 @@ def _validate_contract_scope(mapping, content, contract):
 def _load_context(mapping_name,doctype,name):
     from hero_integration.client.settings import get_configuration
     from hero_integration.services.writeback_source import capture_source
-    from hero_integration.services.graphql_contract import parse_mutation
+    from hero_integration.services.mutation_binding_contract import parse_mutation
     if not send_helpers._roles(): raise MappedUpdateError('Only System Managers and HERO Writeback users may send to HERO.')
     mapping=frappe.get_doc('HERO GraphQL Mapping',mapping_name);mapping.check_permission('read')
     snapshot=frappe.get_doc('HERO GraphQL Schema Snapshot',mapping.schema_snapshot);snapshot.check_permission('read')
@@ -718,7 +718,7 @@ def _binding_state(link):
 
 def _prepare(ctx,client,*,preview_only=False):
     from graphql import get_named_type
-    from hero_integration.services.graphql_contract import validate_mutation
+    from hero_integration.services.mutation_binding_contract import validate_mutation
     remote=_read_record(ctx,client);schema=_schema(ctx.raw_schema);operation=ctx.mapping.operation_name
     actual_id=_at(remote,ctx.content['identity']['mutation_read_path'])
     if type(actual_id) not in (int,str) or not str(actual_id).isdigit() or int(actual_id)<=0:
@@ -932,7 +932,10 @@ def send(mapping_name,doctype,name,*,fingerprint='',confirmed=False,client=None,
             raise MappedUpdateError('The mapped update authority or payload changed after reservation.')
         _assert_mutation_execution_released();config=validate_source(ctx.proof)
         transport=mutation_client or HeroMutationClient(config.endpoint,lambda:config.api_token,config.timeout_seconds)
-        returned=transport.execute_once(ctx.service.query_document,prepared.variables)
+        from hero_integration.services.mapping_contract_v1 import materialize_saved_mutation
+        request=materialize_saved_mutation(fresh.snapshot,fresh.service.query_document,verified.variables,
+            request_scope=audit.correlation_id)
+        returned=transport.execute_once(request.document,request.variables)
         record=returned.get(ctx.mapping.operation_name) if isinstance(returned,dict) else None
         if not isinstance(record,dict) or returned.get('errors') or str(record.get('id'))!=str(prepared.mutation_id):
             raise MappedUpdateError('HERO did not confirm the separately proven mutation identity.')

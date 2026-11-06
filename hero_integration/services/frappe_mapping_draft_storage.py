@@ -347,75 +347,6 @@ class FrappeMappingDraftStorage:
             if canonical not in self._locked_rule_ids:
                 raise DraftConflict('Personal Draft identities changed while locks were acquired.')
 
-    def materialize_portable_draft(self, definition_id, actor, generation, revision, active_revision, reconciliation_revision,
-                                   *, sample_values=None):
-        """Compile a saved personal draft as a non-executable operation plan."""
-        from hero_integration.api import _validated_snapshot
-        from hero_integration.services.mapping_draft_service import _hash
-        from hero_integration.services.mapping_contract_v1 import (
-            MappingContractError, MutationAdapter, MutationDraft, QueryAdapter, QueryDraft, SnapshotAdapter, StoredSnapshot,
-        )
-        from hero_integration.services.mapping_draft_exchange import _portable_content, _validate_portable_query
-        from hero_integration.services.personal_mapping_content import references
-
-        with self.transaction(definition_id, actor):
-            active, draft = self.service()._current(definition_id, actor)
-            if (type(generation) is not int or generation != draft.generation or type(revision) is not int
-                    or revision < 1 or type(reconciliation_revision) is not int
-                    or reconciliation_revision != draft.reconciliation_revision):
-                raise DraftConflict('Personal draft revision changed before plan generation.')
-            self.service()._assert_current(active, draft, revision, active_revision)
-            self.frappe.get_doc(self.DRAFT, draft.key, for_update=True).check_permission('read')
-            if _hash(draft.content) != draft.content_hash or self.canonicalize(draft.content) != draft.content:
-                raise MappingDraftError('Saved personal content is not intact and canonical.')
-            saved = self.frappe.db.sql('select content_hash from `tabHERO Mapping Revision` '
-                'where draft_key=%s and generation=%s and revision=%s and kind=%s for update',
-                (draft.key, generation, revision, 'DRAFT_SAVE'), as_dict=True)
-            if len(saved) != 1 or saved[0].content_hash != draft.content_hash:
-                raise DraftConflict('Saved draft history does not match the requested revision.')
-            parent = self._definition
-            context = draft.new_definition if parent is None else {
-                'snapshot_name': parent.schema_snapshot, 'source_instance': parent.source_instance,
-                'direction': parent.direction, 'operation_name': parent.operation_name}
-            snapshot, schema = _validated_snapshot(context['snapshot_name'], for_update=True)
-            snapshot.check_permission('read')
-            if snapshot.source_instance != context['source_instance'] or snapshot.schema_fingerprint != draft.base_schema_fingerprint:
-                raise DraftConflict('Draft schema context changed before plan generation.')
-            try:
-                validated = SnapshotAdapter().adapt(StoredSnapshot(snapshot.name, schema, snapshot.schema_fingerprint,
-                                                                   snapshot.source_instance, snapshot.analysis_status))
-                content = _object(draft.content)
-                content.pop('_portable_exchange_schema', None)
-                content.pop('field_rule_bases', None)
-                content = _portable_content(content, context['direction'])
-                if context['direction'] == 'QUERY_TO_FRAPPE':
-                    if sample_values is not None:
-                        raise MappingDraftError('Sample input values apply only to mutation drafts.')
-                    if content.get('records_path', content.get('record_path')) != context['operation_name']:
-                        raise MappingDraftError('Only direct query-root record paths are supported for this plan.')
-                    _validate_portable_query(content, context['operation_name'], schema)
-                    paths = tuple(sorted({content['identity_path']} | {
-                        content['field_rules'][identity]['source_path'] for identity in references(content)}))
-                    request = QueryAdapter().materialize(validated, QueryDraft('personal_draft', context['operation_name'],
-                                                          context['operation_name'], paths, {}))
-                    return {'direction': context['direction'], 'execution_authority': 'NONE', 'document': request.document,
-                            'variables': request.variables, 'selected_paths': list(paths), 'draft_revision': revision}
-                assignments = [content] + list(content.get('additional_mappings') or [])
-                paths = []
-                for assignment in assignments:
-                    target = assignment.get('target', {})
-                    if target.get('operation') != context['operation_name']:
-                        raise MappingDraftError('Mutation operation does not match the draft context.')
-                    paths.append((target['argument'], *target['field'].split('.')))
-                if len(set(paths)) != len(paths):
-                    raise MappingDraftError('Mutation assignments have duplicate input paths.')
-                adapter = MutationAdapter()
-                request = MutationDraft(context['operation_name'], tuple(paths), snapshot.source_instance, revision)
-                result = (adapter.materialize(validated, request) if sample_values is None else
-                          adapter.construct_preview_values(validated, request, sample_values))
-                return {**result, 'direction': context['direction'], 'execution_authority': 'NONE', 'draft_revision': revision}
-            except (MappingContractError, KeyError, TypeError, ValueError) as error:
-                raise MappingDraftError('Saved draft cannot produce a compatible non-executable plan.') from error
 
     def materialize_native_task(self, definition_id, actor, generation, revision, active_revision, reconciliation_revision,
                                 *, snapshot_name):
@@ -1387,7 +1318,7 @@ class FrappeMappingDraftStorage:
         from hero_integration.services.frappe_writeback import (
             WritebackContractError, draft_source_type_compatible, normalise_draft_mapping,
         )
-        from hero_integration.services.mapping_suggestions import source_fields
+        from hero_integration.services.mapping_source_fields import source_fields
 
         parent = self._definition
         snapshot, schema = getattr(self, '_publication_snapshot', None) or _validated_snapshot(parent.schema_snapshot)
@@ -1476,7 +1407,7 @@ class FrappeMappingDraftStorage:
         This does not approve a service. Publication still checks its existing
         read contract, rule provenance, permissions and mapping plan.
         """
-        from hero_integration.services.mapping_suggestions import source_fields
+        from hero_integration.services.mapping_source_fields import source_fields
         from hero_integration.services.object_mapping_catalog import field as schema_field
         if content.get('target_operation') != 'HeroProjectMatches':
             return False
@@ -1552,7 +1483,7 @@ class FrappeMappingDraftStorage:
     def _build_publication_content(self, draft, schema):
         from uuid import NAMESPACE_URL, uuid5
         from hero_integration.services.personal_mapping_content import RULE_FIELDS, same
-        from hero_integration.services.mapping_suggestions import source_fields
+        from hero_integration.services.mapping_source_fields import source_fields
         from hero_integration.services.frappe_writeback import normalise_mapping
         from hero_integration.api import _mapping_values_preserved
 

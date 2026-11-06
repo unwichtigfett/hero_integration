@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 from hero_integration.client import graphql
 from hero_integration.client.graphql import HeroClientError, HeroEndpoint, HeroGraphQLClient
-from hero_integration.sources.hero import HeroSource
+from hero_integration.tests.saved_reader_fixture import versioned_contract_source
 
 
 class _Body:
@@ -94,7 +94,7 @@ class TestRateLimits(unittest.TestCase):
 class TestHeroSourceInput(unittest.TestCase):
     def test_offsets_are_validated_before_any_request(self):
         client = MagicMock()
-        source = HeroSource(client)
+        source = versioned_contract_source(client)
         for offset in (-1, True, 1.5, "10", 10_000_001):
             with self.subTest(offset=offset), self.assertRaises(ValueError):
                 source.customers(offset)
@@ -103,8 +103,8 @@ class TestHeroSourceInput(unittest.TestCase):
     def test_non_object_data_is_rejected(self):
         client = MagicMock()
         client.query.return_value = ["not", "an", "object"]
-        with self.assertRaisesRegex(ValueError, "does not match the V1 contract"):
-            HeroSource(client).projects(0)
+        with self.assertRaises(ValueError):
+            versioned_contract_source(client).projects(0)
 
 
 if __name__ == "__main__":

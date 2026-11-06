@@ -84,6 +84,14 @@
       "fieldtype": "Datetime",
       "read_only": 1,
       "search_index": 1
+    },
+    {
+      "fieldname": "realization_started",
+      "label": "Realization Started",
+      "fieldtype": "Check",
+      "default": "0",
+      "read_only": 1,
+      "hidden": 1
     }
   ],
   "permissions": [

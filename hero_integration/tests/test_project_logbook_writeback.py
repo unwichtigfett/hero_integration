@@ -63,7 +63,7 @@ class TestLogbookConfiguration(TestCase):
 
 class TestLogbookPreparation(TestCase):
     def context(self):
-        from hero_integration.services.graphql_contract import parse_mutation
+        from hero_integration.services.mutation_binding_contract import parse_mutation
         value = content()
         return NS(document=NS(name='C1', doctype='Comment', comment_type='Comment', modified='v1', content='<p>New<br>activity</p>',
                    reference_doctype='Project', reference_name='P1'), project=NS(name='P1', modified='p1'),
@@ -114,6 +114,9 @@ class TestLogbookSend(TestCase):
         self.transport.execute_once.return_value = {wb.OPERATION: {'id': 10}}
         self.database = NS(commit=Mock(), rollback=Mock(), set_value=Mock())
         self.fake = NS(local=NS(site='site'), db=self.database, utils=NS(now_datetime=lambda: 'now'))
+        compiler = patch('hero_integration.services.mapping_contract_v1.materialize_saved_mutation',
+            side_effect=lambda snapshot, document, variables, **kwargs: NS(document=document, variables=variables))
+        compiler.start(); self.addCleanup(compiler.stop)
         patches = [patch.object(wb, 'frappe', self.fake), patch.object(wb, '_load_context', return_value=self.ctx),
             patch.object(wb, '_prepare', return_value=self.prepared), patch.object(wb, '_fingerprint', return_value='fingerprint'),
             patch.object(wb, '_reserve_project', side_effect=lambda *a: self.events.append('marker') or 'marker'),

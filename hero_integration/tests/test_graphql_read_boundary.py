@@ -37,6 +37,24 @@ class TestGraphQLReadBoundary(unittest.TestCase):
         token_provider.assert_not_called()
         post.assert_not_called()
 
+    def test_introspection_materializes_both_supported_documents(self):
+        from graphql import parse, print_ast
+        from hero_integration.services.introspection import INTROSPECTION_QUERY, COMPATIBILITY_INTROSPECTION_QUERY
+        client = HeroGraphQLClient(HeroEndpoint('https://example.invalid/', 'example.invalid'), lambda: 'test')
+        for document in (INTROSPECTION_QUERY, COMPATIBILITY_INTROSPECTION_QUERY):
+            with self.subTest(document=document[:50]), patch.object(client, '_post', return_value={'__schema': {}}) as post:
+                self.assertEqual(client.introspect(document), {'data': {'__schema': {}}})
+                post.assert_called_once_with(print_ast(parse(document)), None, operation_name='')
+
+    def test_introspection_rejects_business_fields_and_invalid_syntax(self):
+        client = HeroGraphQLClient(HeroEndpoint('https://example.invalid/', 'example.invalid'), lambda: 'test')
+        for document in ('{ viewer { id } }', '{ _schemaBootstrap }',
+                         '{ alias:_schemaBootstrap }', 'query {', '{ __schema { missing } }'):
+            with self.subTest(document=document), patch.object(client, '_post') as post:
+                with self.assertRaises(HeroClientError):
+                    client.introspect(document)
+                post.assert_not_called()
+
     def test_missing_graphql_parser_fails_closed_before_transport(self):
         original_import = builtins.__import__
 

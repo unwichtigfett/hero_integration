@@ -9,8 +9,9 @@ from unittest.mock import patch
 
 from hero_integration.services import product_migration as pm
 from hero_integration.services import direct_runtime
+from hero_integration.tests.saved_reader_fixture import product_paging_read
 
-BUILTIN = direct_runtime.builtin_read("HeroProducts")
+BUILTIN = product_paging_read()
 
 ROW = {
     "product_id": "FSRmFpZSMAA", "nr": "PV-1001", "base_price": 145.55, "list_price": 199, "is_deleted": False,

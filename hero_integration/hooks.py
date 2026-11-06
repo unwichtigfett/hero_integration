@@ -123,7 +123,10 @@ has_permission = {
 }
 permission_query_conditions["Version"] = "hero_integration.services.mapping_draft_access.personal_version_query"
 has_permission["Version"] = "hero_integration.services.mapping_draft_access.personal_version_permission"
-extend_doctype_class = {"Version": ["hero_integration.services.mapping_draft_access.PersonalMappingVersionAccess"]}
+extend_doctype_class = {
+    "Version": ["hero_integration.services.mapping_draft_access.PersonalMappingVersionAccess"],
+    "Customer": ["hero_integration.integrations.erpnext.contact.DeferredCustomerRelations"],
+}
 
 # Source identities wake only records that were waiting for these relationships.
 doc_events["HERO Integration Link"]["on_update"] = "hero_integration.services.deferred_references.binding_updated"

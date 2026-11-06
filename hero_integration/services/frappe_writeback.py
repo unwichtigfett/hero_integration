@@ -8,7 +8,7 @@ import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from hero_integration.services.graphql_contract import (
+from hero_integration.services.mutation_binding_contract import (
     GraphQLContractError,
     parse_mutation,
     validate_mutation,

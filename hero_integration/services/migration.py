@@ -21,13 +21,14 @@ from hero_integration.integrations.erpnext.contact import (
     synchronize_primary_contact,
     synchronize_home_phone,
 )
-from hero_integration.sources.hero import GraphQLServiceSource, HeroSource, SourcePage, TestingPreviewSource
+from hero_integration.sources.hero import GraphQLServiceSource, SourcePage, TestingPreviewSource
 from hero_integration.services.change_detection import (
     changed_fields, decode as decode_hashes, encode as encode_hashes, field_hashes, managed_target_update, new_mapped_field_conflicts, next_baseline, reconcile,
 )
 from hero_integration.services.conflict_notifications import notify_conflict_once, notify_review, notify_run_summary
 from hero_integration.services.integration_events import record_output
 from hero_integration.services import task_lifecycle
+from hero_integration.services.performance import measured, profiled
 from hero_integration.services.mapping_runtime import MappingPlanError, active_mapping_plan
 from hero_integration.services.business_numbers import BusinessNumberError, customer_document_name, project_reference
 from hero_integration.services.project_naming import ProjectAddressError, ProjectTitleValidationError, build_project_title
@@ -265,7 +266,8 @@ def _verified_historical_users(run, source):
     if source.revalidate and source.revalidate() != source.contract:
         raise MappingPlanError('Read approval changed before historical identity verification.')
     try:
-        identities, _ = _historical_identities(source.client, read.records_path, None, None)
+        identities, _ = _historical_identities(source.client, read.records_path, None, None,
+                                               read=read, source_instance=source.source_instance)
     except (HeroClientError, EmployeeMigrationBlocked):
         return ()  # Unverified references keep their ordinary pending status.
     if source.revalidate and source.revalidate() != source.contract:
@@ -276,6 +278,7 @@ def _verified_historical_users(run, source):
     return identities
 
 
+@profiled('migration.run')
 def execute_run(run_name: str) -> None:
     run = frappe.get_doc("HERO Integration Run", run_name)
     frappe.set_user(run.owner)
@@ -345,14 +348,11 @@ def execute_run(run_name: str) -> None:
 
 
 def _advance_full_migration(run_name: str) -> None:
-    """A finished run that is a Full Migration step lets the chain continue."""
+    """Notify successful standalone areas and continue any parent migration."""
     if not hasattr(getattr(frappe, "db", None), "get_default"):
         return  # no site database (offline run doubles)
     try:
-        from hero_integration.services.file_migration import CHILD_KEY, on_run_finished
-
-        if not frappe.db.get_default(CHILD_KEY.format(run_name)):
-            return  # not a Full Migration step
+        from hero_integration.services.file_migration import on_run_finished
         if frappe.db.get_value("HERO Integration Run", run_name, "state") not in TERMINAL_STATES:
             return
         on_run_finished(run_name)
@@ -623,7 +623,7 @@ def _release_active_run_lock() -> None:
     release(frappe)
 
 
-def _process_requested_phases(run, source: HeroSource, *, checkpoint=None) -> None:
+def _process_requested_phases(run, source: GraphQLServiceSource, *, checkpoint=None) -> None:
     # A project run is never allowed to bypass its own complete Customer pass.
     # This is intentionally stricter than a mere lookup during project creation:
     # the gate belongs to the same run and source instance, and survives retries.
@@ -903,6 +903,17 @@ def _migrate_customer(record: dict[str, object], run) -> Result:
     if _source_instance(record) != 'default':
         values['custom_hero_source_id'] = f'{_source_instance(record)}:{source_id}'
     tracks_home_phone = plan.has_home_phone()
+    defer_relations = _defer_relationships(run)
+    if defer_relations:
+        # ERPNext's Customer.on_update creates a Contact from these proxies.
+        # Do not let that hook realize a relationship during the scalar import.
+        for field in plan.customer_contact_fields() | {'first_name', 'last_name', 'email_id', 'mobile_no'}:
+            values.pop(field, None)
+            values.empty.discard(field)
+            values.missing.add(field)
+        if tracks_home_phone:
+            values.missing.add('hero_phone_home')
+        tracks_home_phone = False
     drift = _business_number_drift(
         "customer", source_id, _source_instance(record), "Customer", "custom_hero_customer_number",
         record.get("nr"), "customer number", run, observed="nr" in record,
@@ -911,12 +922,16 @@ def _migrate_customer(record: dict[str, object], run) -> Result:
         return drift
 
     def after_insert(customer):
+        if defer_relations:
+            return
         _synchronize_customer_relations(
             customer, contact_values, home_phone, address, _source_instance(record), plan.mapping_version,
         )
         _keep_phone_originals(customer, phone_originals)
 
     def after_update(customer, outcome):
+        if defer_relations:
+            return
         # Relations receive only the reconciled HERO changes: a locally edited
         # Contact value is never rewritten because another field changed.
         _synchronize_customer_relations(
@@ -926,6 +941,14 @@ def _migrate_customer(record: dict[str, object], run) -> Result:
         )
         _keep_phone_originals(customer, {field: text for field, text in phone_originals.items() if field in outcome.apply})
 
+    from hero_integration.services.deferred_references import realizing
+    bindings_only = realizing() and getattr(run,'state',None)=='Completed' and run.mode!='Preview'
+    if bindings_only:
+        from hero_integration.services.mapping_runtime import MappedValues
+        allowed = plan.customer_contact_fields() | {'first_name','last_name','email_id','mobile_no'}
+        values = MappedValues({key:value for key,value in values.items() if key in allowed},
+            missing=set(values.missing) | ((set(values) | set(values.empty))-allowed),
+            empty=set(values.empty) & allowed)
     result = _upsert(
         "customer", source_id, record, values, "Customer", "customer_name", plan.mapping_version, run,
         after_insert=after_insert,
@@ -936,8 +959,19 @@ def _migrate_customer(record: dict[str, object], run) -> Result:
         source_instance=_source_instance(record),
         comparison_extra={"hero_phone_home": home_phone} if tracks_home_phone else None,
         required_on_create=("customer_type",),
-        document_name=document_name,
+        document_name=document_name, preserve_unselected=bindings_only,
     )
+    if (not defer_relations and run.mode != 'Preview' and address is not None and result.target_name
+            and result.code in {'SKIPPED', 'CONVERGED', 'OBSERVED'}):
+        # An address-only observation need not change any Customer scalar.
+        # Its own writer still verifies exclusive ownership and field baselines.
+        frappe.db.savepoint('hero_customer_primary_relations')
+        try:
+            customer = frappe.get_doc('Customer', result.target_name)
+            _synchronize_customer_relations(customer, {}, None, address, _source_instance(record), plan.mapping_version)
+        except (HomePhoneConflict, CustomerAddressError) as error:
+            frappe.db.rollback(save_point='hero_customer_primary_relations')
+            return Result('CONFLICT', str(error), 'Customer', result.target_name)
     result = _sync_mapped_relations(plan, record, result, run)
     if incomplete_address and result.target_name and result.code in {'CREATED', 'UPDATED', 'SKIPPED', 'CONVERGED', 'OBSERVED'}:
         if not result.pending_relation and run.mode != 'Preview':
@@ -1062,6 +1096,38 @@ def _projection_task_scope(run, plan, mapping, snapshot_source, source_instance)
     return scope
 
 
+def _defer_relationships(run):
+    from hero_integration.services.deferred_references import realizing
+    return run.mode != 'Preview' and not realizing()
+
+
+def _reference_rule(rule):
+    return (rule.purpose in {'Customer Relation','Project Relation'} or
+            rule.transformation in {'HERO Customer Link','HERO Project Link','HERO User Link','User By Partner ID'})
+
+
+def _defer_reference_values(plan, values, run):
+    """Keep relationship fields out of writes and baseline acknowledgements.
+
+    The original record and exact dependencies are saved by remember(); only
+    the post-success service may turn those identities into target values.
+    """
+    deferred = set()
+    if not _defer_relationships(run):
+        return deferred
+    for rule in plan.definitions:
+        if rule.target_doctype != plan.target_doctype:
+            continue
+        if _reference_rule(rule):
+            if rule.target_field not in values.missing:
+                deferred.add(rule.target_field)
+            values.pop(rule.target_field, None)
+            values.empty.discard(rule.target_field)
+            values.missing.add(rule.target_field)
+    return deferred
+
+
+@measured('migration.record')
 def _migrate_projection_record(record, run, plan, task_scope):
     if task_scope is None:
         return _migrate_isolated(lambda: _migrate_projection(record, run, plan))
@@ -1070,12 +1136,43 @@ def _migrate_projection_record(record, run, plan, task_scope):
     result = _migrate_isolated(lambda: _migrate_native_task(task_record, run, plan, task_scope))
     if (result.code in {'CREATED', 'UPDATED', 'SKIPPED', 'PREVIEW_OK'} and result.target_doctype == 'Task'
             and not getattr(plan, 'adapter_options', None)
+            and not _defer_relationships(run)
             and any(item.source_path == 'target_user_id' for item in plan.definitions)):
         action = _record_task_assignment_pending(run, record, result.target_name, task_scope['source_instance'])
         if action in {'BLOCKED', 'PENDING_IDENTITY', 'CONFLICT'}:
             from dataclasses import replace
             result = replace(result, pending_relation=True)
     return result
+
+
+def realize_mapped_bindings(record,run,plan):
+    """Update only native references/assignments of an already imported target."""
+    from dataclasses import replace
+    from hero_integration.services.deferred_references import realizing
+    from hero_integration.services.query_mapping import mapped_values
+    operation = plan.target_operation or plan.operation
+    if (not realizing() or run.mode=='Preview' or run.state!='Completed' or
+            operation not in {'HeroTasks','HeroProjectMatches'} or plan.adapter_options.get('version')!=2
+            or run.source_instance!=_source_instance(record)):
+        raise MappingPlanError('Mapped binding realization requires its successful originating area.')
+    instance,identity=_source_instance(record),plan.source_identity(record)
+    kind,doctype,name_field=('Task','Task','subject') if operation=='HeroTasks' else ('project','Project','project_name')
+    link=_link(kind,identity,instance)
+    if (not link or link.target_doctype!=doctype or link.mapping_version!=plan.mapping_version or
+            not frappe.db.exists(doctype,link.target_name)):
+        raise MappingPlanError('The imported binding target or mapping changed before realization.')
+    frappe.get_doc(doctype,link.target_name,for_update=True)
+    subset=replace(plan,definitions=tuple(rule for rule in plan.definitions
+        if rule.target_doctype==doctype and _reference_rule(rule)))
+    values=mapped_values(subset,record,customer_link=lambda value:_customer_name_for_source(value,instance),
+        project_link=lambda value:_project_name_or_deferred(value,instance,plan,record))
+    result=_upsert(kind,identity,record,values,doctype,name_field,plan.mapping_version,run,
+        source_instance=instance,preserve_unselected=True)
+    if operation=='HeroTasks':
+        result=_mapped_task_assignment(record,run,plan,result)
+    else:
+        result=_project_assignments_after_import(record,run,result,identity,instance)
+    return _sync_mapped_relations(plan,record,result,run)
 
 
 def _process_projection(run, source, *, checkpoint=None) -> None:
@@ -1412,7 +1509,13 @@ def _migrate_native_task(record, run, plan, scope) -> Result:
                 values['custom_hero_due_date'] = deadline
     except ValueError as error:
         return Result('BLOCKED_RECORD', str(error))
+    deferred_project = _defer_relationships(run) and 'target_project_match_id' in selected_paths
+    if deferred_project:
+        values.pop('project', None)
     lifecycle = _task_lifecycle_source(record)
+    if _defer_relationships(run):
+        lifecycle.pop(task_lifecycle.ASSIGNEE, None)
+        lifecycle.pop(task_lifecycle.AUTHOR, None)
     selected = getattr(plan, 'definitions', ())
     assignment_selected = any(item.source_path == 'target_user_id' for item in selected)
     if assignment_selected:
@@ -1447,7 +1550,7 @@ def _migrate_native_task(record, run, plan, scope) -> Result:
             # Review unwritable HERO values; empty optional values need no review.
             pending_comment = ('comment' in selected_paths and _task_value_present(record.get('comment'))
                                and 'description' not in values)
-            pending_project = ('target_project_match_id' in selected_paths
+            pending_project = (not deferred_project and 'target_project_match_id' in selected_paths
                                and _task_value_present(record.get('target_project_match_id')) and 'project' not in values)
             pending_deadline = ('due_date' in selected_paths and _task_value_present(record.get('due_date'))
                                 and 'custom_hero_due_date' not in values)
@@ -1483,13 +1586,19 @@ def _migrate_native_task(record, run, plan, scope) -> Result:
     pending, conflicts, updates, omitted = [], [], {}, []
     for field, source_path in (('subject', 'title'), ('description', 'comment'), ('project', 'target_project_match_id'),
                                ('custom_hero_due_date', 'due_date')):
-        if source_path not in selected_paths:
+        if source_path not in selected_paths or (field == 'project' and deferred_project):
             continue
         source_hash = field_hashes({field: values[field]})[field] if field in values else None
         target_hash = field_hashes({field: task.get(field)})[field]
         binding = SimpleNamespace(direction=MappingDirection.HERO_TO_FRAPPE, mapping_revision=int(run.mapping_revision),
                                   acknowledged_source_fingerprint=source_base.get(field),
                                   acknowledged_target_fingerprint=target_base.get(field))
+        if (field == 'project' and not _defer_relationships(run) and run.mode != 'Preview'
+                and field not in source_base and field not in target_base and field in values and not task.get(field)):
+            # The initial import deliberately left this relationship unacknowledged.
+            # Acquire it only while the target is still empty; local choices win.
+            updates[field] = values[field]
+            continue
         decision = BindingRegistryService.inbound_reconciliation(binding, active_mapping_revision=int(run.mapping_revision),
                                                                   source_fingerprint=source_hash, target_fingerprint=target_hash)
         if decision == 'APPLY_SOURCE': updates[field] = values[field]
@@ -1683,6 +1792,7 @@ def _migrate_projection(record, run, plan) -> Result:
                 review = [reason for reason in review if not reason.startswith('Recurring HERO event')]
         values = plan.values(record, project_link=lambda value: _project_name_or_deferred(value, instance, plan, record),
                              native_value=lambda target: native_values[target], allow_partial=bool(existing))
+        _defer_reference_values(plan, values, run)
         values['custom_hero_key'] = _digest([instance, contract['source_type'], source_id])
         values['custom_hero_source_instance'] = instance
     except DeletedSourceProjectError as error:
@@ -1804,6 +1914,34 @@ def _project_name_or_deferred(value, source_instance, plan, record):
         raise
 
 
+def _project_assignments_after_import(record,run,result,source_id,source_instance):
+    field_conflict = result.code == 'CONFLICT' and (result.detail or '').startswith('Field conflict requires review:')
+    from hero_integration.services.deferred_references import realizing
+    if (realizing() and run.mode != 'Preview' and result.target_name and 'project_match_assignments' in record
+            and (result.code in {'CREATED', 'UPDATED', 'SKIPPED', 'CONVERGED', 'OBSERVED'} or field_conflict)):
+        from hero_integration.integrations.project_assignments import sync as sync_assignees
+        from hero_integration.services.employee_migration import historical_users
+        historical = historical_users(source_instance)
+        kwargs = {'allow_removals': False} if field_conflict else {}
+        if historical:
+            kwargs['historical_user_ids'] = historical
+        assignees = sync_assignees(result.target_name, record, **kwargs)
+        if assignees.get('historical'):
+            record_output(run=run.name, source_type='project', source_id=str(source_id), result='SKIPPED',
+                          action='project_historical_reference', target_doctype='Project', target_name=result.target_name,
+                          detail=frappe._('{0} deleted HERO users remain as historical references; existing assignments were preserved.').format(assignees['historical']))
+        if assignees["unmatched"]:
+            detail = frappe._(
+                '{0} project assignee(s) could not be resolved to an active, source-bound ERPNext user; existing assignments were preserved and require review.'
+            ).format(assignees['unmatched'])
+            record_output(run=run.name, source_type='project', source_id=str(source_id), result='PENDING_REVIEW',
+                          action='project_assignment_review', target_doctype='Project',
+                          target_name=result.target_name, detail=detail)
+            from dataclasses import replace
+            result = replace(result, pending_relation=True)
+    return result
+
+
 def _migrate_project(record: dict[str, object], run) -> Result:
     if not _target_available("Project"):
         return Result("UNAVAILABLE", "Project is not installed on this site.")
@@ -1845,6 +1983,7 @@ def _migrate_project(record: dict[str, object], run) -> Result:
                 return _project_title_for_record(source, include_address=False)
 
         values = plan.values(record, customer_for, _confirmed_company_name, title_for)
+        deferred_fields = _defer_reference_values(plan, values, run)
         # An existing Project keeps its current customer/title when HERO no
         # longer supplies a usable value; nothing is cleared or renamed.
         for field in keep:
@@ -1865,34 +2004,12 @@ def _migrate_project(record: dict[str, object], run) -> Result:
         return drift
     result = _upsert(
         "project", source_id, record, values, "Project", "project_name", plan.mapping_version, run,
-        source_instance=source_instance, required_on_create=("customer", "project_name"),
+        source_instance=source_instance, required_on_create=tuple(field for field in ("customer", "project_name") if field not in deferred_fields),
         comparison_extra=title_basis, document_name=document_name,
         review_reason=" ".join(review) or None,
         creation_values=None if getattr(plan, 'adapter_options', None) else _project_creation_values(record, values.get("company")),
     )
-    field_conflict = result.code == 'CONFLICT' and (result.detail or '').startswith('Field conflict requires review:')
-    if (run.mode != 'Preview' and result.target_name and 'project_match_assignments' in record
-            and (result.code in {'CREATED', 'UPDATED', 'SKIPPED', 'CONVERGED', 'OBSERVED'} or field_conflict)):
-        from hero_integration.integrations.project_assignments import sync as sync_assignees
-        from hero_integration.services.employee_migration import historical_users
-        historical = historical_users(source_instance)
-        kwargs = {'allow_removals': False} if field_conflict else {}
-        if historical:
-            kwargs['historical_user_ids'] = historical
-        assignees = sync_assignees(result.target_name, record, **kwargs)
-        if assignees.get('historical'):
-            record_output(run=run.name, source_type='project', source_id=str(source_id), result='SKIPPED',
-                          action='project_historical_reference', target_doctype='Project', target_name=result.target_name,
-                          detail=frappe._('{0} deleted HERO users remain as historical references; existing assignments were preserved.').format(assignees['historical']))
-        if assignees["unmatched"]:
-            detail = frappe._(
-                '{0} project assignee(s) could not be resolved to an active, source-bound ERPNext user; existing assignments were preserved and require review.'
-            ).format(assignees['unmatched'])
-            record_output(run=run.name, source_type='project', source_id=str(source_id), result='PENDING_REVIEW',
-                          action='project_assignment_review', target_doctype='Project',
-                          target_name=result.target_name, detail=detail)
-            from dataclasses import replace
-            result = replace(result, pending_relation=True)
+    result = _project_assignments_after_import(record,run,result,source_id,source_instance)
     if (getattr(plan, 'adapter_options', None)
             and (result.target_name or run.mode == 'Preview')
             and result.code in {'CREATED', 'UPDATED', 'SKIPPED', 'CONVERGED', 'OBSERVED', 'PREVIEW_OK'}):
@@ -1910,8 +2027,11 @@ def _migrate_project(record: dict[str, object], run) -> Result:
 
 
 def _sync_mapped_relations(plan, record, result, run):
-    """Run declared native relationships inside the record transaction."""
+    """Preview declared relations or realize them inside the post-success worker."""
     if not getattr(plan, 'adapter_options', None) or not plan.adapter_options.get('native_relations'):
+        return result
+    from hero_integration.services.deferred_references import realizing
+    if run.mode != 'Preview' and not realizing():
         return result
     if result.code not in {'CREATED', 'UPDATED', 'SKIPPED', 'CONVERGED', 'OBSERVED', 'PREVIEW_OK'}:
         return result
@@ -2117,6 +2237,7 @@ def observe_monitor_record(operation: str, record: dict[str, object]) -> Result 
     return None
 
 
+@measured('migration.target_upsert')
 def _upsert(
     source_type,
     source_id,
@@ -2133,6 +2254,7 @@ def _upsert(
     source_instance: str = "default",
     creation_values: dict | None = None,
     preserve_omitted: bool = False,
+    preserve_unselected: bool = False,
     comparison_extra: dict | None = None,
     required_on_create: tuple[str, ...] = (),
     document_name: str | None = None,
@@ -2142,6 +2264,10 @@ def _upsert(
         return Result("UNAVAILABLE", f"{doctype} is not installed on this site.")
     source_hash = _digest(record)
     existing = _link(source_type, source_id, source_instance)
+    if preserve_unselected:
+        from hero_integration.services.deferred_references import realizing
+        if not realizing() or run.mode=='Preview' or not existing:
+            raise MappingPlanError('Relationship-only updates require their imported target and realization service.')
     held = _review_hold(existing)
     if held:
         return held
@@ -2193,7 +2319,7 @@ def _upsert(
         if doctype == 'Task':
             prior_target = _task_midnight_baseline(prior_source, prior_target, target_values)
         target_field_hashes = field_hashes(target_values)
-        if preserve_omitted:
+        if preserve_omitted or preserve_unselected:
             # Events omit unconfirmed values entirely: their acknowledged
             # baselines are carried forward instead of being compared.
             comparison.omit(set(prior_source) | set(prior_target))
@@ -2840,10 +2966,22 @@ def _migrate_mapped_task(record, run, plan, scope) -> Result:
     try:
         values = mapped_values(plan, record,
             project_link=lambda value: _project_name_or_deferred(value, instance, plan, record))
+        _defer_reference_values(plan, values, run)
         if values.get('completed_on'):
             values['status'] = 'Completed'
     except (ValueError, MappingPlanError) as error:
         return Result('BLOCKED_RECORD', str(error))
+    if not values.get('subject'):
+        return Result('BLOCKED_RECORD', 'A mapped Task title is required for intake.')
+    result = _upsert('Task', source_id, record, values, 'Task', 'subject', plan.mapping_version, run,
+        source_instance=instance, required_on_create=('subject',))
+    return _mapped_task_assignment(record,run,plan,result)
+
+
+def _mapped_task_assignment(record,run,plan,result):
+    from hero_integration.services.query_mapping import mapped_values
+    instance = _source_instance(record)
+    source_id = plan.source_identity(record)
     from hero_integration.services.direct_mapping import MISSING, lookup
     assignment_rule = next((spec for spec in plan.definitions if spec.target_doctype == 'ToDo'
                             and spec.target_field == 'allocated_to'), None)
@@ -2855,10 +2993,8 @@ def _migrate_mapped_task(record, run, plan, scope) -> Result:
         # A bad or unresolved assignee is not evidence that the Task itself
         # is invalid. Keep any local assignment and report the relation apart.
         assignment, assignment_error = {}, str(error)
-    if not values.get('subject'):
-        return Result('BLOCKED_RECORD', 'A mapped Task title is required for intake.')
-    result = _upsert('Task', source_id, record, values, 'Task', 'subject', plan.mapping_version, run,
-        source_instance=instance, required_on_create=('subject',))
+    if result.code not in {'CREATED','UPDATED','SKIPPED','CONVERGED','OBSERVED','PREVIEW_OK'}:
+        return result
     from hero_integration.services.employee_migration import historical_users
     if (type(raw_assignee) is int and str(raw_assignee) in historical_users(instance)
             and result.target_name and result.code in {'CREATED', 'UPDATED', 'SKIPPED', 'CONVERGED', 'OBSERVED'}):
@@ -2873,6 +3009,8 @@ def _migrate_mapped_task(record, run, plan, scope) -> Result:
             detail='Task was imported; its assignee requires review: ' + assignment_error)
         from dataclasses import replace
         result = replace(result, pending_relation=True)
+    if _defer_relationships(run):
+        return result
     recipient = assignment.get('allocated_to')
     if recipient and result.target_name and result.code in {'CREATED', 'UPDATED', 'SKIPPED', 'CONVERGED', 'OBSERVED', 'PREVIEW_OK'}:
         assignment_rule = next(spec for spec in plan.definitions if spec.target_doctype == 'ToDo')
