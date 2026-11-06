@@ -20,7 +20,7 @@ The test never contacts HERO. It runs these steps:
    (introspection JSON) is optional; a v2 package brings its own snapshot.
 7. `uninstall-app hero_integration`.
 
-The disposable test site now seeds a minimal ERPNext Company when the setup wizard has not run. Optional schema and configuration imports use a **separate new site** so the app test suite cannot affect the import checks. This does not install or verify the separately distributed assignment-intent framework patch.
+The disposable test site seeds a minimal ERPNext Company when the setup wizard has not run. Before site tests, the shared gate provisions the checked-in mapping-owned Task deadline schema on the explicitly selected test-enabled site; product tests create and roll back their own synthetic item masters. Optional schema and configuration imports use a **separate new site** so the app test suite cannot affect the import checks. This does not install or verify the separately distributed assignment-intent framework patch.
 
 Image requirements: Python 3.14 (`requires-python >=3.14`), Node 20+, yarn,
 git, MariaDB client, `frappe-bench` (pip). Services: MariaDB 11, Redis 7.

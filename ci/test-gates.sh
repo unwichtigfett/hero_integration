@@ -28,6 +28,10 @@ run_hero_test_gates() {
   "$python" "$app/ci/check-test-report.py" --phase offline \
     --report "$report_dir/offline.xml" --minimum "$minimum" || return "$?"
 
+  # The deadline is mapping-owned, so a clean install does not create it.
+  # Provision the checked-in schema only on this explicitly selected test site.
+  HERO_CI_TEST_SITE="$site" bench --site "$site" execute hero_integration.tests.ci_fixture_setup.prepare || return "$?"
+
   # These tests commit through multiple real MariaDB connections. Opt in only on
   # the explicitly disposable site created by the caller, never the test server.
   if HERO_RUN_RESERVATION_TEST_SITE="$site" HERO_WRITEBACK_SOURCE_TEST_SITE="$site" \
