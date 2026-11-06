@@ -16,6 +16,8 @@ class _DB:
         self.runs, self.defaults = {}, {}
 
     def get_value(self, doctype, name, field):
+        if doctype == 'DefaultValue':
+            return self.defaults.get(name['defkey'])
         return self.runs.get(name, {}).get(field)
 
     def set_value(self, doctype, name, values, value=None):
@@ -248,6 +250,25 @@ class TestFullMigrationChain(unittest.TestCase):
             self.assertEqual(order,['commit','FULL'])
         self.assertEqual(self.queued, [])
 
+    def test_cached_parent_miss_cannot_strand_a_completed_task_child(self):
+        self.db.defaults[fm.CHILD_KEY.format('TASKS')] = 'FULL'
+        with patch.object(self.db, 'get_default', return_value=None), \
+                patch.object(fm, 'execute') as execute:
+            fm.on_run_finished('TASKS')
+        execute.assert_called_once_with('FULL')
+
+    def test_stale_cached_checkpoint_cannot_start_a_duplicate_child(self):
+        fm._save_full('FULL', {'step': 4, 'child': 'TASKS', 'notes': [],
+            'steps': list(fm.NEW_FULL_STEPS), 'completed_children': ['EVENTS']})
+        self.db.runs['TASKS'] = {'state': 'Queued'}
+        stale = json.dumps({'step': 3, 'child': 'EVENTS', 'notes': [],
+            'steps': list(fm.NEW_FULL_STEPS), 'completed_children': []})
+        self.db.runs['EVENTS'] = {'state': 'Completed'}
+        with patch.object(self.db, 'get_default', return_value=stale):
+            fm.advance_full('FULL')
+            self.assertEqual(fm._full('FULL')['child'], 'TASKS')
+        self.assertEqual(self.started, [])
+
 
 class TestFileSlice(unittest.TestCase):
     def run_slice(self, state):
@@ -351,7 +372,8 @@ class TestSourceBinding(unittest.TestCase):
         sample = {'version': 1, 'source_instance': 'source-a', 'source_binding_revision': 3,
                   'project_reader_fingerprint': project_reader_fingerprint(read), 'project_ids': ['1']}
         run = SimpleNamespace(name='CHILD', testing_enabled=1, action='Employee Migration')
-        fake = SimpleNamespace(db=SimpleNamespace(get_default=lambda key: 'FULL'))
+        fake = SimpleNamespace(db=SimpleNamespace(get_default=lambda key: None,
+            get_value=lambda doctype, filters, field: 'FULL'))
         with patch.object(fm, 'frappe', fake), patch.object(fm, '_full', return_value={'related_test_enabled': True, 'related_test_digest': 'digest'}), \
              patch.object(fm, '_load_related_test', return_value=sample), \
              patch.object(fm, 'bound_configuration', return_value=_config()), \

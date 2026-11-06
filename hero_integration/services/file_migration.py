@@ -94,7 +94,7 @@ def related_test_for_run(run):
     """Return only a still-valid sample belonging to this full-run child."""
     if not bool(int(getattr(run, 'testing_enabled', 0) or 0)):
         return None
-    parent = frappe.db.get_default(CHILD_KEY.format(run.name))
+    parent = _parent_run(run.name)
     if not parent:
         return None
     state = _full(parent)
@@ -275,7 +275,7 @@ def retry_full_relationships(run_name: str):
         raise SourceBindingError('Only a finished full import can restart its relationship pass.')
     bound_configuration(run)
     for child in state['completed_children']:
-        if (frappe.db.get_default(CHILD_KEY.format(child))!=run_name or
+        if (_parent_run(child)!=run_name or
                 frappe.db.get_value('HERO Integration Run',child,'state') not in SUCCESS or
                 frappe.db.get_value('HERO Integration Run',child,'source_instance')!=run.source_instance):
             raise SourceBindingError('The full import child scope no longer matches its relationship pass.')
@@ -438,7 +438,7 @@ def on_run_finished(run_name: str) -> None:
     """Notify relationship realization and advance an originating Full Migration."""
     from hero_integration.services.deferred_references import notify_completed_run
     notify_completed_run(run_name)
-    parent = frappe.db.get_default(CHILD_KEY.format(run_name))
+    parent = _parent_run(run_name)
     if parent and frappe.db.get_value("HERO Integration Run", parent, "state") in ACTIVE:
         # Publish the child's terminal state and release its reservation before
         # the parent's locked transition. The next child still runs in its own
@@ -558,8 +558,21 @@ def _start_step(action: str, parent: str) -> str:
 
 # ---------------------------------------------------------------- state helpers
 
+def _stored_default(key: str):
+    """Read workflow state from its durable row, bypassing Frappe's defaults cache.
+
+    Other workers can populate that cache before a new child or checkpoint
+    commits. Cached defaults must not decide sample scope or chain progression.
+    """
+    return frappe.db.get_value('DefaultValue', {'parent': '__default', 'defkey': key}, 'defvalue')
+
+
+def _parent_run(run_name: str):
+    return _stored_default(CHILD_KEY.format(run_name))
+
+
 def _full(run_name: str) -> dict:
-    raw = frappe.db.get_default(FULL_KEY.format(run_name))
+    raw = _stored_default(FULL_KEY.format(run_name))
     return json.loads(raw) if raw else {"step": 0, "child": "", "notes": []}
 
 

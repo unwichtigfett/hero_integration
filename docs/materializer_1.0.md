@@ -184,6 +184,10 @@ parent directly through the existing locked full-run executor. The next area
 still receives its own queued job; no extra queue notification is needed between
 the Project completion and Event creation. Duplicate notifications re-read the
 current child under the full-run lock, and cancelled parents remain stopped.
+Parent-child associations and full-run checkpoints are read directly from their
+durable `DefaultValue` rows. Frappe's defaults cache can contain a missing parent
+or an older checkpoint populated before another worker commits. That cache must
+not control continuation or selection of the frozen related test sample.
 Cleanup failures after a durable child completion still attempt this handoff;
 a retry of a terminal child repairs handoff without repeating scalar import.
 This removes a notification dependency but does not reconstruct the cause of a
