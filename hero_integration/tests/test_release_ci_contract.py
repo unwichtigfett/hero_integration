@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class TestReleaseCiGate(unittest.TestCase):
-    def run_gate(self, *, offline_status=0, site_status=0, offline_count=2, site_count=2,
+    def run_gate(self, *, offline_status=0, site_status=0, fixture_status=0, offline_count=2, site_count=2,
                  offline_outcome=None, site_outcome=None, stale_site=False):
         function = (ROOT / 'ci/test-gates.sh').read_text()
         with tempfile.TemporaryDirectory() as tmp:
@@ -48,6 +48,10 @@ exec "$REAL_PYTHON" "$@"
 git() { printf 'synthetic-commit\\n'; }
 bench() {
   printf '%s\\n' "$*" >> "$TRACE"
+  if [[ "$*" == *"execute hero_integration.tests.ci_fixture_setup.prepare"* ]]; then
+    [[ "$HERO_CI_TEST_SITE" == "$SITE" ]] || return 8
+    return "${FIXTURE_STATUS:-0}"
+  fi
   printf '%s %s %s\\n' "$HERO_RUN_RESERVATION_TEST_SITE" "$HERO_WRITEBACK_SOURCE_TEST_SITE" "$HERO_CHECKPOINT_TEST_SITE" >> "$TRACE"
   printf 'SYNTHETIC_SITE_DIAGNOSTIC\\n'
   for (( i=0; i<SITE_COUNT; i++ )); do printf ' ✔ synthetic_test\\n'; done
@@ -58,7 +62,7 @@ run_hero_test_gates
 printf 'GATE_PASSED\\n'
 '''
             env = dict(os.environ, MIN_TESTS='1', HERO_TEST_LOG_DIR=tmp,
-                       OFFLINE_STATUS=str(offline_status), SITE_STATUS=str(site_status),
+                       OFFLINE_STATUS=str(offline_status), SITE_STATUS=str(site_status), FIXTURE_STATUS=str(fixture_status),
                        OFFLINE_COUNT=str(offline_count), SITE_COUNT=str(site_count), TRACE=str(root / 'trace'),
                        REAL_PYTHON=sys.executable, STALE_SITE=str(int(stale_site)), SITE='hero-ci.localhost')
             result = subprocess.run(['bash', '-euo', 'pipefail', '-c', script], cwd=root, env=env,
@@ -78,6 +82,12 @@ printf 'GATE_PASSED\\n'
         self.assertIn('run-tests --app hero_integration', trace)
         self.assertNotIn('--module', trace)
         self.assertNotIn('GATE_PASSED', result.stdout)
+
+    def test_schema_fixture_failure_stops_before_site_tests(self):
+        result, trace = self.run_gate(fixture_status=6)
+        self.assertEqual(result.returncode, 6)
+        self.assertIn('execute hero_integration.tests.ci_fixture_setup.prepare', trace)
+        self.assertNotIn('run-tests --app hero_integration', trace)
 
     def test_incomplete_discovery_is_not_a_pass(self):
         for changes in ({'offline_count': 0}, {'site_count': 0}):

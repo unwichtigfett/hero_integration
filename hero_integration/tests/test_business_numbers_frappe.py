@@ -39,6 +39,17 @@ class TestBusinessNumbersOnERPNext(unittest.TestCase):
             "HERO Integration Link", {"source_type": source_type, "source_id": self.source_id}, "target_name",
         )
 
+    def item_masters(self):
+        """Create isolated item masters even when the setup wizard has not run."""
+        root = frappe.db.get_value('Item Group', {'is_group': 1, 'parent_item_group': ('is', 'not set')}, 'name')
+        if not root:
+            root = frappe.get_doc({'doctype': 'Item Group', 'item_group_name': 'Synthetic Root ' + self.digits,
+                                   'is_group': 1}).insert().name
+        group = frappe.get_doc({'doctype': 'Item Group', 'item_group_name': 'Synthetic Group ' + self.digits,
+                                'parent_item_group': root, 'is_group': 0}).insert().name
+        uom = frappe.get_doc({'doctype': 'UOM', 'uom_name': 'Synthetic Unit ' + self.digits}).insert().name
+        return group, uom
+
     def test_the_hero_number_names_a_new_customer_despite_the_naming_series(self):
         for number in (self.digits, "0" + self.digits):
             with self.subTest(number=number):
@@ -140,9 +151,10 @@ class TestBusinessNumbersOnERPNext(unittest.TestCase):
 
     def test_product_collision_records_a_real_conflict_without_fake_baselines(self):
         from hero_integration.services import product_migration
+        group, uom = self.item_masters()
         item = frappe.get_doc({'doctype': 'Item', 'item_code': 'TEST-' + self.digits,
-                               'item_name': 'Synthetic collision', 'item_group': 'All Item Groups',
-                               'stock_uom': 'Nos', 'is_stock_item': 0}).insert()
+                               'item_name': 'Synthetic collision', 'item_group': group,
+                               'stock_uom': uom, 'is_stock_item': 0}).insert()
         result = product_migration._code_taken(None, {'product_id': self.source_id}, item.name,
                                                'default', SimpleNamespace(mapping_version='test'))
         self.assertEqual(result, 'conflict')
@@ -155,15 +167,16 @@ class TestBusinessNumbersOnERPNext(unittest.TestCase):
 
     def test_product_with_service_number_gets_a_separate_stable_item(self):
         from hero_integration.services import product_migration
+        group, uom = self.item_masters()
         code = 'TEST-SERVICE-' + self.digits
         service = frappe.get_doc({'doctype': 'Item', 'item_code': code, 'item_name': 'Synthetic service',
-                                  'item_group': 'All Item Groups', 'stock_uom': 'Nos', 'is_stock_item': 0}).insert()
+                                  'item_group': group, 'stock_uom': uom, 'is_stock_item': 0}).insert()
         frappe.get_doc({'doctype': 'HERO Integration Link', 'source_system': 'HERO', 'source_instance': 'default',
             'source_type': 'supply_service', 'source_id': self.source_id, 'target_doctype': 'Item',
             'target_name': service.name, 'sync_status': 'Synchronized', 'mapping_version': 'test',
             'source_payload_hash': 'synthetic-source', 'target_payload_hash': 'synthetic-target'}).insert()
-        values = {'item_code': code, 'item_name': 'Synthetic article', 'item_group': 'All Item Groups',
-                  'stock_uom': 'Nos', 'owned': ('item_name', 'item_group', 'stock_uom'),
+        values = {'item_code': code, 'item_name': 'Synthetic article', 'item_group': group,
+                  'stock_uom': uom, 'owned': ('item_name', 'item_group', 'stock_uom'),
                   'barcode': None, 'supplier': None, 'buying': None, 'selling': None}
         row = {'product_id': self.source_id}
         read = SimpleNamespace(mapping_version='test', plan=SimpleNamespace(adapter_options={}))
