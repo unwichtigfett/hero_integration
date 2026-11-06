@@ -3,6 +3,8 @@
 #   -> promote: raise the patch version, fast-forward hero_int_1.0, tag v<version>.
 # Any failure stops the chain; hero_int_1.0 then keeps its state.
 # Release commits carry "[skip ci]", so the promotion push starts no new pipeline.
+# Opt route: hero_int_dev_opt -> the same GitHub/install gates -> hero_int_opt.
+# It uses opt-v<version> tags and does not update the standard test site.
 # The logic lives in ci/*.sh.
 #
 # The complete package export (it contains the HERO schema snapshot) is not in the
@@ -10,7 +12,7 @@
 # The repository must be "trusted" in Woodpecker so the read-only volume can be mounted.
 when:
   - event: [manual, push]
-    branch: [hero_int_dev, hero_int_1.0]
+    branch: [hero_int_dev, hero_int_1.0, hero_int_dev_opt, hero_int_opt]
 
 services:
   - name: mariadb
@@ -77,6 +79,22 @@ steps:
     when:
       - event: push
         branch: hero_int_dev
+    environment:
+      GITHUB_REMOTE: https://github.com/unwichtigfett/hero_integration.git
+      GITHUB_TOKEN:
+        from_secret: github_release_token
+    commands:
+      - apk add --no-cache -q bash git
+      - bash ci/promote-release.sh
+
+  # Optimization releases use their own branch and tag namespace. The shared
+  # VPS2 test-site updater remains exclusive to the standard development lane.
+  - name: promote-opt
+    depends_on: [install-test]
+    image: alpine:3.22.2@sha256:4b7ce07002c69e8f3d704a9c5d6fd3053be500b7f1c69fc0d80990c2ad8dd412
+    when:
+      - event: push
+        branch: hero_int_dev_opt
     environment:
       GITHUB_REMOTE: https://github.com/unwichtigfett/hero_integration.git
       GITHUB_TOKEN:

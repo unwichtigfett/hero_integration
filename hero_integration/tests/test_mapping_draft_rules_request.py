@@ -138,7 +138,7 @@ class TestPersonalRulesRequest(base.TestMappingDraftAPIRequest):
                 'expected_draft_revision':draft['content_revision'],'expected_active_revision':draft['base_active_revision'],
                 'mapping_json':json.dumps(content)}
 
-    def test_private_rules_revision_frozen_template_change_and_discard(self):
+    def test_private_rules_revision_survives_template_change(self):
         active=self.prepare_rules(); a=self.create('a'); b=self.create('b')
         self.assertEqual('original_target',a['content']['field_rules'][self.rule_id]['target_field'])
         content=deepcopy(a['content']);content['field_rules'][self.rule_id]['target_field']='personal_target'
@@ -152,7 +152,7 @@ class TestPersonalRulesRequest(base.TestMappingDraftAPIRequest):
         # Fixture-only template change; never a personal-write side effect.
         frappe.db.set_value('HERO Frappe Mapping',self.rule_name,{'target_field':'later_template','mapping_revision':2,'operation':'later_template_operation'})
         frappe.db.commit();frappe.destroy()
-        history=self.rpc('a','mapping_draft_revisions',{'definition_id':self.definition})[1]['message']
+        history=self.revisions('a')
         self.assertEqual(content,history['items'][0]['content'])
         self.assertEqual('readThings',history['items'][0]['content']['field_rule_bases'][self.rule_id]['operation'])
         status,data=self.rpc('a','mapping_draft_save',self.args_for(saved,content),'POST')
@@ -160,9 +160,7 @@ class TestPersonalRulesRequest(base.TestMappingDraftAPIRequest):
         self.assertEqual(saved['content_revision'],data['message']['draft']['content_revision'])
         status,data=self.rpc('a','mapping_draft_save',self.args_for(a,content),'POST')
         self.assertEqual(417,status,data);self.assertEqual('TimestampMismatchError',data['exc_type'])
-        status,data=self.rpc('a','mapping_draft_discard',{'definition_id':self.definition,'expected_generation':1,'expected_draft_revision':1,'confirmed':True},'POST')
-        self.assertEqual(200,status,data)
-        self.assertEqual(content,self.rpc('a','mapping_draft_revisions',{'definition_id':self.definition})[1]['message']['items'][0]['content'])
+        self.assertEqual(content, self.revisions('a')['items'][0]['content'])
 
     def test_rule_provenance_extra_parameters_and_privilege_injection_rejected_atomically(self):
         self.prepare_rules();draft=self.create();before=self.state()
@@ -178,7 +176,7 @@ class TestPersonalRulesRequest(base.TestMappingDraftAPIRequest):
         for content in variants:
             status,data=self.rpc('a','mapping_draft_save',self.args_for(draft,content),'POST')
             self.assertEqual(417,status,data);self.assertEqual(before,self.state())
-        for method,verb in [('mapping_draft_read','GET'),('mapping_draft_revisions','GET'),('mapping_draft_create','POST')]:
+        for method,verb in [('mapping_draft_read','GET'),('mapping_draft_create','POST')]:
             self.assertEqual(403,self.rpc('employee',method,{'definition_id':self.definition},verb)[0])
         self.assertEqual(403,self.rpc('employee','mapping_draft_save',self.args_for(draft,draft['content']),'POST')[0])
         self.assertEqual(before,self.state())
@@ -217,7 +215,7 @@ class TestPersonalRulesRequest(base.TestMappingDraftAPIRequest):
             outcomes=[queue.get(timeout=20),queue.get(timeout=20)]
             self.assertEqual(2,len({v[0] for v in outcomes}));self.assertCountEqual(['SAVED','CONFLICT'],[v[1] for v in outcomes])
             self.assertEqual(1,self.rpc('a','mapping_draft_read',{'definition_id':self.definition})[1]['message']['draft']['content_revision'])
-            self.assertEqual(1,self.rpc('a','mapping_draft_revisions',{'definition_id':self.definition})[1]['message']['total'])
+            self.assertEqual(1,self.revisions('a')['total'])
             print('RULE_CAS_REAL_CONNECTIONS',outcomes,flush=True)
         finally:
             for process in processes:
@@ -256,24 +254,19 @@ class TestPersonalRulesRequest(base.TestMappingDraftAPIRequest):
         saved=result['message']['draft'];self.assertEqual(1,saved['content_revision']);self.assertEqual(exact,json.loads(saved['content_json']))
         read=self.rpc('a','mapping_draft_read',{'definition_id':self.definition})[1]['message']['draft'];self.assertEqual(saved,read)
         for number in json.loads(read['content_json'])['additional_parameter']['integers'][:4]:self.assertIs(type(number),int)
-        history=self.rpc('a','mapping_draft_revisions',{'definition_id':self.definition})[1]['message']['items'][0];self.assertEqual(saved['content_json'],history['content_json']);self.assertEqual(saved['content_hash'],history['content_hash'])
+        history=self.revisions('a')['items'][0];self.assertEqual(saved['content_json'],history['content_json']);self.assertEqual(saved['content_hash'],history['content_hash'])
         before=self.state();bad=deepcopy(exact);bad['additional_parameter']['integers'][2]=9007199254740992
         self.assertEqual(417,self.rpc('a','mapping_draft_save',self.args_for(saved,bad),'POST')[0])
         injected=self.args_for(saved,exact);injected['content_json']='{}'
         self.assertEqual(417,self.rpc('a','mapping_draft_save',injected,'POST')[0]);self.assertEqual(before,self.state())
         status,result=self.rpc('a','mapping_draft_save',self.args_for(saved,exact),'POST');self.assertEqual(200,status,result);self.assertTrue(result['message']['unchanged'])
 
-    def test_long_reference_identities_are_exact_across_active_pages_and_draft_roundtrip(self):
+    def test_long_reference_identities_are_exact_across_draft_roundtrip(self):
         content=self.prepare_rules();prefix=('r'+uuid4().hex).ljust(120,'r');ids=[prefix,prefix+'a',prefix+'a'*19+'A',prefix+'a'*19+'B']
         base.connect();template=frappe.get_doc('HERO Frappe Mapping',self.rule_name).as_dict()
         for i,identity in enumerate([prefix+'c'+str(n).zfill(19) for n in range(101)]+ids):
             row=dict(template,name='SYNTHETIC-LONG-'+self.definition+'-'+str(i).zfill(4),definition_id=identity);frappe.get_doc(row).db_insert()
         content['mapping_definition_ids']=ids;frappe.db.set_value('HERO GraphQL Mapping',self.rows['active'],'mapping_json',json.dumps(content));frappe.db.commit();frappe.destroy()
-        found=[]
-        for start in (0,100):
-            status,result=self.rpc('employee','frontend_mapping_list',{'search':prefix,'start':start,'page_size':100});self.assertEqual(200,status,result);self.assertEqual(105,result['message']['pagination']['frappe_total']);found+=result['message']['frappe_mappings']
-        self.assertEqual(ids,[row['definition_id'] for row in found if row['definition_id'] in ids])
-        detail=self.rpc('employee','frontend_mapping_detail',{'mapping_type':'frappe','name':found[-1]['name']})[1]['message'];self.assertEqual(ids[-1],detail['definition_id'])
         draft=self.create();self.assertEqual(ids,draft['content']['mapping_definition_ids']);self.assertEqual(set(ids),set(draft['content']['field_rules']))
         edited=json.loads(draft['content_json']);edited['field_rules'][ids[-1]]['target_field']='last-exact-id'
         status,result=self.rpc('a','mapping_draft_save',self.args_for(draft,edited),'POST');self.assertEqual(200,status,result);self.assertEqual(edited,json.loads(result['message']['draft']['content_json']))
@@ -354,7 +347,7 @@ class TestPersonalRulesRequest(base.TestMappingDraftAPIRequest):
             self.assertEqual(2,len({item[0] for item in outcomes}));self.assertCountEqual(['SAVED','CONFLICT'],[item[1] for item in outcomes])
             saved=self.rpc('a','mapping_draft_read',{'definition_id':self.definition})[1]['message']['draft']
             self.assertEqual((1,1),(saved['content_revision'],saved['reconciliation_revision']))
-            self.assertEqual(1,self.rpc('a','mapping_draft_revisions',{'definition_id':self.definition})[1]['message']['total'])
+            self.assertEqual(1,self.revisions('a')['total'])
             print('RECONCILIATION_CAS_REAL_CONNECTIONS',outcomes,flush=True)
         finally:
             for process in processes:

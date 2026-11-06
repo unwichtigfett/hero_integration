@@ -21,20 +21,18 @@ from hero_integration.services.service_schema import ITEM_FIELDS
 
 OPERATION = "HeroServices"
 SOURCE_TYPE = "supply_service"
-VERSION = "service-migration-v1"
+VERSION = "service-migration-v2"
 CALCULATION = "custom_hero_service_calculation"
-DETAIL_QUERY = '''query ServiceComposition($ids:[Int], $first:Int!) {
- supply_services(service_ids:$ids, first:$first) {
-  id company_id modified created is_deleted
-  positions { __typename
-   ... on Documents_SupplyProduct { id name unit_type quantity net_price_per_unit base_price time_minutes
-    company_id nr ean manufacturer manufacturer_nr internal_identifier supply_service_id supplier_id }
-   ... on WageGroup { id name unit_type quantity time_minutes net_price_per_unit wage_cost_price
-    wage_per_hour profit_markup activity tracking_time_id created modified company_id }
-  }
-  file_upload { id uuid filename type size is_deleted modified url_download }
- }
-}'''
+DETAIL_PATHS = (
+    'id', 'company_id', 'modified', 'created', 'is_deleted', 'positions.__typename',
+    *(f'positions.@Documents_SupplyProduct.{name}' for name in (
+        'id', 'name', 'unit_type', 'quantity', 'net_price_per_unit', 'base_price', 'time_minutes',
+        'company_id', 'nr', 'ean', 'manufacturer', 'manufacturer_nr', 'internal_identifier', 'supply_service_id', 'supplier_id')),
+    *(f'positions.@WageGroup.{name}' for name in (
+        'id', 'name', 'unit_type', 'quantity', 'time_minutes', 'net_price_per_unit', 'wage_cost_price',
+        'wage_per_hour', 'profit_markup', 'activity', 'tracking_time_id', 'created', 'modified', 'company_id')),
+    *(f'file_upload.{name}' for name in ('id', 'uuid', 'filename', 'type', 'size', 'is_deleted', 'modified', 'url_download')),
+)
 
 
 class ServiceBlocked(SourceBindingError):
@@ -74,10 +72,21 @@ def service_values(row, read):
     return code.strip(), values, barcode, selling
 
 
-def preflight(instance):
-    from graphql import build_client_schema, parse, validate
+def _composition_request(snapshot, ids):
+    from hero_integration.services.mapping_contract_v1 import QueryAdapter, QueryDraft
+    return QueryAdapter().materialize(snapshot, QueryDraft('ServiceComposition', 'supply_services', 'supply_services',
+        DETAIL_PATHS, {'service_ids': ids, 'first': max(len(ids), 1)}))
+
+
+def _attachment_request(snapshot, ids):
+    from hero_integration.services.mapping_contract_v1 import QueryAdapter, QueryDraft
+    paths=tuple(path for path in DETAIL_PATHS if path in {'id','company_id'} or path.startswith('file_upload.'))
+    return QueryAdapter().materialize(snapshot, QueryDraft('ServiceAttachment','supply_services','supply_services',
+        paths,{'service_ids':ids,'first':max(len(ids),1)}))
+
+
+def preflight(instance, read=None):
     from hero_integration.integrations.erpnext.company import project_company
-    from hero_integration.services.graphql_graph import normalize_schema
 
     company = project_company()
     if not company.is_valid:
@@ -90,15 +99,13 @@ def preflight(instance):
         raise ServiceBlocked("An enabled Standard Selling price list with currency is required.")
     if price_list.currency != frappe.db.get_value("Company", company.name, "default_currency"):
         raise ServiceBlocked("Service selling price currency must match the ERPNext company currency.")
-    names = frappe.get_all("HERO GraphQL Schema Snapshot", filters={"source_instance": instance,
-                           "analysis_status": "Validated"}, pluck="name", order_by="modified desc", limit_page_length=1)
-    if not names:
-        raise ServiceBlocked("Service migration requires a validated source schema.")
-    snapshot = frappe.get_doc("HERO GraphQL Schema Snapshot", names[0])
-    schema = build_client_schema({"__schema": normalize_schema(json.loads(snapshot.snapshot_json))})
-    if validate(schema, parse(DETAIL_QUERY)):
-        raise ServiceBlocked("The service composition query differs from the validated source schema.")
-    return company.name, snapshot.schema_fingerprint
+    read = read or runtime.resolve_read(OPERATION, instance)
+    try:
+        snapshot = runtime.validated_snapshot(read, instance, frappe_module=frappe)
+        _composition_request(snapshot, [])
+    except ValueError as error:
+        raise ServiceBlocked('The service composition cannot be materialized from the approved schema.') from error
+    return company.name, snapshot.fingerprint
 
 
 def scoped_link(instance, kind, identity, target):
@@ -193,7 +200,7 @@ def activity(component, instance):
     return doc.name
 
 
-def composition(positions, instance):
+def composition(positions, instance, *, realize=True):
     if not isinstance(positions, list) or len(positions) > 1000:
         raise ServiceBlocked("Service composition is missing or exceeds its bound.")
     result = []
@@ -206,14 +213,18 @@ def composition(positions, instance):
                   "quantity": number(row.get("quantity")), "unit_price": number(row.get("net_price_per_unit")),
                   "time_minutes": number(row.get("time_minutes")), "resolution": "Linked"}
         if kind == "Documents_SupplyProduct":
-            link = scoped_link(instance, "supply_product", row["id"], "Item")
+            link = scoped_link(instance, "supply_product", row["id"], "Item") if realize else None
             if link and link.sync_status == "Synchronized":
                 values["item_code"] = link.target_name
             else:
                 values["resolution"] = "Unresolved"
         else:
-            values.update(activity_type=activity(row, instance), cost_price=number(row.get("wage_cost_price")),
+            values.update(cost_price=number(row.get("wage_cost_price")),
                           hourly_rate=number(row.get("wage_per_hour")), markup=number(row.get("profit_markup")))
+            if realize:
+                values['activity_type'] = activity(row, instance)
+            else:
+                values['resolution'] = 'Unresolved'
         consumed = {"__typename", "id", "name", "unit_type", "quantity", "net_price_per_unit", "time_minutes"}
         if kind == "WageGroup":
             consumed |= {"wage_cost_price", "wage_per_hour", "profit_markup"}
@@ -277,14 +288,17 @@ def upsert(row, detail, read, instance, company, downloader):
     if item and selling is not None and not baseline.get("price") and frappe.db.exists("Item Price", {"item_code": code, "price_list": "Standard Selling"}):
         raise ServiceBlocked("An existing selling price requires explicit review before adoption.")
     price = products.plan_price(code, "Standard Selling", selling, fields["stock_uom"], baseline.get("price"))
-    fields[CALCULATION] = composition(detail.get("positions"), instance)
+    observed_calculation = composition(detail.get("positions"), instance, realize=False)
+    if item is None:
+        fields[CALCULATION] = observed_calculation
     for doctype, name, values in [("Item Group", "Services", {"item_group_name": "Services", "parent_item_group": "All Item Groups"}),
                                    ("UOM", fields["stock_uom"], {"uom_name": fields["stock_uom"]}),
                                    ("Brand", fields.get("brand"), {"brand": fields.get("brand")})]:
         if name and not frappe.db.exists(doctype, name):
             frappe.get_doc({"doctype": doctype, **values}).insert(ignore_permissions=True)
-    stable_detail = {**detail, "file_upload": {k:v for k,v in (detail.get("file_upload") or {}).items() if k != "url_download"}}
-    source = products.digest([row, stable_detail, fields, barcode, selling, read.mapping_version, company, VERSION])
+    stable_detail = _stable_detail(detail)
+    source = products.digest([row, stable_detail, {**fields, CALCULATION:observed_calculation},
+                              barcode, selling, read.mapping_version, company, VERSION])
     prior_attachment = baseline.get("attachment")
     if prior_attachment:
         file = frappe.get_doc("File", prior_attachment["name"], for_update=True)
@@ -300,7 +314,7 @@ def upsert(row, detail, read, instance, company, downloader):
         products._set_barcode(item, barcode)
     item.insert(ignore_permissions=True) if is_new else item.save(ignore_permissions=True)
     price_state = products.apply_price(item.name, "Standard Selling", price) if price is not None else baseline.get("price")
-    attachment = attach_file(detail.get("file_upload"), item, instance, downloader, baseline.get("attachment"))
+    attachment = baseline.get("attachment")
     item.reload()  # baseline reflects stored native numeric/default and child-row normalization
     owned = set(fields) | {"barcodes"} | set(baseline.get("values", {}))
     values = normalized(item, owned)
@@ -309,19 +323,97 @@ def upsert(row, detail, read, instance, company, downloader):
     return "added" if is_new else "updated"
 
 
+def _stable_detail(detail):
+    return {**detail, 'file_upload':{key:value for key,value in (detail.get('file_upload') or {}).items()
+                                   if key != 'url_download'}}
+
+
+def remember_relationships(run_name, instance, company, read, row, detail, result):
+    from hero_integration.services.deferred_references import save, invalidate
+    identity = runtime.identity(read, row)
+    if result == 'skipped_rejected':
+        invalidate(instance, OPERATION, identity)
+        return
+    link = scoped_link(instance, SOURCE_TYPE, identity, 'Item')
+    if not link:
+        raise ServiceBlocked('Service relationship observations require their imported source identity.')
+    dependencies = set()
+    for component in detail['positions']:
+        kind = 'supply_product' if component['__typename'] == 'Documents_SupplyProduct' else 'WageGroup'
+        dependencies.add((kind, str(component['id'])))
+    file = detail.get('file_upload') or {}
+    if file.get('id') is not None and not file.get('is_deleted'):
+        dependencies.add(('service_file', str(file['id'])))
+    save(run_name, instance, OPERATION, identity, read.mapping_version,
+        {'row':row, 'detail':detail, 'company':company, 'target_name':link.target_name,
+         'source_hash':link.source_payload_hash}, sorted(dependencies), defer_empty=True)
+
+
+def realize_relationships(pending, config):
+    """Realize one frozen calculation without repeating the scalar import."""
+    from hero_integration.services.deferred_references import realizing
+    if not realizing():
+        raise ServiceBlocked('Service relationships are owned by the post-success realization service.')
+    observation = json.loads(pending.record_json)
+    row, detail = observation['row'], observation['detail']
+    read = runtime.resolve_read(OPERATION, pending.source_instance)
+    company, _schema = preflight(pending.source_instance, read)
+    if (runtime.identity(read, row) != pending.source_id or read.mapping_version != pending.mapping_version
+            or company != observation['company']):
+        raise ServiceBlocked('The deferred service mapping, company or source identity changed.')
+    link = scoped_link(pending.source_instance, SOURCE_TYPE, pending.source_id, 'Item')
+    if (not link or link.target_name != observation['target_name'] or link.mapping_version != VERSION
+            or link.source_payload_hash != observation['source_hash'] or link.sync_status != 'Synchronized'):
+        raise ServiceBlocked('The imported service observation changed before relationship realization.')
+    item = frappe.get_doc('Item', link.target_name, for_update=True)
+    baseline = baseline_check(link, item)
+    file = detail.get('file_upload')
+    downloader = None
+    if file and not file.get('is_deleted') and (not baseline.get('attachment') or
+            baseline['attachment'].get('source') != products.digest(file)):
+        # Signed URLs are never persisted. Refresh only this service and require
+        # its file identity/metadata and owning service to match the frozen import.
+        from hero_integration.services.file_transfer import _client_and_downloader
+        client, downloader, source = _client_and_downloader(config)
+        if source != pending.source_instance:
+            raise ServiceBlocked('The deferred service attachment belongs to another source.')
+        snapshot = runtime.validated_snapshot(read, pending.source_instance, frappe_module=frappe)
+        request = _attachment_request(snapshot, [row['id']])
+        current = client.query(request.document, request.variables).get('supply_services')
+        if (not isinstance(current, list) or len(current) != 1 or not isinstance(current[0],dict) or
+                current[0].get('id') != detail.get('id') or current[0].get('company_id') != detail.get('company_id') or
+                products.digest(_stable_detail({'file_upload':current[0].get('file_upload')})) !=
+                products.digest(_stable_detail({'file_upload':detail.get('file_upload')}))):
+            raise ServiceBlocked('The service changed before its attachment could be realized.')
+        file = current[0].get('file_upload')
+    calculation = composition(detail.get('positions'), pending.source_instance)
+    from hero_integration.services.change_detection import managed_target_update
+    with managed_target_update('Item', item.name, link.name):
+        item.set(CALCULATION, calculation)
+        item.save(ignore_permissions=True)
+    attachment = attach_file(file, item, pending.source_instance, downloader, baseline.get('attachment'))
+    item.reload()
+    values = normalized(item, set(baseline['values']) | {CALCULATION})
+    write_link(link, pending.source_instance, SOURCE_TYPE, pending.source_id, item, link.source_payload_hash, values,
+               extra={'price':baseline.get('price'), 'attachment':attachment})
+    return 'UPDATED'
+
+
 def sync_services(client, *, source_instance, run_name, downloader, should_stop=None, progress=None, verify_source=None,
                   time_budget=1200, read=None, record_limit=None, continue_on_conflict=False):
     from hero_integration.services.migration_testing import validate_checkpoint
     frappe.only_for("System Manager")
-    company, schema = preflight(source_instance)
     read = read or runtime.resolve_read(OPERATION, source_instance)
+    company, schema = preflight(source_instance, read)
     key = "hero_service_migration:" + run_name
     raw = frappe.db.get_default(key)
     state = json.loads(raw) if raw else {"offset": 0, "counts": {}}
-    stamp = products.digest([source_instance, company, schema, read.mapping_version])
+    stamp = products.digest([source_instance, company, schema, read.mapping_version, VERSION])
     if state.get("stamp") and state["stamp"] != stamp:
         raise ServiceBlocked("Service source, schema, company or mapping changed; start a new run.")
     validate_checkpoint(state if raw else {}, record_limit, stamp=stamp)
+    from hero_integration.services.deferred_references import require_storage
+    require_storage(frappe)
     state.update(stamp=stamp, done=False, stopped=False)
     deadline = time.monotonic() + time_budget
     from hero_integration.services.migration_testing import bounded_rows, processed
@@ -341,7 +433,11 @@ def sync_services(client, *, source_instance, run_name, downloader, should_stop=
             raise ServiceBlocked("HERO returned invalid or duplicate service identities.")
         if ids != sorted(ids) or (state.get("last_id") is not None and ids[0] <= state["last_id"]):
             raise ServiceBlocked("Service pagination changed or repeated; start a new run.")
-        detailed = client.query(DETAIL_QUERY, {"ids": ids, "first": len(ids)}).get("supply_services")
+        snapshot = runtime.validated_snapshot(read, source_instance, frappe_module=frappe)
+        if snapshot.fingerprint != schema:
+            raise ServiceBlocked('The service schema changed; start a new run.')
+        request = _composition_request(snapshot, ids)
+        detailed = client.query(request.document, request.variables).get("supply_services")
         if not isinstance(detailed, list) or len(detailed) != len(ids) or {d.get("id") for d in detailed} != set(ids):
             raise ServiceBlocked("HERO returned an incomplete service composition list.")
         details = {d["id"]: d for d in detailed}
@@ -359,6 +455,7 @@ def sync_services(client, *, source_instance, run_name, downloader, should_stop=
                 raise ServiceBlocked("Service changed between its record and composition reads; retry the slice.")
             try:
                 result = upsert(row, detail, read, source_instance, company, downloader)
+                remember_relationships(run_name, source_instance, company, read, row, detail, result)
             except Exception as error:
                 frappe.db.rollback()
                 result = "conflict" if isinstance(error, (ServiceBlocked, products.PriceConflict)) else "failed"

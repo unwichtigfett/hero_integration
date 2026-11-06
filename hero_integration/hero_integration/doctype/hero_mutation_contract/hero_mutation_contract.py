@@ -5,7 +5,7 @@ import json
 import frappe
 from frappe.model.document import Document
 
-from hero_integration.services.graphql_contract import GraphQLContractError, parse_mutation
+from hero_integration.services.mutation_binding_contract import GraphQLContractError, parse_mutation
 from hero_integration.services.localized_error import translate_error
 
 

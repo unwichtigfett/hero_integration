@@ -36,16 +36,18 @@ class TestGermanCatalog(unittest.TestCase):
 
     def test_graphql_error_preserves_code_detail_in_both_languages(self):
         from hero_integration.services.localized_error import translate_error
-        from hero_integration.services.query_draft import QueryDraftError, _tokens
+        from hero_integration.services.query_draft import QueryDraftError, validate
+        from hero_integration.tests.test_workspace_service_execution import SCHEMA
 
         with self.assertRaises(QueryDraftError) as caught:
-            _tokens("'")
+            validate(SCHEMA, "'")
         error = caught.exception
-        self.assertEqual(str(error), 'Unsupported GraphQL character "\'".')
+        self.assertIn('Syntax Error', str(error))
         with (APP / "translations" / "de.csv").open(encoding="utf-8", newline="") as stream:
             messages = dict(csv.reader(stream))
-        self.assertEqual(translate_error(error, lambda message: messages.get(message, message)),
-                         'Nicht unterstütztes GraphQL-Zeichen "\'".')
+        translated = translate_error(error, lambda message: messages.get(message, message))
+        self.assertTrue(translated.startswith('GraphQL-Abfrageprüfung fehlgeschlagen: '))
+        self.assertIn(str(error).split(": ", 1)[1], translated)
 
     def test_catalog_is_valid_and_preserves_placeholders(self):
         with (APP / "translations" / "de.csv").open(encoding="utf-8", newline="") as stream:

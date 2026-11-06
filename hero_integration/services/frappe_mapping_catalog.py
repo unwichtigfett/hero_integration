@@ -1,9 +1,4 @@
-"""Runtime Frappe metadata catalog for draft-only mapping proposals.
-
-The catalog deliberately does not grant a write path to another app.  It makes
-site metadata discoverable for a System Manager, but leaves non-canonical
-targets as Draft proposals until that app supplies an explicit integration.
-"""
+"""Frappe field metadata and permission validation shared by mapping imports."""
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
@@ -86,12 +81,6 @@ class FrappePickerMetadata:
         ensure_doctype_write(doctype, frappe)
         return frappe.get_meta(doctype).fields
 
-    def project_activity_fields(self):
-        import frappe
-        from hero_integration.services.doctype_permissions import ensure_doctype_write
-
-        ensure_doctype_write('Project', frappe)
-        return frappe.get_meta('Comment').fields
 
 
 def validate_draft_spec(spec, metadata) -> CatalogField:
@@ -146,14 +135,6 @@ def fields(metadata, app_name: str = "", doctype: str = "", search: str = "", *,
     return sorted(result, key=lambda item: (item.app_name.lower(), item.doctype.lower(), item.path.lower()))
 
 
-def catalog(metadata, app_name: str = "", search: str = "") -> dict[str, object]:
-    all_entries = doctypes(metadata)
-    needle = search.strip().lower()
-    entries = [item for item in all_entries
-               if (not app_name or item.app_name == app_name)
-               and (not needle or needle in f"{item.app_name} {item.module} {item.doctype}".lower())]
-    apps = sorted({item.app_name for item in all_entries if item.app_name})
-    return {"apps": apps, "doctypes": [item.__dict__ for item in entries]}
 
 
 def validate_draft_target(operation: str, source_type: str, target_doctype: str, target_field: str, metadata) -> CatalogField:
@@ -230,48 +211,6 @@ def query_standard_target(doctype, fieldname, enabled=False):
                         options='', reqd=0, read_only=1, hidden=0, permlevel=0, is_virtual=0)
 
 
-def query_target_catalog(metadata, app_name='', search=''):
-    """Discover v2 adapter targets; activation still validates each native binding."""
-    result = catalog(metadata, app_name, search)
-    from hero_integration.services.direct_operations import FIELDS as DIRECT_FIELDS
-    allowed = {'Customer', 'Project', 'Task', 'Event', 'Contact', 'Address', 'Comment', 'ToDo', *DIRECT_FIELDS}
-    targets = []
-    for item in doctypes(metadata, app_name, search):
-        if item.doctype == 'Comment' and metadata.can_write('Project'):
-            item = replace(item, selectable=True, reason='Project activity adapter; Project write permission is required.')
-            result['doctypes'] = [item.__dict__ if row['doctype'] == 'Comment' else row for row in result['doctypes']]
-        if item.selectable and item.doctype in allowed:
-            targets.append(item)
-    selected = []
-    for target in targets:
-        activity_fields = getattr(metadata, 'project_activity_fields', None)
-        fields = activity_fields() if target.doctype == 'Comment' and activity_fields else metadata.fields(target.doctype)
-        for field in fields:
-            item = _field(target, field, metadata)
-            if target.doctype in DIRECT_FIELDS:
-                # Products/Documents/Pictures: the registry's native fields and the app's own fields.
-                if item.path in DIRECT_FIELDS[target.doctype] or item.path.startswith('custom_hero_'):
-                    selected.append(replace(item, selectable=True, activation_allowed=False,
-                        reason='Direct adapter target; activation requires the registry and mapping validation.'))
-                continue
-            contact_proxy = target.doctype in {'Customer', 'Contact'} and item.path in {'first_name', 'last_name', 'email_id', 'mobile_no', 'salutation'}
-            if ((item.path in SYSTEM_FIELDS and not (target.doctype == 'Comment' and item.path in {'creation', 'modified'}))
-                    or getattr(field, 'hidden', 0) or getattr(field, 'is_virtual', 0)
-                    or (getattr(field, 'fetch_from', None) and not contact_proxy)
-                    or int(getattr(field, 'permlevel', 0) or 0)
-                    or item.fieldtype not in ALLOWED_TARGET_TYPES | {'Long Text', 'Text', 'Text Editor', 'Select', 'Table'}
-                    or (getattr(field, 'read_only', 0) and not contact_proxy and not item.path.startswith('custom_hero_')
-                        and not (target.doctype == 'Comment' and item.path in {'creation', 'modified'}))):
-                continue
-            selected.append(replace(item, selectable=True, activation_allowed=False,
-                reason='Query adapter target; activation requires schema, relation and mapping validation.'))
-        if target.doctype == 'Comment':
-            for fieldname in ('creation', 'modified'):
-                if not any(item.doctype == 'Comment' and item.path == fieldname for item in selected):
-                    selected.append(CatalogField(target.app_name, 'Comment', fieldname, fieldname.title(), 'Datetime', True, '', True,
-                        'Logbook date adapter; an explicit timezone transformation is required.', False, False, (), False))
-    result['fields'] = [item.__dict__ for item in selected]
-    return result
 
 
 def send_source_fields(metadata, doctype: str = '', *, targets=None) -> list[CatalogField]:

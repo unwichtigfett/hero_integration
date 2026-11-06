@@ -51,8 +51,8 @@ class _Remotes:
     def head(self, bare, ref) -> str:
         return git(bare, "rev-parse", ref)
 
-    def promote(self, sha):
-        env = {**os.environ, **GIT_ENV, "COMMIT_SHA": sha, "GITHUB_REMOTE": str(self.github)}
+    def promote(self, sha, channel="hero_int_dev"):
+        env = {**os.environ, **GIT_ENV, "COMMIT_SHA": sha, "GITHUB_REMOTE": str(self.github), "RELEASE_CHANNEL": channel}
         return subprocess.run(["bash", str(PROMOTE)], env=env, text=True, capture_output=True)
 
 
@@ -62,6 +62,33 @@ class TestPromotion(unittest.TestCase):
         self.addCleanup(shutil.rmtree, tmp)
         self.repo = _Remotes(Path(tmp))
         self.base = self.repo.head(self.repo.forgejo, "hero_int_1.0")
+
+    def test_opt_bootstrap_and_repeat_leave_standard_branches_and_tags_unchanged(self):
+        git(self.repo.work,'checkout','-q','-b','hero_int_dev_opt')
+        tested=self.repo.commit('optimized materializer')
+        self.repo.push('hero_int_dev_opt',remotes=(self.repo.github,))
+        standard_dev=self.repo.head(self.repo.github,'hero_int_dev')
+        for attempt in range(2):
+            result=self.repo.promote(tested,'hero_int_dev_opt')
+            self.assertEqual(result.returncode,0,result.stderr)
+            released=self.repo.head(self.repo.github,'hero_int_opt')
+            self.assertEqual(self.repo.head(self.repo.github,'hero_int_dev_opt'),released)
+            self.assertEqual(self.repo.head(self.repo.github,'opt-v1.0.1^{commit}'),released)
+            self.assertEqual(self.repo.head(self.repo.github,'hero_int_dev'),standard_dev)
+            self.assertEqual(self.repo.head(self.repo.github,'hero_int_1.0'),self.base)
+        self.assertEqual(git(self.repo.github,'tag','--list','v*'),'')
+
+    def test_opt_never_overwrites_a_diverged_opt_release(self):
+        git(self.repo.work,'checkout','-q','-b','hero_int_dev_opt')
+        tested=self.repo.commit('optimized materializer')
+        self.repo.push('hero_int_dev_opt',remotes=(self.repo.github,))
+        git(self.repo.work,'checkout','-q','-b','other-opt',self.base)
+        unrelated=self.repo.commit('unrelated release',name='unrelated')
+        self.repo.push('hero_int_opt',remotes=(self.repo.github,))
+        result=self.repo.promote(tested,'hero_int_dev_opt')
+        self.assertNotEqual(result.returncode,0)
+        self.assertEqual(self.repo.head(self.repo.github,'hero_int_opt'),unrelated)
+        self.assertEqual(self.repo.head(self.repo.github,'hero_int_dev_opt'),tested)
 
     def test_tested_commit_is_released_on_github_without_touching_forgejo(self):
         tested = self.repo.commit("feature")

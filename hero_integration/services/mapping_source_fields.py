@@ -1,17 +1,9 @@
-"""Offline-safe source/target pickers and non-binding mapping suggestions."""
+"""Schema field discovery shared by mapping import and publication."""
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from hero_integration.services.direct_mapping import (
-    ALLOWED_TARGET_TYPES,
-    PROTECTED_FIELDS,
-    RESERVED_TARGET_FIELDS,
-    SOURCE_CONTRACTS,
-    SYSTEM_FIELDS,
-)
-from hero_integration.services.frappe_mapping_catalog import fields as catalog_fields
-from hero_integration.services.frappe_mapping_catalog import types_compatible
+from hero_integration.services.direct_mapping import SOURCE_CONTRACTS
 from hero_integration.services.graphql_graph import normalize_schema
 from hero_integration.services.projection_contracts import CONTRACTS as PROJECTIONS
 
@@ -77,124 +69,14 @@ def source_fields(operation: str, schema: dict[str, object], search: str = "") -
     return result
 
 
-def target_fields(
-    operation: str, metadata, search: str = "", app_name: str = "", target_doctype: str = "",
-) -> list[PickerField]:
-    contract = SOURCE_CONTRACTS.get(operation)
-    if hasattr(metadata, "doctypes"):
-        items = [
-            PickerField(
-                item.path, item.label, item.fieldtype, item.nullable, item.relation, item.selectable, item.reason,
-                mapping_type=item.fieldtype, app_name=item.app_name, target_doctype=item.doctype,
-                is_custom=item.is_custom, required=item.required, select_options=item.select_options,
-                activation_allowed=item.activation_allowed, description=item.description,
-            )
-            for item in catalog_fields(metadata, app_name, target_doctype, search)
-        ]
-        if contract:
-            return items
-        return [
-            PickerField(
-                **{**item.__dict__, "selectable": False,
-                   "reason": "Schema-only query operation: an approved read-only import contract is required before activation."}
-            )
-            for item in items
-        ]
-    if not contract:
-        return []
-    doctype = contract["target_doctype"]
-    needle = search.strip().lower()
-    result = []
-    for field in metadata.fields(doctype):
-        label = str(field.label or field.fieldname)
-        if needle and needle not in field.fieldname.lower() and needle not in label.lower():
-            continue
-        protected = field.fieldname in SYSTEM_FIELDS | PROTECTED_FIELDS.get(doctype, set()) | RESERVED_TARGET_FIELDS.get(doctype, set())
-        is_child_relation = field.fieldtype == "Table"
-        is_link = field.fieldtype == "Link"
-        is_custom = bool(getattr(field, "is_custom_field", False))
-        selectable = bool(field.fieldtype in ALLOWED_TARGET_TYPES and not getattr(field, "read_only", 0) and not protected and not is_link and is_custom)
-        if selectable:
-            reason = "Writable target field."
-        elif not is_custom:
-            reason = "Standard target field: it requires a reviewed app mapping, not a site-specific direct mapping."
-        elif is_link:
-            reason = "Link target: an approved entity resolver is required before it can be mapped."
-        elif is_child_relation:
-            reason = "Child-DocType relationship: a reviewed resolver is required before it can be mapped."
-        else:
-            reason = "Protected, technical, or unsupported target field."
-        relation = str(field.options or "") if field.fieldtype in {"Link", "Table"} else ""
-        result.append(PickerField(field.fieldname, label, field.fieldtype, False, relation, selectable, reason, mapping_type=field.fieldtype, target_doctype=doctype))
-    return result
 
 
-def picker_page(fields: list[PickerField], start: int = 0, page_size: int = 50) -> dict[str, object]:
-    """Bound a picker response without discarding its searchable result set."""
-    start = max(0, int(start))
-    page_size = min(50, max(1, int(page_size)))
-    items = fields[start:start + page_size]
-    return {
-        "items": [item.__dict__ for item in items],
-        "start": start,
-        "page_size": page_size,
-        "total": len(fields),
-        "has_more": start + len(items) < len(fields),
-    }
 
 
-def suggest_from_source(
-    operation: str, source_path: str, schema: dict[str, object], metadata, target_doctype: str = "",
-) -> list[dict[str, object]]:
-    source = next((item for item in source_fields(operation, schema) if item.path == source_path), None)
-    if not source or not source.selectable:
-        return []
-    return _rank(source, target_fields(operation, metadata, target_doctype=target_doctype))
 
 
-def suggest_from_target(
-    operation: str, target_path: str, schema: dict[str, object], metadata, target_doctype: str = "",
-) -> list[dict[str, object]]:
-    target = next((item for item in target_fields(operation, metadata, target_doctype=target_doctype) if item.path == target_path), None)
-    if not target or not target.selectable:
-        return []
-    candidates = []
-    for source in source_fields(operation, schema):
-        if source.selectable:
-            candidates.extend(_rank(source, [target]))
-    return sorted(candidates, key=lambda item: (-item["score"], item["source_path"]))
 
 
-def _rank(source: PickerField, targets: list[PickerField]) -> list[dict[str, object]]:
-    result = []
-    source_words = set(source.path.replace("_", " ").split())
-    for target in targets:
-        if not target.selectable or not types_compatible(source.mapping_type, target.fieldtype):
-            continue
-        target_words = set((target.path + " " + target.label).lower().replace("_", " ").split())
-        overlap = len(source_words & target_words)
-        score = 100 if source.path == target.path else 20 + overlap * 10
-        if target.is_custom:
-            score += 5
-        if target.required:
-            score -= 10
-        result.append({
-            "source_path": source.path,
-            "source_type": source.mapping_type,
-            "source_graphql_path": source.graphql_path,
-            "source_graphql_type": source.fieldtype,
-            "source_return_type": source.return_type,
-            "source_relation": source.relation,
-            "target_field": target.path,
-            "target_doctype": target.target_doctype,
-            "target_app": target.app_name,
-            "score": score,
-            "confidence": "high" if score >= 70 else "medium" if score >= 40 else "low",
-            "reason": _suggestion_reason(source, target),
-            "requires_approval": True,
-            "draft_only": not target.activation_allowed,
-        })
-    return sorted(result, key=lambda item: (-item["score"], item["target_field"]))
 
 
 def _matches(field: PickerField, needle: str) -> bool:
@@ -204,17 +86,6 @@ def _matches(field: PickerField, needle: str) -> bool:
     )).lower()
 
 
-def _suggestion_reason(source: PickerField, target: PickerField) -> str:
-    parts = ["Type-compatible name and label match."]
-    if target.relation:
-        parts.append(f"Relation: {target.relation}.")
-    if target.select_options:
-        parts.append("Select values require validation before activation.")
-    if target.required:
-        parts.append("Required target field; target creation needs an app-owned contract.")
-    if not target.activation_allowed:
-        parts.append("Draft only for this non-canonical app target.")
-    return " ".join(parts)
 
 
 def _schema_only_fields(

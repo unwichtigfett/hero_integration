@@ -352,6 +352,45 @@ def test_query_adapter_seals_nested_selection_and_decodes_bound_results():
         QueryAdapter().materialize(snapshot(), draft(selected_paths=("requiresArgument.name",)))
 
 
+def test_materializer_resolves_explicit_deep_recursive_paths():
+    raw = copy.deepcopy(RAW_SCHEMA)
+    owner = next(item for item in raw['__schema']['types'] if item['name'] == 'Owner')
+    owner['fields'].append({'name': 'manager', 'args': [], 'type': named('OBJECT', 'Owner')})
+    validated = SnapshotAdapter().adapt(StoredSnapshot('recursive', raw, analyze_snapshot(raw).fingerprint, 'hero-primary'))
+    path = 'owner.manager.manager.manager.manager.name'
+    request = QueryAdapter().materialize(validated, draft(selected_paths=(path,)))
+    assert request.document.count('manager {') == 4
+    assert request.result_bindings[0].selection_path == tuple(path.split('.'))
+    with pytest.raises(MappingContractError, match='not available'):
+        QueryAdapter().materialize(validated, draft(selected_paths=('owner.manager.missing',)))
+    with pytest.raises(MappingContractError, match='Invalid selected'):
+        QueryAdapter().materialize(validated, draft(selected_paths=('owner..name',)))
+
+
+def test_materializer_generates_and_decodes_union_fragments():
+    from graphql import build_schema, introspection_from_schema, parse, validate
+    schema = build_schema('type Query { search: [Result] } union Result = Person | Company '
+                          'type Person { name: String } type Company { name: String revenue: Int }')
+    raw = introspection_from_schema(schema)
+    validated = SnapshotAdapter().adapt(StoredSnapshot('union', raw, analyze_snapshot(raw).fingerprint, 'hero-primary'))
+    from hero_integration.graphql_protocol.schema_snapshot import schema_fingerprint
+    from hero_integration.services.graphql_graph import normalize_schema
+    from hero_integration.services.mapping_contract_v1 import schema as legacy_schema
+    assert validated.ir_fingerprint == schema_fingerprint(legacy_schema(normalize_schema(raw)))
+    assert validated.ir_fingerprint != validated.full_ir_fingerprint
+    request = QueryAdapter().materialize(validated, QueryDraft('Search', 'results', 'search',
+        ('@Person.name', '@Company.name', '@Company.revenue'), {}))
+    assert not validate(schema, parse(request.document))
+    assert '__typename' in request.document
+    response = Response(True, json.dumps({'data': {'results': [
+        {'__typename': 'Person', 'name': 'Ada'}, {'__typename': 'Company', 'name': 'Acme', 'revenue': 10}]}}), True)
+    decoded = decode_graphql_result(request, response)
+    assert decoded.value_for(('@Person', 'name')) == ('Ada', None)
+    assert decoded.value_for(('@Company', 'revenue')) == (None, 10)
+    with pytest.raises(MappingContractError, match='type condition'):
+        QueryAdapter().materialize(validated, QueryDraft('Search', 'results', 'search', ('@Query.search',), {}))
+
+
 def test_query_adapter_requires_bound_pagination_and_ordering_values():
     incomplete = {"filter": {"state": "ACTIVE", "ids": []}, "offset": 0}
     with pytest.raises(MappingContractError, match="pagination/ordering"):
@@ -505,3 +544,26 @@ def test_read_adapter_rejects_saved_query_variable_revision_snapshot_and_binding
   adapt_read_contract(snapshot(), contract, draft(selected_paths=()), READ_QUERY, offset=0, service_revision=7, mapping_revision=3, snapshot_fingerprint=snapshot().fingerprint)
  with pytest.raises(MappingContractError, match="read-only"):
   adapt_read_contract(snapshot(), contract, draft(), "mutation Write { updateCase { id } }", offset=0, service_revision=7, mapping_revision=3, snapshot_fingerprint=snapshot().fingerprint)
+
+
+def test_query_batch_keeps_variable_scopes_aliases_and_result_bindings():
+    from graphql import build_schema, introspection_from_schema, parse, validate
+    schema = build_schema('type Query { node(id:ID!):Node } type Node { id:ID name:String }')
+    raw = introspection_from_schema(schema)
+    validated = SnapshotAdapter().adapt(StoredSnapshot('batch', raw, analyze_snapshot(raw).fingerprint, 'hero-primary'))
+    first = QueryDraft('ReadNode', 'first', 'node', ('id', 'name'), {'id': '1'})
+    second = QueryDraft('ReadNode', 'second', 'node', ('id', 'name'), {'id': '2'})
+    request = QueryAdapter().materialize_many(validated, (first, second), 'ReadNodes')
+    assert validate(schema, parse(request.document)) == []
+    assert request.variables == {'q1_v1': '1', 'q2_v1': '2'}
+    detached = request.variables
+    detached['q1_v1'] = 'changed'
+    assert request.variables['q1_v1'] == '1'
+    assert request == QueryAdapter().materialize_many(validated, (first, second), 'ReadNodes')
+    response = Response(True, json.dumps({'data': {'first': {'id': '1', 'name': 'A'},
+        'second': {'id': '2', 'name': 'B'}}}), True)
+    assert decode_graphql_result(request.requests[1], response).value_for(('name',)) == 'B'
+    with pytest.raises(MappingContractError, match='aliases'):
+        QueryAdapter().materialize_many(validated, (first, first), 'ReadNodes')
+    with pytest.raises(MappingContractError, match='nonempty'):
+        QueryAdapter().materialize_many(validated, (), 'ReadNodes')

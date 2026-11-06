@@ -1,21 +1,20 @@
 #!/usr/bin/env bash
-# Promote a fully tested hero_int_dev commit to the installation branch.
-#
-# Runs only after GitHub CI and the Woodpecker install test succeeded for
-# COMMIT_SHA. It raises the patch version in a release commit on top of the
-# tested commit (only the two version lines change), tags it v<version> and
-# fast-forwards hero_int_dev and hero_int_1.0 to it on GitHub.
-# Nothing is ever force-pushed: if a branch moved, the push is rejected and
-# hero_int_1.0 keeps its state.
-#
-# Environment:
-#   COMMIT_SHA       tested commit (required)
-#   GITHUB_REMOTE    e.g. https://github.com/unwichtigfett/hero_integration.git
-#   GITHUB_TOKEN     write token (optional for local paths)
+# Promote a tested development lane to its matching installation branch.
+# Standard: hero_int_dev -> hero_int_1.0, v<version> tags.
+# Opt: hero_int_dev_opt -> hero_int_opt, opt-v<version> tags.
+# The opt release branch may be created by its first successful promotion.
+# Only version lines may differ from the tested tree. Publication is atomic
+# and never forced; a diverged release branch is rejected.
+# COMMIT_SHA/CI_COMMIT_SHA and GITHUB_REMOTE are required. GITHUB_TOKEN is
+# optional for local test remotes. CI_COMMIT_BRANCH selects the CI lane;
+# RELEASE_CHANNEL selects it outside CI (default hero_int_dev).
 set -Eeuo pipefail
 
-DEV=hero_int_dev
-REL=hero_int_1.0
+case "${CI_COMMIT_BRANCH:-${RELEASE_CHANNEL:-hero_int_dev}}" in
+    hero_int_dev) DEV=hero_int_dev; REL=hero_int_1.0; TAG_PREFIX=v ;;
+    hero_int_dev_opt) DEV=hero_int_dev_opt; REL=hero_int_opt; TAG_PREFIX=opt-v ;;
+    *) echo "Unsupported release source branch" >&2; exit 2 ;;
+esac
 RELEASE_PREFIX="Release "
 SKIP_MARK="[skip ci]"
 VERSION_FILES=(hero_integration/__init__.py pyproject.toml)
@@ -44,7 +43,13 @@ git remote add github "$(with_token "${GITHUB_REMOTE:?GITHUB_REMOTE is required}
 REMOTES=(github)
 
 for remote in "${REMOTES[@]}"; do
-    git fetch -q --no-tags "$remote" "+refs/heads/$DEV:refs/r/$remote/dev" "+refs/heads/$REL:refs/r/$remote/rel"
+    git fetch -q --no-tags "$remote" "+refs/heads/$DEV:refs/r/$remote/dev"
+    if git ls-remote --exit-code "$remote" "refs/heads/$REL" > /dev/null; then
+        git fetch -q --no-tags "$remote" "+refs/heads/$REL:refs/r/$remote/rel"
+    else
+        status=$?
+        [[ $status == 2 && $DEV == hero_int_dev_opt ]] || exit "$status"
+    fi
     git fetch -q "$remote" "+refs/tags/*:refs/r/$remote/tags/*"
 done
 
@@ -76,7 +81,10 @@ done
 
 current=$(version_of "$sha")
 [[ -n $current ]] || { echo "No __version__ in $sha." >&2; exit 1; }
-released=$(version_of refs/r/github/rel)
+released=$current
+if git show-ref --verify --quiet refs/r/github/rel; then
+    released=$(version_of refs/r/github/rel)
+fi
 
 # The only allowed release change: the two version lines of the tested commit.
 version_commit() {  # tested-sha version -> commit with exactly that change
@@ -110,10 +118,11 @@ fi
 [[ $(version_of "$release") == "$version" && $(pyproject_version "$release") == "$version" ]] || {
     echo "hero_integration/__init__.py and pyproject.toml must both carry version $version." >&2; exit 1; }
 
-tag="v$version"
+tag="$TAG_PREFIX$version"
 reuse_tag=''
 for remote in "${REMOTES[@]}"; do
-    if ! git merge-base --is-ancestor "refs/r/$remote/rel" "$release"; then
+    if git show-ref --verify --quiet "refs/r/$remote/rel" &&
+            ! git merge-base --is-ancestor "refs/r/$remote/rel" "$release"; then
         echo "$remote/$REL is not an ancestor of $release; it stays unchanged." >&2
         exit 1
     fi

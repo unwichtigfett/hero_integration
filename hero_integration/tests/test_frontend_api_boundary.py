@@ -146,117 +146,13 @@ def _plan():
 
 
 class TestFrontendApiBoundary(unittest.TestCase):
-    def test_direction_filter_precedes_pagination_and_count(self):
-        class Mixed(_Frappe):
-            def get_all(self, doctype, **kwargs):
-                self.get_all_calls.append((doctype, kwargs))
-                if doctype == 'HERO Frappe Mapping':
-                    rows = [{'name': 'rule-1', 'definition_id': 'rule', 'status': 'Active'}]
-                else:
-                    rows = [dict(name=f'map-{index}', definition_id=f'def-{index}', status='Active',
-                                 direction='QUERY_TO_FRAPPE' if index % 2 == 0 else 'FRAPPE_TO_MUTATION',
-                                 mapping_revision=1, mapping_json='{}') for index in range(6)]
-                filters = kwargs.get('filters') or {}
-                rows = [row for row in rows if all(row.get(k) == v for k, v in filters.items())]
-                if kwargs.get('fields') == [{'COUNT': 'name', 'as': 'total'}]:
-                    return [{'total': len(rows)}]
-                start, limit = kwargs.get('limit_start', 0), kwargs.get('limit', 100)
-                return rows[start:start + limit]
-        frappe = Mixed(roles=('Employee',))
-        with patch.object(api, 'frappe', frappe):
-            q0 = api.frontend_mapping_list(start=0, page_size=1, direction='QUERY_TO_FRAPPE')
-            q1 = api.frontend_mapping_list(start=1, page_size=1, direction='QUERY_TO_FRAPPE')
-            m0 = api.frontend_mapping_list(start=0, page_size=1, direction='FRAPPE_TO_MUTATION')
-            all_rows = api.frontend_mapping_list(start=0, page_size=10)
-            with self.assertRaises(ValueError):
-                api.frontend_mapping_list(direction='OTHER')
-        self.assertEqual([q0['graphql_mappings'][0]['name'], q1['graphql_mappings'][0]['name']], ['map-0', 'map-2'])
-        self.assertEqual((q0['pagination']['graphql_total'], q1['pagination']['graphql_total']), (3, 3))
-        self.assertEqual(m0['graphql_mappings'][0]['name'], 'map-1')
-        self.assertEqual((m0['pagination']['graphql_total'], m0['pagination']['frappe_total'], m0['frappe_mappings']), (3, 0, []))
-        self.assertEqual(all_rows['pagination']['graphql_total'], 6)
 
-    def test_unconfigured_operations_are_not_reported_as_builtin_active_mappings(self):
-        class EmptyMappings(_Frappe):
-            def get_all(self, doctype, **kwargs):
-                self.get_all_calls.append((doctype, kwargs))
-                return []
 
-        frappe = EmptyMappings(roles=("Employee",))
-        with patch.object(api, "frappe", frappe):
-            for direction in ("", "QUERY_TO_FRAPPE", "FRAPPE_TO_MUTATION"):
-                with self.subTest(direction=direction):
-                    result = api.frontend_mapping_list(direction=direction)
-                    self.assertEqual(result["graphql_mappings"], [])
-                    self.assertEqual(result["frappe_mappings"], [])
-                    self.assertEqual(result["builtin_mappings"], [])
 
-    def test_employee_can_read_only_sanitized_mapping_status(self):
-        frappe = _Frappe(roles=("Employee",), user="employee@example.invalid", mapping=_Mapping(status="Active"))
-        with patch.object(api, "frappe", frappe):
-            result = api.frontend_mapping_list()
 
-        self.assertEqual(result["graphql_mappings"][0]["status"], "Active")
-        self.assertEqual(result["frappe_mappings"][0]["status"], "Active")
-        self.assertEqual(result["graphql_mappings"][0]["definition"], {"record_path": "things"})
-        self.assertNotIn("must-not-leak", repr(result))
-        self.assertNotIn("mapping_json", result["graphql_mappings"][0])
 
-    def test_non_employee_cannot_read_mapping_status(self):
-        frappe = _Frappe(roles=("Guest",), user="guest@example.invalid")
-        with patch.object(api, "frappe", frappe):
-            with self.assertRaises(PermissionError):
-                api.frontend_mapping_list()
-        self.assertEqual(frappe.get_all_calls, [])
 
-    def test_non_employee_cannot_probe_mapping_detail(self):
-        frappe = _Frappe(roles=("Guest",), user="guest@example.invalid")
-        with patch.object(api, "frappe", frappe):
-            with self.assertRaises(PermissionError):
-                api.frontend_mapping_detail("graphql", "known-or-unknown")
-        self.assertEqual(frappe.get_all_calls, [])
 
-    def test_active_projection_keeps_mutation_argument_and_input_path_but_not_values(self):
-        projection = api._sanitized_mapping_definition({
-            "source": {"app": "frappe", "doctype": "Customer", "field": "customer_name"},
-            "target": {"operation": "updateCustomer", "argument": "input", "field_path": "name", "input_type": "CustomerInput"},
-            "variables": {"value": "must-not-leak"}, "token": "must-not-leak",
-        })
-        self.assertEqual(projection["source"], {"app": "frappe", "doctype": "Customer", "field": "customer_name"})
-        self.assertEqual(projection["target"], {"operation": "updateCustomer", "argument": "input", "field_path": "name", "input_type": "CustomerInput"})
-        self.assertNotIn("must-not-leak", repr(projection))
-
-    def test_nested_mapping_projection_removes_secret_and_unknown_keys(self):
-        projection = api._sanitized_mapping_definition({
-            "selected_paths": [
-                {"path": "customer.name", "variables": {"value": "hidden"}},
-                {"path": "customer.id", "unknown": "hidden", "source": {"token": "hidden", "field": "id"}},
-            ],
-        })
-        self.assertEqual(projection, {"selected_paths": [
-            {"path": "customer.name"},
-            {"path": "customer.id", "source": {"field": "id"}},
-        ]})
-
-    def test_binding_projection_is_system_manager_only_and_uses_existing_binding_identities(self):
-        frappe = _Frappe()
-        with patch.object(api, "frappe", frappe):
-            result = api.frontend_mapping_bindings("definition-1")
-
-        self.assertEqual(result["pagination"]["total"], 1)
-        item = result["items"][0]
-        self.assertEqual(item["identity_key"], "field-binding-1")
-        self.assertEqual(item["object"]["identity_key"], "object-binding-1")
-        self.assertNotIn("reconciliation", repr(result))
-        self.assertEqual(frappe.get_all_calls[0][1]["filters"], {
-            "site_scope": "b9-acceptance-41i.localhost", "mapping_definition_id": "definition-1",
-        })
-
-        employee = _Frappe(roles=("Employee",))
-        with patch.object(api, "frappe", employee):
-            with self.assertRaises(PermissionError):
-                api.frontend_mapping_bindings("definition-1")
-        self.assertEqual(employee.get_all_calls, [])
 
     def test_integration_link_listing_is_admin_only_and_paged_without_field_claims(self):
         class Links(_Frappe):

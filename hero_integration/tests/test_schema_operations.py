@@ -3,15 +3,16 @@ from __future__ import annotations
 import copy
 import unittest
 
-from graphql import parse
+from graphql import build_schema, introspection_from_schema, parse
 
-from hero_integration.services.schema_operations import SchemaOperationError, catalog, operation_service_draft, suggest
+from hero_integration.services.schema_operations import SchemaOperationError, catalog, operation_service_draft
 
 
-SCHEMA = {"__schema": {"queryType": {"name": "Query"}, "mutationType": {"name": "Mutation"}, "types": [
-    {"kind": "OBJECT", "name": "Query", "fields": [{"name": "heroCustomers", "args": [{"name": "first", "type": {"kind": "NON_NULL", "ofType": {"kind": "SCALAR", "name": "Int"}}}], "type": {"kind": "OBJECT", "name": "Customer"}}]},
-    {"kind": "OBJECT", "name": "Mutation", "fields": [{"name": "updateCustomer", "args": [], "type": {"kind": "OBJECT", "name": "Customer"}}]}, {"kind": "OBJECT", "name": "Customer", "fields": []},
-]}}
+SCHEMA = introspection_from_schema(build_schema('''
+    type Query { heroCustomers(first:Int!):Customer }
+    type Mutation { updateCustomer:Customer }
+    type Customer { id:ID }
+'''))
 
 
 class TestSchemaOperations(unittest.TestCase):
@@ -41,6 +42,12 @@ class TestSchemaOperations(unittest.TestCase):
         with self.assertRaises(SchemaOperationError):
             operation_service_draft(schema, "operation:mutation:heroCustomers")
 
+    def test_incomplete_schema_cannot_generate_an_apparently_valid_service_draft(self):
+        schema = copy.deepcopy(SCHEMA)
+        schema['__schema']['types'] = [item for item in schema['__schema']['types'] if item['name'] != 'Customer']
+        with self.assertRaisesRegex(SchemaOperationError,'cannot be materialized'):
+            operation_service_draft(schema,'operation:query:heroCustomers')
+
     def test_input_catalog_bounds_cycles_depth_and_list_mapping(self):
         schema = copy.deepcopy(SCHEMA)
         mutation = next(item for item in schema["__schema"]["types"] if item["name"] == "Mutation")
@@ -64,8 +71,3 @@ class TestSchemaOperations(unittest.TestCase):
         self.assertFalse(any(path.startswith("cycle.") for path in by_path))
         self.assertFalse(by_path["many"]["selectable"])
         self.assertIn("collection resolver", by_path["many"]["reason"])
-
-    def test_suggestions_are_explainable_and_draft_only_by_callers(self):
-        result = suggest("customer_name", ["customerName", "projectTitle"])
-        self.assertEqual(result[0]["candidate"], "customerName")
-        self.assertIn("shared normalized names", result[0]["reason"])

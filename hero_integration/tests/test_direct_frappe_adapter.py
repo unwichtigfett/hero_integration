@@ -13,12 +13,7 @@ from hero_integration.services.direct_mapping import (
     validate_spec,
 )
 from hero_integration.services.graphql_graph import analyze_snapshot
-from hero_integration.services.mapping_suggestions import (
-    source_fields,
-    suggest_from_source,
-    suggest_from_target,
-    target_fields,
-)
+from hero_integration.services.mapping_source_fields import source_fields
 
 
 class TestDirectFrappeAdapter(unittest.TestCase):
@@ -128,59 +123,9 @@ class TestDirectFrappeAdapter(unittest.TestCase):
             ("contacts.address.city", "Customer"),
         )
 
-    def test_historic_partner_query_reverse_suggestions_remain_separate_from_semantic_filtering(self):
-        self.metadata.extra = [
-            SimpleNamespace(fieldname="custom_hero_schema_value", label="HERO Schema Value", fieldtype="Data", read_only=0, options="", is_custom_field=1),
-        ]
 
-        matches = suggest_from_target("HeroCustomers", "custom_hero_schema_value", _historic_partner_customer_schema(), self.metadata)
 
-        self.assertIn("full_name", {item["source_path"] for item in matches})
-        self.assertTrue(all(item["source_graphql_path"].startswith("contacts.") for item in matches))
 
-    def test_historic_partner_query_keeps_protected_customer_name_without_a_synthetic_suggestion(self):
-        self.metadata.extra = [
-            SimpleNamespace(fieldname="customer_name", label="Customer Name", fieldtype="Data", read_only=0, options="", is_custom_field=0),
-        ]
-
-        self.assertTrue(any(field.selectable for field in source_fields("HeroCustomers", _historic_partner_customer_schema())))
-        self.assertEqual(suggest_from_target("HeroCustomers", "customer_name", _historic_partner_customer_schema(), self.metadata), [])
-
-    def test_bidirectional_suggestions_filter_protected_and_incompatible_fields(self):
-        schema = _customer_schema()
-        self.metadata.extra = [
-            SimpleNamespace(fieldname="territory", label="Customer Category", fieldtype="Data", read_only=0, options="", is_custom_field=1),
-            SimpleNamespace(fieldname="status", label="Status", fieldtype="Data", read_only=0, options="", is_custom_field=1),
-            SimpleNamespace(fieldname="credit_limit", label="Credit Limit", fieldtype="Float", read_only=0, options="", is_custom_field=0),
-            SimpleNamespace(fieldname="custom_score", label="Custom Score", fieldtype="Float", read_only=0, options="", is_custom_field=1),
-            SimpleNamespace(fieldname="territory_link", label="Territory Link", fieldtype="Link", read_only=0, options="Territory", is_custom_field=1),
-        ]
-
-        targets = target_fields("HeroCustomers", self.metadata)
-        forward = suggest_from_source("HeroCustomers", "category", schema, self.metadata)
-        reverse = suggest_from_target("HeroCustomers", "territory", schema, self.metadata)
-
-        self.assertTrue(next(item for item in targets if item.path == "territory").selectable)
-        self.assertFalse(next(item for item in targets if item.path == "status").selectable)
-        self.assertFalse(next(item for item in targets if item.path == "territory_link").selectable)
-        self.assertEqual(forward[0]["target_field"], "territory")
-        self.assertNotIn("custom_score", {item["target_field"] for item in forward})
-        self.assertEqual(reverse[0]["source_path"], "category")
-        self.assertEqual((reverse[0]["source_graphql_path"], reverse[0]["source_graphql_type"]), ("contacts.category", "String"))
-        self.assertTrue(all(item["requires_approval"] for item in forward + reverse))
-
-    def test_reverse_suggestions_explain_nested_query_response_fields_without_following_cycles(self):
-        self.metadata.extra = [
-            SimpleNamespace(fieldname="custom_hero_address_city", label="Address City", fieldtype="Data", read_only=0, options="", is_custom_field=1),
-        ]
-
-        matches = suggest_from_target("HeroCustomers", "custom_hero_address_city", _customer_schema(), self.metadata)
-
-        city = next(item for item in matches if item["source_path"] == "address.city")
-        self.assertEqual((city["source_graphql_path"], city["source_graphql_type"]), ("contacts.address.city", "String"))
-        self.assertEqual(city["source_relation"], "Contact.address → Address")
-        self.assertIn("Type-compatible", city["reason"])
-        self.assertIn(city["confidence"], {"high", "medium", "low"})
 
     def test_source_picker_excludes_missing_and_mutation_input_paths(self):
         schema = _customer_schema(contact_fields=[
@@ -206,35 +151,7 @@ class TestDirectFrappeAdapter(unittest.TestCase):
 
         self.assertEqual([field.path for field in fields], ["category"])
 
-    def test_reverse_suggestion_api_reuses_the_selected_snapshot_and_target_metadata(self):
-        self.metadata.extra = [
-            SimpleNamespace(fieldname="territory", label="Customer Category", fieldtype="Data", read_only=0, options="", is_custom_field=1),
-        ]
-        calls = []
-        snapshot = SimpleNamespace(name="SYNTHETIC")
-        fake_frappe = SimpleNamespace(only_for=calls.append)
 
-        with (
-            patch.object(api, "frappe", fake_frappe),
-            patch.object(api, "_validated_snapshot", return_value=(snapshot, _customer_schema())),
-            patch.object(api, "_FrappePickerMetadata", return_value=self.metadata),
-        ):
-            matches = api.mapping_suggestions("SYNTHETIC", "HeroCustomers", target_field="territory", target_doctype="Customer")
-
-        self.assertEqual(calls, ["System Manager"])
-        self.assertEqual(matches[0]["source_path"], "category")
-        self.assertEqual(matches[0]["source_graphql_path"], "contacts.category")
-
-    def test_target_picker_keeps_child_relations_visible_but_unselectable(self):
-        self.metadata.extra = [
-            SimpleNamespace(fieldname="contacts", label="Contacts", fieldtype="Table", read_only=0, options="Contact", is_custom_field=1),
-        ]
-
-        field = target_fields("HeroCustomers", self.metadata)[0]
-
-        self.assertFalse(field.selectable)
-        self.assertEqual(field.relation, "Contact")
-        self.assertIn("resolver", field.reason)
 
     def test_stale_snapshot_is_rejected_before_picker_or_preview(self):
         raw = {"__schema": {"types": [{"kind": "OBJECT", "name": "Query", "fields": []}]}}

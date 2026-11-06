@@ -39,14 +39,18 @@ class TestServiceValues(unittest.TestCase):
         from pathlib import Path
         from graphql import build_client_schema, parse, validate
         from hero_integration.services.graphql_graph import normalize_schema
+        from hero_integration.services.graphql_graph import analyze_snapshot
+        from hero_integration.services.mapping_contract_v1 import SnapshotAdapter, StoredSnapshot
         import os
         reference = os.environ.get('HERO_REFERENCE_SCHEMA')
         if not reference: self.skipTest('Optional HERO_REFERENCE_SCHEMA unavailable')
         path = Path(reference)
-        schema = json.loads(path.read_text()); schema = schema.get('data', schema)
-        schema = build_client_schema({'__schema': normalize_schema(schema)})
+        raw = json.loads(path.read_text()); raw = raw.get('data', raw)
+        snapshot = SnapshotAdapter().adapt(StoredSnapshot('reference', raw, analyze_snapshot(raw).fingerprint, 'source'))
+        schema = build_client_schema({'__schema': normalize_schema(raw)})
         self.assertEqual(validate(schema, parse(self.read.document)), [])
-        self.assertEqual(validate(schema, parse(sm.DETAIL_QUERY)), [])
+        request = sm._composition_request(snapshot, [1])
+        self.assertEqual(validate(schema, parse(request.document)), [])
 
 
 class TestCalculation(unittest.TestCase):
@@ -113,7 +117,12 @@ class TestServiceRun(unittest.TestCase):
         self.client=SimpleNamespace(query=lambda document,variables:{'supply_services':[row for row in self.rows if row['id'] in variables['ids']]})
         self.addCleanup(patch.stopall)
         patch.object(sm,'frappe',self.fake).start()
+        patch('hero_integration.services.deferred_references.require_storage').start()
+        patch.object(sm, 'remember_relationships').start()
         patch.object(sm,'preflight',return_value=('Company','schema-v1')).start()
+        patch.object(sm.runtime,'validated_snapshot',return_value=SimpleNamespace(fingerprint='schema-v1')).start()
+        patch.object(sm,'_composition_request',side_effect=lambda snapshot, ids: SimpleNamespace(
+            document='materialized composition', variables={'ids': ids, 'first': len(ids)})).start()
         self.fetch=patch.object(sm.runtime,'fetch_page',side_effect=lambda client,read,offset:self.rows[offset:]).start()
 
     def run_sync(self,**kwargs):
@@ -188,6 +197,17 @@ class TestServiceUpsert(unittest.TestCase):
         self.assertEqual(item.custom_hero_service_calculation,[])
         self.price.assert_called_once_with('SERVICE-1','Standard Selling',0,'Hour',None)
         self.write.assert_called_once()
+
+    def test_initial_service_import_keeps_component_ids_without_realizing_relationships(self):
+        self.detail['positions'] = [{'__typename':'WageGroup', 'id':'labor-a', 'name':'Labor', 'wage_per_hour':60}]
+        self.detail['file_upload'] = {'id':99, 'url_download':'https://private.invalid/signed'}
+        with patch.object(sm, 'activity', side_effect=AssertionError('Premature activity binding')), \
+             patch.object(sm, 'attach_file', side_effect=AssertionError('Premature attachment')):
+            self.assertEqual(sm.upsert(self.row,self.detail,self.read,'source-a','Company',None),'added')
+        item = next(doc for doc in self.created if doc.doctype=='Item')
+        self.assertEqual(item[sm.CALCULATION][0]['source_id'], 'labor-a')
+        self.assertEqual(item[sm.CALCULATION][0]['resolution'], 'Unresolved')
+        self.assertNotIn('activity_type', item[sm.CALCULATION][0])
 
     def test_occupied_article_code_never_creates_or_changes_a_master(self):
         self.fake.db.exists=lambda dt,name:dt=='Item'
@@ -271,6 +291,25 @@ class TestServiceUpsert(unittest.TestCase):
 
 
 class TestServiceAttachments(unittest.TestCase):
+    def test_attachment_refresh_materializes_only_the_owning_service_and_file_metadata(self):
+        from graphql import build_schema,introspection_from_schema,parse,validate
+        from hero_integration.services.graphql_graph import analyze_snapshot
+        from hero_integration.services.mapping_contract_v1 import SnapshotAdapter,StoredSnapshot
+        schema=build_schema('''
+            type Query { supply_services(first:Int,service_ids:[Int]):[Service] }
+            type Service { id:Int company_id:Int file_upload:Upload }
+            type Upload { id:Int uuid:String filename:String type:String size:Int
+                          is_deleted:Boolean modified:String url_download:String }
+        ''')
+        raw=introspection_from_schema(schema)
+        snapshot=SnapshotAdapter().adapt(StoredSnapshot('file-only',raw,analyze_snapshot(raw).fingerprint,'source'))
+        request=sm._attachment_request(snapshot,[42])
+        self.assertEqual(validate(schema,parse(request.document)),[])
+        self.assertNotIn('positions',request.document)
+        self.assertIn('url_download',request.document)
+        self.assertIn([42],request.variables.values())
+        self.assertEqual(len(request.result_bindings),10)
+
     def test_unchanged_private_file_is_reused_and_local_ownership_edit_blocks(self):
         detail={'id':5,'filename':'synthetic.pdf','modified':'now','size':12,'url_download':'https://example.invalid/files/5'}
         fingerprint=sm.products.digest({k:v for k,v in detail.items() if k!='url_download'})

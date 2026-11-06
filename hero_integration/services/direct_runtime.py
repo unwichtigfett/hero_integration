@@ -28,6 +28,9 @@ class DirectRead:
     page_size: int = 100
     origin: str = BUILTIN        # "builtin" or the approved read service
     mapping: str = ""            # approved HERO GraphQL Mapping, "" for the built-in mapping
+    snapshot: object | None = None
+    projection_paths: tuple[str, ...] | None = None
+    projection_preserve_paths: tuple[str, ...] = ()
 
     @property
     def mapping_version(self) -> str:
@@ -89,6 +92,24 @@ def builtin_read(operation: str, *, records_path: str | None = None) -> DirectRe
 
 # ---------------------------------------------------------------- approved own mapping
 
+def validated_snapshot(read: DirectRead, source_instance: str, *, frappe_module=None):
+    """Load and validate the exact schema bound to an area's approved mapping."""
+    if frappe_module is None:
+        import frappe as frappe_module
+    from hero_integration.services.mapping_contract_v1 import SnapshotAdapter, StoredSnapshot
+
+    if not read.mapping:
+        raise ValueError('An approved mapping and schema snapshot are required.')
+    mapping = frappe_module.get_doc('HERO GraphQL Mapping', read.mapping)
+    if mapping.status != 'Active' or mapping.source_instance != source_instance:
+        raise ValueError('The approved mapping no longer belongs to this source.')
+    snapshot = frappe_module.get_doc('HERO GraphQL Schema Snapshot', mapping.schema_snapshot)
+    if (snapshot.source_instance != source_instance or snapshot.schema_fingerprint != mapping.schema_fingerprint
+            or getattr(snapshot, 'execution_contract_status', '') == 'Blocked'):
+        raise ValueError('The approved schema no longer matches this source.')
+    return SnapshotAdapter().adapt(StoredSnapshot(snapshot.name, snapshot.snapshot_json,
+        snapshot.schema_fingerprint, snapshot.source_instance, snapshot.analysis_status))
+
 def approved_read(operation: str, source_instance: str) -> DirectRead | None:
     """The approved own mapping of ``source_instance`` for ``operation``, validated like a native area."""
     import frappe
@@ -106,8 +127,12 @@ def approved_read(operation: str, source_instance: str) -> DirectRead | None:
     contract = from_documents(service, mapping, snapshot)  # proves the sealed query and the frozen rules
     plan = active_mapping_plan(service.operation_name, definition_ids=contract.definition_ids,
                                target_operation=operation, mapping_name=mapping.name)
+    from hero_integration.services.mapping_contract_v1 import StoredSnapshot
+    stored = StoredSnapshot(snapshot.name, snapshot.snapshot_json, snapshot.schema_fingerprint,
+                            snapshot.source_instance, snapshot.analysis_status)
     return DirectRead(operation, plan, service.query_document, contract.records_path, dict(contract.variables),
-                      contract.page_size, service.name, mapping.name)
+                      contract.page_size, service.name, mapping.name, stored,
+                      contract.projection_paths,contract.projection_preserve_paths)
 
 
 def resolve_read(operation: str, source_instance: str) -> DirectRead:
@@ -149,9 +174,15 @@ def records(read: DirectRead, data) -> list[dict]:
 
 def fetch_page(client, read: DirectRead, offset: int, size: int | None = None) -> list[dict]:
     """One page; a page HERO rejects is read again in two halves (down to 50 records)."""
+    if read.snapshot is None:
+        raise ValueError('A schema-bound read is required before GraphQL transport.')
     size = size or read.page_size
     try:
-        return records(read, client.query(read.document, page_variables(read, offset, size)))
+        from hero_integration.services.mapping_contract_v1 import materialize_saved_query
+        options = ({'selected_paths':read.projection_paths,'preserve_paths':read.projection_preserve_paths}
+                   if read.projection_paths is not None else {})
+        request = materialize_saved_query(read.snapshot, read.document, page_variables(read, offset, size),**options)
+        return records(read, client.query(request.document, request.variables))
     except ValueError:
         raise
     except Exception:

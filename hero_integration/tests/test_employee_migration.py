@@ -6,6 +6,7 @@ from unittest.mock import patch, Mock
 
 from hero_integration.services import employee_migration as em
 from hero_integration.tests import test_employee_mapping as mapping_tests
+from hero_integration.tests.saved_reader_fixture import isolate_direct_materialization
 
 
 class Doc(dict):
@@ -57,7 +58,7 @@ class TestEmployeeWrites(unittest.TestCase):
         employee = self.new_docs[0]
         self.assertEqual(employee.company, 'Synthetic Company')
         self.assertEqual(employee.date_of_joining, '2026-01-01')
-        self.assertEqual(employee.user_id, 'login@example.invalid')
+        self.assertIsNone(employee.user_id)
         self.assertTrue(employee.employee_number.startswith('HERO-'))
         self.assertEqual((employee.create_user_permission, employee.create_user_automatically), (0, 0))
         self.assertNotIn('date_of_birth', employee)
@@ -71,7 +72,7 @@ class TestEmployeeWrites(unittest.TestCase):
         self.find_user.return_value = self.user.name
         self.row['user']['email'] = 'changed@example.invalid'
         self.assertEqual(self.run_import(), 'added')
-        self.assertEqual(self.new_docs[0].user_id, self.user.name)
+        self.assertIsNone(self.new_docs[0].user_id)
         self.assertEqual(self.user.email, 'login@example.invalid')
         self.assertEqual(self.user.custom_hero_partner_id, str(self.row['id']))
 
@@ -89,7 +90,7 @@ class TestEmployeeWrites(unittest.TestCase):
         self.assertEqual(user.roles, [{'role':'Employee'}])
         self.assertEqual(user.send_welcome_email, 0)
         self.assertEqual(user.user_type, 'System User')
-        self.assertEqual(employee.user_id, user.name)
+        self.assertIsNone(employee.user_id)
         self.assertEqual(user.custom_hero_role, 'partner')
         self.assertNotIn({'role':'partner'}, user.roles)
 
@@ -99,7 +100,7 @@ class TestEmployeeWrites(unittest.TestCase):
         user = next(doc for doc in self.new_docs if doc.doctype == 'User')
         employee = next(doc for doc in self.new_docs if doc.doctype == 'Employee')
         self.assertEqual(user.email, 'new-login@example.invalid')
-        self.assertEqual(employee.user_id, user.name)
+        self.assertIsNone(employee.user_id)
 
     def test_missing_login_email_blocks_account_creation(self):
         self.row['user']['email'] = None
@@ -139,6 +140,23 @@ class TestEmployeeWrites(unittest.TestCase):
 
 
 class TestEmployeeRecordList(unittest.TestCase):
+    def test_historical_queries_materialize_root_and_nested_arguments(self):
+        from graphql import build_schema, introspection_from_schema, parse, validate
+        from hero_integration.services.graphql_graph import analyze_snapshot
+        from hero_integration.services.mapping_contract_v1 import SnapshotAdapter, StoredSnapshot
+        for root, path in [('partners(show_deleted:Boolean):[Partner]', 'partners'),
+                           ('company:Company', 'company.partners')]:
+            schema = build_schema('type Query { ' + root + ' } type Company { partners(show_deleted:Boolean):[Partner] } '
+                'type Partner { id:Int status:String user_id:Int user:User } type User { id:Int }')
+            raw = introspection_from_schema(schema)
+            validated = SnapshotAdapter().adapt(StoredSnapshot('snapshot', raw, analyze_snapshot(raw).fingerprint, 'source-a'))
+            with self.subTest(path=path), patch.object(em.runtime, 'validated_snapshot', return_value=validated):
+                request = em._historical_request(object(), 'source-a', path)
+                self.assertEqual(validate(schema, parse(request.document)), [])
+                self.assertIn(True, request.variables.values())
+                self.assertIn('show_deleted: $', request.document)
+                self.assertNotIn('show_deleted: true', request.document)
+
     def test_project_run_revalidates_employee_reader_before_and_after_historical_lookup(self):
         from hero_integration.services import migration
         from hero_integration.services import direct_runtime
@@ -150,7 +168,8 @@ class TestEmployeeRecordList(unittest.TestCase):
         contract = object()
         source = SimpleNamespace(source_instance='source-a', client=client, contract=contract,
                                  revalidate=Mock(return_value=contract))
-        with patch.object(direct_runtime, 'approved_read', return_value=read):
+        with patch.object(direct_runtime, 'approved_read', return_value=read), \
+             patch.object(em, '_historical_request', return_value=SimpleNamespace(document='query', variables={})):
             result = migration._verified_historical_users(SimpleNamespace(action='Project Migration'), source)
         self.assertEqual(result, ['101'])
         self.assertEqual(source.revalidate.call_count, 2)
@@ -162,11 +181,12 @@ class TestEmployeeRecordList(unittest.TestCase):
             {'id': 4, 'status': 'active', 'user_id': 104, 'user': {'id': 104}},
         ]
         client = SimpleNamespace(query=Mock(return_value={'company': {'partners': rows}}))
-        users, partners = em._historical_identities(client, 'company.partners',
-                                                     {'101', '102', '103', '104', '105'}, {'1', '2'})
+        with patch.object(em, '_historical_request', return_value=SimpleNamespace(document='query', variables={'v1': True})):
+            users, partners = em._historical_identities(client, 'company.partners',
+                {'101', '102', '103', '104', '105'}, {'1', '2'}, read=object(), source_instance='source-a')
         self.assertEqual(users, ['101'])
         self.assertEqual(partners, ['1'])
-        self.assertIn('show_deleted: true', client.query.call_args.args[0])
+        self.assertEqual(client.query.call_args.args[1], {'v1': True})
 
     def test_nested_and_direct_lists_and_empty_list(self):
         self.assertEqual(em._records({'partners':[{'id':2},{'id':1}]}, 'partners'), [{'id':1},{'id':2}])
@@ -177,21 +197,9 @@ class TestEmployeeRecordList(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(em.EmployeeMigrationBlocked):
                 em._records({'partners': value}, 'partners')
 
-    def test_query_validates_supported_shape_without_inventing_pagination(self):
-        from graphql import build_schema, introspection_from_schema
-        user = 'type User { id:Int email:String role:String locale:String last_login:String created:String modified:String }'
-        partner = 'type Partner { id:Int user_id:Int first_name:String last_name:String full_name:String email:String phone:String mobile:String role:String status:String account_type:String user:User }'
-        for root, path in [('type Query { partners:[Partner] }','partners'),
-                           ('type Query { company:Company } type Company { partners:[Partner] }','company.partners')]:
-            schema = introspection_from_schema(build_schema(f'{root} {partner} {user}'))
-            query, result = em.read_query(schema)
-            self.assertEqual(result, path)
-            self.assertIn('user { id email role locale last_login created modified }', query)
-            self.assertNotIn('first:', query)
-
-
 class TestEmployeeResume(unittest.TestCase):
     def setUp(self):
+        isolate_direct_materialization(self)
         self.stored = {}
         self.fake = SimpleNamespace(only_for=Mock(), get_all=lambda *a, **k: ['de'],
             db=SimpleNamespace(get_default=lambda key:self.stored.get(key),
@@ -202,6 +210,9 @@ class TestEmployeeResume(unittest.TestCase):
         patch.object(em, 'frappe', self.fake).start()
         patch.object(em.runtime, 'resolve_read', return_value=em.runtime.builtin_read('HeroEmployees')).start()
         patch.object(em, 'preflight', return_value=('Company','snapshot','query','partners')).start()
+        patch('hero_integration.services.deferred_references.require_storage').start()
+        patch.object(em, 'remember_relationships').start()
+        patch.object(em, '_historical_request', return_value=SimpleNamespace(document='query', variables={'v1': True})).start()
 
     def run_import(self, **kwargs):
         return em.sync_employees(self.client, source_instance='source', run_name='run-1', **kwargs)

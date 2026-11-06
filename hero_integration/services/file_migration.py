@@ -206,9 +206,6 @@ def start(action: str, parent: str = "") -> str:
     from hero_integration.services.migration_testing import configuration, run_metadata
     parent_run = frappe.get_doc('HERO Integration Run', parent) if parent else None
     require_mappings(action, config.source_instance)
-    if action in FILE_ACTIONS or action == FULL_ACTION:
-        from hero_integration.services.deferred_references import require_storage
-        require_storage(frappe)
     if action == EMPLOYEE_ACTION:
         from hero_integration.services.employee_migration import preflight
 
@@ -217,6 +214,9 @@ def start(action: str, parent: str = "") -> str:
         from hero_integration.services.service_migration import preflight
 
         preflight(config.source_instance)
+    if action in FILE_ACTIONS or action in {FULL_ACTION, EMPLOYEE_ACTION, SERVICE_ACTION}:
+        from hero_integration.services.deferred_references import require_storage
+        require_storage(frappe)
     if parent:
         bound_configuration(frappe.get_doc("HERO Integration Run", parent))  # a chain never switches sources
     testing = configuration(parent_run, frappe_module=frappe)
@@ -407,7 +407,9 @@ def _finish(run_name: str, state: str, message: str) -> None:
 
 
 def on_run_finished(run_name: str) -> None:
-    """Advance the Full Migration that started ``run_name``, if any."""
+    """Notify relationship realization and advance an originating Full Migration."""
+    from hero_integration.services.deferred_references import notify_completed_run
+    notify_completed_run(run_name)
     parent = frappe.db.get_default(CHILD_KEY.format(run_name))
     if parent and frappe.db.get_value("HERO Integration Run", parent, "state") in ACTIVE:
         _enqueue(parent)

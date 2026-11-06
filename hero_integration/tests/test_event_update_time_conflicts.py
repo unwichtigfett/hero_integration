@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 from hero_integration.services import mapped_update_v2 as update
 from hero_integration.services.direct_mapping import MappingSpec
 from hero_integration.services.change_detection import encode, field_hashes
-from hero_integration.services.graphql_contract import parse_mutation
+from hero_integration.services.mutation_binding_contract import parse_mutation
 from hero_integration.services.native_projections import values
 from hero_integration.tests.test_mapped_update_v2 import SCHEMA, mapping
 

@@ -105,6 +105,8 @@ class FakeFrappeMigrationHarness:
 
 
 class TestProjectCompanyMigration(FakeFrappeMigrationHarness, unittest.TestCase):
+    # Exercise the relationship writer owned by the post-success service.
+    @patch('hero_integration.services.deferred_references.realizing', new=lambda: True)
     def test_confirmed_company_creates_project_with_customer_and_stable_link(self):
         record = _project_title_inputs(id=201, customer_id=101, project_title="Synthetic HERO Project")
 
@@ -141,6 +143,8 @@ class TestProjectCompanyMigration(FakeFrappeMigrationHarness, unittest.TestCase)
         self.assertEqual(self.migration.observe_monitor_record("HeroCustomers", record), None)
         self.assertEqual(self._execute({**record, "category": "B"}).code, "UPDATED")
 
+    # Exercise the Customer relationship writer after successful import.
+    @patch('hero_integration.services.deferred_references.realizing', new=lambda: True)
     def test_customer_contact_values_are_dry_run_safe_and_idempotent(self):
         record = {
             "id": 301, "full_name": "Synthetic Ada", "company_name": None, "first_name": "Ada", "last_name": "Lovelace",
@@ -202,6 +206,8 @@ class TestProjectCompanyMigration(FakeFrappeMigrationHarness, unittest.TestCase)
         self.assertEqual(result.code, "CREATED")
         self.assertEqual(self.frappe.customers[0]["custom_hero_customer_category"], "Synthetic Territory")
 
+    # Exercise the Customer relationship writer after successful import.
+    @patch('hero_integration.services.deferred_references.realizing', new=lambda: True)
     def test_hero_only_customer_contact_change_updates_through_native_validation(self):
         record = {"id": 301, "full_name": "Synthetic Ada", "company_name": None, "email": "ada@synthetic.invalid"}
         self.migration._migrate_customer(record, SimpleNamespace(mode="Execute"))
@@ -214,6 +220,8 @@ class TestProjectCompanyMigration(FakeFrappeMigrationHarness, unittest.TestCase)
         self.assertEqual(self.frappe.customers[0]["email_id"], "changed@synthetic.invalid")
         self.assertEqual(self.frappe.links[("customer", "301")].sync_status, "Synchronized")
 
+    # Exercise the Customer relationship writer after successful import.
+    @patch('hero_integration.services.deferred_references.realizing', new=lambda: True)
     def test_same_field_changed_on_both_sides_conflicts_without_overwrite(self):
         record = {"id": 301, "full_name": "Synthetic Ada", "company_name": None, "email": "ada@synthetic.invalid"}
         self.migration._migrate_customer(record, SimpleNamespace(mode="Execute"))
@@ -227,6 +235,8 @@ class TestProjectCompanyMigration(FakeFrappeMigrationHarness, unittest.TestCase)
         self.assertEqual(self.frappe.customers[0]["email_id"], "local@synthetic.invalid")
         self.assertIn("email_id", self.frappe.links[("customer", "301")].conflict_detail)
 
+    # Exercise the Customer relationship writer after successful import.
+    @patch('hero_integration.services.deferred_references.realizing', new=lambda: True)
     def test_monitor_linked_customer_uses_contact_snapshot_without_business_write(self):
         record = {"id": 301, "full_name": "Synthetic Ada", "company_name": None, "email": "ada@synthetic.invalid"}
         self.migration._migrate_customer(record, SimpleNamespace(mode="Execute"))
@@ -234,6 +244,8 @@ class TestProjectCompanyMigration(FakeFrappeMigrationHarness, unittest.TestCase)
         self.assertIsNone(self.migration.observe_monitor_record("HeroCustomers", record))
         self.assertEqual(self.frappe.customers, before)
 
+    # Exercise the Customer relationship writer after successful import.
+    @patch('hero_integration.services.deferred_references.realizing', new=lambda: True)
     def test_local_observation_does_not_hide_later_same_field_conflict(self):
         record = {"id": 301, "full_name": "Synthetic Ada", "company_name": None, "email": "ada@synthetic.invalid"}
         self.migration._migrate_customer(record, SimpleNamespace(mode="Execute"))
@@ -245,6 +257,8 @@ class TestProjectCompanyMigration(FakeFrappeMigrationHarness, unittest.TestCase)
         self.assertEqual(result.code, "CONFLICT")
         self.assertEqual(self.frappe.customers[0]["email_id"], "local@synthetic.invalid")
 
+    # Exercise the Customer relationship writer after successful import.
+    @patch('hero_integration.services.deferred_references.realizing', new=lambda: True)
     def test_local_change_survives_unrelated_source_change_and_later_conflict(self):
         record = {"id": 301, "full_name": "Synthetic Ada", "company_name": None, "email": "ada@synthetic.invalid", "category": "A"}
         self.migration._migrate_customer(record, SimpleNamespace(mode="Execute"))
@@ -293,6 +307,8 @@ class TestProjectCompanyMigration(FakeFrappeMigrationHarness, unittest.TestCase)
         self.assertEqual(result.code, "CONFLICT")
         self.assertEqual(customer["custom_hero_customer_category"], "Mine")
 
+    # Exercise the Customer relationship writer after successful import.
+    @patch('hero_integration.services.deferred_references.realizing', new=lambda: True)
     def test_local_edit_then_hero_edit_replay_and_conflict_recovery(self):
         record = {"id": 301, "full_name": "Synthetic Ada", "company_name": None, "email": "ada@synthetic.invalid", "category": "A"}
         self._execute(record)
@@ -312,6 +328,8 @@ class TestProjectCompanyMigration(FakeFrappeMigrationHarness, unittest.TestCase)
         self.assertEqual(self._execute({**changed, "email": "next@synthetic.invalid"}).code, "UPDATED")
         self.assertEqual(customer["email_id"], "next@synthetic.invalid")
 
+    # Exercise the Customer relationship writer after successful import.
+    @patch('hero_integration.services.deferred_references.realizing', new=lambda: True)
     def test_relation_writes_are_scoped_to_reconciled_hero_changes(self):
         calls = []
         self.migration._synchronize_customer_relations = lambda customer, contact_values, phone, *rest: calls.append((dict(contact_values), phone))
@@ -326,6 +344,8 @@ class TestProjectCompanyMigration(FakeFrappeMigrationHarness, unittest.TestCase)
         self.assertEqual(calls, [({"first_name": "Adele"}, None)])
         self.assertEqual(self.frappe.customers[0]["email_id"], "local@synthetic.invalid")
 
+    # Exercise the Customer relationship writer after successful import.
+    @patch('hero_integration.services.deferred_references.realizing', new=lambda: True)
     def test_missing_response_field_is_neither_a_change_nor_a_clear(self):
         record = {"id": 301, "full_name": "Synthetic Ada", "company_name": None, "email": "ada@synthetic.invalid", "category": "A"}
         self._execute(record)
@@ -366,6 +386,8 @@ class TestProjectCompanyMigration(FakeFrappeMigrationHarness, unittest.TestCase)
         self.assertEqual(self._execute({**record, "category": "C"}).code, "CONFLICT")
         self.assertEqual(self.frappe.customers[0]["custom_hero_customer_category"], "Local")
 
+    # Exercise the Customer relationship writer after successful import.
+    @patch('hero_integration.services.deferred_references.realizing', new=lambda: True)
     def test_monitor_customer_outcomes_never_write_business_data_or_advance_baselines(self):
         from unittest.mock import patch
         record = {"id": 301, "full_name": "Synthetic Ada", "company_name": None, "email": "ada@synthetic.invalid", "category": "A"}
@@ -437,6 +459,8 @@ class TestProjectCompanyMigration(FakeFrappeMigrationHarness, unittest.TestCase)
         with self.assertRaises(self.migration.MappingPlanError):
             self.migration._validate_run_source_binding(SimpleNamespace(source_instance="", source_binding_revision=0), other, snapshot)
 
+    # Exercise the Customer relationship writer after successful import.
+    @patch('hero_integration.services.deferred_references.realizing', new=lambda: True)
     def test_preview_existing_change_does_not_write_link_or_target_state(self):
         record = {"id": 301, "full_name": "Synthetic Ada", "company_name": None, "email": "ada@synthetic.invalid"}
         self.migration._migrate_customer(record, SimpleNamespace(mode="Execute"))
@@ -719,7 +743,7 @@ class TestProjectCompanyMigration(FakeFrappeMigrationHarness, unittest.TestCase)
 
     def test_local_project_change_does_not_block_independent_assignee_reconciliation(self):
         record = _project_title_inputs(id=782, customer_id=101, project_match_assignments=[{'user_id': 44}])
-        with patch('hero_integration.integrations.project_assignments.sync', return_value={'added': 0, 'closed': 0, 'unmatched': 0}) as sync:
+        with patch('hero_integration.services.deferred_references.realizing', return_value=True), patch('hero_integration.integrations.project_assignments.sync', return_value={'added': 0, 'closed': 0, 'unmatched': 0}) as sync:
             self.assertEqual(self._project(record).code, 'CREATED')
             self.frappe.projects[0]['project_name'] = 'Locally edited title'
             self.assertEqual(self._project(record).code, 'OBSERVED')
@@ -728,7 +752,7 @@ class TestProjectCompanyMigration(FakeFrappeMigrationHarness, unittest.TestCase)
 
     def test_project_field_conflict_allows_assignee_additions_but_not_removals(self):
         record = _project_title_inputs(id=782, customer_id=101, project_match_assignments=[{'user_id': 44}])
-        with patch('hero_integration.integrations.project_assignments.sync', return_value={'added': 0, 'closed': 0, 'unmatched': 0}) as sync:
+        with patch('hero_integration.services.deferred_references.realizing', return_value=True), patch('hero_integration.integrations.project_assignments.sync', return_value={'added': 0, 'closed': 0, 'unmatched': 0}) as sync:
             self.assertEqual(self._project(record).code, 'CREATED')
             self.frappe.projects[0]['project_name'] = 'Locally edited title'
             result = self._project({**record, 'project_nr': '1112'})
@@ -797,7 +821,8 @@ class TestProjectCompanyMigration(FakeFrappeMigrationHarness, unittest.TestCase)
         self.assertEqual(link.sync_status, 'Synchronized')
         self.assertIsNone(self.frappe.projects[0].get('customer'))
         self.frappe.links[('customer', '999')] = SimpleNamespace(target_name='Synthetic Customer', target_doctype='Customer')
-        self.assertEqual(self._project(record).code, 'UPDATED')
+        with patch('hero_integration.services.deferred_references.realizing', return_value=True):
+            self.assertEqual(self._project(record).code, 'UPDATED')
         self.assertEqual(self.frappe.projects[0]['customer'], 'Synthetic Customer')
 
     def test_admin_approval_releases_the_project_for_normal_sync(self):
@@ -880,6 +905,8 @@ class TestProjectCompanyMigration(FakeFrappeMigrationHarness, unittest.TestCase)
         self.assertEqual(result.code, "UPDATED")
         self.assertNotEqual(self.frappe.projects[0]["project_name"], original)
 
+    # Exercise the relationship writer owned by the post-success service.
+    @patch('hero_integration.services.deferred_references.realizing', new=lambda: True)
     def test_missing_project_customer_preserves_link_and_allows_other_update(self):
         record = _project_title_inputs(id=778, customer_id=101, partner_notes="A")
         run = SimpleNamespace(mode="Execute")
@@ -900,6 +927,8 @@ class TestProjectCompanyMigration(FakeFrappeMigrationHarness, unittest.TestCase)
         self.assertEqual(self.migration._migrate_project(record, SimpleNamespace(mode="Execute")).code, "BLOCKED_RECORD")
         self.assertFalse(self.frappe.projects)
 
+    # Exercise the relationship writer owned by the post-success service.
+    @patch('hero_integration.services.deferred_references.realizing', new=lambda: True)
     def test_missing_title_input_preserves_name_during_independent_update(self):
         record = _project_title_inputs(id=779, customer_id=101, partner_notes="A")
         run = SimpleNamespace(mode="Execute")
@@ -921,6 +950,8 @@ class TestProjectCompanyMigration(FakeFrappeMigrationHarness, unittest.TestCase)
             self.assertEqual(self.migration._migrate_project(invalid, run).code, "BLOCKED_RECORD")
             self.assertEqual(self.migration.observe_monitor_record("HeroProjectMatches", invalid).code, "BLOCKED_RECORD")
 
+    # Exercise the relationship writer owned by the post-success service.
+    @patch('hero_integration.services.deferred_references.realizing', new=lambda: True)
     def test_project_status_presence_null_and_zero(self):
         from hero_integration.services.direct_mapping import MappingSpec
         from hero_integration.services.mapping_runtime import plan_from_definitions
@@ -976,6 +1007,8 @@ class TestProjectCompanyMigration(FakeFrappeMigrationHarness, unittest.TestCase)
         self.assertFalse(self.frappe.customers)
         self.assertIsNone(self.frappe.link("customer", "rollback-1"))
 
+    # Exercise the relationship writer owned by the post-success service.
+    @patch('hero_integration.services.deferred_references.realizing', new=lambda: True)
     def test_dataset_transfer_maps_relations_and_detects_repeats_and_updates(self):
         customers = [
             self.migration._migrate_customer(record, SimpleNamespace(mode="Execute")) for record in CUSTOMERS

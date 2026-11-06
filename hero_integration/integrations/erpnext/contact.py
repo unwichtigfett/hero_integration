@@ -2,6 +2,27 @@
 from __future__ import annotations
 
 
+class DeferredCustomerRelations:
+    """Keep ERPNext's automatic relationship writes in the post-success pass."""
+
+    def _hero_relations_deferred(self):
+        from hero_integration.services.change_detection import managed_target_update_active
+        from hero_integration.services.deferred_references import realizing
+        return managed_target_update_active('Customer', self.name) and not realizing()
+
+    def create_primary_contact(self):
+        if not self._hero_relations_deferred():
+            return super().create_primary_contact()
+
+    def create_primary_address(self):
+        if not self._hero_relations_deferred():
+            return super().create_primary_address()
+
+    def link_address_and_contact(self):
+        if not self._hero_relations_deferred():
+            return super().link_address_and_contact()
+
+
 def synchronize_home_phone(customer, source_phone_home: object) -> None:
     """Add the HERO home phone only to this Customer's exclusive Contact.
 

@@ -59,7 +59,7 @@ def _mapping_type(name, nullable):
 def _object_areas(schema, types):
     """Resolve areas only along existing reviewed source-contract paths."""
     from hero_integration.services.direct_mapping import SOURCE_CONTRACTS
-    from hero_integration.services.mapping_suggestions import OPERATION_ROOTS
+    from hero_integration.services.mapping_source_fields import OPERATION_ROOTS
     query = types.get((schema.get('queryType') or {}).get('name'), {})
     root_fields = {field['name']: field for field in query.get('fields') or []
                    if isinstance(field, Mapping) and isinstance(field.get('name'), str)}

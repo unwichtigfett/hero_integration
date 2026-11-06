@@ -21,6 +21,19 @@ from hero_integration.services.introspection import endpoint_fingerprint
 from hero_integration.services.writeback_source import SourceContext
 
 
+MUTATION = 'mutation Write($contact:ContactInput) { update_contact(contact:$contact) { id } }'
+
+
+def mutation_snapshot():
+    from graphql import build_schema, introspection_from_schema
+    from hero_integration.services.graphql_graph import analyze_snapshot
+    from hero_integration.services.mapping_contract_v1 import StoredSnapshot
+    raw = introspection_from_schema(build_schema('type Query { contacts:[Contact] } '
+        'type Contact { id:ID full_name:String } input ContactInput { full_name:String } '
+        'type Mutation { update_contact(contact:ContactInput):Contact }'))
+    return StoredSnapshot('writeback', raw, analyze_snapshot(raw).fingerprint, 'hero')
+
+
 def configuration(**changes):
     return replace(HeroConfiguration(HeroEndpoint('https://example.invalid/graphql', 'example.invalid'),
                                     'synthetic', 1, 'hero', 7, True), **changes)
@@ -31,7 +44,7 @@ def context():
                  result_bindings=[NS(selection_path=('id',)), NS(selection_path=('full_name',))])
     plan = NS(request=request, source_instance='hero', sealed=NS(contract=NS(identity_path='id', records_path='contacts', definition_ids=('d',), mapping_revision=1)))
     value = 'Expected'
-    return {'source_context': SourceContext('hero', 7, endpoint_fingerprint('https://example.invalid/graphql', 'hero')),
+    return {'snapshot': mutation_snapshot(), 'source_context': SourceContext('hero', 7, endpoint_fingerprint('https://example.invalid/graphql', 'hero')),
             'mapping': {'target': {'operation': 'update_contact', 'argument': 'contact', 'field': 'full_name'}},
             'parent': NS(object_type='Contact', source_instance='hero', external_object_id='42'),
             'binding': NS(target_doctype='Customer', source_field='full_name', acknowledged_source_fingerprint=None, mapping_definition_id='d', mapping_revision=1), 'readback_plan': plan,
@@ -77,7 +90,7 @@ class TestVerifiedWriteback(TestCase):
         c = context(); del c['readback_plan']
         with patch('hero_integration.client.graphql_mutation.HeroMutationClient') as mutation:
             with self.assertRaises(RuntimeError):
-                api._SyncHeroTransport(c, NS(correlation_id='audit')).execute_once('mutation', {})
+                api._SyncHeroTransport(c, NS(correlation_id='audit')).execute_once(MUTATION, {})
         mutation.assert_not_called()
 
     def test_transport_preserves_binding_when_readback_fails_and_never_retries_mutation(self):
@@ -89,7 +102,7 @@ class TestVerifiedWriteback(TestCase):
             mutation.return_value.execute_once.return_value = {'update_contact': {'id': '42'}}
             read.return_value.query.return_value = {'contacts': [{'id': '42', 'full_name': 'Old'}]}
             with self.assertRaises(WritebackContractError):
-                api._SyncHeroTransport(c, NS(correlation_id='audit')).execute_once('mutation', {'contact': {'full_name': 'Expected'}})
+                api._SyncHeroTransport(c, NS(correlation_id='audit')).execute_once(MUTATION, {'contact': {'full_name': 'Expected'}})
             mutation.return_value.execute_once.assert_called_once()
 
 
@@ -110,7 +123,7 @@ class TestVerifiedWriteback(TestCase):
                 ]
                 transport = api._SyncHeroTransport(c, NS(correlation_id='audit'))
                 if succeeds:
-                    ack = transport.execute_once('mutation', {'contact': {'full_name': 'Expected'}})
+                    ack = transport.execute_once(MUTATION, {'contact': {'full_name': 'Expected'}})
                     self.assertTrue(ack.verified)
                     self.assertEqual(ack.source_fingerprint, state_fingerprint('Expected', present=True))
                     self.assertEqual(ack.target_fingerprint, c['intent'].local_fingerprint)
@@ -118,7 +131,7 @@ class TestVerifiedWriteback(TestCase):
                     self.assertEqual(read.return_value.query.call_count, 2)
                 else:
                     with self.assertRaises(RuntimeError):
-                        transport.execute_once('mutation', {'contact': {'full_name': 'Expected'}})
+                        transport.execute_once(MUTATION, {'contact': {'full_name': 'Expected'}})
                     mutation.assert_not_called()
 
     def test_missing_bound_record_in_approved_page_blocks_before_mutation(self):
@@ -129,7 +142,7 @@ class TestVerifiedWriteback(TestCase):
                 patch('hero_integration.client.graphql.HeroGraphQLClient') as read:
             read.return_value.query.return_value = {'contacts': []}
             with self.assertRaises(WritebackContractError):
-                api._SyncHeroTransport(c, NS(correlation_id='audit')).execute_once('mutation', {})
+                api._SyncHeroTransport(c, NS(correlation_id='audit')).execute_once(MUTATION, {})
             mutation.assert_not_called()
 
 
@@ -142,7 +155,7 @@ class TestVerifiedWriteback(TestCase):
                     patch('hero_integration.client.graphql_mutation.HeroMutationClient') as mutation, \
                     patch('hero_integration.client.graphql.HeroGraphQLClient') as reader:
                 with self.assertRaises(WritebackContractError):
-                    api._SyncHeroTransport(context(), NS(correlation_id='audit')).execute_once('mutation', {})
+                    api._SyncHeroTransport(context(), NS(correlation_id='audit')).execute_once(MUTATION, {})
                 reader.assert_not_called(); mutation.assert_not_called()
 
 

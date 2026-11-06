@@ -10,7 +10,7 @@ from uuid import NAMESPACE_URL, uuid5
 
 from hero_integration import api  # Load Frappe-decorated API before replacing the DB boundary.
 from hero_integration.patches.v0_1 import normalize_mapping_priorities
-from hero_integration.services import mapping_runtime, mapping_suggestions, direct_mapping
+from hero_integration.services import mapping_runtime, mapping_source_fields, direct_mapping
 from hero_integration.services.frappe_mapping_draft_storage import FrappeMappingDraftStorage
 from hero_integration.services.mapping_draft_service import ActiveMapping, MappingDraft, draft_key, _hash
 from hero_integration.hero_integration.doctype.hero_graphql_mapping import hero_graphql_mapping
@@ -209,7 +209,7 @@ class TestSharedRulePublication(unittest.TestCase):
         draft = SimpleNamespace(key='draft-a', generation=1, content_revision=1, base_content=baseline,
                                 reconciliation=None, content={**parent_config, 'field_rules':rules, 'field_rule_bases':bases})
         metadata = SimpleNamespace(field=lambda *_args: SimpleNamespace(is_custom_field=True))
-        with patch.object(mapping_suggestions, 'source_fields', return_value=[]), \
+        with patch.object(mapping_source_fields, 'source_fields', return_value=[]), \
              patch.object(direct_mapping, 'validate_spec'), \
              patch.object(hero_frappe_mapping, '_FrappeMetadata', return_value=metadata), \
              patch.object(storage, '_validate_publication_read_contract'), \
