@@ -165,6 +165,35 @@ class TestTaskAssignmentPolicyFrappe(unittest.TestCase):
         self.assertEqual(frappe.db.count('ToDo', {'reference_type': 'Task', 'reference_name': task.target_name,
                                                  'status': 'Open'}), 1)
 
+    def test_silent_completed_assignment_is_closed_and_idempotent(self):
+        from hero_integration.services.migration import _migrate_native_task, _record_task_assignment_pending
+        self.user.reload(); self.user.add_roles('Projects User')
+        self.payload['silent_initial'] = True
+        self.payload['native_effects'] = {'date_rule': 'LOCAL_TODAY', 'allow_notifications': False, 'allow_follow': False}
+        name = task_assignment_policy_create(json.dumps(self.payload))['name']
+        task_assignment_policy_approve(name, 1)
+        class Plan:
+            mapping_version = 'policy-test'
+            definitions = (SimpleNamespace(source_path='id'), SimpleNamespace(source_path='title'))
+            def source_identity(self, record): return str(record['id'])
+        scope = {'confirmed': True, 'source_instance': 'fixture-policy32b', 'source_type': 'Task'}
+        run = SimpleNamespace(mode='Execute', mapping_revision=1, name=None)
+        record = {'id': 990006, 'title': 'Synthetic completed task', 'target_user_id': 990001,
+                  '_hero_source_instance': 'fixture-policy32b'}
+        task_name = _migrate_native_task(record, run, Plan(), scope).target_name
+        task = frappe.get_doc('Task', task_name); task.status = 'Completed'; task.save()
+        with patch('frappe.desk.form.assign_to.add', side_effect=AssertionError('native notifications forbidden')), \
+             patch('frappe.share.add', side_effect=AssertionError('sharing forbidden')), \
+             patch('frappe.sendmail', side_effect=AssertionError('email forbidden')):
+            self.assertEqual(_record_task_assignment_pending(run, record, task_name, 'fixture-policy32b'), 'CREATE_COMPLETED')
+            self.assertEqual(_record_task_assignment_pending(run, record, task_name, 'fixture-policy32b'), 'KEEP')
+        todos = frappe.get_all('ToDo', filters={'reference_type': 'Task', 'reference_name': task_name},
+                              fields=['name', 'status', 'allocated_to'])
+        self.assertEqual(len(todos), 1)
+        self.assertEqual((todos[0].status, todos[0].allocated_to), ('Closed', self.user.name))
+        self.assertTrue(frappe.db.exists('HERO Integration Link', {'source_instance': 'fixture-policy32b',
+            'source_type': 'task_completed_assignment', 'source_id': '990006', 'target_name': todos[0].name}))
+
     def test_policy_does_not_grant_recipient_task_access(self):
         from hero_integration.services.migration import _migrate_native_task, _record_task_assignment_pending
         name = task_assignment_policy_create(json.dumps(self.payload))['name']

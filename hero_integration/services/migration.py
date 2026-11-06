@@ -1204,7 +1204,7 @@ def _plan_task_assignment(run, record, task_name: str, source_instance: str) -> 
     task = frappe.get_doc('Task', task_name, for_update=True)
     if not silent_initial and not task_has_policy_company(task, policy):
         return decision('BLOCKED', 'PENDING_AUTHORITY: Task has no verified project in the policy company.', **details)
-    if task.status in {'Completed', 'Cancelled'}:
+    if task.status == 'Cancelled' or (task.status == 'Completed' and not silent_initial):
         return decision('BLOCKED', 'PENDING_AUTHORITY: Task lifecycle does not permit assignment.', **details)
     if not frappe.has_permission('Task', 'write', doc=task, user=frappe.session.user):
         return decision('BLOCKED', 'BLOCKED_PERMISSION: actor cannot write the Task.', **details)
@@ -1229,9 +1229,29 @@ def _plan_task_assignment(run, record, task_name: str, source_instance: str) -> 
     state = frappe.get_doc('HERO Task Assignment State', states[0].name, for_update=True) if states else None
     history = frappe.db.sql('SELECT name FROM `tabToDo` WHERE reference_type=%s AND reference_name=%s FOR UPDATE',
                             ('Task', task_name), as_dict=True)
-    active = [frappe.get_doc('ToDo', row.name, for_update=True) for row in history]
-    active = [item for item in active if item.status == 'Open']
+    history_docs = [frappe.get_doc('ToDo', row.name, for_update=True) for row in history]
+    active = [item for item in history_docs if item.status == 'Open']
     details['existing'] = tuple(item.name for item in active)
+    if silent_initial and task.status == 'Completed' and not state:
+        completed_link = _link('task_completed_assignment', str(record['id']), source_instance)
+        if completed_link:
+            if completed_link.target_doctype != 'ToDo' or not frappe.db.exists('ToDo', completed_link.target_name):
+                return decision('CONFLICT', 'The completed assignment binding has a missing target.', **details)
+            completed = frappe.get_doc('ToDo', completed_link.target_name, for_update=True)
+            expected_source = _digest({'recipient_id': target})
+            observed = _digest({'task': completed.reference_name, 'recipient': completed.allocated_to,
+                                'status': completed.status, 'reference_type': completed.reference_type})
+            if (completed_link.source_payload_hash != expected_source or completed_link.target_payload_hash != observed
+                    or completed.reference_type != 'Task' or completed.reference_name != task_name
+                    or completed.allocated_to != recipient or completed.status != 'Closed'):
+                return decision('BLOCKED', 'PENDING_AUTHORITY: completed assignment changed and is preserved.', **details)
+            return decision('KEEP', 'Completed HERO assignment is already recorded.', **details)
+        if active:
+            return decision('BLOCKED', 'PENDING_AUTHORITY: existing local assignments are preserved.', **details)
+        if history:
+            if any(item.status == 'Closed' and item.allocated_to == recipient for item in history_docs):
+                return decision('KEEP', 'Existing completed assignment already includes the HERO recipient.', **details)
+            return decision('BLOCKED', 'PENDING_AUTHORITY: historical assignments require local review.', **details)
     if silent_initial and not state and active:
         if any(item.allocated_to == recipient for item in active):
             return decision('KEEP', 'Existing local assignment already includes the HERO recipient.', **details)
@@ -1268,14 +1288,15 @@ def _plan_task_assignment(run, record, task_name: str, source_instance: str) -> 
     if not silent_initial and frappe.get_cached_value('User', recipient, 'follow_assigned_documents') and not effects['allow_follow']:
         return decision('BLOCKED', 'POLICY_REQUIRED: native document following is not authorized.',
                         proposed='CREATE', **details)
-    return decision('CREATE', 'Authorized initial assignment; local date is today.',
-                    proposed='CREATE', date_rule=effects['date_rule'], **details)
+    action = 'CREATE_COMPLETED' if silent_initial and task.status == 'Completed' else 'CREATE'
+    return decision(action, 'Authorized initial assignment; local date is today.',
+                    proposed=action, date_rule=effects['date_rule'], **details)
 
 
 def _execute_initial_task_assignment(run, record, task_name, source_instance, observed):
     """Revalidate under the same transaction immediately before native effects."""
     current = _plan_task_assignment(run, record, task_name, source_instance)
-    if current != observed or current.action != 'CREATE':
+    if current != observed or current.action not in {'CREATE', 'CREATE_COMPLETED'}:
         raise RuntimeError('Task assignment admission changed before execution.')
     from frappe.desk.form import assign_to
     from frappe.utils import nowdate
@@ -1284,12 +1305,28 @@ def _execute_initial_task_assignment(run, record, task_name, source_instance, ob
     try:
         with managed_assignment():
             policy = frappe.get_doc('HERO Task Assignment Policy', current.policy, for_update=True)
+            completed = current.action == 'CREATE_COMPLETED'
             if json.loads(policy.policy_json).get('silent_initial') is True:
-                frappe.get_doc({'doctype': 'ToDo', 'allocated_to': current.recipient, 'reference_type': 'Task',
+                created_todo = frappe.get_doc({'doctype': 'ToDo', 'allocated_to': current.recipient, 'reference_type': 'Task',
                     'reference_name': task_name, 'description': frappe._('Assignment for Task {0}').format(task_name),
-                    'priority': 'Medium', 'status': 'Open', 'date': date, 'assigned_by': frappe.session.user}).insert()
+                    'priority': 'Medium', 'status': 'Closed' if completed else 'Open',
+                    'date': date, 'assigned_by': frappe.session.user}).insert()
             else:
                 assign_to.add({'doctype': 'Task', 'name': task_name, 'assign_to': [current.recipient], 'date': date})
+            if completed:
+                todo = frappe.get_doc('ToDo', created_todo.name, for_update=True)
+                if (todo.reference_type != 'Task' or todo.reference_name != task_name or todo.status != 'Closed'
+                        or todo.allocated_to != current.recipient or todo.assigned_by != frappe.session.user):
+                    raise RuntimeError('Completed assignment does not match its approved task and recipient.')
+                frappe.get_doc({'doctype': 'HERO Integration Link', 'source_system': 'HERO',
+                    'source_instance': source_instance, 'source_type': 'task_completed_assignment',
+                    'source_id': str(record['id']), 'target_doctype': 'ToDo', 'target_name': todo.name,
+                    'sync_status': 'Synchronized', 'mapping_version': str(run.mapping_revision),
+                    'source_payload_hash': _digest({'recipient_id': record['target_user_id']}),
+                    'target_payload_hash': _digest({'task': todo.reference_name, 'recipient': todo.allocated_to,
+                        'status': todo.status, 'reference_type': todo.reference_type}),
+                    'last_synced_on': frappe.utils.now_datetime()}).insert()
+                return todo.name
             rows = frappe.get_all('ToDo', filters={'reference_type': 'Task', 'reference_name': task_name,
                                   'status': 'Open'}, fields=['name', 'allocated_to'], limit=2)
             if len(rows) != 1 or rows[0].allocated_to != current.recipient:
@@ -1316,12 +1353,13 @@ def _execute_initial_task_assignment(run, record, task_name, source_instance, ob
 def _record_task_assignment_pending(run, record, task_name: str, source_instance: str) -> None:
     """Use the same locked admission decision for Preview and execution."""
     plan = _plan_task_assignment(run, record, task_name, source_instance)
-    if plan.action == 'CREATE' and getattr(run, 'mode', '') == 'Execute':
+    if plan.action in {'CREATE', 'CREATE_COMPLETED'} and getattr(run, 'mode', '') == 'Execute':
         todo_name = _execute_initial_task_assignment(run, record, task_name, source_instance, plan)
         record_output(run=run.name, source_type='Task', source_id=str(record['id']), result='CREATED',
-                      action='task_assignment_created', target_doctype='Task', target_name=task_name,
-                      correlation_id=todo_name, detail='Approved native assignment created.')
-        return 'CREATE'
+                      action='task_completed_assignment_created' if plan.action == 'CREATE_COMPLETED' else 'task_assignment_created',
+                      target_doctype='Task', target_name=task_name, correlation_id=todo_name,
+                      detail='Completed assignment recorded.' if plan.action == 'CREATE_COMPLETED' else 'Approved native assignment created.')
+        return plan.action
     detail = json.dumps({'decision': plan.action, 'proposed': plan.proposed, 'reason': plan.detail, 'recipient': plan.recipient,
                          'existing_todos': list(plan.existing), 'local_date': plan.date_rule or 'POLICY_REQUIRED'}, sort_keys=True)
     pending = (plan.action == 'PENDING_IDENTITY' or

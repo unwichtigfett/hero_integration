@@ -48,7 +48,8 @@ class TestTaskAssignmentTransfer(unittest.TestCase):
         payload = {'source_instance': self.source, 'issuer': self.users[0], 'company': company,
                    'user_bindings': bindings, 'allow_initial': True, 'allow_transfer': self._testMethodName != 'test_transfer_requires_policy',
                    'native_effects': {'date_rule': 'LOCAL_TODAY', 'allow_notifications': True, 'allow_follow': True}}
-        if self._testMethodName in {'test_competing_silent_initial_assignment', 'test_silent_initial_against_manual_assignment'}:
+        if self._testMethodName in {'test_competing_silent_initial_assignment', 'test_silent_initial_against_manual_assignment',
+                                   'test_competing_silent_completed_assignment'}:
             payload.update(silent_initial=True, allow_transfer=False, native_effects={
                 'date_rule': 'LOCAL_TODAY', 'allow_notifications': False, 'allow_follow': False})
         self.policy = task_assignment_policy_create(json.dumps(payload))['name']
@@ -460,3 +461,29 @@ class TestTaskAssignmentTransfer(unittest.TestCase):
         frappe.db.rollback()
         self.assertEqual(frappe.db.count('ToDo', {'reference_type': 'Task', 'reference_name': task,
                                                  'allocated_to': self.users[0], 'status': 'Open'}), 1)
+
+    def test_competing_silent_completed_assignment(self):
+        row = {**self.record, 'id': 991013}
+        task_name = _migrate_native_task(row, self.run, _Plan(), self.scope).target_name
+        task = frappe.get_doc('Task', task_name); task.status = 'Completed'; task.save()
+        frappe.db.commit()
+        gate = threading.Barrier(2); results = []
+        def worker():
+            frappe.init(site=os.environ['HERO_TEST_PRIVATE_SITE']); frappe.connect(); frappe.set_user(self.users[0])
+            try:
+                gate.wait(timeout=10)
+                _record_task_assignment_pending(self.run, row, task_name, self.source)
+                frappe.db.commit(); results.append('OK')
+            except Exception as error:
+                frappe.db.rollback(); results.append(type(error).__name__)
+            finally: frappe.destroy()
+        threads = [threading.Thread(target=worker) for _ in range(2)]
+        for thread in threads: thread.start()
+        for thread in threads: thread.join(timeout=30)
+        self.assertFalse(any(thread.is_alive() for thread in threads))
+        self.assertIn(sorted(results), (['OK', 'OK'], ['OK', 'QueryDeadlockError']))
+        frappe.db.rollback()
+        self.assertEqual(frappe.db.count('ToDo', {'reference_type': 'Task', 'reference_name': task_name,
+                                                 'allocated_to': self.users[0], 'status': 'Closed'}), 1)
+        self.assertEqual(frappe.db.count('ToDo', {'reference_type': 'Task', 'reference_name': task_name,
+                                                 'status': 'Open'}), 0)
