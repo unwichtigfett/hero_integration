@@ -125,8 +125,10 @@ their normal baselines. Generic observations also capture the original imported
 binding and source hashes; the worker locks and verifies that proof before replay.
 Employee, service and file workers verify their frozen source/target evidence.
 
-Versioned Task/Project workers use a dedicated reference/assignment path instead
-of replaying full scalar intake or Project logbook processing. Unselected scalar
+Versioned Task/Project/Event workers use a dedicated reference/assignment path
+instead of replaying scalar intake, Event time processing or Project logbook
+processing. Event binding updates retain the native privacy/outbound checks and
+carry forward unselected scalar baselines without acknowledgement. Unselected scalar
 baselines are carried forward without acknowledgement. Customer reconciliation
 restricts its target writes to contact/relation fields in the successful replay
 context. Employee realization validates the imported baselines, creates/verifies
@@ -157,6 +159,31 @@ Resolved observations clear their private source record while retaining dependen
 identities. Signed download URLs and credentials are excluded from stored records;
 service attachments refresh only the owning service identity, company and file
 metadata/URL before download. They do not reload the service calculation.
+
+## Full-import relationship completion
+
+Missing dependencies remain Waiting while areas are still being imported; ready
+relationships may be realized after their own successful origin run. Completeness
+is assessed only after every scalar area of the full import has finished. The
+final pass processes one bounded page per job in dependency order: Employees,
+Customers, Projects, Events, Tasks, Services, Documents and Pictures. Products are
+already imported by then. Each stage has its own cursor and is checkpointed.
+
+Both ordinary and bounded test full imports reconcile only their recorded child
+runs, never an unrelated source-wide backlog. After the dependency stages, a
+bounded final assessment marks still-Waiting observations as conflicts while
+preserving their frozen source records. Existing conflicts are also counted. A
+full import with unresolved relationships ends as Completed With Conflicts and
+reports the count instead of appearing successfully complete with indefinite
+Waiting entries. Failed/cancelled origins never acquire write authority.
+
+`file_migration.retry_full_relationships(run_name)` restarts only this final pass
+for an already finished full import. It requires System Manager and write access,
+a current confirmed source binding, a complete scalar checkpoint and matching
+frozen child/source associations. It preserves the child scope and test cohort;
+no scalar import or fresh source enumeration restarts. It does not reset genuine
+conflicts or reconstruct cleared observations. The operations project provides
+`reconcile-opt-full.sh` for invoking it on the opt site after deployment.
 
 ## Runtime measurement
 

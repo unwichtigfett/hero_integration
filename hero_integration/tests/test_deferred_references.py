@@ -641,3 +641,41 @@ class TestReferenceFailureState(TestCase):
             with self.subTest(payload=payload),self.assertRaises(deferred.PendingObservationError):
                 deferred._source_observation(NS(record_json=payload))
         self.assertEqual(deferred._source_observation(NS(record_json='{"id":1}')),{'id':1})
+
+
+class TestFullReferenceFinalization(TestCase):
+    def test_dependency_stages_use_independent_cursors_and_scope_without_early_conflicts(self):
+        state={'reconciliation_after':'old-global-cursor'}
+        db=NS(set_value=Mock(),commit=Mock())
+        with patch.object(deferred,'frappe',NS(db=db)), \
+                patch.object(deferred,'reconcile_source_page',return_value=('page-end',False)) as page:
+            for operation in deferred.FINAL_RELATION_ORDER:
+                self.assertFalse(deferred.reconcile_full_page('source',['child'],state))
+                page.assert_called_with('source','',origin_runs=['child'],operations=(operation,))
+        self.assertEqual(state['reconciliation_stage'],len(deferred.FINAL_RELATION_ORDER))
+        db.set_value.assert_not_called()
+
+    def test_stage_continues_on_its_own_cursor_before_advancing(self):
+        state={}
+        with patch.object(deferred,'reconcile_source_page',side_effect=[('last',True),('last',False)]) as page:
+            deferred.reconcile_full_page('source',['child'],state)
+            self.assertEqual(state['reconciliation_stage'],0)
+            deferred.reconcile_full_page('source',['child'],state)
+        self.assertEqual(page.call_args.args[:2],('source','last'))
+        self.assertEqual(state['reconciliation_stage'],1)
+        self.assertEqual(state['reconciliation_after'],'')
+
+    def test_only_final_phase_marks_unresolved_observations_and_preserves_payload(self):
+        pending=NS(status='Waiting',source_instance='source',origin_run='child',record_json='frozen')
+        db=NS(sql=Mock(return_value=[NS(name='ref')]),set_value=Mock(),commit=Mock(),count=Mock(return_value=3))
+        state={'reconciliation_stage':len(deferred.FINAL_RELATION_ORDER)}
+        with patch.object(deferred,'frappe',NS(db=db,get_doc=Mock(return_value=pending))):
+            self.assertTrue(deferred.reconcile_full_page('source',['child'],state))
+        self.assertEqual(db.sql.call_args.args[1],('source',('child',),'',deferred.BATCH))
+        self.assertEqual(db.set_value.call_args.args[2]['status'],'Conflict')
+        self.assertNotIn('record_json',db.set_value.call_args.args[2])
+        self.assertEqual(state['reconciliation_conflicts'],3)
+        self.assertEqual(pending.record_json,'frozen')
+
+    def test_missing_child_scope_is_not_replaced_with_global_source_scan(self):
+        with self.assertRaises(ValueError):deferred.reconcile_full_page('source',[],{})

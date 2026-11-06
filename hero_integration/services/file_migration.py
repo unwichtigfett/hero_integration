@@ -262,6 +262,34 @@ def resume(run) -> None:
     _enqueue(run.name)
 
 
+
+def retry_full_relationships(run_name: str):
+    """Queue only the final binding pass of an already imported full run."""
+    frappe.only_for('System Manager')
+    run=frappe.get_doc('HERO Integration Run',run_name,for_update=True)
+    run.check_permission('write')
+    state=_full(run_name)
+    if (run.action!=FULL_ACTION or run.mode=='Preview' or run.state not in SUCCESS
+            or state.get('steps')!=list(NEW_FULL_STEPS) or state.get('step')!=len(NEW_FULL_STEPS)
+            or state.get('child') or not state.get('completed_children')):
+        raise SourceBindingError('Only a finished full import can restart its relationship pass.')
+    bound_configuration(run)
+    for child in state['completed_children']:
+        if (frappe.db.get_default(CHILD_KEY.format(child))!=run_name or
+                frappe.db.get_value('HERO Integration Run',child,'state') not in SUCCESS or
+                frappe.db.get_value('HERO Integration Run',child,'source_instance')!=run.source_instance):
+            raise SourceBindingError('The full import child scope no longer matches its relationship pass.')
+    for key in ('reconciliation_done','reconciliation_stage','reconciliation_after',
+                'reconciliation_final_after','reconciliation_conflicts'):
+        state.pop(key,None)
+    state['notes']=[note for note in state.get('notes',[]) if not note.startswith('Relationship reconciliation:')]
+    _save_full(run_name,state)
+    run.state,run.finished_on,run.error_message='Queued',None,''
+    run.save(ignore_permissions=True)
+    _enqueue(run_name)
+    return {'run':run_name,'phase':'relationships'}
+
+
 def _enqueue(run_name: str) -> None:
     import time
 
@@ -470,18 +498,19 @@ def _advance_full_locked(run_name: str) -> None:
             state.update(step=state["step"] + 1, child="")
         if state["step"] >= len(steps):
             if steps == list(NEW_FULL_STEPS) and not state.get("reconciliation_done"):
-                from hero_integration.services.deferred_references import reconcile_source_page
+                from hero_integration.services.deferred_references import reconcile_full_page
                 source = bound_configuration(frappe.get_doc("HERO Integration Run", run_name)).source_instance
-                testing = bool(frappe.db.get_value("HERO Integration Run", run_name, "testing_enabled"))
-                origins = state.get("completed_children", []) if testing else None
-                cursor, more = reconcile_source_page(source, state.get("reconciliation_after", ""), origin_runs=origins)
-                state["reconciliation_after"] = cursor
-                state["reconciliation_done"] = not more
+                origins = state.get("completed_children", [])
+                done = reconcile_full_page(source, origins, state)
+                state['reconciliation_done']=bool(done)
                 _save_full(run_name, state)
-                if more:
+                if not done:
                     _enqueue(run_name)
                     frappe.db.commit()
                     return
+                if state.get('reconciliation_conflicts'):
+                    state['notes'].append('Relationship reconciliation: {0} reference(s) require review.'.format(
+                        state['reconciliation_conflicts']))
             _save_full(run_name, state)
             notes = "; ".join(state["notes"])
             _finish(run_name, "Completed With Conflicts" if notes else "Completed", notes or "All steps completed.")

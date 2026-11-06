@@ -3768,3 +3768,7 @@ The imported binding target or mapping changed before realization.,Das importier
 Relationship-only updates require their imported target and realization service.,Reine Beziehungsaktualisierungen erfordern ihr importiertes Ziel und den zuständigen Realisierungsdienst.
 Saved source observation is missing or invalid; import the affected source record again.,Die gespeicherte Quellbeobachtung fehlt oder ist ungültig; den betroffenen Quelldatensatz erneut importieren.
 Deferred relationship validation failed; see the reference error diagnostic.,Die Prüfung der nachgelagerten Beziehung ist fehlgeschlagen; siehe Fehlerdiagnose der Referenz.
+Full import finished; required relationship bindings are missing or require review.,Der Komplettimport ist beendet; erforderliche Beziehungsbindungen fehlen oder müssen geprüft werden.
+Relationship reconciliation: {0} reference(s) require review.,Beziehungsabgleich: {0} Referenz(en) müssen geprüft werden.
+Only a finished full import can restart its relationship pass.,Nur bei einem abgeschlossenen Komplettimport kann die Beziehungsrunde erneut gestartet werden.
+The full import child scope no longer matches its relationship pass.,Die zugehörigen Bereichsläufe passen nicht mehr zur Beziehungsrunde des Komplettimports.

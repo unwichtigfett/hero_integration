@@ -1152,22 +1152,29 @@ def realize_mapped_bindings(record,run,plan):
     from hero_integration.services.query_mapping import mapped_values
     operation = plan.target_operation or plan.operation
     if (not realizing() or run.mode=='Preview' or run.state!='Completed' or
-            operation not in {'HeroTasks','HeroProjectMatches'} or plan.adapter_options.get('version')!=2
+            operation not in {'HeroTasks','HeroProjectMatches','HeroCalendarEvents'} or plan.adapter_options.get('version')!=2
             or run.source_instance!=_source_instance(record)):
         raise MappingPlanError('Mapped binding realization requires its successful originating area.')
     instance,identity=_source_instance(record),plan.source_identity(record)
-    kind,doctype,name_field=('Task','Task','subject') if operation=='HeroTasks' else ('project','Project','project_name')
+    kind,doctype,name_field={'HeroTasks':('Task','Task','subject'),
+        'HeroProjectMatches':('project','Project','project_name'),
+        'HeroCalendarEvents':('CalendarEvent','Event','custom_hero_key')}[operation]
     link=_link(kind,identity,instance)
     if (not link or link.target_doctype!=doctype or link.mapping_version!=plan.mapping_version or
             not frappe.db.exists(doctype,link.target_name)):
         raise MappingPlanError('The imported binding target or mapping changed before realization.')
-    frappe.get_doc(doctype,link.target_name,for_update=True)
+    target=frappe.get_doc(doctype,link.target_name,for_update=True)
+    if operation=='HeroCalendarEvents' and (target.get('event_type')!='Private' or any(target.get(field) for field in (
+            'event_participants','send_reminder','sync_with_google_calendar','add_video_conferencing'))):
+        return Result('CONFLICT','Event sharing or outbound settings changed; native calendar update requires review.',doctype,target.name)
     subset=replace(plan,definitions=tuple(rule for rule in plan.definitions
         if rule.target_doctype==doctype and _reference_rule(rule)))
     values=mapped_values(subset,record,customer_link=lambda value:_customer_name_for_source(value,instance),
         project_link=lambda value:_project_name_or_deferred(value,instance,plan,record))
     result=_upsert(kind,identity,record,values,doctype,name_field,plan.mapping_version,run,
         source_instance=instance,preserve_unselected=True)
+    if operation=='HeroCalendarEvents':
+        return result
     if operation=='HeroTasks':
         result=_mapped_task_assignment(record,run,plan,result)
     else:
