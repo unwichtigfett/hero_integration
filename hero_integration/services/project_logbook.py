@@ -9,6 +9,7 @@ retain the ERPNext entry.
 from __future__ import annotations
 
 import json
+import re
 
 import frappe
 
@@ -259,6 +260,17 @@ def _digest(value) -> str:
     return digest(value)
 
 
+def _same_line_break_representation(source, observed):
+    """Frappe can serialize HERO's closing BR tag as an ordinary BR tag."""
+    if set(source) != set(observed) or any(source[key] != observed[key] for key in source if key != 'content'):
+        return False
+    left, right = source.get('content'), observed.get('content')
+    if not isinstance(left, str) or not isinstance(right, str):
+        return False
+    normalize = lambda value: re.sub(r'<\s*/?\s*br\s*/?\s*>', '<br>', value, flags=re.IGNORECASE)
+    return normalize(left) == normalize(right)
+
+
 def _local(value):
     from hero_integration.services.migration import _external_task_deadline
 
@@ -381,6 +393,13 @@ def sync_mapped_entries(plan, record, project, *, preview=False, conflicts=None)
                 for field in ('creation', 'modified'):
                     if observed.get(field) is not None: observed[field] = str(observed[field])
                 if _digest(observed) != link.target_payload_hash:
+                    if (link.source_payload_hash == _digest(values)
+                            and _same_line_break_representation(values, observed)):
+                        frappe.db.set_value('HERO Integration Link', link.name, {
+                            'sync_status': 'Synchronized', 'conflict_detail': '',
+                            'mapping_version': plan.mapping_version, 'target_payload_hash': _digest(observed),
+                            'last_synced_on': frappe.utils.now_datetime()}, update_modified=False)
+                        continue
                     # A local edit is retained, while a stricter visibility above still takes effect.
                     if conflicts is not None: conflicts.append(link.name)
                     frappe.db.set_value('HERO Integration Link', link.name, {
