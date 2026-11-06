@@ -283,6 +283,7 @@ def execute_run(run_name: str) -> None:
     run = frappe.get_doc("HERO Integration Run", run_name)
     frappe.set_user(run.owner)
     if run.state in TERMINAL_STATES:
+        _advance_full_migration(run.name)
         return
     if not _claim_run(run):
         return
@@ -337,14 +338,21 @@ def execute_run(run_name: str) -> None:
             raise RuntimeError("HERO Integration run failed; see the original exception.") from error
         raise
     finally:
-        if not failed:
-            if testing_source is not None:
-                _persist_testing_result(run, testing_source)
-            if _locked_active_run() == run.name:
-                current = frappe.get_doc("HERO Integration Run", run.name, for_update=True)
-                if current.started_on == claim_started_on:
-                    _release_run(run.name)
-        _advance_full_migration(run.name)
+        try:
+            if not failed:
+                if testing_source is not None:
+                    _persist_testing_result(run, testing_source)
+                if _locked_active_run() == run.name:
+                    current = frappe.get_doc("HERO Integration Run", run.name, for_update=True)
+                    if current.started_on == claim_started_on:
+                        _release_run(run.name)
+        except BaseException:
+            frappe.db.rollback()
+            raise
+        finally:
+            # A failure after the durable Completed checkpoint must not strand
+            # the parent. A retry of this terminal child also repairs handoff.
+            _advance_full_migration(run.name)
 
 
 def _advance_full_migration(run_name: str) -> None:
