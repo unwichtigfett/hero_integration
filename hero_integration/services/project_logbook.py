@@ -388,6 +388,9 @@ def sync_mapped_entries(plan, record, project, *, preview=False, conflicts=None)
                         'observed_source_hash': _digest(values), 'observed_target_hash': _digest(observed),
                         'last_observed_on': frappe.utils.now_datetime()}, update_modified=False)
                     continue
+                if (link.sync_status == 'Synchronized' and link.mapping_version == plan.mapping_version
+                        and link.source_payload_hash == _digest(values)):
+                    continue  # An unchanged entry needs no writes or timestamp churn.
                 frappe.db.set_value('Comment', comment.name, values, update_modified=False)
                 frappe.db.set_value('HERO Integration Link', link.name, {
                     'sync_status': 'Synchronized', 'conflict_detail': '',

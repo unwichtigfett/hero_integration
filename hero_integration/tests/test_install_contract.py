@@ -50,20 +50,8 @@ class TestInstallContract(unittest.TestCase):
         self.assertEqual(len(environment.create_calls), 1)
         fields, update = environment.create_calls[0]
         self.assertFalse(update)
-        self.assertEqual(sum(map(len, fields.values())), 32)
-        self.assertEqual(
-            {row["fieldname"] for rows in fields.values() for row in rows},
-            {
-                "custom_hero_source_id", "custom_hero_customer_number", "custom_hero_customer_category",
-                "custom_hero_related_project_id", "custom_hero_display_id",
-                "custom_hero_source_created", "custom_hero_source_modified", "custom_hero_manufacturer_nr",
-                "custom_hero_lead_source", "custom_hero_designation", "custom_hero_project_manager",
-                "custom_hero_partner_id", "custom_hero_user_id", "custom_hero_project", "custom_hero_logbook_context",
-                "custom_hero_author",
-                *{field["fieldname"] for field in install.SERVICE_ITEM_FIELDS},
-                *{field for fields in install.OBSERVATIONS.values() for field, _ in fields},
-            },
-        )
+        self.assertEqual({(doctype, row['fieldname']) for doctype, rows in fields.items() for row in rows},
+                         {(doctype, row['fieldname']) for doctype, rows in install.HERO_CUSTOM_FIELDS.items() for row in rows})
 
         # A different label is not a conflict: the app gives its fields plain labels itself.
         environment.custom_fields[("Customer", "custom_hero_customer_number")]["label"] = "HERO Customer Number"

@@ -134,6 +134,14 @@ class TestNativeRelations(TestCase):
         with self.assertRaisesRegex(ValueError, 'locally owned'): self.sync(ADDRESS, self.address_record)
         self.assertEqual(self.docs('Address'), [])
 
+    def test_project_address_uses_germany_only_for_empty_source_country(self):
+        plan = NS(adapter_options={'native_relations': [ADDRESS]})
+        record = deepcopy(self.address_record)
+        record['address']['country'] = None
+        self.assertEqual(mr.prepare(plan, record, 'Project', 'P1')[0]['values']['country_code'], 'de')
+        record['address']['country'] = {'code': 'FR'}
+        self.assertEqual(mr.prepare(plan, record, 'Project', 'P1')[0]['values']['country_code'], 'fr')
+
     def test_preview_and_empty_relations_write_nothing(self):
         self.assertEqual(self.sync(BANK, self.bank_record, preview=True)['planned'], 1)
         self.assertEqual(self.sync(ADDRESS, self.address_record, preview=True)['planned'], 1)

@@ -169,7 +169,7 @@ class TestMappedCollectionsAndRelations(TestCase):
         self.assertEqual(qm.source_type(snapshot.snapshot_json, 'tasks', 'id'), 'int')
         with self.assertRaises(ValueError): qm.source_type(snapshot.snapshot_json, 'tasks', 'absent')
 
-    def test_address_country_requires_selected_mapping_without_germany_fallback(self):
+    def test_address_country_defaults_to_germany_only_when_source_reports_empty(self):
         op = 'HeroCustomers'
         rules = [rule('street', 'address.street', 'Address', 'address_line1', operation=op, relation='Customer Primary Address'),
                  rule('zip', 'address.zipcode', 'Address', 'pincode', operation=op, relation='Customer Primary Address'),
@@ -180,6 +180,8 @@ class TestMappedCollectionsAndRelations(TestCase):
         record = {'address': {'id': 7, 'street': 'Synthetic street', 'zipcode': '12345', 'city': 'Synthetic', 'country': {'code': 'de'}}}
         with patch.object(qm, '_reference', side_effect=lambda dt, name: name):
             self.assertEqual(qm.address_values(p, record)['country_name'], 'Germany')
+            without_country = {**record, 'address': {**record['address'], 'country': None}}
+            self.assertEqual(qm.address_values(p, without_country)['country_code'], 'de')
             with self.assertRaises(ValueError):
                 qm.address_values(p, {'address': {k: v for k, v in record['address'].items() if k != 'country'}})
 

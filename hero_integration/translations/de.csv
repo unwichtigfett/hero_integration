@@ -3732,3 +3732,15 @@ Replaced drafts and their history will be deleted.,Ersetzte Entwürfe und ihre H
 Activated drafts and their history will be deleted.,Aktivierte Entwürfe und ihre Historie werden gelöscht.
 {0} deleted HERO users are retained as historical references; no accounts were created for them.,{0} gelöschte HERO-Benutzer bleiben als historische Referenzen erhalten; für sie wurden keine Benutzerkonten angelegt.
 {0} · {1} processed · {2} received · {3} related identities unresolved · {4} historical users,{0} · {1} verarbeitet · {2} empfangen · {3} zugehörige Identitäten nicht aufgelöst · {4} historische Benutzer
+{0} deleted HERO users remain as historical references; existing assignments were preserved.,{0} gelöschte HERO-Benutzer bleiben als historische Referenzen erhalten; bestehende Zuweisungen wurden beibehalten.
+A deleted HERO user remains as a historical reference; existing assignments were preserved.,Ein gelöschter HERO-Benutzer bleibt als historische Referenz erhalten; bestehende Zuweisungen wurden beibehalten.
+Employee reader changed during historical identity verification.,Der Mitarbeiter-Lesedienst wurde während der Prüfung historischer Identitäten geändert.
+"Mapped primary address is incomplete; street, postcode and city are required.",Die gemappte Hauptadresse ist unvollständig; Straße Postleitzahl und Ort sind erforderlich.
+HERO country code must be text when supplied.,Ein angegebener HERO-Ländercode muss Text sein.
+The source address country was not selected or returned.,Das Land der Quelladresse wurde nicht ausgewählt oder nicht zurückgegeben.
+Read approval changed before historical identity verification.,Die Lesefreigabe wurde vor der Prüfung historischer Identitäten geändert.
+Read approval changed during historical identity verification.,Die Lesefreigabe wurde während der Prüfung historischer Identitäten geändert.
+A synchronized binding requires both successful synchronization baselines.,Eine synchronisierte Bindung benötigt beide erfolgreichen Synchronisationsgrundlagen.
+HERO Original Article Number,Ursprüngliche HERO-Artikelnummer
+A linked local Item was retained; changed HERO fields require review.,Ein verknüpfter lokaler Artikel wurde beibehalten; geänderte HERO-Felder müssen geprüft werden.
+The original HERO article number changed; the existing Item code was preserved.,Die ursprüngliche HERO-Artikelnummer wurde geändert; die vorhandene ERPNext-Artikelnummer wurde beibehalten.

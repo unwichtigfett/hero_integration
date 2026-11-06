@@ -74,7 +74,10 @@ def references(plan, record):
             if (type(value) in (int, str) and str(value).strip()
                     and (type(value) is not int or value > 0) and str(value) != str(primary)):
                 result.add(('customer_address', str(value).strip()))
-    return sorted(result)
+    from hero_integration.services.employee_migration import historical_users
+    historical = historical_users(record.get('_hero_source_instance') or 'default')
+    return sorted((kind, identity) for kind, identity in result
+                  if kind != 'User' or identity not in historical)
 
 
 def available(source, kind, identity):
@@ -125,8 +128,12 @@ def remember(run, source_type, record, result):
     if result.code in {'SKIPPED_SOURCE_DELETED', 'SKIPPED_REJECTED'}:
         invalidate(_source_instance(record), operation, identity)
         return
-    save(run.name, _source_instance(record), operation, identity, plan.mapping_version,
-         record, references(plan, record),
+    source = _source_instance(record)
+    from hero_integration.services.employee_migration import historical_users
+    historical = historical_users(source)
+    observation = {**record, '__hero_historical_users': sorted(historical)} if historical else record
+    save(run.name, source, operation, identity, plan.mapping_version,
+         observation, references(plan, record),
          result_code='PENDING_REVIEW' if getattr(result, 'pending_relation', False) else result.code)
 
 
@@ -362,17 +369,22 @@ def resolve_one(name, *, dependency=None):
             if plan.mapping_version != pending.mapping_version:
                 raise ValueError('The approved mapping changed; refresh the source record before retrying.')
             record = json.loads(pending.record_json)
+            historical = record.pop('__hero_historical_users', [])
+            if not isinstance(historical, list) or any(not isinstance(value, str) or not value.isdigit() or int(value) <= 0 for value in historical):
+                raise ValueError('The deferred historical identity proof is invalid.')
             if str(plan.source_identity(record)) != pending.source_id or m._source_instance(record) != pending.source_instance:
                 raise ValueError('The deferred source identity changed.')
-            if pending.operation in {'HeroCustomers', 'HeroProjectMatches'}:
-                action = m._migrate_customer if pending.operation == 'HeroCustomers' else m._migrate_project
-                result = m._migrate_isolated(lambda: action(record, run))
-            else:
-                # A long-lived worker must not reuse another run's legacy User directory.
-                m._load_task_user_directory(None, pending.operation)
-                mapping = frappe.get_doc('HERO GraphQL Mapping', run.graphql_mapping)
-                scope = m._projection_task_scope(run, plan, mapping, source.source_instance, source.source_instance)
-                result = m._migrate_projection_record(record, run, plan, scope)
+            from hero_integration.services.employee_migration import historical_user_scope
+            with historical_user_scope(pending.source_instance, historical):
+                if pending.operation in {'HeroCustomers', 'HeroProjectMatches'}:
+                    action = m._migrate_customer if pending.operation == 'HeroCustomers' else m._migrate_project
+                    result = m._migrate_isolated(lambda: action(record, run))
+                else:
+                    # A long-lived worker must not reuse another run's legacy User directory.
+                    m._load_task_user_directory(None, pending.operation)
+                    mapping = frappe.get_doc('HERO GraphQL Mapping', run.graphql_mapping)
+                    scope = m._projection_task_scope(run, plan, mapping, source.source_instance, source.source_instance)
+                    result = m._migrate_projection_record(record, run, plan, scope)
             code = result.code
             pending_detail = ''
             if getattr(result, 'pending_relation', False) and code in {
@@ -434,6 +446,7 @@ def _resolve_available_project_assignee(pending, user_id):
     m._source_for_run(run, config)
     plan = m._mapping_plan_for_run(run, pending.operation)
     record = json.loads(pending.record_json)
+    record.pop('__hero_historical_users', None)
     if (plan.mapping_version != pending.mapping_version or str(plan.source_identity(record)) != pending.source_id
             or m._source_instance(record) != pending.source_instance):
         raise ValueError('The deferred Project mapping or source identity changed.')

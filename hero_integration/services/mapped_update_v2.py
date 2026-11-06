@@ -449,7 +449,14 @@ def _price_collection(ctx,item):
 def _collection_remote(ctx,item,remote):
     selected=ctx.price_collections[item['id']];config=selected['config'];rows=_at(remote,config['collection_path'])
     if not isinstance(rows,list): raise MappedUpdateError('Approved readback omitted its managed sales-price collection.')
-    matches=[r for r in rows if isinstance(r,dict) and str(_at(r,config['identity_path']))==str(selected['source_id'])]
+    from hero_integration.services.mapped_collection_relations import sales_price_identity
+    def matches_identity(row):
+        if not isinstance(row, dict):
+            return False
+        if not config.get('parent_source_identity_path'):
+            return str(_at(row, config['identity_path'])) == str(selected['source_id'])
+        return sales_price_identity(config, remote, row) == str(selected['source_id'])
+    matches=[r for r in rows if matches_identity(r)]
     if len(matches)!=1: raise MappedUpdateError('Managed sales-price row identity is not unique in approved readback.')
     row=matches[0];list_id=str(_at(row,config['price_list_identity_path']));binding=config['price_lists'].get(list_id)
     if (not binding or binding.get('name')!=item['options']['price_list']

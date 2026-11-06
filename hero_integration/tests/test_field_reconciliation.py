@@ -57,6 +57,12 @@ class TestReconcile(unittest.TestCase):
                                                                   {'notes': raw}, {'notes': current})
                 self.assertEqual(result.conflicts, {'notes'})
 
+    def test_plain_ampersand_in_equivalent_notes_is_preserved(self):
+        from hero_integration.services.migration import _same_project_notes_after_mapping_change
+        raw = 'Work & materials\nSecond line'
+        self.assertTrue(_same_project_notes_after_mapping_change(
+            {'partner_notes': raw}, raw, '<p>Work &amp; materials<br>Second line</p>'))
+
     def test_missing_fields_are_carried_forward(self):
         outcome = reconcile(_h(f="a"), _h(f="a"), {}, _h(f="z"), tracked={"f"}, missing={"f"})
         self.assertFalse(outcome.apply | outcome.local | outcome.conflicts)

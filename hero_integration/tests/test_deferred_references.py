@@ -94,6 +94,17 @@ class TestDeferredObservation(TestCase):
                 deferred._replaying.reset(token)
         save.assert_not_called()
 
+    def test_verified_historical_users_are_not_missing_dependencies(self):
+        from hero_integration.services.employee_migration import historical_user_scope
+        plan = NS(definitions=[], adapter_options={})
+        record = {'_hero_source_instance': 'source-a', 'project_match_assignments': [
+            {'user_id': 10}, {'user_id': 20}]}
+        with historical_user_scope('source-a', {'10'}):
+            self.assertEqual(deferred.references(plan, record), [('User', '20')])
+            self.assertEqual(deferred.references(plan, {**record, '_hero_source_instance': 'other'}),
+                             [('User', '10'), ('User', '20')])
+        self.assertEqual(deferred.references(plan, record), [('User', '10'), ('User', '20')])
+
     def test_reference_extraction_uses_mapping_paths_not_fixed_field_names(self):
         definitions = [NS(source_path=path, transformation=transform, purpose='Field') for path, transform in
             [('client.identity', 'HERO Customer Link'), ('project_id', 'HERO Project Link'),

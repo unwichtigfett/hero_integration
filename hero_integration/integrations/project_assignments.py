@@ -47,11 +47,15 @@ def assignee_emails(record: dict) -> set[str] | None:
     return None if found is None else {value for kind, value in found if kind == "email"}
 
 
-def sync(project: str, record: dict, frappe_api=None, *, allow_removals: bool = True) -> dict:
+def sync(project: str, record: dict, frappe_api=None, *, allow_removals: bool = True, historical_user_ids=()) -> dict:
     """Open one ToDo per matched HERO assignee; close the import's ToDos of removed assignees."""
     found, unknown = _assignees_with_unknown(record)
     if found is None:
         return {"added": 0, "closed": 0, "unmatched": 0}
+    historical = {str(value) for kind, value in found if kind == 'id' and str(value) in historical_user_ids}
+    if historical:
+        found = [key for key in found if not (key[0] == 'id' and str(key[1]) in historical)]
+        allow_removals = False  # Never remove an existing local assignment on an incomplete directory.
     if frappe_api is None:
         import frappe as frappe_api
     from hero_integration.integrations.hero_people import user_by_hero_user
@@ -79,4 +83,7 @@ def sync(project: str, record: dict, frappe_api=None, *, allow_removals: bool = 
                 todo.status = "Cancelled"
                 todo.save(ignore_permissions=True)
                 closed += 1
-    return {"added": added, "closed": closed, "unmatched": unmatched}
+    result = {"added": added, "closed": closed, "unmatched": unmatched}
+    if historical:
+        result['historical'] = len(historical)
+    return result

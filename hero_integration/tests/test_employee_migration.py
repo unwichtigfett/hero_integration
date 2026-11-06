@@ -139,6 +139,21 @@ class TestEmployeeWrites(unittest.TestCase):
 
 
 class TestEmployeeRecordList(unittest.TestCase):
+    def test_project_run_revalidates_employee_reader_before_and_after_historical_lookup(self):
+        from hero_integration.services import migration
+        from hero_integration.services import direct_runtime
+        read = SimpleNamespace(operation='HeroEmployees', origin='service', mapping='map', mapping_version='v1',
+                               document='query', records_path='company.partners', variables={}, page_size=1)
+        client = SimpleNamespace(query=Mock(return_value={'company': {'partners': [
+            {'id': 1, 'status': 'deleted', 'user_id': 101, 'user': {'id': 101}},
+            {'id': 2, 'status': 'active', 'user_id': 102, 'user': {'id': 102}}]}}))
+        contract = object()
+        source = SimpleNamespace(source_instance='source-a', client=client, contract=contract,
+                                 revalidate=Mock(return_value=contract))
+        with patch.object(direct_runtime, 'approved_read', return_value=read):
+            result = migration._verified_historical_users(SimpleNamespace(action='Project Migration'), source)
+        self.assertEqual(result, ['101'])
+        self.assertEqual(source.revalidate.call_count, 2)
     def test_historical_ids_require_consistent_deleted_source_records(self):
         rows = [
             {'id': 1, 'status': 'deleted', 'user_id': 101, 'user': {'id': 101}},

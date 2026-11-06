@@ -99,6 +99,39 @@ class TestProductOrderFields(unittest.TestCase):
 
 
 class TestPeopleAndSourceFields(unittest.TestCase):
+    def test_deleted_assignee_is_historical_and_does_not_remove_existing_assignments(self):
+        from types import SimpleNamespace
+        from unittest import mock
+        from hero_integration.integrations import project_assignments as pa
+        saved = []
+        class Todo(dict):
+            __getattr__ = dict.get
+        rows = [Todo(name='old', allocated_to='existing@example.invalid', description=pa.MARKER)]
+        api = SimpleNamespace(db=SimpleNamespace(get_value=lambda *args: 'Project'),
+            get_all=lambda *args, **kwargs: rows,
+            get_doc=lambda value, name=None: SimpleNamespace(status='Open', save=lambda **kwargs: saved.append(name)))
+        record = {'_hero_source_instance': 'source-a', 'project_match_assignments': [{'user_id': 123}]}
+        with mock.patch('hero_integration.integrations.hero_people.user_by_hero_user') as lookup:
+            result = pa.sync('P-1', record, api, historical_user_ids={'123'})
+        lookup.assert_not_called()
+        self.assertEqual(result['historical'], 1)
+        self.assertEqual(result['unmatched'], 0)
+        self.assertEqual(saved, [])
+
+    def test_many_project_assignees_are_not_ambiguous(self):
+        from types import SimpleNamespace
+        from unittest import mock
+        from hero_integration.integrations import project_assignments as pa
+        class Todo(dict):
+            __getattr__ = dict.get
+        rows = [Todo(name=f'T{i}', allocated_to=f'user-{i}', description=pa.MARKER) for i in range(1, 202)]
+        api = SimpleNamespace(db=SimpleNamespace(get_value=lambda *args: 'Project'),
+            get_all=lambda *args, **kwargs: rows,
+            get_doc=lambda *args, **kwargs: self.fail('unchanged assignments must not be rewritten'))
+        record = {'_hero_source_instance': 'source-a', 'project_match_assignments': [{'user_id': i} for i in range(1, 202)]}
+        with mock.patch('hero_integration.integrations.hero_people.user_by_hero_user',
+                        side_effect=lambda identity, **kwargs: f'user-{identity}'):
+            self.assertEqual(pa.sync('P-1', record, api), {'added': 0, 'closed': 0, 'unmatched': 0})
     def test_project_v4_and_customer_v5_read_the_new_fields(self):
         from hero_integration.sources.hero import customer_query, project_query
         query = project_query("v4")

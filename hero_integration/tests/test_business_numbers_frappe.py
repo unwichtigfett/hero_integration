@@ -127,6 +127,56 @@ class TestBusinessNumbersOnERPNext(unittest.TestCase):
                                      'new-mapping', EXECUTE, document_name=reference)
         self.assertEqual(repeated.code, 'SKIPPED')
 
+    def test_new_task_can_import_hero_deadline_but_local_edits_remain_blocked(self):
+        values = {'subject': 'Synthetic deadline ' + self.digits, 'custom_hero_due_date': '2026-04-03 12:00:00'}
+        result = migration._upsert('Task', self.source_id, {'id': self.source_id}, values,
+                                   'Task', 'subject', 'deadline-test', EXECUTE)
+        self.assertEqual(result.code, 'CREATED')
+        task = frappe.get_doc('Task', result.target_name)
+        self.assertEqual(str(task.custom_hero_due_date), '2026-04-03 12:00:00')
+        task.custom_hero_due_date = '2026-04-04 12:00:00'
+        with self.assertRaises(frappe.PermissionError):
+            task.save()
+
+    def test_product_collision_records_a_real_conflict_without_fake_baselines(self):
+        from hero_integration.services import product_migration
+        item = frappe.get_doc({'doctype': 'Item', 'item_code': 'TEST-' + self.digits,
+                               'item_name': 'Synthetic collision', 'item_group': 'All Item Groups',
+                               'stock_uom': 'Nos', 'is_stock_item': 0}).insert()
+        result = product_migration._code_taken(None, {'product_id': self.source_id}, item.name,
+                                               'default', SimpleNamespace(mapping_version='test'))
+        self.assertEqual(result, 'conflict')
+        link = frappe.get_doc('HERO Integration Link', {'source_type': 'supply_product', 'source_id': self.source_id})
+        self.assertEqual(link.sync_status, 'Conflict')
+        self.assertFalse(link.source_payload_hash or link.target_payload_hash)
+        link.sync_status = 'Synchronized'
+        with self.assertRaises(frappe.ValidationError):
+            link.save()
+
+    def test_product_with_service_number_gets_a_separate_stable_item(self):
+        from hero_integration.services import product_migration
+        code = 'TEST-SERVICE-' + self.digits
+        service = frappe.get_doc({'doctype': 'Item', 'item_code': code, 'item_name': 'Synthetic service',
+                                  'item_group': 'All Item Groups', 'stock_uom': 'Nos', 'is_stock_item': 0}).insert()
+        frappe.get_doc({'doctype': 'HERO Integration Link', 'source_system': 'HERO', 'source_instance': 'default',
+            'source_type': 'supply_service', 'source_id': self.source_id, 'target_doctype': 'Item',
+            'target_name': service.name, 'sync_status': 'Synchronized', 'mapping_version': 'test',
+            'source_payload_hash': 'synthetic-source', 'target_payload_hash': 'synthetic-target'}).insert()
+        values = {'item_code': code, 'item_name': 'Synthetic article', 'item_group': 'All Item Groups',
+                  'stock_uom': 'Nos', 'owned': ('item_name', 'item_group', 'stock_uom'),
+                  'barcode': None, 'supplier': None, 'buying': None, 'selling': None}
+        row = {'product_id': self.source_id}
+        read = SimpleNamespace(mapping_version='test', plan=SimpleNamespace(adapter_options={}))
+        masters = SimpleNamespace(for_item=lambda fields: None)
+        with mock.patch.object(product_migration, 'item_values', return_value=values.copy()), \
+             mock.patch.object(product_migration, 'plan_price', return_value=None):
+            self.assertEqual(product_migration.upsert(row, None, masters, 'default', read=read), 'added')
+        target = product_migration._collision_code(code, 'default', self.source_id)
+        self.assertEqual(frappe.db.get_value('Item', target, 'custom_hero_original_article_number'), code)
+        self.assertEqual(frappe.db.get_value('Item', service.name, 'item_name'), 'Synthetic service')
+        self.assertEqual(frappe.db.get_value('HERO Integration Link',
+            {'source_type': 'supply_product', 'source_id': self.source_id}, 'target_name'), target)
+
     def test_legacy_customer_id_is_reused_without_rename(self):
         legacy = f"KD-TEST-{self.digits}"
         values = {"customer_name": f"BN Test {self.digits}", "customer_type": "Individual",

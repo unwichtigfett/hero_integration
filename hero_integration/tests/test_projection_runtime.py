@@ -125,7 +125,7 @@ class TestProjectionRuntime(unittest.TestCase):
             self.assertEqual(target.fields, {"subject": "new", "location": "local edit"})
             self.assertEqual(apply({"subject": "new"}).code, "SKIPPED")
             self.assertEqual(apply({"subject": "new", "location": "source edit"}).code, "CONFLICT")
-            self.assertEqual(apply({"subject": "new"}, "v2").code, "CONFLICT")
+            self.assertEqual(apply({"subject": "new"}, "v2").code, "SKIPPED")
             self.assertEqual(target.saves, 1)
 
     def test_event_mapping_republication_requires_unchanged_field_evidence(self):
@@ -142,10 +142,37 @@ class TestProjectionRuntime(unittest.TestCase):
             def apply(values, mode='Execute'):
                 return migration._upsert('CalendarEvent', '9', {'id': 9}, values, 'Event', 'custom_hero_key',
                                          'new', SimpleNamespace(mode=mode), preserve_omitted=True)
-            self.assertEqual(apply({'subject': 'Changed'}).code, 'CONFLICT')
-            self.assertEqual(apply({'subject': 'Appointment', 'description': 'New field'}).code, 'CONFLICT')
+            with patch.object(migration, 'new_mapped_field_conflicts', return_value={'description'}):
+                self.assertEqual(apply({'subject': 'Appointment', 'description': 'New field'}).code, 'CONFLICT')
             self.assertEqual(apply({'subject': 'Appointment'}, 'Preview').code, 'PREVIEW_OK')
             self.assertEqual(link.mapping_version, 'old')
             self.assertEqual(apply({'subject': 'Appointment'}).code, 'SKIPPED')
             self.assertEqual(link.mapping_version, 'new')
             save.assert_called_once_with(link)
+
+    def test_event_republication_applies_remote_changes_and_safe_new_fields(self):
+        from hero_integration.services.change_detection import encode, field_hashes
+        original = {'subject': 'Earlier', 'location': 'Original'}
+        link = SimpleNamespace(name='LINK', target_doctype='Event', target_name='EV-1', mapping_version='old',
+            source_field_hashes=encode(field_hashes(original)), target_field_hashes=encode(field_hashes(original)))
+        class Target:
+            name = 'EV-1'
+            def __init__(self): self.fields = {**original, 'description': ''}; self.saves = 0
+            def get(self, field): return self.fields.get(field)
+            def set(self, field, value): self.fields[field] = value
+            def save(self): self.saves += 1
+        target = Target()
+        fake = SimpleNamespace(db=SimpleNamespace(exists=lambda *args: True, savepoint=lambda *args: None),
+                               get_doc=lambda *args: target)
+        values = {'subject': 'Changed remotely', 'description': 'New source field'}
+        with patch.object(migration, 'frappe', fake), patch.object(migration, '_target_available', return_value=True), \
+             patch.object(migration, '_link', return_value=link), patch.object(migration, '_observe_link'), \
+             patch.object(migration, '_save_link'), patch.object(migration, '_update_link_baseline') as baseline, \
+             patch.object(migration, 'managed_target_update', return_value=nullcontext()):
+            result = migration._upsert('CalendarEvent', '9', {'id': 9}, values, 'Event', 'custom_hero_key',
+                                       'new', SimpleNamespace(mode='Execute'), preserve_omitted=True)
+        self.assertEqual(result.code, 'UPDATED')
+        self.assertEqual(target.fields, {'subject': 'Changed remotely', 'location': 'Original',
+                                         'description': 'New source field'})
+        self.assertEqual(target.saves, 1)
+        self.assertEqual(baseline.call_args.args[-1], 'new')

@@ -55,6 +55,50 @@ class TestMappedCollectionRelations(TestCase):
                 record, dt, 'C1' if dt == 'Customer' else 'I1', preview=preview)
     def docs(self, dt): return [doc for (kind, _), doc in self.site.docs.items() if kind == dt]
 
+    def test_incomplete_address_leaves_customer_imported_and_reports_pending_relation(self):
+        from hero_integration.services import migration
+        plan = NS(adapter_options={'native_relations': [ADDRESSES]}, target_doctype='Customer',
+                  source_identity=lambda record: str(record['id']))
+        result = migration.Result('UPDATED', 'Customer imported.', 'Customer', 'C1')
+        run = NS(mode='Execute', name='RUN')
+        with patch.object(relations, 'sync', side_effect=collection.IncompleteCustomerAddress('Country missing')), \
+             patch.object(migration, 'record_output') as report:
+            actual = migration._sync_mapped_relations(plan, {'id': 10}, result, run)
+        self.assertEqual(actual.code, 'UPDATED')
+        self.assertTrue(actual.pending_relation)
+        self.assertEqual(report.call_args.kwargs['result'], 'PENDING_REVIEW')
+        self.assertIn('Country missing', report.call_args.kwargs['detail'])
+
+    def test_address_defaults_empty_country_to_germany_but_keeps_explicit_country(self):
+        record = deepcopy(self.address)
+        record['customer_addresses'][1]['address']['country'] = None
+        self.assertEqual(collection.prepare(ADDRESSES, record, 'Customer', 'C1')[0]['values']['country_code'], 'de')
+        record['customer_addresses'][1]['address']['country'] = {'code': 'FR'}
+        self.assertEqual(collection.prepare(ADDRESSES, record, 'Customer', 'C1')[0]['values']['country_code'], 'fr')
+        del record['customer_addresses'][1]['address']['country']
+        with self.assertRaisesRegex(ValueError, 'absent'):
+            collection.prepare(ADDRESSES, record, 'Customer', 'C1')
+
+    def test_product_and_price_list_form_a_stable_explicit_price_identity(self):
+        config = {**PRICES, 'parent_source_identity_path': 'product_id'}
+        row = {'product_id': 'product-A', '_hero_source_instance': 'source-a', 'sales_prices': [
+            {'id': None, 'supply_sales_price_id': 10, 'net_price_per_unit': 12.5}]}
+        first = collection.prepare(config, row, 'Item', 'I1')[0]
+        row['sales_prices'][0]['id'] = 123
+        second = collection.prepare(config, row, 'Item', 'I1')[0]
+        self.assertEqual(first['source_id'], second['source_id'])
+        row['product_id'] = 'product-B'
+        self.assertNotEqual(first['source_id'], collection.prepare(config, row, 'Item', 'I1')[0]['source_id'])
+        self.assertIn('product_id', collection.required_paths(config))
+
+    def test_composite_price_identity_rejects_duplicate_lists(self):
+        config = {**PRICES, 'parent_source_identity_path': 'product_id'}
+        row = {'product_id': 'product-A', '_hero_source_instance': 'source-a', 'sales_prices': [
+            {'id': None, 'supply_sales_price_id': 10, 'net_price_per_unit': 12.5},
+            {'id': 4, 'supply_sales_price_id': 10, 'net_price_per_unit': 12.5}]}
+        with self.assertRaisesRegex(ValueError, 'multiple prices'):
+            collection.prepare(config, row, 'Item', 'I1')
+
     def test_secondary_addresses_skip_primary_and_deleted_and_repeat_without_duplicates(self):
         self.assertEqual(self.sync(ADDRESSES, self.address)['created'], 1)
         self.assertEqual(self.sync(ADDRESSES, self.address)['unchanged'], 1)
@@ -63,6 +107,27 @@ class TestMappedCollectionRelations(TestCase):
         self.assertEqual((addresses[0].country, addresses[0].links[0].link_name), ('Germany', 'C1'))
         self.assertFalse(self.site.docs['Customer', 'C1'].customer_primary_address)
         self.assertEqual(self.docs('HERO Integration Link')[0].source_type, 'customer_address')
+
+    def test_equal_source_addresses_share_existing_bound_native_address(self):
+        self.assertEqual(self.sync(ADDRESSES, self.address)['created'], 1)
+        native = self.docs('Address')[0]
+        native.set('address_type', 'Billing')
+        alias = deepcopy(self.address)
+        alias['customer_addresses'][1]['address']['id'] = 4
+        self.assertEqual(self.sync(ADDRESSES, alias)['created'], 1)
+        self.assertEqual(len(self.docs('Address')), 1)
+        self.assertEqual(native.address_type, 'Billing')
+        links = self.docs('HERO Integration Link')
+        self.assertEqual({link.source_id for link in links}, {'2', '4'})
+        self.assertEqual({link.target_name for link in links}, {native.name})
+
+    def test_partial_address_match_is_not_automatically_aliased(self):
+        self.sync(ADDRESSES, self.address)
+        alias = deepcopy(self.address)
+        alias['customer_addresses'][1]['address'].update(id=4, zipcode='99999')
+        with self.assertRaises(collection.UnboundCustomerAddress):
+            self.sync(ADDRESSES, alias)
+        self.assertEqual(len(self.docs('Address')), 1)
 
     def test_address_local_edit_is_not_overwritten_and_foreign_owner_blocks(self):
         self.sync(ADDRESSES, self.address)

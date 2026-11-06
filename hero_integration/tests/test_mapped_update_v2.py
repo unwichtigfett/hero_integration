@@ -205,6 +205,20 @@ class TestMappedUpdatePrepare(TestCase):
 
 
 class TestMappedCollectionPriceProof(TestCase):
+    def test_composite_price_readback_uses_product_and_price_list(self):
+        from hero_integration.services.mapped_collection_relations import sales_price_identity
+        ctx, item, remote = self.context()
+        remote['product_id'] = 'product-A'
+        row = remote['sales_prices'][0]
+        row['id'] = None
+        selected = ctx.price_collections['price']
+        selected['config']['parent_source_identity_path'] = 'product_id'
+        selected['source_id'] = sales_price_identity(selected['config'], remote, row)
+        self.assertEqual(update._collection_remote(ctx, item, remote), 9.5)
+        remote['product_id'] = 'product-B'
+        with self.assertRaisesRegex(ValueError, 'not unique'):
+            update._collection_remote(ctx, item, remote)
+
     def context(self):
         item={'id':'price','resolver':'PRICE','read_path':'sales_prices','options':{'price_list':'Standard Selling'}}
         selected={'source_id':'500','document':SimpleNamespace(currency='EUR'),'config':{
