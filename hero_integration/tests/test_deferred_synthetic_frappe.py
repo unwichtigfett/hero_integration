@@ -213,6 +213,14 @@ class TestSyntheticDeferredMariaDB(TestCase):
             'source_instance': self.source, 'source_id': '2'}, 'target_name'), address.name)
         self.assertEqual(frappe.db.get_value('Address', address.name, 'address_type'), 'Billing')
         self.assertEqual(frappe.db.get_value('Address', address.name, 'is_primary_address'), 1)
+        record['customer_addresses'][0]['address'].update(id=3, zipcode='54321')
+        actual = migration._sync_mapped_relations(plan, record, result, self.run)
+        self.assertFalse(actual.pending_relation)
+        other = frappe.db.get_value('HERO Integration Link', {'source_type': 'customer_address',
+            'source_instance': self.source, 'source_id': '3'}, 'target_name')
+        self.assertTrue(other)
+        self.assertNotEqual(other, address.name)
+        self.assertEqual(frappe.db.get_value('Address', other, 'pincode'), '54321')
 
     def test_local_project_edit_is_preserved_as_conflict(self):
         task_name, pending = self._task_and_pending()
