@@ -137,6 +137,18 @@ class TestTaskAssignmentPlanning(unittest.TestCase):
         self.todos.append(NS(name='LOCAL2', status='Open', allocated_to=self.recipient.target_name))
         self.assertEqual(self.plan().action, 'KEEP')
 
+    def test_silent_completed_assignment_is_closed_and_preserves_history(self):
+        self.policy.policy_json = json.dumps({'silent_initial': True, 'native_effects': {
+            'date_rule': 'LOCAL_TODAY', 'allow_notifications': False, 'allow_follow': False}})
+        self.task.status = 'Completed'
+        original = migration._link
+        with patch.object(migration, '_link', side_effect=lambda kind, *args: None if kind == 'task_completed_assignment' else original(kind, *args)):
+            self.assertEqual(self.plan().action, 'CREATE_COMPLETED')
+            self.todos = [NS(name='LOCAL', status='Closed', allocated_to=self.recipient.target_name)]
+            self.assertEqual(self.plan().action, 'KEEP')
+            self.todos = [NS(name='LOCAL', status='Closed', allocated_to='other@example.invalid')]
+            self.assertEqual(self.plan().action, 'BLOCKED')
+
     def test_missing_null_invalid_and_unknown_users(self):
         for record, expected in [({'id': 7}, 'NO_OP'), ({'id': 7, 'target_user_id': None}, 'NO_OP'),
                                  ({'id': 7, 'target_user_id': True}, 'PENDING_IDENTITY')]:
