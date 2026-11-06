@@ -64,7 +64,9 @@ class _Frappe:
     def get_all(self, *args, **kwargs):
         return []
 
-    def get_doc(self, values, name=None):
+    def has_permission(self, *args, **kwargs): return True
+
+    def get_doc(self, values, name=None, **kwargs):
         if isinstance(values, str):
             return self.items[name]
         if values["doctype"] == "Item":
@@ -72,7 +74,12 @@ class _Frappe:
             self.items[values["item_code"]] = item
             return item
         if values["doctype"] == "HERO Integration Link":
-            return SimpleNamespace(insert=lambda **k: self.links.append(("insert", values)))
+            document = SimpleNamespace(name='LINK-1', **values)
+            def insert(**kwargs):
+                self.links.append(('insert', values))
+                return document
+            document.insert = insert
+            return document
         self.masters.append(values)
         return SimpleNamespace(insert=lambda **k: None, name=values.get("supplier_name") or values.get("doctype"))
 
@@ -266,16 +273,34 @@ class TestProductDecisions(unittest.TestCase):
         self.assertEqual(item["supplier_items"], [{"supplier": "Krannich Solar", "supplier_part_no": "0151299"},
                                                   {"supplier": "Local", "supplier_part_no": "L-1"}])
 
-    def test_a_taken_item_code_is_a_conflict_not_a_suffix(self):
-        foreign = _Item({"item_code": "PV-1001", "item_name": "Local article"})
+    def test_unbound_item_is_linked_without_changing_local_values(self):
+        foreign = _Item({"item_code": "PV-1001", "name": "PV-1001", "item_name": "Local article", 'stock_uom': 'Stk'})
         fake = _Frappe({"PV-1001": foreign})
         with patch.object(pm, "frappe", fake):
-            self.assertEqual(pm.upsert(ROW, None, pm._Masters(), "default", read=BUILTIN), "conflict")
-        self.assertEqual(set(fake.items), {"PV-1001"})              # nothing new, no PV-1001-<id>
-        self.assertNotIn("saved", foreign)                           # the foreign Item is untouched
+            self.assertEqual(pm.upsert(ROW, None, pm._Masters(), "default", read=BUILTIN), "unchanged")
+        self.assertEqual(set(fake.items), {"PV-1001"})
+        self.assertNotIn("saved", foreign)
+        self.assertEqual(foreign['item_name'], 'Local article')
         link = next(entry[1] for entry in fake.links if entry[0] == "insert")
-        self.assertEqual((link["sync_status"], link["target_name"]), ("Conflict", "PV-1001"))
-        self.assertTrue(link["conflict_detail"].startswith("Item code PV-1001 is already used"))
+        self.assertEqual((link["sync_status"], link["target_name"]), ("Synchronized", "PV-1001"))
+        self.assertTrue(json.loads(link['target_field_hashes'])['adopted_locally'])
+        bound = SimpleNamespace(name='LINK-1', **link)
+        with patch.object(pm, 'frappe', fake):
+            self.assertEqual(pm.upsert(ROW, bound, pm._Masters(), 'default', read=BUILTIN), 'unchanged')
+            changed = {**ROW, 'base_data': {**ROW['base_data'], 'name': 'A changed source name'}}
+            self.assertEqual(pm.upsert(changed, bound, pm._Masters(), 'default', read=BUILTIN), 'conflict')
+        self.assertEqual(foreign['item_name'], 'Local article')
+
+    def test_service_code_collision_uses_stable_separate_article_code(self):
+        service = _Item({'item_code': 'PV-1001', 'name': 'PV-1001', 'item_name': 'Local service'})
+        fake = _Frappe({'PV-1001': service})
+        fake.get_all = lambda *args, **kwargs: [SimpleNamespace(source_type='supply_service',
+            source_instance='default', sync_status='Synchronized')]
+        with patch.object(pm, 'frappe', fake):
+            self.assertEqual(pm.upsert(ROW, None, pm._Masters(), 'default', read=BUILTIN), 'added')
+        code = pm._collision_code('PV-1001', 'default', ROW['product_id'])
+        self.assertEqual(fake.items[code]['custom_hero_original_article_number'], 'PV-1001')
+        self.assertEqual(service['item_name'], 'Local service')
 
     def test_the_conflict_waits_approve_links_the_item_and_decline_skips(self):
         foreign = _Item({"item_code": "PV-1001", "item_name": "Local article", "stock_uom": "Stk"})

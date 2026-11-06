@@ -23,7 +23,7 @@ from hero_integration.integrations.erpnext.contact import (
 )
 from hero_integration.sources.hero import GraphQLServiceSource, HeroSource, SourcePage, TestingPreviewSource
 from hero_integration.services.change_detection import (
-    changed_fields, decode as decode_hashes, encode as encode_hashes, field_hashes, managed_target_update, next_baseline, reconcile,
+    changed_fields, decode as decode_hashes, encode as encode_hashes, field_hashes, managed_target_update, new_mapped_field_conflicts, next_baseline, reconcile,
 )
 from hero_integration.services.conflict_notifications import notify_conflict_once, notify_review, notify_run_summary
 from hero_integration.services.integration_events import record_output
@@ -129,7 +129,8 @@ def _same_project_notes_after_mapping_change(record, incoming, current):
 
     raw = record.get('partner_notes')
     return (isinstance(raw, str) and bool(raw.strip())
-            and not any(character in raw for character in '<>&')
+            and not any(character in raw for character in '<>')
+            and not re.search(r'&(?:#[0-9]+|#x[0-9a-f]+|[a-z][a-z0-9]{1,31});', raw, re.IGNORECASE)
             and incoming == sanitize_html(raw)
             and current == plain_text_html(raw))
 
@@ -248,6 +249,33 @@ def _checkpoint_transaction(run, claim_started_on):
         raise
 
 
+def _verified_historical_users(run, source):
+    """Classify deleted employees from the bound HERO source without creating users."""
+    action = getattr(run, 'action', '')
+    if action not in PROJECT_ACTIONS and action != 'Projection Migration':
+        return ()
+    from hero_integration.client.graphql import HeroClientError
+    from hero_integration.services import direct_runtime
+    from hero_integration.services.employee_migration import EmployeeMigrationBlocked, _historical_identities
+    from hero_integration.services.migration_testing import project_reader_fingerprint
+    read = direct_runtime.approved_read('HeroEmployees', source.source_instance)
+    if read is None:
+        return ()
+    fingerprint = project_reader_fingerprint(read)
+    if source.revalidate and source.revalidate() != source.contract:
+        raise MappingPlanError('Read approval changed before historical identity verification.')
+    try:
+        identities, _ = _historical_identities(source.client, read.records_path, None, None)
+    except (HeroClientError, EmployeeMigrationBlocked):
+        return ()  # Unverified references keep their ordinary pending status.
+    if source.revalidate and source.revalidate() != source.contract:
+        raise MappingPlanError('Read approval changed during historical identity verification.')
+    current = direct_runtime.approved_read('HeroEmployees', source.source_instance)
+    if current is None or project_reader_fingerprint(current) != fingerprint:
+        raise MappingPlanError('Employee reader changed during historical identity verification.')
+    return identities
+
+
 def execute_run(run_name: str) -> None:
     run = frappe.get_doc("HERO Integration Run", run_name)
     frappe.set_user(run.owner)
@@ -270,7 +298,10 @@ def execute_run(run_name: str) -> None:
             testing_source = (RelatedProjectSource(source, record_limit(run), cohort) if cohort is not None
                               else RecordLimitedSource(source, record_limit(run)))
             source = testing_source
-        _process_requested_phases(run, source, checkpoint=lambda: _checkpoint_transaction(run, claim_started_on))
+        from hero_integration.services.employee_migration import historical_user_scope
+        historical = _verified_historical_users(run, source)
+        with historical_user_scope(getattr(source, 'source_instance', ''), historical):
+            _process_requested_phases(run, source, checkpoint=lambda: _checkpoint_transaction(run, claim_started_on))
         run.reload()
         if run.state == "Running":
             with _checkpoint_transaction(run, claim_started_on):
@@ -838,6 +869,7 @@ def _migrate_customer(record: dict[str, object], run) -> Result:
         home_phone, phone_originals, phone_note = _clean_customer_phones(values, plan.home_phone(record))
         contact_values = plan.customer_contact_values(values)
         address_note = ""
+        incomplete_address = False
         try:
             if getattr(plan, 'adapter_options', None):
                 from hero_integration.services.query_mapping import address_values
@@ -847,6 +879,7 @@ def _migrate_customer(record: dict[str, object], run) -> Result:
         except (IncompleteAddress, IncompleteMappedAddress) as error:
             # The Customer is still imported; an incomplete address is skipped, as if HERO had none.
             address, address_note = None, f" {error} It was not imported."
+            incomplete_address = True
         if not getattr(plan, 'adapter_options', None) and address is not None and not address.get("country_code"):
             # HERO customers are German unless HERO names another country.
             address["country_code"] = DEFAULT_ADDRESS_COUNTRY
@@ -906,6 +939,13 @@ def _migrate_customer(record: dict[str, object], run) -> Result:
         document_name=document_name,
     )
     result = _sync_mapped_relations(plan, record, result, run)
+    if incomplete_address and result.target_name and result.code in {'CREATED', 'UPDATED', 'SKIPPED', 'CONVERGED', 'OBSERVED'}:
+        if not result.pending_relation and run.mode != 'Preview':
+            record_output(run=run.name, source_type='customer', source_id=str(source_id), result='PENDING_REVIEW',
+                          action='customer_address_review', target_doctype='Customer', target_name=result.target_name,
+                          detail=address_note.strip())
+        from dataclasses import replace
+        result = replace(result, pending_relation=True)
     note = email_note + phone_note + address_note + (name_note if _creates(result) else "")
     if note and result.code != "BLOCKED_RECORD":
         from dataclasses import replace
@@ -1137,10 +1177,8 @@ def _plan_task_assignment(run, record, task_name: str, source_instance: str) -> 
         return decision('NO_OP', 'PENDING_SOURCE_SEMANTICS: explicit NULL never removes a native assignment.')
     if not isinstance(target, int) or isinstance(target, bool) or target <= 0:
         return decision('PENDING_IDENTITY', 'PENDING_IDENTITY: source User identity is invalid.')
-    if 'author_user_id' not in record:
-        return decision('BLOCKED', 'PENDING_AUTHORITY: source author was not included in the read.')
-    if record.get('author_user_id') is not None:
-        return decision('BLOCKED', 'PENDING_AUTHORITY: source author has no verified system, peer or supervisor authority.')
+    # HERO permits any employee to assign a task. The source author therefore
+    # does not determine authority; the recipient and local policy still do.
     candidates = frappe.db.sql('''SELECT name, target_name FROM `tabHERO Object Binding`
         WHERE site_scope=%s AND source_instance=%s AND object_type=%s AND external_object_id=%s
           AND target_doctype=%s AND lifecycle=%s ORDER BY name LIMIT 2 FOR UPDATE''',
@@ -1786,8 +1824,16 @@ def _migrate_project(record: dict[str, object], run) -> Result:
     if (run.mode != 'Preview' and result.target_name and 'project_match_assignments' in record
             and (result.code in {'CREATED', 'UPDATED', 'SKIPPED', 'CONVERGED', 'OBSERVED'} or field_conflict)):
         from hero_integration.integrations.project_assignments import sync as sync_assignees
-        assignees = (sync_assignees(result.target_name, record, allow_removals=False) if field_conflict
-                     else sync_assignees(result.target_name, record))
+        from hero_integration.services.employee_migration import historical_users
+        historical = historical_users(source_instance)
+        kwargs = {'allow_removals': False} if field_conflict else {}
+        if historical:
+            kwargs['historical_user_ids'] = historical
+        assignees = sync_assignees(result.target_name, record, **kwargs)
+        if assignees.get('historical'):
+            record_output(run=run.name, source_type='project', source_id=str(source_id), result='SKIPPED',
+                          action='project_historical_reference', target_doctype='Project', target_name=result.target_name,
+                          detail=frappe._('{0} deleted HERO users remain as historical references; existing assignments were preserved.').format(assignees['historical']))
         if assignees["unmatched"]:
             detail = frappe._(
                 '{0} project assignee(s) could not be resolved to an active, source-bound ERPNext user; existing assignments were preserved and require review.'
@@ -1820,14 +1866,15 @@ def _sync_mapped_relations(plan, record, result, run):
     if result.code not in {'CREATED', 'UPDATED', 'SKIPPED', 'CONVERGED', 'OBSERVED', 'PREVIEW_OK'}:
         return result
     from dataclasses import replace
-    from hero_integration.services.mapped_relations import sync
-    from hero_integration.services.mapped_collection_relations import UnboundCustomerAddress
+    from hero_integration.services.mapped_relations import IncompleteProjectAddress, sync
+    from hero_integration.services.mapped_collection_relations import IncompleteCustomerAddress, UnboundCustomerAddress
     try:
         counts = sync(plan, record, plan.target_doctype, result.target_name or '', preview=run.mode == 'Preview')
-    except UnboundCustomerAddress as error:
+    except (UnboundCustomerAddress, IncompleteCustomerAddress, IncompleteProjectAddress) as error:
         if run.mode != 'Preview' and result.target_name:
-            record_output(run=run.name, source_type='customer', source_id=str(plan.source_identity(record)),
-                result='PENDING_REVIEW', action='customer_address_review', target_doctype='Customer',
+            project = isinstance(error, IncompleteProjectAddress)
+            record_output(run=run.name, source_type='project' if project else 'customer', source_id=str(plan.source_identity(record)),
+                result='PENDING_REVIEW', action='project_address_review' if project else 'customer_address_review', target_doctype='Project' if project else 'Customer',
                 target_name=result.target_name, detail=str(error))
         return replace(result, pending_relation=True)
     except ValueError as error:
@@ -2059,26 +2106,24 @@ def _upsert(
         snapshot = target_snapshot or (lambda item: _target_values(item, values))
         prior_source = decode_hashes(getattr(existing, "source_field_hashes", ""))
         prior_target = decode_hashes(getattr(existing, "target_field_hashes", ""))
-        if preserve_omitted and existing.mapping_version != mapping_version:
+        rebind_event = preserve_omitted and existing.mapping_version != mapping_version
+        if rebind_event:
             # An approved mapping may have been republished without changing
             # this Event. Rebind only when every previous target field and every
-            # currently supplied source field still matches its own baseline.
-            # New fields, changed values or missing baselines require review.
+            # currently supplied previously-owned target field is unchanged.
+            # New fields may be acquired only when empty or already equal.
             comparison = _Comparison(values, comparison_extra)
             if prior_source is not None and prior_target is not None:
                 comparison.omit(set(prior_source) | set(prior_target))
                 current_target = field_hashes(comparison.target_values(target, snapshot))
-                safe = (bool(comparison.source_hashes) and set(comparison.source_hashes) <= set(prior_source)
-                        and set(prior_source) == set(prior_target)
-                        and all(prior_source[field] == value for field, value in comparison.source_hashes.items())
-                        and all(current_target.get(field) == value for field, value in prior_target.items()))
+                common = set(comparison.source_hashes) & set(prior_target)
+                safe = (bool(comparison.source_hashes) and set(prior_source) == set(prior_target)
+                        and all(current_target.get(field) == prior_target[field] for field in common)
+                        and not new_mapped_field_conflicts(target, values, set(prior_source) | set(prior_target)))
             else:
                 safe = False
             if not safe:
                 return Result('CONFLICT', 'Event binding or approved mapping version requires review.', doctype, existing.target_name)
-            if run.mode != 'Preview':
-                existing.mapping_version = mapping_version
-                _save_link(existing)
         # RC15 links have whole-payload hashes only.  They remain fail-closed
         # until an administrator establishes a fresh, field-level baseline.
         if prior_source is None or prior_target is None:
@@ -2115,6 +2160,9 @@ def _upsert(
             if outcome.apply:
                 return Result("PREVIEW_OK", "Existing target would receive non-conflicting HERO field changes.", doctype, target.name)
             return Result("PREVIEW_OK", "Existing target would remain unchanged; local changes are observed only.", doctype, target.name)
+        if rebind_event:
+            existing.mapping_version = mapping_version
+            _save_link(existing)
         _observe_link(existing, source_hash, _digest(target_values))
         if outcome.apply:
             savepoint = "hero_upsert_update"
@@ -2178,7 +2226,9 @@ def _upsert(
         target = frappe.get_doc({"doctype": doctype, **(creation_values or {}), **values})
         from hero_integration.services.guards import hero_project_naming
 
-        with hero_project_naming():  # HERO business IDs may end in the reserved -H
+        # The target has no name/link yet; the guarded insert still owns its
+        # inbound fields and must not be mistaken for a local edit.
+        with hero_project_naming(), managed_target_update(doctype, None, ''):
             if document_name:
                 target.insert(set_name=document_name)
             else:
@@ -2493,10 +2543,11 @@ def _synchronize_customer_address(customer, address: dict[str, object], source_i
     configured_country = address.get('country_name')
     if configured_country:
         country = _native_lookup('Country', configured_country).name
-    elif not isinstance(code, str) or not code.strip():
-        raise CustomerAddressError('Primary address requires an explicit HERO country.code selection.')
     else:
-        countries = frappe.get_list('Country', filters={'code': code.strip().lower()}, pluck='name', limit_page_length=2)
+        if code is not None and not isinstance(code, str):
+            raise CustomerAddressError('HERO country code must be text when supplied.')
+        code = code.strip().lower() if isinstance(code, str) and code.strip() else DEFAULT_ADDRESS_COUNTRY
+        countries = frappe.get_list('Country', filters={'code': code}, pluck='name', limit_page_length=2)
         if len(countries) != 1:
             raise CustomerAddressError('HERO country code has no unique readable native Country binding.')
         country = countries[0]
@@ -2754,6 +2805,18 @@ def _migrate_mapped_task(record, run, plan, scope) -> Result:
         return Result('BLOCKED_RECORD', 'A mapped Task title is required for intake.')
     result = _upsert('Task', source_id, record, values, 'Task', 'subject', plan.mapping_version, run,
         source_instance=instance, required_on_create=('subject',))
+    from hero_integration.services.direct_mapping import MISSING, lookup
+    from hero_integration.services.employee_migration import historical_users
+    assignment_rule = next((spec for spec in plan.definitions if spec.target_doctype == 'ToDo'
+                            and spec.target_field == 'allocated_to'), None)
+    raw_assignee = lookup(record, assignment_rule.source_path) if assignment_rule else MISSING
+    if (type(raw_assignee) is int and str(raw_assignee) in historical_users(instance)
+            and result.target_name and result.code in {'CREATED', 'UPDATED', 'SKIPPED', 'CONVERGED', 'OBSERVED'}):
+        if run.mode != 'Preview':
+            record_output(run=run.name, source_type='Task', source_id=str(source_id), result='SKIPPED',
+                action='task_historical_reference', target_doctype='Task', target_name=result.target_name,
+                detail=frappe._('A deleted HERO user remains as a historical reference; existing assignments were preserved.'))
+        return result
     if assignment_error and result.target_name and run.mode != 'Preview':
         record_output(run=run.name, source_type='Task', source_id=str(source_id), result='PENDING_REVIEW',
             action='task_assignment_review', target_doctype='Task', target_name=result.target_name,

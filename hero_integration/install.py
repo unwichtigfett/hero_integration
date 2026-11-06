@@ -47,6 +47,13 @@ HERO_CUSTOM_FIELDS = {
     "Item": [
         *SERVICE_ITEM_FIELDS,
         {
+            "fieldname": "custom_hero_original_article_number",
+            "fieldtype": "Data",
+            "label": "HERO Original Article Number",
+            "insert_after": "item_code",
+            "read_only": 1,
+        },
+        {
             "fieldname": "custom_hero_manufacturer_nr",
             "fieldtype": "Data",
             "label": "Manufacturer Part No",

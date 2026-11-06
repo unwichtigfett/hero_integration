@@ -39,6 +39,10 @@ class TestTaskAssignmentPolicyFrappe(unittest.TestCase):
         fixture = getattr(self, '_committed_fixture', None)
         if fixture:
             task = fixture['task']
+            for name in frappe.get_all('HERO Pending Reference', filters={'origin_run': fixture['run']}, pluck='name'):
+                frappe.db.delete('HERO Pending Dependency', {'parent': name})
+                frappe.db.delete('HERO Pending Reference', {'name': name})
+            frappe.db.delete('HERO Integration Run', {'name': fixture['run']})
             frappe.db.delete('HERO Integration Record', {'target_doctype': 'Task', 'target_name': task})
             frappe.db.delete('HERO Task Assignment State', {'task_name': task})
             frappe.db.delete('ToDo', {'reference_type': 'Task', 'reference_name': task})
@@ -214,22 +218,24 @@ class TestTaskAssignmentPolicyFrappe(unittest.TestCase):
             def projection(self, offset):
                 return SimpleNamespace(records=({'id': 990003, 'title': 'Synthetic registered policy task',
                     'target_user_id': self.target, 'author_user_id': None, '_hero_source_instance': 'default'},), next_offset=None)
+        run_doc = frappe.get_doc({'doctype': 'HERO Integration Run', 'action': 'Projection Migration',
+                                  'mode': 'Execute', 'source_instance': 'default'}).insert(ignore_permissions=True)
         run = Run(graphql_mapping=mapping.name, graphql_service=service.name, service_revision=service.service_revision,
                   mapping_revision=mapping.mapping_revision, source_instance='default', mode='Execute',
-                  resume_offset=0, resume_record_index=0, state='Running', name=None, processed=0,
+                  resume_offset=0, resume_record_index=0, state='Running', name=run_doc.name, processed=0,
                   created_records=0, conflict_records=0, skipped_records=0)
         frappe.set_user(self.user.name)
         source = Source()
         _process_projection(run, source)
         link = frappe.get_doc('HERO Integration Link', {'source_key': 'HERO:default:Task:990003'})
         frappe.set_user('Administrator')
-        project = frappe.get_doc({'doctype': 'Project', 'project_name': 'task32b-registered', 'company': self.company}).insert()
+        project = frappe.get_doc({'doctype': 'Project', 'project_name': 'task32b-registered-' + self.nonce, 'company': self.company}).insert()
         task = frappe.get_doc('Task', link.target_name); task.project = project.name; task.save()
         frappe.set_user(self.user.name)
         run.resume_record_index = 0
         _process_projection(run, source)
         task_name, recipient, binding_name = link.target_name, self.user.name, self.payload['user_bindings'][0]
-        self._committed_fixture = {'task': task_name, 'project': project.name, 'policy': policy,
+        self._committed_fixture = {'task': task_name, 'project': project.name, 'policy': policy, 'run': run_doc.name,
             'bindings': [self.fixture_binding, user_binding.identity_key, second_binding.identity_key], 'snapshot': snapshot.name,
             'users': [self.user.name, second_binding.target_name], 'sharing': old_sharing}
         frappe.db.commit()

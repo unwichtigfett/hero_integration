@@ -23,14 +23,15 @@ class _Plan:
 
 
 class TestNativeTaskEmptyTitleOffline(TestCase):
-    def test_missing_author_is_pending_before_binding_or_assignment(self):
+    def test_missing_author_still_requires_a_verified_assignee_binding(self):
         from hero_integration.services import migration
         record = {'id': 7, 'target_user_id': 8}
-        fake = SimpleNamespace(db=SimpleNamespace(sql=lambda *args, **kwargs: self.fail('unexpected identity lookup')))
+        fake = SimpleNamespace(local=SimpleNamespace(site='test.local'),
+                               db=SimpleNamespace(sql=lambda *args, **kwargs: []))
         with patch.object(migration, 'frappe', fake), patch.object(migration, 'record_output') as output:
             migration._record_task_assignment_pending(SimpleNamespace(name='synthetic'), record, 'TASK', 'source')
         self.assertEqual(output.call_args.kwargs['result'], 'PENDING_REVIEW')
-        self.assertIn('source author was not included', output.call_args.kwargs['detail'])
+        self.assertIn('PENDING_IDENTITY', output.call_args.kwargs['detail'])
 
     def test_empty_title_keeps_subject_and_updates_independent_description(self):
         from hero_integration.services import migration

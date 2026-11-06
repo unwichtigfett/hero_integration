@@ -27,6 +27,10 @@ class UnboundCustomerAddress(ValueError):
     """A matching address exists, but its source identity is not established."""
 
 
+class IncompleteCustomerAddress(ValueError):
+    """A source address cannot yet be represented as a native Address."""
+
+
 def _path(value):
     return isinstance(value, str) and bool(PATH.fullmatch(value))
 
@@ -49,7 +53,7 @@ def validate_relation(relation):
     elif kind == 'customer_contacts':
         allowed |= {'deleted_path', 'contact_person_path', 'parent_identity_path', 'parent_source_identity_path', 'salutation_map'}
     elif kind == 'sales_prices':
-        allowed |= {'price_list_identity_path', 'price_lists'}
+        allowed |= {'price_list_identity_path', 'price_lists', 'parent_source_identity_path'}
     else:
         raise ValueError('Native collection kind is unsupported.')
     if set(relation) - allowed or not all(_path(relation.get(key)) for key in ('collection_path', 'identity_path')):
@@ -73,6 +77,8 @@ def validate_relation(relation):
         bindings = relation.get('price_lists')
         if not _path(relation.get('price_list_identity_path')) or not isinstance(bindings, dict) or not 1 <= len(bindings) <= 100:
             raise ValueError('Sales prices require explicit source price-list bindings.')
+        if 'parent_source_identity_path' in relation and not _path(relation['parent_source_identity_path']):
+            raise ValueError('Sales prices require a valid parent source identity path.')
         names = set()
         for source_id, binding in bindings.items():
             _identity(source_id)
@@ -98,6 +104,8 @@ def required_paths(relation):
         result.add(relation['parent_source_identity_path'])
     else:
         result.add(prefix + relation['price_list_identity_path'])
+        if relation.get('parent_source_identity_path'):
+            result.add(relation['parent_source_identity_path'])
     return result
 
 
@@ -106,6 +114,16 @@ def _read(record, path):
     if value is MISSING:
         raise ValueError('An approved native collection source field is absent.')
     return value
+
+
+def sales_price_identity(relation, record, row):
+    """Use an explicitly configured product/list identity or the native row ID."""
+    parent_path = relation.get('parent_source_identity_path')
+    if not parent_path:
+        return _identity(_read(row, relation['identity_path']))
+    parent = _identity(_read(record, parent_path))
+    price_list = _identity(_read(row, relation['price_list_identity_path']))
+    return 'product-list:' + _hash([parent, price_list])
 
 
 def prepare(relation, record, parent_doctype, parent_name):
@@ -136,7 +154,7 @@ def prepare(relation, record, parent_doctype, parent_name):
         raw_identity = _read(row, relation['identity_path'])
         if kind == 'sales_prices' and _read(row, relation['fields']['price_list_rate']) is None:
             continue  # An absent source price needs no row identity and writes nothing.
-        identity = _identity(raw_identity)
+        identity = sales_price_identity(relation, record, row) if kind == 'sales_prices' else _identity(raw_identity)
         if kind == 'customer_addresses' and identity == primary:
             continue  # Primary address is already handled by the canonical customer importer.
         values = {field: _read(row, path) for field, path in relation['fields'].items()}
@@ -146,10 +164,12 @@ def prepare(relation, record, parent_doctype, parent_name):
                 raise ValueError('Customer address fields must contain text or null.')
             values = {field: value.strip() if value else '' for field, value in values.items()}
             country = _read(row, relation['country_code_path'])
+            if country is None or isinstance(country, str) and not country.strip():
+                country = 'de'
             if not isinstance(country, str) or not re.fullmatch('[a-zA-Z]{2}', country):
-                raise ValueError('Customer addresses require an explicit country code.')
+                raise IncompleteCustomerAddress('Customer addresses require an explicit country code.')
             if not values['address_line1'] or not values['city']:
-                raise ValueError('Customer addresses require street and city.')
+                raise IncompleteCustomerAddress('Customer addresses require street and city.')
             values['country_code'] = country.lower()
             source_type, source_id = 'customer_address', identity
         elif kind=='customer_contacts':
@@ -185,6 +205,9 @@ def prepare(relation, record, parent_doctype, parent_name):
             source_id = identity
         item = {'config': relation, 'values': values, 'identity': identity, 'source_type': source_type,
                 'source_id': source_id, 'source_instance': instance, **extra}
+        if (kind == 'sales_prices' and relation.get('parent_source_identity_path')
+                and any(previous['price_list_identity'] == extra['price_list_identity'] for previous in result)):
+            raise ValueError('One product contains multiple prices for the same bound price list.')
         if identity in seen:
             if seen[identity] != item:
                 raise ValueError('Duplicate native collection identities contain conflicting values.')
@@ -247,13 +270,33 @@ def preflight(item, parent_doctype, parent_name, parent=None):
         values.update(country=countries[0].name, address_type=item['config']['address_type'])
         if document and not any(row.link_doctype == 'Customer' and row.link_name == parent_name for row in document.get('links', [])):
             raise ValueError('Bound customer address does not belong to the mapped Customer.')
-        # An unbound existing address is never silently adopted or recreated.
+        # Reuse only the user's approved exact duplicate: it must already be
+        # bound to this source and belong exclusively to this Customer.
         if not document:
             candidates = _rows('Address', {'address_line1': values['address_line1'], 'city': values['city'], 'country': values['country']}, limit=0)
+            related = []
             for candidate in candidates:
-                address = frappe.get_doc('Address', candidate.name)
-                if any(row.link_doctype == 'Customer' and row.link_name == parent_name for row in address.get('links', [])):
+                address = frappe.get_doc('Address', candidate.name, for_update=True)
+                links = address.get('links', [])
+                if not any(row.link_doctype == 'Customer' and row.link_name == parent_name for row in links):
+                    continue
+                related.append(address)
+            if related:
+                if len(related) != 1:
                     raise UnboundCustomerAddress('An existing customer address requires explicit source reconciliation.')
+                address = related[0]
+                owners = address.get('links', [])
+                exact = all(str(address.get(field) or '').strip() == str(value or '').strip()
+                            for field, value in values.items() if field != 'address_type')
+                proofs = _rows('HERO Integration Link', {'source_system': 'HERO', 'source_instance': item['source_instance'],
+                    'source_type': 'customer_address', 'target_doctype': 'Address', 'target_name': address.name,
+                    'sync_status': 'Synchronized'}, ('name',), limit=2)
+                if (not exact or len(proofs) != 1 or len(owners) != 1
+                        or owners[0].link_doctype != 'Customer' or owners[0].link_name != parent_name):
+                    raise UnboundCustomerAddress('An existing customer address requires explicit source reconciliation.')
+                frappe.has_permission('Address', 'write', doc=address, throw=True)
+                document = address
+                values['address_type'] = address.address_type
     elif kind=='customer_contacts':
         if values.get('salutation') and not frappe.db.exists('Salutation',values['salutation']):
             raise ValueError('The explicitly bound native Salutation does not exist.')

@@ -11,9 +11,9 @@ services.direct_operations): an approved own mapping of the source, otherwise
 the built-in mapping – name, description, unit → UOM, catalog → Item Group
 under "HERO Artikel", manufacturer → Brand, EAN → barcode (only when unique),
 purchase price → Standard Buying, default sales price → Standard Selling,
-deleted → disabled, configured article number → Item Code on insert. Fixed in code:
-collision protection (``code-product_id`` when the code is taken), the name/group/unit fallbacks, master records, non-stock
-Items and the price conflict protection.
+deleted → disabled, configured article number → Item Code on insert. An unbound
+existing Item keeps its local values; a service collision gets a stable separate
+Item code. Name/group/unit fallbacks and price conflict protection remain active.
 """
 
 from __future__ import annotations
@@ -165,6 +165,23 @@ def _managed_prices(link) -> dict:
     return prices if isinstance(prices, dict) else {}
 
 
+def _collision_code(code, instance, product_id):
+    """Keep a visible original prefix and a stable, source-scoped suffix."""
+    return code[:110] + '-HERO-' + digest([instance, str(product_id)])[:20]
+
+
+def _adopt_existing_product(item, row, source_instance, read, source, owned):
+    """Bind an unowned native Item without altering its existing values."""
+    baseline = {'fields': owned_field_digests(item, owned), 'prices': {}, 'adopted_locally': True}
+    return frappe.get_doc({'doctype': 'HERO Integration Link', 'source_system': 'HERO',
+        'source_type': SOURCE_TYPE, 'source_id': str(row['product_id']), 'source_instance': source_instance,
+        'target_doctype': 'Item', 'target_name': item.name, 'sync_status': 'Synchronized',
+        'source_payload_hash': source, 'target_payload_hash': owned_digest(item, owned),
+        'target_field_hashes': json.dumps(baseline, sort_keys=True),
+        'mapping_version': f'{MAPPING_VERSION}:{read.mapping_version}'[:140],
+        'last_synced_on': frappe.utils.now_datetime()}).insert(ignore_permissions=True)
+
+
 def _conflict(link, source: str, detail: str) -> str:
     frappe.db.set_value("HERO Integration Link", link.name, {
         "sync_status": "Conflict", "observed_source_hash": source, "last_observed_on": frappe.utils.now_datetime(),
@@ -191,8 +208,32 @@ def upsert(row: dict, link, masters: _Masters, source_instance: str, read=None, 
         return "unchanged"
     item = frappe.get_doc("Item", link.target_name) if link else None
     if item is None and frappe.db.exists("Item", values["item_code"]):
-        # The HERO article number is the Item's identity; it is never suffixed or reassigned.
-        return _code_taken(link, row, values["item_code"], source_instance, read)
+        existing_links = frappe.get_all('HERO Integration Link', filters={'target_doctype': 'Item',
+            'target_name': values['item_code']}, fields=['source_type', 'source_instance', 'sync_status'], limit_page_length=2)
+        if (len(existing_links) == 1 and existing_links[0].source_type == 'supply_service'
+                and existing_links[0].source_instance == source_instance
+                and existing_links[0].sync_status == 'Synchronized'):
+            original_code = values['item_code']
+            values['item_code'] = _collision_code(original_code, source_instance, row['product_id'])
+            if frappe.db.exists('Item', values['item_code']):
+                return _code_taken(link, row, values['item_code'], source_instance, read)
+            values['custom_hero_original_article_number'] = original_code
+            owned = (*owned, 'custom_hero_original_article_number')
+        elif not existing_links:
+            item = frappe.get_doc('Item', values['item_code'], for_update=True)
+            frappe.has_permission('Item', 'write', doc=item, throw=True)
+            link = _adopt_existing_product(item, row, source_instance, read, source, owned)
+        else:
+            return _code_taken(link, row, values['item_code'], source_instance, read)
+    adopted = bool(_link_baseline(link).get('adopted_locally'))
+    if adopted and link.source_payload_hash != source:
+        return _conflict(link, source, 'A linked local Item was retained; changed HERO fields require review.')
+    if item is not None and 'custom_hero_original_article_number' in (_link_baseline(link).get('fields') or {}):
+        original_code = item.get('custom_hero_original_article_number')
+        if values['item_code'] != original_code:
+            return _conflict(link, source, 'The original HERO article number changed; the existing Item code was preserved.')
+        values['custom_hero_original_article_number'] = original_code
+        owned = (*owned, 'custom_hero_original_article_number')
     # The baseline covers the fields mapped when it was taken; legacy links used the built-in set.
     baseline_fields = _link_baseline(link).get("fields") or {}
     if item is not None:
@@ -209,7 +250,7 @@ def upsert(row: dict, link, masters: _Masters, source_instance: str, read=None, 
         if new_mapped_field_conflicts(item, incoming, tuple(baseline_fields) if baseline_fields else OWNED):
             return _conflict(link, source, "The Item was changed in ERPNext; the newer HERO article was not applied.")
     supplier_baseline = _link_baseline(link).get("supplier")
-    if item is not None and not _supplier_unchanged(item, values["supplier"], supplier_baseline):
+    if item is not None and not adopted and not _supplier_unchanged(item, values["supplier"], supplier_baseline):
         return _conflict(link, source, "The Item was changed in ERPNext; the newer HERO article was not applied.")
     managed = _managed_prices(link) if item is not None else {}
     plans = {}
@@ -235,14 +276,15 @@ def upsert(row: dict, link, masters: _Masters, source_instance: str, read=None, 
     if item is None:
         fields = {**{key: value for key, value in REQUIRED_FALLBACKS.items() if not fields.get(key)}, **{
             key: value for key, value in fields.items() if value is not None or key not in REQUIRED_FALLBACKS}}
-    masters.for_item(fields)
+    if not adopted:
+        masters.for_item(fields)
     if item is None:
         item = frappe.get_doc({"doctype": "Item", "item_code": values["item_code"], "is_stock_item": 0, **fields})
         _set_barcode(item, values["barcode"])
         supplier_baseline = _set_supplier(item, values["supplier"], masters) or supplier_baseline
         item.insert(ignore_permissions=True)
         result = "added"
-    else:
+    elif not adopted:
         item.update({key: value for key, value in fields.items()
                      if value is not None or key not in REQUIRED_FALLBACKS})  # never blank a required field
         if not item.get("barcodes"):
@@ -250,6 +292,8 @@ def upsert(row: dict, link, masters: _Masters, source_instance: str, read=None, 
         supplier_baseline = _set_supplier(item, values["supplier"], masters) or supplier_baseline
         item.save(ignore_permissions=True)
         result = "updated"
+    else:
+        result = 'unchanged'
     prices = dict(managed)
     for price_list, key in PRICE_LISTS:
         plan = plans[price_list] if price_list in plans else plan_price(
@@ -271,6 +315,7 @@ def upsert(row: dict, link, masters: _Masters, source_instance: str, read=None, 
     link_values = {"sync_status": "Pending Review" if relation_pending else "Synchronized", "target_name": item.name, "source_payload_hash": source,
                    "target_payload_hash": owned_digest(item, owned), "conflict_detail": relation_pending,
                    "target_field_hashes": json.dumps({"prices": prices, "fields": owned_field_digests(item, owned),
+                                                     **({'adopted_locally': True} if adopted else {}),
                                                      **({"supplier": supplier_baseline} if supplier_baseline else {})},
                                                      sort_keys=True),
                    "mapping_version": f"{MAPPING_VERSION}:{read.mapping_version}"[:140],

@@ -22,6 +22,10 @@ FIELDS = {
 PARENTS = {'customer_bank_account': 'Customer', 'project_address': 'Project', **collections.PARENTS}
 
 
+class IncompleteProjectAddress(ValueError):
+    """The source address lacks fields required by the native Project address."""
+
+
 def validate_config(config):
     if not isinstance(config, list) or len(config) > 5:
         raise ValueError('Native relations require a bounded explicit list.')
@@ -113,9 +117,9 @@ def prepare(plan, record, parent_doctype, parent_name):
             if values['swift_number'] and not re.fullmatch(r'[A-Z]{6}[A-Z0-9]{2}(?:[A-Z0-9]{3})?', values['swift_number']):
                 raise ValueError('Bank BIC has an invalid format.')
         else:
-            values['country_code'] = _value(record, relation['country_code_path']).lower()
+            values['country_code'] = _value(record, relation['country_code_path']).lower() or 'de'
             if not values['address_line1'] or not values['city'] or not re.fullmatch('[a-z]{2}', values['country_code']):
-                raise ValueError('Project address requires street, city and an explicit country code.')
+                raise IncompleteProjectAddress('Project address requires street, city and an explicit country code.')
         key = _hash([instance, kind, str(identity)])
         result.append({'config': relation, 'values': values, 'source_id': key,
                        'source_instance': instance, 'identity': str(identity)})

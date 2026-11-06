@@ -624,12 +624,14 @@ def _reference(doctype, name):
 
 
 def mapped_values(plan, record, *, customer_link=None, confirmed_company=None, project_title=None,
-                  project_link=None, native_value=None, allow_partial=False, target_doctype=None):
+                  project_link=None, native_value=None, allow_partial=False, target_doctype=None, skip_fields=()):
     from hero_integration.services.mapping_runtime import MappedValues
     target = target_doctype or plan.target_doctype
     values = MappedValues()
     for spec in plan.definitions:
         if spec.target_doctype != target and not (target == 'Customer' and spec.target_doctype == 'Contact'):
+            continue
+        if spec.target_field in skip_fields:
             continue
         if spec.purpose == 'Record Name' and plan.target_doctype == 'Project' and project_title is not None:
             values[spec.target_field] = project_title(record)
@@ -679,7 +681,7 @@ def mapped_values(plan, record, *, customer_link=None, confirmed_company=None, p
 
 
 def address_values(plan, record):
-    """Resolve only declared Address fields; never invent a missing country."""
+    """Resolve declared Address fields and use Germany when HERO omits country."""
     selected = [d for d in plan.definitions if d.target_doctype == 'Address']
     if not selected:
         return None
@@ -693,12 +695,20 @@ def address_values(plan, record):
         return None
     if not isinstance(parent, dict) or type(parent.get('id')) is not int or parent['id'] <= 0:
         raise ValueError('Mapped primary address requires a stable source identity.')
-    values = mapped_values(plan, record, target_doctype='Address')
-    if not {'address_line1', 'pincode', 'city', 'country'} <= set(values):
-        raise IncompleteMappedAddress('Mapped primary address is incomplete; no country is assumed.')
+    countries = [spec for spec in selected if spec.target_field == 'country']
+    if len(countries) != 1:
+        raise IncompleteMappedAddress('The source address country was not selected or returned.')
+    raw_country = lookup(record, countries[0].source_path)
+    if raw_country is MISSING:
+        raise IncompleteMappedAddress('The source address country was not selected or returned.')
+    empty_country = raw_country is None or isinstance(raw_country, str) and not raw_country.strip()
+    values = mapped_values(plan, record, target_doctype='Address', skip_fields={'country'} if empty_country else ())
+    if not {'address_line1', 'pincode', 'city'} <= set(values):
+        raise IncompleteMappedAddress('Mapped primary address is incomplete; street, postcode and city are required.')
     # The existing Address writer owns linking, exclusive ownership and baselines.
     return {'id': str(parent['id']), 'street': values['address_line1'], 'zipcode': values['pincode'],
-            'city': values['city'], 'country_name': values['country'],
+            'city': values['city'], 'country_name': values.get('country'),
+            **({'country_code': 'de'} if not values.get('country') else {}),
             **({'line_2': values['address_line2']} if 'address_line2' in values else {}),
             'mapped_values': dict(values)}
 

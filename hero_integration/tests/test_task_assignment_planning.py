@@ -97,6 +97,14 @@ class TestTaskAssignmentPlanning(unittest.TestCase):
         self.assertEqual((plan.action, plan.proposed, plan.recipient), ('BLOCKED', 'CREATE', self.recipient.target_name))
         self.assertIn('POLICY_REQUIRED', plan.detail)
 
+    def test_source_author_does_not_block_an_approved_initial_assignment(self):
+        self.policy.policy_json = json.dumps({'native_effects': {
+            'date_rule': 'LOCAL_TODAY', 'allow_notifications': True, 'allow_follow': True}})
+        self.record['author_user_id'] = 123
+        self.assertEqual(self.plan().action, 'CREATE')
+        del self.record['author_user_id']
+        self.assertEqual(self.plan().action, 'CREATE')
+
     def test_opt_in_native_effects_and_guarded_follow(self):
         effects = {'date_rule': 'LOCAL_TODAY', 'allow_notifications': False, 'allow_follow': False}
         self.policy.policy_json = json.dumps({'native_effects': effects})

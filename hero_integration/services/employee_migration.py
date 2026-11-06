@@ -6,6 +6,8 @@ Existing account roles/access, login email and local audit fields stay local. Ev
 from __future__ import annotations
 
 from hashlib import sha256
+from contextlib import contextmanager
+from contextvars import ContextVar
 import json
 import time
 
@@ -23,6 +25,7 @@ VERSION = "employee-migration-v2"
 OPERATION = "HeroEmployees"
 MAX_RECORDS = 10000
 STATE_KEY = "hero_employee_migration:{}"
+_historical_users = ContextVar('hero_historical_users', default=('', frozenset()))
 
 
 
@@ -82,6 +85,20 @@ def _records(data, path):
     return sorted(rows, key=lambda row: row["id"])
 
 
+@contextmanager
+def historical_user_scope(source_instance, identities):
+    token = _historical_users.set((source_instance, frozenset(str(value) for value in identities)))
+    try:
+        yield
+    finally:
+        _historical_users.reset(token)
+
+
+def historical_users(source_instance):
+    source, identities = _historical_users.get()
+    return identities if source == source_instance else frozenset()
+
+
 def _historical_identities(client, path, wanted_users, wanted_partners):
     """Verify deleted source identities without provisioning local accounts."""
     if path not in ('partners', 'company.partners'):
@@ -100,9 +117,9 @@ def _historical_identities(client, path, wanted_users, wanted_partners):
         deleted = row.get('status') == 'deleted' and consistent
         for identity in identities:
             by_user.setdefault(identity, []).append(deleted)
-        if deleted and str(row['id']) in wanted_partners:
+        if deleted and wanted_partners is not None and str(row['id']) in wanted_partners:
             historical_partners.add(str(row['id']))
-    historical_users = {identity for identity in wanted_users
+    historical_users = {identity for identity in (wanted_users if wanted_users is not None else by_user)
                         if identity in by_user and all(by_user[identity])}
     return sorted(historical_users), sorted(historical_partners)
 
@@ -270,6 +287,10 @@ def upsert(record, instance, company, languages, read=None):
             binding_updated(user_link)
         return "unchanged"
     is_new = employee is None
+    user_changed = new_user or _values(user, {**user_values, **ids}) != {
+        key: str(value or '') for key, value in {**user_values, **ids}.items()}
+    employee_changed = is_new or _values(employee, employee_values) != {
+        key: str(value or '') for key, value in employee_values.items()}
     if is_new:
         employee_values["employee_number"] = f"HERO-{_digest(instance)[:8]}-{record['id']}"
         employee = frappe.get_doc({"doctype": "Employee", "create_user_permission": 0, "create_user_automatically": 0, **employee_values})
@@ -283,11 +304,11 @@ def upsert(record, instance, company, languages, read=None):
          managed_target_update('Employee', employee.name, employee_link.name if employee_link else None):
         if new_user:
             user.insert(ignore_permissions=True)
-        else:
+        elif user_changed:
             user.save(ignore_permissions=True)
         if is_new:
             employee.insert(ignore_permissions=True)
-        else:
+        elif employee_changed:
             employee.save(ignore_permissions=True)
     _write_link(user_link, instance, "User", user_id, user, user_values, record, read.mapping_version)
     _write_link(employee_link, instance, "partner", record["id"], employee, employee_values, record, read.mapping_version)

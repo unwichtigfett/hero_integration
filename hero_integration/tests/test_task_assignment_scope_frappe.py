@@ -2,6 +2,7 @@
 import os
 import threading
 import unittest
+from uuid import uuid4
 
 import frappe
 
@@ -23,7 +24,7 @@ class TestTaskAssignmentScope(unittest.TestCase):
     def test_project_company_allows_initial_assignment_but_holds_unordered_transfer(self):
         company = frappe.get_all('Company', pluck='name', limit=1)[0]
         frappe.set_user('Administrator')
-        project = frappe.get_doc({'doctype': 'Project', 'project_name': 'scope-' + self._testMethodName,
+        project = frappe.get_doc({'doctype': 'Project', 'project_name': 'scope-' + self._testMethodName + '-' + uuid4().hex[:8],
                                   'company': company}).insert()
         task = frappe.get_doc('Task', self.task); task.project = project.name; task.save()
         frappe.set_user(self.users[0])

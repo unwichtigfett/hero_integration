@@ -133,6 +133,12 @@ class TestCompleteMappedLogbook(TestCase):
         self.assertEqual(len(self.links), 1)
         self.assertEqual(self.links[0].sync_status, 'Synchronized')
 
+    def test_unchanged_logbook_does_not_rewrite_comments_or_bindings(self):
+        self.sync()
+        self.writes.clear()
+        self.assertEqual(self.sync(), 0)
+        self.assertEqual(self.writes, [])
+
     def test_local_edit_is_retained_but_new_restriction_still_applies(self):
         self.sync(); comment = self.docs[self.links[0].target_name]
         comment.content = 'Local edit'

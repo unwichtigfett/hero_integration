@@ -173,6 +173,31 @@ class TestSyntheticDeferredMariaDB(TestCase):
         self.assertEqual(frappe.db.get_value(deferred.MAIN, pending, 'status'), 'Resolved')
         self.assertEqual(frappe.db.count('Address', {'address_title': 'Synthetic secondary address'}), 1)
 
+    def test_equal_secondary_source_address_reuses_bound_primary_address(self):
+        from hero_integration.tests.test_mapped_collection_relations import ADDRESSES
+        customer = frappe.get_doc({'doctype': 'Customer', 'customer_name': 'Synthetic alias ' + uuid4().hex[:10],
+            'customer_type': 'Individual', 'customer_group': 'Commercial', 'territory': 'Germany'}).insert()
+        address = frappe.get_doc({'doctype': 'Address', 'address_title': 'Synthetic alias ' + uuid4().hex[:10],
+            'address_type': 'Billing', 'address_line1': 'Example 2', 'city': 'Example City',
+            'pincode': '12345', 'country': 'Germany', 'is_primary_address': 1,
+            'links': [{'link_doctype': 'Customer', 'link_name': customer.name}]}).insert()
+        frappe.get_doc({'doctype': 'HERO Integration Link', 'source_system': 'HERO', 'source_type': 'customer_address',
+            'source_id': '1', 'source_instance': self.source, 'target_doctype': 'Address', 'target_name': address.name,
+            'sync_status': 'Synchronized', 'source_payload_hash': 'source', 'target_payload_hash': 'target',
+            'mapping_version': 'fixture'}).insert()
+        record = {'id': 777, 'address': {'id': 1}, '_hero_source_instance': self.source,
+                  'customer_addresses': [{'is_deleted': False, 'address': {'id': 2, 'street': 'Example 2',
+                      'city': 'Example City', 'zipcode': '12345', 'country': None}}]}
+        plan = SimpleNamespace(definitions=[], adapter_options={'native_relations': [ADDRESSES]},
+                               target_doctype='Customer', mapping_version='fixture', source_identity=lambda _: '777')
+        result = migration.Result('SKIPPED', 'Customer synchronized.', 'Customer', customer.name)
+        actual = migration._sync_mapped_relations(plan, record, result, self.run)
+        self.assertFalse(actual.pending_relation)
+        self.assertEqual(frappe.db.get_value('HERO Integration Link', {'source_type': 'customer_address',
+            'source_instance': self.source, 'source_id': '2'}, 'target_name'), address.name)
+        self.assertEqual(frappe.db.get_value('Address', address.name, 'address_type'), 'Billing')
+        self.assertEqual(frappe.db.get_value('Address', address.name, 'is_primary_address'), 1)
+
     def test_local_project_edit_is_preserved_as_conflict(self):
         task_name, pending = self._task_and_pending()
         local = self._project(20002)

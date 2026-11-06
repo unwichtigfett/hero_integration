@@ -3,6 +3,9 @@ from frappe.model.document import Document
 
 class HEROIntegrationLink(Document):
     def validate(self) -> None:
+        import frappe
+        if self.sync_status == 'Synchronized' and (not self.source_payload_hash or not self.target_payload_hash):
+            frappe.throw(frappe._('A synchronized binding requires both successful synchronization baselines.'))
         self.source_system = self.source_system or "HERO"
         self.source_key = ":".join(
             (self.source_system, self.source_instance or "default", self.source_type, self.source_id)

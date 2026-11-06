@@ -100,7 +100,10 @@ class TestEmployeeMappingExtension(unittest.TestCase):
                     try:
                         self.assertEqual(fixture.run_import(), 'updated')
                         fixture.user.save.assert_called_once()
-                        employee.save.assert_called_once()
+                        if doctype == 'Employee' and value != '__same__':
+                            employee.save.assert_called_once()
+                        else:
+                            employee.save.assert_not_called()
                         self.assertEqual(fixture.write_link.call_count, 2)
                     finally:
                         fixture.doCleanups()
