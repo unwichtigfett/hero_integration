@@ -120,14 +120,24 @@ class TestMappedCollectionRelations(TestCase):
         links = self.docs('HERO Integration Link')
         self.assertEqual({link.source_id for link in links}, {'2', '4'})
         self.assertEqual({link.target_name for link in links}, {native.name})
+        alias['customer_addresses'][1]['address']['id'] = 5
+        self.assertEqual(self.sync(ADDRESSES, alias)['created'], 1)
+        self.assertEqual({link.source_id for link in self.docs('HERO Integration Link')}, {'2', '4', '5'})
+        self.assertEqual(len(self.docs('Address')), 1)
 
-    def test_partial_address_match_is_not_automatically_aliased(self):
+    def test_different_postcode_creates_separate_address(self):
         self.sync(ADDRESSES, self.address)
         alias = deepcopy(self.address)
         alias['customer_addresses'][1]['address'].update(id=4, zipcode='99999')
+        self.assertEqual(self.sync(ADDRESSES, alias)['created'], 1)
+        self.assertEqual(len(self.docs('Address')), 2)
+
+    def test_missing_postcode_does_not_prove_a_separate_address(self):
+        self.sync(ADDRESSES, self.address)
+        alias = deepcopy(self.address)
+        alias['customer_addresses'][1]['address'].update(id=4, zipcode=None)
         with self.assertRaises(collection.UnboundCustomerAddress):
             self.sync(ADDRESSES, alias)
-        self.assertEqual(len(self.docs('Address')), 1)
 
     def test_address_local_edit_is_not_overwritten_and_foreign_owner_blocks(self):
         self.sync(ADDRESSES, self.address)

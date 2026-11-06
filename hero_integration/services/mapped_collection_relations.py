@@ -282,16 +282,22 @@ def preflight(item, parent_doctype, parent_name, parent=None):
                     continue
                 related.append(address)
             if related:
-                if len(related) != 1:
+                exact_matches = [address for address in related
+                    if all(str(address.get(field) or '').strip() == str(value or '').strip()
+                           for field, value in values.items() if field != 'address_type')]
+                if not exact_matches and values.get('pincode') and all(
+                        address.get('pincode') and str(address.get('pincode')).strip() != str(values['pincode']).strip()
+                        for address in related):
+                    related = []  # Explicitly different postal codes identify separate addresses.
+                elif len(exact_matches) != 1:
                     raise UnboundCustomerAddress('An existing customer address requires explicit source reconciliation.')
-                address = related[0]
+            if related:
+                address = exact_matches[0]
                 owners = address.get('links', [])
-                exact = all(str(address.get(field) or '').strip() == str(value or '').strip()
-                            for field, value in values.items() if field != 'address_type')
                 proofs = _rows('HERO Integration Link', {'source_system': 'HERO', 'source_instance': item['source_instance'],
                     'source_type': 'customer_address', 'target_doctype': 'Address', 'target_name': address.name,
                     'sync_status': 'Synchronized'}, ('name',), limit=2)
-                if (not exact or len(proofs) != 1 or len(owners) != 1
+                if (not proofs or len(owners) != 1
                         or owners[0].link_doctype != 'Customer' or owners[0].link_name != parent_name):
                     raise UnboundCustomerAddress('An existing customer address requires explicit source reconciliation.')
                 frappe.has_permission('Address', 'write', doc=address, throw=True)

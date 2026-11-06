@@ -87,18 +87,34 @@ class TestSyntheticDeferredMariaDB(TestCase):
                                  'Native Binding', 'HERO User Link', definition_id='synthetic-assignee')
         plan = plan_from_definitions('HeroTasks', [*self.plan.definitions, assignment],
                                      target_operation='HeroTasks', adapter_options={'version': 2})
-        result = migration._migrate_mapped_task({**self.row, 'target_user_id': 0}, self.run, plan, self.scope)
+        result = migration._migrate_mapped_task({**self.row, 'target_user_id': -1}, self.run, plan, self.scope)
         self.assertEqual(result.code, 'CREATED')
         self.assertTrue(frappe.db.exists('Task', result.target_name))
         self.assertTrue(frappe.db.exists('HERO Integration Record', {'run': self.run.name,
             'target_name': result.target_name, 'technical_action': 'task_assignment_review', 'result': 'PENDING_REVIEW'}))
+
+    def test_zero_assignee_is_unassigned_and_preserves_local_todos(self):
+        assignment = MappingSpec('HeroTasks', 'target_user_id', 'ToDo', 'allocated_to', 'int|null',
+                                 'Native Binding', 'HERO User Link', definition_id='synthetic-assignee')
+        plan = plan_from_definitions('HeroTasks', [*self.plan.definitions, assignment],
+                                     target_operation='HeroTasks', adapter_options={'version': 2})
+        record = {**self.row, 'target_user_id': 0}
+        result = migration._migrate_mapped_task(record, self.run, plan, self.scope)
+        self.assertEqual(result.code, 'CREATED')
+        todo = frappe.get_doc({'doctype': 'ToDo', 'allocated_to': 'Administrator', 'reference_type': 'Task',
+            'reference_name': result.target_name, 'description': 'Synthetic local assignment'}).insert()
+        repeated = migration._migrate_mapped_task(record, self.run, plan, self.scope)
+        self.assertFalse(repeated.pending_relation)
+        self.assertEqual(frappe.db.get_value('ToDo', todo.name, 'status'), 'Open')
+        self.assertFalse(frappe.db.exists('HERO Integration Record', {'run': self.run.name,
+            'target_name': result.target_name, 'technical_action': 'task_assignment_review'}))
 
     def test_resolving_project_does_not_hide_unresolved_task_assignee(self):
         assignment = MappingSpec('HeroTasks', 'target_user_id', 'ToDo', 'allocated_to', 'int|null',
                                  'Native Binding', 'HERO User Link', definition_id='synthetic-assignee')
         self.plan = plan_from_definitions('HeroTasks', [*self.plan.definitions, assignment],
                                           target_operation='HeroTasks', adapter_options={'version': 2})
-        self.row['target_user_id'] = 0
+        self.row['target_user_id'] = -1
         task_name, pending = self._task_and_pending()
         project = self._project(20001)
         self._resolve(pending)
