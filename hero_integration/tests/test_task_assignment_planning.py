@@ -149,6 +149,15 @@ class TestTaskAssignmentPlanning(unittest.TestCase):
             self.todos = [NS(name='LOCAL', status='Closed', allocated_to='other@example.invalid')]
             self.assertEqual(self.plan().action, 'BLOCKED')
 
+    def test_manager_wide_policy_retains_original_assignment_actor(self):
+        self.policy.policy_json = json.dumps({'silent_initial': True, 'allow_all_system_managers': True,
+            'native_effects': {'date_rule': 'LOCAL_TODAY', 'allow_notifications': False, 'allow_follow': False}})
+        self.managed(); self.state.user_binding = 'USER-BINDING'; self.state.owner = 'creator@example.invalid'
+        self.todos[0].assigned_by = self.state.owner
+        self.assertEqual(self.plan().action, 'KEEP')
+        self.todos[0].assigned_by = 'different@example.invalid'
+        self.assertEqual(self.plan().action, 'CONFLICT')
+
     def test_missing_null_invalid_and_unknown_users(self):
         for record, expected in [({'id': 7}, 'NO_OP'), ({'id': 7, 'target_user_id': None}, 'NO_OP'),
                                  ({'id': 7, 'target_user_id': True}, 'PENDING_IDENTITY')]:
