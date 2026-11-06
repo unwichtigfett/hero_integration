@@ -139,6 +139,22 @@ class TestCompleteMappedLogbook(TestCase):
         self.assertEqual(self.sync(), 0)
         self.assertEqual(self.writes, [])
 
+    def test_frappe_line_break_serialization_is_not_a_local_edit(self):
+        self.record['histories'][0]['custom_text'] = 'First</br>Second'
+        self.sync()
+        comment = self.docs[self.links[0].target_name]
+        comment.content = comment.content.replace('</br>', '<br>')
+        self.writes.clear()
+        conflicts = []
+        self.sync(conflicts=conflicts)
+        self.assertEqual(conflicts, [])
+        self.assertEqual(comment.content, 'First<br>Second')
+        self.assertEqual(self.links[0].sync_status, 'Synchronized')
+        self.assertTrue(all(doctype != 'Comment' for doctype, _, _ in self.writes))
+        comment.content = 'Actual local change'
+        self.sync(conflicts=conflicts)
+        self.assertEqual(conflicts, [self.links[0].name])
+
     def test_local_edit_is_retained_but_new_restriction_still_applies(self):
         self.sync(); comment = self.docs[self.links[0].target_name]
         comment.content = 'Local edit'
