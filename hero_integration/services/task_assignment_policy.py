@@ -29,14 +29,21 @@ def policy_write_active():
 def validate_policy_payload(payload, site_scope):
     expected = {'source_instance', 'issuer', 'company', 'user_bindings', 'allow_initial', 'allow_transfer'}
     if (not isinstance(payload, dict) or not expected <= set(payload)
-            or set(payload) - expected - {'native_effects', 'silent_initial'}
+            or set(payload) - expected - {'native_effects', 'silent_initial', 'allow_all_active_bound_users',
+                                           'allow_all_system_managers'}
             or not isinstance(site_scope, str) or not site_scope):
         raise PolicyError('Policy requires the exact authorized scope and actions.')
     for field in ('source_instance', 'issuer', 'company'):
         if not isinstance(payload[field], str) or not payload[field] or payload[field] != payload[field].strip():
             raise PolicyError('Policy requires explicit source, issuer and company identities.')
     bindings = payload['user_bindings']
-    if (not isinstance(bindings, list) or not bindings or len(bindings) > 100
+    dynamic_users = payload.get('allow_all_active_bound_users', False)
+    if type(dynamic_users) is not bool or (dynamic_users and (payload.get('silent_initial') is not True or bindings != [])):
+        raise PolicyError('Dynamic recipients require the silent policy and no fixed recipient list.')
+    all_managers = payload.get('allow_all_system_managers', False)
+    if type(all_managers) is not bool or (all_managers and not dynamic_users):
+        raise PolicyError('Manager-wide execution requires the dynamic silent policy.')
+    if (not isinstance(bindings, list) or (not bindings and not dynamic_users) or len(bindings) > 100
             or any(not isinstance(item, str) or not item or item != item.strip() for item in bindings)
             or len(bindings) != len(set(bindings))):
         raise PolicyError('Policy requires distinct explicit User binding identities.')
@@ -63,6 +70,10 @@ def _policy_input(value):
         result['native_effects'] = value['native_effects']
     if 'silent_initial' in value:
         result['silent_initial'] = value['silent_initial']
+    if 'allow_all_active_bound_users' in value:
+        result['allow_all_active_bound_users'] = value['allow_all_active_bound_users']
+    if 'allow_all_system_managers' in value:
+        result['allow_all_system_managers'] = value['allow_all_system_managers']
     return result
 
 
@@ -105,8 +116,9 @@ def _check_references(payload):
         if matches != [name]:
             raise PolicyError('Policy User binding is ambiguous.')
         employees = frappe.get_all('Employee', filters={'user_id': binding.target_name, 'status': 'Active'}, fields=['company'], limit=2)
-        if len(employees) != 1 or employees[0].company != payload['company']:
-            raise PolicyError('Policy recipient requires one active Employee in the approved company.')
+        if (len(employees) != 1 or not employees[0].company or
+                not payload.get('allow_all_active_bound_users') and employees[0].company != payload['company']):
+            raise PolicyError('Policy recipient requires one active Employee in an authorized company.')
 
 
 def create_policy(payload):
@@ -156,23 +168,30 @@ def revoke_policy(name, expected_revision):
 def approved_initial_policy(source_instance, binding_name):
     """Lock and verify a unique policy; absence never grants authority."""
     import frappe
-    rows = frappe.db.sql('SELECT name FROM `tabHERO Task Assignment Policy` WHERE site_scope=%s AND source_instance=%s AND issuer=%s AND state=%s FOR UPDATE',
-                         (frappe.local.site, source_instance, frappe.session.user, 'APPROVED'), as_dict=True)
+    rows = frappe.db.sql('SELECT name FROM `tabHERO Task Assignment Policy` WHERE site_scope=%s AND source_instance=%s AND state=%s FOR UPDATE',
+                         (frappe.local.site, source_instance, 'APPROVED'), as_dict=True)
     matches = []
     for row in rows:
         doc = frappe.get_doc('HERO Task Assignment Policy', row.name, for_update=True)
         try:
             payload = json.loads(doc.policy_json)
+            manager_scope = (payload.get('allow_all_system_managers') is True and
+                             (frappe.session.user == 'Administrator' or 'System Manager' in frappe.get_roles(frappe.session.user)))
+            if doc.issuer != frappe.session.user and not manager_scope:
+                continue
             raw = _policy_input(payload)
             if (validate_policy_payload(raw, frappe.local.site) != payload or _fingerprint(payload) != doc.policy_fingerprint
                     or doc.source_instance != payload['source_instance'] or doc.issuer != payload['issuer']
                     or not doc.approved_by or int(doc.approved_revision or 0) != int(doc.policy_revision or 0)):
                 raise PolicyError('Stored policy approval is stale or invalid.')
-            if (payload['source_instance'] == source_instance and payload['issuer'] == frappe.session.user
-                    and binding_name in payload['user_bindings'] and payload['allow_initial']):
-                _check_references(payload)
+            if (payload['source_instance'] == source_instance and (payload['issuer'] == frappe.session.user or manager_scope)
+                    and (binding_name in payload['user_bindings'] or payload.get('allow_all_active_bound_users') is True)
+                    and payload['allow_initial']):
+                verified = ({**payload, 'user_bindings': [binding_name]}
+                            if payload.get('allow_all_active_bound_users') is True else payload)
+                _check_references(verified)
                 matches.append(doc)
-        except (KeyError, TypeError, ValueError):
+        except (AttributeError, KeyError, TypeError, ValueError):
             raise PolicyError('Stored policy cannot be verified.')
     return matches[0] if len(matches) == 1 else None
 
