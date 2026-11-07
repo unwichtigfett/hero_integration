@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fresh, bench-native install test for HERO Integration (Woodpecker CI).
+# Standard architecture: fresh Frappe/ERPNext installation and required branch tests.
 #
 # Builds a throw-away bench with Frappe and ERPNext v16, installs this app from
 # the checkout, checks the install, migrates twice (idempotency), builds the

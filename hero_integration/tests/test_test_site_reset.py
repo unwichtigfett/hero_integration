@@ -133,7 +133,7 @@ class TestTestSiteReset(unittest.TestCase):
                 updater.update_request(command)
 
     def test_pipeline_passes_its_exact_commit_to_the_restricted_updater(self):
-        self.assertIn('"update:blank:$$expected"', (ROOT / ".woodpecker.yml").read_text())
+        self.assertIn('"update:blank:$$expected"', (ROOT / ".woodpecker/standard.yml").read_text())
 
     def test_identity_snapshot_excludes_api_keys_and_secrets(self):
         frappe = Mock()

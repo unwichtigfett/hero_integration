@@ -38,3 +38,7 @@ Both the workflow condition and script recognize that prefix and require
 `-canidate` as a complete leading word, followed by whitespace or end of text.
 The script also validates the manual event, successful preceding CI status,
 allowed source branch and full tested commit SHA before contacting GitHub.
+
+## Standard workflow
+
+This branch uses `.woodpecker/standard.yml` and `ci/standard-install-test.sh`. Its workflow admits only `hero_int_dev` and `hero_int_1.0`. The required architecture groups in `ci/required-tests.json` belong to this branch and remain in addition to the full offline/site test suites and package-import gate. The manual candidate step admits only `hero_int_dev`. Woodpecker discovers the named workflow automatically; do not set a repository-wide path that breaks older branches.
