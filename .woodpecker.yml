@@ -102,3 +102,19 @@ steps:
     commands:
       - apk add --no-cache -q bash git
       - bash ci/promote-release.sh
+
+  # Manual opt-in only; all existing push promotions remain unchanged.
+  - name: promote-candidate
+    depends_on: [install-test]
+    image: alpine:3.22.2@sha256:4b7ce07002c69e8f3d704a9c5d6fd3053be500b7f1c69fc0d80990c2ad8dd412
+    when:
+      - event: manual
+        branch: [hero_int_dev, hero_int_dev_opt]
+        evaluate: 'CI_COMMIT_MESSAGE matches "^(MANUAL: )?-canidate([[:space:]]|$)"'
+    environment:
+      GITHUB_REMOTE: https://github.com/unwichtigfett/hero_integration.git
+      GITHUB_TOKEN:
+        from_secret: github_candidate_token
+    commands:
+      - apk add --no-cache -q bash git
+      - bash ci/promote-candidate.sh
