@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 PROMOTE = ROOT / "ci/promote-release.sh"
@@ -53,7 +54,8 @@ class _Remotes:
         return git(bare, "rev-parse", ref)
 
     def promote(self, sha, channel="hero_int_dev"):
-        env = {**os.environ, **GIT_ENV, "COMMIT_SHA": sha, "GITHUB_REMOTE": str(self.github), "RELEASE_CHANNEL": channel}
+        env = {**os.environ, **GIT_ENV, "COMMIT_SHA": sha, "GITHUB_REMOTE": str(self.github),
+               "RELEASE_CHANNEL": channel, "CI_COMMIT_BRANCH": channel}
         return subprocess.run(["bash", str(PROMOTE)], env=env, text=True, capture_output=True)
 
 
@@ -63,6 +65,14 @@ class TestPromotion(unittest.TestCase):
         self.addCleanup(shutil.rmtree, tmp)
         self.repo = _Remotes(Path(tmp))
         self.base = self.repo.head(self.repo.forgejo, "hero_int_1.0")
+
+    def test_fixture_channel_is_independent_of_the_enclosing_pipeline(self):
+        tested = self.repo.commit("feature")
+        self.repo.push("hero_int_dev")
+        with patch.dict(os.environ, {"CI_COMMIT_BRANCH": "unrelated-ci-branch"}):
+            result = self.repo.promote(tested)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.repo.head(self.repo.github, "hero_int_1.0^"), tested)
 
     def test_opt_bootstrap_and_repeat_leave_standard_branches_and_tags_unchanged(self):
         git(self.repo.work,'checkout','-q','-b','hero_int_dev_opt')
