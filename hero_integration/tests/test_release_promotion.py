@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 PROMOTE = ROOT / "ci/promote-release.sh"
@@ -53,7 +54,8 @@ class _Remotes:
         return git(bare, "rev-parse", ref)
 
     def promote(self, sha):
-        env = {**os.environ, **GIT_ENV, "COMMIT_SHA": sha, "GITHUB_REMOTE": str(self.github)}
+        env = {**os.environ, **GIT_ENV, "COMMIT_SHA": sha, "GITHUB_REMOTE": str(self.github),
+               "CI_COMMIT_BRANCH": "hero_int_dev"}
         return subprocess.run(["bash", str(PROMOTE)], env=env, text=True, capture_output=True)
 
 
@@ -63,6 +65,14 @@ class TestPromotion(unittest.TestCase):
         self.addCleanup(shutil.rmtree, tmp)
         self.repo = _Remotes(Path(tmp))
         self.base = self.repo.head(self.repo.forgejo, "hero_int_1.0")
+
+    def test_fixture_channel_is_independent_of_the_enclosing_pipeline(self):
+        tested = self.repo.commit("feature")
+        self.repo.push("hero_int_dev")
+        with patch.dict(os.environ, {"CI_COMMIT_BRANCH": "unrelated-ci-branch"}):
+            result = self.repo.promote(tested)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.repo.head(self.repo.github, "hero_int_1.0^"), tested)
 
     def test_tested_commit_is_released_on_github_without_touching_forgejo(self):
         tested = self.repo.commit("feature")
