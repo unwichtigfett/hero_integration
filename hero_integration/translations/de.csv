@@ -3772,3 +3772,4 @@ Full import finished; required relationship bindings are missing or require revi
 Relationship reconciliation: {0} reference(s) require review.,Beziehungsabgleich: {0} Referenz(en) müssen geprüft werden.
 Only a finished full import can restart its relationship pass.,Nur bei einem abgeschlossenen Komplettimport kann die Beziehungsrunde erneut gestartet werden.
 The full import child scope no longer matches its relationship pass.,Die zugehörigen Bereichsläufe passen nicht mehr zur Beziehungsrunde des Komplettimports.
+The HERO binding identity changed before the record comparison.,Die HERO-Binding-Identität wurde vor dem Datensatzvergleich geändert.

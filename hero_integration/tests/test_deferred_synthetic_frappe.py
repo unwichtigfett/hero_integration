@@ -136,6 +136,42 @@ class TestSyntheticDeferredMariaDB(TestCase):
         self.assertEqual(frappe.db.get_value('Task', first.target_name, 'subject'), self.row['title'])
         self.assertEqual(migration._link('Task', str(self.row['id']), self.source).source_system, 'HERO')
 
+    def test_import_reads_current_binding_after_another_connection_commits(self):
+        import pymysql
+        first = migration._migrate_mapped_task(self.row, self.run, self.plan, self.scope)
+        link = migration._link('Task', str(self.row['id']), self.source)
+        frappe.db.commit()
+        connection = None
+        snapshot_mode = frappe.db.sql('SELECT @@session.innodb_snapshot_isolation')[0][0]
+        try:
+            # Match the deployed opt MariaDB session; restore the private site's
+            # stricter default after this repeatable-read concurrency fixture.
+            frappe.db.sql('SET SESSION innodb_snapshot_isolation=OFF')
+            connection = pymysql.connect(unix_socket=frappe.db.socket, user=frappe.db.user,
+                password=frappe.db.password, database=frappe.db.cur_db_name, autocommit=True)
+            for status in ('Synchronized', 'Rejected'):
+                frappe.db.rollback()
+                # Establish a repeatable-read snapshot before the other writer.
+                stale = migration._link('Task', str(self.row['id']), self.source)
+                with connection.cursor() as cursor:
+                    cursor.execute('UPDATE `tabHERO Integration Link` SET modified=TIMESTAMPADD(MICROSECOND,1,modified), sync_status=%s WHERE name=%s',
+                        (status, link.name))
+                self.assertEqual(migration._link('Task', str(self.row['id']), self.source).modified, stale.modified)
+                result = migration._migrate_mapped_task(self.row, self.run, self.plan, self.scope)
+                if status == 'Rejected':
+                    self.assertEqual(result.code, 'SKIPPED_REJECTED')
+                else:
+                    self.assertEqual(result.code, 'SKIPPED')
+        finally:
+            frappe.db.rollback()
+            if connection is not None:
+                connection.close()
+            frappe.db.delete('HERO Integration Link', {'name': link.name, 'source_instance': self.source})
+            frappe.db.delete('Task', {'name': first.target_name})
+            frappe.db.delete('HERO Integration Run', {'source_instance': self.source})
+            frappe.db.commit()
+            frappe.db.sql('SET SESSION innodb_snapshot_isolation=%s', (snapshot_mode,))
+
     def _project(self, source_id):
         project = frappe.get_doc({'doctype': 'Project', 'project_name': 'Synthetic Project ' + uuid4().hex[:10],
                                   'company': os.environ.get('HERO_SYNTHETIC_COMPANY', 'Synthetic Test Company')}).insert()

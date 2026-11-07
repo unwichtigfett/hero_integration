@@ -245,6 +245,11 @@ database read for the legacy fallback. A stale cached cursor cannot reset the
 acknowledged offset or the frozen test budget. The inbound identity lookup also
 requires `source_system=HERO`; another system's identical external ID cannot
 authorize updates to its target.
+Execute upserts read and lock the current binding before comparing review status
+or field baselines. This prevents a completed relationship worker's commit from
+leaving the next import with an older repeatable-read binding snapshot. Preview
+and dependency lookups retain their read-only behavior; native timestamp checks
+remain active for actual concurrent target changes.
 
 The grouped Send runtime reloads permissions, source bindings, active mappings,
 readback and local values after committing its mutation reservation. It checks

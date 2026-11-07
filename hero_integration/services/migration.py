@@ -2278,7 +2278,7 @@ def _upsert(
     if not _target_available(doctype):
         return Result("UNAVAILABLE", f"{doctype} is not installed on this site.")
     source_hash = _digest(record)
-    existing = _link(source_type, source_id, source_instance)
+    existing = _link(source_type, source_id, source_instance, for_update=run.mode != 'Preview')
     if preserve_unselected:
         from hero_integration.services.deferred_references import realizing
         if not realizing() or run.mode=='Preview' or not existing:
@@ -2555,12 +2555,21 @@ def _target_available(doctype: str) -> bool:
     return bool(frappe.db.exists("DocType", doctype))
 
 
-def _link(source_type: str, source_id: str, source_instance: str = "default"):
+def _link(source_type: str, source_id: str, source_instance: str = "default", *, for_update=False):
     name = frappe.db.exists(
         "HERO Integration Link",
         {"source_system": "HERO", "source_type": source_type, "source_id": source_id, "source_instance": source_instance},
     )
-    return frappe.get_doc("HERO Integration Link", name) if name else None
+    if not name:
+        return None
+    # A completed relationship worker can commit after this transaction's
+    # repeatable-read snapshot. Lock and read its current row before comparing
+    # baselines or review status; reloading only at save time is already too late.
+    link = frappe.get_doc("HERO Integration Link", name, **({'for_update': True} if for_update else {}))
+    if for_update and (link.source_system != 'HERO' or link.source_type != source_type
+            or str(link.source_id) != str(source_id) or link.source_instance != source_instance):
+        raise MappingPlanError('The HERO binding identity changed before the record comparison.')
+    return link
 
 
 def _digest(value: object) -> str:

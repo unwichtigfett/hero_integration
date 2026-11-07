@@ -1102,7 +1102,7 @@ class _FakeFrappe:
         (field, value), = filters.items()
         return [record["name"] for record in records if record.get(field) == value]
 
-    def link(self, source_type, source_id, source_instance="default"):
+    def link(self, source_type, source_id, source_instance="default", *, for_update=False):
         link = self.links.get((source_type, source_id, source_instance))
         if link is None and source_instance == "default":
             link = self.links.get((source_type, source_id))
