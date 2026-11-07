@@ -22,9 +22,12 @@ the candidate script never overwrites the release history. Publishing the same
 commit again succeeds without a push.
 
 The repository needs a separate `github_candidate_token` secret, available only
-for **manual** events and the pinned Alpine image used by `promote-candidate`.
-The GitHub credential needs repository contents write access. Woodpecker event
-and image restrictions do not restrict the underlying credential to one Git
+for **manual** events. The GitHub credential needs repository contents write
+access. Woodpecker v3.20 image-filtered secrets are restricted to plugins and
+cannot be used by this commands step, so this secret has no image filter.
+Repository access and the manual event restrict its availability; the pinned
+image and marker condition are not credential authorization boundaries.
+These restrictions do not limit the underlying GitHub credential to one Git
 branch; GitHub rules must provide any additional branch-level restrictions.
 Do not expand the event scopes of `github_release_token` or
 `hero_site_update_key`. Only trusted repository administrators may start these
