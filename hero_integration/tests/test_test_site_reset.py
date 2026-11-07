@@ -132,8 +132,11 @@ class TestTestSiteReset(unittest.TestCase):
             with self.subTest(command=command), self.assertRaises(RuntimeError):
                 updater.update_request(command)
 
-    def test_pipeline_passes_its_exact_commit_to_the_restricted_updater(self):
-        self.assertIn('"update:blank:$$expected"', (ROOT / ".woodpecker.yml").read_text())
+    def test_opt_pipeline_never_uses_the_shared_test_site_updater(self):
+        workflow = (ROOT / ".woodpecker/opt.yml").read_text()
+        self.assertNotIn('hero_site_update_key', workflow)
+        self.assertNotIn('update-test-site', workflow)
+        self.assertNotIn('update:blank:', workflow)
 
     def test_identity_snapshot_excludes_api_keys_and_secrets(self):
         frappe = Mock()

@@ -330,10 +330,10 @@ class TestCandidatePromotion(unittest.TestCase):
     def test_workflow_requires_manual_marker_and_installation_success(self):
         import yaml
 
-        steps = {s["name"]: s for s in yaml.safe_load((ROOT / ".woodpecker.yml").read_text())["steps"]}
+        steps = {s["name"]: s for s in yaml.safe_load((ROOT / ".woodpecker/opt.yml").read_text())["steps"]}
         step = steps["promote-candidate"]
         self.assertEqual(step["depends_on"], ["install-test"])
-        self.assertEqual(step["when"], [{"event": "manual", "branch": ["hero_int_dev", "hero_int_dev_opt"],
+        self.assertEqual(step["when"], [{"event": "manual", "branch": "hero_int_dev_opt",
                          "evaluate": 'CI_COMMIT_MESSAGE matches "^(MANUAL: )?-canidate([[:space:]]|$)"'}])
         self.assertEqual(step["environment"]["GITHUB_TOKEN"], {"from_secret": "github_candidate_token"})
         self.assertNotIn("hero_site_update_key", str(step))
@@ -383,16 +383,16 @@ class TestWaitForGitHub(unittest.TestCase):
 
 
 class TestWoodpeckerChain(unittest.TestCase):
-    def test_promotion_runs_last_and_only_for_dev_pushes(self):
+    def test_opt_promotion_runs_last_and_only_for_opt_pushes(self):
         import yaml
 
-        steps = {step["name"]: step for step in yaml.safe_load((ROOT / ".woodpecker.yml").read_text())["steps"]}
+        steps = {s["name"]: s for s in yaml.safe_load((ROOT / ".woodpecker/opt.yml").read_text())["steps"]}
         self.assertEqual(steps["install-test"]["depends_on"], ["wait-github"])
-        self.assertEqual(steps["promote"]["depends_on"], ["install-test", "update-test-site"])
-        self.assertEqual(steps["promote"]["when"], [{"event": "push", "branch": "hero_int_dev"}])
-        self.assertEqual(steps["promote"]["environment"]["GITHUB_TOKEN"], {"from_secret": "github_release_token"})
-        self.assertNotIn("FORGEJO_REMOTE", steps["promote"]["environment"])
-        self.assertNotIn("FORGEJO_TOKEN", steps["promote"]["environment"])
+        self.assertEqual(steps["promote-opt"]["depends_on"], ["install-test"])
+        self.assertEqual(steps["promote-opt"]["when"], [{"event": "push", "branch": "hero_int_dev_opt"}])
+        self.assertEqual(steps["promote-opt"]["environment"]["GITHUB_TOKEN"], {"from_secret": "github_release_token"})
+        self.assertNotIn("promote", steps)
+        self.assertNotIn("update-test-site", steps)
 
 
 if __name__ == "__main__":
