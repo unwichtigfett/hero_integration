@@ -132,7 +132,7 @@ printf 'GATE_PASSED\\n'
         self.assertIn('hero-ci.localhost hero-ci.localhost hero-ci.localhost', trace)
 
     def test_both_providers_use_the_shared_gate(self):
-        for path in ('ci/github-install-test.sh', 'ci/bench-install-test.sh'):
+        for path in ('ci/github-install-test.sh', 'ci/opt-install-test.sh'):
             source = (ROOT / path).read_text()
             self.assertIn('/ci/test-gates.sh"', source)
             self.assertIn('run_hero_test_gates', source)
@@ -147,15 +147,20 @@ printf 'GATE_PASSED\\n'
                 result = subprocess.run(['bash', '-c', source], env=env, text=True, capture_output=True)
                 self.assertEqual(result.returncode, 0 if branch == 'diagnostic-feature' else 2)
 
-    def test_workflows_cover_both_maintained_branches(self):
-        github = (ROOT / '.github/workflows/ci.yml').read_text()
-        before_jobs = github.split('\njobs:', 1)[0]
-        self.assertIn('branches: [hero_int_dev, hero_int_1.0, hero_int_dev_opt, hero_int_opt]', before_jobs)
-        self.assertIn('      - hero_int_1.0\n', before_jobs)
-        woodpecker = (ROOT / '.woodpecker.yml').read_text()
-        self.assertIn('branch: [hero_int_dev, hero_int_1.0, hero_int_dev_opt, hero_int_opt]', woodpecker)
-        update = woodpecker.split('  - name: update-test-site\n', 1)[1].split('  - name: install-test', 1)[0]
-        self.assertIn('depends_on: [install-test]', update)
+    def test_workflows_cover_only_the_opt_branches(self):
+        import yaml
+
+        github = yaml.load((ROOT / '.github/workflows/ci.yml').read_text(), Loader=yaml.BaseLoader)
+        expected = ['hero_int_dev_opt', 'hero_int_opt']
+        self.assertTrue(all(branch in github['on']['push']['branches'] for branch in expected))
+        self.assertTrue(all(branch in github['on']['pull_request']['branches'] for branch in expected))
+        woodpecker = yaml.safe_load((ROOT / '.woodpecker/opt.yml').read_text())
+        self.assertEqual(woodpecker['when'], [{'event': ['manual', 'push'], 'branch': expected}])
+        steps = {step['name']: step for step in woodpecker['steps']}
+        self.assertNotIn('update-test-site', steps)
+        self.assertNotIn('promote', steps)
+        self.assertEqual(steps['promote-opt']['depends_on'], ['install-test'])
+        self.assertEqual(steps['promote-opt']['when'], [{'event': 'push', 'branch': 'hero_int_dev_opt'}])
 
     def test_company_setup_handles_bench_zero_output_and_query_failures(self):
         source = (ROOT / 'ci/github-install-test.sh').read_text()
@@ -180,3 +185,25 @@ bench() {
                 self.assertEqual(result.returncode, status, result.stderr)
                 inserted = trace.read_text() if trace.exists() else ''
                 self.assertEqual('"doctype":"Company"' in inserted, should_insert)
+
+
+class TestArchitectureWorkflowIsolation(unittest.TestCase):
+    def test_the_named_workflow_is_canonical_and_uses_its_own_installer(self):
+        import yaml
+
+        configs = list((ROOT / '.woodpecker').glob('*.yml'))
+        self.assertEqual([p.name for p in configs], ['opt.yml'])
+        self.assertFalse((ROOT / '.woodpecker.yml').exists())
+        steps = {step['name']: step for step in yaml.safe_load(configs[0].read_text())['steps']}
+        self.assertIn('ci/opt-install-test.sh', '\n'.join(steps['install-test']['commands']))
+        self.assertTrue((ROOT / 'ci/opt-install-test.sh').is_file())
+        self.assertFalse((ROOT / 'ci/bench-install-test.sh').exists())
+
+    def test_required_architecture_groups_cannot_be_silently_dropped(self):
+        manifest = json.loads((ROOT / 'ci/required-tests.json').read_text())
+        expected = ['opt document compiler', 'opt schema cache isolation', 'opt request scoped caches', 'opt finite selection architecture']
+        for group in expected:
+            self.assertIn(group, manifest['offline'])
+            self.assertTrue(manifest['offline'][group])
+        other_prefix = 'standard '
+        self.assertFalse([name for name in manifest['offline'] if name.startswith(other_prefix)])

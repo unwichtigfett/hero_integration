@@ -114,7 +114,7 @@ class TestCodexReview(unittest.TestCase):
 class TestPipelineHasNoApiKeyJob(unittest.TestCase):
     def test_the_subscription_review_replaces_the_api_job(self):
         self.assertNotIn("ai-review", (ROOT / ".github/workflows/ci.yml").read_text())
-        self.assertNotIn("ai-review", (ROOT / ".woodpecker.yml").read_text())
+        self.assertNotIn("ai-review", (ROOT / ".woodpecker/opt.yml").read_text())
         self.assertFalse((ROOT / "ci/ai_review.py").exists())
 
 
