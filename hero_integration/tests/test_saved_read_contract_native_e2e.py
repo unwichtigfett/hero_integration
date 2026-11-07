@@ -4,6 +4,8 @@ import json
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from graphql import build_schema, introspection_from_schema, parse, print_ast
+
 import frappe
 from frappe.tests import IntegrationTestCase
 
@@ -59,27 +61,19 @@ class TestSavedReadContractNativeE2E(IntegrationTestCase):
                 "doctype": "HERO GraphQL Schema Snapshot",
                 "source_instance": "synthetic",
                 "endpoint_fingerprint": endpoint_fingerprint("https://synthetic.invalid/graphql", "synthetic"),
-                "snapshot_json": json.dumps(
-                    {
-                        "__schema": {
-                            "queryType": {"name": "Query"},
-                            "types": [
-                                {
-                                    "kind": "OBJECT",
-                                    "name": "Query",
-                                    "fields": [
-                                        {
-                                            "name": operation,
-                                            "args": [],
-                                            "type": {"kind": "LIST", "ofType": {"kind": "OBJECT", "name": "Contact"}},
-                                        }
-                                    ],
-                                },
-                                {"kind": "OBJECT", "name": "Contact", "fields": []},
-                            ],
-                        }
+                "snapshot_json": json.dumps(introspection_from_schema(build_schema("""
+                    type Query {
+                        contacts(first: Int!, offset: Int!, orderBy: String!, show_deleted: Boolean!): [Contact]
                     }
-                ),
+                    type Contact {
+                        id: Int! nr: String first_name: String last_name: String full_name: String
+                        email: String phone_mobile: String phone_home: String company_name: String
+                        category: String type: String is_contact_person: Boolean is_deleted: Boolean
+                        address: Address
+                    }
+                    type Address { id: Int street: String zipcode: String city: String country: Country }
+                    type Country { code: String }
+                """))),
             }
         )
         definitions = [
@@ -221,8 +215,8 @@ class TestSavedReadContractNativeE2E(IntegrationTestCase):
         self.assertEqual((run.graphql_service, run.service_revision), (service.name, service.service_revision))
         self.assertEqual((run.graphql_mapping, run.mapping_revision), (mapping.name, mapping.mapping_revision))
         self.assertEqual(_Client.calls, [
-            (service.query_document, {"first": 10, "offset": 0, "orderBy": "id", "showDeleted": True}),
-            (service.query_document, {"first": 10, "offset": 1, "orderBy": "id", "showDeleted": True}),
+            (print_ast(parse(service.query_document)), {"first": 10, "offset": 0, "orderBy": "id", "showDeleted": True}),
+            (print_ast(parse(service.query_document)), {"first": 10, "offset": 1, "orderBy": "id", "showDeleted": True}),
         ])
         self.assertEqual(customer.customer_name, record["full_name"])
         self.assertNotEqual(customer.customer_name, record["nr"])

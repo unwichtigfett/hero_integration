@@ -24,12 +24,13 @@ from hero_integration.services.writeback_source import SourceContext
 MUTATION = 'mutation Write($contact:ContactInput) { update_contact(contact:$contact) { id } }'
 
 
-def mutation_snapshot():
+def mutation_snapshot(*, include_id=False):
     from graphql import build_schema, introspection_from_schema
     from hero_integration.services.graphql_graph import analyze_snapshot
     from hero_integration.services.mapping_contract_v1 import StoredSnapshot
+    identity = 'id:Int! ' if include_id else ''
     raw = introspection_from_schema(build_schema('type Query { contacts:[Contact] } '
-        'type Contact { id:ID full_name:String } input ContactInput { full_name:String } '
+        'type Contact { id:ID full_name:String } input ContactInput { ' + identity + 'full_name:String } '
         'type Mutation { update_contact(contact:ContactInput):Contact }'))
     return StoredSnapshot('writeback', raw, analyze_snapshot(raw).fingerprint, 'hero')
 

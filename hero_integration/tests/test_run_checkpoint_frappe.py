@@ -8,6 +8,8 @@ from unittest import TestCase, skipUnless
 from unittest.mock import patch
 from uuid import uuid4
 
+from graphql import build_schema, introspection_from_schema
+
 import frappe
 from hero_integration.services import migration
 from hero_integration.services.mapping_runtime import effective_rule_fingerprint
@@ -134,11 +136,19 @@ class TestCheckpointMariaDB(TestCase):
         self.run.source_instance = 'synthetic'
         contract = ReadContract('SERVICE', 1, 'MAP', 1, 'HeroCustomers', 'contacts', 'id',
                                 (self.rule,), {'offset': '$offset', 'first': '$page_size'}, 1)
+        from hero_integration.services.graphql_graph import analyze_snapshot
+        schema = introspection_from_schema(build_schema(
+            'type Query { contacts(first:Int!, offset:Int!):[Contact] } type Contact { id:Int }'))
+        fingerprint = analyze_snapshot(schema).fingerprint
+        document = 'query Read($first:Int!, $offset:Int!) { contacts(first:$first, offset:$offset) { id } }'
         docs = {
-            ('HERO GraphQL Service', 'SERVICE'): SimpleNamespace(schema_snapshot='SNAP', query_document='query { contacts { id } }'),
+            ('HERO GraphQL Service', 'SERVICE'): SimpleNamespace(schema_snapshot='SNAP',
+                query_document=document, schema_fingerprint=fingerprint),
             ('HERO GraphQL Mapping', 'MAP'): SimpleNamespace(),
             ('HERO GraphQL Schema Snapshot', 'SNAP'): SimpleNamespace(source_instance='synthetic',
-                endpoint_fingerprint=endpoint_fingerprint(endpoint.url, 'synthetic')),
+                endpoint_fingerprint=endpoint_fingerprint(endpoint.url, 'synthetic'),
+                name='SNAP', snapshot_json=json.dumps(schema), schema_fingerprint=fingerprint,
+                analysis_status='Validated'),
         }
         delegated = frappe.get_doc
         def get_doc(doctype, name=None, **kwargs):
@@ -148,7 +158,9 @@ class TestCheckpointMariaDB(TestCase):
         lock_name = _target_lock_name('personal-draft-exchange', self.token,
                                      json.dumps([self.token, 'QUERY_TO_FRAPPE'], separators=(',', ':')))
         self.assertEqual(self.db.sql('SELECT IS_USED_LOCK(%s) = CONNECTION_ID()', (lock_name,))[0][0], 1)
+        requests = []
         def transport(*args):
+            requests.append(args)
             self.assertEqual(self.db.sql('SELECT IS_FREE_LOCK(%s)', (lock_name,))[0][0], 1)
             self.assertFalse(getattr(self.db, '_hero_mapping_target_locks', None))
             return {'contacts': []}
@@ -158,6 +170,8 @@ class TestCheckpointMariaDB(TestCase):
              patch.object(migration, '_request_rate', return_value=10000):
             source = migration._source_for_run(self.run, config)
             self.assertEqual(source.customers().records, ())
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(requests[0][1], {'offset': 0, 'first': 1})
 
     def test_mapping_publication_uses_same_transaction_scoped_root_lock(self):
         from hero_integration.hero_integration.doctype.hero_graphql_mapping.hero_graphql_mapping import lock_exchange_context

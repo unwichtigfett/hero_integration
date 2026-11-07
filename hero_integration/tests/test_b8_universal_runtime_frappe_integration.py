@@ -4,6 +4,8 @@ import json
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from graphql import build_schema, introspection_from_schema
+
 import frappe
 from frappe.tests import IntegrationTestCase
 
@@ -81,25 +83,13 @@ class TestB8UniversalRuntimeFrappeIntegration(IntegrationTestCase):
         frappe.db.commit()
 
     def _create_approved_universal_plan(self):
-        schema = {"__schema": {"queryType": {"name": "Query"}, "mutationType": {"name": "Mutation"}, "types": [
-            {"kind": "OBJECT", "name": "Query", "fields": [{"name": "project_matches", "args": [
-                {"name": name, "type": {"kind": "NON_NULL", "ofType": {"kind": "SCALAR", "name": kind}}}
-                for name, kind in (("first", "Int"), ("offset", "Int"), ("orderBy", "String"))
-            ], "type": {"kind": "LIST", "ofType": {"kind": "OBJECT", "name": "ProjectMatch"}}}]},
-            {"kind": "OBJECT", "name": "ProjectMatch", "fields": [
-                {"name": "id", "args": [], "type": {"kind": "SCALAR", "name": "ID"}},
-                {"name": "name", "args": [], "type": {"kind": "SCALAR", "name": "String"}},
-            ]},
-            {"kind": "OBJECT", "name": "Mutation", "fields": [{"name": "update_contact", "args": [
-                {"name": "contact", "type": {"kind": "NON_NULL", "ofType": {"kind": "INPUT_OBJECT", "name": "CustomerInput"}}}
-            ], "type": {"kind": "OBJECT", "name": "Contact"}}]},
-            {"kind": "OBJECT", "name": "Contact", "fields": [{"name": "id", "args": [], "type": {"kind": "SCALAR", "name": "ID"}}]},
-            {"kind": "INPUT_OBJECT", "name": "CustomerInput", "inputFields": [
-                {"name": "id", "type": {"kind": "NON_NULL", "ofType": {"kind": "SCALAR", "name": "Int"}}},
-                {"name": "full_name", "type": {"kind": "SCALAR", "name": "String"}},
-            ]},
-            *[{"kind": "SCALAR", "name": name} for name in ("ID", "Int", "String")],
-        ]}}
+        schema = introspection_from_schema(build_schema("""
+            type Query { project_matches(first: Int!, offset: Int!, orderBy: String!): [ProjectMatch] }
+            type ProjectMatch { id: ID name: String }
+            type Mutation { update_contact(contact: CustomerInput!): Contact }
+            type Contact { id: ID }
+            input CustomerInput { id: Int! full_name: String }
+        """))
         snapshot = frappe.get_doc({"doctype": "HERO GraphQL Schema Snapshot", "source_instance": self.source, "snapshot_json": json.dumps(schema)}).insert()
         draft = QueryDraft("project_matches", "project_matches", "project_matches", ("id", "name"), {"first": 1, "offset": 0, "orderBy": "id"})
         request = QueryAdapter().materialize(
