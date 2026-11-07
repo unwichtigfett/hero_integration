@@ -113,7 +113,7 @@ class TestServiceRun(unittest.TestCase):
         self.read=SimpleNamespace(page_size=2,mapping_version='mapping-v1')
         self.rows=[{'id':1,'company_id':9,'modified':'now'},{'id':2,'company_id':9,'modified':'now'}]
         self.fake=SimpleNamespace(only_for=Mock(),log_error=Mock(),db=SimpleNamespace(
-            get_default=lambda k:self.saved.get(k),set_default=lambda k,v:self.saved.__setitem__(k,v),commit=Mock(),rollback=Mock()))
+            get_default=lambda k:None,get_value=lambda dt,filters,field:self.saved.get(filters['defkey']),set_default=lambda k,v:self.saved.__setitem__(k,v),commit=Mock(),rollback=Mock()))
         self.client=SimpleNamespace(query=lambda document,variables:{'supply_services':[row for row in self.rows if row['id'] in variables['ids']]})
         self.addCleanup(patch.stopall)
         patch.object(sm,'frappe',self.fake).start()

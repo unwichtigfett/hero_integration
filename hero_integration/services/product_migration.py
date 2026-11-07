@@ -453,7 +453,7 @@ def reset() -> None:
 
 
 def _state() -> dict:
-    raw = frappe.db.get_default(STATE_KEY)
+    raw = frappe.db.get_value('DefaultValue', {'parent': '__default', 'defkey': STATE_KEY}, 'defvalue')
     return json.loads(raw) if raw else {}
 
 

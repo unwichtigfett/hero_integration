@@ -332,7 +332,7 @@ def _profile_name(rows, doctype, mode):
         raise MappedSendError('Exactly one active Send to HERO mapping is required for this document and source.')
     return candidates[0]
 
-def _load_context(doctype, name):
+def _load_context(doctype, name, *, exclude_audit=None):
     from hero_integration.client.settings import get_configuration
     from hero_integration.services.personal_mapping_content import unique_json_object
     from hero_integration.services.writeback_source import capture_source
@@ -398,7 +398,7 @@ def _load_context(doctype, name):
     ctx = SimpleNamespace(document=document, mapping=mapping, content=content, snapshot=snapshot, link=link,
         contract=contract, service=service, parsed=parsed, proof=proof, read=read, hero_id=hero_id, related={}, related_selection={}, baseline_links={}, condition_values=[])
     if mode == 'CREATE':
-        _assert_create_available(ctx)
+        _assert_create_available(ctx, exclude=exclude_audit)
     return ctx
 
 
@@ -979,12 +979,21 @@ def send(doctype, name, *, fingerprint='', confirmed=0, phase_id=None, client=No
         request_fingerprint=_create_scope(ctx) if creating else current)
     attempted = False
     try:
+        # The durable reservation releases the preview's transaction. Re-read
+        # permissions, mappings, bindings and values before the external write.
+        fresh = _load_context(doctype, name, exclude_audit=audit.correlation_id)
+        checked = _prepare(fresh, client, phase_id)
+        if checked[4] != current or checked[2] or not checked[1]:
+            raise MappedSendError('The mapped Send authority or payload changed after reservation.')
+        ctx = fresh
+        before, changes, conflicts, variables, current, _phases = checked
         if creating:
             _assert_create_available(ctx, exclude=audit.correlation_id)
             _assert_task_unbound(ctx.document.name)
             fresh = frappe.get_doc('Task', ctx.document.name)
             if str(fresh.modified) != str(ctx.document.modified):
                 raise MappedSendError('The local Task changed after its creation preview.')
+        _assert_mutation_execution_released()
         config = validate_source(ctx.proof)
         transport = mutation_client or HeroMutationClient(config.endpoint, lambda: config.api_token, config.timeout_seconds)
         from hero_integration.services.mapping_contract_v1 import materialize_saved_mutation

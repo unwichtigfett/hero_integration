@@ -132,6 +132,54 @@ class _TransportFixture(TestCase):
 
 
 class TestMappedSendTransport(_TransportFixture):
+    def test_changes_during_reservation_stop_before_transport(self):
+        for change in ('mapping', 'local', 'identity', 'remote_baseline'):
+            with self.subTest(change=change):
+                self.ctx = context()
+                self.statuses.clear()
+                fingerprint = self.preview()['fingerprint']
+                def reserve(**kwargs):
+                    if change == 'mapping':
+                        self.ctx.mapping.mapping_revision += 1
+                    elif change == 'local':
+                        self.ctx.document['custom_notes'] = 'Changed after confirmation'
+                    elif change == 'identity':
+                        self.ctx.hero_id = 43
+                    else:
+                        self.ctx.link.source_field_hashes = encode(field_hashes({'custom_notes': 'Other'}))
+                    return NS(correlation_id='AUDIT-1')
+                with patch.object(ms, '_load_context', side_effect=lambda *a, **k: self.ctx), \
+                        patch('hero_integration.api._reserve_mutation', side_effect=reserve), \
+                        self.assertRaises(ms.MappedSendError):
+                    self.send(fingerprint)
+                self.mutation.execute_once.assert_not_called()
+                self.assertEqual(self.statuses, ['Failed'])
+
+    def test_execution_revocation_during_reservation_stops_before_transport(self):
+        fingerprint = self.preview()['fingerprint']
+        with patch('hero_integration.api._assert_mutation_execution_released',
+                side_effect=[None, ms.MappedSendError('Execution disabled')]), \
+                self.assertRaises(ms.MappedSendError):
+            self.send(fingerprint)
+        self.mutation.execute_once.assert_not_called()
+        self.assertEqual(self.statuses, ['Failed'])
+
+    def test_document_permission_revoked_after_reservation_blocks_transport(self):
+        fingerprint = self.preview()['fingerprint']
+        with patch.object(ms, '_load_context', side_effect=[self.ctx, PermissionError('Write permission revoked')]), \
+                self.assertRaises(ms.MappedSendError):
+            self.send(fingerprint)
+        self.mutation.execute_once.assert_not_called()
+        self.assertEqual(self.statuses, ['Failed'])
+
+    def test_remote_change_after_reservation_requires_a_new_preview(self):
+        fingerprint = self.preview()['fingerprint']
+        with patch.object(ms, '_read_record', side_effect=[{'id': 42, 'remarks': 'Old'},
+                {'id': 42, 'remarks': 'Changed remotely'}]), self.assertRaises(ms.MappedSendError):
+            self.send(fingerprint)
+        self.mutation.execute_once.assert_not_called()
+        self.assertEqual(self.statuses, ['Failed'])
+
     def test_materialization_failure_prevents_the_single_transport_attempt(self):
         fingerprint = self.preview()['fingerprint']
         def reserve(**kwargs):
@@ -144,7 +192,7 @@ class TestMappedSendTransport(_TransportFixture):
 
     def test_configured_pair_drives_real_mutation_arguments_and_approved_service(self):
         fingerprint = self.preview()['fingerprint']
-        with patch.object(ms, '_read_record', side_effect=[{'id': 42, 'remarks': 'Old'}, {'id': 42, 'remarks': 'Expected'}]):
+        with patch.object(ms, '_read_record', side_effect=[{'id': 42, 'remarks': 'Old'}, {'id': 42, 'remarks': 'Old'}, {'id': 42, 'remarks': 'Expected'}]):
             result = self.send(fingerprint)
         self.mutation.execute_once.assert_called_once_with(print_ast(parse(DOCUMENT)), {'input': {'id': 42, 'remarks': 'Expected'}})
         self.assertEqual(result['status'], 'SENT')
@@ -256,7 +304,7 @@ class TestGroupedNestedSend(_TransportFixture):
             fingerprint = self.preview()['fingerprint']
         with patch('hero_integration.services.migration._mapping_plan_for_run',
                    return_value=NS(definitions=(self.ctx.rule, address_rule))), \
-                patch.object(ms, '_read_record', side_effect=[before, after]):
+                patch.object(ms, '_read_record', side_effect=[before, before, after]):
             self.send(fingerprint)
         self.mutation.execute_once.assert_called_once_with(print_ast(parse(DOCUMENT)), {'input': {
             'id': 42, 'remarks': 'Expected', 'address': {'id': 9, 'street': 'New Street'}}})
@@ -278,7 +326,7 @@ class TestGroupedNestedSend(_TransportFixture):
         after = {'id': 42, 'remarks': 'Expected', 'address': None}
         with patch.object(ms, '_read_record', return_value=before):
             fingerprint = self.preview()['fingerprint']
-        with patch.object(ms, '_read_record', side_effect=[before, after]):
+        with patch.object(ms, '_read_record', side_effect=[before, before, after]):
             result = self.send(fingerprint)
         self.mutation.execute_once.assert_called_once_with(print_ast(parse(DOCUMENT)), {'input': {'id': 42, 'remarks': 'Expected'}})
         self.assertEqual((result['status'], self.statuses), ('SENT', ['Succeeded']))
@@ -432,7 +480,7 @@ class TestConfiguredProjectPhase(_TransportFixture):
         self.assertEqual(preview['phases'], [{'id': 1, 'name': 'Old'}, {'id': 2, 'name': 'New'}])
         self.assertEqual(preview['hero']['phase_id'], 1)
         with patch('hero_integration.services.migration._mapping_plan_for_run', return_value=NS(definitions=(rule,))), \
-                patch.object(ms, '_read_record', side_effect=[before, after]):
+                patch.object(ms, '_read_record', side_effect=[before, before, after]):
             ms.send('Project', 'C1', phase_id=2, fingerprint=preview['fingerprint'], confirmed=1,
                     client=NS(), mutation_client=self.mutation)
         self.mutation.execute_once.assert_called_once_with(print_ast(parse(document)), {'input': {
@@ -496,7 +544,7 @@ class TestConfiguredTaskCompletion(_TransportFixture):
             fingerprint = ms.preview('Task', 'C1', client=NS())['fingerprint']
         with patch('frappe.utils.get_system_timezone', return_value='UTC'), \
                 patch.object(ms, '_baseline_remote', side_effect=lambda ctx, item, setting, observed, **kw: observed[:10] if observed else None), \
-                patch.object(ms, '_read_record', side_effect=[before, after]):
+                patch.object(ms, '_read_record', side_effect=[before, before, after]):
             ms.send('Task', 'C1', fingerprint=fingerprint, confirmed=1, client=NS(), mutation_client=self.mutation)
         self.mutation.execute_once.assert_called_once_with(print_ast(parse(document)), {'input': {'id': 42, 'done_date': '2026-11-02T12:00:00+00:00'}})
         self.assertEqual(self.statuses, ['Succeeded'])
@@ -509,7 +557,7 @@ class TestConfiguredTaskCompletion(_TransportFixture):
                 patch.object(ms, '_read_record', return_value=before):
             fingerprint = ms.preview('Task', 'C1', client=NS())['fingerprint']
         with patch.object(ms, '_baseline_remote', side_effect=lambda ctx, item, setting, observed, **kw: observed[:10] if observed else None), \
-                patch.object(ms, '_read_record', side_effect=[before, after]):
+                patch.object(ms, '_read_record', side_effect=[before, before, after]):
             ms.send('Task', 'C1', fingerprint=fingerprint, confirmed=1, client=NS(), mutation_client=self.mutation)
         self.mutation.execute_once.assert_called_once_with(print_ast(parse(document)), {'input': {'id': 42, 'done_date': ''}})
         self.assertEqual(self.statuses, ['Succeeded'])
@@ -533,7 +581,7 @@ class TestConfiguredTaskCompletion(_TransportFixture):
         reads = []
         def read(*args):
             reads.append(1)
-            return before if len(reads) == 1 else changed_status()
+            return before if len(reads) <= 2 else changed_status()
         with patch.object(ms, '_baseline_remote', side_effect=canonical), \
                 patch.object(ms, '_read_record', side_effect=read), self.assertRaises(ms.MappedSendError):
             ms.send('Task', 'C1', fingerprint=fingerprint, confirmed=1, client=NS(), mutation_client=self.mutation)
@@ -549,7 +597,7 @@ class TestAcknowledgmentTransaction(_TransportFixture):
         current.source_field_hashes = encode(field_hashes({'custom_notes': 'Old', 'other': 'New remote'}))
         current.target_field_hashes = encode(field_hashes({'custom_notes': 'Old', 'other': 'New local'}))
         self.frappe.get_doc = lambda *args, **kwargs: current
-        with patch.object(ms, '_read_record', side_effect=[{'id': 42, 'remarks': 'Old'}, {'id': 42, 'remarks': 'Expected'}]):
+        with patch.object(ms, '_read_record', side_effect=[{'id': 42, 'remarks': 'Old'}, {'id': 42, 'remarks': 'Old'}, {'id': 42, 'remarks': 'Expected'}]):
             self.send(fingerprint)
         values = self.writes[0][0][2]
         self.assertEqual(json.loads(values['source_field_hashes'])['other'], field_hashes({'other': 'New remote'})['other'])
@@ -562,7 +610,7 @@ class TestAcknowledgmentTransaction(_TransportFixture):
         self.frappe.get_doc = lambda *args, **kwargs: current
         events = []
         self.frappe.db.rollback.side_effect = lambda: events.append('rollback')
-        with patch.object(ms, '_read_record', side_effect=[{'id': 42, 'remarks': 'Old'}, {'id': 42, 'remarks': 'Expected'}]), \
+        with patch.object(ms, '_read_record', side_effect=[{'id': 42, 'remarks': 'Old'}, {'id': 42, 'remarks': 'Old'}, {'id': 42, 'remarks': 'Expected'}]), \
                 patch('hero_integration.api._finalize_mutation', side_effect=lambda audit, status, detail: events.append(status)), \
                 self.assertRaises(ms.MappedSendError):
             self.send(fingerprint)
@@ -585,7 +633,7 @@ class TestAcknowledgmentTransaction(_TransportFixture):
         def finalize(audit, status, detail):
             events.append(status)
             callbacks.run()
-        with patch.object(ms, '_read_record', side_effect=[{'id': 42, 'remarks': 'Old'}, {'id': 42, 'remarks': 'Expected'}]), \
+        with patch.object(ms, '_read_record', side_effect=[{'id': 42, 'remarks': 'Old'}, {'id': 42, 'remarks': 'Old'}, {'id': 42, 'remarks': 'Expected'}]), \
                 patch.object(ms, '_apply_phase_source', side_effect=apply), \
                 patch('hero_integration.api._finalize_mutation', side_effect=finalize), self.assertRaises(ms.MappedSendError):
             self.send(fingerprint)
@@ -653,7 +701,7 @@ class TestMappedTaskAssignee(_TransportFixture):
         with patch.dict(sys.modules, {'hero_integration.services.query_mapping': NS(transform=transform)}), \
                 patch('hero_integration.services.migration._mapping_plan_for_run', return_value=NS(definitions=rules, adapter_options=options)), \
                 patch.object(ms, '_lookup', return_value=[('new@example.invalid', 8)]), \
-                patch.object(ms, '_read_record', side_effect=[before, after]):
+                patch.object(ms, '_read_record', side_effect=[before, before, after]):
             ms.send('Task', 'C1', fingerprint=fingerprint, confirmed=1, client=NS(), mutation_client=self.mutation)
         self.mutation.execute_once.assert_called_once_with(print_ast(parse(document)), {'input': {'id': 42, 'target_user_id': 8}})
         values = self.writes[-1][0][2]
@@ -1045,7 +1093,7 @@ class TestBindingIdentityAcknowledgment(_TransportFixture):
         changed.target_name = 'C2'
         changed.sync_status = 'Conflict'
         self.frappe.get_doc = lambda doctype, name, **kw: changed if doctype == 'HERO Integration Link' else self.ctx.document
-        with patch.object(ms, '_read_record', side_effect=[{'id': 42, 'remarks': 'Old'}, {'id': 42, 'remarks': 'Expected'}]), \
+        with patch.object(ms, '_read_record', side_effect=[{'id': 42, 'remarks': 'Old'}, {'id': 42, 'remarks': 'Old'}, {'id': 42, 'remarks': 'Expected'}]), \
                 self.assertRaises(ms.MappedSendError):
             self.send(fingerprint)
         self.assertEqual(self.writes, [])

@@ -238,6 +238,24 @@ in-memory aggregates to offline benchmarks without enabling log output.
 
 ## Migration and validation
 
+Resume cursors for Products, Services, Employees, files and bounded test imports
+read their durable database rows rather than Frappe's defaults cache. Employee
+progress continues to prefer the existing run Long Text field, with a direct
+database read for the legacy fallback. A stale cached cursor cannot reset the
+acknowledged offset or the frozen test budget. The inbound identity lookup also
+requires `source_system=HERO`; another system's identical external ID cannot
+authorize updates to its target.
+
+The grouped Send runtime reloads permissions, source bindings, active mappings,
+readback and local values after committing its mutation reservation. It checks
+the exact confirmed fingerprint, conflicts and the global execution switch again
+before transport, matching the boundary already used by mapped updates and
+logbook sends. Task creation excludes only its own current audit reservation;
+uncertain earlier creations still require reconciliation. This adds a fresh
+pre-transport read rather than trusting an earlier preview across a commit.
+Readback verification, baseline comparison, one transport attempt and partial
+Project delivery reporting remain in the owning native senders.
+
 Deploy the app with the normal site migration so the updated pending-reference
 DocType, including `realization_started`, is installed. Pending legacy generic
 observations without the original binding proof require a fresh area import.
