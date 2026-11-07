@@ -12,6 +12,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 PROMOTE = ROOT / "ci/promote-release.sh"
 WAIT = ROOT / "ci/wait-github-checks.sh"
+CANDIDATE = ROOT / "ci/promote-candidate.sh"
 GIT_ENV = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid", "GIT_COMMITTER_NAME": "t",
            "GIT_COMMITTER_EMAIL": "t@example.invalid", "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
 
@@ -184,6 +185,149 @@ class TestPromotion(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.repo.head(self.repo.github, "hero_int_1.0"), tested)
         self.assertEqual(self.repo.head(self.repo.github, "v1.1.0^{commit}"), tested)
+
+
+class TestCandidatePromotion(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp)
+        self.repo = _Remotes(Path(tmp))
+        self.repo.push("hero_int_release", remotes=(self.repo.github,))
+        self.base = self.repo.head(self.repo.github, "hero_int_release")
+        self.tested = self.repo.commit("tested candidate")
+        self.repo.push("hero_int_dev")
+
+    def refs(self):
+        return git(self.repo.github, "for-each-ref", "--format=%(refname) %(objectname)")
+
+    def candidate(self, **changes):
+        env = {**os.environ, **GIT_ENV, "GITHUB_REMOTE": str(self.repo.github), "GITHUB_TOKEN": "",
+               "CI_PIPELINE_EVENT": "manual", "CI_PIPELINE_STATUS": "success",
+               "CI_COMMIT_BRANCH": "hero_int_dev", "CI_COMMIT_SHA": self.tested,
+               "CI_COMMIT_MESSAGE": "MANUAL: -canidate Validate release @ hero_int_dev", **changes}
+        return subprocess.run(["bash", str(CANDIDATE)], env=env, text=True, capture_output=True)
+
+    def test_manual_candidate_publishes_only_the_exact_tested_commit(self):
+        git(self.repo.work, "tag", "existing-tag")
+        git(self.repo.work, "push", "-q", str(self.repo.github), "refs/tags/existing-tag")
+        before = self.refs().replace(f"refs/heads/hero_int_release {self.base}",
+                                     f"refs/heads/hero_int_release {self.tested}")
+        result = self.candidate()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.repo.head(self.repo.github, "hero_int_release"), self.tested)
+        self.assertEqual(self.refs(), before)
+        self.assertEqual(self.repo.head(self.repo.forgejo, "hero_int_1.0"), self.base)
+        self.assertEqual(git(self.repo.github, "show", "hero_int_release:hero_integration/__init__.py"),
+                         '__version__ = "1.0.0"')
+
+    def test_ordinary_manual_runs_and_incomplete_markers_do_not_write(self):
+        before = self.refs()
+        for message in ("", "MANUAL PIPELINE @ hero_int_dev", "MANUAL: Validate -canidate @ hero_int_dev",
+                        "MANUAL: -canidate-extra @ hero_int_dev", "MANUAL: -canidates @ hero_int_dev",
+                        "MANUAL:  -canidate @ hero_int_dev"):
+            with self.subTest(message=message):
+                result = self.candidate(CI_COMMIT_MESSAGE=message, GITHUB_REMOTE="unreachable")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(self.refs(), before)
+
+    def test_manual_message_with_marker_alone_and_newline_are_supported(self):
+        for message in ("-canidate", "MANUAL: -canidate @ hero_int_dev", "-canidate\nDetails"):
+            with self.subTest(message=message):
+                result = self.candidate(CI_COMMIT_MESSAGE=message)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(self.repo.head(self.repo.github, "hero_int_release"), self.tested)
+
+    def test_push_and_other_events_cannot_publish_even_with_the_marker(self):
+        before = self.refs()
+        for event in ("push", "pull_request", "cron", ""):
+            with self.subTest(event=event):
+                result = self.candidate(CI_PIPELINE_EVENT=event)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(self.refs(), before)
+
+    def test_failed_or_unknown_preceding_ci_cannot_publish(self):
+        before = self.refs()
+        for status in ("failure", "pending", "running", ""):
+            with self.subTest(status=status):
+                self.assertNotEqual(self.candidate(CI_PIPELINE_STATUS=status).returncode, 0)
+                self.assertEqual(self.refs(), before)
+
+    def test_unsupported_source_and_invalid_sha_cannot_publish(self):
+        before = self.refs()
+        for changes in ({"CI_COMMIT_BRANCH": "hero_int_release"}, {"CI_COMMIT_BRANCH": "hero_int_1.0"},
+                        {"CI_COMMIT_BRANCH": "refs/heads/hero_int_dev"}, {"CI_COMMIT_SHA": ""},
+                        {"CI_COMMIT_SHA": "HEAD"}, {"CI_COMMIT_SHA": "a" * 39}):
+            with self.subTest(changes=changes):
+                self.assertNotEqual(self.candidate(**changes).returncode, 0)
+                self.assertEqual(self.refs(), before)
+
+    def test_opt_source_can_publish_without_creating_an_opt_release_or_tag(self):
+        self.repo.push("hero_int_dev_opt", remotes=(self.repo.github,))
+        before = self.refs().replace(f"refs/heads/hero_int_release {self.base}",
+                                     f"refs/heads/hero_int_release {self.tested}")
+        result = self.candidate(CI_COMMIT_BRANCH="hero_int_dev_opt")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.refs(), before)
+
+    def test_source_moved_since_ci_started_is_rejected(self):
+        self.repo.commit("newer untested source")
+        self.repo.push("hero_int_dev")
+        before = self.refs()
+        result = self.candidate()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Source branch moved", result.stderr)
+        self.assertEqual(self.refs(), before)
+
+    def test_diverged_release_is_rejected_without_force(self):
+        git(self.repo.work, "checkout", "-q", "--detach", self.base)
+        self.repo.commit("independent release hotfix", name="hotfix.txt")
+        self.repo.push("hero_int_release", remotes=(self.repo.github,))
+        before = self.refs()
+        result = self.candidate()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("diverged", result.stderr)
+        self.assertEqual(self.refs(), before)
+
+    def test_missing_release_is_not_silently_created(self):
+        git(self.repo.github, "update-ref", "-d", "refs/heads/hero_int_release")
+        before = self.refs()
+        self.assertNotEqual(self.candidate().returncode, 0)
+        self.assertEqual(self.refs(), before)
+
+    def test_repeat_is_idempotent(self):
+        self.assertEqual(self.candidate().returncode, 0)
+        before = self.refs()
+        result = self.candidate()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("already contains", result.stdout)
+        self.assertEqual(self.refs(), before)
+
+    def test_remote_rejection_fails_without_modifying_any_ref(self):
+        hook = self.repo.github / "hooks/pre-receive"
+        hook.write_text("#!/bin/sh\nexit 1\n")
+        hook.chmod(0o700)
+        before = self.refs()
+        result = self.candidate()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.refs(), before)
+
+    def test_credential_is_not_embedded_in_remote_errors(self):
+        token = "synthetic-candidate-credential"
+        result = self.candidate(GITHUB_REMOTE=str(self.repo.root / "missing.git"), GITHUB_TOKEN=token)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn(token, result.stdout + result.stderr)
+
+    def test_workflow_requires_manual_marker_and_installation_success(self):
+        import yaml
+
+        steps = {s["name"]: s for s in yaml.safe_load((ROOT / ".woodpecker.yml").read_text())["steps"]}
+        step = steps["promote-candidate"]
+        self.assertEqual(step["depends_on"], ["install-test"])
+        self.assertEqual(step["when"], [{"event": "manual", "branch": ["hero_int_dev", "hero_int_dev_opt"],
+                         "evaluate": 'CI_COMMIT_MESSAGE matches "^(MANUAL: )?-canidate([[:space:]]|$)"'}])
+        self.assertEqual(step["environment"]["GITHUB_TOKEN"], {"from_secret": "github_candidate_token"})
+        self.assertNotIn("hero_site_update_key", str(step))
+        self.assertNotIn("status", step["when"][0])
 
 
 @unittest.skipUnless(shutil.which("jq"), "jq is installed in the Woodpecker step image")
