@@ -132,7 +132,7 @@ printf 'GATE_PASSED\\n'
         self.assertIn('hero-ci.localhost hero-ci.localhost hero-ci.localhost', trace)
 
     def test_both_providers_use_the_shared_gate(self):
-        for path in ('ci/github-install-test.sh', 'ci/bench-install-test.sh'):
+        for path in ('ci/github-install-test.sh', 'ci/standard-install-test.sh'):
             source = (ROOT / path).read_text()
             self.assertIn('/ci/test-gates.sh"', source)
             self.assertIn('run_hero_test_gates', source)
@@ -152,7 +152,7 @@ printf 'GATE_PASSED\\n'
         before_jobs = github.split('\njobs:', 1)[0]
         self.assertIn('branches: [hero_int_dev, hero_int_1.0]', before_jobs)
         self.assertIn('      - hero_int_1.0\n', before_jobs)
-        woodpecker = (ROOT / '.woodpecker.yml').read_text()
+        woodpecker = (ROOT / '.woodpecker/standard.yml').read_text()
         self.assertIn('branch: [hero_int_dev, hero_int_1.0]', woodpecker)
         update = woodpecker.split('  - name: update-test-site\n', 1)[1].split('  - name: install-test', 1)[0]
         self.assertIn('depends_on: [install-test]', update)
@@ -180,3 +180,25 @@ bench() {
                 self.assertEqual(result.returncode, status, result.stderr)
                 inserted = trace.read_text() if trace.exists() else ''
                 self.assertEqual('"doctype":"Company"' in inserted, should_insert)
+
+
+class TestArchitectureWorkflowIsolation(unittest.TestCase):
+    def test_the_named_workflow_is_canonical_and_uses_its_own_installer(self):
+        import yaml
+
+        configs = list((ROOT / '.woodpecker').glob('*.yml'))
+        self.assertEqual([p.name for p in configs], ['standard.yml'])
+        self.assertFalse((ROOT / '.woodpecker.yml').exists())
+        steps = {step['name']: step for step in yaml.safe_load(configs[0].read_text())['steps']}
+        self.assertIn('ci/standard-install-test.sh', '\n'.join(steps['install-test']['commands']))
+        self.assertTrue((ROOT / 'ci/standard-install-test.sh').is_file())
+        self.assertFalse((ROOT / 'ci/bench-install-test.sh').exists())
+
+    def test_required_architecture_groups_cannot_be_silently_dropped(self):
+        manifest = json.loads((ROOT / 'ci/required-tests.json').read_text())
+        expected = ['standard query architecture', 'standard mutation architecture']
+        for group in expected:
+            self.assertIn(group, manifest['offline'])
+            self.assertTrue(manifest['offline'][group])
+        other_prefix = 'opt '
+        self.assertFalse([name for name in manifest['offline'] if name.startswith(other_prefix)])

@@ -63,6 +63,14 @@
     ],
     "binding resume after acknowledgment": [
       "hero_integration.tests.test_binding_registry.TestBindingRegistry.test_resolve_after_acknowledgment_preserves_revision_baselines_and_reconciliation"
+    ],
+    "standard query architecture": [
+      "hero_integration.tests.test_query_draft.TestQueryDraft.test_mutations_subscriptions_and_multiple_operations_are_rejected",
+      "hero_integration.tests.test_query_draft.TestQueryDraft.test_recursive_selection_depth_is_bounded_at_twelve_levels"
+    ],
+    "standard mutation architecture": [
+      "hero_integration.tests.test_graphql_contract.TestGraphQLContract.test_root_argument_binding_requires_compatible_declared_variable_type",
+      "hero_integration.tests.test_graphql_contract.TestGraphQLContract.test_literals_and_extra_operations_cannot_hide_a_second_mutation"
     ]
   },
   "site": {

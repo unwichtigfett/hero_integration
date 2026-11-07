@@ -10,4 +10,4 @@
 - Configuration packages exclude credentials, runtime switches and business records; import requires System Manager, preview and confirmation.
 - A partial configuration preview is insufficient for approval; validate the target snapshot and inspect the full preview first.
 - Runtime requires an approved source binding, schema, mapping, read service and permissions; external mutations require separate authorization.
-- Fresh-install tests: `ci/bench-install-test.sh` and `.github/workflows/ci.yml`.
+- Fresh-install tests: `ci/standard-install-test.sh` and `.github/workflows/ci.yml`.
