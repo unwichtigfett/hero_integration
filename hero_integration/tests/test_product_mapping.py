@@ -194,7 +194,7 @@ class TestSyncFollowsTheMapping(unittest.TestCase):
 
     def test_a_mapping_change_restarts_the_pass_and_reads_with_its_query(self):
         saved = {pm.STATE_KEY: json.dumps({"source_instance": "default", "mapping": "old", "offset": 500})}
-        db = SimpleNamespace(get_default=saved.get, set_default=lambda k, v: saved.__setitem__(k, v),
+        db = SimpleNamespace(get_default=lambda key:None, get_value=lambda dt,filters,field:saved.get(filters['defkey']), set_default=lambda k, v: saved.__setitem__(k, v),
                              commit=lambda: None, rollback=lambda: None)
         documents = []
 
@@ -218,7 +218,7 @@ class TestProgress(unittest.TestCase):
 
     def test_progress_is_reported_after_every_page(self):
         saved, reports = {}, []
-        db = SimpleNamespace(get_default=saved.get, set_default=lambda k, v: saved.__setitem__(k, v),
+        db = SimpleNamespace(get_default=lambda key:None, get_value=lambda dt,filters,field:saved.get(filters['defkey']), set_default=lambda k, v: saved.__setitem__(k, v),
                              commit=lambda: None, rollback=lambda: None)
 
         class Client:

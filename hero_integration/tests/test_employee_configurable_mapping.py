@@ -233,7 +233,8 @@ class TestEmployeeMappingVersion(unittest.TestCase):
         self.assertNotEqual(original.mapping_version, changed.mapping_version)
         old_stamp = migration._digest(["Synthetic Company", migration.JOINING_DATE, "snapshot",
                                        original.document, original.mapping_version, migration.VERSION])
-        db = NS(get_default=Mock(return_value=json.dumps({"stamp": old_stamp, "done_ids": [101]})),
+        db = NS(get_default=Mock(return_value=None),
+                get_value=Mock(return_value=json.dumps({"stamp": old_stamp, "done_ids": [101]})),
                 set_default=Mock(), commit=Mock())
         fake = NS(only_for=Mock(), db=db)
         client = Mock()

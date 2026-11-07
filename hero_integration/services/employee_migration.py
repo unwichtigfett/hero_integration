@@ -398,7 +398,7 @@ def sync_employees(client, *, source_instance, run_name, should_stop=None, progr
     use_run_field = bool(has_column and has_column('HERO Integration Run', 'employee_progress_json'))
     raw = (frappe.db.get_value('HERO Integration Run', run_name, 'employee_progress_json') if use_run_field else None)
     if not raw:
-        raw = frappe.db.get_default(STATE_KEY.format(run_name))
+        raw = frappe.db.get_value('DefaultValue', {'parent': '__default', 'defkey': STATE_KEY.format(run_name)}, 'defvalue')
     def save_progress(value):
         payload = json.dumps(value, separators=(',', ':'))
         if use_run_field:

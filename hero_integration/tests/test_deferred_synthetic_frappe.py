@@ -41,6 +41,24 @@ class TestSyntheticDeferredMariaDB(TestCase):
         frappe.db.rollback()
         frappe.clear_messages()
 
+    def test_area_resume_and_test_limits_ignore_stale_defaults_cache(self):
+        import json
+        from hero_integration.services import product_migration, file_transfer, migration_testing
+        key = 'hero_synthetic_checkpoint:' + self.source
+        payload = {'offset': 7, 'counts': {'added': 3}, 'testing_record_limit': 5}
+        keys = [key, key + ':documents', 'hero_testing_migration:' + self.run.name + ':HeroProducts']
+        for identity in keys:
+            frappe.db.set_default(identity, json.dumps(payload))
+        get_default = frappe.db.get_default
+        def stale_default(identity, *args, **kwargs):
+            return '{"offset":0}' if identity in keys else get_default(identity, *args, **kwargs)
+        with patch.object(frappe.db, 'get_default', side_effect=stale_default), \
+                patch.object(product_migration, 'STATE_KEY', key), \
+                patch.object(file_transfer, 'STATE_KEY', key + ':{}'):
+            self.assertEqual(product_migration._state(), payload)
+            self.assertEqual(file_transfer._state('documents'), payload)
+            self.assertEqual(migration_testing.test_state(self.run.name, 'HeroProducts'), payload)
+
     def test_project_completion_hands_off_to_one_event_child_without_an_extra_job(self):
         from hero_integration.services import file_migration as fm
         parent=frappe.get_doc({'doctype':'HERO Integration Run','action':fm.FULL_ACTION,'mode':'Execute',
@@ -104,6 +122,19 @@ class TestSyntheticDeferredMariaDB(TestCase):
         pending = deferred.observation_key(self.source, 'HeroTasks', str(self.row['id']), self.run.name)
         self.assertEqual(frappe.db.get_value(deferred.MAIN, pending, 'status'), 'Waiting')
         return result.target_name, pending
+
+    def test_same_external_identity_in_another_system_cannot_reuse_its_target(self):
+        first = migration._migrate_mapped_task(self.row, self.run, self.plan, self.scope)
+        self.assertEqual(first.code, 'CREATED')
+        link = migration._link('Task', str(self.row['id']), self.source)
+        link.source_system = 'SyntheticOther'
+        link.save()
+        row = {**self.row, 'title': self.row['title'] + ' HERO record'}
+        second = migration._migrate_mapped_task(row, self.run, self.plan, self.scope)
+        self.assertEqual(second.code, 'CREATED')
+        self.assertNotEqual(second.target_name, first.target_name)
+        self.assertEqual(frappe.db.get_value('Task', first.target_name, 'subject'), self.row['title'])
+        self.assertEqual(migration._link('Task', str(self.row['id']), self.source).source_system, 'HERO')
 
     def _project(self, source_id):
         project = frappe.get_doc({'doctype': 'Project', 'project_name': 'Synthetic Project ' + uuid4().hex[:10],

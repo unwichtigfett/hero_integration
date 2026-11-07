@@ -2558,7 +2558,7 @@ def _target_available(doctype: str) -> bool:
 def _link(source_type: str, source_id: str, source_instance: str = "default"):
     name = frappe.db.exists(
         "HERO Integration Link",
-        {"source_type": source_type, "source_id": source_id, "source_instance": source_instance},
+        {"source_system": "HERO", "source_type": source_type, "source_id": source_id, "source_instance": source_instance},
     )
     return frappe.get_doc("HERO Integration Link", name) if name else None
 

@@ -202,7 +202,8 @@ class TestEmployeeResume(unittest.TestCase):
         isolate_direct_materialization(self)
         self.stored = {}
         self.fake = SimpleNamespace(only_for=Mock(), get_all=lambda *a, **k: ['de'],
-            db=SimpleNamespace(get_default=lambda key:self.stored.get(key),
+            db=SimpleNamespace(get_default=lambda key:None,
+                               get_value=lambda dt, filters, field:self.stored.get(filters['defkey']),
                                set_default=lambda key,value:self.stored.__setitem__(key,value),
                                commit=Mock(), rollback=Mock()))
         self.client = SimpleNamespace(query=lambda *a: {'partners':[{'id':1},{'id':2}]})
@@ -257,7 +258,8 @@ class TestEmployeeResume(unittest.TestCase):
         self.stored[em.STATE_KEY.format('run-1')] = json.dumps(legacy)
         run_fields = {}
         self.fake.db.has_column = lambda doctype, field: field == 'employee_progress_json'
-        self.fake.db.get_value = lambda doctype, name, field: run_fields.get(field)
+        self.fake.db.get_value = lambda doctype, name, field: (
+            self.stored.get(name['defkey']) if doctype == 'DefaultValue' else run_fields.get(field))
         self.fake.db.set_value = lambda doctype, name, field, value, **kwargs: run_fields.__setitem__(field, value)
         with patch.object(em, 'upsert', return_value='added') as upsert:
             state = self.run_import()
