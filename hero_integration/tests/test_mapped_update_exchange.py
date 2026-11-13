@@ -123,7 +123,7 @@ class TestPortableMappedReadback(TestCase):
 
 
 class TestTechnicalInboundMetadata(TestCase):
-    def test_only_exact_inbound_observation_may_use_hidden_metadata(self):
+    def test_hidden_inbound_and_outbound_metadata_remains_usable(self):
         value = {'target_operation': 'HeroCustomers', 'query_adapter': {'version': 2}, 'mapping_definition_ids': ['rule'],
                  'field_rules': {'rule': {'source_path': 'is_contact_person', 'target_doctype': 'Customer',
                                           'target_field': 'custom_hero_is_contact_person'}}}
@@ -136,13 +136,65 @@ class TestTechnicalInboundMetadata(TestCase):
                 if change == 'operation': altered['target_operation'] = 'HeroProjectMatches'
                 if change == 'virtual': meta['Customer']['fields'][0]['is_virtual'] = 1
                 if change == 'permission': meta['Customer']['fields'][0]['permlevel'] = 1
-                with self.subTest(change=change), patch.object(exchange, '_rule_target_metadata', return_value=meta), self.assertRaises(ValueError):
-                    exchange._portable_target_metadata(altered, 'QUERY_TO_FRAPPE')
+                with self.subTest(change=change), patch.object(exchange, '_rule_target_metadata', return_value=meta):
+                    if change in {'virtual', 'permission'}:
+                        with self.assertRaises(ValueError):
+                            exchange._portable_target_metadata(altered, 'QUERY_TO_FRAPPE')
+                    else:
+                        self.assertEqual(exchange._portable_target_metadata(altered, 'QUERY_TO_FRAPPE'), meta)
             outbound = content(); outbound['assignments'][0]['source']['field'] = 'custom_hero_is_contact_person'
-            with self.assertRaises(ValueError): exchange._portable_target_metadata(outbound, 'FRAPPE_TO_MUTATION')
+            self.assertEqual(exchange._portable_target_metadata(outbound, 'FRAPPE_TO_MUTATION'), metadata)
 
 
 class TestLockedPropertySetters(TestCase):
+    def test_declared_target_allows_hidden_flag_and_hidden_property_setter(self):
+        content = {'mapping_definition_ids': ['rule'], 'field_rules': {
+            'rule': {'target_doctype': 'Customer', 'target_field': 'custom_label'}}}
+        definition = {'doctype': 'Customer', 'fieldname': 'custom_label', 'fieldtype': 'Data'}
+        schema = {'custom_fields': [definition]}
+        field = {'name': 'custom-label', 'fieldname': 'custom_label', 'fieldtype': 'Data',
+                 'options': '', 'reqd': 0, 'read_only': 0, 'hidden': 1, 'permlevel': 0, 'is_virtual': 0}
+        setter = {'name': 'hide-label', 'doctype_or_field': 'DocField', 'field_name': 'custom_label',
+                  'property': 'hidden', 'value': '1'}
+        for overrides in ([], [setter]):
+            fake = NS(db=NS(sql=Mock(side_effect=[[{'name': 'Customer'}], [], [field], overrides])))
+            with self.subTest(overrides=overrides), patch.object(exchange, 'frappe', fake):
+                self.assertIn('Customer', exchange._rule_target_metadata(content, schema))
+        for flag in ('permlevel', 'is_virtual', 'read_only'):
+            fake = NS(db=NS(sql=Mock(side_effect=[[{'name': 'Customer'}], [], [{**field, flag: 1}], []])))
+            with self.subTest(flag=flag), patch.object(exchange, 'frappe', fake), self.assertRaises(ValueError):
+                exchange._rule_target_metadata(content, schema)
+        for prop in ('fieldtype', 'options', 'reqd', 'read_only', 'permlevel', 'is_virtual'):
+            fake = NS(db=NS(sql=Mock(side_effect=[[{'name': 'Customer'}], [], [field], [{**setter, 'property': prop}]])))
+            with self.subTest(prop=prop), patch.object(exchange, 'frappe', fake), self.assertRaisesRegex(ValueError, 'reconciliation'):
+                exchange._rule_target_metadata(content, schema)
+
+    def test_cached_hidden_difference_is_ignored_and_hidden_metadata_is_retained(self):
+        import frappe
+        from hero_integration import api
+
+        document = {'name': 'Address', 'module': 'Contacts', 'custom': 0, 'istable': 0, 'issingle': 0, 'is_virtual': 0}
+        stored = {'name': 'address-line2', 'fieldname': 'address_line2', 'fieldtype': 'Data',
+                  'options': '', 'reqd': 0, 'read_only': 0, 'hidden': 1, 'permlevel': 0, 'is_virtual': 0}
+        cached = frappe._dict({**stored, 'hidden': 0})
+        snapshot = NS(name='snapshot', schema_fingerprint='fingerprint')
+        storage = NS(_definition=NS(schema_snapshot='snapshot', direction='QUERY_TO_FRAPPE'))
+        for changed in (None, 'reqd', 'read_only', 'permlevel', 'is_virtual', 'fieldtype', 'options'):
+            field = frappe._dict(cached)
+            if changed:
+                field[changed] = 'different' if changed in {'fieldtype', 'options'} else 1
+            fake = NS(db=NS(sql=Mock(side_effect=[[document], [stored], [], []])),
+                      get_meta=lambda dt: NS(get=document.get, get_field=lambda name: field))
+            with self.subTest(changed=changed), patch.object(exchange, 'frappe', fake), \
+                 patch.object(api, '_validated_snapshot', return_value=(snapshot, {})):
+                if changed:
+                    with self.assertRaisesRegex(ValueError, 'stale'):
+                        exchange._assignment_metadata(storage, [{'target': {'doctype': 'Address', 'field': 'address_line2'}}])
+                else:
+                    metadata = exchange._assignment_metadata(storage, [{'target': {'doctype': 'Address', 'field': 'address_line2'}}])
+                    self.assertEqual(metadata['fields'][0]['hidden'], 0)
+                    self.assertEqual(metadata['locked_metadata']['Address']['fields'][0]['hidden'], 1)
+
     def test_projection_matches_installed_flags_without_mutating_stored_metadata(self):
         field = {'name': 'native-field', 'fieldname': 'date_of_birth', 'reqd': 1, 'hidden': 0}
         setters = [{'name': 'dob-optional', 'doctype_or_field': 'DocField', 'field_name': 'date_of_birth', 'property': 'reqd', 'value': '0'}]

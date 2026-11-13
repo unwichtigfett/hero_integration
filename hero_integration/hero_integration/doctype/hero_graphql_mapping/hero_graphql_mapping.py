@@ -11,6 +11,7 @@ from hero_integration.services.frappe_mapping_catalog import FrappePickerMetadat
 from hero_integration.services.frappe_writeback import (
     WritebackContractError, draft_source_type_compatible, normalise_draft_mapping, normalise_mapping,
 )
+from hero_integration.services.localized_error import LocalizedError, translate_error
 from hero_integration.services.schema_operations import catalog
 
 
@@ -93,6 +94,8 @@ class HEROGraphQLMapping(Document):
             available = {item["operation_name"] for item in catalog(json.loads(snapshot.snapshot_json), self.operation_kind)}
         except WritebackContractError as error:
             frappe.throw(str(error))
+        except LocalizedError as error:
+            frappe.throw(translate_error(error, frappe._))
         except (ValueError, TypeError):
             frappe.throw(frappe._("The GraphQL mapping must contain a valid JSON object and schema operation."))
         if lossy_writeback:

@@ -230,8 +230,10 @@ def after_migrate() -> None:
     if _reference_apps_installed():
         # Create-only; also covers Helpdesk/CRM installed after this app.
         from hero_integration.integrations.app_references import ensure_reference_fields
+        from hero_integration.integrations.helpdesk.desk_return import ensure_setting
 
         ensure_reference_fields()
+        ensure_setting()
 
 
 def ensure_pending_reference_schema() -> None:

@@ -65,8 +65,13 @@ class TestNativeQueryFieldContract(unittest.TestCase):
         with patch.dict(SOURCE_CONTRACTS['HeroCustomers'], {'native_field_bindings': frozenset()}):
             validate_spec(self.spec, Metadata())
 
+    def test_hidden_native_target_is_writable(self):
+        metadata = Metadata()
+        metadata.fields[('Customer', 'alias')].hidden = 1
+        validate_spec(self.spec, metadata)
+
     def test_unavailable_readonly_calculated_or_wrong_type_fails_closed(self):
-        for attrs in ({'read_only': 1}, {'hidden': 1}, {'fetch_from': 'customer_group.group_name'},
+        for attrs in ({'read_only': 1}, {'fetch_from': 'customer_group.group_name'},
                       {'is_virtual': 1}, {'fieldtype': 'Link'}):
             metadata = Metadata()
             for key, value in attrs.items():

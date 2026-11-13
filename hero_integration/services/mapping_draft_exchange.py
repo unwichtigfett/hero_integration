@@ -776,18 +776,6 @@ def _portable_existing_candidate(item, local_id, source_instance, snapshot_name,
         return candidate, row, draft, remapping
 
 
-def _query_hidden_target(content, doctype, field):
-    """Only exact reviewed inbound observations can name a hidden target."""
-    options = content.get('query_adapter') or {}
-    if type(options.get('version')) is not int or options.get('version') != 2:
-        return False
-    from hero_integration.services.query_mapping import TECHNICAL_BINDINGS
-    rules = [rule for rule in content.get('field_rules', {}).values()
-             if (rule.get('target_doctype'), rule.get('target_field')) == (doctype, field)]
-    return bool(rules) and all((content.get('target_operation'), rule.get('source_path'), doctype, field)
-                               in TECHNICAL_BINDINGS for rule in rules)
-
-
 def _portable_target_metadata(content, direction):
     """Lock and bind the actual target-side metadata used by parentless drafts."""
     if direction == 'QUERY_TO_FRAPPE':
@@ -809,15 +797,7 @@ def _portable_target_metadata(content, direction):
         rows = metadata.get(doctype, {}).get('fields', [])
         for field in fields:
             matches = [row for row in rows if row['fieldname'] == field]
-            hidden_source = False
-            if direction == 'FRAPPE_TO_MUTATION' and content.get('usage') == 'PROJECT_LOGBOOK_V1':
-                from hero_integration.services.project_logbook_writeback import VERSION_SOURCE
-                # Frappe deliberately hides its native change JSON. Only the
-                # explicit, reviewed change-summary source can read that field.
-                hidden_source = (doctype, field) == ('Version', 'data') and content.get('version_source') == VERSION_SOURCE
-            if (len(matches) != 1 or any(int(matches[0].get(flag) or 0) for flag in ('permlevel', 'is_virtual'))
-                    or (int(matches[0].get('hidden') or 0)
-                        and not (hidden_source or direction == 'QUERY_TO_FRAPPE' and _query_hidden_target(content, doctype, field)))):
+            if (len(matches) != 1 or any(int(matches[0].get(flag) or 0) for flag in ('permlevel', 'is_virtual'))):
                 raise MappingDraftExchangeError('Portable target metadata is missing, ambiguous or restricted.')
     return metadata
 
@@ -1498,7 +1478,7 @@ def _rule_target_metadata(content, schema):
                 continue
             existing = [row for row in list(fields) + list(custom) if row['fieldname'] == fieldname]
             overrides = [row for row in setters if row['field_name'] == fieldname and row['property'] in {
-                'fieldtype', 'options', 'reqd', 'read_only', 'hidden', 'permlevel', 'is_virtual'}]
+                'fieldtype', 'options', 'reqd', 'read_only', 'permlevel', 'is_virtual'}]
             if len(existing) > 1 or overrides:
                 raise MappingDraftExchangeError('Declared rule target metadata requires reconciliation.')
             if existing:
@@ -1506,8 +1486,7 @@ def _rule_target_metadata(content, schema):
                 if ((row['fieldtype'] or '') != (definition.get('fieldtype') or '')
                         or (row['options'] or '') != (definition.get('options') or '')
                         or any(int(row[key] or 0) != int(definition.get(key) or 0) for key in ('reqd', 'read_only'))
-                        or any(int(row[key] or 0) for key in ('permlevel', 'is_virtual'))
-                        or (int(row['hidden'] or 0) and not _query_hidden_target(content, doctype, fieldname))):
+                        or any(int(row[key] or 0) for key in ('permlevel', 'is_virtual'))):
                     raise MappingDraftExchangeError('Declared rule target metadata differs from the schema contract.')
         selected = [dict(row) for row in list(fields) + list(custom)
                     if row['fieldname'] in targets[doctype] and (doctype, row['fieldname']) not in planned]
@@ -1620,7 +1599,7 @@ def _assignment_metadata(storage, mappings, content=None):
         current = [row for row in locked[side['doctype']]['fields'] if row['fieldname'] == side['field']]
         if len(current) != 1:
             raise MappingDraftExchangeError('Assigned Frappe field metadata is ambiguous.')
-        flags = ('reqd', 'read_only', 'hidden', 'permlevel', 'is_virtual')
+        flags = ('reqd', 'read_only', 'permlevel', 'is_virtual')
         if (any((field.get(key) or '') != (current[0].get(key) or '') for key in ('fieldtype', 'options'))
                 or any(int(field.get(key) or 0) != int(current[0].get(key) or 0) for key in flags)):
             raise MappingDraftExchangeError('Cached Frappe field metadata is stale; retry the import.')

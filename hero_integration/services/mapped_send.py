@@ -552,7 +552,7 @@ def _lookup(ctx, settings, remote, client):
 
 def _source_field(document, field):
     meta = frappe.get_meta(document.doctype).get_field(field)
-    if (meta is None or getattr(meta, 'hidden', 0) or getattr(meta, 'is_virtual', 0)
+    if (meta is None or getattr(meta, 'is_virtual', 0)
             or getattr(meta, 'fieldtype', '') == 'Password' or int(getattr(meta, 'permlevel', 0) or 0)):
         raise MappedSendError('The mapped Frappe source field is unavailable or protected.')
     return meta

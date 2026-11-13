@@ -210,7 +210,7 @@ def writeback_fields(metadata, doctype: str = '', *, targets=None) -> list[Catal
                     and item.path in PROTECTED_FIELDS.get(target.doctype, set())
                     and item.path not in SYSTEM_FIELDS and item.fieldtype in ALLOWED_TARGET_TYPES | {'Long Text', 'Text', 'Code', 'Select'}
                     and item.fieldtype not in {'Link', 'Table'}
-                    and not getattr(field, 'read_only', 0) and not getattr(field, 'hidden', 0)
+                    and not getattr(field, 'read_only', 0)
                     and not getattr(field, 'is_virtual', 0) and not int(getattr(field, 'permlevel', 0) or 0)):
                 item = replace(item, selectable=True, reason='Reviewed writeback source; execution requires separate approval.')
             result.append(item)
@@ -256,7 +256,7 @@ def query_target_catalog(metadata, app_name='', search=''):
                 continue
             contact_proxy = target.doctype in {'Customer', 'Contact'} and item.path in {'first_name', 'last_name', 'email_id', 'mobile_no', 'salutation'}
             if ((item.path in SYSTEM_FIELDS and not (target.doctype == 'Comment' and item.path in {'creation', 'modified'}))
-                    or getattr(field, 'hidden', 0) or getattr(field, 'is_virtual', 0)
+                    or getattr(field, 'is_virtual', 0)
                     or (getattr(field, 'fetch_from', None) and not contact_proxy)
                     or int(getattr(field, 'permlevel', 0) or 0)
                     or item.fieldtype not in ALLOWED_TARGET_TYPES | {'Long Text', 'Text', 'Text Editor', 'Select', 'Table'}
@@ -284,7 +284,7 @@ def send_source_fields(metadata, doctype: str = '', *, targets=None) -> list[Cat
             continue
         for field in metadata.fields(target.doctype):
             item = _field(target, field, metadata)
-            if (item.path in SYSTEM_FIELDS or getattr(field, 'hidden', 0) or getattr(field, 'is_virtual', 0)
+            if (item.path in SYSTEM_FIELDS or getattr(field, 'is_virtual', 0)
                     or int(getattr(field, 'permlevel', 0) or 0)
                     or item.fieldtype not in ALLOWED_TARGET_TYPES | {'Long Text', 'Text', 'Text Editor', 'Select'}):
                 continue
@@ -357,8 +357,6 @@ def _field(target: CatalogDocType, field, metadata) -> CatalogField:
         selectable, reason = False, "System field: the import sets it through its fixed purpose (name, identity, relation)."
     elif fieldtype == "Read Only" or getattr(field, "fetch_from", None):
         selectable, reason = False, "Filled automatically from a linked record; map the linked record instead."
-    elif getattr(field, "hidden", 0) and not app_field:
-        selectable, reason = False, "Hidden field: it cannot be a mapping target."
     elif getattr(field, "read_only", 0) and not app_field:
         selectable, reason = False, "Read-only field: ERPNext calculates it."
     elif fieldtype == "Table":

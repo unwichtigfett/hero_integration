@@ -41,7 +41,7 @@ class TestDeletionHook(IntegrationTestCase):
             set(hero_integration.hooks.doc_events),
             # Project/Version: native activity handling; Helpdesk/CRM: ERPNext reference fields.
             {*hero_integration.hooks._HERO_OWNED_DOCTYPES, "*", "Task", "ToDo", "Project", "Version", "User", "Employee",
-             "HD Ticket", "ERPNext HD Settings", "CRM Lead", "CRM Deal", "ERPNext CRM Settings"},
+             "HD Ticket", "HD Customer", "CRM Lead", "CRM Deal", "ERPNext CRM Settings"},
         )
         self.assertEqual(
             hero_integration.hooks.doc_events["*"]["on_update"],

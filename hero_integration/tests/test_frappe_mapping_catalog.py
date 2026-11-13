@@ -91,8 +91,21 @@ class TestFrappeMappingCatalog(unittest.TestCase):
         self.assertFalse(outbound['name'].selectable)
         self.assertEqual(validate_draft_writeback_source('Customer', 'customer_name', self.metadata).path, 'customer_name')
 
+    def test_hidden_fields_are_selectable_for_inbound_writeback_query_and_send(self):
+        from hero_integration.services.frappe_mapping_catalog import query_target_catalog, send_source_fields
+
+        self.metadata._fields['Customer'] = [
+            _field('customer_name', 'Customer Name', 'Data', hidden=1),
+            _field('alias', 'Alias', 'Data', hidden=1),
+        ]
+        self.assertTrue(next(item for item in fields(self.metadata, doctype='Customer') if item.path == 'alias').selectable)
+        self.assertTrue(validate_draft_writeback_source('Customer', 'customer_name', self.metadata).selectable)
+        self.assertTrue(next(item for item in send_source_fields(self.metadata, 'Customer') if item.path == 'alias').selectable)
+        result = query_target_catalog(self.metadata)
+        self.assertTrue(next(item for item in result['fields'] if item['doctype'] == 'Customer' and item['path'] == 'alias')['selectable'])
+
     def test_reviewed_source_requires_accessible_real_field_and_doctype(self):
-        for flag in ({'hidden': 1}, {'permlevel': 1}, {'read_only': 1}, {'is_virtual': 1}):
+        for flag in ({'permlevel': 1}, {'read_only': 1}, {'is_virtual': 1}):
             self.metadata._fields['Customer'] = [_field('customer_name', 'Customer Name', 'Data', **flag)]
             self.assertFalse(writeback_fields(self.metadata, doctype='Customer')[0].selectable)
             with self.assertRaises(ValueError):
