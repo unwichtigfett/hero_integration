@@ -236,7 +236,7 @@ def validate_sources(content, *, field_provider=None):
         source=item['source'];field=field_for(source['doctype'], source['field'])
         contact_proxy=(source['doctype']=='Contact' and source['field'] in {'email_id','mobile_no','phone'}
             or source=={'doctype':'File','field':'file_name'})
-        if (field is None or field.get('hidden') or field.get('is_virtual') or field.get('permlevel')
+        if (field is None or field.get('is_virtual') or field.get('permlevel')
                 or field.get('read_only') and not contact_proxy or field.fieldtype in {'Password','Code','Attach','Attach Image','Signature'}
                 or field.fieldtype in {'Table','Table MultiSelect'} and item['resolver']!='BARCODE'):
             raise MappedUpdateError('The mapped native source is protected, absent or not editable.')
@@ -245,7 +245,7 @@ def validate_sources(content, *, field_provider=None):
         condition=item['options'].get('when')
         if condition:
             control=field_for(source['doctype'], condition['field'])
-            if control is None or control.get('hidden') or control.get('permlevel') or control.fieldtype=='Password':
+            if control is None or control.get('permlevel') or control.fieldtype=='Password':
                 raise MappedUpdateError('A source condition must be an explicit local-field equality.')
         if item['resolver']=='MASTER_NAME' and (source['doctype'],source['field'],field.options) not in {
              ('Item','brand','Brand'),('Item','stock_uom','UOM'),('Item','item_group','Item Group')}:

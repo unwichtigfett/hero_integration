@@ -85,7 +85,7 @@ class TestLogbookPortableLifecycle(TestCase):
             ('Version.data', 'logbook_entry.custom_text', 'CHANGE_SUMMARY')})
         self.assertEqual({row['mapping'] for row in rows}, {'mapping'})
 
-    def test_only_explicit_native_version_data_may_be_a_hidden_source(self):
+    def test_hidden_sources_are_accepted_but_permissions_and_resolver_stay_checked(self):
         value = automatic_content()
         metadata = {}
         for source in personal.configured_mutation_sources(value):
@@ -100,12 +100,12 @@ class TestLogbookPortableLifecycle(TestCase):
                     exchange._portable_target_metadata(value, 'FRAPPE_TO_MUTATION')
                 metadata['Version']['fields'][0][flag] = 0
             metadata['Comment']['fields'][0]['hidden'] = 1
-            with self.assertRaisesRegex(ValueError, 'restricted'):
-                exchange._portable_target_metadata(value, 'FRAPPE_TO_MUTATION')
+            self.assertEqual(exchange._portable_target_metadata(value, 'FRAPPE_TO_MUTATION'), metadata)
             metadata['Comment']['fields'][0]['hidden'] = 0
             value['version_source']['resolver'] = 'Identity'
-            with self.assertRaisesRegex(ValueError, 'restricted'):
-                exchange._portable_target_metadata(value, 'FRAPPE_TO_MUTATION')
+            self.assertEqual(exchange._portable_target_metadata(value, 'FRAPPE_TO_MUTATION'), metadata)
+            with self.assertRaises(ValueError):
+                logbook.normalise_mapping(value, SCHEMA)
 
     def test_closed_portable_roundtrip_and_real_normalizer(self):
         row = group();parsed = exchange._parse_portable(json.dumps(portable([row])), 'FRAPPE_TO_MUTATION')

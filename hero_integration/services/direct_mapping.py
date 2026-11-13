@@ -408,9 +408,8 @@ def _validate_custom_field(spec: MappingSpec, metadata) -> None:
     if (field is None or (field.fieldtype not in ALLOWED_TARGET_TYPES | PLAIN_TEXT_TYPES and not text_editor)
             or (field.read_only and not (is_native or app_field))):
         raise DirectMappingError("Target field is not a writable supported Frappe field.")
-    if spec.relation or any(getattr(field, key, None) for key in ("fetch_from", "is_virtual")) or (
-            getattr(field, "hidden", 0) and not app_field):
-        raise DirectMappingError("Target field is filled automatically or hidden; map its source record instead.")
+    if spec.relation or any(getattr(field, key, None) for key in ("fetch_from", "is_virtual")):
+        raise DirectMappingError("Target field is filled automatically; map its source record instead.")
     if text_editor and spec.transformation not in {TRANSFORM_PLAIN_TEXT_HTML, TRANSFORM_SAFE_HTML}:
         raise DirectMappingError("Formatted text needs the Plain Text To HTML or Safe HTML transformation.")
     if spec.transformation in {TRANSFORM_PLAIN_TEXT_HTML, TRANSFORM_SAFE_HTML} and not text_editor:

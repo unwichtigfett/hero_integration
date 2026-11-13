@@ -627,7 +627,7 @@ class FrappeMappingDraftStorage:
                         if (field is None or any((field.get(k) or '') != (stored.get(k) or '')
                                                  for k in ('fieldtype', 'options'))
                                 or any(int(field.get(k) or 0) != int(stored.get(k) or 0)
-                                       for k in ('reqd', 'read_only', 'hidden', 'permlevel', 'is_virtual'))):
+                                       for k in ('reqd', 'read_only', 'permlevel', 'is_virtual'))):
                             raise MappingDraftError('Cached target metadata differs from the locked metadata.')
             except ValueError as error:
                 raise MappingDraftError('Target metadata is unavailable or unsafe for publication.') from error

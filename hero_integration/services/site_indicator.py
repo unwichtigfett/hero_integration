@@ -7,6 +7,7 @@ from urllib.parse import quote, urlsplit
 import frappe
 
 from hero_integration import __version__
+from hero_integration.services import spa_theme
 
 
 MARKER = 'id="hero-site-indicator"'
@@ -52,7 +53,8 @@ def after_request(response, request=None):
         return
     indicator = ('<link rel="stylesheet" href="/assets/hero_integration/css/site_indicator.css?v='
                  + quote(__version__, safe='') + '">'
-                 + '<div ' + MARKER + '>' + escape(label()) + '</div>')
+                 + '<div ' + MARKER + '>' + escape(label()) + '</div>'
+                 + spa_theme.markup(request))
     position = closing[-1].start()
     response.set_data(html[:position] + indicator + html[position:])
     response.headers.pop('ETag', None)

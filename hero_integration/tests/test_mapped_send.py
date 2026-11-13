@@ -57,6 +57,18 @@ def context():
 
 
 class TestSendProfileNormalization(TestCase):
+    def test_hidden_source_is_readable_but_permissions_virtual_and_password_stay_blocked(self):
+        for restriction in ({}, {'permlevel': 1}, {'is_virtual': 1}, {'fieldtype': 'Password'}):
+            values = {'fieldtype': 'Data', 'hidden': 1, 'permlevel': 0, 'is_virtual': 0, **restriction}
+            field = NS(**values)
+            with self.subTest(restriction=restriction), patch.object(ms.frappe, 'get_meta',
+                    return_value=NS(get_field=lambda name: field)):
+                if restriction:
+                    with self.assertRaises(ms.MappedSendError):
+                        ms._source_field(NS(doctype='Address'), 'address_line2')
+                else:
+                    self.assertIs(ms._source_field(NS(doctype='Address'), 'address_line2'), field)
+
     def test_configured_pair_is_not_limited_to_the_legacy_fixed_customer_fields(self):
         actual = ms.normalise_send_mapping(content(), SCHEMA)
         self.assertEqual(actual['target']['field'], 'remarks')
