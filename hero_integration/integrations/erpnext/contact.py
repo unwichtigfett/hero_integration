@@ -38,7 +38,16 @@ def synchronize_primary_contact(customer, source_values: dict[str, object]) -> N
     if not _is_exclusive_customer_contact(contact, customer.name):
         raise HomePhoneConflict("The Customer primary Contact is shared or not linked to this Customer.")
 
+    # ERPNext parses an Individual's display name before applying explicit
+    # first/last names. A salutation can shift the first name into middle_name.
+    # Remove that inferred duplicate only while correcting the parsed name.
     changed = False
+    if (values["first_name"] and values["last_name"]
+            and _text(_field_value(contact, "first_name")) != values["first_name"]
+            and _text(_field_value(contact, "middle_name")) == values["first_name"]
+            and _text(_field_value(contact, "last_name")) == values["last_name"]):
+        _set_field(contact, "middle_name", None)
+        changed = True
     for field in ("first_name", "last_name", "salutation", "designation"):
         if values[field] and _field_value(contact, field) != values[field]:
             _set_field(contact, field, values[field])

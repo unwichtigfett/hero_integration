@@ -1,0 +1,97 @@
+/* The row beside the Desk's top-left logo names the app; it is as tall as the rail's logo slot,
+   so the module menu below it sits level with the rail's search button. */
+.body-sidebar .hero-brand-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 0 0 auto;
+    height: 49px;
+    padding: 0 15px 0 16px;
+    color: var(--ink-gray-9, #171717);
+    font-size: 14px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+}
+
+.body-sidebar .hero-brand-name {
+    flex: 1 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Search and notifications, moved here from the rail. */
+.body-sidebar .hero-brand-tools {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 2px;
+    margin-right: -6px;
+}
+
+.body-sidebar .hero-brand-tools:empty {
+    display: none;
+}
+
+.body-sidebar .hero-brand-tools .dock-item {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--ink-gray-7, #525252);
+    cursor: pointer;
+}
+
+.body-sidebar .hero-brand-tools .dock-item:hover {
+    background: var(--surface-gray-3, #ededed);
+}
+
+.body-sidebar .hero-brand-tools .dock-item-icon {
+    display: inline-flex;
+}
+
+.body-sidebar .hero-brand-tools .dock-item-dot {
+    position: absolute;
+    top: 1px;
+    right: 1px;
+    min-width: 14px;
+    height: 14px;
+    padding: 0 3px;
+    border-radius: 999px;
+    background: #e03636;
+    color: #ffffff;
+    font-size: 9px;
+    font-weight: 600;
+    line-height: 14px;
+    text-align: center;
+}
+
+.body-sidebar .hero-brand-tools .dock-item-dot.hidden {
+    display: none;
+}
+
+.body-sidebar .hero-brand-logo:empty {
+    display: none;
+}
+
+.body-sidebar .hero-brand-logo img {
+    display: block;
+    width: 28px;
+    height: 28px;
+    object-fit: contain;
+}
+
+.body-sidebar .hero-brand-row + .sidebar-header {
+    margin-top: 6px;
+}
+
+/* With the buttons beside the name, the rail's first module tile is level with the module menu. */
+#desk-dock.hero-tools-beside-name .dock-logo + .dock-utilities + .dock-items {
+    padding-top: 5px;
+}

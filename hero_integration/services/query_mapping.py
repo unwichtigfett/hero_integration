@@ -40,7 +40,7 @@ TARGET_TYPES = TEXT_TYPES | FLOAT_TYPES | INT_TYPES | {'Check', 'Date', 'Datetim
 CHILD_TYPES = {'Data', 'Small Text', 'Long Text', 'Int', 'Float', 'Currency', 'Percent', 'Check'}
 CHILD_TRANSFORMS = {'Identity', 'Trim', 'Scalar Text', 'Number', 'Integer', 'JSON Value'}
 # Existing adapter observations are hidden from forms, but retain their exact
-# canonical source binding. No arbitrary hidden target becomes selectable.
+# canonical source binding. Hiding a field does not change that binding.
 TECHNICAL_BINDINGS = {
     ('HeroCustomers', 'is_contact_person', 'Customer', 'custom_hero_is_contact_person'),
     ('HeroProjectMatches', 'project_nr', 'Project', 'custom_hero_project_number'),
@@ -191,9 +191,8 @@ def validate_v2_spec(spec, metadata, adapter_options=None):
         and spec.target_doctype in {'Customer', 'Contact'}
         and spec.target_field in FIELDS['Contact'])
     field = metadata.field(spec.target_doctype, spec.target_field)
-    technical = (spec.operation, spec.source_path, spec.target_doctype, spec.target_field) in TECHNICAL_BINDINGS
     if (field is None or getattr(field, 'is_virtual', False) or (getattr(field, 'fetch_from', None) and not contact_proxy)
-            or (getattr(field, 'hidden', False) and not technical) or getattr(field, 'permlevel', 0)):
+            or getattr(field, 'permlevel', 0)):
         raise ValueError('Mapped native field is absent or computed.')
     if (getattr(field, 'read_only', 0) and not spec.target_field.startswith('custom_hero_') and not contact_proxy
             and spec.target_doctype not in {'Customer', 'Comment'}
@@ -225,7 +224,7 @@ def validate_v2_spec(spec, metadata, adapter_options=None):
         for child in opts['child_fields'].values():
             entry = metadata.field(field.options, child)
             if (entry is None or entry.fieldtype not in CHILD_TYPES
-                    or any(getattr(entry, name, False) for name in ('hidden', 'permlevel', 'read_only', 'is_virtual', 'fetch_from'))):
+                    or any(getattr(entry, name, False) for name in ('permlevel', 'read_only', 'is_virtual', 'fetch_from'))):
                 raise ValueError('Native table child is absent, protected or incompatible.')
             if opts.get('child_types', {}).get(child) != entry.fieldtype:
                 raise ValueError('Configured table child type differs from native metadata.')

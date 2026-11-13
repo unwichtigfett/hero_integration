@@ -1,4 +1,4 @@
-"""Helpdesk references ERPNext Customers/Projects directly; it keeps no copies (2026-11-01)."""
+"""Helpdesk references ERPNext Customers/Projects; ERPNext owns the customer data (2026-11-12)."""
 from __future__ import annotations
 
 import frappe
@@ -11,9 +11,9 @@ def profile_status() -> tuple[bool, str]:
     if not frappe.db.exists("DocType", "HD Customer"):
         return False, "The installed Helpdesk app has no HD Customer DocType."
     if frappe.db.get_single_value("ERPNext HD Settings", "enabled"):
-        return False, ("Disable ERPNext HD Settings: it mirrors every ERPNext Customer as an HD Customer; "
-                       "tickets reference the ERPNext Customer and Project directly.")
-    return True, "Tickets reference the ERPNext Customer and Project directly; no HD Customer copies."
+        return True, ("Helpdesk lists every ERPNext Customer through its linked HD Customer; "
+                      "customers are created, changed and deleted in ERPNext only.")
+    return True, "Tickets reference the ERPNext Customer and Project directly; Helpdesk lists no customers."
 
 
 def ticket_migration_status() -> str:

@@ -1934,7 +1934,6 @@ The HERO schema no longer offers the customer fields this button sends.,"Das HER
 The HERO schema no longer offers the project fields this button sends.,"Das HERO-Schema bietet die Projektfelder, die diese Schaltfläche sendet, nicht mehr an."
 The HERO schema no longer offers the task fields this button sends.,"Das HERO-Schema bietet die Aufgabenfelder, die diese Schaltfläche sendet, nicht mehr an."
 The HERO target is not the reviewed target for this Frappe field.,Das HERO-Ziel ist nicht das geprüfte Ziel für dieses Frappe-Feld.
-"The Helpdesk ERPNext mirror stays disabled: tickets reference the ERPNext Customer and Project directly (HERO integration, option A).","Die Helpdesk-ERPNext-Spiegelung bleibt deaktiviert: Tickets referenzieren ERPNext-Kunden und -Projekte direkt (HERO-Integration, Option A)."
 The Send identity differs from its approved readback contract.,Die Identität zum Senden entspricht nicht ihrem freigegebenen Readback-Vertrag.
 The Send mapping no longer matches its executable schema and source.,Das Mapping zum Senden entspricht nicht mehr seinem ausführbaren Schema und seiner Quelle.
 The Send source is outside its verified native document relations.,Die Sendequelle liegt außerhalb ihrer verifizierten nativen Dokumentbeziehungen.
@@ -3190,14 +3189,13 @@ New query field rule is incomplete.,Die neue Query-Feldregel ist unvollständig.
 Existing Record,Vorhandener Datensatz
 "System field: the import sets it through its fixed purpose (name, identity, relation).","Systemfeld: Der Import setzt es über seinen festen Zweck (Name, Identität, Verknüpfung)."
 Filled automatically from a linked record; map the linked record instead.,Wird automatisch aus einem verknüpften Datensatz gefüllt; mappe stattdessen den verknüpften Datensatz.
-Hidden field: it cannot be a mapping target.,Ausgeblendetes Feld: Es kann kein Mapping-Ziel sein.
 Read-only field: ERPNext calculates it.,Schreibgeschütztes Feld: ERPNext berechnet es.
 Unsupported field type.,Nicht unterstützter Feldtyp.
 Link field: use the 'Existing Record' transformation (the value must name an existing linked record).,Verknüpfungsfeld: Umwandlung „Vorhandener Datensatz“ verwenden (der Wert muss einen bestehenden verknüpften Datensatz benennen).
 Formatted text: use 'Plain Text To HTML' or 'Safe HTML'.,Formatierter Text: „Klartext zu HTML“ oder „Sicheres HTML“ verwenden.
 "App field: written by the import, read-only for users.","App-Feld: vom Import geschrieben, für Benutzer schreibgeschützt."
 Direct adapter target; activation requires the registry and mapping validation.,Ziel des direkten Adapters; die Aktivierung erfordert Registrierung und Mapping-Prüfung.
-Target field is filled automatically or hidden; map its source record instead.,Das Zielfeld wird automatisch gefüllt oder ist ausgeblendet; mappe stattdessen den Quelldatensatz.
+Target field is filled automatically; map its source record instead.,Das Zielfeld wird automatisch gefüllt; mappe stattdessen den Quelldatensatz.
 Formatted text needs the Plain Text To HTML or Safe HTML transformation.,Formatierter Text braucht die Umwandlung „Klartext zu HTML“ oder „Sicheres HTML“.
 HTML transformations only target formatted text fields.,HTML-Umwandlungen sind nur für formatierte Textfelder.
 A Link target needs the Existing Record transformation.,Ein Verknüpfungsfeld braucht die Umwandlung „Vorhandener Datensatz“.
@@ -3746,3 +3744,9 @@ HERO Original Article Number,Ursprüngliche HERO-Artikelnummer
 A linked local Item was retained; changed HERO fields require review.,Ein verknüpfter lokaler Artikel wurde beibehalten; geänderte HERO-Felder müssen geprüft werden.
 The original HERO article number changed; the existing Item code was preserved.,Die ursprüngliche HERO-Artikelnummer wurde geändert; die vorhandene ERPNext-Artikelnummer wurde beibehalten.
 Assignment for Task {0},Zuweisung für Aufgabe {0}
+Create the customer in ERPNext; Helpdesk lists it automatically.,Legen Sie den Kunden in ERPNext an; Helpdesk zeigt ihn automatisch.
+Change this value on the ERPNext Customer; Helpdesk shows it automatically.,Ändern Sie diesen Wert am ERPNext-Kunden; Helpdesk zeigt ihn automatisch.
+Rename the ERPNext Customer; Helpdesk follows automatically.,Benennen Sie den ERPNext-Kunden um; Helpdesk folgt automatisch.
+Delete the ERPNext Customer; Helpdesk follows automatically.,Löschen Sie den ERPNext-Kunden; Helpdesk folgt automatisch.
+Open the Helpdesk workspace when returning to the Desk,Beim Wechsel zum Desk den Helpdesk-Bereich öffnen
+Off: the Desk entry in Helpdesk's Apps menu opens the Desk's start page directly.,Aus: Der Eintrag „Desk“ im Apps-Menü des Helpdesks öffnet direkt die Startseite des Desks.

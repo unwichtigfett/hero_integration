@@ -80,6 +80,21 @@ class TestMappedUpdateSchema(TestCase):
         data=update.normalise_mapping(mapping('HeroDocuments'),SCHEMA)
         self.assertEqual(data['identity']['input_path'],'id');self.assertEqual(data['assignments'][0]['input_path'],'filename')
 
+    def test_hidden_source_and_condition_are_accepted_without_relaxing_protection(self):
+        data = mapping()
+        data['assignments'][0]['options']['when'] = {'field': 'enabled', 'equals': 1}
+        def field_provider(doctype, name):
+            values = {'fieldtype': 'Data', 'hidden': 1, 'read_only': 0, 'permlevel': 0, 'is_virtual': 0}
+            return SimpleNamespace(**values)
+        update.validate_sources(data, field_provider=field_provider)
+        for flag in ('read_only', 'permlevel', 'is_virtual'):
+            with self.subTest(flag=flag), self.assertRaisesRegex(update.MappedUpdateError, 'protected'):
+                update.validate_sources(data, field_provider=lambda dt, name: SimpleNamespace(
+                    fieldtype='Data', hidden=1, **{flag: 1}))
+        for fieldtype in ('Password', 'Code', 'Attach', 'Attach Image', 'Signature', 'Table', 'Table MultiSelect'):
+            with self.subTest(fieldtype=fieldtype), self.assertRaises(update.MappedUpdateError):
+                update.validate_sources(data, field_provider=lambda dt, name: SimpleNamespace(fieldtype=fieldtype, hidden=1))
+
     def test_protected_native_metadata_blocks(self):
         field=SimpleNamespace(fieldtype='Data',get=lambda key:1 if key=='read_only' else 0)
         with patch.object(update.frappe,'get_meta',return_value=SimpleNamespace(get_field=lambda _:field)):
