@@ -1,5 +1,6 @@
 """Helpdesk and CRM link to native ERPNext Customer/Project and shared Contact.
-Their ERPNext mirroring integrations stay disabled."""
+ERPNext owns the customer data: Helpdesk may list every ERPNext Customer through
+its linked HD Customer, but cannot create, change or delete one. CRM never creates Customers."""
 
 from __future__ import annotations
 
@@ -8,6 +9,10 @@ import json
 import frappe
 
 CUSTOMER_FIELD, PROJECT_FIELD = "erp_customer", "erp_project"
+HELPDESK_CUSTOMER_FIELD = "customer"
+# Set by Helpdesk while it applies an ERPNext-side rename or deletion to the linked record.
+HELPDESK_CASCADE_FLAG = "erpnext_hd_cascade_in_progress"
+ERPNEXT_OWNED_HD_CUSTOMER_FIELDS = ("customer_type", "image")
 REFERENCE_DOCTYPES = {
     # doctype: (insert_after, contact field, email field)
     "HD Ticket": ("customer", "contact", "raised_by"),
@@ -109,6 +114,33 @@ def fill_references(doc, method=None) -> None:
         customer = _customer_for(doc)
         if customer:
             doc.set(CUSTOMER_FIELD, customer)
+    _link_helpdesk_customer(doc)
+
+
+def _link_helpdesk_customer(doc) -> None:
+    """Show the ERPNext Customer in Helpdesk's own customer field, lists and statistics."""
+    customer = doc.get(CUSTOMER_FIELD)
+    if doc.doctype != "HD Ticket" or not customer or not doc.meta.has_field(HELPDESK_CUSTOMER_FIELD):
+        return
+    linked = frappe.get_all("HD Customer", filters={"erpnext_customer": customer}, pluck="name", limit=1)
+    if linked and doc.get(HELPDESK_CUSTOMER_FIELD) != linked[0]:
+        doc.set(HELPDESK_CUSTOMER_FIELD, linked[0])
+
+
+def link_existing_helpdesk_tickets() -> int:
+    """Idempotent: give existing tickets the HD Customer linked to their ERPNext Customer."""
+    if not (frappe.db.exists("DocType", "HD Customer") and frappe.get_meta("HD Ticket").has_field(CUSTOMER_FIELD)):
+        return 0
+    linked = dict(frappe.get_all("HD Customer", filters={"erpnext_customer": ["is", "set"]},
+                                 fields=["erpnext_customer", "name"], as_list=True))
+    changed = 0
+    for ticket in frappe.get_all("HD Ticket", filters={CUSTOMER_FIELD: ["in", list(linked)]},
+                                 fields=["name", CUSTOMER_FIELD, HELPDESK_CUSTOMER_FIELD]) if linked else []:
+        target = linked[ticket[CUSTOMER_FIELD]]
+        if ticket[HELPDESK_CUSTOMER_FIELD] != target:
+            frappe.db.set_value("HD Ticket", ticket["name"], HELPDESK_CUSTOMER_FIELD, target, update_modified=False)
+            changed += 1
+    return changed
 
 
 def _customer_for(doc) -> str | None:
@@ -132,11 +164,33 @@ def _customer_for(doc) -> str | None:
 
 
 def refuse_record_mirrors(doc, method=None) -> None:
-    """Reject Helpdesk/CRM integrations that mirror or create ERPNext records.
-    These apps must reference existing Customer/Project records."""
-    if doc.doctype == "ERPNext HD Settings" and doc.get("enabled"):
-        frappe.throw(frappe._("The Helpdesk ERPNext mirror stays disabled: tickets reference the ERPNext Customer "
-                              "and Project directly (HERO integration, option A)."))
+    """CRM must reference existing Customers. Helpdesk may list them: see protect_erpnext_customer."""
     if doc.doctype == "ERPNext CRM Settings" and doc.get("enabled") and doc.get("create_customer_on_status_change"):
         frappe.throw(frappe._("CRM must not create ERPNext Customers: customers are created in HERO and imported; "
                               "deals reference them (HERO integration, option A)."))
+
+
+def _helpdesk_lists_erpnext_customers() -> bool:
+    return bool(frappe.db.get_single_value("ERPNext HD Settings", "enabled"))
+
+
+def _applied_from_erpnext(doc) -> bool:
+    return bool(doc.flags.get("ignore_erpnext_sync") or frappe.flags.get(HELPDESK_CASCADE_FLAG))
+
+
+def protect_erpnext_customer(doc, method=None, *args, **kwargs) -> None:
+    """HD Customer validate/before_rename/on_trash: the linked ERPNext Customer is the only place to
+    create, rename, change or delete a customer; Helpdesk keeps the link, never an independent value."""
+    if not _helpdesk_lists_erpnext_customers() or _applied_from_erpnext(doc):
+        return
+    if method == "validate":
+        if doc.is_new():
+            if not doc.get("erpnext_customer"):
+                frappe.throw(frappe._("Create the customer in ERPNext; Helpdesk lists it automatically."))
+            return
+        if any(doc.has_value_changed(field) for field in ERPNEXT_OWNED_HD_CUSTOMER_FIELDS):
+            frappe.throw(frappe._("Change this value on the ERPNext Customer; Helpdesk shows it automatically."))
+    elif method == "before_rename":
+        frappe.throw(frappe._("Rename the ERPNext Customer; Helpdesk follows automatically."))
+    elif method == "on_trash" and doc.get("erpnext_customer"):
+        frappe.throw(frappe._("Delete the ERPNext Customer; Helpdesk follows automatically."))

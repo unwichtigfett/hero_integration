@@ -55,6 +55,20 @@ def fixture():
 
 
 class TestQueryAdapterV2(TestCase):
+    def test_hidden_target_is_accepted_but_other_restrictions_remain(self):
+        spec = rule('title', 'title', 'Task', 'subject')
+        for flag in (None, 'permlevel', 'read_only', 'is_virtual', 'fetch_from'):
+            values = dict(fieldtype='Data', hidden=1, permlevel=0, read_only=0, is_virtual=0, fetch_from='')
+            if flag:
+                values[flag] = 'parent.secret' if flag == 'fetch_from' else 1
+            metadata = NS(ensure_write=lambda dt: None, field=lambda dt, name: NS(**values))
+            with self.subTest(flag=flag):
+                if flag:
+                    with self.assertRaises(ValueError):
+                        qm.validate_v2_spec(spec, metadata, {'version': 2})
+                else:
+                    qm.validate_v2_spec(spec, metadata, {'version': 2})
+
     def test_options_participate_in_mapping_version(self):
         p = plan()
         changed = replace(p, adapter_options={'version': 2, 'transform_options': {'title': {'default': 'configured'}}})
@@ -655,8 +669,12 @@ class TestMappedChildTargetTypes(TestCase):
         metadata = NS(ensure_write=lambda dt: None, field=field)
         return spec, options, metadata
 
+    def test_hidden_child_fields_are_accepted(self):
+        spec, options, metadata = self.context({'hidden': 1})
+        qm.validate_v2_spec(spec, metadata, options)
+
     def test_every_protected_child_attribute_is_rejected(self):
-        for attribute, value in [('hidden', 1), ('permlevel', 1), ('read_only', 1), ('is_virtual', 1), ('fetch_from', 'parent.secret')]:
+        for attribute, value in [('permlevel', 1), ('read_only', 1), ('is_virtual', 1), ('fetch_from', 'parent.secret')]:
             spec, options, metadata = self.context({attribute: value})
             with self.subTest(attribute=attribute), self.assertRaises(ValueError):
                 qm.validate_v2_spec(spec, metadata, options)

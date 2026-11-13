@@ -14,8 +14,10 @@ after_install = "hero_integration.install.after_install"
 after_migrate = ["hero_integration.install.after_migrate"]
 before_uninstall = "hero_integration.services.desk_theme.remove_navy_theme"
 
-app_include_css = ["/assets/hero_integration/css/navy_theme.css"]
-app_include_js = ["/assets/hero_integration/js/navy_theme.js"]
+app_include_css = ["/assets/hero_integration/css/navy_theme.css", "/assets/hero_integration/css/site_logo.css"]
+app_include_js = ["/assets/hero_integration/js/navy_theme.js", "/assets/hero_integration/js/site_logo.js"]
+# The site's own logo (Navbar/Website Settings) is the top-left mark of the Desk.
+extend_bootinfo = ["hero_integration.services.branding.extend_bootinfo"]
 # Includes standalone CRM/Helpdesk templates as well as Desk and portal pages.
 after_request = ["hero_integration.services.site_indicator.after_request"]
 override_whitelisted_methods = {
@@ -91,8 +93,10 @@ doc_events["ToDo"] = {
 # Helpdesk and CRM keep plain references to ERPNext Customer/Project.
 for _doctype in ("HD Ticket", "CRM Lead", "CRM Deal"):
     doc_events[_doctype] = {"validate": "hero_integration.integrations.app_references.fill_references"}
-for _doctype in ("ERPNext HD Settings", "ERPNext CRM Settings"):
-    doc_events[_doctype] = {"validate": "hero_integration.integrations.app_references.refuse_record_mirrors"}
+doc_events["ERPNext CRM Settings"] = {"validate": "hero_integration.integrations.app_references.refuse_record_mirrors"}
+# Helpdesk lists ERPNext Customers; ERPNext stays the only place to create, change or delete them.
+doc_events["HD Customer"] = {event: "hero_integration.integrations.app_references.protect_erpnext_customer"
+                             for event in ("validate", "before_rename", "on_trash")}
 # Project IDs ending in -H are reserved for HERO.
 doc_events["Project"] = {
     "validate": "hero_integration.services.guards.protect_hero_project_ids",

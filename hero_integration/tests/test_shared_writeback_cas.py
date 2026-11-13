@@ -1,12 +1,33 @@
-"""No activation: lock, authorization, and revision regressions for shared drafts."""
+"""Lock, authorization, revision and hidden-field save regressions; no HERO calls."""
 import json
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from frappe.tests import IntegrationTestCase
+
 from hero_integration import api
 from hero_integration.tests.test_frontend_api_boundary import _Frappe, _Mapping
 from hero_integration.hero_integration.doctype.hero_graphql_mapping import hero_graphql_mapping as controller
+
+
+def address_update_fixture():
+    from graphql import build_schema, introspection_from_schema
+    from hero_integration.tests.test_mapped_update_exchange import content
+
+    schema = introspection_from_schema(build_schema("""
+        type Query { contacts: [Contact] }
+        type Contact { id: Int address: Address }
+        type Address { id: Int line_2: String }
+        input AddressInput { id: Int line_2: String }
+        input ContactInput { id: Int address: AddressInput }
+        type Mutation { update_contact(contact: ContactInput!): Contact }
+    """))
+    value = content()
+    value['assignments'][0].update(source={'doctype': 'Address', 'field': 'address_line2'},
+                                   input_path='contact.address.line_2', read_path='address.line_2')
+    value['required_readback'] = [{'input_path': 'contact.address.id', 'read_path': 'address.id'}]
+    return schema, value
 
 
 class TestSharedWritebackCAS(unittest.TestCase):
@@ -43,6 +64,68 @@ class TestSharedWritebackCAS(unittest.TestCase):
                 api.graphql_mapping_save("SNAPSHOT", "MUTATION", "update", "FRAPPE_TO_MUTATION",
                                          mapping.mapping_json, mapping_name=mapping.name, expected_revision=3)
         self.assertEqual(mapping.save_calls, 0)
+
+    def test_active_address_update_revalidates_after_source_is_hidden(self):
+        from copy import deepcopy
+        from hero_integration.services import mapped_update_v2 as update
+
+        schema, value = address_update_fixture()
+        snapshot = SimpleNamespace(name='snapshot', analysis_status='Validated', snapshot_json=json.dumps(schema),
+                                   schema_fingerprint='fp', source_instance='src')
+        class Document:
+            name = definition_id = 'existing-address-update'
+            schema_snapshot = 'snapshot'
+            source_instance = 'src'
+            mapping_json = json.dumps(value, ensure_ascii=False, sort_keys=True)
+            direction, operation_kind, operation_name = 'FRAPPE_TO_MUTATION', 'MUTATION', 'update_contact'
+            mapping_revision, status, modified_by = 4, 'Active', 'Administrator'
+            def is_new(self): return False
+            def get(self, key): return getattr(self, key, None)
+            def get_doc_before_save(self): return previous
+            def has_value_changed(self, key): return self.get(key) != previous.get(key)
+        doc = Document()
+        previous = deepcopy(doc)
+        field = SimpleNamespace(fieldtype='Data', hidden=0, read_only=0, permlevel=0, is_virtual=0)
+        def throw(message): raise ValueError(message)
+        fake = SimpleNamespace(only_for=lambda role: None, get_doc=lambda *args: snapshot,
+                               get_all=lambda *args, **kwargs: ['approved-contract'],
+                               get_meta=lambda dt: SimpleNamespace(get_field=lambda name: field),
+                               _dict=update.frappe._dict, _=lambda text: text, throw=throw,
+                               session=SimpleNamespace(user='Administrator'))
+        with patch.object(controller, 'frappe', fake), patch.object(update, 'frappe', fake), \
+             patch('hero_integration.services.mapping_draft_access.protect_managed_mapping'):
+            controller.HEROGraphQLMapping.validate(doc)
+            before = (doc.mapping_json, doc.content_hash, doc.mapping_revision)
+            field.hidden = 1  # effective metadata after a Property Setter was applied
+            controller.HEROGraphQLMapping.validate(doc)
+        self.assertEqual((doc.mapping_json, doc.content_hash, doc.mapping_revision), before)
+        self.assertEqual(doc.status, 'Active')
+
+    def test_controller_preserves_localized_errors_and_generic_parse_errors(self):
+        from hero_integration.services.mapped_update_v2 import MappedUpdateError
+        from hero_integration.services.localized_error import LocalizedError
+
+        def throw(message): raise RuntimeError(message)
+        snapshot = SimpleNamespace(analysis_status='Validated', snapshot_json='{}')
+        fake = SimpleNamespace(only_for=lambda role: None, get_doc=lambda *args: snapshot,
+                               _=lambda text: 'translated: ' + text, throw=throw)
+        doc = SimpleNamespace(direction='QUERY_TO_FRAPPE', operation_kind='QUERY', schema_snapshot='snapshot',
+                              status='Draft', is_new=lambda: True, mapping_json='{}')
+        generic = 'The GraphQL mapping must contain a valid JSON object and schema operation.'
+        cases = [(MappedUpdateError('Protected source {0}.', 'Address.address_line2'), 'Protected source Address.address_line2.'),
+                 (LocalizedError('Specific schema reason.'), 'Specific schema reason.'),
+                 (ValueError('internal parse detail'), generic), (TypeError('internal type detail'), generic)]
+        for error, expected in cases:
+            with self.subTest(error=type(error).__name__), patch.object(controller, 'frappe', fake), \
+                 patch.object(controller, 'catalog', side_effect=error), \
+                 patch('hero_integration.services.mapping_draft_access.protect_managed_mapping'), \
+                 self.assertRaisesRegex(RuntimeError, '^translated: ' + expected.replace('.', r'\.') + '$'):
+                controller.HEROGraphQLMapping.validate(doc)
+        doc.mapping_json = '{invalid json'
+        with patch.object(controller, 'frappe', fake), \
+             patch('hero_integration.services.mapping_draft_access.protect_managed_mapping'), \
+             self.assertRaisesRegex(RuntimeError, 'valid JSON object'):
+            controller.HEROGraphQLMapping.validate(doc)
 
     def test_existing_controller_advances_revision_for_status_and_draft_editor_only(self):
         previous = SimpleNamespace(status="Draft", modified_by="alice", mapping_revision=4, definition_id="id", direction="FRAPPE_TO_MUTATION", get=lambda key: None)
@@ -305,3 +388,35 @@ class TestMappingSaveContext(unittest.TestCase):
              patch.object(controller, 'lock_exchange_context'):
             with self.assertRaisesRegex(ValueError, 'source context changed'):
                 api._lock_mapping_save_context('SNAPSHOT', 'QUERY_TO_FRAPPE')
+
+
+class TestHiddenMappingSaveOnSite(IntegrationTestCase):
+    def test_active_address_mapping_saves_after_property_setter_hides_source(self):
+        import frappe
+        from frappe.custom.doctype.property_setter.property_setter import make_property_setter
+
+        schema, value = address_update_fixture()
+        frappe.set_user('Administrator')
+        self.addCleanup(frappe.clear_cache, doctype='Address')
+        make_property_setter('Address', 'address_line2', 'hidden', '0', 'Check')
+        snapshot = frappe.get_doc({'doctype': 'HERO GraphQL Schema Snapshot',
+                                   'snapshot_json': json.dumps(schema), 'source_instance': 'hidden-regression'}).insert()
+        service = frappe.get_doc({'doctype': 'HERO GraphQL Service', 'service_name': 'Hidden field regression',
+            'schema_snapshot': snapshot.name, 'operation_name': 'update_contact',
+            'query_document': 'mutation Update($contact: ContactInput!) { update_contact(contact: $contact) { id } }'}).insert()
+        frappe.get_doc({'doctype': 'HERO Mutation Contract', 'graphql_service': service.name,
+                        'mapping_json': '{}', 'status': 'Active'}).insert()
+        doc = frappe.get_doc({'doctype': 'HERO GraphQL Mapping', 'schema_snapshot': snapshot.name,
+            'operation_kind': 'MUTATION', 'operation_name': 'update_contact', 'direction': 'FRAPPE_TO_MUTATION',
+            'mapping_json': json.dumps(value), 'status': 'Draft'}).insert()
+        controller.lock_exchange_context(snapshot.source_instance, snapshot.name, doc.direction)
+        doc.status = 'Active'
+        doc.save()
+        doc.reload()
+        before = (doc.mapping_json, doc.content_hash, doc.mapping_revision)
+        make_property_setter('Address', 'address_line2', 'hidden', '1', 'Check')
+        self.assertEqual(frappe.get_meta('Address').get_field('address_line2').hidden, 1)
+        doc.save()
+        doc.reload()
+        self.assertEqual(doc.status, 'Active')
+        self.assertEqual((doc.mapping_json, doc.content_hash, doc.mapping_revision), before)

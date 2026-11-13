@@ -129,6 +129,25 @@ class TestContactPersistence(unittest.TestCase):
         self.assertEqual(snapshot, values)
         self.assertEqual(contact.save_calls, 1)
 
+    def test_mapped_name_removes_only_the_shifted_duplicate_middle_name(self):
+        customer = _Document(name="CUST-001", customer_primary_contact="CONT-001")
+        for first, middle, source, expected in (
+            ("Frau", "Ada", {"first_name": "Ada", "last_name": "Lovelace"}, None),
+            ("Frau", "Augusta", {"first_name": "Ada", "last_name": "Lovelace"}, "Augusta"),
+            ("Ada", "Ada", {"first_name": "Ada", "last_name": "Lovelace"}, "Ada"),
+            ("Frau", "Ada", {"first_name": "Ada"}, "Ada"),
+            ("Frau", "Ada", {"first_name": "Ada", "last_name": "Byron"}, "Ada"),
+        ):
+            with self.subTest(first=first, middle=middle, source=source):
+                contact = _Document(name="CONT-001", first_name=first, middle_name=middle,
+                    last_name="Lovelace", links=[_Document(link_doctype="Customer", link_name="CUST-001")],
+                    email_ids=[], phone_nos=[])
+                with _fake_frappe(contact):
+                    synchronize_primary_contact(customer, source)
+                    synchronize_primary_contact(customer, source)
+                self.assertEqual(contact.get("middle_name"), expected)
+                self.assertLessEqual(contact.save_calls, 1)
+
     def test_missing_optional_contact_values_do_not_overwrite_native_values(self):
         customer = _Document(name="CUST-001", customer_primary_contact="CONT-001")
         contact = _Document(
