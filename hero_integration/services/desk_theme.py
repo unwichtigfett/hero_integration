@@ -16,9 +16,16 @@ def switch_theme(theme: str):
     if not isinstance(theme, str) or theme not in THEMES:
         frappe.throw(frappe._("Unsupported Desk theme."))
     if theme == "Navy":
+        if _is_native_design():
+            frappe.throw(frappe._("Navy is available with the Custom Design package."))
         frappe.db.set_value("User", user, "desk_theme", theme)
     else:
         return _switch_standard_theme(theme)
+
+
+def _is_native_design():
+    from hero_integration.services.design_mode import get_design_mode
+    return get_design_mode() == "Native"
 
 
 def _switch_standard_theme(theme):

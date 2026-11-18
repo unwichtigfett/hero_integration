@@ -12,22 +12,16 @@ from hero_integration.services.frappe_writeback import (
 
 
 def schema():
-    return {"__schema": {"mutationType": {"name": "Mutation"}, "types": [
-        {"kind": "OBJECT", "name": "Mutation", "fields": [
-            {"name": "update_contact", "args": [{"name": "contact", "type": {"kind": "INPUT_OBJECT", "name": "CustomerInput"}}]},
-            {"name": "update_project_match", "args": [{"name": "project_match", "type": {"kind": "INPUT_OBJECT", "name": "ProjectMatchInput"}}]},
-        ]},
-        {"kind": "INPUT_OBJECT", "name": "CustomerInput", "inputFields": [
-            {"name": "id", "type": {"kind": "SCALAR", "name": "Int"}},
-            {"name": "email", "type": {"kind": "SCALAR", "name": "String"}},
-            {"name": "phone_mobile", "type": {"kind": "SCALAR", "name": "String"}},
-        ]},
-        {"kind": "INPUT_OBJECT", "name": "ProjectMatchInput", "inputFields": [
-            {"name": "id", "type": {"kind": "SCALAR", "name": "Int"}},
-            {"name": "partner_notes", "type": {"kind": "SCALAR", "name": "String"}},
-            {"name": "project_title", "type": {"kind": "SCALAR", "name": "String"}},
-        ]},
-    ]}}
+    from graphql import build_schema, introspection_from_schema
+    result = introspection_from_schema(build_schema(
+        'type Query { ping:String } type Mutation { update_contact(contact:CustomerInput):WriteResult '
+        'update_project_match(project_match:ProjectMatchInput):WriteResult } type WriteResult { id:Int } '
+        'input CustomerInput { id:Int email:String phone_mobile:String } '
+        'input ProjectMatchInput { id:Int partner_notes:String project_title:String }'))
+    types = result['__schema']['types']
+    first = ('Mutation', 'CustomerInput', 'ProjectMatchInput')
+    result['__schema']['types'] = [next(row for row in types if row['name']==name) for name in first] + [row for row in types if row['name'] not in first]
+    return result
 
 
 class TestFrappeWritebackContract(unittest.TestCase):

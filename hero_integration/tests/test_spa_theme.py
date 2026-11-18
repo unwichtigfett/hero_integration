@@ -9,6 +9,11 @@ from hero_integration.services import branding, site_indicator, spa_theme
 
 
 class TestSpaTheme(TestCase):
+    def setUp(self):
+        self.design_patch = patch("hero_integration.services.design_mode.get_design_mode", return_value="Custom")
+        self.design_patch.start()
+        self.addCleanup(self.design_patch.stop)
+
     def test_only_helpdesk_and_crm_paths_get_the_theme(self):
         for path in ("/helpdesk", "/helpdesk/tickets/1", "/crm", "/crm/deals"):
             html = spa_theme.markup(SimpleNamespace(path=path))
@@ -29,6 +34,10 @@ class TestSpaTheme(TestCase):
             desk = Response("<html><body>Desk</body></html>", mimetype="text/html")
             site_indicator.after_request(desk, SimpleNamespace(method="GET", path="/desk"))
             self.assertNotIn(spa_theme.MARKER, desk.get_data(as_text=True))
+
+    def test_native_design_does_not_inject_custom_palette_assets(self):
+        with patch("hero_integration.services.design_mode.get_design_mode", return_value="Native"):
+            self.assertNotIn("navy", spa_theme.markup(SimpleNamespace(path="/crm")))
 
 
 class TestBranding(TestCase):

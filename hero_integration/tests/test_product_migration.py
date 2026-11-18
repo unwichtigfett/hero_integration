@@ -9,8 +9,9 @@ from unittest.mock import patch
 
 from hero_integration.services import product_migration as pm
 from hero_integration.services import direct_runtime
+from hero_integration.tests.saved_reader_fixture import product_paging_read
 
-BUILTIN = direct_runtime.builtin_read("HeroProducts")
+BUILTIN = product_paging_read()
 
 ROW = {
     "product_id": "FSRmFpZSMAA", "nr": "PV-1001", "base_price": 145.55, "list_price": 199, "is_deleted": False,
@@ -73,11 +74,12 @@ class TestPaging(unittest.TestCase):
             return document
 
         def get_value(doctype, filters, field):
+            if doctype == 'DefaultValue': return saved.get(filters['defkey'])
             return next((name for (kind, name), values in documents.items()
                          if kind == doctype and all(values.get(key) == value for key, value in filters.items())), None)
 
         fake = SimpleNamespace(
-            db=SimpleNamespace(get_default=saved.get, set_default=lambda key, value: saved.__setitem__(key, value),
+            db=SimpleNamespace(get_default=lambda key:None, set_default=lambda key, value: saved.__setitem__(key, value),
                                exists=lambda doctype, name: (doctype, name) in documents,
                                get_value=get_value, commit=lambda: None, rollback=documents.clear),
             get_doc=get_doc, utils=SimpleNamespace(now_datetime=lambda: 'now'), log_error=lambda **kwargs: None)
@@ -111,7 +113,7 @@ class TestPaging(unittest.TestCase):
     def test_sync_walks_all_pages_and_finishes(self):
         saved, seen = {}, []
         fake = SimpleNamespace(
-            db=SimpleNamespace(get_default=lambda k: saved.get(k), set_default=lambda k, v: saved.__setitem__(k, v),
+            db=SimpleNamespace(get_default=lambda key:None, get_value=lambda dt,filters,field:saved.get(filters['defkey']), set_default=lambda k, v: saved.__setitem__(k, v),
                                commit=lambda: None, rollback=lambda: None),
             utils=SimpleNamespace(now_datetime=lambda: "now"), log_error=lambda **k: None)
         client = _Client(1200)
@@ -126,7 +128,7 @@ class TestPaging(unittest.TestCase):
 
     def test_short_server_pages_do_not_truncate_the_import(self):
         saved, seen = {}, []
-        fake = SimpleNamespace(db=SimpleNamespace(get_default=saved.get, set_default=lambda k, v: saved.__setitem__(k, v),
+        fake = SimpleNamespace(db=SimpleNamespace(get_default=lambda key:None, get_value=lambda dt,filters,field:saved.get(filters['defkey']), set_default=lambda k, v: saved.__setitem__(k, v),
             commit=lambda: None, rollback=lambda: None), utils=SimpleNamespace(now_datetime=lambda: 'now'),
             log_error=lambda **k: None)
         client = _Client(5, page_cap=2)
@@ -139,7 +141,7 @@ class TestPaging(unittest.TestCase):
 
     def test_repeated_page_stops_before_a_second_write(self):
         saved = {}
-        fake = SimpleNamespace(db=SimpleNamespace(get_default=saved.get, set_default=lambda k, v: saved.__setitem__(k, v),
+        fake = SimpleNamespace(db=SimpleNamespace(get_default=lambda key:None, get_value=lambda dt,filters,field:saved.get(filters['defkey']), set_default=lambda k, v: saved.__setitem__(k, v),
             commit=lambda: None, rollback=lambda: None), utils=SimpleNamespace(now_datetime=lambda: 'now'),
             log_error=lambda **k: None)
         with patch.object(pm, 'frappe', fake), patch.object(pm, '_links', return_value={}), \
@@ -265,7 +267,7 @@ class TestManagedPrices(unittest.TestCase):
             pm._links("source-b")
         self.assertEqual(calls[0]["source_instance"], "source-b")
         saved = {pm.STATE_KEY: json.dumps({"source_instance": "source-b", "offset": 500})}
-        db = SimpleNamespace(get_default=saved.get, set_default=lambda k, v: saved.__setitem__(k, v),
+        db = SimpleNamespace(get_default=lambda key:None, get_value=lambda dt,filters,field:saved.get(filters['defkey']), set_default=lambda k, v: saved.__setitem__(k, v),
                              commit=lambda: None, rollback=lambda: None)
         client = _Client(10)
         with patch.object(pm, "frappe", SimpleNamespace(db=db, utils=SimpleNamespace(now_datetime=lambda: "now"))), \

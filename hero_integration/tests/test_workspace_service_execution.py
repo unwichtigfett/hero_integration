@@ -23,27 +23,24 @@ def _non_null(ref):
     return {"kind": "NON_NULL", "name": None, "ofType": ref}
 
 
-SCHEMA = {"__schema": {"queryType": {"name": "Query"}, "mutationType": {"name": "Mutation"}, "types": [
-    {"kind": "OBJECT", "name": "Query", "fields": [
-        {"name": "contact", "args": [{"name": "id", "type": _non_null(_named("SCALAR", "ID")), "defaultValue": None},
-                                     {"name": "lang", "type": _named("SCALAR", "String"), "defaultValue": None}],
-         "type": _named("OBJECT", "Contact")},
-        {"name": "version", "args": [], "type": _named("SCALAR", "String")},
-    ]},
-    {"kind": "OBJECT", "name": "Mutation", "fields": [
-        {"name": "update_contact", "args": [{"name": "input", "type": _non_null(_named("INPUT_OBJECT", "ContactInput")), "defaultValue": None}],
-         "type": _named("OBJECT", "Contact")}]},
-    {"kind": "OBJECT", "name": "Contact", "fields": [{"name": "id", "args": [], "type": _non_null(_named("SCALAR", "ID"))},
-                                                    {"name": "email", "args": [], "type": _named("SCALAR", "String")}]},
-    {"kind": "INPUT_OBJECT", "name": "ContactInput", "inputFields": [{"name": "email", "type": _named("SCALAR", "String"), "defaultValue": None}]},
-    {"kind": "SCALAR", "name": "ID"}, {"kind": "SCALAR", "name": "String"},
-]}}
+from pathlib import Path
+
+SCHEMA = json.loads((Path(__file__).with_name('fixtures') / 'workspace_service_schema.json').read_text())
+
+
+def snapshot_fixture():
+    from hero_integration.services.graphql_graph import analyze_snapshot
+    raw = SCHEMA
+    return SimpleNamespace(name="SNAPSHOT", schema_fingerprint=analyze_snapshot(raw).fingerprint,
+        snapshot_json=raw, source_instance="source", analysis_status="Validated")
+
+
 QUERY = "query Contact($id: ID!) { contact(id: $id) { id email } }"
 
 
 class _Service:
     def __init__(self, document=QUERY, status="Validated", revision=3):
-        self.name, self.schema_snapshot, self.schema_fingerprint = "HERO-GQL-00001", "SNAPSHOT", "fp"
+        self.name, self.schema_snapshot, self.schema_fingerprint = "HERO-GQL-00001", "SNAPSHOT", snapshot_fixture().schema_fingerprint
         self.service_name, self.operation_name, self.query_document = "Contact", "Contact", document
         self.service_revision, self.status, self.validation_summary, self.provenance = revision, status, "", ""
         self.saves = 0
@@ -82,9 +79,9 @@ class _Frappe:
 class TestWorkspaceServiceExecution(unittest.TestCase):
     def setUp(self):
         self.frappe = _Frappe(_Service())
-        self.snapshot = SimpleNamespace(name="SNAPSHOT", schema_fingerprint="fp")
+        self.snapshot = snapshot_fixture()
         self.patches = [patch.object(api, "frappe", self.frappe),
-                        patch.object(api, "_validated_snapshot", MagicMock(return_value=(self.snapshot, SCHEMA))),
+                        patch.object(api, "_validated_snapshot", MagicMock(return_value=(self.snapshot, self.snapshot.snapshot_json))),
                         patch.object(api, "_mutation_execution_state", MagicMock(return_value={"mutation_execution_enabled": False}))]
         for patcher in self.patches:
             patcher.start()
@@ -109,13 +106,13 @@ class TestWorkspaceServiceExecution(unittest.TestCase):
         self.assertEqual(result["query_detail"]["required_variables"], ["id"])
         self.assertEqual(self.frappe.service.status, "Validated")
         self.frappe.service.query_document = "{ contact { unknown } }"
-        with self.assertRaisesRegex(ValueError, "Required argument|does not exist"):
+        with self.assertRaisesRegex(ValueError, "is required|Cannot query field"):
             api.workspace_service_validate("SNAPSHOT", query_id="HERO-GQL-00001", expected_revision=3)
 
     def test_unsaved_query_preview_validates_but_cannot_execute(self):
         result = api.workspace_service_validate("SNAPSHOT", payload_json=json.dumps({"name": "x", "query": QUERY}))
         self.assertFalse(result["can_execute"])
-        with self.assertRaisesRegex(ValueError, "does not exist"):
+        with self.assertRaisesRegex(ValueError, "Cannot query field"):
             api.workspace_service_validate("SNAPSHOT", payload_json=json.dumps({"name": "x", "query": "{ nope }"}))
 
     # -- execution --------------------------------------------------------------
@@ -123,7 +120,8 @@ class TestWorkspaceServiceExecution(unittest.TestCase):
         result = self.execute()
         self.assertEqual(result["status"], "OK")
         self.assertEqual(result["data"], {"contact": {"id": "7", "email": "a@b"}})
-        self.client.query.assert_called_once_with(QUERY, {"id": "7"})
+        from graphql import parse, print_ast
+        self.client.query.assert_called_once_with(print_ast(parse(QUERY)), {"id": "7"})
         self.assertEqual(self.client_class.call_args.kwargs["max_retries"], 0)
         self.assertEqual(self.frappe.service.saves, 0, "execution must not persist anything")
 
@@ -132,8 +130,8 @@ class TestWorkspaceServiceExecution(unittest.TestCase):
             (lambda: setattr(self.frappe.service, "status", "Draft"), {}, "Validate the saved query"),
             (lambda: None, {"revision": 2}, "changed"),
             (lambda: setattr(self.frappe.service, "schema_fingerprint", "old"), {}, "another schema fingerprint"),
-            (lambda: None, {"variables": "{}"}, "Required query variable"),
-            (lambda: None, {"variables": '{"id": 7.5}'}, "ID"),
+            (lambda: None, {"variables": "{}"}, "declared types"),
+            (lambda: None, {"variables": '{"id": 7.5}'}, "declared types"),
             (lambda: None, {"variables": "not json"}, "JSON"),
             (lambda: setattr(self.frappe.service, "query_document", "mutation M { update_contact(input: {}) { id } }"), {},
              "MUTATION_EXECUTION_DISABLED"),
@@ -145,6 +143,26 @@ class TestWorkspaceServiceExecution(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, message):
                     self.execute(**kwargs)
         self.client.query.assert_not_called()
+
+    def test_execution_rejects_corrupt_snapshot_before_transport(self):
+        self.snapshot.snapshot_json = {"__schema": {}}
+        with self.assertRaises(ValueError):
+            self.execute()
+        self.client_class.assert_not_called()
+
+    def test_execution_preserves_fragments_aliases_and_default_variables(self):
+        self.frappe.service.query_document = ('query Contact($id:ID!, $show:Boolean=true) '
+            '{ selected:contact(id:$id) { ...Fields email @include(if:$show) } } '
+            'fragment Fields on Contact { id }')
+        self.frappe.service.status = 'Draft'
+        validated = api.workspace_service_validate('SNAPSHOT', query_id='HERO-GQL-00001', expected_revision=3)
+        self.assertTrue(validated['can_execute'])
+        self.assertEqual(self.frappe.service.status, 'Validated')
+        self.execute()
+        document, variables = self.client.query.call_args.args
+        self.assertIn('...Fields', document)
+        self.assertIn('selected: contact', document)
+        self.assertEqual(variables, {'id':'7', 'show':True})
 
     def test_permission_is_checked_before_any_lookup(self):
         self.frappe.denied = True
@@ -178,7 +196,7 @@ class TestWorkspaceServiceExecution(unittest.TestCase):
         draft = api.workspace_analyzer_service_draft("SNAPSHOT", "operation:query:contact")
         self.assertEqual(draft["operation_kind"], "query")
         self.assertEqual(draft["required_variables"], [{"name": "id", "type": "ID!"}])
-        self.assertEqual(draft["payload"]["query"], "query Contact($id: ID!) {\n  contact(id: $id) { __typename }\n}")
+        self.assertEqual(draft["payload"]["query"], "query Contact($id: ID!) {\n  contact(id: $id) {\n    __typename\n  }\n}")
         self.assertEqual(api.workspace_analyzer_service_draft("SNAPSHOT", "operation:query:version")["payload"]["query"],
                          "query Version {\n  version\n}")
         with self.assertRaisesRegex(ValueError, "Select a Query or Mutation"):
@@ -188,7 +206,7 @@ class TestWorkspaceServiceExecution(unittest.TestCase):
 
     def test_analyzer_save_records_provenance_and_keeps_the_selected_operation(self):
         draft = api.workspace_analyzer_service_draft("SNAPSHOT", "operation:mutation:update_contact")
-        self.assertEqual(draft["payload"]["query"], "mutation UpdateContact($input: ContactInput!) {\n  update_contact(input: $input) { __typename }\n}")
+        self.assertEqual(draft["payload"]["query"], "mutation UpdateContact($input: ContactInput!) {\n  update_contact(input: $input) {\n    __typename\n  }\n}")
         saved = api.workspace_analyzer_service_save("SNAPSHOT", "operation:mutation:update_contact", json.dumps(draft["payload"]))
         self.assertEqual((saved["query"]["provenance"], saved["query"]["service_kind"]), ("API Analyzer", "mutation"))
         self.assertEqual(self.frappe.created[-1].status, "Draft")

@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Project extension synthetic browser contract</title>
+<style>
+* { box-sizing: border-box; }
+body { margin: 0; padding: 16px; font: 14px system-ui; color: #26313c; background: #f6f8fa; }
+main { max-width: 1140px; margin: auto; }
+nav { display: flex; flex-wrap: wrap; gap: 10px; margin: 16px 0; }
+button, input, select, a { font: inherit; }
+.btn { border: 1px solid #d3dbe2; border-radius: 6px; background: #fff; color: #26313c; cursor: pointer; padding: 7px 10px; }
+.btn-primary { background: #215ba9; color: white; }
+.form-control { padding: 8px; border: 1px solid #d3dbe2; border-radius: 6px; }
+.native-fields { border: 1px solid #d3dbe2; background: white; padding: 16px; margin: 16px 0; }
+.native-fields label { display: block; }
+.native-fields input { display: block; width: 100%; min-width: 0; }
+.layout-main { display: flex; gap: 12px; }
+.layout-main-section-wrapper { flex: 1 1 auto; width: calc(100% - 220px); min-width: 0; }
+.layout-side-section { flex: 0 0 220px; width: 220px; padding: 16px; background: white; }
+[hidden] { display: none !important; }
+</style>
+<div id="workspace-navigation">Workspace navigation — retained</div>
+<div id="native-page"><div id="native-toolbar"></div><div class="layout-main">
+<div class="layout-main-section-wrapper"><main id="form"><nav id="tabs" class="form-tabs-list" aria-label="Project views"></nav><div id="panes" class="form-tab-content"></div></main></div>
+<aside id="form-sidebar" class="layout-side-section right">Native Project form sidebar</aside>
+</div></div>
+<output id="result"></output>
+<script>
+const dictionary = {
+    Documents: "Dokumente", Images: "Bilder", Appointments: "Termine", Tasks: "Aufgaben",
+    Assignments: "Zuweisungen", Advanced: "Erweitert", "Project and Customer": "Projekt und Kunde",
+    "Customer Primary Contact": "Hauptkontakt des Kunden", Refresh: "Aktualisieren",
+    "New Task": "Neue Aufgabe", "Add attachment": "Anhang hinzufügen",
+    "Project site address": "Projektanschrift", "Project sidebar": "Projekt-Seitenleiste",
+};
+window.__ = (value, params = []) => (dictionary[value] || value).replace(/\{(\d+)\}/g,
+    (match, index) => index < params.length ? String(params[index]) : match);
+let events, active = "__details";
+const routes = [], calls = [], buttons = new Map();
+const fields = ["__details", "custom_project_documents_tab", "custom_project_images_tab",
+    "more_info_tab", "connections_tab", "monitor_progress_tab", "costing_tab"];
+const nativeTabs = fields.map(fieldname => {
+    const wrapper = document.createElement("div");
+    wrapper.className = "tab-pane";
+    wrapper.hidden = fieldname !== active;
+    const native = document.createElement("section");
+    native.className = "native-fields";
+    const label = document.createElement("label");
+    label.textContent = "Native field — retained";
+    const control = document.createElement("input"); control.value = "Synthetic native data";
+    control.disabled = fieldname === "costing_tab";
+    control.required = fieldname === "__details";
+    control.dataset.nativeField = fieldname === "__details" ? "project_name"
+        : fieldname === "monitor_progress_tab" ? "custom_project_responsible" : fieldname;
+    label.append(control); native.append(label); wrapper.append(native);
+    if (fieldname === "__details") {
+        const customer = document.createElement("label"); customer.textContent = "Customer";
+        const input = document.createElement("input"); input.dataset.nativeField = "customer";
+        customer.append(input); native.append(customer);
+    }
+    document.getElementById("panes").append(wrapper);
+    const tab = document.createElement("span"), link = document.createElement("button");
+    link.className = "nav-link btn"; tab.append(link);
+    link.addEventListener("click", () => {
+        active = fieldname;
+        for (const item of nativeTabs) item.wrapper[0].hidden = item.df.fieldname !== active;
+        events.on_tab_change(frm);
+    });
+    document.getElementById("tabs").append(tab);
+    return {df: {fieldname}, wrapper: [wrapper], tab_link: [tab], is_active: () => fieldname === active};
+});
+window.frappe = {
+    ui: {form: {on: (doctype, handlers) => { events = handlers; }}},
+    get_route: () => ["Form", "Project", "SYNTHETIC-1"],
+    datetime: {str_to_user: value => String(value), get_today: () => "2026-11-16"},
+    model: {can_read: () => true, can_create: () => true},
+    set_route: (...args) => routes.push(args), new_doc: () => {},
+    call: async request => {
+        calls.push(request);
+        if (request.method.endsWith("project_pdf_preview.get_page")) return {message: {
+            page: request.args.page, page_count: 2,
+            data_url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=",
+        }};
+        if (request.method.endsWith(".get_address_context")) return {project: "SYNTHETIC-1",
+            message: {project: "SYNTHETIC-1", state: "ready", address: "Synthetic project site address"}};
+        const result = {project: "SYNTHETIC-1", modified: "2026-11-16 12:00:00",
+            section: request.args.section, state: "ready", rows: [], next_start: null,
+            categories: request.args.section === "images" ? ["Dach", "Elektro"] : []};
+        if (request.args.section === "details") result.context = {
+            customer: {name: "CUSTOMER-1", customer_name: "Synthetic customer"},
+            address: {address_line1: "Example Street", city: "Example City"},
+            contact: {name: "CONTACT-1", first_name: "Example", email_id: "example@example.invalid"},
+        };
+        if (request.args.section === "documents") result.rows = [
+            {name: "FILE-1", file_name: "Synthetic PDF attachment", file_type: "PDF", is_private: 1,
+                file_url: "/private/files/synthetic.pdf", modified: "v1"},
+        ];
+        if (request.args.section === "images") result.rows = [
+            {name: "FILE-2", file_name: "Synthetic pixel image", file_type: "PNG",
+                file_url: "/private/files/pixel.png", category: "Dach", modified: "v1"},
+        ];
+        if (request.args.section === "tasks") result.rows = [
+            {name: "TASK-1", subject: "A realistically long synthetic task title for narrow layouts",
+                status: "Working", exp_end_date: "2026-11-20", _assign: '["example@example.invalid"]', progress: 35},
+        ];
+        if (request.args.section === "appointments") result.rows = [
+            {name: "EVENT-1", subject: "Synthetic visit", starts_on: "2026-11-16 08:00:00", ends_on: "2026-11-16 09:00:00",
+                participants: [{doctype: "User", name: "example@example.invalid"}], status: "Open"},
+        ];
+        if (request.args.section === "assignments") result.rows = [
+            {name: "TODO-1", description: "<b>Synthetic assignment</b>", allocated_to: "example@example.invalid"},
+        ];
+        return {message: result};
+    },
+};
+const frm = {
+    doc: {name: "SYNTHETIC-1", project_name: "Synthetic project — long title for responsive checks",
+        status: "Open", priority: "High", modified: "2026-11-16 12:00:00"},
+    layout: {wrapper: [document.getElementById("form")], tabs: nativeTabs},
+    page: {wrapper: [document.getElementById("native-page")], sidebar: [document.getElementById("form-sidebar")]},
+    fields_dict: {custom_project_responsible: {}},
+    set_query: (name, query) => { frm.responsible_query = query; },
+    add_custom_button: (label, action) => {
+        const element = document.createElement("button"); element.className = "btn"; element.textContent = label;
+        element.addEventListener("click", action); document.getElementById("native-toolbar").append(element);
+        const item = {element, attr: (name, value) => { element.setAttribute(name, value); return item; }};
+        buttons.set(label, item); return item;
+    },
+    remove_custom_button: label => { buttons.get(label)?.element.remove(); buttons.delete(label); },
+    is_new: () => false, is_dirty: () => false, has_perm: () => true,
+    attachments: {max_reached: () => false, new_attachment: () => {}}, assign_to: {add: () => {}},
+};
+</script>
+<script src="/workspace.js"></script>
+<script>
+window.addEventListener("load", async () => {
+    const checks = [];
+    const check = (name, condition) => { checks.push({name, pass: Boolean(condition)}); };
+    const flush = async () => { for (let i = 0; i < 15; i++) await Promise.resolve(); };
+    try {
+        const originalControls = [...document.querySelectorAll(".native-fields input")];
+        const nameField = document.querySelector('[data-native-field="project_name"]');
+        nameField.value = "Unsaved native project name"; nameField.focus();
+        events.refresh(frm); await flush();
+        // Wait for the optional stylesheet before measuring actual layout.
+        const css = document.getElementById("hero-project-workspace-css");
+        if (!css.sheet) await new Promise((resolve, reject) => {
+            css.addEventListener("load", resolve); css.addEventListener("error", reject);
+        });
+        check("seven panels", document.querySelectorAll("[data-project-panel]").length === 7);
+        check("native fields retained", originalControls.every(element => element.isConnected));
+        check("native readonly retained", nativeTabs[6].wrapper[0].querySelector("input").disabled);
+        check("native required and draft retained", nameField.required && nameField.value === "Unsaved native project name");
+        check("focus retained", document.activeElement === nameField);
+        const sidebarButton = buttons.get("Projekt-Seitenleiste").element;
+        sidebarButton.click();
+        check("right sidebar collapsed", getComputedStyle(frm.page.sidebar[0]).display === "none");
+        check("workspace navigation retained", document.getElementById("workspace-navigation").getBoundingClientRect().height > 0);
+        sidebarButton.click();
+        check("right sidebar expanded", getComputedStyle(frm.page.sidebar[0]).display !== "none");
+        sidebarButton.click();
+        const contexts = [...document.querySelectorAll(".hp-context-grid > article")];
+        check("exactly address and contact cards", contexts.length === 2 && contexts[0].dataset.projectContext === "address" && contexts[1].dataset.projectContext === "contact");
+        const addressRect = contexts[0].getBoundingClientRect(), contactRect = contexts[1].getBoundingClientRect();
+        check("address left of contact or stacked on narrow view", window.innerWidth > 600
+            ? addressRect.left < contactRect.left && Math.abs(addressRect.top-contactRect.top) < 2
+            : addressRect.top < contactRect.top);
+        check("project address label", contexts[0].querySelector("h4").textContent === "Projektanschrift");
+        const heading = document.querySelector('[data-project-panel="details"] .hp-panel-heading');
+        check("no tab to heading gap", Math.abs(heading.getBoundingClientRect().top-document.getElementById("tabs").getBoundingClientRect().bottom) <= 2);
+        check("native responsible field query", frm.responsible_query().filters.user_type === "System User");
+        for (const [index, key] of ["details", "documents", "images", "appointments", "tasks", "assignments", "advanced"].entries()) {
+            nativeTabs[index].tab_link[0].querySelector("button").click(); await flush();
+            const panel = document.querySelector(`[data-project-panel="${key}"]`);
+            check(key + " rendered", panel.getBoundingClientRect().height > 0 && !panel.textContent.includes("could not be loaded"));
+            check(key + " fits viewport", document.documentElement.scrollWidth <= window.innerWidth + 1);
+        }
+        nativeTabs[4].tab_link[0].querySelector("button").click(); await flush();
+        const panel = document.querySelector('[data-project-panel="tasks"]');
+        const action = [...panel.querySelectorAll("button")].find(button => button.textContent === "Board");
+        action.click(); check("board cards", panel.querySelectorAll(".hp-board .hp-card").length === 1);
+        const input = panel.querySelector("input"); input.focus();
+        check("keyboard focus", document.activeElement === input);
+        check("localized tab", nativeTabs[3].tab_link[0].textContent === "Termine");
+        check("read-only RPCs", calls.every(call => call.type === "GET"));
+        check("no implicit navigation", routes.length === 0);
+        nativeTabs[2].tab_link[0].querySelector("button").click(); await flush();
+        const image = document.querySelector(".hp-image-tile img");
+        if (image && !image.complete) await new Promise(resolve => {
+            image.addEventListener("load", resolve); image.addEventListener("error", resolve);
+        });
+        check("raster image decoded", image && image.complete && image.naturalWidth > 0);
+        nativeTabs[1].tab_link[0].querySelector("button").click(); await flush();
+        const pdfPanel = document.querySelector('[data-project-panel="documents"]');
+        const pdf = pdfPanel.querySelector(".hp-pdf-raster");
+        if (pdf && !pdf.complete) await new Promise(resolve => {
+            pdf.addEventListener("load", resolve); pdf.addEventListener("error", resolve);
+        });
+        check("PDF raster decoded without browser PDF viewer", pdf && pdf.complete && pdf.naturalWidth > 0);
+        check("no PDF plug-in embedding", pdfPanel.querySelectorAll("iframe,object,embed").length === 0);
+        [...pdfPanel.querySelectorAll("button")].find(button => button.textContent === "Next page").click();
+        await flush();
+        check("PDF next page", pdfPanel.textContent.includes("Page 2 of 2"));
+    } catch (error) { checks.push({name: String(error), pass: false}); }
+    document.getElementById("result").textContent = JSON.stringify({width: window.innerWidth, checks});
+    document.getElementById("result").hidden = true;
+});
+</script>
+</html>

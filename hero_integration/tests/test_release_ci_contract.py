@@ -30,7 +30,7 @@ class TestReleaseCiGate(unittest.TestCase):
                     case = ET.SubElement(suite, 'testcase', classname=f'synthetic.{phase}', name=f'test_{i}')
                     if i == 0 and outcome:
                         ET.SubElement(case, outcome)
-                (root / f'{phase}-fixture.xml').write_bytes(ET.tostring(suite))
+                (root / f'{phase}-fixture.xml').write_bytes(ET.tostring(suite, encoding='utf-8', xml_declaration=True))
             if stale_site:
                 (root / 'site.xml').write_text('<testsuite/>')
             (root / 'env/bin').mkdir(parents=True)
@@ -52,7 +52,7 @@ bench() {
     [[ "$HERO_CI_TEST_SITE" == "$SITE" ]] || return 8
     return "${FIXTURE_STATUS:-0}"
   fi
-  printf '%s %s %s\\n' "$HERO_RUN_RESERVATION_TEST_SITE" "$HERO_WRITEBACK_SOURCE_TEST_SITE" "$HERO_CHECKPOINT_TEST_SITE" >> "$TRACE"
+  printf '%s %s %s\\n' "${HERO_RUN_RESERVATION_TEST_SITE:-}" "${HERO_WRITEBACK_SOURCE_TEST_SITE:-}" "${HERO_CHECKPOINT_TEST_SITE:-}" >> "$TRACE"
   printf 'SYNTHETIC_SITE_DIAGNOSTIC\\n'
   for (( i=0; i<SITE_COUNT; i++ )); do printf ' ✔ synthetic_test\\n'; done
   if [[ "$STALE_SITE" != 1 ]]; then cp "$HERO_TEST_LOG_DIR/site-fixture.xml" "${@: -1}"; fi
@@ -132,7 +132,7 @@ printf 'GATE_PASSED\\n'
         self.assertIn('hero-ci.localhost hero-ci.localhost hero-ci.localhost', trace)
 
     def test_both_providers_use_the_shared_gate(self):
-        for path in ('ci/github-install-test.sh', 'ci/standard-install-test.sh'):
+        for path in ('ci/github-install-test.sh', 'ci/bench-install-test.sh'):
             source = (ROOT / path).read_text()
             self.assertIn('/ci/test-gates.sh"', source)
             self.assertIn('run_hero_test_gates', source)
@@ -140,22 +140,36 @@ printf 'GATE_PASSED\\n'
 
     def test_manual_no_hero_selection_cannot_pass_a_maintained_branch_gate(self):
         source = (ROOT / 'ci/github-install-test.sh').read_text().split('cd /tmp', 1)[0]
-        for branch in ('hero_int_dev', 'hero_int_1.0', 'diagnostic-feature'):
+        for branch in ('hero_int_dev', 'hero_int_1.0', 'hero_int_dev_opt', 'hero_int_opt', 'diagnostic-feature'):
             with self.subTest(branch=branch):
                 env = dict(os.environ, GITHUB_WORKSPACE=str(ROOT), DB_ROOT_PASSWORD='synthetic',
                            INSTALL_APPS='none', GITHUB_REF_NAME=branch, GITHUB_BASE_REF='')
                 result = subprocess.run(['bash', '-c', source], env=env, text=True, capture_output=True)
                 self.assertEqual(result.returncode, 0 if branch == 'diagnostic-feature' else 2)
 
-    def test_workflows_cover_both_maintained_branches(self):
-        github = (ROOT / '.github/workflows/ci.yml').read_text()
-        before_jobs = github.split('\njobs:', 1)[0]
-        self.assertIn('branches: [hero_int_dev, hero_int_1.0]', before_jobs)
-        self.assertIn('      - hero_int_1.0\n', before_jobs)
-        woodpecker = (ROOT / '.woodpecker/standard.yml').read_text()
-        self.assertIn('branch: [hero_int_dev, hero_int_1.0]', woodpecker)
-        update = woodpecker.split('  - name: update-test-site\n', 1)[1].split('  - name: install-test', 1)[0]
-        self.assertIn('depends_on: [install-test]', update)
+    def test_workflows_preserve_independent_standard_and_opt_lanes(self):
+        import yaml
+
+        github = yaml.load((ROOT / '.github/workflows/ci.yml').read_text(), Loader=yaml.BaseLoader)
+        expected = ['hero_int_dev_opt', 'hero_int_opt']
+        self.assertTrue(all(branch in github['on']['push']['branches'] for branch in expected))
+        self.assertTrue(all(branch in github['on']['pull_request']['branches'] for branch in expected))
+        woodpecker = yaml.safe_load((ROOT / '.woodpecker/opt.yml').read_text())
+        self.assertEqual(woodpecker['when'], [{'event': ['manual', 'push'], 'branch': expected}])
+        steps = {step['name']: step for step in woodpecker['steps']}
+        self.assertNotIn('update-test-site', steps)
+        self.assertNotIn('promote', steps)
+        self.assertEqual(steps['promote-opt']['depends_on'], ['install-test'])
+        self.assertEqual(steps['promote-opt']['when'][0]['event'], 'manual')
+        self.assertIn('RELEASE_APPROVED', steps['promote-opt']['when'][0]['evaluate'])
+        standard = yaml.safe_load((ROOT / '.woodpecker/standard.yml').read_text())
+        self.assertEqual(standard['when'], [{'event': ['manual', 'push'], 'branch': ['hero_int_dev', 'hero_int_release', 'hero_int_1.0', 'integration/*']}])
+        stdsteps = {step['name']: step for step in standard['steps']}
+        self.assertEqual(stdsteps['promote']['depends_on'], ['install-test'])
+        self.assertEqual(stdsteps['update-test-site']['when'][0]['event'], 'manual')
+        self.assertIn('DEPLOY_APPROVED', stdsteps['update-test-site']['when'][0]['evaluate'])
+        for branch in ('hero_int_dev', 'hero_int_1.0'):
+            self.assertIn(branch, github['on']['push']['branches'])
 
     def test_company_setup_handles_bench_zero_output_and_query_failures(self):
         source = (ROOT / 'ci/github-install-test.sh').read_text()
@@ -187,18 +201,20 @@ class TestArchitectureWorkflowIsolation(unittest.TestCase):
         import yaml
 
         configs = list((ROOT / '.woodpecker').glob('*.yml'))
-        self.assertEqual([p.name for p in configs], ['standard.yml'])
+        self.assertEqual(sorted(p.name for p in configs), ['opt.yml', 'standard.yml'])
         self.assertFalse((ROOT / '.woodpecker.yml').exists())
-        steps = {step['name']: step for step in yaml.safe_load(configs[0].read_text())['steps']}
-        self.assertIn('ci/standard-install-test.sh', '\n'.join(steps['install-test']['commands']))
-        self.assertTrue((ROOT / 'ci/standard-install-test.sh').is_file())
-        self.assertFalse((ROOT / 'ci/bench-install-test.sh').exists())
+        steps = {step['name']: step for step in yaml.safe_load((ROOT / '.woodpecker/opt.yml').read_text())['steps']}
+        self.assertIn('ci/opt-install-test.sh', '\n'.join(steps['install-test']['commands']))
+        self.assertTrue((ROOT / 'ci/opt-install-test.sh').is_file())
+        self.assertTrue((ROOT / 'ci/bench-install-test.sh').is_file())
+        for lane in ('standard', 'opt'):
+            self.assertIn('/bench-install-test.sh', (ROOT / f'ci/{lane}-install-test.sh').read_text())
 
     def test_required_architecture_groups_cannot_be_silently_dropped(self):
         manifest = json.loads((ROOT / 'ci/required-tests.json').read_text())
-        expected = ['standard query architecture', 'standard mutation architecture']
+        expected = ['opt document compiler', 'opt schema cache isolation', 'opt request scoped caches', 'opt finite selection architecture']
         for group in expected:
             self.assertIn(group, manifest['offline'])
             self.assertTrue(manifest['offline'][group])
-        other_prefix = 'opt '
+        other_prefix = 'standard '
         self.assertFalse([name for name in manifest['offline'] if name.startswith(other_prefix)])

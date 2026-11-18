@@ -8,9 +8,10 @@ import json
 import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+from graphql import parse, print_ast
 
 # Imported first: it installs the minimal frappe stand-in when Frappe is not available.
-from hero_integration.tests.test_workspace_service_execution import QUERY, SCHEMA, _Frappe, _Service
+from hero_integration.tests.test_workspace_service_execution import QUERY, SCHEMA, _Frappe, _Service, snapshot_fixture
 from hero_integration import api
 from hero_integration.client.graphql import HeroClientError, HeroEndpoint, HeroGraphQLClient
 
@@ -20,10 +21,10 @@ MUTATION = "mutation UpdateContact($input: ContactInput!) { update_contact(input
 class _Base(unittest.TestCase):
     def setUp(self):
         self.frappe = _Frappe(_Service())
-        self.snapshot = SimpleNamespace(name="SNAPSHOT", schema_fingerprint="fp")
+        self.snapshot = snapshot_fixture()
         self.gate = MagicMock(return_value={"mutation_execution_enabled": False})
         for patcher in (patch.object(api, "frappe", self.frappe),
-                        patch.object(api, "_validated_snapshot", MagicMock(return_value=(self.snapshot, SCHEMA))),
+                        patch.object(api, "_validated_snapshot", MagicMock(return_value=(self.snapshot, self.snapshot.snapshot_json))),
                         patch.object(api, "_mutation_execution_state", self.gate)):
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -93,7 +94,7 @@ class TestLocalVariableValidation(_Base):
 
     def test_query_variables_follow_the_declarations_not_the_names(self):
         self.assertEqual(self.validate(QUERY, {"id": 5})["variables_validated"], ["id"])
-        for variables, message in (({}, "Required query variable"), ({"id": "7", "extra": 1}, "extra"),
+        for variables, message in (({}, "declared types"), ({"id": "7", "extra": 1}, "extra"),
                                    ({"id": True}, "ID"), ({"id": [1]}, "ID")):
             with self.subTest(variables=variables), self.assertRaisesRegex(ValueError, message):
                 self.validate(QUERY, variables)
@@ -114,7 +115,7 @@ class TestLocalVariableValidation(_Base):
         self.assertEqual((ok["variables_validated"], ok["can_execute"]), (["input"], False))
         with self.assertRaisesRegex(ValueError, "."):
             api.workspace_mutation_draft_validate("SNAPSHOT", payload, json.dumps({"input": {"email": 5}}))
-        with self.assertRaisesRegex(ValueError, "missing"):
+        with self.assertRaisesRegex(ValueError, "declared types"):
             api.workspace_mutation_draft_validate("SNAPSHOT", payload, "{}")
         self.mutation_class.assert_not_called()
         self.client.query.assert_not_called()
@@ -125,6 +126,13 @@ class TestMutationExecutionContract(_Base):
 
     def setUp(self):
         super().setUp()
+        from graphql import build_schema, introspection_from_schema
+        from hero_integration.services.graphql_graph import analyze_snapshot
+        raw = introspection_from_schema(build_schema('type Query { contact:Contact } '
+            'type Contact { id:ID email:String } input ContactInput { email:String } '
+            'type Mutation { update_contact(input:ContactInput!):Contact }'))
+        self.snapshot = SimpleNamespace(name='SNAPSHOT', snapshot_json=raw,
+            schema_fingerprint=analyze_snapshot(raw).fingerprint, source_instance='source', analysis_status='Validated')
         self.contract = SimpleNamespace(status="Active", contract_revision=2)
         self.service = SimpleNamespace(operation_name="update_contact", query_document=MUTATION)
         self.request = MagicMock(return_value=(self.contract, self.service, self.snapshot, {"input": {"email": "a@b"}}, "req-fp"))
@@ -168,7 +176,7 @@ class TestMutationExecutionContract(_Base):
         self.gate.return_value = {"mutation_execution_enabled": True}
         result = self.run_mutation()
         self.assertEqual(result, {"status": "SUCCEEDED", "correlation_id": "corr-1", "operation": "update_contact"})
-        self.mutation_client.execute_once.assert_called_once_with(MUTATION, {"input": {"email": "a@b"}})
+        self.mutation_client.execute_once.assert_called_once_with(print_ast(parse(MUTATION)), {"input": {"email": "a@b"}})
         self.client.query.assert_not_called()
         self.assertEqual(self.finalize.call_args.args[1], "Succeeded")
 

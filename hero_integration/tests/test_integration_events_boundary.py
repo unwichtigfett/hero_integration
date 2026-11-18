@@ -45,12 +45,12 @@ class TestIntegrationOutputBoundary(unittest.TestCase):
         query.assert_not_called()
 
     def test_manager_receives_bounded_projection_without_detail_values(self):
-        query = Mock(return_value=[{"name": "synthetic"}])
+        query = Mock(return_value=[{"name": "synthetic", "outcome": "FAILED"}])
         fake = SimpleNamespace(get_roles=lambda: ["System Manager"], get_all=query)
         with patch.object(integration_events, "frappe", fake):
             result = integration_events.list_outputs(limit_start=-10, limit_page_length=500)
         self.assertEqual((result["limit_start"], result["limit_page_length"]), (0, 100))
-        self.assertEqual(result["records"], [{"name": "synthetic"}])
+        self.assertEqual(result["records"], [{"name": "synthetic", "outcome": "FAILED"}])
         fields = query.call_args.kwargs["fields"]
         self.assertNotIn("detail", fields)
         self.assertNotIn("source_payload", fields)
@@ -61,3 +61,10 @@ class TestIntegrationOutputBoundary(unittest.TestCase):
 
     def test_changed_fields_formatter_does_not_validate_or_redact_input(self):
         self.assertEqual(integration_events.redacted_changed_fields(["synthetic value"]), "synthetic value")
+
+
+class TestMigrationOutcomes(unittest.TestCase):
+    def test_existing_results_have_distinct_release_outcomes(self):
+        for code, expected in {"CREATED": "SUCCESS", "BLOCKED_RECORD": "FAILED",
+                               "PENDING_REVIEW": "SKIPPED_DEPENDENCY", "CONFLICT": "CONFLICT"}.items():
+            self.assertEqual(integration_events.migration_outcome(code), expected)

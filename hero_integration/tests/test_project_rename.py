@@ -12,9 +12,11 @@ from hero_integration.services import project_rename as pr
 class _Client:
     def __init__(self):
         self.documents = []
+        self.variables = []
 
     def query(self, document, variables):
         self.documents.append(document)
+        self.variables.append(variables)
         return {"data": {"p1": {"id": 1, "measure": {"short": "PV"}},
                          "p2": {"id": 2, "measure": {"short": "X9", "name": "Elektrohandwerk"}},
                          "p3": {"id": 3, "measure": None}}}
@@ -54,6 +56,31 @@ ROWS = [
 
 
 class TestProjectRename(unittest.TestCase):
+    def setUp(self):
+        from graphql import build_schema, introspection_from_schema
+        from hero_integration.sources.hero import GraphQLServiceSource
+        from hero_integration.services.graphql_graph import analyze_snapshot
+        from hero_integration.services.mapping_contract_v1 import StoredSnapshot, SnapshotAdapter
+        raw = introspection_from_schema(build_schema('type Query { project_match(project_match_id:Int):Project } '
+            'type Project { id:Int measure:Measure } type Measure { short:String name:String }'))
+        snapshot = SnapshotAdapter().adapt(StoredSnapshot('trades', raw, analyze_snapshot(raw).fingerprint, 'default'))
+        def source(client):
+            contract = SimpleNamespace()
+            result = GraphQLServiceSource(client, SimpleNamespace(), contract, 'default', revalidate=lambda: contract)
+            result._auxiliary_snapshot = lambda: snapshot
+            return result
+        patcher = patch.object(pr, '_approved_project_source', side_effect=source)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_foreign_source_links_are_not_queried_or_merged(self):
+        links = [SimpleNamespace(source_id='1', source_instance='other'),
+                 SimpleNamespace(source_id='2', source_instance='default')]
+        client = _Client()
+        result = pr.hero_project_trades(client, links)
+        self.assertEqual(client.variables, [{'q1_v1': 2}])
+        self.assertEqual(result, {'default': {'2': 'ELEK'}})
+
     def test_trades_come_from_hero_measure_never_from_titles(self):
         links = [SimpleNamespace(source_id=str(i), source_instance="default") for i in (1, 2, 3)]
         client = _Client()

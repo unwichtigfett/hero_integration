@@ -42,3 +42,16 @@ allowed source branch and full tested commit SHA before contacting GitHub.
 ## Standard workflow
 
 This branch uses `.woodpecker/standard.yml` and `ci/standard-install-test.sh`. Its workflow admits only `hero_int_dev` and `hero_int_1.0`. The required architecture groups in `ci/required-tests.json` belong to this branch and remain in addition to the full offline/site test suites and package-import gate. The manual candidate step admits only `hero_int_dev`. Woodpecker discovers the named workflow automatically; do not set a repository-wide path that breaks older branches.
+## Opt workflow
+
+This branch uses `.woodpecker/opt.yml` and `ci/opt-install-test.sh`. Its workflow admits only `hero_int_dev_opt` and `hero_int_opt`. The required architecture groups in `ci/required-tests.json` belong to this branch and remain in addition to the full offline/site test suites and package-import gate. The manual candidate step admits only `hero_int_dev_opt`. Woodpecker discovers the named workflow automatically; do not set a repository-wide path that breaks older branches.
+
+## Consolidated candidate
+
+The integrated runtime shares the Opt compiler and safety gates across both lanes. The standard and Opt Woodpecker workflows retain independent branch filters, promotion namespaces and credentials. Both lane install entry points delegate to ci/bench-install-test.sh; GitHub and that installer reuse ci/test-gates.sh. The integration branch does not invoke either live updater or promotion.
+
+## Unified release target and explicit operations
+
+The consolidated candidate uses version 1.1.0 (numeric release schema), with active development on hero_int_dev and stable release on hero_int_release. GitHub Actions also accepts integration/** candidates. The standard Woodpecker lane accepts integration/* and runs only wait-github/install-test for ordinary integration pushes. Historical Opt lane compatibility remains available without becoming a runtime prerequisite of the two target branches.
+
+Automatic test-site updates and release promotion on push are disabled in the consolidated workflows. Those existing capabilities require a manual pipeline with DEPLOY_APPROVED or RELEASE_APPROVED respectively; the manual -canidate stable-promotion path retains its existing explicit gate. Merely pushing code to CI does not authorize a deployment or release. No remote protection/default branch setting is changed by this repository configuration.

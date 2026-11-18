@@ -12,7 +12,7 @@ esac
 # A manual diagnostic selection must not turn the maintained branch's required
 # install-test check green without running HERO's complete test gate.
 case "${GITHUB_BASE_REF:-${GITHUB_REF_NAME:-}}" in
-  hero_int_dev|hero_int_1.0)
+  hero_int_dev|hero_int_1.0|hero_int_dev_opt|hero_int_opt)
     [[ ",$selection," == *,hero_integration,* ]] || {
       echo 'Maintained branches require a selection containing HERO Integration.' >&2; exit 2;
     }

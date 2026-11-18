@@ -59,6 +59,22 @@ def test_compiles_mutation_input_and_output_without_execution_authority():
     assert not hasattr(plan.request, "execute")
 
 
+def test_recursive_mutation_input_references_are_checked_against_schema():
+    snapshot, registry, router = _router_context()
+    route = MutationRoutingRequest(operation='updateCase',
+        input_references=('hero.mutation.updateCase.input.status',
+                          'hero.mutation.updateCase.input.child.status',
+                          'hero.mutation.updateCase.input.child.child.status'),
+        arguments={'input': {'status': 'OPEN', 'child': {'status': 'OPEN', 'child': {'status': 'CLOSED'}}}},
+        output_references=('hero.mutation.updateCase.result.children.children.id',))
+    plan = router.compile_mutation(snapshot, registry, route)
+    assert plan.request.mutation_safety_request is not None
+    assert plan.request.variables['v1']['child']['child']['status'] == 'CLOSED'
+    with pytest.raises(MaterializerRoutingError):
+        router.compile_mutation(snapshot, registry, replace(route,
+            input_references=(*route.input_references, 'hero.mutation.updateCase.input.child.missing')))
+
+
 def test_query_argument_is_bound_as_data_even_when_it_resembles_graphql():
     snapshot, registry, router = _router_context()
     payload = 'case-1") { id } mutation injected { deleteCase(id: "1") } #'

@@ -238,7 +238,7 @@ def _load_context(comment, *, activity_doctype='Comment', lock=False, audit=None
     from hero_integration.services.personal_mapping_content import unique_json_object
     from hero_integration.services.writeback_source import capture_source
     from hero_integration.services.config_mutation_contracts import _scope
-    from hero_integration.services.graphql_contract import parse_mutation
+    from hero_integration.services.mutation_binding_contract import parse_mutation
     if not mapped_send._roles():
         _fail('Only System Managers and HERO Writeback users may send to HERO.')
     document, project = _native_comment(comment, activity_doctype=activity_doctype, lock=lock, receipt=receipt)
@@ -355,7 +355,7 @@ def _require_readback_paths(read):
 
 def _prepare(ctx, client):
     from hero_integration.services.task_send import plain_text
-    from hero_integration.services.graphql_contract import validate_mutation
+    from hero_integration.services.mutation_binding_contract import validate_mutation
     from hero_integration.services.read_contract import value_at
     remote = _read_project(ctx, client)
     options = ctx.read.contract.adapter_options['logbook']
@@ -535,8 +535,11 @@ def send(comment, *, activity_doctype='Comment', fingerprint='', confirmed=False
             _fail('The activity preview changed; review and confirm it again.')
         _assert_mutation_execution_released(); config = validate_source(fresh.proof)
         transport = mutation_client or HeroMutationClient(config.endpoint, lambda: config.api_token, config.timeout_seconds)
+        from hero_integration.services.mapping_contract_v1 import materialize_saved_mutation
+        request = materialize_saved_mutation(fresh.snapshot, fresh.service.query_document, checked.variables,
+                                             request_scope=audit.correlation_id)
         attempted = True
-        returned = transport.execute_once(fresh.service.query_document, checked.variables)
+        returned = transport.execute_once(request.document, request.variables)
         record = returned.get(OPERATION) if isinstance(returned, dict) else None
         identity = record.get('id') if isinstance(record, dict) else None
         if type(identity) is not int or identity <= 0 or returned.get('errors') or str(identity) in checked.history_ids:

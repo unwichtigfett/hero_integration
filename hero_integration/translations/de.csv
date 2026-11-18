@@ -2892,7 +2892,7 @@ The {0} price {1} was changed in ERPNext. The newer HERO article was not applied
 Several general {0} prices exist for {1} ({2}); none was changed. The newer HERO article was not applied.,Für {1} ({2}) gibt es mehrere allgemeine Preise in {0}; keiner wurde geändert. Der neuere HERO-Artikel wurde nicht übernommen.
 The conflict belongs to a different HERO source.,Der Konflikt gehört zu einer anderen HERO-Quelle.
 The record has no open conflict.,Der Datensatz hat keinen offenen Konflikt.
-"The rules of the run that processed this record can no longer be reconstructed.","Die Regeln des Laufs, der diesen Datensatz verarbeitet hat, lassen sich nicht mehr rekonstruieren."
+The rules of the run that processed this record can no longer be reconstructed.,"Die Regeln des Laufs, der diesen Datensatz verarbeitet hat, lassen sich nicht mehr rekonstruieren."
 Not started,Noch nicht gestartet
 Run,Lauf
 Built-in,Standard (eingebaut)
@@ -3102,7 +3102,7 @@ One confirmed Company per Project,Ein bestätigtes Unternehmen je Projekt
 Employee Status,Mitarbeiterstatus
 Employee Language,Benutzersprache
 HeroEmployees,Mitarbeiter
-"Affected areas ({0}): {1}.","Betroffene Bereiche ({0}): {1}."
+Affected areas ({0}): {1}.,Betroffene Bereiche ({0}): {1}.
 Existing mappings in these areas will be replaced: {0} field mappings and {1} GraphQL mappings. Previous versions remain in history.,Bestehende Mappings in diesen Bereichen werden ersetzt: {0} Feldmappings und {1} GraphQL-Mappings. Bisherige Versionen bleiben im Verlauf erhalten.
 Replaced: {0} field mappings and {1} GraphQL mappings. Previous versions remain in history.,Ersetzt: {0} Feldmappings und {1} GraphQL-Mappings. Bisherige Versionen bleiben im Verlauf erhalten.
 Native replacement requires its current source-bound mapping.,Zum Ersetzen wird das aktuelle native Mapping der zugeordneten Quelle benötigt.
@@ -3253,7 +3253,7 @@ An active rule already writes this ERPNext field; remove it first.,Eine aktive R
 Only inactive field rules of this area can be activated.,Nur inaktive Feldregeln dieses Bereichs können aktiviert werden.
 You have an unpublished draft of this mapping; publish or discard it under Advanced first.,Du hast einen unveröffentlichten Entwurf dieses Mappings; veröffentliche oder verwirf ihn zuerst unter „Erweitert“.
 Select at least one mapping.,Wähle mindestens ein Mapping.
-"Creating send mappings (ERPNext → HERO) follows; sending to HERO is switched off.",Das Anlegen von Sende-Mappings (ERPNext → HERO) folgt; das Senden an HERO ist ausgeschaltet.
+Creating send mappings (ERPNext → HERO) follows; sending to HERO is switched off.,Das Anlegen von Sende-Mappings (ERPNext → HERO) folgt; das Senden an HERO ist ausgeschaltet.
 Areas in the file,Bereiche in der Datei
 The file contains no mapping areas.,Die Datei enthält keine Mapping-Bereiche.
 Existing mappings in these areas will be replaced.,Bestehende Mappings in diesen Bereichen werden ersetzt.
@@ -3744,9 +3744,193 @@ HERO Original Article Number,Ursprüngliche HERO-Artikelnummer
 A linked local Item was retained; changed HERO fields require review.,Ein verknüpfter lokaler Artikel wurde beibehalten; geänderte HERO-Felder müssen geprüft werden.
 The original HERO article number changed; the existing Item code was preserved.,Die ursprüngliche HERO-Artikelnummer wurde geändert; die vorhandene ERPNext-Artikelnummer wurde beibehalten.
 Assignment for Task {0},Zuweisung für Aufgabe {0}
+No approved read service is available for this area.,Für diesen Bereich ist kein freigegebener Lesedienst verfügbar.
+The approved reader belongs to another source.,Der freigegebene Lesedienst gehört zu einer anderen Quelle.
+The auxiliary read schema no longer matches its approved source.,Das Schema der Hilfsabfrage stimmt nicht mehr mit der freigegebenen Quelle überein.
+Read approval changed before auxiliary transport.,Die Lesefreigabe wurde vor der Hilfsabfrage geändert.
+Read approval changed during auxiliary transport.,Die Lesefreigabe wurde während der Hilfsabfrage geändert.
+Realization Started,Realisierung begonnen
+GraphQL query validation failed: {0},GraphQL-Abfrageprüfung fehlgeschlagen: {0}
+GraphQL document validation failed: {0},GraphQL-Dokumentprüfung fehlgeschlagen: {0}
+GraphQL mutation draft validation failed: {0},GraphQL-Mutationsentwurfprüfung fehlgeschlagen: {0}
+Mutation contract validation failed: {0},Mutationsvertragsprüfung fehlgeschlagen: {0}
+Mutation contract fragments must have unique names.,Fragmente des Mutationsvertrags müssen eindeutige Namen haben.
+A mutation contract must contain exactly one root field.,Ein Mutationsvertrag muss genau ein Wurzelfeld enthalten.
+A write binding requires an unaliased mutation root field.,Eine Schreibbindung erfordert ein Mutations-Wurzelfeld ohne Alias.
+Duplicate mutation argument {0}.,Doppeltes Mutationsargument {0}.
+Mutation contract arguments must be declared variables.,Argumente des Mutationsvertrags müssen deklarierte Variablen sein.
+Mutation contract fragments must be defined and acyclic.,Fragmente des Mutationsvertrags müssen definiert und zyklenfrei sein.
+The operation cannot be materialized from the saved schema.,Die Operation kann nicht aus dem gespeicherten Schema materialisiert werden.
+Mapped binding realization requires its successful originating area.,Die Realisierung der Mapping-Beziehungen erfordert den erfolgreichen Abschluss ihres Ursprungsbereichs.
+The imported binding target or mapping changed before realization.,Das importierte Beziehungsziel oder Mapping wurde vor der Realisierung geändert.
+Relationship-only updates require their imported target and realization service.,Reine Beziehungsaktualisierungen erfordern ihr importiertes Ziel und den zuständigen Realisierungsdienst.
+Saved source observation is missing or invalid; import the affected source record again.,Die gespeicherte Quellbeobachtung fehlt oder ist ungültig; den betroffenen Quelldatensatz erneut importieren.
+Deferred relationship validation failed; see the reference error diagnostic.,Die Prüfung der nachgelagerten Beziehung ist fehlgeschlagen; siehe Fehlerdiagnose der Referenz.
+Full import finished; required relationship bindings are missing or require review.,Der Komplettimport ist beendet; erforderliche Beziehungsbindungen fehlen oder müssen geprüft werden.
+Relationship reconciliation: {0} reference(s) require review.,Beziehungsabgleich: {0} Referenz(en) müssen geprüft werden.
+Only a finished full import can restart its relationship pass.,Nur bei einem abgeschlossenen Komplettimport kann die Beziehungsrunde erneut gestartet werden.
+The full import child scope no longer matches its relationship pass.,Die zugehörigen Bereichsläufe passen nicht mehr zur Beziehungsrunde des Komplettimports.
+The HERO binding identity changed before the record comparison.,Die HERO-Binding-Identität wurde vor dem Datensatzvergleich geändert.
 Create the customer in ERPNext; Helpdesk lists it automatically.,Legen Sie den Kunden in ERPNext an; Helpdesk zeigt ihn automatisch.
 Change this value on the ERPNext Customer; Helpdesk shows it automatically.,Ändern Sie diesen Wert am ERPNext-Kunden; Helpdesk zeigt ihn automatisch.
 Rename the ERPNext Customer; Helpdesk follows automatically.,Benennen Sie den ERPNext-Kunden um; Helpdesk folgt automatisch.
 Delete the ERPNext Customer; Helpdesk follows automatically.,Löschen Sie den ERPNext-Kunden; Helpdesk folgt automatisch.
 Open the Helpdesk workspace when returning to the Desk,Beim Wechsel zum Desk den Helpdesk-Bereich öffnen
 Off: the Desk entry in Helpdesk's Apps menu opens the Desk's start page directly.,Aus: Der Eintrag „Desk“ im Apps-Menü des Helpdesks öffnet direkt die Startseite des Desks.
+A customer address is not a verified project site address.,Eine Kundenadresse ist keine bestätigte Baustellenadresse.
+Add attachment,Anhang hinzufügen
+All statuses,Alle Status
+Appointment,Termin
+Appointments,Termine
+Assign,Zuweisen
+Assigned To,Zugewiesen an
+Assignment,Zuweisung
+Assignments,Zuweisungen
+Attachments are separate from ERP records. No stored document categories are configured.,Anhänge und ERP-Belege sind getrennt. Es sind keine gespeicherten Dokumentkategorien eingerichtet.
+Board,Board
+"Costs, progress notifications and source information remain in the native fields below. Existing permissions and HERO confirmations are unchanged.","Kosten, Fortschrittsmeldungen und Quellinformationen stehen weiterhin in den vorhandenen Feldern unten. Berechtigungen und HERO-Bestätigungen bleiben unverändert."
+Customer Primary Address,Hauptadresse des Kunden
+Document,Dokument
+Document preview,Dokumentvorschau
+Due Date,Fällig am
+Edit project fields below. Activity and comments remain in the native timeline.,Die Projektfelder können Sie unten bearbeiten. Aktivitäten und Kommentare bleiben im vorhandenen Verlauf.
+End,Ende
+Enlarge,Vergrößern
+File details,Dateidetails
+Further linked records and project actions remain available in the native dashboard and form menu.,Weitere verknüpfte Belege und Projektaktionen bleiben im vorhandenen Dashboard und Formularmenü erreichbar.
+Images,Bilder
+Invalid project information response.,Die Antwort mit den Projektinformationen ist ungültig.
+Invalid project page.,Die angeforderte Projektseite ist ungültig.
+Invalid project view input.,Die Eingabe für die Projektansicht ist ungültig.
+List,Liste
+Loading project information…,Projektinformationen werden geladen…
+Log in to view project information.,"Melden Sie sich an, um Projektinformationen anzuzeigen."
+New Project,Neues Projekt
+New Task,Neue Aufgabe
+New Event,Neuer Termin
+Next week,Nächste Woche
+No matching records on this page.,Keine passenden Einträge auf dieser Seite.
+No readable customer is linked.,Es ist kein für Sie lesbarer Kunde verknüpft.
+No readable primary contact is linked.,Es ist kein für Sie lesbarer Hauptkontakt verknüpft.
+"Only explicitly linked project appointments are shown. The week grid covers this page, not employee availability.","Es werden nur ausdrücklich verknüpfte Projekttermine angezeigt. Der Wochenplan zeigt die Einträge dieser Seite, nicht die Verfügbarkeit der Mitarbeitenden."
+Open appointment,Termin öffnen
+Open file,Datei öffnen
+Page,Seite
+Participants,Teilnehmende
+Preview unavailable.,Keine Vorschau verfügbar.
+Preview unavailable. Open the file instead.,Keine Vorschau verfügbar. Öffnen Sie stattdessen die Datei.
+Previous week,Vorherige Woche
+Privacy,Sichtbarkeit
+Private,Privat
+Project and Customer,Projekt und Kunde
+Project information could not be loaded.,Die Projektinformationen konnten nicht geladen werden.
+Project team membership is edited below. These are direct Project assignments; Task assignments stay with their Tasks.,Das Projektteam können Sie unten bearbeiten. Hier stehen direkte Projektzuweisungen; Aufgabenzuweisungen bleiben bei den jeweiligen Aufgaben.
+Public,Öffentlich
+Recurring appointments show their stored start. Use the native Calendar for recurring occurrences.,Bei wiederkehrenden Terminen wird der gespeicherte Beginn angezeigt. Weitere Wiederholungen finden Sie im vorhandenen Kalender.
+Related records refer to the saved project. Save or refresh using the native form.,Verknüpfte Einträge beziehen sich auf das gespeicherte Projekt. Nutzen Sie die vorhandenen Formularaktionen zum Speichern oder Aktualisieren.
+Save the project to load related records.,"Speichern Sie das Projekt, um verknüpfte Einträge zu laden."
+Save the project to refresh customer information.,"Speichern Sie das Projekt, um die Kundeninformationen zu aktualisieren."
+Select an appointment for details.,"Wählen Sie einen Termin aus, um die Details anzuzeigen."
+Task list,Aufgabenliste
+"This view shows one page. Use the native Task list for Gantt, full boards and dependency editing.","Diese Ansicht zeigt eine Seite. Gantt, vollständige Boards und Abhängigkeiten finden Sie in der vorhandenen Aufgabenliste."
+This week,Diese Woche
+Try again,Erneut versuchen
+Uncategorized images. No stored image categories are configured.,Bilder ohne Kategorie. Es sind keine gespeicherten Bildkategorien eingerichtet.
+Unsupported project view or filter.,Diese Projektansicht oder dieser Filter wird nicht unterstützt.
+You do not have permission to view these records.,Sie haben keine Berechtigung zum Anzeigen dieser Einträge.
+All images,Alle Bilder
+Apply,Anwenden
+Categories are managed by a System Manager. Existing images are not categorized automatically.,Die Bildkategorien verwaltet die Administration. Vorhandene Bilder werden nicht automatisch zugeordnet.
+Categories can only be assigned to project image attachments.,"Kategorien können nur Bildern zugeordnet werden, die an einem Projekt hängen."
+Category Name,Kategoriename
+Filter by category,Nach Kategorie filtern
+HERO does not provide a project site address.,HERO liefert keine Baustellenadresse für dieses Projekt.
+Leave empty to remove the image category.,"Leer lassen, um die Bildkategorie zu entfernen."
+Loading project site address…,Baustellenadresse wird geladen…
+Local category for a project image. Categories are managed by a System Manager.,Lokale Kategorie eines Projektbildes. Die Kategorien verwaltet die Administration.
+Log in to categorize project images.,"Melden Sie sich an, um Projektbilder zu kategorisieren."
+Manage image categories,Bildkategorien verwalten
+No synchronized HERO project is linked.,Es ist kein synchronisiertes HERO-Projekt verknüpft.
+Project Image Category,Projektbildkategorie
+Project site address (HERO),Baustellenadresse (HERO)
+Set image category,Bildkategorie festlegen
+Source: ProjectMatch.address. Read-only; never replaced by the customer address.,Quelle: ProjectMatch.address. Schreibgeschützt; wird niemals durch die Kundenadresse ersetzt.
+The HERO project site address is currently unavailable.,Die Baustellenadresse aus HERO ist derzeit nicht verfügbar.
+The image category could not be saved. Refresh the image list and try again.,Die Bildkategorie konnte nicht gespeichert werden. Aktualisieren Sie die Bildliste und versuchen Sie es erneut.
+The image changed. Refresh the image list before categorizing it.,Das Bild wurde geändert. Aktualisieren Sie vor der Zuordnung die Bildliste.
+The project image category field has an incompatible definition.,Das Feld für die Projektbildkategorie hat eine nicht kompatible Definition.
+This image category is disabled. Choose an active category.,Diese Bildkategorie ist deaktiviert. Wählen Sie eine aktive Kategorie.
+This image does not belong to the selected project.,Dieses Bild gehört nicht zum ausgewählten Projekt.
+Uncategorized,Ohne Kategorie
+The HERO address may be cached for up to five minutes.,Die HERO-Adresse kann bis zu fünf Minuten zwischengespeichert werden.
+PDF preview,PDF-Vorschau
+Loading PDF preview…,PDF-Vorschau wird geladen…
+PDF page {0},PDF-Seite {0}
+Page {0} of {1},Seite {0} von {1}
+Invalid PDF preview page.,Die angeforderte PDF-Seite ist ungültig.
+This document does not belong to the selected project.,Dieses Dokument gehört nicht zum ausgewählten Projekt.
+The document changed. Refresh the document list before previewing it.,Das Dokument wurde geändert. Aktualisieren Sie vor der Vorschau die Dokumentliste.
+Only local PDF attachments can be previewed.,Die Vorschau unterstützt nur lokal gespeicherte PDF-Anhänge.
+This PDF is too large for the preview. Open the original file.,Diese PDF-Datei ist für die Vorschau zu groß. Öffnen Sie die Originaldatei.
+Another PDF preview is loading. Try again shortly.,Eine andere PDF-Vorschau wird gerade geladen. Versuchen Sie es gleich erneut.
+PDF preview unavailable. Open the original file.,Keine PDF-Vorschau verfügbar. Öffnen Sie die Originaldatei.
+Read-only page image. Open the original for form fields and signature validation.,Schreibgeschützte Seitenansicht. Formularfelder und die Prüfung von Signaturen sind in der Originaldatei verfügbar.
+Project site address,Projektanschrift
+Source information,Quellinformationen
+"Choose the ERPNext project responsible below and save the project. This does not change the project team, user permissions or HERO responsibility.","Wählen Sie unten den ERPNext-Projektverantwortlichen und speichern Sie das Projekt. Projektteam, Benutzerrechte und die HERO-Verantwortlichkeit bleiben unverändert."
+"Internal ERPNext responsibility. Does not change team membership, permissions or the HERO responsible.",Interne ERPNext-Zuständigkeit. Ändert weder die Teammitgliedschaft noch Berechtigungen oder den HERO-Verantwortlichen.
+Choose an enabled system user as the project responsible.,Wählen Sie einen aktiven Systembenutzer als Projektverantwortlichen.
+The ERPNext project responsible field has an incompatible definition.,Das Feld für den ERPNext-Projektverantwortlichen hat eine nicht kompatible Definition.
+The configured Project field order could not be verified.,Die konfigurierte Projektfeldreihenfolge konnte nicht geprüft werden.
+The Project layout changed. Review its field order before continuing.,Das Projektlayout wurde geändert. Prüfen Sie vor dem Fortfahren die Feldreihenfolge.
+The Project layout has an unexpected opening section.,Das Projektlayout enthält einen unerwarteten Anfangsabschnitt.
+Add images,Bilder hinzufügen
+Add images to {0},Bilder zur Kategorie {0} hinzufügen
+An image category is required. Choose another category instead of clearing it.,"Eine Bildkategorie ist erforderlich. Wählen Sie eine andere Kategorie, statt sie zu leeren."
+Ask an administrator to configure this image category's upload folder.,"Bitten Sie die Administration, den Upload-Ordner dieser Bildkategorie einzurichten."
+Choose an image category before uploading a project image.,Wählen Sie vor dem Hochladen eines Projektbildes eine Bildkategorie.
+Choose image category,Bildkategorie wählen
+"Choose the ERPNext project responsible in the native field above and save the project. This does not change the project team, user permissions or HERO responsibility.","Wählen Sie den ERPNext-Projektverantwortlichen im Formularfeld oben und speichern Sie das Projekt. Projektteam, Benutzerrechte und die HERO-Verantwortlichkeit bleiben unverändert."
+Image uploads are not enabled for this site.,Für diese Site sind keine Bild-Uploads freigegeben.
+More image categories are available through the category filter.,Weitere Bildkategorien sind über den Kategoriefilter verfügbar.
+Project sidebar,Projekt-Seitenleiste
+The image category upload folder is invalid.,Der Upload-Ordner der Bildkategorie ist ungültig.
+The image upload folder is managed by the application.,Der Bild-Upload-Ordner wird von der Anwendung verwaltet.
+The image uploader could not be opened. Refresh and choose an active category.,Der Bild-Upload konnte nicht geöffnet werden. Aktualisieren Sie die Ansicht und wählen Sie eine aktive Kategorie.
+The native attachments folder is unavailable.,Der Standardordner für Anhänge ist nicht verfügbar.
+Upload Folder,Upload-Ordner
+Upload project images,Projektbilder hochladen
+Log in to change your Design preference.,"Melden Sie sich an, um Ihre Design-Einstellung zu ändern."
+The Design preference field has an incompatible definition.,Das Feld für die Design-Einstellung hat eine nicht kompatible Definition.
+The Design preference is not installed. Ask an administrator.,Die Design-Einstellung ist nicht eingerichtet. Wenden Sie sich an die Administration.
+Unsupported Design preference.,Diese Design-Einstellung wird nicht unterstützt.
+Navy is available with the Custom Design package.,Navy ist im Design-Paket „Angepasst“ verfügbar.
+One package for the custom Desk and Project appearance. Data and permissions do not change.,Ein gemeinsames Paket für die angepasste Desk- und Projektansicht. Daten und Berechtigungen bleiben unverändert.
+Save or discard open changes before switching designs.,"Speichern oder verwerfen Sie offene Änderungen, bevor Sie das Design wechseln."
+Apply this Design and reload the Desk? Save open work first.,Dieses Design übernehmen und den Desk neu laden? Speichern Sie vorher offene Eingaben.
+The Design preference could not be saved.,Die Design-Einstellung konnte nicht gespeichert werden.
+Native,Nativ,Design mode
+Custom,Angepasst,Design mode
+Appearance,Erscheinungsbild
+Design,Design
+Edit project address,Projektadresse bearbeiten
+Select a separate address instead of following the customer's primary address.,"Wählen Sie eine eigene Adresse, statt die Hauptadresse des Kunden zu übernehmen."
+Required for every project. Uses the customer's primary address unless Edit project address is selected.,"Für jedes Projekt erforderlich. Übernimmt die Hauptadresse des Kunden, solange „Projektadresse bearbeiten“ nicht ausgewählt ist."
+The Project Address fields have an incompatible definition.,Die Felder für die Projektanschrift haben eine nicht kompatible Definition.
+Choose whether to edit the project address.,"Wählen Sie aus, ob Sie die Projektadresse bearbeiten möchten."
+Invalid project address reference.,Ungültige Verknüpfung für die Projektanschrift.
+"Choose an enabled, complete project address with street, city and country.","Wählen Sie eine aktive, vollständige Projektanschrift mit Straße, Ort und Land."
+Set the customer's primary address or select Edit project address and choose a separate address.,Ergänzen Sie die Hauptadresse des Kunden oder wählen Sie „Projektadresse bearbeiten“ und eine eigene Adresse.
+Project Address is required for every project.,Die Projektanschrift ist für jedes Projekt erforderlich.
+"Choose a customer with a primary address, or select Edit project address.",Wählen Sie einen Kunden mit Hauptadresse oder aktivieren Sie „Projektadresse bearbeiten“.
+The project address is unavailable or you do not have permission to read it.,Die Projektanschrift ist nicht verfügbar oder Sie haben keine Leseberechtigung.
+Uses the customer's primary address unless Edit project address is selected. Changes are saved with the project.,"Übernimmt die Hauptadresse des Kunden, solange „Projektadresse bearbeiten“ nicht ausgewählt ist. Änderungen werden mit dem Projekt gespeichert."
+Upload document,Dokument hochladen
+CLI Configuration Identities,Identitäten der CLI-Konfiguration
+No project address is available. The address is optional.,Es ist keine Projektadresse verfügbar. Die Adresse ist optional.
+Invalid Design response,Ungültige Design-Antwort
+Invalid address context,Ungültiger Adresskontext
+Invalid image upload options,Ungültige Optionen für den Bildupload
+Invalid address response,Ungültige Adressantwort
+Invalid PDF preview response,Ungültige Antwort der PDF-Vorschau
+Invalid category response,Ungültige Kategorieantwort

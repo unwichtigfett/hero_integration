@@ -1,4 +1,4 @@
-"""Dynamic operation catalog and explainable name-only mapping suggestions."""
+"""Saved-schema operation catalog and materializer-backed service drafts."""
 from __future__ import annotations
 
 import re
@@ -52,25 +52,22 @@ def operation_service_draft(snapshot: object, node_id: str) -> dict[str, object]
     operations = {item["operation_name"]: item for item in catalog(snapshot, kind)}
     if field_name not in operations:
         raise SchemaOperationError("The operation does not exist in the saved schema.")
-    schema = normalize_schema(snapshot)
-    types = {item.get("name"): item for item in schema.get("types") or [] if isinstance(item, Mapping)}
-    root = types.get(operations[field_name]["root_type"]) or {}
-    field = next(item for item in root.get("fields") or [] if isinstance(item, Mapping) and item.get("name") == field_name)
-    required = [arg for arg in field.get("args") or []
-                if isinstance(arg, Mapping) and is_required(arg.get("type")) and arg.get("defaultValue") is None]
-    target, _ = _named_type(field.get("type"))
-    composite = (types.get(target) or {}).get("kind") in {"OBJECT", "INTERFACE", "UNION"}
-    operation_name = "".join(part[:1].upper() + part[1:] for part in re.split(r"_+", field_name) if part) or "Operation"
-    definitions = ", ".join(f"${arg['name']}: {type_reference(arg.get('type'))}" for arg in required)
-    arguments = ", ".join(f"{arg['name']}: ${arg['name']}" for arg in required)
-    document = (f"{kind} {operation_name}{f'({definitions})' if definitions else ''} {{\n"
-                f"  {field_name}{f'({arguments})' if arguments else ''}{' { __typename }' if composite else ''}\n}}")
+    from graphql import parse, print_ast
+    from hero_integration.services.graphql_schema_cache import compiled_schema
+    from hero_integration.graphql_protocol.graphql_operation_materializer import GraphQLOperationMaterializer
+    try:
+        schema = compiled_schema(snapshot).core
+        document = GraphQLOperationMaterializer.operation_template(schema, kind, field_name)
+    except (TypeError, ValueError) as error:
+        raise SchemaOperationError('The operation cannot be materialized from the saved schema.') from error
+    operation = parse(document).definitions[0]
     return {
         "operation_kind": kind,
         "operation_name": field_name,
-        "return_type": type_reference(field.get("type")),
-        "required_variables": [{"name": arg["name"], "type": type_reference(arg.get("type"))} for arg in required],
-        "payload": {"name": field_name, "operation_name": operation_name, "query": document, "variables": {}},
+        "return_type": operations[field_name]['return_type'],
+        "required_variables": [{"name": variable.variable.name.value, "type": print_ast(variable.type)}
+                               for variable in operation.variable_definitions],
+        "payload": {"name": field_name, "operation_name": operation.name.value, "query": document, "variables": {}},
     }
 
 
@@ -89,11 +86,6 @@ def _operation(kind: str, root_name: str, field: Mapping, types: dict[object, Ma
             if isinstance(argument.get("name"), str)
         },
     }
-
-
-def _argument(argument: Mapping) -> dict[str, object]:
-    details = _argument_details(argument)
-    return {key: details[key] for key in ("name", "type", "required")}
 
 
 def _argument_details(argument: Mapping) -> dict[str, object]:
@@ -185,18 +177,6 @@ def _has_list(reference: object) -> bool:
     return False
 
 
-def suggest(source: str, candidates: list[str]) -> list[dict[str, object]]:
-    """Explain name affinity only; callers must keep all results as drafts."""
-    source_tokens = set(_tokens(source))
-    result = []
-    for candidate in candidates:
-        overlap = source_tokens & set(_tokens(candidate))
-        score = len(overlap) / max(len(source_tokens | set(_tokens(candidate))), 1)
-        if score:
-            result.append({"candidate": candidate, "confidence": round(score, 2), "reason": "shared normalized names: " + ", ".join(sorted(overlap))})
-    return sorted(result, key=lambda item: (-item["confidence"], item["candidate"]))
-
-
 def type_reference(ref: object) -> str:
     if not isinstance(ref, Mapping):
         return "Unknown"
@@ -207,7 +187,3 @@ def type_reference(ref: object) -> str:
 
 def is_required(ref: object) -> bool:
     return isinstance(ref, Mapping) and ref.get("kind") == "NON_NULL"
-
-
-def _tokens(value: str) -> tuple[str, ...]:
-    return tuple(token.lower() for token in re.findall(r"[A-Z]?[a-z]+|[A-Z]+(?=[A-Z]|$)|\d+", value))

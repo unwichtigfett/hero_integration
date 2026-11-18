@@ -16,6 +16,10 @@ from hero_integration.tests import test_service_migration as service_fixtures
 
 
 class TestMigrationRecordLimits(unittest.TestCase):
+    def setUp(self):
+        from hero_integration.tests.saved_reader_fixture import isolate_direct_materialization
+        isolate_direct_materialization(self)
+
     def test_related_project_sample_keeps_all_distinct_assignees_and_customers(self):
         plan = SimpleNamespace(source_identity=lambda row: str(row['id']), definitions=[
             SimpleNamespace(transformation='HERO Customer Link', purpose='Customer Relation', source_path='customer_id')])

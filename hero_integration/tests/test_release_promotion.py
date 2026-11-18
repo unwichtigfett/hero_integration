@@ -1,4 +1,4 @@
-"""Release chain: GitHub CI gate and promotion of hero_int_dev to hero_int_1.0."""
+"""Release chain: GitHub CI gate and promotion of hero_int_dev to hero_int_release."""
 from __future__ import annotations
 
 import json
@@ -34,7 +34,7 @@ class _Remotes:
         git(root, "init", "-q", "-b", "hero_int_dev", str(self.work))
         (self.work / "hero_integration").mkdir()
         self.commit("base", version="1.0.0")
-        self.push("hero_int_dev", "hero_int_1.0")
+        self.push("hero_int_dev", "hero_int_release")
 
     def commit(self, message, version=None, name="change.txt") -> str:
         if version:
@@ -53,9 +53,9 @@ class _Remotes:
     def head(self, bare, ref) -> str:
         return git(bare, "rev-parse", ref)
 
-    def promote(self, sha):
+    def promote(self, sha, channel="hero_int_dev"):
         env = {**os.environ, **GIT_ENV, "COMMIT_SHA": sha, "GITHUB_REMOTE": str(self.github),
-               "CI_COMMIT_BRANCH": "hero_int_dev"}
+               "RELEASE_CHANNEL": channel, "CI_COMMIT_BRANCH": channel}
         return subprocess.run(["bash", str(PROMOTE)], env=env, text=True, capture_output=True)
 
 
@@ -64,7 +64,7 @@ class TestPromotion(unittest.TestCase):
         tmp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, tmp)
         self.repo = _Remotes(Path(tmp))
-        self.base = self.repo.head(self.repo.forgejo, "hero_int_1.0")
+        self.base = self.repo.head(self.repo.forgejo, "hero_int_release")
 
     def test_fixture_channel_is_independent_of_the_enclosing_pipeline(self):
         tested = self.repo.commit("feature")
@@ -72,7 +72,34 @@ class TestPromotion(unittest.TestCase):
         with patch.dict(os.environ, {"CI_COMMIT_BRANCH": "unrelated-ci-branch"}):
             result = self.repo.promote(tested)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self.repo.head(self.repo.github, "hero_int_1.0^"), tested)
+        self.assertEqual(self.repo.head(self.repo.github, "hero_int_release^"), tested)
+
+    def test_opt_bootstrap_and_repeat_leave_standard_branches_and_tags_unchanged(self):
+        git(self.repo.work,'checkout','-q','-b','hero_int_dev_opt')
+        tested=self.repo.commit('optimized materializer')
+        self.repo.push('hero_int_dev_opt',remotes=(self.repo.github,))
+        standard_dev=self.repo.head(self.repo.github,'hero_int_dev')
+        for attempt in range(2):
+            result=self.repo.promote(tested,'hero_int_dev_opt')
+            self.assertEqual(result.returncode,0,result.stderr)
+            released=self.repo.head(self.repo.github,'hero_int_opt')
+            self.assertEqual(self.repo.head(self.repo.github,'hero_int_dev_opt'),released)
+            self.assertEqual(self.repo.head(self.repo.github,'opt-v1.0.1^{commit}'),released)
+            self.assertEqual(self.repo.head(self.repo.github,'hero_int_dev'),standard_dev)
+            self.assertEqual(self.repo.head(self.repo.github,'hero_int_release'),self.base)
+        self.assertEqual(git(self.repo.github,'tag','--list','v*'),'')
+
+    def test_opt_never_overwrites_a_diverged_opt_release(self):
+        git(self.repo.work,'checkout','-q','-b','hero_int_dev_opt')
+        tested=self.repo.commit('optimized materializer')
+        self.repo.push('hero_int_dev_opt',remotes=(self.repo.github,))
+        git(self.repo.work,'checkout','-q','-b','other-opt',self.base)
+        unrelated=self.repo.commit('unrelated release',name='unrelated')
+        self.repo.push('hero_int_opt',remotes=(self.repo.github,))
+        result=self.repo.promote(tested,'hero_int_dev_opt')
+        self.assertNotEqual(result.returncode,0)
+        self.assertEqual(self.repo.head(self.repo.github,'hero_int_opt'),unrelated)
+        self.assertEqual(self.repo.head(self.repo.github,'hero_int_dev_opt'),tested)
 
     def test_tested_commit_is_released_on_github_without_touching_forgejo(self):
         tested = self.repo.commit("feature")
@@ -80,9 +107,9 @@ class TestPromotion(unittest.TestCase):
         result = self.repo.promote(tested)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.repo.head(self.repo.forgejo, 'hero_int_dev'), tested)
-        self.assertEqual(self.repo.head(self.repo.forgejo, 'hero_int_1.0'), self.base)
+        self.assertEqual(self.repo.head(self.repo.forgejo, 'hero_int_release'), self.base)
         for bare in (self.repo.github,):
-            release = self.repo.head(bare, "hero_int_1.0")
+            release = self.repo.head(bare, "hero_int_release")
             self.assertEqual(self.repo.head(bare, "hero_int_dev"), release)
             self.assertEqual(self.repo.head(bare, f"{release}^"), tested)
             self.assertEqual(self.repo.head(bare, "v1.0.1^{commit}"), release)
@@ -101,20 +128,20 @@ class TestPromotion(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("moved past", result.stdout)
         for bare in (self.repo.forgejo, self.repo.github):
-            self.assertEqual(self.repo.head(bare, "hero_int_1.0"), self.base)
+            self.assertEqual(self.repo.head(bare, "hero_int_release"), self.base)
 
     def test_diverged_installation_branch_is_never_overwritten(self):
         git(self.repo.work, "checkout", "-q", "-b", "hotfix")
         self.repo.commit("hotfix on 1.0", name="hotfix.txt")
-        self.repo.push("hero_int_1.0")
-        hotfix = self.repo.head(self.repo.forgejo, "hero_int_1.0")
+        self.repo.push("hero_int_release")
+        hotfix = self.repo.head(self.repo.forgejo, "hero_int_release")
         git(self.repo.work, "checkout", "-q", "hero_int_dev")
         tested = self.repo.commit("feature")
         self.repo.push("hero_int_dev")
         result = self.repo.promote(tested)
         self.assertNotEqual(result.returncode, 0)
         for bare in (self.repo.forgejo, self.repo.github):
-            self.assertEqual(self.repo.head(bare, "hero_int_1.0"), hotfix)
+            self.assertEqual(self.repo.head(bare, "hero_int_release"), hotfix)
             self.assertEqual(self.repo.head(bare, "hero_int_dev"), tested)
 
     def test_interrupted_promotion_is_completed_with_the_same_release_and_tag(self):
@@ -124,7 +151,7 @@ class TestPromotion(unittest.TestCase):
         self.repo.github = self.repo.root / "missing.git"  # GitHub unreachable on the first run
         self.assertNotEqual(self.repo.promote(tested).returncode, 0)
         self.repo.github = github
-        self.assertEqual(self.repo.head(github, "hero_int_1.0"), self.base)
+        self.assertEqual(self.repo.head(github, "hero_int_release"), self.base)
         result = self.repo.promote(tested)
         self.assertEqual(result.returncode, 0, result.stderr)
 
@@ -132,11 +159,11 @@ class TestPromotion(unittest.TestCase):
         tested = self.repo.commit("feature")
         self.repo.push("hero_int_dev")
         self.assertEqual(self.repo.promote(tested).returncode, 0)
-        release = self.repo.head(self.repo.github, "hero_int_1.0")
+        release = self.repo.head(self.repo.github, "hero_int_release")
         tag = self.repo.head(self.repo.github, "v1.0.1")
         result = self.repo.promote(tested)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self.repo.head(self.repo.github, "hero_int_1.0"), release)
+        self.assertEqual(self.repo.head(self.repo.github, "hero_int_release"), release)
         self.assertEqual(self.repo.head(self.repo.github, "v1.0.1"), tag)
 
     def test_reused_release_commit_with_extra_changes_is_rejected(self):
@@ -159,14 +186,14 @@ class TestPromotion(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("changes more than the version", result.stderr)
                 for bare in (self.repo.forgejo, self.repo.github):
-                    self.assertEqual(self.repo.head(bare, "hero_int_1.0"), self.base)
+                    self.assertEqual(self.repo.head(bare, "hero_int_release"), self.base)
 
     def test_version_raised_by_hand_is_released_without_a_bump_commit(self):
         tested = self.repo.commit("minor release", version="1.1.0")
         self.repo.push("hero_int_dev")
         result = self.repo.promote(tested)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self.repo.head(self.repo.github, "hero_int_1.0"), tested)
+        self.assertEqual(self.repo.head(self.repo.github, "hero_int_release"), tested)
         self.assertEqual(self.repo.head(self.repo.github, "v1.1.0^{commit}"), tested)
 
 
@@ -199,7 +226,7 @@ class TestCandidatePromotion(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.repo.head(self.repo.github, "hero_int_release"), self.tested)
         self.assertEqual(self.refs(), before)
-        self.assertEqual(self.repo.head(self.repo.forgejo, "hero_int_1.0"), self.base)
+        self.assertEqual(self.repo.head(self.repo.forgejo, "hero_int_release"), self.base)
         self.assertEqual(git(self.repo.github, "show", "hero_int_release:hero_integration/__init__.py"),
                          '__version__ = "1.0.0"')
 
@@ -237,7 +264,7 @@ class TestCandidatePromotion(unittest.TestCase):
 
     def test_unsupported_source_and_invalid_sha_cannot_publish(self):
         before = self.refs()
-        for changes in ({"CI_COMMIT_BRANCH": "hero_int_release"}, {"CI_COMMIT_BRANCH": "hero_int_1.0"},
+        for changes in ({"CI_COMMIT_BRANCH": "hero_int_release"}, {"CI_COMMIT_BRANCH": "hero_int_release"},
                         {"CI_COMMIT_BRANCH": "refs/heads/hero_int_dev"}, {"CI_COMMIT_SHA": ""},
                         {"CI_COMMIT_SHA": "HEAD"}, {"CI_COMMIT_SHA": "a" * 39}):
             with self.subTest(changes=changes):
@@ -303,10 +330,10 @@ class TestCandidatePromotion(unittest.TestCase):
     def test_workflow_requires_manual_marker_and_installation_success(self):
         import yaml
 
-        steps = {s["name"]: s for s in yaml.safe_load((ROOT / ".woodpecker/standard.yml").read_text())["steps"]}
+        steps = {s["name"]: s for s in yaml.safe_load((ROOT / ".woodpecker/opt.yml").read_text())["steps"]}
         step = steps["promote-candidate"]
         self.assertEqual(step["depends_on"], ["install-test"])
-        self.assertEqual(step["when"], [{"event": "manual", "branch": "hero_int_dev",
+        self.assertEqual(step["when"], [{"event": "manual", "branch": "hero_int_dev_opt",
                          "evaluate": 'CI_COMMIT_MESSAGE matches "^(MANUAL: )?-canidate([[:space:]]|$)"'}])
         self.assertEqual(step["environment"]["GITHUB_TOKEN"], {"from_secret": "github_candidate_token"})
         self.assertNotIn("hero_site_update_key", str(step))
@@ -356,16 +383,17 @@ class TestWaitForGitHub(unittest.TestCase):
 
 
 class TestWoodpeckerChain(unittest.TestCase):
-    def test_promotion_runs_last_and_only_for_dev_pushes(self):
+    def test_opt_promotion_runs_last_and_only_for_opt_pushes(self):
         import yaml
 
-        steps = {step["name"]: step for step in yaml.safe_load((ROOT / ".woodpecker/standard.yml").read_text())["steps"]}
+        steps = {s["name"]: s for s in yaml.safe_load((ROOT / ".woodpecker/opt.yml").read_text())["steps"]}
         self.assertEqual(steps["install-test"]["depends_on"], ["wait-github"])
-        self.assertEqual(steps["promote"]["depends_on"], ["install-test", "update-test-site"])
-        self.assertEqual(steps["promote"]["when"], [{"event": "push", "branch": "hero_int_dev"}])
-        self.assertEqual(steps["promote"]["environment"]["GITHUB_TOKEN"], {"from_secret": "github_release_token"})
-        self.assertNotIn("FORGEJO_REMOTE", steps["promote"]["environment"])
-        self.assertNotIn("FORGEJO_TOKEN", steps["promote"]["environment"])
+        self.assertEqual(steps["promote-opt"]["depends_on"], ["install-test"])
+        self.assertEqual(steps['promote-opt']['when'][0]['event'], 'manual')
+        self.assertIn('RELEASE_APPROVED', steps['promote-opt']['when'][0]['evaluate'])
+        self.assertEqual(steps["promote-opt"]["environment"]["GITHUB_TOKEN"], {"from_secret": "github_release_token"})
+        self.assertNotIn("promote", steps)
+        self.assertNotIn("update-test-site", steps)
 
 
 if __name__ == "__main__":

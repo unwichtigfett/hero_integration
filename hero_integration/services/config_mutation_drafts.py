@@ -59,7 +59,6 @@ def save(payload, source_instance, snapshot_name):
 
 
 def export(source_instance, snapshot_name):
-    """Reuse the directional exporter so own prepared revisions round-trip too."""
-    from hero_integration.services import mapping_draft_exchange as exchange
-    result = json.loads(exchange._export_portable(source_instance, snapshot_name, DIRECTION, usage='CONFIGURED_MUTATIONS'))
-    return [item for item in result['mappings'] if item['content'].get('usage') in {'MAPPED_UPDATE_V2', 'PROJECT_LOGBOOK_V1'}]
+    """Export the active configuration, never personal or prepared revisions."""
+    from hero_integration.services.direct_config_import import export_mutations
+    return export_mutations(source_instance, snapshot_name)

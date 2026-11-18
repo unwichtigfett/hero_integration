@@ -5,8 +5,9 @@ package/schema and approved area read services. Customer-service references
 use areas rather than site-specific names. Excluded: credentials, URL/hosts,
 recipients, mutation/deletion switches, testing mode and runtime status.
 
-Import uses the existing adoption workflow and target-side approvals/revisions.
-Identical configurations write nothing. Format v1 remains supported.
+Complete replacement uses a direct, source-scoped installer without personal
+drafts. The additive legacy format keeps its adoption workflow. Identical
+configuration documents are not rewritten. Format v1 remains supported.
 """
 
 from __future__ import annotations
@@ -45,6 +46,13 @@ class ConfigExchangeError(LocalizedError):
 
 
 def export_config(snapshot_name: str, source_instance: str = "default", *, mappings_only: bool = False) -> str:
+    from hero_integration.services.doctype_permissions import configuration_metadata_review
+
+    with configuration_metadata_review(frappe):
+        return _export_config(snapshot_name, source_instance, mappings_only=mappings_only)
+
+
+def _export_config(snapshot_name: str, source_instance: str, *, mappings_only: bool) -> str:
     from hero_integration import api
     from hero_integration.services import mapping_exchange
     from hero_integration.services.schema_provisioning import _definitions, _target_dependency
@@ -79,9 +87,20 @@ def export_config(snapshot_name: str, source_instance: str = "default", *, mappi
             if len(rows) != 1:
                 raise ConfigExchangeError("An approved mapping field rule is unavailable for export.")
             selected[identity] = rows[0]
+        imported = json.loads(mapping.get("configuration_import_ids") or "{}").get("rules", {})
+        if imported:
+            from hero_integration.services.personal_mapping_content import remap_query_options
+            remap_query_options(config, imported)
+            config["mapping_definition_ids"] = [imported.get(identity, identity) for identity in config["mapping_definition_ids"]]
         exported.append({"target_operation": operation, "service_name": service.service_name,
                          "operation_name": service.operation_name, "mapping_operation_name": mapping.operation_name,
                          "query": service.query_document, "mapping": portable(config)})
+        # Keep original file identities on export without sharing local rule
+        # records across sources. The unchanged CLI can round-trip explicit
+        # query_rule_id references as well as its generated UUIDs.
+        for identity, portable_id in imported.items():
+            if identity in selected:
+                selected[identity] = {**selected[identity], "definition_id": portable_id}
     schema = mapping_exchange._merge_export_schemas([*selected.values(), *manifests])
     definitions = _definitions(schema)
     rules = []
@@ -106,7 +125,7 @@ def export_config(snapshot_name: str, source_instance: str = "default", *, mappi
     mutations = export_mutations(source_instance, snapshot_name)
     contracts = []
     if mutations:
-        from hero_integration.services.config_mutation_contracts import export as export_contracts
+        from hero_integration.services.direct_config_import import export_contracts
         contracts = export_contracts(source_instance, snapshot_name, mutation_mappings=mutations)
     return json.dumps({"format_version": FORMAT_VERSION, "replace_mappings": True,
         "schema_snapshot": {"schema_fingerprint": snapshot.schema_fingerprint, "schema": json.loads(snapshot.snapshot_json)},
@@ -208,7 +227,8 @@ def preview_config(snapshot_name: str, payload_json: str, source_instance: str =
     payload = _parse(payload_json)
     if payload.get("replace_mappings"):
         from hero_integration.services.config_mutation_drafts import summary
-        return {**_replacement_preview(snapshot_name, payload, source_instance), **summary(payload)}
+        from hero_integration.services.direct_config_import import preview
+        return {**preview(snapshot_name, payload, source_instance), **summary(payload)}
     snapshot_name, snapshot_state = _resolve_snapshot(snapshot_name, payload, create=False)
     result = {"format_version": payload["format_version"], "snapshot": snapshot_state,
               "settings": sorted(_settings_changes(payload))}
@@ -259,7 +279,8 @@ def import_config(snapshot_name: str, payload_json: str, source_instance: str = 
     frappe.only_for("System Manager")
     payload = _parse(payload_json)
     if payload.get("replace_mappings"):
-        return _replace_config(snapshot_name, payload, source_instance, before_mapping_write=before_mapping_write)
+        from hero_integration.services.direct_config_import import apply
+        return apply(snapshot_name, payload, source_instance, before_mapping_write=before_mapping_write)
     snapshot_name, snapshot_state = _resolve_snapshot(snapshot_name, payload, create=True)
     package_json, _ = _rebased_package(snapshot_name, payload)
     package = preview_package(snapshot_name, package_json)
@@ -330,8 +351,10 @@ def _parse(payload_json: str) -> dict:
             raise ConfigExchangeError('Mutation contracts require a replacement configuration package.')
         from hero_integration.services.config_mutation_contracts import validate as validate_contracts
         try:
-            payload['mutation_contracts'] = validate_contracts(payload['mutation_contracts'],
-                payload['schema_snapshot']['schema'], payload.get('mutation_mappings', []))
+            # Validate without rewriting the artifact. h-map verifies the
+            # exported JSON, including GraphQL text and contract list order.
+            validate_contracts(payload['mutation_contracts'], payload['schema_snapshot']['schema'],
+                               payload.get('mutation_mappings', []))
         except ValueError as error:
             raise ConfigExchangeError.from_error(error) from error
     return payload
@@ -535,7 +558,7 @@ def _existing_equivalent(item, rules, candidates, created=None):
     return None
 
 
-def _replacement_check(snapshot, payload, rules):
+def _replacement_check(snapshot, payload, rules, *, replace_existing=False):
     from hero_integration.services.direct_mapping import MappingSpec, validate_spec
     from hero_integration.services.mapping_runtime import plan_from_definitions
     from hero_integration.services.query_mapping import validate_v2_spec, seal_query
@@ -589,7 +612,7 @@ def _replacement_check(snapshot, payload, rules):
     if payload.get('mutation_contracts'):
         from hero_integration.services.config_mutation_contracts import preview as preview_contracts, planned_preview
         try:
-            if snapshot.name == 'package-preview':
+            if replace_existing or snapshot.name == 'package-preview':
                 contract_preview = planned_preview(payload['mutation_contracts'], json.loads(snapshot.snapshot_json),
                     mutation_mappings=payload.get('mutation_mappings', []))
             else:

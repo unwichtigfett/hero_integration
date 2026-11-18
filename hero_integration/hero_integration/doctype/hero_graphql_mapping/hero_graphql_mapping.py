@@ -18,6 +18,9 @@ from hero_integration.services.schema_operations import catalog
 class HEROGraphQLMapping(Document):
     def validate(self) -> None:
         frappe.only_for("System Manager")
+        from hero_integration.services.direct_config_import import accepts_document
+        if accepts_document(self):
+            return
         from hero_integration.services.mapping_draft_access import protect_managed_mapping
         protect_managed_mapping(self)
         previous = self.get_doc_before_save() if not self.is_new() else None
@@ -185,6 +188,7 @@ class HEROGraphQLMapping(Document):
 def lock_exchange_context(source_instance, snapshot_name, direction):
     """Serialize supported membership changes for this exact source context."""
     from hero_integration.hero_integration.doctype.hero_frappe_mapping.hero_frappe_mapping import _lock_active_target
+    _lock_active_target('direct-config-import', source_instance or '', 'all')
     _lock_active_target('personal-draft-exchange', source_instance or '',
                         json.dumps([snapshot_name, direction], ensure_ascii=False, separators=(',', ':')))
 

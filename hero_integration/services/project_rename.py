@@ -17,21 +17,31 @@ CONFIRMATION = "RENAME HERO PROJECTS"
 COMMIT_EVERY = 50
 
 
+def _approved_project_source(client):
+    from hero_integration.client.settings import get_configuration
+    from hero_integration.sources.hero import GraphQLServiceSource
+    return GraphQLServiceSource.approved(client, 'HeroProjectMatches', get_configuration().source_instance)
+
+
 def hero_project_trades(client, links) -> dict[str, dict[str, str]]:
     """{source_instance: {source_id: trade_code}} from HERO's measure, 50 IDs per read-only query."""
     from hero_integration.client.graphql import HeroClientError
     from hero_integration.services.project_naming import ProjectTitleValidationError, project_trade
 
+    from hero_integration.services.mapping_contract_v1 import QueryDraft
+    if not links:
+        return {}
+    source = _approved_project_source(client)
     trades: dict[str, dict[str, str]] = {}
-    ids = sorted({int(link.source_id) for link in links if str(link.source_id).isdigit()})
-    instance_of = {str(link.source_id): link.source_instance or "default" for link in links}
+    ids = sorted({int(link.source_id) for link in links
+        if (link.source_instance or 'default') == source.source_instance
+        and str(link.source_id).isdigit() and int(link.source_id) > 0})
     for start in range(0, len(ids), 50):
         chunk = ids[start:start + 50]
-        document = "query HeroProjectTrades { " + " ".join(
-            f"p{value}: project_match(project_match_id: {value}) {{ id measure {{ short name }} }}" for value in chunk
-        ) + " }"
         try:
-            data = client.query(document, {})
+            data = source._auxiliary_batch('HeroProjectTrades', tuple(QueryDraft(
+                'ProjectTrade', f'p{value}', 'project_match', ('id', 'measure.short', 'measure.name'),
+                {'project_match_id': value}) for value in chunk))
         except HeroClientError as error:
             data = getattr(error, "data", None) or {}
         data = data.get("data", data) if isinstance(data, dict) else {}
@@ -43,7 +53,7 @@ def hero_project_trades(client, links) -> dict[str, dict[str, str]]:
                 code, _name = project_trade({"measure": row.get("measure")})
             except ProjectTitleValidationError:
                 continue
-            trades.setdefault(instance_of[str(value)], {})[str(value)] = code
+            trades.setdefault(source.source_instance, {})[str(value)] = code
     return trades
 
 

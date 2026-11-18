@@ -108,7 +108,10 @@ test('partial or unknown result is displayed and never retried',async()=>{
 });
 test('Project hooks mount only unified action',()=>{
     const hooks=readFileSync(new URL('../hooks.py',import.meta.url),'utf8');
-    assert.ok(hooks.includes('"Project": ["public/js/hero_project_send.js"]'));
+    const registration = hooks.match(/"Project":\s*\[([^\]]+)\]/)?.[1] || "";
+    assert.equal((registration.match(/hero_project_send\.js/g) || []).length, 1);
+    assert.ok(registration.includes("public/js/project_workspace.js"));
+    assert.ok(!registration.includes("hero_writeback.js"));
 });
 test('Customer script cannot register a second Project field action after visiting Customer',()=>{
     const source=readFileSync(new URL('../public/js/hero_writeback.js',import.meta.url),'utf8');

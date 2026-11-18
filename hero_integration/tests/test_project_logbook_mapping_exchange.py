@@ -196,11 +196,12 @@ class TestLogbookConfigurationAndContract(TestCase):
             else: broken['mapping']['mapping_definition_ids'] = [groups[1]['definition_id']]
             with self.subTest(change=change), self.assertRaises(ValueError): contracts.validate([broken], SCHEMA, groups)
 
-    def test_configuration_export_selects_both_profiles_but_not_legacy_arbitrary_actions(self):
+    def test_configuration_export_reads_active_profiles_without_personal_draft_export(self):
         selected = [group(update_mapping('HeroProjectMatches')), group()]
-        with patch.object(exchange, '_export_portable', return_value=json.dumps(portable(selected))) as export:
+        with patch('hero_integration.services.direct_config_import.export_mutations', return_value=selected) as export, \
+                patch.object(exchange, '_export_portable', side_effect=AssertionError('Obsolete draft export')):
             self.assertEqual(drafts.export('source', 'snapshot'), selected)
-        export.assert_called_once_with('source', 'snapshot', 'FRAPPE_TO_MUTATION', usage='CONFIGURED_MUTATIONS')
+        export.assert_called_once_with('source', 'snapshot')
 
 
 class TestLogbookReadbackAndUniqueness(TestCase):

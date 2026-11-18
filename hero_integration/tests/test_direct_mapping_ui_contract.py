@@ -12,8 +12,8 @@ class TestDirectMappingUIContract(unittest.TestCase):
         data = path.read_bytes()
         self.assertNotIn(b"\r", data)
         rows = list(csv.reader(data.decode().splitlines()))
-        self.assertTrue(all(len(row) == 2 for row in rows))
-        translations = dict(rows)
+        self.assertTrue(all(len(row) in (2, 3) for row in rows))
+        translations = {row[0] + (":" + row[2] if len(row) == 3 and row[2] else ""): row[1] for row in rows}
         messages = [
             "Price list", "Choose a price list", "Standard Buying", "Standard Selling",
             "Query rule crosses an unsupported native relationship.",

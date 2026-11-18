@@ -8,8 +8,8 @@
       "hero_integration.tests.test_file_migration.TestSourceBinding.test_run_uses_only_the_confirmed_binding_it_was_queued_under",
       "hero_integration.tests.test_file_migration.TestSourceBinding.test_start_records_source_and_binding_revision",
       "hero_integration.tests.test_file_migration.TestSourceBinding.test_source_change_before_execution_blocks_without_reading_hero",
-      "hero_integration.tests.test_file_migration.TestEveryStartPathIsSourceBound.test_unconfirmed_binding_blocks_both_public_starts",
-      "hero_integration.tests.test_file_migration.TestEveryStartPathIsSourceBound.test_legacy_start_creates_a_bound_run",
+      "hero_integration.tests.test_file_migration.TestEveryStartPathIsSourceBound.test_unconfirmed_binding_blocks_central_start",
+      "hero_integration.tests.test_file_migration.TestEveryStartPathIsSourceBound.test_central_start_creates_a_bound_run",
       "hero_integration.tests.test_file_migration.TestEveryStartPathIsSourceBound.test_already_queued_legacy_job_transfers_nothing",
       "hero_integration.tests.test_file_migration.TestEveryStartPathIsSourceBound.test_transfer_without_a_bound_client_requires_a_confirmed_binding",
       "hero_integration.tests.test_product_migration.TestManagedPrices.test_links_and_offset_belong_to_one_source"
@@ -39,7 +39,7 @@
       "hero_integration.tests.test_mapped_send.TestGroupedNestedSend.test_related_address_identity_must_be_proven_by_pre_read"
     ],
     "N-06 unchanged file reassignment": [
-      "hero_integration.tests.test_file_transfer.TestSourceAndTargetBinding.test_unchanged_unassigned_file_is_attached_once_its_project_exists",
+      "hero_integration.tests.test_file_transfer.TestSourceAndTargetBinding.test_unchanged_unassigned_file_waits_even_when_its_project_exists",
       "hero_integration.tests.test_file_transfer.TestSourceAndTargetBinding.test_unchanged_file_without_resolvable_target_stays_untouched"
     ],
     "writeback readback and source guard": [
@@ -64,13 +64,22 @@
     "binding resume after acknowledgment": [
       "hero_integration.tests.test_binding_registry.TestBindingRegistry.test_resolve_after_acknowledgment_preserves_revision_baselines_and_reconciliation"
     ],
-    "standard query architecture": [
-      "hero_integration.tests.test_query_draft.TestQueryDraft.test_mutations_subscriptions_and_multiple_operations_are_rejected",
-      "hero_integration.tests.test_query_draft.TestQueryDraft.test_recursive_selection_depth_is_bounded_at_twelve_levels"
+    "opt document compiler": [
+      "hero_integration.tests.test_document_materializer.TestDocumentMaterializer.test_selected_operation_still_validates_the_entire_document",
+      "hero_integration.tests.test_document_materializer.TestDocumentMaterializer.test_named_selection_cannot_bypass_mutation_scope",
+      "hero_integration.tests.test_document_materializer.TestDocumentMaterializer.test_invalid_stored_schema_blocks_saved_service_transport"
     ],
-    "standard mutation architecture": [
-      "hero_integration.tests.test_graphql_contract.TestGraphQLContract.test_root_argument_binding_requires_compatible_declared_variable_type",
-      "hero_integration.tests.test_graphql_contract.TestGraphQLContract.test_literals_and_extra_operations_cannot_hide_a_second_mutation"
+    "opt schema cache isolation": [
+      "hero_integration.tests.test_graphql_schema_cache.TestGraphQLSchemaCache.test_warm_schema_does_not_skip_status_identity_or_fingerprint_validation",
+      "hero_integration.tests.test_graphql_schema_cache.TestGraphQLSchemaCache.test_mutating_a_dictionary_cannot_change_or_reuse_its_cached_schema",
+      "hero_integration.tests.test_graphql_schema_cache.TestGraphQLSchemaCache.test_core_and_generated_schema_caches_evict_old_entries"
+    ],
+    "opt request scoped caches": [
+      "hero_integration.tests.test_sync_page_read_cache.TestSyncPageReadCache.test_failures_are_not_cached_and_exception_cleans_up_scope",
+      "hero_integration.tests.test_sync_page_read_cache.TestSyncPageReadCache.test_endpoint_scope_ends_before_the_next_status_or_migration_request"
+    ],
+    "opt finite selection architecture": [
+      "hero_integration.tests.test_query_draft.TestQueryDraft.test_recursive_selection_is_not_bounded_by_the_retired_editor_depth_limit"
     ]
   },
   "site": {
@@ -88,6 +97,14 @@
       "hero_integration.tests.test_run_checkpoint_frappe.TestCheckpointMariaDB.test_concurrent_field_change_waits_for_checkpoint_then_rejects_stale_continuation",
       "hero_integration.tests.test_run_checkpoint_frappe.TestCheckpointMariaDB.test_actual_run_reader_releases_database_locks_before_transport",
       "hero_integration.tests.test_run_checkpoint_frappe.TestCheckpointMariaDB.test_mapping_publication_uses_same_transaction_scoped_root_lock"
+    ],
+    "unified native deferred and full-import boundaries": [
+      "hero_integration.tests.test_deferred_synthetic_frappe.TestSyntheticDeferredMariaDB.test_available_project_is_not_realized_until_origin_run_completed",
+      "hero_integration.tests.test_deferred_synthetic_frappe.TestSyntheticDeferredMariaDB.test_task_binding_worker_skips_full_intake_and_keeps_scalar_baselines",
+      "hero_integration.tests.test_deferred_synthetic_frappe.TestSyntheticDeferredMariaDB.test_project_completion_hands_off_to_one_event_child_without_an_extra_job",
+      "hero_integration.tests.test_deferred_synthetic_frappe.TestSyntheticDeferredMariaDB.test_full_binding_pass_resolves_event_after_project_stage_without_another_import",
+      "hero_integration.tests.test_deferred_synthetic_frappe.TestSyntheticDeferredMariaDB.test_native_logbook_baseline_ignores_own_creation_defaults_and_unlinked_system_comments",
+      "hero_integration.tests.test_deferred_synthetic_frappe.TestSyntheticDeferredMariaDB.test_private_file_attaches_only_after_success_and_keeps_source_ids"
     ]
   }
 }

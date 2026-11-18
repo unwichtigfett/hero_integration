@@ -210,7 +210,14 @@ def after_install() -> None:
     from hero_integration.services.desk_theme import ensure_navy_theme
 
     ensure_navy_theme()
+    from hero_integration.services.design_mode import ensure_field as ensure_design_preference
+    ensure_design_preference()
+    from hero_integration.services.project_address import ensure_fields as ensure_project_address
+    ensure_project_address()
     apply_form_layout()
+    from hero_integration.services.project_image_categories import install_defaults
+
+    install_defaults()
     if _reference_apps_installed():
         from hero_integration.integrations.app_references import setup_reference_access
 
@@ -227,6 +234,13 @@ def after_migrate() -> None:
     from hero_integration.services.desk_theme import ensure_navy_theme
 
     ensure_navy_theme()
+    from hero_integration.services.design_mode import ensure_field as ensure_design_preference
+    ensure_design_preference()
+    from hero_integration.services.project_address import ensure_fields as ensure_project_address
+    ensure_project_address()
+    from hero_integration.services.project_image_categories import ensure_field
+
+    ensure_field()
     if _reference_apps_installed():
         # Create-only; also covers Helpdesk/CRM installed after this app.
         from hero_integration.integrations.app_references import ensure_reference_fields

@@ -20,7 +20,7 @@ from hero_integration.services.binding_registry import BindingRegistryService, I
 from hero_integration.services.frappe_writeback import WritebackContractError
 from hero_integration.services.mapping_registry_model import MappingDirection
 from hero_integration.services.sync_engine import OutboundApproval, OutboundIntent, execute_sync_hero
-from hero_integration.tests.test_verified_writeback import context
+from hero_integration.tests.test_verified_writeback import MUTATION, context, mutation_snapshot
 
 SITE = os.environ.get('HERO_WRITEBACK_SOURCE_TEST_SITE')
 SETTINGS = 'HERO Integration Settings'
@@ -114,9 +114,10 @@ class TestWritebackSourceSnapshotMariaDB(IntegrationTestCase):
         field = bindings.record_verified_acknowledgment(field, expected_revision=1, mapping_definition_id='d',
             mapping_revision=1, source_fingerprint=old, target_fingerprint=old, evidence_id='initial', version=1)
         result = context()
+        result['snapshot'] = mutation_snapshot(include_id=True)
         result['binding'], result['bindings'] = field, bindings
         result['intent'] = OutboundIntent(field, 1, 'a' * 64, state_fingerprint('Expected', present=True),
-            True, 'mutation', {'contact': {'id': 42, 'full_name': 'Expected'}})
+            True, MUTATION, {'contact': {'id': 42, 'full_name': 'Expected'}})
         return result
 
     def _run_with_committed_change(self, change, *, succeeds):

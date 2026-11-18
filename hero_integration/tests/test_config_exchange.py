@@ -315,6 +315,7 @@ class TestScopedConfigurationExport(unittest.TestCase):
             requested.append(kwargs["filters"])
             return [rule]
         fake = SimpleNamespace(get_doc=lambda doctype, name: docs[name], get_all=get_all,
+                                session=SimpleNamespace(user="Administrator"),
                                get_single=lambda *a: {key: ("source-a" if key == "hero_source_instance" else None) for key in cx.SETTINGS_KEYS})
         with patch('hero_integration.services.config_mutation_drafts.export', return_value=[]), patch.object(cx, "frappe", fake), patch.object(api, "_sync_area_read_services", return_value={
                 "HeroEmployees": [{"service": "reader", "mapping": "mapped"}]}):

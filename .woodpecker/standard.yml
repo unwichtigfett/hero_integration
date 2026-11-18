@@ -10,7 +10,7 @@
 # The repository must be "trusted" in Woodpecker so the read-only volume can be mounted.
 when:
   - event: [manual, push]
-    branch: [hero_int_dev, hero_int_1.0]
+    branch: [hero_int_dev, hero_int_release, hero_int_1.0, integration/*]
 
 services:
   - name: mariadb
@@ -33,8 +33,9 @@ steps:
     depends_on: [install-test]
     image: alpine:3.22.2@sha256:4b7ce07002c69e8f3d704a9c5d6fd3053be500b7f1c69fc0d80990c2ad8dd412
     when:
-      - event: push
+      - event: manual
         branch: hero_int_dev
+        evaluate: 'CI_COMMIT_MESSAGE matches "^(MANUAL: )?DEPLOY_APPROVED([[:space:]]|$)"'
     environment:
       SSH_KEY:
         from_secret: hero_site_update_key
@@ -72,11 +73,12 @@ steps:
 
   # Push to hero_int_dev only, after every earlier gate succeeded.
   - name: promote
-    depends_on: [install-test, update-test-site]
+    depends_on: [install-test]
     image: alpine:3.22.2@sha256:4b7ce07002c69e8f3d704a9c5d6fd3053be500b7f1c69fc0d80990c2ad8dd412
     when:
-      - event: push
+      - event: manual
         branch: hero_int_dev
+        evaluate: 'CI_COMMIT_MESSAGE matches "^(MANUAL: )?RELEASE_APPROVED([[:space:]]|$)"'
     environment:
       GITHUB_REMOTE: https://github.com/unwichtigfett/hero_integration.git
       GITHUB_TOKEN:

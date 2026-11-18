@@ -94,7 +94,7 @@ def related_test_for_run(run):
     """Return only a still-valid sample belonging to this full-run child."""
     if not bool(int(getattr(run, 'testing_enabled', 0) or 0)):
         return None
-    parent = frappe.db.get_default(CHILD_KEY.format(run.name))
+    parent = _parent_run(run.name)
     if not parent:
         return None
     state = _full(parent)
@@ -206,9 +206,6 @@ def start(action: str, parent: str = "") -> str:
     from hero_integration.services.migration_testing import configuration, run_metadata
     parent_run = frappe.get_doc('HERO Integration Run', parent) if parent else None
     require_mappings(action, config.source_instance)
-    if action in FILE_ACTIONS or action == FULL_ACTION:
-        from hero_integration.services.deferred_references import require_storage
-        require_storage(frappe)
     if action == EMPLOYEE_ACTION:
         from hero_integration.services.employee_migration import preflight
 
@@ -217,6 +214,9 @@ def start(action: str, parent: str = "") -> str:
         from hero_integration.services.service_migration import preflight
 
         preflight(config.source_instance)
+    if action in FILE_ACTIONS or action in {FULL_ACTION, EMPLOYEE_ACTION, SERVICE_ACTION}:
+        from hero_integration.services.deferred_references import require_storage
+        require_storage(frappe)
     if parent:
         bound_configuration(frappe.get_doc("HERO Integration Run", parent))  # a chain never switches sources
     testing = configuration(parent_run, frappe_module=frappe)
@@ -260,6 +260,34 @@ def resume(run) -> None:
             state["child"] = ""  # the stopped step starts again as a new child run
             _save_full(run.name, state)
     _enqueue(run.name)
+
+
+
+def retry_full_relationships(run_name: str):
+    """Queue only the final binding pass of an already imported full run."""
+    frappe.only_for('System Manager')
+    run=frappe.get_doc('HERO Integration Run',run_name,for_update=True)
+    run.check_permission('write')
+    state=_full(run_name)
+    if (run.action!=FULL_ACTION or run.mode=='Preview' or run.state not in SUCCESS
+            or state.get('steps')!=list(NEW_FULL_STEPS) or state.get('step')!=len(NEW_FULL_STEPS)
+            or state.get('child') or not state.get('completed_children')):
+        raise SourceBindingError('Only a finished full import can restart its relationship pass.')
+    bound_configuration(run)
+    for child in state['completed_children']:
+        if (_parent_run(child)!=run_name or
+                frappe.db.get_value('HERO Integration Run',child,'state') not in SUCCESS or
+                frappe.db.get_value('HERO Integration Run',child,'source_instance')!=run.source_instance):
+            raise SourceBindingError('The full import child scope no longer matches its relationship pass.')
+    for key in ('reconciliation_done','reconciliation_stage','reconciliation_after',
+                'reconciliation_final_after','reconciliation_conflicts'):
+        state.pop(key,None)
+    state['notes']=[note for note in state.get('notes',[]) if not note.startswith('Relationship reconciliation:')]
+    _save_full(run_name,state)
+    run.state,run.finished_on,run.error_message='Queued',None,''
+    run.save(ignore_permissions=True)
+    _enqueue(run_name)
+    return {'run':run_name,'phase':'relationships'}
 
 
 def _enqueue(run_name: str) -> None:
@@ -407,11 +435,16 @@ def _finish(run_name: str, state: str, message: str) -> None:
 
 
 def on_run_finished(run_name: str) -> None:
-    """Advance the Full Migration that started ``run_name``, if any."""
-    parent = frappe.db.get_default(CHILD_KEY.format(run_name))
+    """Notify relationship realization and advance an originating Full Migration."""
+    from hero_integration.services.deferred_references import notify_completed_run
+    notify_completed_run(run_name)
+    parent = _parent_run(run_name)
     if parent and frappe.db.get_value("HERO Integration Run", parent, "state") in ACTIVE:
-        _enqueue(parent)
+        # Publish the child's terminal state and release its reservation before
+        # the parent's locked transition. The next child still runs in its own
+        # queued job; the handoff itself must not depend on another notification.
         frappe.db.commit()
+        execute(parent)
 
 
 def advance_full(run_name: str) -> None:
@@ -468,18 +501,19 @@ def _advance_full_locked(run_name: str) -> None:
             state.update(step=state["step"] + 1, child="")
         if state["step"] >= len(steps):
             if steps == list(NEW_FULL_STEPS) and not state.get("reconciliation_done"):
-                from hero_integration.services.deferred_references import reconcile_source_page
+                from hero_integration.services.deferred_references import reconcile_full_page
                 source = bound_configuration(frappe.get_doc("HERO Integration Run", run_name)).source_instance
-                testing = bool(frappe.db.get_value("HERO Integration Run", run_name, "testing_enabled"))
-                origins = state.get("completed_children", []) if testing else None
-                cursor, more = reconcile_source_page(source, state.get("reconciliation_after", ""), origin_runs=origins)
-                state["reconciliation_after"] = cursor
-                state["reconciliation_done"] = not more
+                origins = state.get("completed_children", [])
+                done = reconcile_full_page(source, origins, state)
+                state['reconciliation_done']=bool(done)
                 _save_full(run_name, state)
-                if more:
+                if not done:
                     _enqueue(run_name)
                     frappe.db.commit()
                     return
+                if state.get('reconciliation_conflicts'):
+                    state['notes'].append('Relationship reconciliation: {0} reference(s) require review.'.format(
+                        state['reconciliation_conflicts']))
             _save_full(run_name, state)
             notes = "; ".join(state["notes"])
             _finish(run_name, "Completed With Conflicts" if notes else "Completed", notes or "All steps completed.")
@@ -524,8 +558,21 @@ def _start_step(action: str, parent: str) -> str:
 
 # ---------------------------------------------------------------- state helpers
 
+def _stored_default(key: str):
+    """Read workflow state from its durable row, bypassing Frappe's defaults cache.
+
+    Other workers can populate that cache before a new child or checkpoint
+    commits. Cached defaults must not decide sample scope or chain progression.
+    """
+    return frappe.db.get_value('DefaultValue', {'parent': '__default', 'defkey': key}, 'defvalue')
+
+
+def _parent_run(run_name: str):
+    return _stored_default(CHILD_KEY.format(run_name))
+
+
 def _full(run_name: str) -> dict:
-    raw = frappe.db.get_default(FULL_KEY.format(run_name))
+    raw = _stored_default(FULL_KEY.format(run_name))
     return json.loads(raw) if raw else {"step": 0, "child": "", "notes": []}
 
 

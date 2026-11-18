@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 
 from hero_integration.services import mapping_snapshot_rebase as rebase
 from hero_integration.services.graphql_graph import analyze_snapshot
-from hero_integration.services.graphql_contract import parse_mutation
+from hero_integration.services.mutation_binding_contract import parse_mutation
 from hero_integration.tests.test_config_mutation_contracts import fixtures, SCHEMA
 
 
