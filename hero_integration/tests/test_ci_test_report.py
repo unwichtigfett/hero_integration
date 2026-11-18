@@ -85,7 +85,7 @@ class TestCiTestReport(unittest.TestCase):
 
     def test_required_manifest_resolves_to_real_test_methods(self):
         manifest = json.loads((ROOT / 'ci/required-tests.json').read_text())
-        self.assertEqual(set(manifest), {'offline', 'site'})
+        self.assertEqual(set(manifest), {'offline', 'site', 'native'})
         for phase, groups in manifest.items():
             self.assertTrue(groups)
             for group, identities in groups.items():

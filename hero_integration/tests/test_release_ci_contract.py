@@ -15,16 +15,16 @@ ROOT = Path(__file__).resolve().parents[2]
 
 class TestReleaseCiGate(unittest.TestCase):
     def run_gate(self, *, offline_status=0, site_status=0, fixture_status=0, offline_count=2, site_count=2,
-                 offline_outcome=None, site_outcome=None, stale_site=False):
+                 offline_outcome=None, site_outcome=None, native_outcome=None, native_status=0, stale_site=False):
         function = (ROOT / 'ci/test-gates.sh').read_text()
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             app = root / 'apps/hero_integration'
             (app / 'ci').mkdir(parents=True)
             (app / 'ci/check-test-report.py').write_text((ROOT / 'ci/check-test-report.py').read_text())
-            manifest = {phase: {'critical': [f'synthetic.{phase}.test_0']} for phase in ('offline', 'site')}
+            manifest = {phase: {'critical': [f'synthetic.{phase}.test_0']} for phase in ('offline', 'site', 'native')}
             (app / 'ci/required-tests.json').write_text(json.dumps(manifest))
-            for phase, count, outcome in [('offline', offline_count, offline_outcome), ('site', site_count, site_outcome)]:
+            for phase, count, outcome in [('offline', offline_count, offline_outcome), ('site', site_count, site_outcome), ('native', 6, native_outcome)]:
                 suite = ET.Element('testsuite')
                 for i in range(count):
                     case = ET.SubElement(suite, 'testcase', classname=f'synthetic.{phase}', name=f'test_{i}')
@@ -52,6 +52,10 @@ bench() {
     [[ "$HERO_CI_TEST_SITE" == "$SITE" ]] || return 8
     return "${FIXTURE_STATUS:-0}"
   fi
+  if [[ "$*" == *"--case TestSyntheticDeferredMariaDB"* ]]; then
+    cp "$HERO_TEST_LOG_DIR/native-fixture.xml" "${@: -1}"
+    return "$NATIVE_STATUS"
+  fi
   printf '%s %s %s\\n' "${HERO_RUN_RESERVATION_TEST_SITE:-}" "${HERO_WRITEBACK_SOURCE_TEST_SITE:-}" "${HERO_CHECKPOINT_TEST_SITE:-}" >> "$TRACE"
   printf 'SYNTHETIC_SITE_DIAGNOSTIC\\n'
   for (( i=0; i<SITE_COUNT; i++ )); do printf ' ✔ synthetic_test\\n'; done
@@ -63,7 +67,7 @@ printf 'GATE_PASSED\\n'
 '''
             env = dict(os.environ, MIN_TESTS='1', HERO_TEST_LOG_DIR=tmp,
                        OFFLINE_STATUS=str(offline_status), SITE_STATUS=str(site_status), FIXTURE_STATUS=str(fixture_status),
-                       OFFLINE_COUNT=str(offline_count), SITE_COUNT=str(site_count), TRACE=str(root / 'trace'),
+                       OFFLINE_COUNT=str(offline_count), SITE_COUNT=str(site_count), NATIVE_STATUS=str(native_status), TRACE=str(root / 'trace'),
                        REAL_PYTHON=sys.executable, STALE_SITE=str(int(stale_site)), SITE='hero-ci.localhost')
             result = subprocess.run(['bash', '-euo', 'pipefail', '-c', script], cwd=root, env=env,
                                     text=True, capture_output=True)
@@ -130,6 +134,13 @@ printf 'GATE_PASSED\\n'
         result, trace = self.run_gate()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('hero-ci.localhost hero-ci.localhost hero-ci.localhost', trace)
+
+    def test_native_report_requires_success_independently_of_general_suite(self):
+        for changes in ({'native_outcome': 'skipped'}, {'native_outcome': 'failure'}, {'native_status': 7}):
+            with self.subTest(changes=changes):
+                result, _ = self.run_gate(**changes)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn('GATE_PASSED', result.stdout)
 
     def test_both_providers_use_the_shared_gate(self):
         for path in ('ci/github-install-test.sh', 'ci/bench-install-test.sh'):

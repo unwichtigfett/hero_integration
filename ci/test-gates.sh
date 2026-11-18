@@ -61,7 +61,10 @@ run_hero_test_gates() {
     cat "$report_dir/native.log"
     return "$native_rc"
   fi
-  cat "$report_dir/native.xml" >> "$report_dir/site.xml" || return "$?"
+  # Keep the opted-in run separate from expected skips in the general suite.
+  # Duplicate failures within each invocation still fail closed.
+  "$python" "$app/ci/check-test-report.py" --phase native \
+    --report "$report_dir/native.xml" --minimum 6 || return "$?"
   "$python" "$app/ci/check-test-report.py" --phase site \
     --report "$report_dir/site.xml" --minimum "$minimum" || return "$?"
   printf 'HERO offline and complete site test suites passed.\n'
