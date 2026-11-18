@@ -9,6 +9,16 @@ from unittest import mock
 
 
 class TestInstallContract(unittest.TestCase):
+    def test_image_category_lifecycle_seeds_only_at_install_and_repairs_field_on_migrate(self):
+        environment = _InstallEnvironment(apps=["frappe", "erpnext"], version="16.35.0")
+        install = environment.load()
+        environment.call(install.after_install)
+        environment.call(install.after_migrate)
+        environment.call(install.after_migrate)
+        categories = environment.modules["hero_integration.services.project_image_categories"]
+        self.assertEqual(categories.install_defaults.call_count, 1)
+        self.assertEqual(categories.ensure_field.call_count, 2)
+
     def test_migration_repairs_missing_pending_storage_and_is_idempotent(self):
         environment = _InstallEnvironment(apps=['frappe', 'erpnext'], version='16.35.0')
         environment.doctypes -= {'HERO Pending Dependency', 'HERO Pending Reference'}
@@ -174,10 +184,23 @@ class _InstallEnvironment:
         erpnext_module.__version__ = self.version
         custom_field_module = types.ModuleType("frappe.custom.doctype.custom_field.custom_field")
         custom_field_module.create_custom_fields = self.create_custom_fields
+        category_module = types.ModuleType("hero_integration.services.project_image_categories")
+        category_module.ensure_field = mock.Mock()
+        category_module.install_defaults = mock.Mock()
+        theme_module = types.ModuleType("hero_integration.services.desk_theme")
+        theme_module.ensure_navy_theme = mock.Mock()
+        design_module = types.ModuleType("hero_integration.services.design_mode")
+        design_module.ensure_field = mock.Mock()
+        address_module = types.ModuleType("hero_integration.services.project_address")
+        address_module.ensure_fields = mock.Mock()
         self.modules = {
             "frappe": frappe_module,
             "erpnext": erpnext_module,
             "frappe.custom.doctype.custom_field.custom_field": custom_field_module,
+            "hero_integration.services.project_image_categories": category_module,
+            "hero_integration.services.desk_theme": theme_module,
+            "hero_integration.services.design_mode": design_module,
+            "hero_integration.services.project_address": address_module,
         }
         package = importlib.import_module("hero_integration")
         missing = object()
@@ -200,9 +223,8 @@ class _InstallEnvironment:
 
     def call(self, function):
         # Theme lifecycle has its own metadata tests; this fixture owns ERPNext fields.
-        with mock.patch("hero_integration.services.desk_theme.ensure_navy_theme"), \
-                mock.patch("hero_integration.integrations.field_labels.relabel_fields") as relabel, \
-                mock.patch.dict(sys.modules, self.modules):
+        with mock.patch.dict(sys.modules, self.modules), \
+                mock.patch("hero_integration.integrations.field_labels.relabel_fields") as relabel:
             result = function()
             self.relabel_calls += relabel.call_count
             return result

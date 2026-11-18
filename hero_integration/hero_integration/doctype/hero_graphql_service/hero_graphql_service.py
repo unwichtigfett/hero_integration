@@ -13,6 +13,9 @@ from hero_integration.services.localized_error import translate_error
 class HEROGraphQLService(Document):
     def validate(self) -> None:
         frappe.only_for("System Manager")
+        from hero_integration.services.direct_config_import import accepts_document
+        if accepts_document(self):
+            return
         snapshot = frappe.get_doc("HERO GraphQL Schema Snapshot", self.schema_snapshot)
         if snapshot.analysis_status != "Validated":
             frappe.throw(frappe._("A validated GraphQL schema snapshot is required."))

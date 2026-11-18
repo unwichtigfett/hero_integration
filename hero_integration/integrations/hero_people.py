@@ -11,23 +11,39 @@ from __future__ import annotations
 
 import frappe
 
-PEOPLE_QUERY = """
-query HeroPeople {
-  company {
-    partners {
-      id user_id first_name last_name full_name email phone mobile status account_type
-      user { id email }
-    }
-  }
-}
-"""
+PEOPLE_PATHS = ('id', 'user_id', 'first_name', 'last_name', 'full_name', 'email', 'phone', 'mobile',
+                'status', 'account_type', 'user.id', 'user.email')
+
+
+def _people_request(snapshot, path):
+    from hero_integration.services.mapping_contract_v1 import QueryAdapter, QueryDraft
+    if path == 'company.partners':
+        root, paths = 'company', tuple('partners.' + item for item in PEOPLE_PATHS)
+    elif path == 'partners':
+        root, paths = 'partners', PEOPLE_PATHS
+    else:
+        raise ValueError('The approved employee reader has no supported partner collection.')
+    return QueryAdapter().materialize(snapshot, QueryDraft('HeroPeople', root, root, paths, {}))
+
+
+def _approved_people_request():
+    from hero_integration.client.settings import get_configuration
+    from hero_integration.services import direct_runtime
+    config = get_configuration()
+    read = direct_runtime.resolve_read('HeroEmployees', config.source_instance)
+    snapshot = direct_runtime.validated_snapshot(read, config.source_instance, frappe_module=frappe)
+    return _people_request(snapshot, read.records_path), read.records_path
 
 
 def partners(client) -> list[dict]:
-    data = client.query(PEOPLE_QUERY, {})
-    data = data.get("data", data) if isinstance(data, dict) else {}
-    company = data.get("company") if isinstance(data, dict) else None
-    return [row for row in (company or {}).get("partners") or [] if isinstance(row, dict)]
+    from hero_integration.services.direct_mapping import lookup
+    request, path = _approved_people_request()
+    data = client.query(request.document, request.variables)
+    data = data.get('data', data) if isinstance(data, dict) else {}
+    rows = lookup(data, path)
+    if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+        raise ValueError('HERO returned an invalid employee collection.')
+    return rows
 
 
 def person_email(partner: dict) -> str | None:

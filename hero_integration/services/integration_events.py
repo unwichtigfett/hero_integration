@@ -17,6 +17,17 @@ OUTPUT_SCHEMA_VERSION = "hero-integration-result/v1"
 _whitelist = getattr(frappe, "whitelist", lambda: lambda function: function)
 
 
+def migration_outcome(result: str) -> str:
+    """Summarize existing durable result codes without replacing their detail."""
+    if result in {"CREATED", "UPDATED", "CONVERGED", "OBSERVED", "BASELINE", "SKIPPED", "PREVIEW_OK", "SKIPPED_CONTACT_PERSON", "SKIPPED_SOURCE_DELETED"}:
+        return "SUCCESS"
+    if result in {"CONFLICT", "SKIPPED_AMBIGUOUS", "SKIPPED_REJECTED"}:
+        return "CONFLICT"
+    if result in {"PENDING_REVIEW", "UNAVAILABLE"}:
+        return "SKIPPED_DEPENDENCY"
+    return "FAILED"
+
+
 def redacted_changed_fields(fields: list[str] | None) -> str:
     """Format supplied field names; callers must not pass values (no validation or redaction)."""
 
@@ -81,10 +92,10 @@ def list_outputs(limit_start: int = 0, limit_page_length: int = 20) -> dict[str,
     ]
     return {
         "schema_version": OUTPUT_SCHEMA_VERSION,
-        "records": frappe.get_all(
+        "records": [{**row, "outcome": migration_outcome(row.get("result", ""))} for row in frappe.get_all(
             "HERO Integration Record", fields=fields, order_by="creation desc",
             limit_start=start, limit_page_length=page_length,
-        ),
+        )],
         "limit_start": start,
         "limit_page_length": page_length,
     }

@@ -9,7 +9,7 @@ from hero_integration.services.binding_registry import state_fingerprint, Bindin
 from hero_integration.services.mapping_registry_model import MappingDirection
 from hero_integration.services.sync_engine import OutboundIntent
 from hero_integration.tests import test_sync_engine as fixtures
-from hero_integration.tests.test_verified_writeback import configuration, context
+from hero_integration.tests.test_verified_writeback import configuration, context, MUTATION
 
 
 class TestFormVerifiedWriteback(TestCase):
@@ -25,7 +25,7 @@ class TestFormVerifiedWriteback(TestCase):
         verified['binding'] = fixture.binding
         verified['bindings'] = fixture.bindings
         verified['intent'] = OutboundIntent(fixture.binding, 1, fixtures.FP,
-            state_fingerprint('Expected', present=True), True, 'mutation', {'contact': {'full_name': 'Expected'}})
+            state_fingerprint('Expected', present=True), True, MUTATION, {'contact': {'full_name': 'Expected'}})
         verified['fingerprint'] = 'shared'
         form = {'verified_context': verified, 'fingerprint': 'preview', 'mapping': verified['mapping'],
                 'mapping_row': NS(mapping_revision=1), 'snapshot': NS(schema_fingerprint=fixtures.FP)}

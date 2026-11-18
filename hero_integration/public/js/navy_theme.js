@@ -2,6 +2,7 @@
     "use strict";
 
     const ui = frappe.ui;
+    if (frappe.boot?.hero_design_mode === "Native") return;
     if (ui.ThemeSwitcher.hero_navy_theme) return;
 
     const setTheme = ui.set_theme;

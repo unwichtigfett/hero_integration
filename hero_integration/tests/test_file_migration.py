@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -15,6 +16,8 @@ class _DB:
         self.runs, self.defaults = {}, {}
 
     def get_value(self, doctype, name, field):
+        if doctype == 'DefaultValue':
+            return self.defaults.get(name['defkey'])
         return self.runs.get(name, {}).get(field)
 
     def set_value(self, doctype, name, values, value=None):
@@ -67,11 +70,11 @@ class TestFullMigrationChain(unittest.TestCase):
         steps = list(fm.NEW_FULL_STEPS)
         fm._save_full("FULL", {"step": 0, "child": "", "notes": [], "steps": steps})
         with patch.object(fm, 'bound_configuration', return_value=SimpleNamespace(source_instance='source-a')), \
-             patch('hero_integration.services.deferred_references.reconcile_source_page', return_value=('', False)) as reconcile:
+             patch('hero_integration.services.deferred_references.reconcile_full_page', return_value=True) as reconcile:
             fm.advance_full("FULL")
             for _ in steps:
                 self.finish_current()
-        reconcile.assert_called_once_with('source-a', '', origin_runs=None)
+        self.assertEqual(reconcile.call_args.args[:2],('source-a',fm._full('FULL')['completed_children']))
         self.assertEqual(self.started, steps)
         self.assertEqual(self.started, ['Employee Migration', 'Customer Migration', 'Project Migration',
             'Schedule Migration', 'Projection Migration', 'Document Migration', 'Picture Migration',
@@ -79,15 +82,15 @@ class TestFullMigrationChain(unittest.TestCase):
         self.assertEqual(self.db.runs["FULL"]["state"], "Completed")
 
     def test_final_reconciliation_is_bounded_and_finishes_before_parent(self):
-        state = {'step': len(fm.NEW_FULL_STEPS), 'child': '', 'notes': [], 'steps': list(fm.NEW_FULL_STEPS)}
+        state = {'step': len(fm.NEW_FULL_STEPS), 'child': '', 'notes': [], 'steps': list(fm.NEW_FULL_STEPS),'completed_children':['CHILD-1']}
         fm._save_full('FULL', state)
         with patch.object(fm, 'bound_configuration', return_value=SimpleNamespace(source_instance='source-a')), \
-             patch('hero_integration.services.deferred_references.reconcile_source_page', side_effect=[('last', True), ('last', False)]) as reconcile:
+             patch('hero_integration.services.deferred_references.reconcile_full_page', side_effect=[False,True]) as reconcile:
             fm.advance_full('FULL')
             self.assertEqual(self.db.runs['FULL']['state'], 'Running')
             self.assertEqual(self.queued, ['FULL'])
             fm.advance_full('FULL')
-        self.assertEqual([call.args for call in reconcile.call_args_list], [('source-a', ''), ('source-a', 'last')])
+        self.assertEqual([call.args[:2] for call in reconcile.call_args_list],[('source-a',['CHILD-1'])]*2)
         self.assertEqual(self.db.runs['FULL']['state'], 'Completed')
 
     def test_test_run_final_sweep_is_limited_to_its_own_children(self):
@@ -96,9 +99,22 @@ class TestFullMigrationChain(unittest.TestCase):
                  'steps': list(fm.NEW_FULL_STEPS), 'completed_children': ['CHILD-1', 'CHILD-2']}
         fm._save_full('FULL', state)
         with patch.object(fm, 'bound_configuration', return_value=SimpleNamespace(source_instance='source-a')), \
-             patch('hero_integration.services.deferred_references.reconcile_source_page', return_value=('', False)) as reconcile:
+             patch('hero_integration.services.deferred_references.reconcile_full_page', return_value=True) as reconcile:
             fm.advance_full('FULL')
-        reconcile.assert_called_once_with('source-a', '', origin_runs=['CHILD-1', 'CHILD-2'])
+        self.assertEqual(reconcile.call_args.args[:2],('source-a',['CHILD-1','CHILD-2']))
+
+    def test_final_binding_conflicts_are_reported_only_after_all_area_steps(self):
+        state={'step':len(fm.NEW_FULL_STEPS),'child':'','notes':[],
+            'steps':list(fm.NEW_FULL_STEPS),'completed_children':['EVENTS']}
+        fm._save_full('FULL',state)
+        def finish(source,origins,current):
+            current['reconciliation_conflicts']=2
+            return True
+        with patch.object(fm,'bound_configuration',return_value=SimpleNamespace(source_instance='source-a')), \
+                patch('hero_integration.services.deferred_references.reconcile_full_page',side_effect=finish):
+            fm.advance_full('FULL')
+        self.assertEqual(self.db.runs['FULL']['state'],'Completed With Conflicts')
+        self.assertIn('2 reference(s)',self.db.runs['FULL']['error_message'])
 
     def test_steps_run_one_after_another_and_complete(self):
         fm.advance_full("FULL")
@@ -222,13 +238,36 @@ class TestFullMigrationChain(unittest.TestCase):
         self.assertEqual([row['id'] for row in selected.records], [4])
         self.assertEqual(wrapper.projection(selected.next_offset), SourcePage((), None))
 
-    def test_a_finished_child_queues_its_parent(self):
+    def test_a_finished_child_continues_its_parent_without_a_handoff_job(self):
         self.db.defaults[fm.CHILD_KEY.format("RUN-9")] = "FULL"
-        fm.on_run_finished("RUN-9")
-        self.assertEqual(self.queued, ["FULL"])
-        self.db.runs["FULL"]["state"] = "Cancelled"
-        fm.on_run_finished("RUN-9")
-        self.assertEqual(self.queued, ["FULL"])
+        order=[]
+        with patch.object(self.db,'commit',side_effect=lambda:order.append('commit')), \
+                patch.object(fm,'execute',side_effect=lambda name:order.append(name)):
+            fm.on_run_finished("RUN-9")
+            self.assertEqual(order,['commit','FULL'])
+            self.db.runs["FULL"]["state"] = "Cancelled"
+            fm.on_run_finished("RUN-9")
+            self.assertEqual(order,['commit','FULL'])
+        self.assertEqual(self.queued, [])
+
+    def test_cached_parent_miss_cannot_strand_a_completed_task_child(self):
+        self.db.defaults[fm.CHILD_KEY.format('TASKS')] = 'FULL'
+        with patch.object(self.db, 'get_default', return_value=None), \
+                patch.object(fm, 'execute') as execute:
+            fm.on_run_finished('TASKS')
+        execute.assert_called_once_with('FULL')
+
+    def test_stale_cached_checkpoint_cannot_start_a_duplicate_child(self):
+        fm._save_full('FULL', {'step': 4, 'child': 'TASKS', 'notes': [],
+            'steps': list(fm.NEW_FULL_STEPS), 'completed_children': ['EVENTS']})
+        self.db.runs['TASKS'] = {'state': 'Queued'}
+        stale = json.dumps({'step': 3, 'child': 'EVENTS', 'notes': [],
+            'steps': list(fm.NEW_FULL_STEPS), 'completed_children': []})
+        self.db.runs['EVENTS'] = {'state': 'Completed'}
+        with patch.object(self.db, 'get_default', return_value=stale):
+            fm.advance_full('FULL')
+            self.assertEqual(fm._full('FULL')['child'], 'TASKS')
+        self.assertEqual(self.started, [])
 
 
 class TestFileSlice(unittest.TestCase):
@@ -333,7 +372,8 @@ class TestSourceBinding(unittest.TestCase):
         sample = {'version': 1, 'source_instance': 'source-a', 'source_binding_revision': 3,
                   'project_reader_fingerprint': project_reader_fingerprint(read), 'project_ids': ['1']}
         run = SimpleNamespace(name='CHILD', testing_enabled=1, action='Employee Migration')
-        fake = SimpleNamespace(db=SimpleNamespace(get_default=lambda key: 'FULL'))
+        fake = SimpleNamespace(db=SimpleNamespace(get_default=lambda key: None,
+            get_value=lambda doctype, filters, field: 'FULL'))
         with patch.object(fm, 'frappe', fake), patch.object(fm, '_full', return_value={'related_test_enabled': True, 'related_test_digest': 'digest'}), \
              patch.object(fm, '_load_related_test', return_value=sample), \
              patch.object(fm, 'bound_configuration', return_value=_config()), \
@@ -472,16 +512,16 @@ class TestEveryStartPathIsSourceBound(unittest.TestCase):
             target.start()
             self.addCleanup(target.stop)
 
-    def test_unconfirmed_binding_blocks_both_public_starts(self):
+    def test_unconfirmed_binding_blocks_central_start(self):
         with patch.object(fm, "_configuration", return_value=_config(confirmed=False)):
-            for start in (lambda: self.ft.start("documents"), lambda: self.api.sync_area_start("documents")):
+            for start in (lambda: self.api.sync_area_start("documents"),):
                 with self.subTest(start=start), self.assertRaisesRegex(RuntimeError, "confirm the source binding"):
                     start()
         self.assertEqual((self.inserted, self.queued), ([], []))
 
-    def test_legacy_start_creates_a_bound_run(self):
+    def test_central_start_creates_a_bound_run(self):
         with patch.object(fm, "_configuration", return_value=_config()):
-            self.assertEqual(self.ft.start("images"), "RUN-1")
+            self.assertEqual(self.api.sync_area_start("pictures")["run"], "RUN-1")
         self.assertEqual((self.inserted[0].action, self.inserted[0].source_instance,
                           self.inserted[0].source_binding_revision), ("Picture Migration", "source-a", 3))
         self.assertEqual(self.queued, ["RUN-1"])
@@ -499,3 +539,44 @@ class TestEveryStartPathIsSourceBound(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestFullRelationshipRetry(unittest.TestCase):
+    def setUp(self):
+        self.db=_DB()
+        self.db.runs['EVENTS']={'state':'Completed','source_instance':'source'}
+        self.db.defaults[fm.CHILD_KEY.format('EVENTS')]='FULL'
+        self.state={'step':len(fm.NEW_FULL_STEPS),'steps':list(fm.NEW_FULL_STEPS),'child':'',
+            'completed_children':['EVENTS'],'notes':['scalar conflict','Relationship reconciliation: 1 reference(s) require review.'],
+            'reconciliation_done':True,'reconciliation_after':'old','reconciliation_stage':8}
+        self.db.defaults[fm.FULL_KEY.format('FULL')]=json.dumps(self.state)
+        self.run=SimpleNamespace(action=fm.FULL_ACTION,mode='Execute',state='Completed',source_instance='source',
+            testing_enabled=1,testing_cohort_json='frozen cohort',check_permission=Mock(),save=Mock())
+        self.fake=SimpleNamespace(db=self.db,only_for=Mock(),get_doc=Mock(return_value=self.run))
+
+    def test_retry_queues_only_frozen_relationship_scope_without_scalar_restart(self):
+        with patch.object(fm,'frappe',self.fake),patch.object(fm,'bound_configuration'), \
+                patch.object(fm,'_enqueue') as enqueue,patch.object(fm,'_start_step') as start:
+            result=fm.retry_full_relationships('FULL')
+        self.assertEqual(result['phase'],'relationships')
+        self.fake.only_for.assert_called_once_with('System Manager')
+        self.run.check_permission.assert_called_once_with('write')
+        start.assert_not_called();enqueue.assert_called_once_with('FULL')
+        state=json.loads(self.db.defaults[fm.FULL_KEY.format('FULL')])
+        self.assertEqual(state['completed_children'],['EVENTS'])
+        self.assertEqual(state['step'],len(fm.NEW_FULL_STEPS))
+        self.assertEqual(state['notes'],['scalar conflict'])
+        self.assertNotIn('reconciliation_done',state)
+        self.assertEqual(self.run.testing_cohort_json,'frozen cohort')
+
+    def test_incomplete_full_run_or_wrong_child_source_cannot_retry(self):
+        for mode in ('incomplete','wrong-source','wrong-parent'):
+            with self.subTest(mode=mode):
+                self.setUp()
+                if mode=='incomplete':self.run.state='Running'
+                elif mode=='wrong-source':self.db.runs['EVENTS']['source_instance']='other'
+                else:self.db.defaults[fm.CHILD_KEY.format('EVENTS')]='OTHER'
+                with patch.object(fm,'frappe',self.fake),patch.object(fm,'bound_configuration'), \
+                        patch.object(fm,'_enqueue') as enqueue,self.assertRaises(fm.SourceBindingError):
+                    fm.retry_full_relationships('FULL')
+                enqueue.assert_not_called();self.run.save.assert_not_called()

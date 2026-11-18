@@ -137,7 +137,8 @@ def refresh_project_phases_from_hero() -> dict:
     from hero_integration.services.project_send import _read_client
     from hero_integration.sources.hero import GraphQLServiceSource
 
-    source = GraphQLServiceSource(_read_client(), SimpleNamespace(), SimpleNamespace(), "default")
+    from hero_integration.client.settings import get_configuration
+    source = GraphQLServiceSource.approved(_read_client(), 'HeroProjectMatches', get_configuration().source_instance)
     changed = refresh_project_phases(source.project_status_steps())
     frappe.db.commit()
     return {"projects_updated": changed}

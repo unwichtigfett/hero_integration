@@ -9,13 +9,13 @@ let framework;
 try { framework = readFileSync(frameworkPath, 'utf8'); }
 catch { framework = null; }
 
-function setup(mode = 'light') {
+function setup(mode = 'light', design = 'Custom') {
     const attributes = new Map([['data-theme-mode', mode], ['data-theme', mode]]);
     const calls = [];
     const root = {getAttribute: name => attributes.get(name) || null,
         setAttribute: (name, value) => attributes.set(name, value), removeAttribute: name => attributes.delete(name)};
     const media = {matches: false, addEventListener() {}};
-    const frappe = {ui: {}, provide() {}, show_alert() {}, xcall: (method, args) => {calls.push({method,args}); return Promise.resolve();}};
+    const frappe = {boot: {hero_design_mode: design}, ui: {}, provide() {}, show_alert() {}, xcall: (method, args) => {calls.push({method,args}); return Promise.resolve();}};
     const context = vm.createContext({frappe, document:{documentElement:root}, window:{matchMedia:() => media},
         __: value => value, toTitle: value => value[0].toUpperCase() + value.slice(1)});
     vm.runInContext(framework, context);
@@ -66,4 +66,11 @@ test('Light, Dark and Automatic clear Navy and preserve native system selection'
     media.matches = true; frappe.ui.set_theme();
     assert.equal(attributes.get('data-theme'), 'dark');
     assert.equal(attributes.get('data-theme-mode'), 'automatic');
+});
+test('Native design keeps only native palette choices and installs no Navy behavior', {skip: !framework}, async () => {
+    const {frappe, switcher, attributes} = setup('dark', 'Native');
+    await switcher.fetch_themes();
+    assert.deepEqual(Array.from(switcher.themes, theme => theme.name), ['automatic','light','dark']);
+    assert.equal(attributes.has('data-hero-theme'), false);
+    assert.equal(frappe.ui.ThemeSwitcher.hero_navy_theme, undefined);
 });

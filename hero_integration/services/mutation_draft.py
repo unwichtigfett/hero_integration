@@ -1,122 +1,79 @@
-"""Local-only validation for HERO mutation drafts against a saved schema."""
+"""Local mutation metadata and variables validated by the operation materializer."""
 from __future__ import annotations
 
-import re
+from hero_integration.graphql_protocol.graphql_operation_materializer import GraphQLOperationMaterializer
+from hero_integration.services.graphql_schema_cache import compiled_schema
+from hero_integration.services.localized_error import LocalizedError
 
-from hero_integration.services.graphql_graph import GraphSnapshotError, normalize_schema
 
-
-_MUTATION = re.compile(r"^\s*mutation(?:\s+[_A-Za-z][_0-9A-Za-z]*)?(?:\s*\([^)]*\))?\s*\{\s*([_A-Za-z][_0-9A-Za-z]*)")
-_OPERATION = re.compile(r"\b(query|mutation|subscription)\b", re.IGNORECASE)
-_STRING_LITERAL = re.compile(r'"')
+class MutationDraftError(LocalizedError):
+    pass
 
 
 def operation_kind(document: str) -> str:
-    """Return the sole top-level GraphQL operation kind without parsing variables as secrets."""
-    if not isinstance(document, str):
-        raise ValueError("The GraphQL document must be text.")
-    anonymous_query = document.lstrip().startswith("{")
-    operations = (["query"] if anonymous_query else []) + _top_level_operations(document)
-    if len(operations) != 1:
-        raise ValueError("A draft must contain exactly one GraphQL operation.")
-    return operations[0]
+    from graphql.language.ast import OperationDefinitionNode
+    try:
+        tree = GraphQLOperationMaterializer.parse_document(document)
+    except ValueError as error:
+        raise MutationDraftError('GraphQL document validation failed: {0}', str(error)) from error
+    return next(node.operation.value for node in tree.definitions if isinstance(node, OperationDefinitionNode))
+
+
+def _validated(schema, document):
+    try:
+        return _validated_document(schema, document)
+    except (TypeError, ValueError) as error:
+        raise MutationDraftError('GraphQL mutation draft validation failed: {0}', str(error)) from error
+
+
+def _validated_document(schema, document):
+    from graphql import visit, Visitor
+    # Persisted service documents use variables for string values. Inspect the
+    # AST so quotes inside comments cannot be mistaken for persisted values.
+    class NoPersistedStrings(Visitor):
+        def enter_string_value(self, node, *_):
+            raise ValueError('Mutation drafts must not contain literal values.')
+    tree = GraphQLOperationMaterializer.parse_document(document, allowed_kinds=('mutation',))
+    visit(tree, NoPersistedStrings())
+    try:
+        compiled = compiled_schema(schema)
+        core = compiled.core
+    except (TypeError, ValueError) as error:
+        raise ValueError('The saved schema is invalid.') from error
+    if core.mutation_type is None:
+        raise ValueError('The saved schema has no mutation root.')
+    return core, GraphQLOperationMaterializer.validate_document(core, document, allowed_kinds=('mutation',)), compiled.fingerprint
 
 
 def validate(schema: dict[str, object], document: str) -> dict[str, object]:
-    if operation_kind(document) != "mutation":
-        raise ValueError("A local mutation draft must contain exactly one mutation operation.")
-    # Reject quoted literals in persisted documents. Numeric, boolean and
-    # enum literals are not screened here; callers must not assume all values
-    # are excluded by this local draft check.
-    if _STRING_LITERAL.search(document):
-        raise ValueError("Mutation drafts must not contain literal values.")
-    match = _MUTATION.match(document)
-    if not match:
-        raise ValueError("A local mutation draft must start with a GraphQL mutation operation.")
+    from graphql import get_named_type
+    from graphql.language.ast import FieldNode, FragmentDefinitionNode, FragmentSpreadNode, InlineFragmentNode, OperationDefinitionNode
+    core, tree, _fingerprint = _validated(schema, document)
+    operation = next(node for node in tree.definitions if isinstance(node, OperationDefinitionNode))
+    fragments = {node.name.value:node for node in tree.definitions if isinstance(node, FragmentDefinitionNode)}
+    fields = []
+    def collect(selection):
+        for node in selection.selections:
+            if isinstance(node, FieldNode):
+                fields.append(node.name.value)
+            elif isinstance(node, InlineFragmentNode):
+                collect(node.selection_set)
+            elif isinstance(node, FragmentSpreadNode):
+                collect(fragments[node.name.value].selection_set)
+    collect(operation.selection_set)
+    field = fields[0]
+    detail = {'operation':field, 'root':core.mutation_type.name,
+              'return_type':('String' if field == '__typename' else get_named_type(core.mutation_type.fields[field].type).name)}
+    if len(fields) > 1:
+        detail['root_fields'] = fields
+    return detail
+
+
+def validate_variables(schema, document, values):
+    """Validate local input only; the returned values carry no execution authority."""
+    core, _tree, fingerprint = _validated(schema, document)
     try:
-        body = normalize_schema(schema)
-    except GraphSnapshotError as error:
-        raise ValueError("The saved schema is invalid.") from error
-    mutation_type = body.get("mutationType")
-    root_name = mutation_type.get("name") if isinstance(mutation_type, dict) else ""
-    types = body.get("types") if isinstance(body.get("types"), list) else []
-    root = next((item for item in types if isinstance(item, dict) and item.get("name") == root_name), None)
-    if not isinstance(root, dict):
-        raise ValueError("The saved schema has no mutation root.")
-    operation = match.group(1)
-    field = next((item for item in root.get("fields", []) if isinstance(item, dict) and item.get("name") == operation), None)
-    if not isinstance(field, dict):
-        raise ValueError("The mutation operation does not exist in the saved schema.")
-    return {"operation": operation, "root": root_name, "return_type": _type_name(field.get("type"))}
-
-
-def _top_level_operations(document: str) -> list[str]:
-    """Find operation keywords at GraphQL document depth zero.
-
-    GraphQL field names can legitimately be called ``query`` or ``mutation``;
-    only top-level keywords identify operations.  Strings and comments are
-    skipped so a user-visible description cannot change the draft kind.
-    """
-    operations: list[str] = []
-    depth = 0
-    previous_nonspace = ""
-    index = 0
-    length = len(document)
-    while index < length:
-        char = document[index]
-        if char == "#":
-            newline = document.find("\n", index + 1)
-            index = length if newline < 0 else newline + 1
-            continue
-        if char == '"':
-            index = _skip_string(document, index)
-            continue
-        if char == "{":
-            depth += 1
-            previous_nonspace = char
-            index += 1
-            continue
-        if char == "}":
-            depth -= 1
-            previous_nonspace = char
-            index += 1
-            continue
-        if depth == 0 and not previous_nonspace:
-            match = _OPERATION.match(document, index)
-            if match:
-                operations.append(match.group(1).lower())
-                previous_nonspace = match.group(0)[-1]
-                index = match.end()
-                continue
-        elif depth == 0 and previous_nonspace == "}":
-            match = _OPERATION.match(document, index)
-            if match:
-                operations.append(match.group(1).lower())
-                previous_nonspace = match.group(0)[-1]
-                index = match.end()
-                continue
-        if not char.isspace():
-            previous_nonspace = char
-        index += 1
-    return operations
-
-
-def _skip_string(document: str, index: int) -> int:
-    triple_quoted = document.startswith('"""', index)
-    delimiter = '"""' if triple_quoted else '"'
-    index += len(delimiter)
-    while index < len(document):
-        if document.startswith(delimiter, index):
-            return index + len(delimiter)
-        if document[index] == "\\" and not triple_quoted:
-            index += 2
-        else:
-            index += 1
-    raise ValueError("The GraphQL document contains an unterminated string.")
-
-
-def _type_name(type_ref: object) -> str:
-    current = type_ref
-    while isinstance(current, dict) and current.get("ofType"):
-        current = current["ofType"]
-    return str(current.get("name") or current.get("kind") or "unknown") if isinstance(current, dict) else "unknown"
+        return GraphQLOperationMaterializer.materialize_document(core, fingerprint,
+            document, values, request_scope='local-mutation-draft-validation').variables
+    except (TypeError, ValueError) as error:
+        raise MutationDraftError('GraphQL mutation draft validation failed: {0}', str(error)) from error

@@ -15,13 +15,18 @@ after_migrate = ["hero_integration.install.after_migrate"]
 before_uninstall = "hero_integration.services.desk_theme.remove_navy_theme"
 
 app_include_css = ["/assets/hero_integration/css/navy_theme.css", "/assets/hero_integration/css/site_logo.css"]
-app_include_js = ["/assets/hero_integration/js/navy_theme.js", "/assets/hero_integration/js/site_logo.js"]
+app_include_js = [
+    "/assets/hero_integration/js/design_mode.js?v=project-design-20261117",
+    "/assets/hero_integration/js/navy_theme.js?v=project-design-20261117",
+    "/assets/hero_integration/js/site_logo.js?v=project-design-20261117",
+]
 # The site's own logo (Navbar/Website Settings) is the top-left mark of the Desk.
-extend_bootinfo = ["hero_integration.services.branding.extend_bootinfo"]
+extend_bootinfo = ["hero_integration.services.branding.extend_bootinfo", "hero_integration.services.design_mode.extend_bootinfo"]
 # Includes standalone CRM/Helpdesk templates as well as Desk and portal pages.
 after_request = ["hero_integration.services.site_indicator.after_request"]
 override_whitelisted_methods = {
     "frappe.core.doctype.user.user.switch_theme": "hero_integration.services.desk_theme.switch_theme",
+    "frappe.desk.form.load.getdoctype": "hero_integration.services.design_mode.getdoctype",
 }
 
 # A one-minute tick only checks mode, window and interval; the configured
@@ -40,7 +45,7 @@ scheduler_events = {
 # on every form refresh and never observes or sends values by itself.
 doctype_js = {
     "Customer": ["public/js/hero_writeback.js", "public/js/hero_customer_send.js"],
-    "Project": ["public/js/hero_project_send.js"],
+    "Project": ["public/js/hero_project_send.js", "public/js/project_address.js", "public/js/project_workspace.js"],
     "Task": ["public/js/hero_task_send.js"],
     "HERO Integration Link": ["public/js/hero_diagnostics.js"],
     "HERO Integration Record": ["public/js/hero_diagnostics.js"],
@@ -99,11 +104,16 @@ doc_events["HD Customer"] = {event: "hero_integration.integrations.app_reference
                              for event in ("validate", "before_rename", "on_trash")}
 # Project IDs ending in -H are reserved for HERO.
 doc_events["Project"] = {
-    "validate": "hero_integration.services.guards.protect_hero_project_ids",
+    "validate": [
+        "hero_integration.services.guards.protect_hero_project_ids",
+        "hero_integration.services.project_responsibility.validate_project_responsible",
+        "hero_integration.services.project_address.validate_project_address",
+    ],
     "before_rename": "hero_integration.services.guards.protect_hero_project_rename",
     "on_update": "hero_integration.services.project_logbook_writeback.capture_project_activity",
 }
 doc_events["Task"] = {"validate": "hero_integration.services.change_detection.protect_external_task_deadline"}
+doc_events["File"] = {"validate": "hero_integration.services.project_image_categories.validate_file_category"}
 for _doctype in ("User", "Employee"):
     doc_events[_doctype] = {"validate": "hero_integration.services.change_detection.protect_employee_source_observations"}
 doc_events["Version"] = {"before_insert": "hero_integration.services.project_logbook_writeback.mark_imported_project_version"}
@@ -127,7 +137,10 @@ has_permission = {
 }
 permission_query_conditions["Version"] = "hero_integration.services.mapping_draft_access.personal_version_query"
 has_permission["Version"] = "hero_integration.services.mapping_draft_access.personal_version_permission"
-extend_doctype_class = {"Version": ["hero_integration.services.mapping_draft_access.PersonalMappingVersionAccess"]}
+extend_doctype_class = {
+    "Version": ["hero_integration.services.mapping_draft_access.PersonalMappingVersionAccess"],
+    "Customer": ["hero_integration.integrations.erpnext.contact.DeferredCustomerRelations"],
+}
 
 # Source identities wake only records that were waiting for these relationships.
 doc_events["HERO Integration Link"]["on_update"] = "hero_integration.services.deferred_references.binding_updated"

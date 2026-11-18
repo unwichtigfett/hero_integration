@@ -9,7 +9,7 @@ from the saved offset in a new background job.
 Runs are started as Document or Picture Migration (services.file_migration),
 which binds them to the confirmed HERO source. Usage (bench execute):
     hero_integration.services.file_transfer.preview --kwargs "{'phase': 'documents'}"
-    hero_integration.services.file_transfer.start --kwargs "{'phase': 'documents'}"
+    hero_integration.api.sync_area_start --kwargs "{'area': 'documents'}"
     hero_integration.services.file_transfer.status
 """
 
@@ -47,11 +47,12 @@ PHASE_FOLDER = {"documents": "Dokumente", "images": "Bilder"}
 UNASSIGNED_FOLDER = "Ohne Zuordnung"
 DELETED_DOCUMENT_STATUS = 1000
 
-DETAIL_QUERY = (
-    "query HeroFileDetails($uuids: [String!], $first: Int) { file_uploads(uuids: $uuids, first: $first) { "
-    "id uuid is_deleted file_upload_matches { project_match_id } "
-    "file_upload_links { target target_id customer_id project_match_id } "
-    "customer_document { id nr status_code project_match_id contact_id localized_type document_type { name } } } }"
+DETAIL_PATHS = (
+    'id', 'uuid', 'is_deleted', 'file_upload_matches.project_match_id',
+    'file_upload_links.target', 'file_upload_links.target_id', 'file_upload_links.customer_id',
+    'file_upload_links.project_match_id', 'customer_document.id', 'customer_document.nr',
+    'customer_document.status_code', 'customer_document.project_match_id', 'customer_document.contact_id',
+    'customer_document.localized_type', 'customer_document.document_type.name',
 )
 
 
@@ -136,12 +137,25 @@ class Downloader:
 
 # ---------------------------------------------------------------- listing
 
-def details(client, rows: list[dict]) -> dict[str, dict]:
+def _detail_request(read, source_instance, uuids):
+    """Compile file relationship reads against the area's approved source snapshot."""
+    from hero_integration.services.mapping_contract_v1 import QueryAdapter, QueryDraft
+
+    try:
+        validated = direct_runtime.validated_snapshot(read, source_instance, frappe_module=frappe)
+    except ValueError as error:
+        raise TransferError(str(error)) from error
+    return QueryAdapter().materialize(validated, QueryDraft('HeroFileDetails', 'file_uploads', 'file_uploads',
+        DETAIL_PATHS, {'uuids': uuids, 'first': len(uuids)}))
+
+
+def details(client, rows: list[dict], read, source_instance: str) -> dict[str, dict]:
     """Project/customer/document data per uuid, fetched in batches."""
     found = {}
     for start in range(0, len(rows), DETAIL_BATCH):
         uuids = [row["uuid"] for row in rows[start:start + DETAIL_BATCH]]
-        data = client.query(DETAIL_QUERY, {"uuids": uuids, "first": len(uuids)})
+        request = _detail_request(read, source_instance, uuids)
+        data = client.query(request.document, request.variables)
         for item in (data or {}).get("file_uploads") or []:
             found[item.get("uuid")] = item
     return found
@@ -422,9 +436,7 @@ def reconcile_legacy_file(existing, read, row, target, folder, source_instance, 
         return 'would_update'
     try:
         if repairs:
-            frappe.db.set_value('File', link.target_name, repairs, update_modified=False)
-            for name, value in repairs.items():
-                setattr(document, name, value)
+            document = _save_file(link.target_name, repairs, repairs, existing.name)
         baseline = {**json.loads(field_hashes(fields)), 'version': 2, 'mapped_fields': sorted(fields),
                     'target': _target_hash(link.target_name, fields, document=document),
                     'legacy': {'fields': digest, 'mapping_version': getattr(link, 'mapping_version', '')}}
@@ -495,24 +507,26 @@ def _record(row, size, md5, file_url, target, folder, existing, source_instance,
     fields = mapped_values(read, row)
     doctype, name = target
     old_url = None
+    created = (row.get("created") or "").replace("T", " ")[:19]
+    metadata = {"creation": created} if created else {}
     if existing and frappe.db.exists("File", existing.target_name):
         _assert_target_baseline(existing, fields, lock=True)
         old_url = frappe.db.get_value("File", existing.target_name, "file_url")
         # The old blob stays until the commit succeeded (see commit_file).
-        frappe.db.set_value("File", existing.target_name, {"file_url": file_url, "file_size": size, "content_hash": md5,
-                                                           **fields, **_attachment(target, folder)})
+        _save_file(existing.target_name, {"file_url": file_url, "file_size": size, "content_hash": md5,
+                                          **fields, **metadata, **_attachment(target, folder)}, fields, existing.name)
         file_name = existing.target_name
     else:
-        doc = frappe.get_doc({"doctype": "File", **fields, "file_url": file_url,
+        doc = frappe.get_doc({"doctype": "File", **fields, **metadata, "file_url": file_url,
                               "is_private": 1, "folder": folder, "file_size": size, "content_hash": md5,
                               "attached_to_doctype": doctype, "attached_to_name": name})
+        from hero_integration.services.project_image_categories import prepare_import_category
+        doc.set("file_type", _native_file_type(doc.file_name))
+        prepare_import_category(doc, fields)
         doc.flags.copy_from_existing_file = True  # blob is already on disk; skip reading it into memory
         doc.flags.ignore_duplicate_entry_error = True
         doc.insert(ignore_permissions=True)
         file_name = doc.name
-    created = (row.get("created") or "").replace("T", " ")[:19]
-    if created:
-        frappe.db.set_value("File", file_name, {"creation": created}, update_modified=False)
     values = {"sync_status": "Synchronized", "target_name": file_name, "source_payload_hash": source_hash(row),
               "target_payload_hash": md5, "target_field_hashes": _target_baseline(file_name, fields),
               "mapping_version": read.mapping_version, "last_synced_on": frappe.utils.now_datetime()}
@@ -525,6 +539,22 @@ def _record(row, size, md5, file_url, target, folder, existing, source_instance,
     return StoredFile(file_name, file_url, old_url)
 
 
+def _save_file(name, values, mapped_fields, link_name):
+    """Use native File validation inside the existing guarded import transaction."""
+    from hero_integration.services.change_detection import managed_target_update
+    from hero_integration.services.project_image_categories import prepare_import_category
+
+    document = frappe.get_doc("File", name, for_update=True)
+    document.load_doc_before_save(raise_exception=True)
+    document.update(values)
+    if "file_name" in values:
+        document.set_file_type()
+    prepare_import_category(document, mapped_fields)
+    with managed_target_update("File", name, link_name):
+        document.save(ignore_permissions=True)
+    return document
+
+
 def relink(existing, target: tuple, folder: str) -> bool:
     """Attach an unchanged file to its now resolvable target; never detaches. Not committed."""
     wanted = _attachment(target, folder)
@@ -534,7 +564,7 @@ def relink(existing, target: tuple, folder: str) -> bool:
     if all((current.get(key) or "") == value for key, value in wanted.items()):
         return False
     _assert_target_baseline(existing, {}, lock=True)
-    frappe.db.set_value("File", existing.target_name, wanted)
+    _save_file(existing.target_name, wanted, {}, existing.name)
     return True
 
 
@@ -559,7 +589,7 @@ def _remove(path: str) -> None:
 # ---------------------------------------------------------------- run
 
 def _state(phase: str) -> dict:
-    raw = frappe.db.get_default(STATE_KEY.format(phase))
+    raw = frappe.db.get_value('DefaultValue', {'parent': '__default', 'defkey': STATE_KEY.format(phase)}, 'defvalue')
     return json.loads(raw) if raw else {}
 
 
@@ -606,6 +636,10 @@ def transfer(phase: str, *, source_instance: str | None = None, client=None, dow
     if cohort is not None and (record_limit is None or dry_run or not isinstance(cohort, dict) or cohort.get('version') != 1):
         raise TransferError('Related file selection requires a frozen test run.')
     operation = OPERATION[phase]
+    if not dry_run:
+        from hero_integration.services.deferred_references import require_storage
+        if not isinstance(run_name, str) or not run_name.strip():
+            raise TransferError('File migration requires its originating integration run.')
     read = direct_runtime.resolve_read(operation, source_instance)
     from hero_integration.services.migration_testing import bounded_rows, processed, test_state, save_test_state, validate_checkpoint
     state = {} if dry_run else test_state(run_name, operation) if record_limit is not None else _state(phase)
@@ -618,6 +652,8 @@ def transfer(phase: str, *, source_instance: str | None = None, client=None, dow
                 raise TransferError('The frozen related project sample changed; start a new run.')
         if state.get('done'):
             return state
+    if not dry_run:
+        require_storage(frappe)
     if (state.get("done") or state.get("source_instance") != source_instance or "offset" not in state
             or state.get("mapping") != read.mapping_version):
         # An offset belongs to its approved mapping: changed filters or field
@@ -674,10 +710,10 @@ def transfer(phase: str, *, source_instance: str | None = None, client=None, dow
         candidates = [row for row in page if direct_runtime.belongs(operation, row)]
         if cohort is None:
             rows = bounded_rows(state, candidates, record_limit)
-            found = details(client, rows) if rows else {}
+            found = details(client, rows, read, source_instance) if rows else {}
         else:
             state['testing_records_received'] = int(state.get('testing_records_received', 0)) + len(page)
-            found = details(client, candidates) if candidates else {}
+            found = details(client, candidates, read, source_instance) if candidates else {}
             if any(row.get('uuid') not in found for row in candidates):
                 raise TransferError('File detail is missing; related test selection cannot be completed.')
             rows = [row for row in candidates if belongs_to_test_cohort(found[row['uuid']], cohort)]
@@ -702,13 +738,16 @@ def transfer(phase: str, *, source_instance: str | None = None, client=None, dow
                         invalidate(source_instance, operation, direct_runtime.identity(read, row))
                 bump("unchanged" if unchanged else f"skipped_{reason}")
                 continue
-            target = resolve_target(detail, projects, customers)
+            resolved_target = resolve_target(detail, projects, customers)
+            # Files are imported privately without realizing a new attachment.
+            # The run-scoped observation retains every eligible target identity.
+            target = resolved_target if dry_run else (None, None)
             fields = mapped_values(read, row)
             try:
                 if not dry_run:
                     from hero_integration.services.deferred_references import remember_file
                     remember_file(run_name, source_instance, operation, read, row, detail, cohort=cohort)
-                reconciled = reconcile_legacy_file(link, read, row, target, folders[bool(target[0])], source_instance, dry_run=dry_run)
+                reconciled = reconcile_legacy_file(link, read, row, resolved_target, folders[bool(resolved_target[0])], source_instance, dry_run=dry_run)
                 if reconciled:
                     bump(reconciled)
                     if not dry_run:
@@ -734,7 +773,7 @@ def transfer(phase: str, *, source_instance: str | None = None, client=None, dow
                         continue
                     moved = relink(link, target, folders[bool(target[0])])
                     if changed:
-                        frappe.db.set_value("File", link.target_name, fields)
+                        _save_file(link.target_name, fields, fields, link.name)
                     if changed or moved:
                         frappe.db.set_value("HERO Integration Link", link.name, {
                             "target_field_hashes": _target_baseline(link.target_name, fields),
@@ -801,20 +840,6 @@ def preview(phase: str = "documents") -> dict:
     """Count what a transfer would do; reads HERO, writes nothing."""
     frappe.only_for("System Manager")
     return transfer(phase, dry_run=True, time_budget=24 * 3600)
-
-
-@frappe.whitelist()
-def start(phase: str = "documents") -> str:
-    """Start a Document or Picture Migration run; returns the run name.
-
-    Delegates to the source-bound run path, so this entry point has no
-    separate queue and no check of its own."""
-    frappe.only_for("System Manager")
-    if phase not in PHASES:
-        frappe.throw(f"Unknown phase {phase!r}.")
-    from hero_integration import api
-
-    return api.sync_area_start({"documents": "documents", "images": "pictures"}[phase])["run"]
 
 
 @frappe.whitelist()

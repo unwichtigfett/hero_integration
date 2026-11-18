@@ -1,5 +1,6 @@
 """Offline contracts for the four-domain mapping extension."""
 from __future__ import annotations
+from hero_integration.tests.saved_reader_fixture import isolate_saved_materialization
 
 import json
 import unittest
@@ -70,6 +71,9 @@ def record(operation="HeroTasks"):
 
 
 class TestProjectionContracts(unittest.TestCase):
+    def setUp(self):
+        isolate_saved_materialization(self)
+
     def test_native_task_plan_requires_only_explicit_native_rules(self):
         identity = MappingSpec('HeroTasks', 'id', 'HERO Integration Link', 'source_id', 'int', 'Source Identity', 'Positive Int To Text', definition_id='native-id')
         title = MappingSpec('HeroTasks', 'title', 'Task', 'subject', 'string|null', 'Record Name', 'Trim', definition_id='native-title')

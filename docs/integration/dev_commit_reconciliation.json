@@ -1,0 +1,111 @@
+[
+  {
+    "SOURCE_COMMIT": "56bd18d705c9becb1c9370890bd3c34c01ed5235",
+    "FUNCTION": "ci: add opt-in manual release candidates [skip ci]",
+    "CHANGED_PATHS": [
+      ".woodpecker.yml",
+      "ci/promote-candidate.sh",
+      "docs/release_candidates.md",
+      "hero_integration/tests/test_release_promotion.py"
+    ],
+    "INTEGRATION_RESULT": "ADAPTED",
+    "RELEASE_EQUIVALENT": "Preserved newer Dev UI/design; common CI implementation and manual operation gates supersede branch-specific parser/installer assumptions."
+  },
+  {
+    "SOURCE_COMMIT": "621017407bd170241916d9174805c146687623c2",
+    "FUNCTION": "ci: use digest-only candidate image for secret compatibility [skip ci]",
+    "CHANGED_PATHS": [
+      ".woodpecker.yml"
+    ],
+    "INTEGRATION_RESULT": "ADAPTED",
+    "RELEASE_EQUIVALENT": "Preserved newer Dev UI/design; common CI implementation and manual operation gates supersede branch-specific parser/installer assumptions."
+  },
+  {
+    "SOURCE_COMMIT": "4b5af458581e3e9ee5f17279d098670e7b987bcf",
+    "FUNCTION": "test: isolate release fixtures from enclosing CI branch [skip ci]",
+    "CHANGED_PATHS": [
+      "hero_integration/tests/test_release_promotion.py"
+    ],
+    "INTEGRATION_RESULT": "ADAPTED",
+    "RELEASE_EQUIVALENT": "Preserved newer Dev UI/design; common CI implementation and manual operation gates supersede branch-specific parser/installer assumptions."
+  },
+  {
+    "SOURCE_COMMIT": "cfa4419e1d8d13d7f30e7e115b5b8b2b63011413",
+    "FUNCTION": "docs: clarify manual candidate secret boundaries [skip ci]",
+    "CHANGED_PATHS": [
+      "docs/release_candidates.md"
+    ],
+    "INTEGRATION_RESULT": "ADAPTED",
+    "RELEASE_EQUIVALENT": "Preserved newer Dev UI/design; common CI implementation and manual operation gates supersede branch-specific parser/installer assumptions."
+  },
+  {
+    "SOURCE_COMMIT": "6549a40834331f63199bec32877dd69105764101",
+    "FUNCTION": "ci: isolate Woodpecker workflows and architecture gates [skip ci]",
+    "CHANGED_PATHS": [
+      ".woodpecker.yml",
+      ".woodpecker/standard.yml",
+      "ci/bench-install-test.sh",
+      "ci/required-tests.json",
+      "ci/standard-install-test.sh",
+      "docs/architecture/hero-integration_f-topology_00.md",
+      "docs/release_candidates.md",
+      "hero_integration/tests/test_codex_review.py",
+      "hero_integration/tests/test_release_ci_contract.py",
+      "hero_integration/tests/test_release_promotion.py",
+      "hero_integration/tests/test_test_site_reset.py",
+      "installation_guide_1.0.md"
+    ],
+    "INTEGRATION_RESULT": "ADAPTED",
+    "RELEASE_EQUIVALENT": "Preserved newer Dev UI/design; common CI implementation and manual operation gates supersede branch-specific parser/installer assumptions."
+  },
+  {
+    "SOURCE_COMMIT": "e5c7ea48c5e064a06ed7f594d169cf16e98e84e1",
+    "FUNCTION": "feat: shared UI updates and hidden-field mapping support",
+    "CHANGED_PATHS": [
+      "hero_integration/__init__.py",
+      "hero_integration/hero_integration/doctype/hero_graphql_mapping/hero_graphql_mapping.py",
+      "hero_integration/hooks.py",
+      "hero_integration/install.py",
+      "hero_integration/integrations/app_references.py",
+      "hero_integration/integrations/erpnext/contact.py",
+      "hero_integration/integrations/helpdesk/desk_return.py",
+      "hero_integration/integrations/helpdesk/profile.py",
+      "hero_integration/public/css/navy_spa.css",
+      "hero_integration/public/css/navy_theme.css",
+      "hero_integration/public/css/site_logo.css",
+      "hero_integration/public/js/helpdesk_desk_return.js",
+      "hero_integration/public/js/navy_spa.js",
+      "hero_integration/public/js/site_logo.js",
+      "hero_integration/services/branding.py",
+      "hero_integration/services/direct_mapping.py",
+      "hero_integration/services/frappe_mapping_catalog.py",
+      "hero_integration/services/frappe_mapping_draft_storage.py",
+      "hero_integration/services/mapped_send.py",
+      "hero_integration/services/mapped_update_v2.py",
+      "hero_integration/services/mapping_draft_exchange.py",
+      "hero_integration/services/query_mapping.py",
+      "hero_integration/services/site_indicator.py",
+      "hero_integration/services/spa_theme.py",
+      "hero_integration/tests/test_app_references.py",
+      "hero_integration/tests/test_contact_persistence.py",
+      "hero_integration/tests/test_deletion_hook.py",
+      "hero_integration/tests/test_frappe_mapping_catalog.py",
+      "hero_integration/tests/test_helpdesk_desk_return.mjs",
+      "hero_integration/tests/test_helpdesk_desk_return.py",
+      "hero_integration/tests/test_mapped_send.py",
+      "hero_integration/tests/test_mapped_update_exchange.py",
+      "hero_integration/tests/test_mapped_update_v2.py",
+      "hero_integration/tests/test_native_query_field_contract.py",
+      "hero_integration/tests/test_navy_spa.mjs",
+      "hero_integration/tests/test_project_logbook_mapping_exchange.py",
+      "hero_integration/tests/test_query_mapping_v2.py",
+      "hero_integration/tests/test_shared_writeback_cas.py",
+      "hero_integration/tests/test_site_logo.mjs",
+      "hero_integration/tests/test_spa_theme.py",
+      "hero_integration/translations/de.csv",
+      "pyproject.toml"
+    ],
+    "INTEGRATION_RESULT": "ADAPTED",
+    "RELEASE_EQUIVALENT": "Preserved newer Dev UI/design; common CI implementation and manual operation gates supersede branch-specific parser/installer assumptions."
+  }
+]

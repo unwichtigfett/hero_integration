@@ -17,6 +17,9 @@ def is_spa(path: str | None) -> bool:
 def markup(request) -> str:
     if request is None or not is_spa(getattr(request, "path", None)):
         return ""
+    from hero_integration.services.design_mode import get_design_mode
+    if get_design_mode() == "Native":
+        return _desk_return(request.path, "/assets/hero_integration/", quote(__version__, safe=""))
     version = quote(__version__, safe="")
     assets = "/assets/hero_integration/"
     return ('<link rel="stylesheet" href="' + assets + 'css/navy_theme.css?v=' + version + '">'

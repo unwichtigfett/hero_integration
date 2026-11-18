@@ -5,6 +5,7 @@
     // replaced app mark is still named. The sidebar's module menu moves one row down, level with
     // the rail's search button. Apps keep their own marks on the apps screen and in menus.
     const ui = frappe.ui;
+    if (frappe.boot?.hero_design_mode === "Native") return;
     const logo = frappe.boot && frappe.boot.hero_site_logo;
     if (!logo || ui.hero_site_logo) return;
     ui.hero_site_logo = true;

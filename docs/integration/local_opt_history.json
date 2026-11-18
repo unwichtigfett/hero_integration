@@ -1,0 +1,62 @@
+[
+  {
+    "SOURCE_COMMIT": "f989f7cb2b5e1449b46d8a70568c12b682ea0e46",
+    "FUNCTION": "Align native CI fixtures with saved GraphQL materialization",
+    "RELEASE_EQUIVALENT": "Local Opt final tree equals GitHub Opt4d38085; complete source-tree equality verified before integration. Paths are covered by the Opt path reconciliation.",
+    "INTEGRATION_RESULT": "SUPERSEDED_BY_EQUIVALENT"
+  },
+  {
+    "SOURCE_COMMIT": "8663ac05e4fd3469671c6166370519909f042d15",
+    "FUNCTION": "fix: drop the first name ERPNext shifted into a contact's middle name",
+    "RELEASE_EQUIVALENT": "Local Opt final tree equals GitHub Opt4d38085; complete source-tree equality verified before integration. Paths are covered by the Opt path reconciliation.",
+    "INTEGRATION_RESULT": "SUPERSEDED_BY_EQUIVALENT"
+  },
+  {
+    "SOURCE_COMMIT": "02c58ae76e28dd611b29bc763763174841c00a82",
+    "FUNCTION": "feat: list ERPNext customers in Helpdesk, Navy in Helpdesk/CRM, site logo in Desk",
+    "RELEASE_EQUIVALENT": "Local Opt final tree equals GitHub Opt4d38085; complete source-tree equality verified before integration. Paths are covered by the Opt path reconciliation.",
+    "INTEGRATION_RESULT": "SUPERSEDED_BY_EQUIVALENT"
+  },
+  {
+    "SOURCE_COMMIT": "3e5cac4504f8190385110026d0d498f8eb889a19",
+    "FUNCTION": "fix: Navy is an added choice in Helpdesk/CRM; site logo only at the Desk's top left",
+    "RELEASE_EQUIVALENT": "Local Opt final tree equals GitHub Opt4d38085; complete source-tree equality verified before integration. Paths are covered by the Opt path reconciliation.",
+    "INTEGRATION_RESULT": "SUPERSEDED_BY_EQUIVALENT"
+  },
+  {
+    "SOURCE_COMMIT": "0c560d355e0c916c14d0121d9544f4e45cdc5d48",
+    "FUNCTION": "feat: name the app beside the Desk's site logo",
+    "RELEASE_EQUIVALENT": "Local Opt final tree equals GitHub Opt4d38085; complete source-tree equality verified before integration. Paths are covered by the Opt path reconciliation.",
+    "INTEGRATION_RESULT": "SUPERSEDED_BY_EQUIVALENT"
+  },
+  {
+    "SOURCE_COMMIT": "25a1558312f9d76c02f047cd9ba7a8d1bbec36ac",
+    "FUNCTION": "feat: search and notifications beside the app name in the Desk",
+    "RELEASE_EQUIVALENT": "Local Opt final tree equals GitHub Opt4d38085; complete source-tree equality verified before integration. Paths are covered by the Opt path reconciliation.",
+    "INTEGRATION_RESULT": "SUPERSEDED_BY_EQUIVALENT"
+  },
+  {
+    "SOURCE_COMMIT": "d380d73e7099b3d03c89192fd575f78dc2f0ea5e",
+    "FUNCTION": "feat: Navy as a card in the Helpdesk and CRM theme choice",
+    "RELEASE_EQUIVALENT": "Local Opt final tree equals GitHub Opt4d38085; complete source-tree equality verified before integration. Paths are covered by the Opt path reconciliation.",
+    "INTEGRATION_RESULT": "SUPERSEDED_BY_EQUIVALENT"
+  },
+  {
+    "SOURCE_COMMIT": "84ada4d449e9fb1ca9ffaac199496445f75c7909",
+    "FUNCTION": "feat: Helpdesk setting for the workspace stop on the way back to the Desk",
+    "RELEASE_EQUIVALENT": "Local Opt final tree equals GitHub Opt4d38085; complete source-tree equality verified before integration. Paths are covered by the Opt path reconciliation.",
+    "INTEGRATION_RESULT": "SUPERSEDED_BY_EQUIVALENT"
+  },
+  {
+    "SOURCE_COMMIT": "29b92635a6d78840a08a67de3652d28bb820789d",
+    "FUNCTION": "fix: allow hidden fields in mappings",
+    "RELEASE_EQUIVALENT": "Local Opt final tree equals GitHub Opt4d38085; complete source-tree equality verified before integration. Paths are covered by the Opt path reconciliation.",
+    "INTEGRATION_RESULT": "SUPERSEDED_BY_EQUIVALENT"
+  },
+  {
+    "SOURCE_COMMIT": "42e6065ab3b392b8948a2d79e86ed980a0c09ad4",
+    "FUNCTION": "merge: preserve Opt CI alongside local UI updates",
+    "RELEASE_EQUIVALENT": "Local Opt final tree equals GitHub Opt4d38085; complete source-tree equality verified before integration. Paths are covered by the Opt path reconciliation.",
+    "INTEGRATION_RESULT": "SUPERSEDED_BY_EQUIVALENT"
+  }
+]

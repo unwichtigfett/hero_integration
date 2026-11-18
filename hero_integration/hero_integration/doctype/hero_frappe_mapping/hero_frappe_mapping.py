@@ -27,6 +27,9 @@ class HEROFrappeMapping(Document):
 
     def validate(self) -> None:
         frappe.only_for("System Manager")
+        from hero_integration.services.direct_config_import import accepts_document
+        if accepts_document(self):
+            return
         from hero_integration.services.frappe_mapping_draft_storage import personal_publication_parent, first_publication_admits
         scope = getattr(self, 'personal_graphql_mapping', None) or ''
         previous = self.get_doc_before_save() if not self.is_new() else None

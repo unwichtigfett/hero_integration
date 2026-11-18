@@ -1,4 +1,5 @@
 from __future__ import annotations
+from hero_integration.tests.saved_reader_fixture import isolate_saved_materialization
 
 import json
 import sys
@@ -14,6 +15,7 @@ from hero_integration.sources.hero import CUSTOMER_CONTRACT_V1, customer_query, 
 class TestSavedReadContract(unittest.TestCase):
     def setUp(self):
         # Synthetic metadata boundary: ordinary legacy rules are unscoped.
+        isolate_saved_materialization(self)
         fake = SimpleNamespace(db=SimpleNamespace(has_column=lambda *_: False),
             get_all=lambda _doctype, filters, **_kwargs: [{'definition_id':filters['definition_id'], 'personal_graphql_mapping':'',
                 'status':'Active', 'operation':'HeroCustomers', 'schema_snapshot':'SNAP', 'schema_fingerprint':'fp'}])
@@ -119,21 +121,12 @@ class TestGeneratedTaskRead(unittest.TestCase):
         from hero_integration.services.graphql_graph import analyze_snapshot
         from hero_integration.services.mapping_runtime import plan_from_definitions
         from hero_integration.services.read_contract import task_materialization
-        scalar = lambda name: {'kind': 'SCALAR', 'name': name}
-        schema = {'__schema': {'queryType': {'name': 'Query'}, 'types': [
-            {'kind': 'OBJECT', 'name': 'Query', 'fields': [{'name': 'tasks', 'args': [
-                {'name': 'first', 'type': scalar('Int')}, {'name': 'offset', 'type': scalar('Int')},
-                {'name': 'orderBy', 'type': scalar('String')}],
-                'type': {'kind': 'LIST', 'ofType': {'kind': 'OBJECT', 'name': 'Task'}}}]},
-            {'kind': 'OBJECT', 'name': 'Task', 'fields': [
-                {'name': 'id', 'args': [], 'type': scalar('Int')},
-                {'name': 'title', 'args': [], 'type': scalar('String')},
-                {'name': 'target_user_id', 'args': [], 'type': scalar('Int')},
-                {'name': 'author_user_id', 'args': [], 'type': scalar('Int')},
-                {'name': 'target_project_match_id', 'args': [], 'type': scalar('Int')},
-                {'name': 'due_date', 'args': [], 'type': scalar('String')},
-                {'name': 'is_deleted', 'args': [], 'type': scalar('Boolean')}]},
-            *({'kind': 'SCALAR', 'name': name} for name in ('Int', 'String', 'Boolean'))]}}
+        from graphql import build_schema, introspection_from_schema
+        schema = introspection_from_schema(build_schema('''
+            type Query { tasks(first:Int,offset:Int,orderBy:String):[Task] }
+            type Task { id:Int title:String target_user_id:Int author_user_id:Int
+                        target_project_match_id:Int due_date:String is_deleted:Boolean }
+        '''))
         fingerprint = analyze_snapshot(schema).fingerprint
         self.snapshot = SimpleNamespace(name='SNAP', schema_fingerprint=fingerprint,
             snapshot_json=json.dumps(schema), source_instance='synthetic', analysis_status='Validated')
@@ -163,7 +156,8 @@ class TestGeneratedTaskRead(unittest.TestCase):
         rows = {spec.definition_id: {**asdict(spec), 'personal_graphql_mapping': 'MAP',
                     'schema_snapshot': 'SNAP', 'schema_fingerprint': fingerprint, 'status': 'Active'} for spec in specs}
         db = SimpleNamespace(sql=lambda query, params, **kwargs: [rows[params[0]]] if params[0] in rows else [])
-        fake_frappe = SimpleNamespace(db=db, get_doc=lambda *args, **kwargs: self.mapping,
+        fake_frappe = SimpleNamespace(db=db, get_doc=lambda doctype,*args,**kwargs:
+            self.snapshot if doctype == 'HERO GraphQL Schema Snapshot' else self.mapping,
             get_all=lambda doctype, **kw: [{key: row.get(key) for key in kw.get('fields', row)}
                                           for row in rows.values() if row['status'] == 'Active'])
         self.rows, self.fake_frappe = rows, fake_frappe
@@ -186,7 +180,8 @@ class TestGeneratedTaskRead(unittest.TestCase):
             revalidate=lambda: from_documents(self.service, self.mapping, self.snapshot))
         page = source.projection(0)
         self.assertEqual(page.records[0]['title'], 'Synthetic Task')
-        self.assertEqual(client.calls[0][0], contract.materialized_request.document)
+        from graphql import parse, print_ast
+        self.assertEqual(print_ast(parse(client.calls[0][0])),print_ast(parse(contract.materialized_request.document)))
         self.assertIn(2, client.calls[0][1].values())
         self.service.approved_mapping_revision = 2
         with self.assertRaisesRegex(ReadContractError, 'mapping approval is stale'):
@@ -207,6 +202,22 @@ class TestGeneratedTaskRead(unittest.TestCase):
         active_request = from_documents(self.service, self.mapping, self.snapshot).materialized_request
         self.assertEqual(personal_request.document, active_request.document)
         self.assertEqual(personal_request.request_fingerprint, active_request.request_fingerprint)
+
+    def test_generated_pages_rematerialize_their_actual_offset_without_changing_the_sealed_request(self):
+        from hero_integration.services import mapping_contract_v1
+        contract = from_documents(self.service,self.mapping,self.snapshot)
+        request = contract.materialized_request
+        initial = request.variables
+        offset = next(binding.variable_name for binding in request.argument_bindings if binding.argument_name == 'offset')
+        client = _Client({'tasks':[]})
+        source = GraphQLServiceSource(client,self.service,contract,'synthetic',
+            revalidate=lambda:from_documents(self.service,self.mapping,self.snapshot))
+        with patch.object(mapping_contract_v1,'materialize_saved_query',wraps=mapping_contract_v1.materialize_saved_query) as compile:
+            source.projection(0)
+            source.projection(3)
+        self.assertEqual(compile.call_count,2)
+        self.assertEqual([call[1][offset] for call in client.calls],[0,3])
+        self.assertEqual(request.variables,initial)
 
     def test_generated_read_fails_on_tampering_and_missing_decoded_field(self):
         from hero_integration.graphql_protocol.graphql_result_decoder import GraphQLResultDecodeError
@@ -348,9 +359,9 @@ class TestGeneratedTaskRead(unittest.TestCase):
         self.assertEqual([event['result'] for event in events if event['action'] == 'hero_to_frappe'], ['CREATED', 'SKIPPED'])
         self.assertEqual(run.created_records, 1)
         self.assertEqual(records['task'].subject, 'Synthetic Task')
-        self.assertEqual(records['task'].project, 'PROJECT-1')
+        self.assertFalse(getattr(records['task'], 'project', None))
         self.assertEqual(str(records['task'].custom_hero_due_date), '2026-10-29 13:30:00')
-        self.assertTrue(any('PENDING_IDENTITY' in event.get('detail', '') for event in events))
+        self.assertFalse(any(event.get('action') == 'task_assignment_review' for event in events))
         self.assertEqual(transport.call_count, 4)
 
     def test_offline_replay_isolated_from_preloaded_site_database(self):

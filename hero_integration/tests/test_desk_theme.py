@@ -18,6 +18,8 @@ class TestDeskTheme(unittest.TestCase):
             get_doc=Mock())
         self.patch = patch.object(desk_theme, "frappe", self.frappe)
         self.patch.start(); self.addCleanup(self.patch.stop)
+        self.design_patch = patch.object(desk_theme, "_is_native_design", return_value=False)
+        self.design_patch.start(); self.addCleanup(self.design_patch.stop)
 
     def test_navy_is_saved_for_only_the_current_user_without_manager_role(self):
         desk_theme.switch_theme("Navy")
@@ -29,6 +31,12 @@ class TestDeskTheme(unittest.TestCase):
                 with self.subTest(theme=theme):
                     self.assertEqual(desk_theme.switch_theme(theme), "native")
                     native.assert_called_with(theme)
+        self.frappe.db.set_value.assert_not_called()
+
+    def test_native_design_rejects_only_the_custom_navy_palette(self):
+        with patch.object(desk_theme, "_is_native_design", return_value=True):
+            with self.assertRaisesRegex(ValueError, "Custom Design"):
+                desk_theme.switch_theme("Navy")
         self.frappe.db.set_value.assert_not_called()
 
     def test_guest_or_missing_session_cannot_save_a_preference(self):

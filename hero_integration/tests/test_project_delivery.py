@@ -1,3 +1,4 @@
+from hero_integration.tests.saved_reader_fixture import isolate_saved_materialization
 """The single Project confirmation binds data and every displayed activity."""
 from copy import deepcopy
 import hashlib
@@ -168,6 +169,9 @@ class TestProjectIdentityRead(TestCase):
 
 
 class TestProjectNamingProtection(TestCase):
+    def setUp(self):
+        isolate_saved_materialization(self)
+
     def test_mixed_version_keeps_status_but_never_local_naming(self):
         fields={name:NS(label=name,fieldtype='Data',hidden=False) for name in ('project_name','custom_hero_project_number','status')}
         version=NS(data=json.dumps({'changed':[['project_name','Old','Title-H'],

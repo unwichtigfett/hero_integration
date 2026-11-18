@@ -2,14 +2,16 @@
 from copy import deepcopy
 
 from graphql import (parse, print_ast, validate, visit, Visitor, get_named_type, is_list_type,
-                     is_non_null_type, build_client_schema)
+                     is_non_null_type)
 from graphql.language.ast import ArgumentNode, NameNode, IntValueNode, OperationDefinitionNode, FieldNode
 
 
 class ProjectIdentityReader:
     def __init__(self, client, raw_schema, hero_id):
-        from hero_integration.services.graphql_graph import normalize_schema
-        self.client, self.schema, self.hero_id = client, build_client_schema({'__schema': normalize_schema(raw_schema)}), str(hero_id)
+        from hero_integration.services.graphql_schema_cache import compiled_schema
+        compiled = compiled_schema(raw_schema)
+        self.client, self.schema, self.hero_id = client, compiled.core, str(hero_id)
+        self.schema_fingerprint = compiled.fingerprint
         if not self.hero_id.isdigit() or int(self.hero_id) <= 0:
             raise ValueError('The bound external identity is invalid.')
 
@@ -46,7 +48,9 @@ class ProjectIdentityReader:
     def query(self, document, variables):
         from hero_integration.services.mapped_update_v2 import MappedUpdateError
         document, variables = self.request(document, variables)
-        data = self.client.query(document, variables)
+        from hero_integration.graphql_protocol.graphql_operation_materializer import GraphQLOperationMaterializer
+        request = GraphQLOperationMaterializer.materialize_document(self.schema, self.schema_fingerprint, document, variables)
+        data = self.client.query(request.document, request.variables)
         if not isinstance(data, dict) or data.get('errors'):
             raise MappedUpdateError('HERO did not return this project.')
         payload = data.get('data', data)
@@ -71,9 +75,11 @@ class CollectionIdentityReader:
     }
 
     def __init__(self, client, raw_schema, area, identity_path, hero_id, *, file_uuid=None):
-        from hero_integration.services.graphql_graph import normalize_schema
+        from hero_integration.services.graphql_schema_cache import compiled_schema
+        compiled = compiled_schema(raw_schema)
         self.client = client
-        self.schema = build_client_schema({'__schema': normalize_schema(raw_schema)})
+        self.schema = compiled.core
+        self.schema_fingerprint = compiled.fingerprint
         self.area, self.identity_path, self.hero_id, self.file_uuid = area, identity_path, str(hero_id), file_uuid
 
     def request(self, document):
@@ -130,4 +136,7 @@ class CollectionIdentityReader:
         return print_ast(tree)
 
     def query(self, document, variables):
-        return self.client.query(self.request(document), variables)
+        from hero_integration.graphql_protocol.graphql_operation_materializer import GraphQLOperationMaterializer
+        request = GraphQLOperationMaterializer.materialize_document(self.schema, self.schema_fingerprint,
+            self.request(document), variables)
+        return self.client.query(request.document, request.variables)

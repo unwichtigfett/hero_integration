@@ -253,9 +253,12 @@ class _SyncHeroTransport:
         if baseline is not None and state_fingerprint(before, present=True) != baseline:
             raise RuntimeError("The remote field changed since acknowledgment; reconcile before sending.")
         configuration = validate_source(self._context["source_context"])
+        from hero_integration.services.mapping_contract_v1 import materialize_saved_mutation
+        request = materialize_saved_mutation(self._context['snapshot'], document, variables,
+                                             request_scope=self._audit.correlation_id)
         result = HeroMutationClient(
             configuration.endpoint, lambda: configuration.api_token, configuration.timeout_seconds
-        ).execute_once(document, variables)
+        ).execute_once(request.document, request.variables)
         mapping, parent, intent = self._context["mapping"], self._context["parent"], self._context["intent"]
         payload = result.get("data") if isinstance(result, dict) and isinstance(result.get("data"), dict) else result
         returned = payload.get(mapping["target"]["operation"]) if isinstance(payload, dict) else None
@@ -970,13 +973,6 @@ def workspace_schema_refresh(connection_id: str = "", binding_generation: int | 
         frappe.throw(translate_error(error, frappe._))
 
 
-@frappe.whitelist(methods=["POST"])
-def workspace_snapshot_inherit_mappings(snapshot_name: str) -> dict[str, object]:
-    """Inherit the parent's active mappings into this snapshot as personal drafts; never activates anything."""
-    frappe.only_for("System Manager")
-    from hero_integration.services.snapshot_inheritance import inherit_parent_mappings
-
-    return inherit_parent_mappings(_mapping_text(snapshot_name, "snapshot_name"), frappe.session.user)
 
 
 def _schema_snapshot_rows(start: int = 0, page_size: int = 100) -> list[dict[str, object]]:
@@ -1454,28 +1450,8 @@ def schema_operation_catalog(snapshot_name: str, operation_kind: str = "QUERY") 
         frappe.throw(translate_error(error, frappe._))
 
 
-@frappe.whitelist()
-def graphql_mapping_list(snapshot_name: str, operation_kind: str = "") -> list[dict[str, object]]:
-    """List dynamic mappings for one explicit snapshot; no implicit activation."""
-    frappe.only_for("System Manager")
-    filters = {"schema_snapshot": snapshot_name}
-    if operation_kind:
-        filters["operation_kind"] = operation_kind.upper()
-    return frappe.get_all(
-        "HERO GraphQL Mapping", filters=filters,
-        fields=["name", "operation_kind", "operation_name", "direction", "status", "mapping_revision", "confidence", "suggestion_reason"],
-        order_by="modified desc",
-    )
 
 
-def _mapping_reader_authorized() -> None:
-    """Permit the small employee-facing mapping projection, never raw documents."""
-    roles = set(getattr(frappe, "get_roles", lambda: ())())
-    if {"Employee", "System Manager"}.isdisjoint(roles):
-        frappe.throw(
-            frappe._("Employee or System Manager authority is required to inspect mapping status."),
-            getattr(frappe, "PermissionError", PermissionError),
-        )
 
 
 def _row_value(row: object, field: str, default: object = "") -> object:
@@ -1484,117 +1460,10 @@ def _row_value(row: object, field: str, default: object = "") -> object:
     return getattr(row, field, default)
 
 
-_FRONTEND_MAPPING_KEYS = frozenset({
-    "alias", "app", "argument", "doctype", "field", "field_path", "graphql_type", "identity_path", "input_type", "kind", "mapping_definition_id",
-    "mapping_definition_ids", "missing", "operation", "operation_name", "path", "purpose", "record_path",
-    "records_path", "relation", "result_bindings", "selected_paths", "source", "source_path", "target",
-    "target_field", "target_operation", "transform", "transformation", "type",
-})
-_FRONTEND_SECRET_KEYS = frozenset({
-    "api_key", "api_token", "authorization", "credential", "credentials", "endpoint", "password", "payload",
-    "secret", "token", "value", "variables",
-})
 
 
-def _sanitized_mapping_definition(raw: object) -> dict[str, object]:
-    """Return only structural mapping data suitable for an employee-facing list."""
-    try:
-        value = json.loads(raw) if isinstance(raw, str) else raw
-    except (TypeError, ValueError, json.JSONDecodeError):
-        return {}
-    if not isinstance(value, dict):
-        return {}
-
-    def sanitize(item: object) -> object:
-        if isinstance(item, dict):
-            result: dict[str, object] = {}
-            for key, child in item.items():
-                normalized = str(key).lower()
-                if normalized in _FRONTEND_SECRET_KEYS or key not in _FRONTEND_MAPPING_KEYS:
-                    continue
-                result[str(key)] = sanitize(child)
-            return result
-        if isinstance(item, (list, tuple)):
-            return [sanitize(child) for child in item]
-        if isinstance(item, (str, int, float, bool)) or item is None:
-            return item
-        return ""
-
-    sanitized = sanitize(value)
-    return sanitized if isinstance(sanitized, dict) else {}
 
 
-@frappe.whitelist(methods=["GET"])
-def frontend_mapping_list(search: str = "", start: int | str = 0, page_size: int | str = 50, direction: str = ""):
-    """Read-only, redacted mapping/status projection for Employee and System Manager users."""
-    _mapping_reader_authorized()
-    _mapping_request_fields({"search", "start", "page_size", "direction"})
-    search = _mapping_text(search, "search", 120, allow_empty=True)
-    direction = _mapping_text(direction, "direction", 40, allow_empty=True)
-    if direction not in {"", "QUERY_TO_FRAPPE", "FRAPPE_TO_MUTATION"}:
-        frappe.throw(frappe._("MAPPING_INPUT_INVALID: Invalid direction."))
-    start, page_size = _mapping_int(start, "start", 0, 10000), _mapping_int(page_size, "page_size", 1, 100)
-    graphql_filters = {"status": "Active"}
-    if direction:
-        graphql_filters["direction"] = direction
-    graphql_search = [[field, "like", "%" + search + "%"] for field in ("name", "operation_name")]
-    frappe_search = [[field, "like", "%" + search + "%"] for field in ("name", "definition_id", "operation")]
-    graphql_rows = frappe.get_all(
-        "HERO GraphQL Mapping",
-        filters=graphql_filters, or_filters=graphql_search if search else None,
-        fields=[
-            "name", "definition_id", "schema_snapshot", "schema_fingerprint", "source_instance", "operation_kind", "operation_name",
-            "direction", "status", "mapping_revision", "mapping_json",
-        ],
-        order_by="name asc", limit_start=start, limit=page_size,
-    )
-    frappe_rows = [] if direction == "FRAPPE_TO_MUTATION" else frappe.get_all(
-        "HERO Frappe Mapping",
-        filters={"status": "Active"}, or_filters=frappe_search if search else None,
-        fields=[
-            "name", "definition_id", "operation", "source_path", "source_type", "target_doctype", "target_field",
-            "purpose", "transformation", "relation", "priority", "status", "mapping_revision", "schema_snapshot",
-            "schema_fingerprint",
-        ],
-        order_by="name asc", limit_start=start, limit=page_size,
-    )
-    return {
-        "graphql_mappings": [
-            {
-                "name": _row_value(row, "name"),
-                "definition_id": _row_value(row, "definition_id"),
-                "schema_snapshot": _row_value(row, "schema_snapshot"),
-                "schema_fingerprint": _row_value(row, "schema_fingerprint"),
-                "source_instance": _row_value(row, "source_instance"),
-                "operation_kind": _row_value(row, "operation_kind"),
-                "operation_name": _row_value(row, "operation_name"),
-                "direction": _row_value(row, "direction"),
-                "status": _row_value(row, "status"),
-                "revision": int(_row_value(row, "mapping_revision", 0) or 0),
-                "definition": _sanitized_mapping_definition(_row_value(row, "mapping_json")),
-            }
-            for row in graphql_rows if _row_value(row, "status") == "Active"
-        ],
-        "frappe_mappings": [
-            {
-                field: _row_value(row, field)
-                for field in (
-                    "name", "definition_id", "operation", "source_path", "source_type", "target_doctype",
-                    "target_field", "purpose", "transformation", "relation", "priority", "status",
-                    "schema_snapshot", "schema_fingerprint",
-                )
-            }
-            | {"revision": int(_row_value(row, "mapping_revision", 0) or 0)}
-            for row in frappe_rows if _row_value(row, "status") == "Active"
-        ],
-        # Editable templates are personal drafts, never synthetic active mappings.
-        "builtin_mappings": [],
-        "pagination": {
-            "start": start, "page_size": page_size,
-            "graphql_total": _active_mapping_count("HERO GraphQL Mapping", graphql_search if search else None, graphql_filters),
-            "frappe_total": 0 if direction == "FRAPPE_TO_MUTATION" else _active_mapping_count("HERO Frappe Mapping", frappe_search if search else None),
-        },
-    }
 
 
 def _mapping_request_fields(allowed):
@@ -1618,94 +1487,10 @@ def _mapping_int(value, label, minimum=0, maximum=2147483647):
     return value
 
 
-def _active_mapping_count(doctype, or_filters, filters=None):
-    rows = frappe.get_all(doctype, filters=filters or {"status": "Active"}, or_filters=or_filters,
-                          fields=[{"COUNT": "name", "as": "total"}], limit=1)
-    return int(_row_value(rows[0], "total", 0)) if rows else 0
 
 
-@frappe.whitelist(methods=["GET"])
-def frontend_mapping_detail(mapping_type: str, name: str):
-    _mapping_reader_authorized()
-    _mapping_request_fields({"mapping_type", "name"})
-    name = _mapping_text(name, "name")
-    doctype = {"graphql": "HERO GraphQL Mapping", "frappe": "HERO Frappe Mapping"}.get(mapping_type)
-    if not doctype:
-        frappe.throw(frappe._("MAPPING_INPUT_INVALID: Invalid mapping_type."))
-    # Filter before loading or serializing; missing and inactive IDs are identical.
-    if not frappe.db.exists(doctype, {"name": name, "status": "Active"}):
-        frappe.throw(frappe._("Active mapping not found."), frappe.DoesNotExistError)
-    row = frappe.get_doc(doctype, name)
-    if row.status != "Active":
-        frappe.throw(frappe._("Active mapping not found."), frappe.DoesNotExistError)
-    if mapping_type == "graphql":
-        fields = ("name", "definition_id", "schema_snapshot", "schema_fingerprint", "source_instance", "operation_kind", "operation_name", "direction", "status")
-        return {field: row.get(field) for field in fields} | {
-            "revision": int(row.mapping_revision or 0),
-            "definition": _sanitized_mapping_definition(row.mapping_json),
-        }
-    fields = ("name", "definition_id", "operation", "source_path", "source_type", "target_doctype", "target_field",
-              "purpose", "transformation", "relation", "priority", "status", "schema_snapshot", "schema_fingerprint")
-    return {field: row.get(field) for field in fields} | {"revision": int(row.mapping_revision or 0)}
 
 
-@frappe.whitelist(methods=["GET"])
-def frontend_mapping_bindings(
-    definition_id: str, start: int | str = 0, page_size: int | str = 20,
-) -> dict[str, object]:
-    """Read site-scoped binding identities for the administrative Mapping editor."""
-    frappe.only_for("System Manager")
-    _mapping_request_fields({"definition_id", "start", "page_size"})
-    definition_id = _mapping_text(definition_id, "definition_id")
-    start, page_size = _mapping_int(start, "start", 0, 10000), _mapping_int(page_size, "page_size", 1, 100)
-    filters = {"site_scope": frappe.local.site, "mapping_definition_id": definition_id}
-    rows = frappe.get_all(
-        "HERO Field Binding", filters=filters,
-        fields=[
-            "identity_key", "object_binding", "source_instance", "source_field", "target_app",
-            "target_doctype", "target_name", "target_field", "mapping_definition_id",
-            "mapping_revision", "direction", "binding_revision", "sync_state", "acknowledged_version",
-        ],
-        order_by="identity_key asc", limit_start=start, limit=page_size,
-    )
-    object_keys = sorted({str(_row_value(row, "object_binding")) for row in rows if _row_value(row, "object_binding")})
-    objects = frappe.get_all(
-        "HERO Object Binding",
-        filters={"site_scope": frappe.local.site, "identity_key": ["in", object_keys]},
-        fields=[
-            "identity_key", "source_instance", "object_type", "external_object_id", "target_app",
-            "target_doctype", "target_name", "mapping_definition_id", "mapping_revision",
-            "binding_revision", "lifecycle",
-        ],
-        order_by="identity_key asc",
-    ) if object_keys else []
-    parent_by_key = {
-        str(_row_value(row, "identity_key")): {
-            field: _row_value(row, field)
-            for field in (
-                "identity_key", "source_instance", "object_type", "external_object_id", "target_app",
-                "target_doctype", "target_name", "mapping_definition_id", "mapping_revision",
-                "binding_revision", "lifecycle",
-            )
-        }
-        for row in objects
-    }
-    item_fields = (
-        "identity_key", "object_binding", "source_instance", "source_field", "target_app", "target_doctype",
-        "target_name", "target_field", "mapping_definition_id", "mapping_revision", "direction",
-        "binding_revision", "sync_state", "acknowledged_version",
-    )
-    return {
-        "items": [
-            {field: _row_value(row, field) for field in item_fields}
-            | {"object": parent_by_key.get(str(_row_value(row, "object_binding")))}
-            for row in rows
-        ],
-        "pagination": {
-            "start": start, "page_size": page_size,
-            "total": int(frappe.db.count("HERO Field Binding", filters=filters)),
-        },
-    }
 
 
 
@@ -1818,34 +1603,8 @@ def _new_mapping_snapshot(snapshot_name):
     return snapshot, schema
 
 
-@frappe.whitelist(methods=["GET"])
-def mapping_draft_new_seed(snapshot_name: str, direction: str, operation_name: str, target_operation: str = ""):
-    """Build an unsaved picker form from the configured source's stored schema."""
-    _mapping_request_fields({"snapshot_name", "direction", "operation_name", "target_operation"})
-    snapshot, schema = _new_mapping_snapshot(snapshot_name)
-    from hero_integration.services.mapping_draft_creation import seed
-    from hero_integration.services.mapping_draft_service import MappingDraftError
-    try:
-        prepared = seed(schema, _mapping_text(direction, "direction"), _mapping_text(operation_name, "operation_name"),
-                        _mapping_text(target_operation, "target_operation", allow_empty=True))
-    except (MappingDraftError, ValueError) as error:
-        frappe.throw(translate_error(error, frappe._))
-    return {**prepared, "snapshot_name": snapshot.name, "schema_fingerprint": snapshot.schema_fingerprint,
-            "source_instance": snapshot.source_instance, "direction": direction, "operation_name": operation_name}
 
 
-@frappe.whitelist(methods=["POST"])
-def mapping_draft_new(snapshot_name: str, direction: str, operation_name: str, content_json: str):
-    """Save the first complete picker assignment as this actor's personal draft."""
-    _mapping_request_fields({"snapshot_name", "direction", "operation_name", "content_json"})
-    snapshot, schema = _new_mapping_snapshot(snapshot_name)
-    content = _personal_draft_json_object(content_json, "new mapping content", 131072)
-    from hero_integration.services.frappe_mapping_draft_storage import FrappeMappingDraftStorage
-    from hero_integration.services.mapping_draft_creation import create
-    with _personal_draft_errors():
-        draft = create(snapshot, schema, _mapping_text(direction, "direction"), _mapping_text(operation_name, "operation_name"),
-                       content, actor=frappe.session.user, site_scope=frappe.local.site, storage=FrappeMappingDraftStorage())
-    return {"draft": _personal_draft_result(draft)}
 
 
 @frappe.whitelist(methods=["POST"])
@@ -2095,25 +1854,6 @@ def _reconciliation_values(raw, label):
     return value
 
 
-@frappe.whitelist(methods=["POST"])
-def mapping_draft_materialize_plan(definition_id: str, expected_generation: int | str,
-                                   expected_draft_revision: int | str, expected_active_revision: int | str,
-                                   expected_reconciliation_revision: int | str = 0, sample_values_json: str = ''):
-    """Preview an owned saved draft's plan without execution authority."""
-    _mapping_request_fields({"definition_id", "expected_generation", "expected_draft_revision",
-                             "expected_active_revision", "expected_reconciliation_revision", "sample_values_json"})
-    definition_id, _ = _personal_draft_identity(definition_id)
-    values = (_mapping_int(expected_generation, "expected_generation", 1),
-              _mapping_int(expected_draft_revision, "expected_draft_revision", 1),
-              _mapping_int(expected_active_revision, "expected_active_revision", 0),
-              _mapping_int(expected_reconciliation_revision, "expected_reconciliation_revision", 0))
-    from hero_integration.services.frappe_mapping_draft_storage import FrappeMappingDraftStorage
-    if not isinstance(sample_values_json, str):
-        frappe.throw(frappe._('MAPPING_INPUT_INVALID: sample_values_json must be JSON text.'))
-    samples = _personal_draft_content(sample_values_json) if sample_values_json else None
-    with _personal_draft_errors():
-        return FrappeMappingDraftStorage().materialize_portable_draft(definition_id, frappe.session.user, *values,
-                                                                     sample_values=samples)
 
 
 @frappe.whitelist(methods=["POST"])
@@ -2221,38 +1961,8 @@ def mapping_draft_reconcile_apply(definition_id: str, expected_generation: int |
                 "result_content_json": result_content_json, "reconciliation_json": reconciliation_proof_json(result.proof)}
 
 
-@frappe.whitelist(methods=["GET"])
-def mapping_draft_revisions(definition_id: str, start: int | str = 0, page_size: int | str = 20, revision_name: str = ""):
-    _mapping_request_fields({"definition_id", "start", "page_size", "revision_name"})
-    definition_id, key = _personal_draft_identity(definition_id)
-    start, page_size = _mapping_int(start, "start", 0, 10000), _mapping_int(page_size, "page_size", 1, 100)
-    revision_name = _mapping_text(revision_name, "revision_name", allow_empty=True)
-    filters = {"draft_key": key, "actor": frappe.session.user}
-    if revision_name:
-        filters["name"] = revision_name
-    rows = frappe.get_all("HERO Mapping Revision", filters=filters,
-        fields=["name", "generation", "revision", "kind", "actor", "content_json", "content_hash",
-                "base_active_mapping", "base_active_revision", "base_active_hash", "base_schema_fingerprint"],
-        order_by="generation desc, revision desc", limit_start=start, limit=page_size)
-    if revision_name and not rows:
-        frappe.throw(frappe._("Personal mapping revision not found."), frappe.DoesNotExistError)
-    for row in rows:
-        row["content"] = json.loads(row["content_json"])
-    return {"items": rows, "total": frappe.db.count("HERO Mapping Revision", filters), "start": start, "page_size": page_size}
 
 
-@frappe.whitelist(methods=["POST"])
-def mapping_draft_discard(definition_id: str, expected_generation: int | str, expected_draft_revision: int | str, confirmed=False):
-    _mapping_request_fields({"definition_id", "expected_generation", "expected_draft_revision", "confirmed"})
-    definition_id, _ = _personal_draft_identity(definition_id)
-    generation = _mapping_int(expected_generation, "expected_generation", 1)
-    revision = _mapping_int(expected_draft_revision, "expected_draft_revision")
-    if confirmed not in (True, "true", "1"):
-        frappe.throw(frappe._("MAPPING_CONFIRMATION_REQUIRED: Explicit discard confirmation is required."))
-    from hero_integration.services.frappe_mapping_draft_storage import FrappeMappingDraftStorage
-    with _personal_draft_errors():
-        draft = FrappeMappingDraftStorage().service().discard(definition_id, frappe.session.user, generation, revision, confirmed=True)
-    return {"draft": _personal_draft_result(draft)}
 
 
 def _required_revision(value: int | str, label: str) -> int:
@@ -2265,16 +1975,6 @@ def _required_revision(value: int | str, label: str) -> int:
     return revision
 
 
-@frappe.whitelist(methods=['POST'])
-def mapping_field_rule_activate(mapping_name: str, rule_name: str, source_instance: str, snapshot_name: str,
-                                expected_mapping_revision: int | str, expected_rule_revision: int | str,
-                                target_doctype: str | None = None, target_field: str | None = None):
-    """Activate an owned shared rule Draft; never execute a HERO operation."""
-    from hero_integration.services.mapping_rule_write import activate_draft_rule
-    return activate_draft_rule(mapping_name, rule_name, source_instance, snapshot_name,
-                               _required_revision(expected_mapping_revision, 'Mapping revision'),
-                               _required_revision(expected_rule_revision, 'Rule revision'),
-                               target_doctype=target_doctype, target_field=target_field)
 
 
 def _mapping_semantic_content(item, *, snapshot_name: str, operation_kind: str, operation_name: str, direction: str, parsed: dict[str, object]) -> bool:
@@ -2704,12 +2404,8 @@ def _validated_variable_names(schema: dict[str, object], document: str, variable
 
     values = _parse_variables_json(variables_json)
     if _mutation_draft_call(document_kind, document) == "mutation":
-        from hero_integration.services.graphql_contract import GraphQLContractError, parse_mutation, validate_mutation
-
-        try:
-            return sorted(validate_mutation(schema, parse_mutation(document), values))
-        except GraphQLContractError as error:
-            frappe.throw(translate_error(error, frappe._))
+        from hero_integration.services.mutation_draft import validate_variables
+        return sorted(_mutation_draft_call(validate_variables, schema, document, values))
     return sorted(_validated_query_draft(schema, document, values, with_values=True))
 
 
@@ -2953,16 +2649,18 @@ def workspace_service_execute(snapshot_name: str, query_id: str, expected_revisi
     snapshot, schema = _validated_snapshot(snapshot_name)
     if (service.schema_fingerprint or "") != snapshot.schema_fingerprint:
         frappe.throw(frappe._("The saved query was validated against another schema fingerprint; validate it again."))
-    variables = _validated_query_draft(schema, service.query_document, _parse_variables_json(variables_json), with_values=True)
+    variables = _parse_variables_json(variables_json)
     from hero_integration.client.graphql import HeroClientError, HeroGraphQLClient
     from hero_integration.client.settings import get_configuration
+    from hero_integration.services.mapping_contract_v1 import materialize_saved_query
 
+    request = materialize_saved_query(snapshot, service.query_document, variables)
     base = {"query_id": service.name, "revision": int(service.service_revision or 0), "operation": service.operation_name,
             "schema_fingerprint": snapshot.schema_fingerprint}
     try:
         configuration = get_configuration()
         data = HeroGraphQLClient(configuration.endpoint, lambda: configuration.api_token,
-                                 timeout=configuration.timeout_seconds, max_retries=0).query(service.query_document, variables)
+                                 timeout=configuration.timeout_seconds, max_retries=0).query(request.document, request.variables)
     except HeroClientError as error:
         kind = "GRAPHQL" if error.code == "GRAPHQL_ERRORS" else "RESPONSE" if error.code in {"INVALID_RESPONSE", "MISSING_DATA"} else "TRANSPORT"
         failure = {**base, "status": "ERROR", "error_kind": kind, "error_code": error.code, "message": str(error),
@@ -3052,7 +2750,8 @@ def workspace_analyzer_service_save(
         from hero_integration.services.mutation_draft import validate as validate_mutation_draft
 
         try:
-            selected = [validate_mutation_draft(schema, payload["query"])["operation"]]
+            detail = validate_mutation_draft(schema, payload["query"])
+            selected = detail.get('root_fields', [detail['operation']])
         except ValueError as error:
             frappe.throw(translate_error(error, frappe._))
     if selected != [draft["operation_name"]]:
@@ -3141,244 +2840,26 @@ def _assert_service_kind(operation_kind: str) -> None:
         frappe.throw(frappe._("Only GraphQL query and local-only mutation draft definitions are supported."))
 
 
-@frappe.whitelist()
-def preview_direct_mapping(operation: str, source_record_json: str) -> dict[str, object]:
-    """Show an active explicit mapping plan. This endpoint never writes documents."""
-    frappe.only_for("System Manager")
-    try:
-        record = json.loads(source_record_json)
-    except json.JSONDecodeError as error:
-        frappe.throw(frappe._("Source record must be JSON: {0}").format(error.msg))
-    if not isinstance(record, dict):
-        frappe.throw(frappe._("Source record must be a JSON object."))
-    from hero_integration.services.mapping_runtime import MappingPlanError, active_mapping_plan
-
-    try:
-        plan = active_mapping_plan(operation)
-        values = plan.values(record)
-    except MappingPlanError as error:
-        frappe.throw(translate_error(error, frappe._))
-    return {"operation": operation, "values": values, "writes": False}
 
 
-@frappe.whitelist(methods=['GET'])
-def mapping_object_catalog(snapshot_name: str, object_type: str = '', search: str = '',
-                           start: int | str = 0, page_size: int | str = 50) -> dict[str, object]:
-    """Inspect schema objects and relation paths, without authorizing a fetch."""
-    frappe.only_for('System Manager')
-    _mapping_request_fields({'snapshot_name', 'object_type', 'search', 'start', 'page_size'})
-    snapshot_name = _mapping_text(snapshot_name, 'snapshot_name')
-    object_type = _mapping_text(object_type, 'object_type', 140, allow_empty=True)
-    search = _mapping_text(search, 'search', 120, allow_empty=True)
-    start, page_size = _mapping_int(start, 'start', 0, 10000), _mapping_int(page_size, 'page_size', 1, 50)
-    snapshot, schema = _validated_snapshot(snapshot_name)
-    from hero_integration.services.object_mapping_catalog import catalog
-    try:
-        data = catalog(schema, object_type, search)
-    except ValueError as error:
-        frappe.throw(translate_error(error, frappe._))
-    entries = data['items']
-    return {'objects': data['objects'], 'areas': data['areas'], 'items': entries[start:start + page_size], 'start': start,
-            'page_size': page_size, 'total': len(entries), 'has_more': start + page_size < len(entries),
-            'source_instance': snapshot.source_instance, 'snapshot_name': snapshot.name,
-            'schema_fingerprint': snapshot.schema_fingerprint, 'execution_authorized': False}
 
 
-@frappe.whitelist()
-def mapping_source_picker(snapshot_name: str, operation: str, search: str = "") -> list[dict[str, object]]:
-    frappe.only_for("System Manager")
-    snapshot, schema = _validated_snapshot(snapshot_name)
-    from hero_integration.services.mapping_suggestions import source_fields
-
-    mappings_by_path: dict[str, list[dict[str, object]]] = {}
-    for mapping in _existing_mappings(snapshot.schema_fingerprint, operation):
-        mappings_by_path.setdefault(mapping["source_path"], []).append(mapping)
-    result = []
-    for item in source_fields(operation, schema, search):
-        payload = item.__dict__.copy()
-        payload["existing_mappings"] = mappings_by_path.get(item.path, [])
-        result.append(payload)
-    return result
 
 
-@frappe.whitelist()
-def mapping_target_catalog(app_name: str = "", search: str = "", adapter_version: int | str = 0) -> dict[str, object]:
-    """Discover installed-app targets without granting an external-app write path."""
-    frappe.only_for("System Manager")
-    from hero_integration.services.frappe_mapping_catalog import catalog, query_target_catalog
-    if str(adapter_version) not in {'0', '2'}:
-        frappe.throw(frappe._('Unsupported Query adapter version.'))
-    reader = query_target_catalog if str(adapter_version) == '2' else catalog
-    return reader(_FrappePickerMetadata(), app_name, search)
 
 
-@frappe.whitelist(methods=["GET"])
-def mapping_target_catalog_page(
-    app_name: str = "", doctype: str = "", search: str = "", start: int | str = 0, page_size: int | str = 50,
-) -> dict[str, object]:
-    """Page the existing installed-app field catalog without suggesting a mapping."""
-    frappe.only_for("System Manager")
-    _mapping_request_fields({"app_name", "doctype", "search", "start", "page_size"})
-    app_name = _mapping_text(app_name, "app_name", 140, allow_empty=True)
-    doctype = _mapping_text(doctype, "doctype", 140, allow_empty=True)
-    search = _mapping_text(search, "search", 120, allow_empty=True)
-    start, page_size = _mapping_int(start, "start", 0, 10000), _mapping_int(page_size, "page_size", 1, 50)
-    from hero_integration.services.frappe_mapping_catalog import fields
-
-    entries = fields(_FrappePickerMetadata(), app_name, doctype, search)
-    return {
-        "items": [entry.__dict__ for entry in entries[start:start + page_size]],
-        "total": len(entries), "start": start, "page_size": page_size,
-        "has_more": start + page_size < len(entries),
-    }
 
 
-@frappe.whitelist()
-def writeback_mapper_catalog(
-    snapshot_name: str, app_name: str = "", source_doctype: str = "", usage: str = "",
-) -> dict[str, object]:
-    """Return independent Frappe source pickers without widening writeback."""
-    frappe.only_for("System Manager")
-    snapshot, schema = _validated_snapshot(snapshot_name)
-    from hero_integration.services.frappe_mapping_catalog import doctypes as catalog_doctypes, writeback_fields, send_source_fields
-    if usage not in {'', 'SEND_TO_HERO'}:
-        frappe.throw(frappe._('Unsupported mutation mapping usage.'))
-    from hero_integration.services.frappe_writeback import DEFINITIONS, WritebackContractError, reviewed_input_target
-
-    metadata = _FrappePickerMetadata()
-    allowed = [item for item in catalog_doctypes(metadata) if item.selectable]
-    apps = sorted({item.app_name for item in allowed if item.app_name})
-    candidates = [item for item in allowed if (not app_name or item.app_name == app_name)
-                  and (not source_doctype or item.doctype == source_doctype)]
-    if source_doctype and not candidates:
-        frappe.throw(frappe._("The selected source is not available."), frappe.PermissionError)
-    doctypes = [item.__dict__ for item in candidates]
-    source_fields: list[dict[str, object]] = []
-    source_reader = send_source_fields if usage == 'SEND_TO_HERO' else writeback_fields
-    source_candidates = (field for field in source_reader(metadata, targets=candidates) if field.selectable)
-    for field in source_candidates:
-        payload = field.__dict__.copy()
-        doctype = field.doctype
-        fieldname = field.path
-        try:
-            if usage != 'SEND_TO_HERO' and doctype in DEFINITIONS and fieldname in DEFINITIONS[doctype].fields:
-                payload["target"] = reviewed_input_target(doctype, fieldname, schema)
-        except WritebackContractError as error:
-            payload["selectable"] = False
-            payload["reason"] = str(error)
-        if payload["selectable"]:
-            source_fields.append(payload)
-    contract_rows = frappe.get_all(
-        "HERO Mutation Contract",
-        filters={"schema_snapshot": snapshot.name, "operation_name": ["in", [item.operation for item in DEFINITIONS.values()]]},
-        fields=["name", "operation_name", "status", "contract_revision", "graphql_service"],
-        order_by="modified desc",
-    )
-    contracts = []
-    for operation in sorted({item.operation for item in DEFINITIONS.values()}):
-        rows = [row for row in contract_rows if row.operation_name == operation]
-        active = [row for row in rows if row.status == "Active"]
-        if len(rows) == 1 and len(active) == 1:
-            state = {"activation_ready": True, "blocker": ""}
-        elif len(rows) == 1:
-            state = {"activation_ready": False, "blocker": frappe._(
-                "Technical contract {0} is {1}; it must be approved before this mapping can be activated."
-            ).format(rows[0].name, frappe._(rows[0].status))}
-        elif not rows:
-            state = {"activation_ready": False, "blocker": frappe._("No schema-bound technical mutation contract has been prepared for this operation.")}
-        else:
-            state = {"activation_ready": False, "blocker": frappe._("Multiple technical mutation contracts exist for this operation; activation remains fail-closed.")}
-        contracts.append({"operation": operation, "contracts": rows, **state})
-    return {"apps": apps, "doctypes": doctypes, "fields": source_fields, "contracts": contracts}
 
 
-@frappe.whitelist()
-def mapping_target_picker(
-    operation: str, search: str = "", app_name: str = "", target_doctype: str = "",
-) -> list[dict[str, object]]:
-    frappe.only_for("System Manager")
-    from hero_integration.services.mapping_suggestions import target_fields
-
-    return [item.__dict__ for item in target_fields(operation, _FrappePickerMetadata(), search, app_name, target_doctype)]
 
 
-@frappe.whitelist()
-def mapping_source_picker_page(
-    snapshot_name: str, operation: str, search: str = "", start: int = 0, page_size: int = 50,
-) -> dict[str, object]:
-    """Return at most 50 searchable HERO source fields for the mapping picker."""
-    frappe.only_for("System Manager")
-    _, schema = _validated_snapshot(snapshot_name)
-    from hero_integration.services.mapping_suggestions import picker_page, source_fields
-
-    return picker_page(source_fields(operation, schema, search), start, page_size)
 
 
-@frappe.whitelist()
-def mapping_target_picker_page(
-    operation: str, search: str = "", app_name: str = "", target_doctype: str = "",
-    start: int = 0, page_size: int = 50,
-) -> dict[str, object]:
-    """Return at most 50 fields from the selected Frappe target DocType."""
-    frappe.only_for("System Manager")
-    from hero_integration.services.mapping_suggestions import picker_page, target_fields
-
-    return picker_page(target_fields(operation, _FrappePickerMetadata(), search, app_name, target_doctype), start, page_size)
 
 
-@frappe.whitelist()
-def mapping_suggestions(
-    snapshot_name: str, operation: str, source_path: str = "", target_field: str = "", target_doctype: str = "",
-) -> list[dict[str, object]]:
-    frappe.only_for("System Manager")
-    _, schema = _validated_snapshot(snapshot_name)
-    from hero_integration.services.mapping_suggestions import suggest_from_source, suggest_from_target
-
-    metadata = _FrappePickerMetadata()
-    if source_path:
-        return suggest_from_source(operation, source_path, schema, metadata, target_doctype=target_doctype)
-    if target_field:
-        return suggest_from_target(operation, target_field, schema, metadata, target_doctype=target_doctype)
-    frappe.throw(frappe._("Choose a source path or a target field."))
 
 
-@frappe.whitelist()
-def preview_mapping_candidate(
-    snapshot_name: str, operation: str, source_path: str, target_field: str, source_record_json: str,
-    target_doctype: str = "",
-) -> dict[str, object]:
-    """Preview one suggested draft mapping without persisting a mapping or a document."""
-    frappe.only_for("System Manager")
-    snapshot, _schema = _validated_snapshot(snapshot_name)
-    try:
-        record = json.loads(source_record_json)
-    except json.JSONDecodeError as error:
-        frappe.throw(frappe._("Source record must be JSON: {0}").format(error.msg))
-    if not isinstance(record, dict):
-        frappe.throw(frappe._("Source record must be a JSON object."))
-    from hero_integration.services.direct_mapping import MappingSpec, SOURCE_CONTRACTS, source_value, transformed_value
-    from hero_integration.services.frappe_mapping_catalog import validate_draft_target
-
-    contract = SOURCE_CONTRACTS.get(operation)
-    if not contract or source_path not in contract["paths"]:
-        frappe.throw(frappe._("Source path is not selected by the approved HERO operation."))
-    target_doctype = target_doctype or contract["target_doctype"]
-    spec = MappingSpec(operation, source_path, target_doctype, target_field, contract["paths"][source_path])
-    try:
-        target = validate_draft_target(operation, spec.source_type, target_doctype, target_field, _FrappePickerMetadata())
-        value = transformed_value(spec, source_value(record, source_path), source_instance=getattr(snapshot, 'source_instance', None))
-    except ValueError as error:
-        frappe.throw(translate_error(error, frappe._))
-    return {
-        "operation": operation,
-        "source_path": source_path,
-        "target_field": target_field,
-        "target_doctype": target_doctype,
-        "target_app": target.app_name,
-        "values": {target_field: value} if value not in (None, "") else {},
-        "writes": False,
-        "activation": "Draft only; explicit review is required. Non-canonical app targets cannot be activated by this app.",
-    }
 
 
 @frappe.whitelist()
@@ -3539,8 +3020,11 @@ def execute_graphql_service(
         from hero_integration.client.settings import get_configuration
 
         configuration = get_configuration()
+        from hero_integration.services.mapping_contract_v1 import materialize_saved_mutation
+        request = materialize_saved_mutation(snapshot, service.query_document, variables,
+                                             request_scope=audit.correlation_id)
         HeroMutationClient(configuration.endpoint, lambda: configuration.api_token, configuration.timeout_seconds).execute_once(
-            service.query_document, variables
+            request.document, request.variables
         )
     except Exception as error:
         _finalize_mutation(
@@ -3671,7 +3155,7 @@ def _require_writeback_contract(contracts, snapshot):
     if service.schema_snapshot != snapshot.name or service.schema_fingerprint != snapshot.schema_fingerprint:
         frappe.throw(frappe._("The mutation contract service no longer matches its schema snapshot."))
     try:
-        from hero_integration.services.graphql_contract import parse_mutation
+        from hero_integration.services.mutation_binding_contract import parse_mutation
         parsed = parse_mutation(service.query_document)
         if parsed.fingerprint != contract.contract_fingerprint or parsed.root_field != contract.operation_name:
             raise ValueError
@@ -3817,7 +3301,7 @@ def _validated_mutation_request(contract_name: str, variables_json: str):
         mapping = json.loads(contract.mapping_json)
         if not isinstance(mapping, dict) or mapping.get("mode") not in {"ADMIN_INPUT", "VALIDATED_RESOLVER"}:
             raise ValueError
-        from hero_integration.services.graphql_contract import parse_mutation, validate_mutation
+        from hero_integration.services.mutation_binding_contract import parse_mutation, validate_mutation
 
         parsed = parse_mutation(service.query_document)
         if parsed.fingerprint != contract.contract_fingerprint or parsed.root_field != contract.operation_name:
@@ -3868,13 +3352,6 @@ class _FrappePickerMetadata:
         return frappe.get_meta(doctype).fields
 
 
-class _FrappeMetadata:
-    def ensure_write(self, doctype: str):
-        from hero_integration.services.doctype_permissions import ensure_doctype_write
-        ensure_doctype_write(doctype, frappe)
-
-    def field(self, doctype: str, fieldname: str):
-        return frappe.get_meta(doctype).get_field(fieldname)
 
 
 def _validated_snapshot(snapshot_name: str, *, for_update=False, with_graph=False):

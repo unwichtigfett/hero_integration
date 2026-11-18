@@ -2,7 +2,14 @@
 
 - Query exchange: `hero-integration-mappings-v1`; Mutation exchange: `hero-personal-mapping-portable-v2`.
 - Complete configuration: `hero-integration-config-v2`; includes schema snapshot, approved operational settings, mappings and readers, with optional mutation definitions and contracts.
-- Imports require a validated compatible schema, preview and confirmation; schema provisioning and mapping activation are separate from HERO execution.
+- Complete replacement imports install the CLI artifact directly. Personal drafts, author ownership, reconciliation proofs and separate publication are not part of this path.
+- Only System Managers and the Administrator user may import. Existing JSON formats and the `config_import_preview`, `config_import` and `config_export` APIs remain compatible with h-map.
+- `replace_mappings: true` declares the complete mapping configuration for the configured HERO source, not a merge. Omitted Query/Mutation mappings, field rules, readers and mutation contracts are disabled; historical documents and business bindings are retained.
+- The optional server preview is informational, not a publication gate. Runtime plans, reader references and contract fingerprints are rebuilt for the target site. A successful import makes the supplied configuration active without executing HERO operations.
+- Stable local identities and automatically managed revisions keep identical reimports idempotent and invalidate stale running jobs when definitions change. CLI identities are retained separately for lossless export and explicit field-rule references.
+- Schema provisioning runs before the configuration transaction because MariaDB DDL may commit implicitly. Configuration failures roll back the configuration transition; newly provisioned schema may remain. Removed mapping fields never imply dropping ERPNext fields or business data.
+- Deploy the app with `bench migrate` before using the direct importer; the GraphQL Mapping DocType stores CLI identity provenance in `configuration_import_ids`.
+- The unchanged h-map CLI still refuses pushes omitting whole areas, mutations or contracts. Full removal is supported by the server API; no export filtering is used to circumvent that client-side restriction.
 - Credentials, hosts, notification recipients, execution/deletion switches, runtime history and business records are excluded.
 - Nine migration areas share the mapping system; project histories use the project reader.
 - Native ERPNext records and source-bound Integration Links preserve identity and local edits; ambiguous relationships require reconciliation.
@@ -12,6 +19,6 @@
 - Products: `HeroProducts`, `supply_product_versions`, `Source Identity`, `Record Name`, `target_operation` and `read_service`.
 - Price mappings: `relation`, `Standard Buying`, `Standard Selling`, `sales_prices.supply_sales_price.is_default` and `list_price`; stock observations do not post inventory.
 - Files: `HeroDocuments`, `HeroPictures`, `FileUpload_FileUploads.edges.node`, `first`, `offset` and the `images` category.
-- Existing built-in mappings remain available; generated readers require explicit approval and approved mappings.
+- Existing built-in mappings remain available; complete imports install matching read approvals in the same transaction. Other saved-service workflows retain their existing runtime approval requirements.
 - Project logbook: selected histories are paginated, source-bound and deduplicated; restricted entries stay outside the shared timeline.
 - Outbound updates and logbook creation require separate contracts, permission checks, fresh previews, confirmation and verified readback; uncertain creates are not blindly retried.

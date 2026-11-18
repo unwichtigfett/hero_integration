@@ -1,20 +1,21 @@
+"""Retired editor RPCs stay absent while configuration exchange remains available."""
 import unittest
-from types import SimpleNamespace
-from unittest.mock import patch
-
+from pathlib import Path
 from hero_integration import api
-from hero_integration.services import frappe_mapping_catalog
 
 
 class CandidatePreviewValidationTest(unittest.TestCase):
-    def test_invalid_target_is_reported_as_a_validation_error(self):
-        class ValidationError(Exception):
-            pass
-        def throw(message, *args):
-            raise ValidationError(message)
-        frappe = SimpleNamespace(only_for=lambda role: None, throw=throw, _=lambda message: message)
-        with patch.object(api, 'frappe', frappe), patch.object(api, '_validated_snapshot', return_value=(None, {})), \
-             patch.object(api, '_FrappePickerMetadata', return_value=object()), \
-             patch.object(frappe_mapping_catalog, 'validate_draft_target', side_effect=ValueError('Target unavailable')):
-            with self.assertRaisesRegex(ValidationError, 'Target unavailable'):
-                api.preview_mapping_candidate('SYNTHETIC', 'HeroCustomers', 'id', 'customer_name', '{"id": 1}', 'Customer')
+    def test_old_editor_endpoints_are_removed(self):
+        retired = ('mapping_object_catalog', 'mapping_source_picker', 'mapping_source_picker_page', 'mapping_suggestions', 'mapping_target_catalog', 'mapping_target_catalog_page', 'mapping_target_picker', 'mapping_target_picker_page', 'preview_direct_mapping', 'preview_mapping_candidate', 'writeback_mapper_catalog')
+        scripts = Path(__file__).resolve().parents[1] / 'public' / 'js'
+        frontend = '\n'.join(path.read_text() for path in scripts.glob('*.js'))
+        for name in retired:
+            with self.subTest(name=name):
+                self.assertFalse(hasattr(api, name))
+                self.assertNotIn(name, frontend)
+
+    def test_configuration_import_export_remain_available(self):
+        for name in ('simple_mapping_export', 'simple_mapping_import_preview', 'simple_mapping_import_apply',
+                     'export_mapping_json', 'preview_mapping_import', 'import_mapping_json'):
+            with self.subTest(name=name):
+                self.assertTrue(callable(getattr(api, name)))

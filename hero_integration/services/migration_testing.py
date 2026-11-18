@@ -85,7 +85,8 @@ def persist(run_name, operation, state):
 
 def test_state(run_name, operation):
     if not run_name: raise ValueError('Testing migration requires a run-bound checkpoint.')
-    raw = frappe.db.get_default('hero_testing_migration:' + run_name + ':' + operation)
+    raw = frappe.db.get_value('DefaultValue', {'parent': '__default',
+        'defkey': 'hero_testing_migration:' + run_name + ':' + operation}, 'defvalue')
     return json.loads(raw) if raw else {}
 
 

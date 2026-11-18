@@ -12,6 +12,11 @@ from unittest.mock import patch
 APP = Path(__file__).resolve().parents[1]
 
 
+def translation_messages(stream):
+    return {row[0] + (":" + row[2] if len(row) == 3 and row[2] else ""): row[1]
+            for row in csv.reader(stream) if len(row) in (2, 3)}
+
+
 class TestGermanCatalog(unittest.TestCase):
     def test_parameterized_errors_translate_only_at_the_display_boundary(self):
         from hero_integration.services.localized_error import LocalizedError, LocalizedRuntimeError, translate_error
@@ -36,27 +41,30 @@ class TestGermanCatalog(unittest.TestCase):
 
     def test_graphql_error_preserves_code_detail_in_both_languages(self):
         from hero_integration.services.localized_error import translate_error
-        from hero_integration.services.query_draft import QueryDraftError, _tokens
+        from hero_integration.services.query_draft import QueryDraftError, validate
+        from hero_integration.tests.test_workspace_service_execution import SCHEMA
 
         with self.assertRaises(QueryDraftError) as caught:
-            _tokens("'")
+            validate(SCHEMA, "'")
         error = caught.exception
-        self.assertEqual(str(error), 'Unsupported GraphQL character "\'".')
+        self.assertIn('Syntax Error', str(error))
         with (APP / "translations" / "de.csv").open(encoding="utf-8", newline="") as stream:
-            messages = dict(csv.reader(stream))
-        self.assertEqual(translate_error(error, lambda message: messages.get(message, message)),
-                         'Nicht unterstütztes GraphQL-Zeichen "\'".')
+            messages = translation_messages(stream)
+        translated = translate_error(error, lambda message: messages.get(message, message))
+        self.assertTrue(translated.startswith('GraphQL-Abfrageprüfung fehlgeschlagen: '))
+        self.assertIn(str(error).split(": ", 1)[1], translated)
 
     def test_catalog_is_valid_and_preserves_placeholders(self):
         with (APP / "translations" / "de.csv").open(encoding="utf-8", newline="") as stream:
             rows = list(csv.reader(stream))
         seen = set()
         for row in rows:
-            self.assertEqual(len(row), 2)
-            source, translation = row
+            self.assertIn(len(row), (2, 3))
+            source, translation = row[:2]
+            key = source + (":" + row[2] if len(row) == 3 and row[2] else "")
             self.assertTrue(source and translation)
-            self.assertNotIn(source, seen)
-            seen.add(source)
+            self.assertNotIn(key, seen)
+            seen.add(key)
             placeholder = r"\{(\w+)(![rsa])?(?::([^{}]+))?\}"
             self.assertEqual(sorted(re.findall(placeholder, source)),
                              sorted(re.findall(placeholder, translation)))
@@ -68,7 +76,7 @@ class TestGermanCatalog(unittest.TestCase):
 
     def test_frappe_settings_and_domain_terms(self):
         with (APP / "translations" / "de.csv").open(encoding="utf-8", newline="") as stream:
-            messages = dict(csv.reader(stream))
+            messages = translation_messages(stream)
         self.assertEqual(messages["HERO Settings"], "HERO-Einstellungen")
         self.assertIn("Polling", messages["Polling Settings"])
         self.assertIn("Mapping", messages["Active Mappings"])
@@ -76,7 +84,7 @@ class TestGermanCatalog(unittest.TestCase):
 
     def test_python_frappe_translation_calls_have_german_entries(self):
         with (APP / "translations" / "de.csv").open(encoding="utf-8", newline="") as stream:
-            messages = dict(csv.reader(stream))
+            messages = translation_messages(stream)
         missing = []
         for path in APP.rglob("*.py"):
             if "tests" in path.relative_to(APP).parts:
@@ -92,7 +100,7 @@ class TestGermanCatalog(unittest.TestCase):
 
     def test_static_javascript_translation_calls_have_german_entries(self):
         with (APP / "translations" / "de.csv").open(encoding="utf-8", newline="") as stream:
-            messages = dict(csv.reader(stream))
+            messages = translation_messages(stream)
         # These literal calls are a useful minimum; dynamic labels and raw DOM
         # text still need their own review and runtime tests.
         pattern = re.compile(
@@ -128,7 +136,7 @@ class TestGermanCatalog(unittest.TestCase):
         except ModuleNotFoundError:
             self.skipTest("Frappe is not installed")
         with (APP / "translations" / "de.csv").open(encoding="utf-8", newline="") as stream:
-            messages = dict(csv.reader(stream))
+            messages = translation_messages(stream)
         missing = []
         extracted_count = 0
         for path in APP.rglob("*"):
@@ -149,7 +157,7 @@ class TestGermanCatalog(unittest.TestCase):
 
     def test_static_browser_errors_have_german_entries(self):
         with (APP / "translations" / "de.csv").open(encoding="utf-8", newline="") as stream:
-            messages = dict(csv.reader(stream))
+            messages = translation_messages(stream)
         pattern = re.compile(r"""\bnew\s+Error\(\s*(?P<literal>"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')""")
         missing = []
         for path in (APP / "public" / "js").glob("*.js"):
@@ -169,7 +177,7 @@ class TestGermanCatalog(unittest.TestCase):
                    "SchemaOperationError", "SchemaRefreshError", "ReadContractError", "MappingPlanError",
                    "WritebackContractError", "MappingDraftExchangeError", "ConfigExchangeError"}
         with (APP / "translations" / "de.csv").open(encoding="utf-8", newline="") as stream:
-            messages = dict(csv.reader(stream))
+            messages = translation_messages(stream)
         missing = []
         for path in APP.rglob("*.py"):
             if "tests" in path.relative_to(APP).parts:
@@ -186,7 +194,7 @@ class TestGermanCatalog(unittest.TestCase):
         # These canonical texts are stored in Integration Links and translated
         # by the native link form and the migration workspace at display time.
         with (APP / "translations" / "de.csv").open(encoding="utf-8", newline="") as stream:
-            messages = dict(csv.reader(stream))
+            messages = translation_messages(stream)
         path = APP / "services" / "migration.py"
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         missing = []
@@ -202,7 +210,7 @@ class TestGermanCatalog(unittest.TestCase):
         # These values are displayed in native diagnostic fields as well as
         # the workspace; identifiers and arbitrary external values are excluded.
         with (APP / "translations" / "de.csv").open(encoding="utf-8", newline="") as stream:
-            messages = dict(csv.reader(stream))
+            messages = translation_messages(stream)
         fields = {"sync_error", "schema_check_message", "error_message", "analysis_detail",
                   "suggestion_reason", "conflict_detail"}
         missing = []
@@ -228,7 +236,7 @@ class TestGermanCatalog(unittest.TestCase):
         import json
 
         with (APP / "translations" / "de.csv").open(encoding="utf-8", newline="") as stream:
-            messages = dict(csv.reader(stream))
+            messages = translation_messages(stream)
         missing = []
         for path in (APP / "hero_integration" / "doctype").glob("*/*.json"):
             doctype = json.loads(path.read_text(encoding="utf-8"))
@@ -243,7 +251,7 @@ class TestGermanCatalog(unittest.TestCase):
 
     def test_static_response_explanations_have_german_entries(self):
         with (APP / "translations" / "de.csv").open(encoding="utf-8", newline="") as stream:
-            messages = dict(csv.reader(stream))
+            messages = translation_messages(stream)
         paths = [APP / "api.py"] + [APP / "services" / name for name in (
             "mapping_draft_exchange.py", "mapping_exchange.py", "snapshot_inheritance.py",
             "schema_operations.py", "personal_mapping_content.py", "node_bookmark.py")]
@@ -303,7 +311,7 @@ class TestGermanCatalog(unittest.TestCase):
 
     def test_send_preview_labels_and_effect_summaries_have_german_entries(self):
         with (APP / "translations" / "de.csv").open(encoding="utf-8", newline="") as stream:
-            messages = dict(csv.reader(stream))
+            messages = translation_messages(stream)
         labels = {"Notes", "Phase", "Project"}
         for filename, names in (("customer_send.py", {"CUSTOMER_FIELDS", "ADDRESS_FIELDS"}), ("task_send.py", {"FIELDS"})):
             tree = ast.parse((APP / "services" / filename).read_text(encoding="utf-8"))
@@ -320,7 +328,7 @@ class TestGermanCatalog(unittest.TestCase):
 
     def test_mutation_draft_errors_have_german_entries(self):
         with (APP / "translations" / "de.csv").open(encoding="utf-8", newline="") as stream:
-            messages = dict(csv.reader(stream))
+            messages = translation_messages(stream)
         path = APP / "services" / "mutation_draft.py"
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         errors = [node.exc.args[0].value for node in ast.walk(tree)
@@ -333,7 +341,7 @@ class TestGermanCatalog(unittest.TestCase):
 
     def test_static_migration_results_have_german_entries(self):
         with (APP / "translations" / "de.csv").open(encoding="utf-8", newline="") as stream:
-            messages = dict(csv.reader(stream))
+            messages = translation_messages(stream)
         path = APP / "services" / "migration.py"
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         missing = []
@@ -359,7 +367,7 @@ class TestGermanCatalog(unittest.TestCase):
             self.skipTest("Frappe is not installed")
         catalog = get_translation_dict_from_file(str(APP / "translations" / "de.csv"), "de", "hero_integration", throw=True)
         with (APP / "translations" / "de.csv").open(encoding="utf-8", newline="") as stream:
-            expected = dict(csv.reader(stream))
+            expected = translation_messages(stream)
         self.assertEqual(catalog, expected)
         self.assertEqual(catalog["HERO Settings"], "HERO-Einstellungen")
         # Frappe resolves a regional German variant through its parent language.

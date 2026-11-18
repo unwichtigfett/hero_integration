@@ -3,7 +3,9 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
+from functools import lru_cache
 import json, re
+from hero_integration.services.graphql_schema_cache import compiled_schema, schema_text, SCHEMA_CACHE_SIZE, MAX_CACHEABLE_SCHEMA_CHARS
 from hero_integration.services.graphql_graph import analyze_snapshot, normalize_schema, GraphSnapshotError
 from hero_integration.graphql_protocol.schema import GraphQLSchema, GraphQLType, GraphQLField, GraphQLArgument, GraphQLEnumValue, GraphQLTypeRef
 from hero_integration.graphql_protocol.schema_snapshot import schema_fingerprint
@@ -14,6 +16,37 @@ from hero_integration.graphql_protocol.source_proposals import SourceApiProposal
 from hero_integration.services.read_contract import ReadContract
 V1=1; NAME=re.compile(r'^[_A-Za-z][_0-9A-Za-z]*$'); SHA=re.compile(r'^[0-9a-f]{64}$')
 class MappingContractError(ValueError): pass
+
+def materialize_saved_query(snapshot, document, variables, *, operation_name=None, selected_paths=None, preserve_paths=()):
+ if not isinstance(snapshot,StoredSnapshot):
+  snapshot=StoredSnapshot(snapshot.name,snapshot.snapshot_json,snapshot.schema_fingerprint,
+   snapshot.source_instance,snapshot.analysis_status)
+ try:
+  compiled=_saved_schema(snapshot)
+  if selected_paths is not None:
+   if operation_name is not None: raise MappingContractError('Projected reads require one approved operation.')
+   request=GraphQLOperationMaterializer.materialize_projected_query(compiled.core,compiled.fingerprint,
+    document,variables,selected_paths,preserve_paths=preserve_paths)
+  else:
+   request=GraphQLOperationMaterializer.materialize_document(
+    compiled.core,compiled.fingerprint,document,variables,operation_name=operation_name)
+  if request.operation_kind is not GraphQLOperationKind.QUERY: raise MappingContractError('A saved read must be a query.')
+  return request
+ except (GraphQLOperationMaterializationError,TypeError,ValueError) as error: raise MappingContractError(str(error)) from error
+
+def materialize_saved_mutation(snapshot, document, variables, *, request_scope, operation_name=None):
+ if not isinstance(snapshot,StoredSnapshot):
+  snapshot=StoredSnapshot(snapshot.name,snapshot.snapshot_json,snapshot.schema_fingerprint,
+   snapshot.source_instance,snapshot.analysis_status)
+ try:
+  compiled=_saved_schema(snapshot)
+  request=GraphQLOperationMaterializer.materialize_document(
+   compiled.core,compiled.fingerprint,document,variables,
+   request_scope=request_scope, operation_name=operation_name)
+  if request.operation_kind is not GraphQLOperationKind.MUTATION or request.mutation_safety_request is None:
+   raise MappingContractError('A saved mutation requires its sealed mutation request.')
+  return request
+ except (GraphQLOperationMaterializationError,TypeError,ValueError) as error: raise MappingContractError(str(error)) from error
 class Direction(StrEnum): READ='read'; WRITE='write'
 class NullMode(StrEnum): MISSING_IS_UNCHANGED='missing_is_unchanged'; EXPLICIT_NULL='explicit_null'
 class RelationMode(StrEnum): SINGLE='single'; COLLECTION='collection'
@@ -26,14 +59,16 @@ def ref(x):
 def arg(x):
  if not isinstance(x,Mapping): raise MappingContractError('Malformed argument.')
  return GraphQLArgument(name(x.get('name')),x.get('description') if isinstance(x.get('description'),str) else None,ref(x.get('type')),x.get('defaultValue') if isinstance(x.get('defaultValue'),str) else None)
-def schema(x):
+def schema(x, *, polymorphism=False):
  types=[]
  if not isinstance(x.get('types'),list): raise MappingContractError('Schema types missing.')
  for t in x['types']:
   if not isinstance(t,Mapping) or not isinstance(t.get('fields') or [],list) or not isinstance(t.get('inputFields') or [],list): raise MappingContractError('Incomplete schema type.')
   fields=tuple(GraphQLField(name(f.get('name')),None,tuple(arg(a) for a in f.get('args',[])),ref(f.get('type')),False,None) for f in t.get('fields') or [] if isinstance(f,Mapping))
   enums=tuple(GraphQLEnumValue(name(e.get('name')),None,False,None) for e in t.get('enumValues') or [] if isinstance(e,Mapping))
-  types.append(GraphQLType(name(t.get('kind')),name(t.get('name')),None,fields,tuple(arg(a) for a in t.get('inputFields') or []),enums))
+  types.append(GraphQLType(name(t.get('kind')),name(t.get('name')),None,fields,tuple(arg(a) for a in t.get('inputFields') or []),enums,
+   tuple(ref(a) for a in t.get('interfaces') or []) if polymorphism else (),
+   tuple(ref(a) for a in t.get('possibleTypes') or []) if polymorphism else ()))
  roots=[]
  for key in ('queryType','mutationType','subscriptionType'):
   v=x.get(key); roots.append(None if v is None else name(v.get('name') if isinstance(v,Mapping) else None))
@@ -42,15 +77,35 @@ def schema(x):
 @dataclass(frozen=True,slots=True)
 class StoredSnapshot: name:str; snapshot_json:Mapping[str,object]|str; fingerprint:str; source_instance:str; analysis_status:str='Validated'
 @dataclass(frozen=True,slots=True)
-class ValidatedSnapshot: name:str; fingerprint:str; source_instance:str; ir:GraphQLSchema; ir_fingerprint:str
+class ValidatedSnapshot: name:str; fingerprint:str; source_instance:str; ir:GraphQLSchema; ir_fingerprint:str; full_ir:GraphQLSchema; full_ir_fingerprint:str
+
+def _require_snapshot(s):
+ if s.analysis_status!='Validated' or not isinstance(s.fingerprint,str) or not SHA.fullmatch(s.fingerprint) or not s.name or not s.source_instance:
+  raise MappingContractError('Unvalidated snapshot.')
+
+def _saved_schema(s):
+ _require_snapshot(s)
+ result=compiled_schema(s.snapshot_json)
+ if result.fingerprint!=s.fingerprint: raise MappingContractError('Stale snapshot fingerprint.')
+ return result
+
+@lru_cache(maxsize=SCHEMA_CACHE_SIZE)
+def _snapshot_ir(text):
+ raw=json.loads(text)
+ normal=normalize_schema(raw); observed=analyze_snapshot(raw).fingerprint
+ ir=schema(normal); full_ir=schema(normal,polymorphism=True)
+ return observed,ir,schema_fingerprint(ir),full_ir,schema_fingerprint(full_ir)
+
 class SnapshotAdapter:
  def adapt(self,s):
-  if s.analysis_status!='Validated' or not SHA.fullmatch(s.fingerprint) or not s.name or not s.source_instance: raise MappingContractError('Unvalidated snapshot.')
-  raw=json.loads(s.snapshot_json) if isinstance(s.snapshot_json,str) else dict(s.snapshot_json)
-  try: normal=normalize_schema(raw); observed=analyze_snapshot(raw).fingerprint
+  _require_snapshot(s)
+  try:
+   text=schema_text(s.snapshot_json)
+   adapt=_snapshot_ir if len(text)<=MAX_CACHEABLE_SCHEMA_CHARS else _snapshot_ir.__wrapped__
+   observed,ir,ir_fingerprint,full_ir,full_ir_fingerprint=adapt(text)
   except (GraphSnapshotError,ValueError,TypeError) as e: raise MappingContractError('Malformed snapshot.') from e
   if observed!=s.fingerprint: raise MappingContractError('Stale snapshot fingerprint.')
-  ir=schema(normal); return ValidatedSnapshot(s.name,s.fingerprint,s.source_instance,ir,schema_fingerprint(ir))
+  return ValidatedSnapshot(s.name,s.fingerprint,s.source_instance,ir,ir_fingerprint,full_ir,full_ir_fingerprint)
 @dataclass(frozen=True,slots=True)
 class LogicalMappingContractV1:
  definition_id:str; direction:Direction; frappe_app:str; doctype:str; fieldname:str; operation:str; source_path:tuple[str,...]; target_path:tuple[str,...]; transformation:str|None; null_mode:NullMode; external_identity_path:tuple[str,...]; relation_mode:RelationMode; snapshot_name:str; snapshot_fingerprint:str; revision:int; lifecycle:str; approval:str; version:int=V1
@@ -58,16 +113,25 @@ class LogicalMappingContractV1:
   if self.version!=V1 or not all((self.definition_id,self.frappe_app,self.doctype,self.fieldname,self.operation,self.snapshot_name,self.lifecycle,self.approval)) or self.revision<1 or not SHA.fullmatch(self.snapshot_fingerprint): raise MappingContractError('Invalid logical mapping contract.')
   if not self.source_path or not self.target_path or not self.external_identity_path: raise MappingContractError('Identity and paths required.')
 @dataclass(frozen=True,slots=True)
-class QueryDraft: operation_name:str; alias:str; field:str; selected_paths:tuple[str,...]; variables:Mapping[str,object]; pagination:str|None=None; ordering:str|None=None
+class QueryDraft: operation_name:str; alias:str; field:str; selected_paths:tuple[str,...]; variables:Mapping[str,object]; pagination:str|None=None; ordering:str|None=None; nested_arguments:Mapping[str,Mapping[str,object]]|None=None
 class QueryAdapter:
- def materialize(self,s,d):
-  f=next((x for x in s.ir.query_fields if x.name==d.field),None)
+ def materialize_many(self,s,drafts,operation_name):
+  drafts=tuple(drafts)
+  full_schema=any(any(any(part.startswith('@') for part in path.split('.')) for path in d.selected_paths) for d in drafts)
+  try: return GraphQLOperationMaterializer.combine_queries(tuple(self.materialize(s,d,full_schema=full_schema) for d in drafts),operation_name)
+  except GraphQLOperationMaterializationError as e: raise MappingContractError(str(e)) from e
+
+ def materialize(self,s,d,*,full_schema=False):
+  polymorphic=full_schema or any(any(part.startswith('@') for part in path.split('.')) for path in d.selected_paths)
+  ir=s.full_ir if polymorphic else s.ir
+  fingerprint=s.full_ir_fingerprint if polymorphic else s.ir_fingerprint
+  f=next((x for x in ir.query_fields if x.name==d.field),None)
   if not f: raise MappingContractError('Unknown query field.')
   args={x.name for x in f.arguments}
   if (d.pagination and d.pagination not in d.variables) or (d.ordering and d.ordering not in d.variables) or any(x and x not in args for x in (d.pagination,d.ordering)): raise MappingContractError('Invalid pagination/ordering contract.')
-  b=GraphQLOperationBinding('draft:'+d.operation_name,s.ir_fingerprint,'operation:query:'+d.field,GraphQLOperationKind.QUERY,d.operation_name,d.alias,d.selected_paths)
-  p=SourceApiProposalModel(1,s.ir_fingerprint,(),(),(SourceOperationProposal(b.operation_node_id,d.field,GraphQLOperationKind.QUERY,SourceOperationRole.COLLECTION,None,(),(),(),()),))
-  try: return GraphQLOperationMaterializer().materialize(s.ir,p,b,d.variables)
+  b=GraphQLOperationBinding('draft:'+d.operation_name,fingerprint,'operation:query:'+d.field,GraphQLOperationKind.QUERY,d.operation_name,d.alias,d.selected_paths)
+  p=SourceApiProposalModel(1,fingerprint,(),(),(SourceOperationProposal(b.operation_node_id,d.field,GraphQLOperationKind.QUERY,SourceOperationRole.COLLECTION,None,(),(),(),()),))
+  try: return GraphQLOperationMaterializer().materialize(ir,p,b,d.variables,nested_arguments=d.nested_arguments)
   except GraphQLOperationMaterializationError as e: raise MappingContractError(str(e)) from e
 
  def materialize_personal_task(self, snapshot, content):

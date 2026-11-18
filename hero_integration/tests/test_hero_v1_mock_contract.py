@@ -7,8 +7,9 @@ from pathlib import Path
 from unittest import mock
 
 from hero_integration.client.graphql import HeroClientError, HeroGraphQLClient, validate_endpoint
-from hero_integration.sources.hero import CUSTOMER_QUERY_V1, CUSTOMER_SELECTED_PATHS, PAGE_SIZE, PROJECT_QUERY_V1, PROJECT_SELECTED_PATHS, HeroSource
+from hero_integration.sources.hero import CUSTOMER_QUERY_V1, CUSTOMER_SELECTED_PATHS, PAGE_SIZE, PROJECT_QUERY_V1, PROJECT_SELECTED_PATHS
 from hero_integration.tests.mapping_fixture import fixture_plan
+from hero_integration.tests.saved_reader_fixture import versioned_contract_source
 from hero_integration.tests.mock_hero_v1 import (
     AMBIGUOUS_PROJECT,
     CUSTOMERS,
@@ -147,14 +148,14 @@ class TestHeroV1MockContract(unittest.TestCase):
             def query(self, _query, _variables):
                 rows = [{'id':1}, {'id':2}, {'id':3}]
                 return {'contacts':rows, 'project_matches':rows}
-        source = HeroSource(Overfull(), page_size=2)
+        source = versioned_contract_source(Overfull(), page_size=2)
         for reader in (source.customers, source.projects):
             with self.assertRaisesRegex(ValueError, 'page size'):
                 reader()
 
     def test_source_and_mapping_cover_all_fixed_values(self):
         source = _StrictSource()
-        customers, projects = HeroSource(source).customers(), HeroSource(source).projects()
+        customers, projects = versioned_contract_source(source).customers(), versioned_contract_source(source).projects()
         self.assertEqual(customers.records, ({**CUSTOMER, "_hero_source_instance": "default"},))
         self.assertEqual(projects.records, ({**PROJECT, "_hero_source_instance": "default"},))
         customer_plan = fixture_plan("HeroCustomers")
@@ -220,7 +221,7 @@ class TestHeroV1MockContract(unittest.TestCase):
 
     def test_deterministic_dataset_covers_pagination_and_negative_cases(self):
         mock_source = DeterministicHeroMock()
-        source = HeroSource(mock_source)
+        source = versioned_contract_source(mock_source)
 
         first_page = source.customers()
         second_page = source.customers(first_page.next_offset or 0)

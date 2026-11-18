@@ -5,13 +5,16 @@ import json
 import frappe
 from frappe.model.document import Document
 
-from hero_integration.services.graphql_contract import GraphQLContractError, parse_mutation
+from hero_integration.services.mutation_binding_contract import GraphQLContractError, parse_mutation
 from hero_integration.services.localized_error import translate_error
 
 
 class HEROMutationContract(Document):
     def validate(self) -> None:
         frappe.only_for("System Manager")
+        from hero_integration.services.direct_config_import import accepts_document
+        if accepts_document(self):
+            return
         service = frappe.get_doc("HERO GraphQL Service", self.graphql_service)
         snapshot = frappe.get_doc("HERO GraphQL Schema Snapshot", service.schema_snapshot)
         if snapshot.analysis_status != "Validated" or snapshot.execution_contract_status == "Blocked":

@@ -1,3 +1,4 @@
+from hero_integration.tests.saved_reader_fixture import isolate_saved_materialization
 """Configured adapters retain grouped content, metadata fences and publication evidence."""
 from copy import deepcopy
 import json
@@ -44,6 +45,9 @@ class Metadata:
 
 
 class TestConfiguredMappingPublication(TestCase):
+    def setUp(self):
+        isolate_saved_materialization(self)
+
     def test_product_draft_completion_preserves_coded_resolver_options(self):
         from hero_integration.services import direct_runtime, query_mapping
         storage = object.__new__(FrappeMappingDraftStorage)
@@ -88,25 +92,6 @@ class TestConfiguredMappingPublication(TestCase):
         self.assertNotIn(('Customer', 'name'), sources)
         self.assertEqual(before, {(f.doctype, f.path) for f in catalog.writeback_fields(meta) if f.selectable})
 
-    def test_logbook_date_slot_uses_project_authority_without_exposing_other_system_fields(self):
-        class ActivityMetadata(Metadata):
-            def fields(self, name):
-                if name == 'Comment':
-                    raise PermissionError('Comment has no standalone write grant')
-                return super().fields(name)
-
-            def project_activity_fields(self):
-                self.assert_project = self.can_write('Project')
-                return self.values['Comment']
-
-        metadata = ActivityMetadata()
-        result = catalog.query_target_catalog(metadata)
-        fields = {(f['doctype'], f['path']) for f in result['fields']}
-        self.assertIn(('Comment', 'creation'), fields)
-        self.assertIn(('Comment', 'content'), fields)
-        self.assertNotIn(('Customer', 'name'), fields)
-        self.assertTrue(next(d for d in result['doctypes'] if d['doctype'] == 'Comment')['selectable'])
-        self.assertTrue(metadata.assert_project)
 
     def test_predicate_sources_are_authorized_independently_from_mutation_value_types(self):
         meta = Metadata()

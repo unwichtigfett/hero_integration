@@ -18,6 +18,7 @@
 - [Query field contract](docs/query_fieldcontract_1.0.md)
 - [App integration](docs/app_integration_1.0.md)
 - [Desk workspace](docs/ui_overview_1.0.md)
+- [Project workspace extension](docs/project_workspace.md)
 - [Portability](docs/portability_report_1.0.md)
 - [GraphQL materializer](docs/materializer_1.0.md)
-- [File topology](docs/architecture/hero-integration_f-topology_00.md)
+- [File topology](docs/architecture/hero-integration_f-topology_01.md)

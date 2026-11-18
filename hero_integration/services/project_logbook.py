@@ -61,6 +61,11 @@ def _rows(value):
     return value
 
 
+def _logbook_source(client, source_instance):
+    from hero_integration.sources.hero import GraphQLServiceSource
+    return GraphQLServiceSource.approved(client, 'HeroProjectMatches', source_instance)
+
+
 def sync_logbook(client, user_emails: dict[int, str] | None = None, max_pages: int = 10000, *,
                  source_instance: str, max_history_pages: int = 200, progress=None, verify_source=None) -> dict:
     """Exhaust both nested collections; fail visibly if a bound/cursor is broken.
@@ -86,12 +91,13 @@ def sync_logbook(client, user_emails: dict[int, str] | None = None, max_pages: i
     counts = {"requests": 0, "added": 0, "known": 0, "without_project": 0, "projects": 0, "complete": False, "restricted": 0, "file_references": 0, "weather_entries": 0}
     seen_projects = set()
     metadata = _metadata(source_instance)
+    source = _logbook_source(client, source_instance)
 
     def request(document, variables):
         if verify_source:
             verify_source()
         counts['requests'] += 1
-        return _response(client.query(document, variables))
+        return _response(source._auxiliary_document(document, variables))
 
     def consume(row, seen):
         identity = str(row['id'])
@@ -271,6 +277,32 @@ def _same_line_break_representation(source, observed):
     return normalize(left) == normalize(right)
 
 
+def _comment_snapshot(comment, selected):
+    """Baseline only approved fields, using their persisted native values."""
+    observed = {field: getattr(comment, field, None) for field in selected}
+    for field in ('creation','modified'):
+        if observed.get(field) is not None:
+            observed[field] = str(observed[field])
+    return observed
+
+
+def _native_comment_values(values, owner=None):
+    """Mirror Comment.validate normalization without changing source evidence."""
+    from frappe.utils.html_utils import sanitize_html
+    result = dict(values)
+    if 'content' in result:
+        result['content'] = sanitize_html(result['content'], always_sanitize=True,
+            disallowed_tags=['form','input','button'])
+    if 'comment_email' in result and not result['comment_email'] and owner:
+        result['comment_email'] = owner
+    return result
+
+
+def _same_import_representation(values, observed, comment):
+    expected = _native_comment_values(values, getattr(comment,'owner',None))
+    return expected == observed or _same_line_break_representation(expected, observed)
+
+
 def _local(value):
     from hero_integration.services.migration import _external_task_deadline
 
@@ -389,12 +421,12 @@ def sync_mapped_entries(plan, record, project, *, preview=False, conflicts=None)
             if config.get('context_paths') and link.mapping_version == 'project-logbook-v1':
                 _enrich_legacy_mapped_comment(comment, values)
             if config.get('context_paths') and link.mapping_version != 'project-logbook-v1':
-                observed = {field: getattr(comment, field, None) for field in values}
-                for field in ('creation', 'modified'):
-                    if observed.get(field) is not None: observed[field] = str(observed[field])
+                observed = _comment_snapshot(comment, values)
                 if _digest(observed) != link.target_payload_hash:
-                    if (link.source_payload_hash == _digest(values)
-                            and _same_line_break_representation(values, observed)):
+                    if (link.source_payload_hash == _digest(values) and (
+                            _same_line_break_representation(values, observed) or
+                            (link.target_payload_hash == link.source_payload_hash and
+                             _same_import_representation(values, observed, comment)))):
                         frappe.db.set_value('HERO Integration Link', link.name, {
                             'sync_status': 'Synchronized', 'conflict_detail': '',
                             'mapping_version': plan.mapping_version, 'target_payload_hash': _digest(observed),
@@ -410,11 +442,13 @@ def sync_mapped_entries(plan, record, project, *, preview=False, conflicts=None)
                 if (link.sync_status == 'Synchronized' and link.mapping_version == plan.mapping_version
                         and link.source_payload_hash == _digest(values)):
                     continue  # An unchanged entry needs no writes or timestamp churn.
-                frappe.db.set_value('Comment', comment.name, values, update_modified=False)
+                written = _native_comment_values(values, getattr(comment,'owner',None))
+                frappe.db.set_value('Comment', comment.name, written, update_modified=False)
+                persisted = _comment_snapshot(frappe.get_doc('Comment', comment.name), values)
                 frappe.db.set_value('HERO Integration Link', link.name, {
                     'sync_status': 'Synchronized', 'conflict_detail': '',
                     'mapping_version': plan.mapping_version, 'source_payload_hash': _digest(values),
-                    'target_payload_hash': _digest(values), 'last_synced_on': frappe.utils.now_datetime()}, update_modified=False)
+                    'target_payload_hash': _digest(persisted), 'last_synced_on': frappe.utils.now_datetime()}, update_modified=False)
             continue
         legacy = _legacy_identity_alias(project, parent, instance, identity)
         if legacy is not None:
@@ -431,17 +465,19 @@ def sync_mapped_entries(plan, record, project, *, preview=False, conflicts=None)
                 'source_payload_hash': legacy.source_payload_hash, 'target_payload_hash': legacy.target_payload_hash,
                 'last_synced_on': legacy.last_synced_on}).insert(ignore_permissions=True)
             continue
+        written = _native_comment_values(values)
         comment = frappe.get_doc({'doctype': 'Comment', 'comment_type': 'Info', 'reference_doctype': None if restricted else 'Project',
-                                  'reference_name': None if restricted else project, 'custom_hero_project': project, **{k: v for k, v in values.items() if k not in {'creation', 'modified'}}})
+                                  'reference_name': None if restricted else project, 'custom_hero_project': project, **{k: v for k, v in written.items() if k not in {'creation', 'modified'}}})
         comment.insert(ignore_permissions=True)
         dates = {key: values[key] for key in ('creation', 'modified') if values.get(key)}
         if dates:
             if 'creation' in dates and 'modified' not in dates: dates['modified'] = dates['creation']
             frappe.db.set_value('Comment', comment.name, dates, update_modified=False)
+        persisted = _comment_snapshot(frappe.get_doc('Comment', comment.name), values)
         link = frappe.get_doc({'doctype': 'HERO Integration Link', 'source_system': 'HERO', 'source_type': SOURCE_TYPE,
             'source_id': key, 'source_instance': instance, 'sync_status': 'Synchronized', 'target_doctype': 'Comment',
             'target_name': comment.name, 'mapping_version': plan.mapping_version,
-            'source_payload_hash': _digest(values), 'target_payload_hash': _digest(values),
+            'source_payload_hash': _digest(values), 'target_payload_hash': _digest(persisted),
             'last_synced_on': frappe.utils.now_datetime()}).insert(ignore_permissions=True)
         if restricted:
             frappe.db.set_value('Comment', comment.name, {'reference_doctype': 'HERO Integration Link',
@@ -532,7 +568,8 @@ def complete_mapped_histories(source, records, variables):
         if source.revalidate() != source.contract:
             raise ReadContractError('Read approval changed before logbook transport.')
         params = {**variables, variable: len(entries)}
-        data = source.client.query(source.service.query_document, params)
+        request = source._saved_request(params)
+        data = source.client.query(request.document, request.variables)
         if source.revalidate() != source.contract:
             raise ReadContractError('Read approval changed during logbook transport.')
         parents = value_at(data, source.contract.records_path)

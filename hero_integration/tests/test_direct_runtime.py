@@ -10,6 +10,7 @@ from graphql import build_schema, introspection_from_schema
 from hero_integration.services import direct_runtime as rt
 from hero_integration.services import query_mapping as qm
 from hero_integration.services.graphql_graph import analyze_snapshot
+from hero_integration.tests.saved_reader_fixture import product_paging_read
 
 
 class TestRequiredApprovedRead(unittest.TestCase):
@@ -80,7 +81,7 @@ class TestBuiltinReads(unittest.TestCase):
         self.assertEqual(rt.identity(documents, rows[0]), "1")
 
     def test_a_rejected_page_is_read_in_halves_and_invalid_lists_fail(self):
-        read = rt.builtin_read("HeroProducts")
+        read = product_paging_read()
         client = _Client(lambda offset, first: {"supply_product_versions": [{"product_id": f"P{i}"}
                                                                             for i in range(offset, offset + first)]},
                          reject_above=250)
@@ -117,12 +118,17 @@ class TestBuiltinReads(unittest.TestCase):
                 rt.records(read, response)
 
     def test_invalid_page_does_not_retry_as_smaller_or_complete_empty(self):
-        read = rt.DirectRead("HeroProducts", None, "query", "supply_product_versions",
-                             {"first": "$page_size", "offset": "$offset"}, 500)
+        read = product_paging_read()
         client = _Client(lambda offset, first: {"supply_product_versions": None})
         with self.assertRaisesRegex(ValueError, "invalid record list"):
             rt.fetch_page(client, read, 0)
         self.assertEqual(len(client.calls), 1)
+
+    def test_read_without_snapshot_never_bypasses_materialization(self):
+        client = _Client(lambda offset, first: {'supply_product_versions':[]})
+        with self.assertRaisesRegex(ValueError,'schema-bound read'):
+            rt.fetch_page(client,rt.builtin_read('HeroProducts'),0)
+        self.assertEqual(client.calls, [])
 
     def test_approved_variable_names_are_respected(self):
         read = rt.DirectRead("HeroProducts", None, "q", "supply_product_versions", {"n": "$page_size", "o": "$offset",
