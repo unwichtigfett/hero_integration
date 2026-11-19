@@ -1,57 +1,52 @@
-# Manual release candidates
+# Test and publish a HERO release
 
-Start a manual Woodpecker pipeline on `hero_int_dev` or `hero_int_dev_opt`.
-Begin its **message** with the exact marker `-canidate`, for example:
+| UI event | GitHub Actions | Woodpecker standard | Publication |
+| --- | --- | --- | --- |
+| Pull request into `hero_int_dev` | Package and full install test | — | — |
+| Push to `hero_int_dev` | Package and full install test | Wait for both SHA checks, then isolated integration tests | — |
+| GitHub Actions → CI → Run workflow on Dev | Package and full install test | — | — |
+| New manual Woodpecker pipeline on Dev, ordinary message | Use existing checks | Same tests as a push | — |
+| New manual Woodpecker pipeline on Dev, exact message `RELEASE_APPROVED` | Use existing checks | Same tests, then promote after success | Both branches and version tag |
+| Push to `hero_int_release` or a version tag | — | — | — |
 
-```text
--canidate Validate the next release
-```
+Open the GitHub Actions run to inspect the job logs, wheel, source distribution
+and test reports. Woodpecker records the tested checkout, suite counts,
+configuration-import result and per-step logs on the pipeline page. Its
+install job uses a disposable Bench and the existing read-only fixture mount.
+Compiler, cache, binding and native relationship tests use the shared
+`ci/required-tests.json` manifest.
 
-After the GitHub `package` and `install-test` checks and the complete Woodpecker
-installation/import test pass for the same commit, `promote-candidate` advances
-`hero_int_release` to that exact tested commit. It creates no version commit or
-tag and does not change the source branch or reset the persistent test site.
-Existing push promotions remain unchanged and retain their separate approval
-requirements. An ordinary manual run without the leading marker only tests.
+## Release approval
 
-The release branch must already exist. Publication fails if the source has
-moved since the manual pipeline started or if advancing `hero_int_release`
-would not be a fast-forward. In particular, switching between development
-branches with divergent histories requires a separately reviewed reconciliation;
-the candidate script never overwrites the release history. Publishing the same
-commit again succeeds without a push.
+1. Confirm the desired Dev SHA in GitHub and the successful push run in Woodpecker.
+2. As an authorized repository operator, start a **new manual pipeline** in
+   Woodpecker. Select branch `hero_int_dev` and enter exactly `RELEASE_APPROVED`
+   as its message. The repository discovers the `standard` workflow automatically.
+   Approve execution in the UI if the repository approval policy requests it.
+3. Open the promotion step to verify the tested SHA, publication SHA and tag.
+   GitHub shows the stable tree and downloadable source archives at that tag.
 
-The repository needs a separate `github_candidate_token` secret, available only
-for **manual** events. The GitHub credential needs repository contents write
-access. Woodpecker v3.20 image-filtered secrets are restricted to plugins and
-cannot be used by this commands step, so this secret has no image filter.
-Repository access and the manual event restrict its availability; the pinned
-image and marker condition are not credential authorization boundaries.
-These restrictions do not limit the underlying GitHub credential to one Git
-branch; GitHub rules must provide any additional branch-level restrictions.
-Do not expand the event scopes of `github_release_token` or
-`hero_site_update_key`. Only trusted repository administrators may start these
-manual pipelines; the message marker expresses intent, not authentication.
+The release step alone requests the repository secret `github_release_token`.
+Configure its Woodpecker event scope to **manual only** and restrict manual
+pipeline execution/approval to trusted repository operators. Scope the GitHub
+credential to contents writes on this repository. Ordinary CI uses public
+GitHub check results. The marker expresses release intent within a manual run.
 
-Woodpecker v3.20 stores the UI message as `MANUAL: <message> @ <branch>`.
-Both the workflow condition and script recognize that prefix and require
-`-canidate` as a complete leading word, followed by whitespace or end of text.
-The script also validates the manual event, successful preceding CI status,
-allowed source branch and full tested commit SHA before contacting GitHub.
+Reusing a manually increased version publishes the exact tested SHA. Otherwise
+the gate creates a direct child with a patch-version bump in the two package
+version fields and a `[skip ci]` subject. It fast-forwards both branches and
+publishes `v<version>` in one atomic push. Repeating an already published
+transaction verifies the branches and tag. A moved source, divergent release
+or conflicting tag requires inspection. Start a fresh test on the intended
+Dev HEAD after resolving the cause.
 
-## Standard workflow
+## Separate test-site maintenance
 
-This branch uses `.woodpecker/standard.yml` and `ci/standard-install-test.sh`. Its workflow admits only `hero_int_dev` and `hero_int_1.0`. The required architecture groups in `ci/required-tests.json` belong to this branch and remain in addition to the full offline/site test suites and package-import gate. The manual candidate step admits only `hero_int_dev`. Woodpecker discovers the named workflow automatically; do not set a repository-wide path that breaks older branches.
-## Opt workflow
-
-This branch uses `.woodpecker/opt.yml` and `ci/opt-install-test.sh`. Its workflow admits only `hero_int_dev_opt` and `hero_int_opt`. The required architecture groups in `ci/required-tests.json` belong to this branch and remain in addition to the full offline/site test suites and package-import gate. The manual candidate step admits only `hero_int_dev_opt`. Woodpecker discovers the named workflow automatically; do not set a repository-wide path that breaks older branches.
-
-## Consolidated candidate
-
-The integrated runtime shares the Opt compiler and safety gates across both lanes. The standard and Opt Woodpecker workflows retain independent branch filters, promotion namespaces and credentials. Both lane install entry points delegate to ci/bench-install-test.sh; GitHub and that installer reuse ci/test-gates.sh. The integration branch does not invoke either live updater or promotion.
-
-## Unified release target and explicit operations
-
-The consolidated candidate uses version 1.1.0 (numeric release schema), with active development on hero_int_dev and stable release on hero_int_release. GitHub Actions also accepts integration/** candidates. The standard Woodpecker lane accepts integration/* and runs only wait-github/install-test for ordinary integration pushes. Historical Opt lane compatibility remains available without becoming a runtime prerequisite of the two target branches.
-
-Automatic test-site updates and release promotion on push are disabled in the consolidated workflows. Those existing capabilities require a manual pipeline with DEPLOY_APPROVED or RELEASE_APPROVED respectively; the manual -canidate stable-promotion path retains its existing explicit gate. Merely pushing code to CI does not authorize a deployment or release. No remote protection/default branch setting is changed by this repository configuration.
+The existing restricted updater accepts `update:blank:<dev-sha>`. A separately
+authorized operator with the dedicated SSH identity may use
+`sh ci/update-test-site.sh DEPLOY_APPROVED <full-dev-sha>` with
+`HERO_UPDATE_IDENTITY` pointing to the identity file. The command checks the
+GitHub Dev HEAD and pins the existing host key. The checked-in server-side
+updater and reset tools retain their existing backup and restore behavior.
+Neither CI provider invokes this operation. Production deployment remains a
+separate operations approval.

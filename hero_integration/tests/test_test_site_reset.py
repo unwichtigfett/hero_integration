@@ -132,11 +132,11 @@ class TestTestSiteReset(unittest.TestCase):
             with self.subTest(command=command), self.assertRaises(RuntimeError):
                 updater.update_request(command)
 
-    def test_standard_pipeline_passes_exact_commit_to_restricted_updater(self):
-        self.assertIn('"update:blank:$$expected"', (ROOT / ".woodpecker/standard.yml").read_text())
+    def test_separate_approved_command_passes_exact_commit_to_restricted_updater(self):
+        self.assertIn('"update:blank:$expected"', (ROOT / "ci/update-test-site.sh").read_text())
 
-    def test_opt_pipeline_never_uses_the_shared_test_site_updater(self):
-        workflow = (ROOT / ".woodpecker/opt.yml").read_text()
+    def test_standard_ci_has_no_test_site_update_path(self):
+        workflow = (ROOT / ".woodpecker/standard.yml").read_text()
         self.assertNotIn('hero_site_update_key', workflow)
         self.assertNotIn('update-test-site', workflow)
         self.assertNotIn('update:blank:', workflow)

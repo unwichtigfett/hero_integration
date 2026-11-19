@@ -1,5 +1,11 @@
 {
   "offline": {
+    "two-branch release gate": [
+      "hero_integration.tests.test_release_ci_contract.TestReleaseCiGate.test_dev_ci_and_manual_release_are_separate",
+      "hero_integration.tests.test_release_promotion.TestPromotion.test_only_exact_manual_approval_after_green_gates_can_publish",
+      "hero_integration.tests.test_release_promotion.TestPromotion.test_atomic_remote_rejection_preserves_all_refs",
+      "hero_integration.tests.test_release_promotion.TestPromotion.test_repeated_promotion_reuses_the_release_and_tag"
+    ],
     "N-01 source isolation": [
       "hero_integration.tests.test_file_transfer.TestSourceAndTargetBinding.test_project_ids_resolve_only_within_the_run_source",
       "hero_integration.tests.test_file_transfer.TestSourceAndTargetBinding.test_new_file_link_records_the_run_source",

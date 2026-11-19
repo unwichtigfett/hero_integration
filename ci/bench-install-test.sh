@@ -31,6 +31,9 @@ REDIS="${REDIS_CACHE:-redis://127.0.0.1:6379}"
 step() { printf '\n==== %s\n' "$*"; }
 run_py() { bench --site "$SITE" execute "$1" ${2:+--kwargs "$2"}; }
 
+if [[ -n ${CI_COMMIT_SHA:-} ]]; then
+  test "$(git -c safe.directory="$APP_PATH" -C "$APP_PATH" rev-parse HEAD)" = "$CI_COMMIT_SHA"
+fi
 step "bench init ($FRAPPE_BRANCH)"
 mkdir -p "$WORKDIR"; cd "$WORKDIR"
 [ -d bench ] || bench init bench --frappe-branch "$FRAPPE_BRANCH" --python "$PYTHON" --skip-redis-config-generation --no-backups
