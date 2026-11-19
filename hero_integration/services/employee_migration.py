@@ -488,9 +488,26 @@ def sync_employees(client, *, source_instance, run_name, should_stop=None, progr
     state["inventory"] = inventory
     languages = frappe.get_all("Language", pluck="name", limit_page_length=0)
     deadline = time.monotonic() + time_budget
-    seen = set(state["done_ids"])
+    from hero_integration.services.direct_mapping import MISSING, lookup
+    from hero_integration.services.query_mapping import required_source_paths
+
+    paths = required_source_paths(read.plan) if rows else ()
+    confirmed = state.setdefault("source_fingerprints", {})
+    rejected = state.setdefault("rejected_fingerprints", {})
+    errors = state.setdefault("errors", {})
+    outcomes = state.setdefault("outcomes", {})
+    done_ids = set(state["done_ids"])
+    settled = 0
     for record in rows:
-        if record["id"] in seen:
+        identity = str(record["id"])
+        fingerprint = _digest({path: value for path in paths
+                               if (value := lookup(record, path)) is not MISSING})
+        # Legacy done_ids carry no version evidence. Recheck them through upsert.
+        if record["id"] in done_ids and (
+            (identity not in errors and confirmed.get(identity) == fingerprint)
+            or (continue_on_conflict and outcomes.get(identity) == "conflict" and rejected.get(identity) == fingerprint)
+        ):
+            settled += 1
             continue
         if should_stop and should_stop():
             state["stopped"] = True
@@ -512,26 +529,34 @@ def sync_employees(client, *, source_instance, run_name, should_stop=None, progr
             frappe.db.rollback()
             result = "conflict" if isinstance(error, EmployeeMigrationBlocked) else "failed"
             # Keep the failed identity retryable when this run is resumed.
-            state.setdefault("errors", {})[str(record["id"])] = str(error)[:300] if result == "conflict" else "Employee validation failed."
+            rejected[identity] = fingerprint
+            errors[identity] = str(error)[:300] if result == "conflict" else "Employee validation failed."
         else:
-            state["done_ids"].append(record["id"])
-            state.setdefault("errors", {}).pop(str(record["id"]), None)
-        if continue_on_conflict and record['id'] not in state['done_ids']:
-            state['done_ids'].append(record['id'])
-        previous = state.setdefault("outcomes", {}).get(str(record["id"]))
+            confirmed[identity] = fingerprint
+            rejected.pop(identity, None)
+            errors.pop(identity, None)
+        if identity not in errors or (result == "conflict" and continue_on_conflict):
+            settled += 1
+            if record["id"] not in done_ids:
+                done_ids.add(record["id"])
+                state["done_ids"].append(record["id"])
+        elif record["id"] in done_ids:
+            done_ids.remove(record["id"])
+            state["done_ids"].remove(record["id"])
+        previous = outcomes.get(identity)
         if previous:
             state["counts"][previous] -= 1
-        state["outcomes"][str(record["id"])] = result
+        outcomes[identity] = result
         state["counts"][result] = state["counts"].get(result, 0) + 1
-        state["counts"]["unique_processed"] = len(state["outcomes"])
+        state["counts"]["unique_processed"] = len(outcomes)
         save_progress(state)
-        frappe.db.commit()
         if progress:
             progress(state["counts"])
-    completed = set(state["done_ids"])
-    state["done"] = all(r["id"] in completed for r in rows)
-    if not continue_on_conflict and not state["done"] and state.get("errors"):
-        state["last_error"] = next(iter(state["errors"].values()))
+        frappe.db.commit()
+    state["done"] = settled == len(rows)
+    open_error = next((message for key, message in errors.items() if int(key) not in done_ids), None)
+    if open_error and not state["done"]:
+        state["last_error"] = open_error
     else:
         state.pop("last_error", None)
     save_progress(state)
