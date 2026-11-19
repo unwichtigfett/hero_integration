@@ -38,6 +38,8 @@
         polling_execution_window: "Polling Execution Window",
         polling_bootstrap: "Allow Bootstrap",
         polling_page_size: "Polling Page Size",
+        polling_page_overlap: "Page Overlap",
+        polling_read_mode: "Read Mode",
         polling_pagination_strategy: "Polling Pagination Strategy",
         polling_allow_backfill: "Allow Backfill",
         polling_full_inventory: "Allow Full Inventory",
@@ -215,6 +217,13 @@
         const pollingSnapshot = node("span", "", "Loading …");
         const pollingBootstrap = document.createElement("input"); pollingBootstrap.type = "checkbox"; pollingBootstrap.className = "hero-settings-check";
         const pollingPageSize = document.createElement("input"); pollingPageSize.type = "number"; pollingPageSize.min = "1"; pollingPageSize.max = "1000"; pollingPageSize.className = "hero-settings-input";
+        const pollingOverlap = document.createElement("input");
+        pollingOverlap.type = "number"; pollingOverlap.min = "0"; pollingOverlap.max = "20"; pollingOverlap.step = "1"; pollingOverlap.className = "hero-settings-input";
+        const pollingReadMode = document.createElement("select");
+        pollingReadMode.className = "hero-settings-input";
+        const normal = document.createElement("option"); normal.value = "NORMAL"; normal.textContent = uiText("Normal Mode");
+        const fast = document.createElement("option"); fast.value = "FAST"; fast.textContent = uiText("Fast Mode"); fast.disabled = true;
+        pollingReadMode.append(normal, fast);
         const pollingPagination = document.createElement("select"); pollingPagination.className = "hero-settings-input"; ["OFFSET", "CURSOR"].forEach(value => { const option = document.createElement("option"); option.value = value; option.textContent = value; pollingPagination.append(option); });
         const pollingBackfill = document.createElement("input"); pollingBackfill.type = "checkbox"; pollingBackfill.className = "hero-settings-check";
         const pollingInventory = document.createElement("input"); pollingInventory.type = "checkbox"; pollingInventory.className = "hero-settings-check";
@@ -305,7 +314,8 @@
                 field("Validated snapshot", pollingSnapshot, "Always the newest validated snapshot; selected automatically."),
                 field("Allow bootstrap", pollingBootstrap, "Stores permission for an initial load; the current polling reader does not perform bootstrap.")),
             pollingGroup("Processing",
-                field("Page size", pollingPageSize), field("Pagination strategy", pollingPagination, "Cursor watermarks are advanced only after complete successful processing. Offset pagination does not invent watermarks."),
+                field("Page size", pollingPageSize), field("Page Overlap", pollingOverlap, "Repeat 0 to 20 rows between full offset pages. Use fewer rows than the approved page size."),
+                field("Read Mode", pollingReadMode, "Fast Mode requires a verified HERO change-discovery contract."), field("Pagination strategy", pollingPagination, "Cursor watermarks are advanced only after complete successful processing. Offset pagination does not invent watermarks."),
                 field("Allow backfill", pollingBackfill, "Stores permission to fetch older records; the current polling reader does not perform backfill."), field("Allow full inventory", pollingInventory, "Allows a bounded scan of up to 100 pages per source instead of one page."), field("Allow reconciliation", pollingReconciliation, "Reconciliation reports discrepancies and never auto-deletes ERPNext records.")),
             pollingGroup("Reliability and notifications",
                 field("Retry limit", pollingRetryLimit), field("Retry backoff seconds", pollingBackoff), field("Polling timeout seconds", pollingTimeout), field("Rate limit", pollingRate), field("Concurrency", pollingConcurrency, "The approved V1 source reader is intentionally single-worker."), field("Notifications", pollingNotifications))
@@ -366,7 +376,7 @@
             allowDeletion.disabled = value;
             pollingMode.disabled = value;
             pollingInterval.disabled = value;
-            [pollingTimezone, pollingWindow, pollingBootstrap, pollingPageSize, pollingPagination, pollingBackfill, pollingInventory, pollingReconciliation, pollingRetryLimit, pollingBackoff, pollingTimeout, pollingRate, pollingConcurrency, pollingNotifications].forEach((control) => { control.disabled = value; });
+            [pollingTimezone, pollingWindow, pollingBootstrap, pollingPageSize, pollingOverlap, pollingReadMode, pollingPagination, pollingBackfill, pollingInventory, pollingReconciliation, pollingRetryLimit, pollingBackoff, pollingTimeout, pollingRate, pollingConcurrency, pollingNotifications].forEach((control) => { control.disabled = value; });
             mutationEnabled.disabled = value;
             mutationSave.disabled = value;
             testingEnabled.disabled = value;
@@ -395,6 +405,8 @@
             pollingSnapshot.textContent = data.polling?.snapshot?.display_name || uiText("No validated snapshot available");
             pollingBootstrap.checked = Boolean(data.polling?.bootstrap);
             pollingPageSize.value = String(data.polling?.page_size || 100);
+            pollingOverlap.value = String(data.polling?.page_overlap || 0);
+            pollingReadMode.value = data.polling?.read_mode || "NORMAL";
             pollingPagination.value = data.polling?.pagination_strategy || "OFFSET";
             pollingBackfill.checked = Boolean(data.polling?.allow_backfill);
             pollingInventory.checked = Boolean(data.polling?.full_inventory);
@@ -472,6 +484,7 @@
                     polling_interval_minutes: Number(pollingInterval.value),
                     polling_timezone: pollingTimezone.value.trim(), polling_execution_window: pollingWindow.value.trim(),
                     polling_bootstrap: pollingBootstrap.checked,
+                    polling_page_overlap: Number(pollingOverlap.value), polling_read_mode: pollingReadMode.value,
                     polling_page_size: Number(pollingPageSize.value), polling_pagination_strategy: pollingPagination.value,
                     polling_allow_backfill: pollingBackfill.checked, polling_full_inventory: pollingInventory.checked, polling_reconciliation: pollingReconciliation.checked,
                     polling_retry_limit: Number(pollingRetryLimit.value), polling_retry_backoff_seconds: Number(pollingBackoff.value), polling_timeout_seconds: Number(pollingTimeout.value),

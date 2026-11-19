@@ -1,1 +1,98 @@
-{"doctype":"DocType","name":"HERO Sync Run Ledger","module":"HERO Integration","autoname":"field:sync_run_id","track_changes":1,"fields":[{"fieldname":"sync_run_id","label":"Sync Run ID","fieldtype":"Data","reqd":1,"unique":1,"read_only":1},{"fieldname":"site_scope","label":"Site Scope","fieldtype":"Link","options":"HERO Sync State Ledger","reqd":1,"read_only":1},{"fieldname":"actor","label":"Actor","fieldtype":"Data","reqd":1,"read_only":1},{"fieldname":"automatic","label":"Automatic","fieldtype":"Check","reqd":1,"read_only":1},{"fieldname":"state","label":"State","fieldtype":"Select","options":"RUNNING\nCOMPLETED","reqd":1,"read_only":1}],"permissions":[{"role":"System Manager","read":1,"write":1,"create":1}],"modified":"2026-10-24 00:00:00.000000"}
+{
+ "doctype": "DocType",
+ "name": "HERO Sync Run Ledger",
+ "module": "HERO Integration",
+ "autoname": "field:sync_run_id",
+ "track_changes": 1,
+ "fields": [
+  {
+   "fieldname": "sync_run_id",
+   "label": "Sync Run ID",
+   "fieldtype": "Data",
+   "reqd": 1,
+   "unique": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "site_scope",
+   "label": "Site Scope",
+   "fieldtype": "Link",
+   "options": "HERO Sync State Ledger",
+   "reqd": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "actor",
+   "label": "Actor",
+   "fieldtype": "Data",
+   "reqd": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "automatic",
+   "label": "Automatic",
+   "fieldtype": "Check",
+   "reqd": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "state",
+   "label": "State",
+   "fieldtype": "Select",
+   "options": "RUNNING\nABORTED\nCOMPLETED\nSUCCEEDED\nPARTIAL\nFAILED\nCONFLICT\nBOUNDED_COMPLETE\nBUDGET_REACHED\nINCOMPLETE\nRECONCILIATION_REQUIRED",
+   "reqd": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "request_fingerprint",
+   "label": "Request Fingerprint",
+   "fieldtype": "Data",
+   "read_only": 1
+  },
+  {
+   "fieldname": "processed_count",
+   "label": "Processed Count",
+   "fieldtype": "Int",
+   "read_only": 1
+  },
+  {
+   "fieldname": "skipped_count",
+   "label": "Skipped Count",
+   "fieldtype": "Int",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_instance",
+   "label": "Source Instance",
+   "fieldtype": "Data",
+   "read_only": 1
+  },
+  {
+   "fieldname": "plan_key",
+   "label": "Runtime Plan",
+   "fieldtype": "Data",
+   "read_only": 1
+  },
+  {
+   "fieldname": "plan_generation",
+   "label": "Plan Generation",
+   "fieldtype": "Int",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_revision",
+   "label": "Source Revision",
+   "fieldtype": "Int",
+   "read_only": 1
+  }
+ ],
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "write": 1,
+   "create": 1
+  }
+ ],
+ "modified": "2026-11-19 17:58:00.000000"
+}

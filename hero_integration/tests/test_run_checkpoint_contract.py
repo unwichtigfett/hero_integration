@@ -196,7 +196,7 @@ class TestReplayAcceptance(TestCase):
                 mock.patch.object(migration,'_advance_full_migration') as advance, \
                 mock.patch.object(migration,'_claim_run') as claim, \
                 mock.patch.object(migration,'_source_for_run') as source:
-            migration.execute_run('RUN')
+            migration._execute_run('RUN')
         advance.assert_called_once_with('RUN')
         claim.assert_not_called()
         source.assert_not_called()
@@ -217,7 +217,7 @@ class TestReplayAcceptance(TestCase):
                 mock.patch.object(migration,'_locked_active_run',side_effect=RuntimeError('cleanup interrupted')), \
                 mock.patch.object(migration,'_advance_full_migration') as advance:
             with self.assertRaisesRegex(RuntimeError,'cleanup interrupted'):
-                migration.execute_run('RUN')
+                migration._execute_run('RUN')
         fake.db.rollback.assert_called_once()
         advance.assert_called_once_with('RUN')
         self.assertEqual(run.state,'Completed')
@@ -230,6 +230,8 @@ class TestReplayAcceptance(TestCase):
         fake = SimpleNamespace(only_for=lambda _: None, get_doc=lambda *a: run, enqueue=mock.Mock(),
                                local=SimpleNamespace(site='site'))
         with mock.patch.object(api, 'frappe', fake), mock.patch.object(migration, 'validate_run_mappings'), \
+             mock.patch('hero_integration.services.file_migration._parent_run', return_value=''), \
+             mock.patch('hero_integration.services.run_reservation.admit_migration'), \
              mock.patch.object(migration, '_assert_checkpoint_contract') as verify, \
              mock.patch.object(migration, 'bind_run_checkpoint') as rebind:
             api.resume_run('RUN')
@@ -254,7 +256,7 @@ class TestReplayAcceptance(TestCase):
              mock.patch.object(migration, '_locked_active_run', return_value='RUN'), \
              mock.patch.object(migration, '_release_run'), \
              mock.patch.object(migration, '_mark_sync_success') as success:
-            migration.execute_run('RUN')
+            migration._execute_run('RUN')
         success.assert_not_called()
         self.assertEqual(run.state, 'Blocked')
 

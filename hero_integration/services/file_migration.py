@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 
 import frappe
+from hero_integration.services import execution_budget
 from frappe.utils import now_datetime
 
 from hero_integration.services import direct_runtime
@@ -80,7 +81,8 @@ def prepare_related_test(run):
     client, _, instance = _client_and_downloader(config)
     if instance != config.source_instance:
         raise SourceBindingError('The related test reader belongs to another HERO source.')
-    cohort = prepare_project_cohort(client, read, record_limit(run))
+    overlap = int(getattr(run, "page_overlap", 0) or 0)
+    cohort = prepare_project_cohort(client, read, record_limit(run), **({"page_overlap": overlap} if overlap else {}))
     bound_configuration(run)
     current = direct_runtime.approved_read('HeroProjectMatches', config.source_instance)
     if current is None or project_reader_fingerprint(current) != before:
@@ -162,12 +164,17 @@ def discover_related_test_page(run, state, cohort, *, page_budget=10):
         read, fingerprint = readers[operation]
         if progress['pages'] >= 10000:
             raise SourceBindingError('Related test discovery reached its page budget before the source ended.')
+        from hero_integration.services.offset_pagination import advance, validate_overlap
+        overlap = int(getattr(run, "page_overlap", 0) or 0)
+        if overlap:
+            validate_overlap(overlap, read.page_size)
         bound_configuration(run)
         page = direct_runtime.fetch_page(client, read, progress['offset'])
         bound_configuration(run)
         progress['pages'] += 1
         if not page:
             progress.update(operation_index=index + 1, offset=0, pages=0, last_page='')
+            progress.pop("offset_window", None)
             continue
         values = [row.get('id') if isinstance(row, dict) else None for row in page]
         if any(not isinstance(value, (int, str)) or isinstance(value, bool) or not str(value).strip() for value in values):
@@ -176,10 +183,17 @@ def discover_related_test_page(run, state, cohort, *, page_budget=10):
         signature = hashlib.sha256(json.dumps(ids, separators=(',', ':')).encode()).hexdigest()
         if not all(ids) or len(set(ids)) != len(ids) or signature == progress.get('last_page'):
             raise SourceBindingError('Related test discovery encountered a missing or repeated source page.')
-        collect_related_projection(cohort, operation, page)
+        window = None
+        if overlap:
+            window = advance(page, offset=progress["offset"], size=read.page_size, overlap=overlap,
+                             previous=progress.get("offset_window"))
+            if window.changed:
+                raise SourceBindingError("A relation changed during test selection; restart selection.")
+            progress["offset_window"] = window.checkpoint
+        collect_related_projection(cohort, operation, window.rows if window else page)
         if len(cohort['task_ids']) + len(cohort['event_ids']) > 50000:
             raise SourceBindingError('Related test selection exceeds 50000 Tasks and Events; reduce the project sample.')
-        progress['offset'] += len(page)
+        progress['offset'] = window.next_offset if window else progress['offset'] + len(page)
         progress['last_page'] = signature
     revalidate_readers()
     return progress['operation_index'] >= len(operations)
@@ -217,15 +231,26 @@ def start(action: str, parent: str = "") -> str:
     if action in FILE_ACTIONS or action in {FULL_ACTION, EMPLOYEE_ACTION, SERVICE_ACTION}:
         from hero_integration.services.deferred_references import require_storage
         require_storage(frappe)
-    if parent:
-        bound_configuration(frappe.get_doc("HERO Integration Run", parent))  # a chain never switches sources
+    if parent_run:
+        bound_configuration(parent_run)  # a chain never switches sources
     testing = configuration(parent_run, frappe_module=frappe)
     if action == FULL_ACTION and testing['testing_enabled'] and not frappe.get_meta('HERO Integration Run').has_field('testing_cohort_json'):
         raise SourceBindingError('Related test selection schema is not installed; migrate the app before starting this run.')
+    from hero_integration.services.run_reservation import admit_migration
+    admit_migration(frappe, parent=parent)
+    if not parent and testing['testing_enabled']:
+        testing['testing_max_actions'] = min(50, testing['testing_max_actions'])
     run = frappe.get_doc({"doctype": "HERO Integration Run", "action": action, "mode": "Execute", "state": "Queued",
                           "source_instance": config.source_instance,
                           "source_binding_revision": int(config.source_binding_revision or 0), **testing, **run_metadata(testing)})
+    if parent:
+        run.flags.parent_execution_run = parent
+        run.execution_budget_run = getattr(parent_run, 'execution_budget_run', None)
+        if parent_run.action == FULL_ACTION and testing['testing_enabled'] and not run.execution_budget_run:
+            raise SourceBindingError('The earlier full test has no provable global budget; start a new full test.')
     run.insert(ignore_permissions=True)
+    if not parent and testing['testing_enabled']:
+        run.db_set('execution_budget_run', run.name, update_modified=False)
     if action in FILE_ACTIONS and not testing["testing_enabled"]:
         from hero_integration.services.file_transfer import reset_phase
 
@@ -246,18 +271,24 @@ def start(action: str, parent: str = "") -> str:
 def resume(run) -> None:
     """Continue a failed, cancelled or blocked file/full run where it stopped."""
     from hero_integration.services.migration_testing import record_limit
-    if record_limit(run) is not None:
+    if record_limit(run) is not None and not execution_budget.for_run(run):
         raise SourceBindingError('Testing imports cannot resume; start a new bounded run.')
     config = bound_configuration(run)
     steps = _full(run.name).get("steps", list(FULL_STEPS)) if run.action == FULL_ACTION else None
     require_mappings(run.action, config.source_instance, steps=steps)
+    from hero_integration.services.run_reservation import admit_migration
+    admit_migration(frappe, parent=_parent_run(run.name), resume=run.name)
     run.state, run.error_message, run.finished_on = "Queued", "", None
     run.save(ignore_permissions=True)
     if run.action == FULL_ACTION:
         state = _full(run.name)
         child = state.get("child")
         if child and frappe.db.get_value("HERO Integration Run", child, "state") not in SUCCESS:
-            state["child"] = ""  # the stopped step starts again as a new child run
+            if getattr(run, 'execution_budget_run', None):
+                from hero_integration.api import resume_run
+                resume_run(child)
+                return  # the same frozen child notifies this parent on completion
+            state["child"] = ""  # legacy full runs restart a stopped step as a new child
             _save_full(run.name, state)
     _enqueue(run.name)
 
@@ -273,12 +304,14 @@ def retry_full_relationships(run_name: str):
             or state.get('steps')!=list(NEW_FULL_STEPS) or state.get('step')!=len(NEW_FULL_STEPS)
             or state.get('child') or not state.get('completed_children')):
         raise SourceBindingError('Only a finished full import can restart its relationship pass.')
+    from hero_integration.services.run_reservation import admit_migration
     bound_configuration(run)
     for child in state['completed_children']:
         if (_parent_run(child)!=run_name or
                 frappe.db.get_value('HERO Integration Run',child,'state') not in SUCCESS or
                 frappe.db.get_value('HERO Integration Run',child,'source_instance')!=run.source_instance):
             raise SourceBindingError('The full import child scope no longer matches its relationship pass.')
+    admit_migration(frappe, resume=run_name)
     for key in ('reconciliation_done','reconciliation_stage','reconciliation_after',
                 'reconciliation_final_after','reconciliation_conflicts'):
         state.pop(key,None)
@@ -308,6 +341,11 @@ def _job_timeout() -> int:
 # ---------------------------------------------------------------- background jobs
 
 def execute(run_name: str) -> None:
+    from hero_integration.services.execution_runtime import execute as dispatch
+    return dispatch('migration', run_name=run_name)
+
+
+def _execute(run_name: str) -> None:
     run = frappe.get_doc("HERO Integration Run", run_name)
     if run.state not in ACTIVE:
         return
@@ -319,10 +357,14 @@ def execute(run_name: str) -> None:
         frappe.db.commit()
     try:
         config = bound_configuration(run)
-        if run.action == FULL_ACTION:
-            advance_full(run.name)
-        else:
-            _file_slice(run, config)
+        with execution_budget.run_scope(run):
+            if run.action == FULL_ACTION:
+                advance_full(run.name)
+            else:
+                _file_slice(run, config)
+    except execution_budget.BudgetReached as error:
+        frappe.db.rollback()
+        _finish(run.name, 'Budget Reached', str(error))
     except SourceBindingError as error:
         frappe.db.rollback()
         _finish(run.name, "Blocked", str(error))
@@ -333,9 +375,30 @@ def execute(run_name: str) -> None:
 
 
 def _file_slice(run, config) -> None:
-    """One slice, reading from exactly the source the run is bound to."""
+    """Hold the area lock through its checkpoint and terminal decision."""
+    from frappe.utils.file_lock import LockTimeoutError
     from frappe.utils.synchronization import filelock
+    lock_name = {
+        EMPLOYEE_ACTION: 'hero_employee_migration', PRODUCT_ACTION: 'hero_product_migration',
+        SERVICE_ACTION: 'hero_service_migration',
+    }.get(run.action, 'hero_file_transfer')
+    acquired = False
+    try:
+        with filelock(lock_name, timeout=5):
+            acquired = True
+            frappe.db.rollback()
+            if frappe.db.get_value('HERO Integration Run', run.name, 'state') != 'Running':
+                return
+            _process_file_slice(run, config)
+    except LockTimeoutError:
+        if acquired:
+            raise  # an inner operation failed after this worker took ownership
+        # The current owner advances the durable checkpoint. A duplicate
+        # delivery must not overwrite its run with a terminal failure.
+        return
 
+
+def _process_file_slice(run, config):
     from hero_integration.services.file_transfer import _client_and_downloader, transfer
 
     def cancelled() -> bool:
@@ -350,33 +413,31 @@ def _file_slice(run, config) -> None:
     maximum = record_limit(run)
     cohort = related_test_for_run(run) if maximum is not None and run.action in {*FILE_ACTIONS, EMPLOYEE_ACTION} else None
     client, downloader, instance = _client_and_downloader(config)
+    overlap = int(getattr(run, "page_overlap", 0) or 0)
+    paging = {"page_overlap": overlap} if overlap else {}
     if run.action == SERVICE_ACTION:
         from hero_integration.services.service_migration import sync_services
 
-        with filelock("hero_service_migration", timeout=5):
-            state = sync_services(client, source_instance=instance, run_name=run.name, downloader=downloader,
-                                  should_stop=cancelled, progress=progress, verify_source=lambda: bound_configuration(run),
-                                  record_limit=maximum, continue_on_conflict=True)
+        state = sync_services(client, source_instance=instance, run_name=run.name, downloader=downloader,
+                              should_stop=cancelled, progress=progress, verify_source=lambda: bound_configuration(run),
+                              record_limit=maximum, continue_on_conflict=True, **paging)
     elif run.action == EMPLOYEE_ACTION:
         from hero_integration.services.employee_migration import sync_employees
 
-        with filelock("hero_employee_migration", timeout=5):
-            args = {'cohort_user_ids': cohort['user_ids'], 'cohort_partner_ids': cohort['partner_ids']} if cohort is not None else {}
-            state = sync_employees(client, source_instance=instance, run_name=run.name,
-                                   should_stop=cancelled, progress=progress, verify_source=lambda: bound_configuration(run),
-                                   record_limit=maximum, continue_on_conflict=True, **args)
+        args = {'cohort_user_ids': cohort['user_ids'], 'cohort_partner_ids': cohort['partner_ids']} if cohort is not None else {}
+        state = sync_employees(client, source_instance=instance, run_name=run.name,
+                               should_stop=cancelled, progress=progress, verify_source=lambda: bound_configuration(run),
+                               record_limit=maximum, continue_on_conflict=True, **args)
     elif run.action == PRODUCT_ACTION:
         from hero_integration.services.product_migration import sync_products
 
-        with filelock("hero_product_migration", timeout=5):
-            state = sync_products(client, source_instance=instance, should_stop=cancelled, progress=progress,
-                                  record_limit=maximum, run_name=run.name)
+        state = sync_products(client, source_instance=instance, should_stop=cancelled, progress=progress,
+                              record_limit=maximum, run_name=run.name, **paging)
     else:
-        with filelock("hero_file_transfer", timeout=5):
-            args = {'cohort': cohort} if cohort is not None else {}
-            state = transfer(FILE_ACTIONS[run.action], source_instance=instance, client=client,
-                             downloader=downloader, should_stop=cancelled, progress=progress,
-                             record_limit=maximum, run_name=run.name, **args)
+        args = {'cohort': cohort} if cohort is not None else {}
+        state = transfer(FILE_ACTIONS[run.action], source_instance=instance, client=client,
+                         downloader=downloader, should_stop=cancelled, progress=progress,
+                         record_limit=maximum, run_name=run.name, **args, **paging)
     counts = state.get("counts") or {}
     if maximum is not None:
         persist(run.name, DIRECT_OPERATIONS[run.action], state)
@@ -428,8 +489,10 @@ def summary(counts: dict) -> str:
 def _finish(run_name: str, state: str, message: str) -> None:
     if frappe.db.get_value("HERO Integration Run", run_name, "state") == "Cancelled":
         return
-    frappe.db.set_value("HERO Integration Run", run_name, {"state": state, "finished_on": now_datetime(),
-                                                           "error_message": message[:1000]})
+    values = {"state": state, "finished_on": now_datetime(), "error_message": message[:1000]}
+    if state == 'Budget Reached':
+        values['testing_status'] = 'LIMIT_REACHED'
+    frappe.db.set_value("HERO Integration Run", run_name, values)
     frappe.db.commit()
     on_run_finished(run_name)
 
@@ -491,6 +554,9 @@ def _advance_full_locked(run_name: str) -> None:
             if child_state in ACTIVE:
                 return  # the child advances the chain when it finishes
             step = steps[state["step"]]
+            if child_state == 'Budget Reached':
+                _finish(run_name, 'Budget Reached', f'Global identity budget reached during {step} ({child}).')
+                return
             if child_state not in SUCCESS:
                 _save_full(run_name, state)
                 _finish(run_name, "Blocked", f"{step} ({child}) ended as {child_state}. Continue this run to retry the step.")
@@ -548,7 +614,7 @@ def _start_step(action: str, parent: str) -> str:
     services = api._sync_area_read_services(instance).get(item.operation) or []
     if not services:
         return ""
-    result = api._start_migration(action=action, dry_run=0, scheduled=False,
+    result = api._start_migration(action=action, dry_run=0, scheduled=False, parent_run_name=parent,
                                   graphql_service=services[0]["service"], source_instance=instance,
                                   testing_configuration=configuration(
                                       frappe.get_doc('HERO Integration Run', parent)))

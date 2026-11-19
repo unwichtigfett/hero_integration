@@ -20,7 +20,7 @@ ACTIONS = {
     "Projection Migration",
     "Schedule Migration",
 }
-TERMINAL_STATES = {"Completed", "Completed With Conflicts", "Failed", "Cancelled", "Blocked"}
+TERMINAL_STATES = {"Completed", "Completed With Conflicts", "Failed", "Cancelled", "Blocked", "Budget Reached"}
 MUTATION_EXECUTION_DISABLED = "HERO_MUTATION_EXECUTION_DISABLED"
 ACTIVE_MUTATION_RESERVATION = "active"
 
@@ -40,11 +40,6 @@ def start_migration(
     )
 
 
-def start_scheduled_sync() -> dict[str, str]:
-    """Internal scheduler entrypoint; automatic execution requires an explicit service."""
-    return {"status": "SKIPPED_NO_APPROVED_SERVICE"}
-
-
 @frappe.whitelist(methods=["POST"])
 def pending_sync(expected_plan_generation: int | str) -> dict[str, object]:
     """Run a manually authorized, bound-only B8 pending-sync attempt."""
@@ -55,11 +50,12 @@ def pending_sync(expected_plan_generation: int | str) -> dict[str, object]:
         frappe.throw(frappe._("Pending Sync requires a positive current runtime-plan generation."))
     if generation < 1:
         frappe.throw(frappe._("Pending Sync requires a positive current runtime-plan generation."))
-    from hero_integration.services.sync_runtime_adapter import RuntimeBridgeError, run_pending_sync
+    from hero_integration.services.execution_runtime import execute
+    from hero_integration.services.sync_runtime_adapter import RuntimeBridgeError
     from hero_integration.services.sync_engine import SyncError
 
     try:
-        result = run_pending_sync(generation)
+        result = execute("manual_sync", expected_plan_generation=generation)
     except (RuntimeBridgeError, SyncError, PermissionError, ValueError) as error:
         frappe.throw(translate_error(error, frappe._))
     return {
@@ -68,6 +64,26 @@ def pending_sync(expected_plan_generation: int | str) -> dict[str, object]:
         "generation": result.generation,
         "source_instance": result.source_instance,
     }
+
+
+@frappe.whitelist(methods=["POST"])
+def start_sync_once(request_id: str, plan_key: str, expected_plan_generation: int,
+                    expected_source_revision: int, confirmed: int, scope: str = "BOUND_OBJECTS"):
+    """Explicit administrative approval, limited to fifty source identities."""
+    from hero_integration.services.execution_runtime import execute
+    frappe.only_for("System Manager")
+    return execute("one_shot", request_id=request_id, plan_key=plan_key,
+                   expected_plan_generation=expected_plan_generation,
+                   expected_source_revision=expected_source_revision, confirmed=confirmed, scope=scope)
+
+
+@frappe.whitelist(methods=["POST"])
+def close_interrupted_sync(run_id: str, request_fingerprint: str):
+    """Release an abandoned receipt only after its owning connection has gone."""
+    from hero_integration.services.sync_engine import FrappeSyncLedger
+    frappe.only_for("System Manager")
+    FrappeSyncLedger(frappe).abort_abandoned(run_id, request_fingerprint)
+    return {"run": run_id, "status": "ABORTED"}
 
 
 @frappe.whitelist()
@@ -270,8 +286,10 @@ class _SyncHeroTransport:
 
 
 def _start_migration(
-    action: str, dry_run: int | bool, scheduled: bool, graphql_service: str, source_instance: str = "", testing_configuration=None
+    action: str, dry_run: int | bool, scheduled: bool, graphql_service: str, source_instance: str = "", testing_configuration=None, parent_run_name: str = ""
 ) -> dict[str, str]:
+    if scheduled:
+        frappe.throw(frappe._("Scheduled polling cannot create an initial migration."))
     if action not in ACTIONS:
         frappe.throw(frappe._("Unsupported HERO migration action."))
     if not graphql_service:
@@ -295,8 +313,8 @@ def _start_migration(
     )
     _require_selected_mappings(action, service, mapping, dependencies)
     binding = _confirmed_source_binding()
-    if scheduled and _has_active_run():
-        return {"status": "SKIPPED_ACTIVE_RUN"}
+    from hero_integration.services.run_reservation import admit_migration
+    admit_migration(frappe, parent=parent_run_name)
     run = frappe.get_doc(
         {
             "doctype": "HERO Integration Run",
@@ -316,8 +334,13 @@ def _start_migration(
         }
     )
     from hero_integration.services.migration import bind_run_checkpoint
+    if parent_run_name:
+        run.flags.parent_execution_run = parent_run_name
+        run.execution_budget_run = frappe.db.get_value("HERO Integration Run", parent_run_name, "execution_budget_run")
     bind_run_checkpoint(run)
     run.insert()
+    if run.testing_enabled and not parent_run_name:
+        frappe.db.set_value("HERO Integration Run", run.name, "execution_budget_run", run.name, update_modified=False)
     frappe.enqueue(
         "hero_integration.services.migration.execute_run",
         queue="long",
@@ -445,7 +468,7 @@ def resume_run(run_name: str) -> dict[str, str]:
         frappe.throw(frappe._("Only failed, cancelled, or blocked runs can resume."))
     from hero_integration.services.file_migration import RUN_ACTIONS, SourceBindingError, resume as resume_file_run
 
-    if _as_bool(getattr(run, "testing_enabled", 0)):
+    if _as_bool(getattr(run, "testing_enabled", 0)) and not getattr(run, "execution_budget_run", None):
         frappe.throw(frappe._("Testing imports cannot resume; start a new bounded run."))
     if getattr(run, "action", "") in RUN_ACTIONS:
         try:
@@ -456,12 +479,20 @@ def resume_run(run_name: str) -> dict[str, str]:
     from hero_integration.services.migration import validate_run_mappings
 
     from hero_integration.services.migration import _assert_checkpoint_contract
+    from hero_integration.services.run_reservation import admit_migration
+    from hero_integration.services.file_migration import _parent_run
+    admit_migration(frappe, parent=_parent_run(run.name), resume=run.name)
     _assert_checkpoint_contract(run, lock=True)
     validate_run_mappings(run)
     # Replay from the beginning through durable identity links. Offset-only
     # continuation cannot prove a stable external dataset or page identity.
-    run.resume_phase, run.resume_offset, run.resume_record_index = "", 0, 0
-    run.customer_phase_state = run.project_phase_state = "Queued"
+    if getattr(run, "page_overlap", 0) and getattr(run, "page_checkpoint_json", None):
+        receipt = json.loads(run.page_checkpoint_json)
+        receipt["replay_requested"] = True
+        run.page_checkpoint_json = json.dumps(receipt)
+    else:
+        run.resume_phase, run.resume_offset, run.resume_record_index = "", 0, 0
+        run.customer_phase_state = run.project_phase_state = "Queued"
     run.state = "Queued"
     run.error_message = ""
     run.save()
@@ -566,6 +597,8 @@ def sync_page_state() -> dict[str, object]:
 
     from hero_integration.services.read_contract import reuse_page_reads
 
+    from frappe.utils.scheduler import is_scheduler_inactive
+
     with reuse_page_reads():
         settings = frappe.get_single("HERO Integration Settings")
         instance = _configured_source_instance()
@@ -573,17 +606,22 @@ def sync_page_state() -> dict[str, object]:
         active = frappe.get_all("HERO Integration Run", filters={"state": ["in", list(ACTIVE_STATES)]},
                                 fields=["name", "action", "state"], order_by="creation asc", limit_page_length=20)
         services = _sync_area_read_services(instance)
+        scheduler_active = not is_scheduler_inactive(verbose=False)
         return {
             "source_instance": instance,
+            "source_revision": int(getattr(settings, "source_binding_revision", 0) or 0),
             "manual_prerequisite": manual_prerequisite(instance, frappe),
             "active_run": active[0] if active else None,
             "areas": [_sync_area_state(item, instance, services.get(item.operation) or [], active, plan) for item in AREAS],
             "file_areas": _file_areas(active, instance),
             "service": {
+                "scheduler_active": scheduler_active,
                 "mode": plan["mode"], "allowed": plan["mode"] != "OFF", "paused": plan["paused"],
-                "running": plan["mode"] != "OFF" and not plan["paused"] and any(plan["areas"].values()),
+                "running": (scheduler_active and plan["mode"] != "OFF" and not plan["paused"]
+                            and not plan["unsupported_sources"] and any(plan["areas"].values())),
                 "interval_minutes": plan["interval_minutes"], "timezone": plan["timezone"],
                 "execution_window": plan["execution_window"], "page_size": plan["page_size"],
+                "page_overlap": plan["page_overlap"], "fast_available": plan["fast_available"],
                 "pagination_strategy": plan["pagination_strategy"], "retry_limit": plan["retry_limit"],
                 "retry_backoff_seconds": plan["retry_backoff_seconds"], "timeout_seconds": plan["timeout_seconds"],
                 "rate_limit": plan["rate_limit"], "notifications": plan["notifications"],
@@ -682,6 +720,11 @@ def sync_page_run_detail(run_name: str) -> dict[str, object]:
         "testing_status", "testing_results_json",
     ]
     detail = {field: getattr(run, field, None) for field in fields}
+    from hero_integration.services.execution_budget import for_run
+    budget = for_run(run) if getattr(run, "execution_budget_run", None) else None
+    if budget:
+        detail["reserved_identities"] = budget.used()
+        detail["identity_limit"] = budget.limit
     outcomes: dict[str, int] = {}
     for row in frappe.get_all("HERO Integration Record", filters={"run": run.name}, fields=["result"], limit_page_length=5000):
         outcomes[row["result"]] = outcomes.get(row["result"], 0) + 1
@@ -699,7 +742,7 @@ def sync_page_run_detail(run_name: str) -> dict[str, object]:
             order_by="creation asc", limit_page_length=20,
         ),
         "can_cancel": run.state in {"Queued", "Running"},
-        "can_continue": run.state in {"Failed", "Cancelled", "Blocked"} and not _as_bool(getattr(run, "testing_enabled", 0)),
+        "can_continue": run.state in {"Failed", "Cancelled", "Blocked"} and (not _as_bool(getattr(run, "testing_enabled", 0)) or bool(getattr(run, "execution_budget_run", None))),
     })
     return detail
 
@@ -1184,6 +1227,9 @@ def workspace_settings_get() -> dict[str, object]:
             "snapshot": _polling_snapshot(),
             "bootstrap": bool(getattr(settings, "polling_bootstrap", 0)),
             "page_size": int(getattr(settings, "polling_page_size", 100) or 100),
+            "page_overlap": int(getattr(settings, "polling_page_overlap", 0) or 0),
+            "read_mode": getattr(settings, "polling_read_mode", "") or "NORMAL",
+            "fast_available": False,
             "pagination_strategy": getattr(settings, "polling_pagination_strategy", "OFFSET") or "OFFSET",
             "allow_backfill": bool(getattr(settings, "polling_allow_backfill", 0)),
             "full_inventory": bool(getattr(settings, "polling_full_inventory", 0)),
@@ -1215,6 +1261,7 @@ def workspace_settings_save(
     allow_deletion: int | bool | None = None, admin_notification_recipients: str | None = None,
     testing_enabled: int | bool | None = None, testing_max_actions: int | str | None = None,
     confirm_source_binding: int | bool | None = None,
+    polling_page_overlap: int | str | None = None, polling_read_mode: str | None = None,
 ) -> dict[str, object]:
     """Persist only native integration configuration, with DocType validation."""
     frappe.only_for("System Manager")
@@ -1254,6 +1301,7 @@ def workspace_settings_save(
         settings,
         timezone=polling_timezone, execution_window=polling_execution_window,
         bootstrap=polling_bootstrap, page_size=polling_page_size,
+        page_overlap=polling_page_overlap, read_mode=polling_read_mode,
         pagination_strategy=polling_pagination_strategy, allow_backfill=polling_allow_backfill,
         full_inventory=polling_full_inventory, reconciliation=polling_reconciliation, retry_limit=polling_retry_limit,
         retry_backoff_seconds=polling_retry_backoff_seconds, timeout_seconds=polling_timeout_seconds,
@@ -1344,6 +1392,14 @@ def _save_polling_configuration(settings, **values: object) -> None:
         "timezone": "polling_timezone", "execution_window": "polling_execution_window",
         "pagination_strategy": "polling_pagination_strategy",
     }
+    from hero_integration.services.offset_pagination import validate_overlap
+    if values.get("page_overlap") is not None:
+        settings.polling_page_overlap = validate_overlap(values["page_overlap"], int(
+            values.get("page_size") or getattr(settings, "polling_page_size", 100) or 100))
+    if values.get("read_mode") is not None:
+        if values["read_mode"] != "NORMAL":
+            frappe.throw(frappe._("Fast Mode requires a verified HERO change-discovery contract."))
+        settings.polling_read_mode = values["read_mode"]
     for input_name, fieldname in scalar_fields.items():
         value = values[input_name]
         if value is not None:
@@ -2237,7 +2293,7 @@ def _runtime_plan_result(plan) -> dict[str, object]:
 
 
 @frappe.whitelist(methods=["GET"])
-def runtime_plan_status(source_instance: str) -> dict[str, object]:
+def runtime_plan_status(source_instance: str, include_execution: int = 0) -> dict[str, object]:
     """Return redacted lifecycle status through the canonical runtime-plan service."""
     frappe.only_for("System Manager")
     from hero_integration.services.sync_runtime_adapter import _runtime_plan_service
@@ -2250,7 +2306,19 @@ def runtime_plan_status(source_instance: str) -> dict[str, object]:
         frappe.throw(translate_error(error, frappe._))
     if plan is None:
         return {"state": "NOT_FOUND", "source_instance": source_instance}
-    return _runtime_plan_result(plan)
+    result = _runtime_plan_result(plan)
+    if not _as_bool(include_execution):
+        return result
+    from hero_integration.services.sync_engine import FrappeSyncLedger
+    state = FrappeSyncLedger(frappe).state(frappe.local.site)
+    result["confirmed_position"] = None
+    if state and state.configuration.source_instance == source_instance and state.cursor:
+        result["confirmed_position"] = hashlib.sha256(state.cursor.encode()).hexdigest()[:16]
+    result["last_execution"] = frappe.db.get_value("HERO Sync Run Ledger",
+        {"site_scope": frappe.local.site, "source_instance": source_instance, "plan_key": plan.plan_key},
+        ["sync_run_id", "state", "plan_generation", "processed_count", "skipped_count"],
+        as_dict=True, order_by="creation desc")
+    return result
 
 
 @frappe.whitelist(methods=["POST"])

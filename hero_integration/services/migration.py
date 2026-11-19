@@ -9,6 +9,7 @@ from datetime import timedelta
 from uuid import uuid4
 
 import frappe
+from hero_integration.services import execution_budget
 from frappe.utils import get_datetime, now_datetime
 
 from hero_integration.client.graphql import HeroGraphQLClient
@@ -37,7 +38,7 @@ from hero_integration.services.projection_contracts import CONTRACTS as PROJECTI
 
 CUSTOMER_ACTIONS = {"Customer Migration", "Cheap Data Migration", "Full Data Migration", "Sync"}
 PROJECT_ACTIONS = {"Project Migration", "Cheap Data Migration", "Full Data Migration", "Sync"}
-TERMINAL_STATES = {"Completed", "Completed With Conflicts", "Failed", "Cancelled", "Blocked"}
+TERMINAL_STATES = {"Budget Reached", "Completed", "Completed With Conflicts", "Failed", "Cancelled", "Blocked"}
 PHASES = ("customer", "project")
 PROJECTION_ACTIONS = {"Projection Migration", "Schedule Migration"}
 PHASE_BLOCKING_RESULTS = {"BLOCKED_RECORD", "CONFLICT", "SKIPPED_AMBIGUOUS", "UNAVAILABLE"}
@@ -204,7 +205,8 @@ def _run_checkpoint_contract(run, *, lock=False):
     return {"version": 1, "site": frappe.local.site, "source_instance": config.source_instance,
             "actor": getattr(run, 'owner', '') or frappe.session.user,
             "action": getattr(run, 'action', ''), "mode": getattr(run, 'mode', ''),
-            "source_binding_revision": int(config.source_binding_revision), "readers": signatures}
+            "source_binding_revision": int(config.source_binding_revision), "readers": signatures,
+            **({"page_overlap": run.page_overlap} if getattr(run, "page_overlap", 0) else {})}
 
 
 def bind_run_checkpoint(run):
@@ -278,8 +280,13 @@ def _verified_historical_users(run, source):
     return identities
 
 
-@profiled('migration.run')
 def execute_run(run_name: str) -> None:
+    from hero_integration.services.execution_runtime import execute
+    return execute('migration', run_name=run_name)
+
+
+@profiled('migration.run')
+def _execute_run(run_name: str) -> None:
     run = frappe.get_doc("HERO Integration Run", run_name)
     frappe.set_user(run.owner)
     if run.state in TERMINAL_STATES:
@@ -303,9 +310,18 @@ def execute_run(run_name: str) -> None:
                               else RecordLimitedSource(source, record_limit(run)))
             source = testing_source
         from hero_integration.services.employee_migration import historical_user_scope
-        historical = _verified_historical_users(run, source)
-        with historical_user_scope(getattr(source, 'source_instance', ''), historical):
-            _process_requested_phases(run, source, checkpoint=lambda: _checkpoint_transaction(run, claim_started_on))
+        previous_page = json.loads(getattr(run, "page_checkpoint_json", None) or "{}")
+        if previous_page.pop("replay_requested", False):
+            # The old offset describes a mutable inventory. Keep its evidence until
+            # a newly admitted worker saves its first confirmed page/record.
+            with _checkpoint_transaction(run, claim_started_on):
+                run.resume_phase, run.resume_offset, run.resume_record_index = "", 0, 0
+                run.customer_phase_state = run.project_phase_state = "Queued"
+                run.page_checkpoint_json = json.dumps(previous_page)
+        with execution_budget.run_scope(run) as budget:
+            historical = () if budget else _verified_historical_users(run, source)
+            with historical_user_scope(getattr(source, 'source_instance', ''), historical):
+                _process_requested_phases(run, source, checkpoint=lambda: _checkpoint_transaction(run, claim_started_on))
         run.reload()
         if run.state == "Running":
             with _checkpoint_transaction(run, claim_started_on):
@@ -316,6 +332,10 @@ def execute_run(run_name: str) -> None:
                 run.save()
                 _mark_sync_success(run)
             _notify_not_imported(run)
+    except execution_budget.BudgetReached as error:
+        failed = True
+        frappe.db.rollback()
+        _finalize_rolled_back_run(run.name, claim_started_on, 'Budget Reached', str(error))
     except RepeatedProjectionPageError as error:
         failed = True
         frappe.db.rollback()
@@ -448,6 +468,9 @@ def _source_for_run(run, config):
         source.customer_source = GraphQLServiceSource(
             source.client, customer_service, customer_contract, source.source_instance, revalidate=revalidate_customer,
         )
+    source.page_overlap = int(getattr(run, 'page_overlap', 0) or 0)
+    if getattr(source, 'customer_source', None):
+        source.customer_source.page_overlap = source.page_overlap
     return source
 
 
@@ -598,12 +621,19 @@ def _finalize_rolled_back_run(run_name: str, claim_started_on, state: str, detai
     run = frappe.get_doc("HERO Integration Run", run_name)
     if run.state != "Running" or run.started_on != claim_started_on:
         return
-    _mark_running_phase_failed(run)
+    if state == 'Budget Reached':
+        run.testing_status = 'LIMIT_REACHED'
+        for phase in PHASES:
+            if _phase_state(run, phase) == 'Running':
+                setattr(run, f'{phase}_phase_state', state)
+    else:
+        _mark_running_phase_failed(run)
     run.state = state
     run.error_message = detail
     run.finished_on = now_datetime()
     run.save()
-    _mark_sync_error(run)
+    if state != 'Budget Reached':
+        _mark_sync_error(run)
     _release_run(run_name)
     frappe.db.commit()
 
@@ -669,8 +699,8 @@ def _refresh_project_phases(run, source) -> None:
     Phase comes from the imported step ID, not sync state. A blocked project
     phase has already left Running and still needs its display refreshed.
     """
-    if getattr(source, "query_adapter", None):
-        return  # v2 phase values come exclusively from selected Query rules
+    if execution_budget.current_budget() or getattr(source, "query_adapter", None):
+        return  # bounded imports cannot refresh unrelated projects; v2 phase values come exclusively from selected Query rules
     reader = getattr(source, "project_status_steps", None)
     if getattr(run, "mode", "Preview") != "Execute" or reader is None:
         return  # Preview and test doubles without a mode never write
@@ -760,10 +790,17 @@ def _mapping_plan_for_run(run, target_operation: str):
     )
 
 
+def _record_offset_checkpoint(run, page, phase, offset, processed, *, complete=False):
+    evidence = getattr(page, "offset_checkpoint", None)
+    if evidence is not None:
+        run.page_checkpoint_json = json.dumps({"phase": phase, "offset": offset, "processed": processed,
+                                              "page_complete": complete, "window": evidence})
+
+
 def _validate_enumeration_page(page: SourcePage, offset: int, seen_ids: set[str], *, allow_filtered_empty=False) -> None:
     """Reject invalid pagination before applying any records from the page."""
     if page.next_offset is not None and (type(page.next_offset) is not int
-            or page.next_offset <= offset or (not page.records and not allow_filtered_empty)):
+            or page.next_offset <= offset or (not page.records and not (allow_filtered_empty or getattr(page, "offset_checkpoint", None)))):
         raise MappingPlanError('Source pagination did not advance safely.')
     identities = []
     for row in page.records:
@@ -771,7 +808,7 @@ def _validate_enumeration_page(page: SourcePage, offset: int, seen_ids: set[str]
         if not isinstance(identity, (str, int)) or isinstance(identity, bool) or not str(identity).strip():
             raise MappingPlanError('Source identity is missing or invalid.')
         identities.append(str(identity))
-    if len(set(identities)) != len(identities) or seen_ids.intersection(identities):
+    if len(set(identities)) != len(identities) or seen_ids.intersection(identities).difference(getattr(page, "changed_overlap_ids", ())):
         raise MappingPlanError('Source identity repeated during enumeration.')
     seen_ids.update(identities)
 
@@ -818,6 +855,9 @@ def _process_phase(run, phase: str, reader, *, checkpoint=None) -> bool:
                 continue
             _cancel_if_requested(run)
             with checkpoint():
+                if budget := execution_budget.current_budget():
+                    operation = 'HeroCustomers' if phase == 'customer' else 'HeroProjectMatches'
+                    _reserve_mapped_record(budget, phase, record, _mapping_plan_for_run(run, operation))
                 migrate = _migrate_customer if phase == "customer" else _migrate_project
                 result = _migrate_isolated(lambda: migrate(record, run))
                 _record_result(run, phase, record, result)
@@ -825,9 +865,11 @@ def _process_phase(run, phase: str, reader, *, checkpoint=None) -> bool:
                 run.resume_phase = phase
                 run.resume_offset = offset
                 run.resume_record_index = index + 1
+                _record_offset_checkpoint(run, page, phase, offset, index + 1)
                 run.save()
         with checkpoint():
             run.resume_phase = phase
+            _record_offset_checkpoint(run, page, phase, offset, len(page.records), complete=True)
             run.resume_offset = page.next_offset or 0
             run.resume_record_index = 0
             run.save()
@@ -1073,6 +1115,14 @@ def _rejections() -> tuple[type, ...]:
     return tuple(item for item in candidates if isinstance(item, type))
 
 
+def _reserve_mapped_record(budget, kind, record, plan):
+    from hero_integration.services.deferred_references import references
+    identity = plan.source_identity(record)
+    dependencies = references(plan, record)
+    dependencies.extend(execution_budget.mapped_dependencies(plan, record, plan.target_doctype))
+    budget.reserve_many([(kind, identity), *dependencies])
+
+
 def _migrate_isolated(migrate) -> Result:
     """Run one record so that an ERPNext validation error blocks only this record."""
     savepoint = "hero_record"
@@ -1212,7 +1262,7 @@ def _process_projection(run, source, *, checkpoint=None) -> None:
     task_scope = _projection_task_scope(run, plan, mapping, snapshot.source_instance, source.source_instance)
     seen_ids: set[str] = set()
     _PROJECT_REFERENCE_STATES.clear()
-    _load_task_user_directory(source, operation)
+    _load_task_user_directory(None if execution_budget.current_budget() else source, operation)
     while True:
         _cancel_if_requested(run)
         from hero_integration.services.migration_testing import RelatedProjectSource
@@ -1235,16 +1285,21 @@ def _process_projection(run, source, *, checkpoint=None) -> None:
             _validate_enumeration_page(page, offset, seen_ids, allow_filtered_empty=isinstance(source, RelatedProjectSource))
         except MappingPlanError as error:
             raise RepeatedProjectionPageError(str(error)) from error
-        _prefetch_project_references(source, operation, page.records)
+        if not execution_budget.current_budget():
+            _prefetch_project_references(source, operation, page.records)
         for index, record in enumerate(page.records):
             if index < index_start:
                 continue
             _cancel_if_requested(run)
             with checkpoint():
+                if budget := execution_budget.current_budget():
+                    _reserve_mapped_record(budget, PROJECTIONS[operation]['source_type'], record, plan)
+                    _prefetch_project_references(source, operation, [record])
                 result = _migrate_projection_record(record, run, plan, task_scope)
                 _record_result(run, PROJECTIONS[operation]['source_type'], record, result)
                 run.resume_phase = operation
                 run.resume_offset, run.resume_record_index = offset, index + 1
+                _record_offset_checkpoint(run, page, operation, offset, index + 1)
                 run.save()
         if page.next_offset is None:
             unmatched = _TASK_USER_DIRECTORY.get('unmatched')
@@ -1253,8 +1308,9 @@ def _process_projection(run, source, *, checkpoint=None) -> None:
                 with checkpoint():
                     notify_unmatched_assignees(run.name, unmatched)
             return
-        offset, index_start = page.next_offset, 0
         with checkpoint():
+            _record_offset_checkpoint(run, page, operation, offset, len(page.records), complete=True)
+            offset, index_start = page.next_offset, 0
             run.resume_offset, run.resume_record_index = offset, 0
             run.save()
 

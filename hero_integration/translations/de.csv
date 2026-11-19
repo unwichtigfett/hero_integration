@@ -3934,3 +3934,53 @@ Invalid image upload options,Ungültige Optionen für den Bildupload
 Invalid address response,Ungültige Adressantwort
 Invalid PDF preview response,Ungültige Antwort der PDF-Vorschau
 Invalid category response,Ungültige Kategorieantwort
+Page Overlap,Seitenüberlappung
+Read Mode,Lesemodus
+NORMAL,NORMAL
+Normal Mode,Normalmodus
+Fast Mode,Schnellmodus
+Fast Mode requires a verified HERO change-discovery contract.,Der Schnellmodus erfordert einen bestätigten HERO-Vertrag zur Änderungserkennung.
+Repeat 0 to 20 rows between full offset pages. Use fewer rows than the approved page size.,Zwischen vollen Offset-Seiten 0 bis 20 Zeilen wiederholen. Der Wert muss kleiner als die freigegebene Seitengröße sein.
+Offset Page Checkpoint,Prüfpunkt der Offset-Seite
+Execution Scope,Ausführungsbereich
+Root Run,Übergeordneter Lauf
+Identity Limit,Identitätslimit
+Reserved Identities,Reservierte Identitäten
+Reserved Source Identities,Reservierte Quellidentitäten
+ABORTED,ABGEBROCHEN
+BOUNDED_COMPLETE,BEGRENZTER LAUF ABGESCHLOSSEN
+BUDGET_REACHED,BUDGET ERREICHT
+Processed Count,Anzahl verarbeitet
+Skipped Count,Anzahl übersprungen
+Global Budget Root,Übergeordneter Budgetlauf
+Budget Reached,Budget erreicht
+Event Id,Ereignis-ID
+External Id,Externe ID
+Source Version,Quellversion
+Mapping Name,Mappingname
+Run Id,Lauf-ID
+Outcome,Ergebnis
+Field Changes,Feldänderungen
+Scheduled polling cannot create an initial migration.,Zeitgesteuertes Polling kann keine Erstmigration anlegen.
+Known-object comparison requires a budgeted manual run.,Der Vergleich bekannter Objekte erfordert einen manuellen Lauf mit Budget.
+Bound updates require explicitly approved field rules and mapping.,Aktualisierungen gebundener Objekte erfordern ausdrücklich freigegebene Feldregeln und ein freigegebenes Mapping.
+Explicit bounded synchronization approval is required.,Die begrenzte Synchronisierung muss ausdrücklich freigegeben werden.
+A one-shot requires polling OFF and the reviewed source revision.,Ein Einzellauf erfordert ausgeschaltetes Polling und die geprüfte Quellenrevision.
+The reviewed runtime plan changed.,Der geprüfte Laufzeitplan wurde geändert.
+Synchronization finished without a durable execution receipt.,Die Synchronisierung wurde ohne dauerhaft gespeicherten Ausführungsnachweis beendet.
+The polling configuration is unsupported.,Die Polling-Konfiguration wird nicht unterstützt.
+A request UUID and approved plan/source revisions are required.,Die Anfrage benötigt eine UUID und freigegebene Revisionen für Plan und Quelle.
+This synchronization approval belongs to a different request.,Diese Synchronisierungsfreigabe gehört zu einer anderen Anfrage.
+Provider object type differs from the approved reader.,Der Objekttyp des Anbieters weicht vom Typ des freigegebenen Lesedienstes ab.
+Compare bound objects once,Gebundene Objekte einmalig vergleichen
+An approved runtime plan is required.,Ein freigegebener Laufzeitplan ist erforderlich.
+Compare and update up to 50 existing bound objects? {0},Bis zu 50 bestehende gebundene Objekte vergleichen und aktualisieren? {0}
+"Run {0}: {1}. Reserved {2}/50, processed {3}, skipped {4}.","Lauf {0}: {1}. Reserviert {2}/50, verarbeitet {3}, übersprungen {4}."
+Plan Generation,Plangeneration
+Source Revision,Quellenrevision
+Execution status,Ausführungsstatus
+Runtime plan,Laufzeitplan
+Confirmed cursor fingerprint,Fingerabdruck des bestätigten Cursors
+Sync Run,Synchronisierungslauf
+Scheduler disabled,Scheduler deaktiviert
+Reserved identities,Reservierte Quellidentitäten

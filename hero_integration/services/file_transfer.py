@@ -613,13 +613,13 @@ def _client_and_downloader(config=None):
 
 def reset_phase(phase: str) -> None:
     """Forget offset and counts so the next transfer starts a fresh pass."""
+    # The accepting transaction also owns the run, parent linkage and after-commit enqueue.
     frappe.db.set_default(STATE_KEY.format(phase), "")
-    frappe.db.commit()
 
 
 def transfer(phase: str, *, source_instance: str | None = None, client=None, downloader=None, dry_run: bool = False,
              time_budget: int = TIME_BUDGET_SECONDS, min_free: int = MIN_FREE_BYTES, should_stop=None,
-             progress=None, record_limit=None, run_name=None, cohort=None) -> dict:
+             progress=None, record_limit=None, run_name=None, cohort=None, page_overlap=0) -> dict:
     """Process one phase from its saved offset until done or the time budget ends.
 
     ``source_instance`` is the HERO source the client reads from; every lookup,
@@ -641,6 +641,9 @@ def transfer(phase: str, *, source_instance: str | None = None, client=None, dow
         if not isinstance(run_name, str) or not run_name.strip():
             raise TransferError('File migration requires its originating integration run.')
     read = direct_runtime.resolve_read(operation, source_instance)
+    from hero_integration.services.offset_pagination import advance, validate_overlap
+    if page_overlap:
+        validate_overlap(page_overlap, read.page_size)
     from hero_integration.services.migration_testing import bounded_rows, processed, test_state, save_test_state, validate_checkpoint
     state = {} if dry_run else test_state(run_name, operation) if record_limit is not None else _state(phase)
     save = (lambda value: save_test_state(run_name, operation, value)) if record_limit is not None else (lambda value: _save_state(phase, value))
@@ -655,7 +658,7 @@ def transfer(phase: str, *, source_instance: str | None = None, client=None, dow
     if not dry_run:
         require_storage(frappe)
     if (state.get("done") or state.get("source_instance") != source_instance or "offset" not in state
-            or state.get("mapping") != read.mapping_version):
+            or state.get("mapping") != read.mapping_version or state.get("page_overlap", 0) != page_overlap):
         # An offset belongs to its approved mapping: changed filters or field
         # selections require every row to be reconsidered under the new version.
         state = {}  # unchanged content is skipped by its link, without another download
@@ -663,6 +666,7 @@ def transfer(phase: str, *, source_instance: str | None = None, client=None, dow
     state.setdefault("offset", 0)
     state["source_instance"] = source_instance
     state["mapping"] = read.mapping_version
+    state["page_overlap"] = page_overlap
     if cohort is not None:
         state['testing_cohort_fingerprint'] = fingerprint
         state['testing_record_limit'] = record_limit
@@ -674,19 +678,22 @@ def transfer(phase: str, *, source_instance: str | None = None, client=None, dow
         projects = {key: value for key, value in projects.items() if key in project_ids}
         customers = {key: value for key, value in customers.items() if key in customer_ids}
     known = _known_files(source_instance)
-    if not dry_run:
+    from hero_integration.services.execution_budget import BudgetReached, current_budget
+    if not dry_run and not current_budget():
         allow_unlimited_attachments()
-    folders = {
-        True: "/".join(("Home", ROOT_FOLDER, PHASE_FOLDER[phase])),
-        False: "/".join(("Home", ROOT_FOLDER, PHASE_FOLDER[phase], UNASSIGNED_FOLDER))} if dry_run else {
-        True: _folder(ROOT_FOLDER, PHASE_FOLDER[phase]), False: _folder(ROOT_FOLDER, PHASE_FOLDER[phase], UNASSIGNED_FOLDER)}
-    if not dry_run:
-        # Folder setup belongs to the transfer, not the first file's transaction.
-        # A per-file conflict rollback must not invalidate these cached references.
-        frappe.db.commit()
     partial_dir = frappe.get_site_path("private", "files", ".hero-partial")
-    if not dry_run:
+    folders = {True: "/".join(("Home", ROOT_FOLDER, PHASE_FOLDER[phase])),
+               False: "/".join(("Home", ROOT_FOLDER, PHASE_FOLDER[phase], UNASSIGNED_FOLDER))}
+
+    def initialize_storage():
+        folders.update({True: _folder(ROOT_FOLDER, PHASE_FOLDER[phase]),
+                        False: _folder(ROOT_FOLDER, PHASE_FOLDER[phase], UNASSIGNED_FOLDER)})
+        frappe.db.commit()
         os.makedirs(partial_dir, exist_ok=True)
+
+    storage_ready = dry_run or not current_budget()
+    if storage_ready and not dry_run:
+        initialize_storage()
     deadline = time.monotonic() + time_budget
     state.update(phase=phase, done=False, last_error=None, stopped=False)
 
@@ -701,33 +708,53 @@ def transfer(phase: str, *, source_instance: str | None = None, client=None, dow
         bump("requests")
         if not page:
             break
+        window = None
+        if page_overlap:
+            window = advance(page, offset=state["offset"], size=read.page_size, overlap=page_overlap,
+                             previous=state.get("offset_window"), identity=lambda row: direct_runtime.identity(read, row))
+            if window.changed:
+                known = _known_files(source_instance)
         identities = [direct_runtime.identity(read, row) for row in page]
         if len(set(identities)) != len(identities):
             raise TransferError("HERO returned duplicate file identities in a page.")
         page_fingerprint = hashlib.sha256(json.dumps(identities, separators=(',', ':')).encode()).hexdigest()
         if state.get('last_page_fingerprint') == page_fingerprint:
             raise TransferError("HERO repeated a file page; pagination cannot safely continue.")
-        candidates = [row for row in page if direct_runtime.belongs(operation, row)]
+        candidates = [row for row in (window.rows if window else page) if direct_runtime.belongs(operation, row)]
         if cohort is None:
-            rows = bounded_rows(state, candidates, record_limit)
-            found = details(client, rows, read, source_instance) if rows else {}
+            candidates = bounded_rows(state, candidates, record_limit)
         else:
             state['testing_records_received'] = int(state.get('testing_records_received', 0)) + len(page)
-            found = details(client, candidates, read, source_instance) if candidates else {}
-            if any(row.get('uuid') not in found for row in candidates):
-                raise TransferError('File detail is missing; related test selection cannot be completed.')
-            rows = [row for row in candidates if belongs_to_test_cohort(found[row['uuid']], cohort)]
-        # Unchanged content is not downloaded again, but its target may have
-        # become resolvable since (e.g. projects imported after the documents).
-        todo = [(row, known.get(direct_runtime.identity(read, row))) for row in rows]
-        bump("requests", -(-len(candidates if cohort is not None else rows) // DETAIL_BATCH))
-        for index, (row, link) in enumerate(todo):
+        budget = current_budget()
+        batch_size = 1 if budget else DETAIL_BATCH
+        def selected_files():
+            for start in range(0, len(candidates), batch_size):
+                batch = candidates[start:start + batch_size]
+                if budget:
+                    try:
+                        budget.reserve('file_upload', batch[0]['id'])
+                    except BudgetReached:
+                        if not dry_run:
+                            save(state)
+                        raise
+                found = details(client, batch, read, source_instance)
+                bump('requests')
+                for row in batch:
+                    detail = found.get(row['uuid'])
+                    if cohort is not None:
+                        if detail is None:
+                            raise TransferError('File detail is missing; related test selection cannot be completed.')
+                        if not belongs_to_test_cohort(detail, cohort):
+                            continue
+                    yield row, detail
+
+        for index, (row, detail) in enumerate(selected_files()):
             if should_stop and index % 25 == 0 and should_stop():
                 state["stopped"] = True
                 if not dry_run:
                     save(state)  # retry this page; committed files are skipped later
                 return state
-            detail = found.get(row["uuid"])
+            link = known.get(direct_runtime.identity(read, row))
             unchanged = bool(link) and link.source_payload_hash == source_hash(row)
             unchanged = unchanged and bool(frappe.db.exists("File", link.target_name))
             reason = skip_reason(row, detail)
@@ -738,6 +765,12 @@ def transfer(phase: str, *, source_instance: str | None = None, client=None, dow
                         invalidate(source_instance, operation, direct_runtime.identity(read, row))
                 bump("unchanged" if unchanged else f"skipped_{reason}")
                 continue
+            if budget:
+                from hero_integration.services.deferred_references import file_dependencies
+                budget.reserve_many(file_dependencies(detail, cohort))
+            if not storage_ready:
+                initialize_storage()
+                storage_ready = True
             resolved_target = resolve_target(detail, projects, customers)
             # Files are imported privately without realizing a new attachment.
             # The run-scoped observation retains every eligible target identity.
@@ -754,6 +787,8 @@ def transfer(phase: str, *, source_instance: str | None = None, client=None, dow
                         bump('baselines_verified')
                     continue
                 _assert_target_baseline(link, fields, lock=not dry_run and unchanged)
+            except BudgetReached:
+                raise
             except FileConflict as error:
                 _record_conflict(link, error, dry_run=dry_run)
                 bump('conflict')
@@ -821,7 +856,11 @@ def transfer(phase: str, *, source_instance: str | None = None, client=None, dow
                 bump("failed")
                 frappe.log_error(title="HERO file transfer failed",
                                  message=f"HERO file {row.get('id')} ({row.get('filename')}): {error}")
-        state["offset"] += len(page)
+        if window:
+            state["offset"] = window.next_offset
+            state["offset_window"] = window.checkpoint
+        else:
+            state["offset"] += len(page)
         state['last_page_fingerprint'] = page_fingerprint
         if not dry_run:
             save(state)

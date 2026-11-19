@@ -216,10 +216,9 @@ class FrappeBindingStorage:
             return self._after_duplicate(error, lambda: self.field(value.site_scope, value.identity_key), value)
     def update_field(self, value, expected_revision):
         frappe = self._scope(value.site_scope); self._write(frappe, self.FIELD)
-        frappe.db.sql("select name from `tabHERO Field Binding` where identity_key=%s and site_scope=%s for update", (value.identity_key, value.site_scope))
-        old = self.field(value.site_scope, value.identity_key)
-        if old is None or old.revision != expected_revision: raise BindingConflict("Field binding revision is stale.")
-        doc = frappe.get_doc(self.FIELD, value.identity_key)
+        doc = frappe.get_doc(self.FIELD, value.identity_key, for_update=True)
+        if doc.site_scope != value.site_scope or int(doc.binding_revision) != expected_revision:
+            raise BindingConflict("Field binding revision is stale.")
         for key, item in {"binding_revision": value.revision, "sync_state": value.state.value, "acknowledged_source_fingerprint": value.acknowledged_source_fingerprint, "acknowledged_target_fingerprint": value.acknowledged_target_fingerprint, "acknowledged_version": value.acknowledged_version, "reconciliation": value.reconciliation}.items(): setattr(doc, key, item)
         doc.save(); return value
     @staticmethod

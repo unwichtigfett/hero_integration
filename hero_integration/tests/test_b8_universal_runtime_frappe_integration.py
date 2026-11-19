@@ -69,8 +69,12 @@ class TestB8UniversalRuntimeFrappeIntegration(IntegrationTestCase):
         frappe.db.commit()
 
     def _remove(self):
+        frappe.db.delete("HERO Polling Event", {"source_instance": self.source})
         frappe.db.delete("HERO Sync Run Ledger", {"site_scope": frappe.local.site})
         frappe.db.delete("HERO Sync State Ledger", {"site_scope": frappe.local.site})
+        frappe.db.delete("HERO Frappe Mapping", {"name": "B9-UNIVERSAL-RULE"})
+        frappe.db.delete("HERO Sync Change Event", {"source_instance": self.source})
+        frappe.db.delete("HERO Execution Budget", {"source_instance": self.source})
         frappe.db.delete("HERO Field Binding", {"source_instance": self.source})
         frappe.db.delete("HERO Object Binding", {"source_instance": self.source})
         frappe.db.delete("HERO Runtime Plan Audit", {"source_instance": self.source})
@@ -84,13 +88,15 @@ class TestB8UniversalRuntimeFrappeIntegration(IntegrationTestCase):
 
     def _create_approved_universal_plan(self):
         schema = introspection_from_schema(build_schema("""
-            type Query { project_matches(first: Int!, offset: Int!, orderBy: String!): [ProjectMatch] }
+            type Query { project_matches(first: Int!, offset: Int!, orderBy: String!): [ProjectMatch] project_match(project_match_id: Int!): ProjectMatch }
             type ProjectMatch { id: ID name: String }
             type Mutation { update_contact(contact: CustomerInput!): Contact }
             type Contact { id: ID }
             input CustomerInput { id: Int! full_name: String }
         """))
-        snapshot = frappe.get_doc({"doctype": "HERO GraphQL Schema Snapshot", "source_instance": self.source, "snapshot_json": json.dumps(schema)}).insert()
+        from hero_integration.services.introspection import endpoint_fingerprint
+        endpoint = self.settings.hero_api_url
+        snapshot = frappe.get_doc({"doctype": "HERO GraphQL Schema Snapshot", "source_instance": self.source, "endpoint_fingerprint": endpoint_fingerprint(endpoint, self.source), "snapshot_json": json.dumps(schema)}).insert()
         draft = QueryDraft("project_matches", "project_matches", "project_matches", ("id", "name"), {"first": 1, "offset": 0, "orderBy": "id"})
         request = QueryAdapter().materialize(
             SnapshotAdapter().adapt(StoredSnapshot(snapshot.name, snapshot.snapshot_json, snapshot.schema_fingerprint, self.source)), draft
@@ -124,6 +130,13 @@ class TestB8UniversalRuntimeFrappeIntegration(IntegrationTestCase):
             mapping.name, int(mapping.mapping_revision), snapshot.name, snapshot.schema_fingerprint, "project_matches", "AUTO_SYNC",
         )
         self.assertEqual(b8_runtime.canonical_operation_contract(self.selection, request), payload["b8_canonical_operation"])
+        # Persist the synthetic field revision named in the sealed B8 reader.
+        frappe.get_doc({"doctype": "HERO Frappe Mapping", "name": "B9-UNIVERSAL-RULE",
+            "definition_id": "b9-universal-name", "operation": "HeroProjectMatches", "source_path": "name",
+            "source_type": "String", "target_doctype": "Customer", "target_field": "customer_name",
+            "purpose": "Field", "transformation": "Identity", "schema_snapshot": snapshot.name,
+            "schema_fingerprint": snapshot.schema_fingerprint, "mapping_revision": 1,
+            "status": "Active", "priority": 5}).db_insert()
         self.snapshot = snapshot
         plans = _runtime_plan_service(frappe)
         draft_plan = plans.create_draft(self.selection, actor="Administrator")
@@ -139,18 +152,16 @@ class TestB8UniversalRuntimeFrappeIntegration(IntegrationTestCase):
             if phase["name"] == "failure":
                 raise RuntimeError("synthetic provider failure")
             if phase["name"] == "pending":
-                return ChangePage(({"id": "1", "name": self.bound_pending},), None, True, "wm-2")
+                return ChangePage(({"id": "unbound-1", "name": self.bound_pending},), None, True, "wm-2")
             return ChangePage((
                 {"id": "1", "name": self.bound_new},
                 {"id": "unbound-1", "name": "MUST-NOT-CREATE"},
             ), None, True, "wm-1")
 
         provider = guarded_provider(ProviderContract(ProviderCapability.COMPLETE_DELTA_CURSOR), read_page)
-        # Automatic sync now queues the configured areas; it no longer invokes
-        # the legacy bound-only provider directly from the scheduler.
-        with patch.object(tasks, "_auto_sync_tick") as tick:
+        with patch.object(tasks, "_run") as dispatch, patch("frappe.utils.scheduler.is_scheduler_inactive", return_value=True):
             tasks.run_scheduled_sync()
-        tick.assert_called_once()
+        dispatch.assert_not_called()
         self.assertEqual(calls, [])
         self.settings.reload()
         self.settings.polling_mode = "OFF"
@@ -162,7 +173,7 @@ class TestB8UniversalRuntimeFrappeIntegration(IntegrationTestCase):
         self.assertEqual(frappe.get_doc("Customer", self.bound.name).customer_name, self.bound_old)
         self.assertEqual(frappe.get_doc("Customer", self.unbound.name).customer_name, self.unbound_old)
         self.assertFalse(frappe.db.exists("Customer", {"customer_name": "MUST-NOT-CREATE"}))
-        self.assertEqual((FrappeSyncLedger().state(frappe.local.site).cursor, FrappeSyncLedger().state(frappe.local.site).status), (None, SyncStatus.PARTIAL))
+        self.assertEqual((FrappeSyncLedger().state(frappe.local.site).cursor, FrappeSyncLedger().state(frappe.local.site).status), (None, SyncStatus.INCOMPLETE))
         self.assertEqual(FrappeBindingStorage().field(frappe.local.site, self.binding.identity_key).revision, self.binding.revision)
 
         with patch("hero_integration.services.sync_runtime_adapter._UnprovenProvider", return_value=provider):
@@ -179,15 +190,65 @@ class TestB8UniversalRuntimeFrappeIntegration(IntegrationTestCase):
         phase["name"] = "pending"
         with patch("hero_integration.services.sync_runtime_adapter._UnprovenProvider", return_value=provider):
             result = api.pending_sync(self.plan.generation)
-        self.assertEqual(result["status"], "PARTIAL")
+        self.assertEqual(result["status"], "SUCCEEDED")
         self.assertEqual(frappe.get_doc("Customer", self.bound.name).customer_name, self.bound_old)
-        self.assertIsNone(FrappeSyncLedger().state(frappe.local.site).cursor)
+        self.assertEqual(FrappeSyncLedger().state(frappe.local.site).cursor, "wm-2")
 
         before = list(calls)
         with patch("hero_integration.services.sync_runtime_adapter._UnprovenProvider", return_value=provider):
             with self.assertRaises(frappe.ValidationError):
                 api.pending_sync(self.plan.generation - 1)
         self.assertEqual(calls, before)
+
+    def test_scheduled_unproved_delta_references_its_own_durable_run(self):
+        from hero_integration.client.graphql import HeroGraphQLClient
+        from hero_integration.services.polling import record_scheduler_outcome
+
+        frappe.db.set_single_value("HERO Integration Settings", "source_binding_confirmed_revision",
+                                   self.settings.source_binding_revision)
+        with patch.object(HeroGraphQLClient, "query") as transport:
+            tasks._run("AUTO_SYNC", record_scheduler_outcome)
+            transport.assert_not_called()
+        event = frappe.db.get_value("HERO Polling Event", {"source_instance": self.source},
+                                    ["status", "sync_run"], as_dict=True)
+        self.assertEqual(event.status, "Incomplete")
+        receipt = frappe.get_doc("HERO Sync Run Ledger", event.sync_run)
+        self.assertEqual((receipt.source_instance, receipt.plan_key, receipt.state),
+                         (self.source, self.plan.plan_key, "INCOMPLETE"))
+        self.assertEqual(frappe.db.count("HERO Integration Run", {"source_instance": self.source}), 0)
+
+    def test_one_shot_requires_approval_and_replays_its_durable_off_mode_receipt(self):
+        from uuid import uuid4
+        from hero_integration.client.graphql import HeroGraphQLClient
+        from hero_integration.services.sync_runtime_adapter import RuntimeBridgeError
+
+        self.settings.reload()
+        self.settings.polling_mode = "OFF"
+        self.settings.save()
+        revision = self.settings.source_binding_revision
+        frappe.db.set_single_value("HERO Integration Settings", "source_binding_confirmed_revision", revision)
+        frappe.db.commit()
+        args = dict(request_id=uuid4().hex, expected_source_revision=revision, plan_key=self.plan.plan_key,
+                    expected_plan_generation=self.plan.generation, scope="DELTA", confirmed=1)
+        with patch.object(HeroGraphQLClient, "query", side_effect=AssertionError) as transport:
+            with self.assertRaises(RuntimeBridgeError):
+                api.start_sync_once(**(args | {"confirmed": 0}))
+            self.assertFalse(frappe.db.exists("HERO Sync Run Ledger", args["request_id"]))
+            receipt = api.start_sync_once(**args)
+            self.assertEqual((receipt["run"], receipt["status"], receipt["reserved"]),
+                             (args["request_id"], "INCOMPLETE", 0))
+            self.assertEqual(api.start_sync_once(**args), receipt)
+            with self.assertRaises(RuntimeBridgeError):
+                api.start_sync_once(**(args | {"scope": "BOUND_OBJECTS"}))
+            frappe.set_user("Guest")
+            try:
+                with self.assertRaises(frappe.PermissionError):
+                    api.start_sync_once(**args)
+            finally:
+                frappe.set_user("Administrator")
+            transport.assert_not_called()
+        self.assertEqual(frappe.get_single("HERO Integration Settings").polling_mode, "OFF")
+        self.assertFalse(FrappeSyncLedger().active_run(frappe.local.site))
 
     def test_sync_hero_rejects_a_read_contract_for_a_different_object_type(self):
         mutation_service = frappe.get_doc({

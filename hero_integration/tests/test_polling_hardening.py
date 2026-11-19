@@ -65,7 +65,7 @@ class _FakeDb:
     def __init__(self, state=None):
         self.state, self.commits = dict(state or {}), 0
 
-    def get_single_value(self, doctype, field):
+    def get_single_value(self, doctype, field, *, cache=True):
         assert doctype == "HERO Integration Sync State", doctype
         return self.state.get(field)
 
@@ -136,7 +136,7 @@ class TestScheduledEntry(unittest.TestCase):
 
     def test_unsupported_configuration_is_recorded_once_without_a_request(self):
         settings = _settings(polling_timezone="Invalid/Zone", sync_status="", sync_error="")
-        with patch.object(polling, "run_monitor") as run_monitor:
+        with patch("hero_integration.services.execution_runtime.execute") as run_monitor:
             fake, _tasks = self.run_tasks(settings)
             self.run_tasks(settings)
         run_monitor.assert_not_called()
@@ -147,11 +147,11 @@ class TestScheduledEntry(unittest.TestCase):
 
     def test_string_last_success_no_longer_crashes_the_hourly_run(self):
         settings = _settings(last_successful_sync="2026-11-10 11:30:00", sync_status="", sync_error="")
-        with patch.object(polling, "run_monitor") as run_monitor:
+        with patch("hero_integration.services.execution_runtime.execute") as run_monitor:
             self.run_tasks(settings)
         run_monitor.assert_not_called()
         settings.last_successful_sync = "2026-11-10 10:00:00"
-        with patch.object(polling, "run_monitor") as run_monitor:
+        with patch("hero_integration.services.execution_runtime.execute") as run_monitor:
             self.run_tasks(settings)
         run_monitor.assert_called_once()
 
@@ -160,7 +160,7 @@ class TestScheduledEntry(unittest.TestCase):
                           {"polling_execution_window": "not-a-window"}):
             with self.subTest(settings=overrides):
                 settings = _settings(sync_status="", sync_error="", **overrides)
-                with patch.object(polling, "run_monitor") as run_monitor:
+                with patch("hero_integration.services.execution_runtime.execute") as run_monitor:
                     fake, _ = self.run_tasks(settings)
                 run_monitor.assert_not_called()
                 self.assertNotIn("last_poll_started_on", fake.db.state)
@@ -168,10 +168,10 @@ class TestScheduledEntry(unittest.TestCase):
 
     def test_interval_counts_from_the_last_started_poll_so_failures_are_not_retried_every_tick(self):
         settings = _settings(sync_status="", sync_error="")
-        with patch.object(polling, "run_monitor") as run_monitor:
+        with patch("hero_integration.services.execution_runtime.execute") as run_monitor:
             fake, _ = self.run_tasks(settings, state={"last_poll_started_on": "2026-11-10 11:50:00"})
         run_monitor.assert_not_called()
-        with patch.object(polling, "run_monitor") as run_monitor:
+        with patch("hero_integration.services.execution_runtime.execute") as run_monitor:
             fake, _ = self.run_tasks(settings, state={"last_poll_started_on": "2026-11-10 10:50:00"})
         run_monitor.assert_called_once()
         self.assertEqual(fake.db.state["last_poll_started_on"], datetime(2026, 11, 10, 12, 0))
@@ -179,13 +179,13 @@ class TestScheduledEntry(unittest.TestCase):
 
     def test_a_live_migration_run_makes_polling_wait(self):
         settings = _settings(sync_status="", sync_error="")
-        with patch.object(polling, "run_monitor") as run_monitor, \
+        with patch("hero_integration.services.execution_runtime.execute") as run_monitor, \
              patch.dict(sys.modules, {"hero_integration.services.migration": SimpleNamespace(run_lease_alive=lambda name: True)}):
             fake, _ = self.run_tasks(settings, state={"active_run": "RUN-1"})
         run_monitor.assert_not_called()
         self.assertEqual(fake.events[-1]["status"], "Skipped")
         self.assertIn("HERO run is active", fake.events[-1]["detail"])
-        with patch.object(polling, "run_monitor") as run_monitor, \
+        with patch("hero_integration.services.execution_runtime.execute") as run_monitor, \
              patch.dict(sys.modules, {"hero_integration.services.migration": SimpleNamespace(run_lease_alive=lambda name: False)}):
             self.run_tasks(settings, state={"active_run": "RUN-1"})
         run_monitor.assert_called_once()
@@ -208,7 +208,7 @@ class TestScheduledEntry(unittest.TestCase):
             yield
 
         settings = _settings(sync_status="", sync_error="")
-        with patch.object(polling, "run_monitor") as run_monitor:
+        with patch("hero_integration.services.execution_runtime.execute") as run_monitor:
             fake, _ = self.run_tasks(settings, lock=busy_lock, lock_error=Busy)
         run_monitor.assert_not_called()
         self.assertEqual(fake.events[-1]["status"], "Skipped")

@@ -25,7 +25,7 @@
         full: ["M4 12a8 8 0 1 0 2.3-5.7", "M4 4v5h5"],
     };
     const MODE_LABELS = {OFF: "Off", MONITOR: "Monitor only", AUTO_SYNC: "Automatic sync"};
-    const STATE_TONE = {Completed: "ok", "Completed With Conflicts": "warn", Running: "busy", Queued: "busy", Failed: "error", Blocked: "error", Cancelled: "muted"};
+    const STATE_TONE = {"Budget Reached": "warn", Completed: "ok", "Completed With Conflicts": "warn", Running: "busy", Queued: "busy", Failed: "error", Blocked: "error", Cancelled: "muted"};
     const FUNCTION_TEXT = "Start / Update migrates the object fields included in the active mapping. Existing records are matched by source identity, bindings remain stable, and newly mapped fields are backfilled subject to validation and conflict rules.";
 
     function el(tag, attrs = {}, ...children) {
@@ -175,12 +175,13 @@
         function renderSubscription() {
             const svc = state.data.service;
             const on = svc.allowed && !svc.paused;
-            const label = !svc.allowed ? "Polling is off in Settings" : svc.mode === "MONITOR" ? "Monitor only: reads and reports, no data changes" : "Polling / Update";
+            const active = on && svc.scheduler_active;
+            const label = svc.allowed && !svc.scheduler_active ? "Scheduler disabled" : !svc.allowed ? "Polling is off in Settings" : svc.mode === "MONITOR" ? "Monitor only: reads and reports, no data changes" : "Polling / Update";
             const button = el("button", {type: "button", role: "switch", class: "hero-sync-global", "aria-checked": on ? "true" : "false", disabled: (!svc.allowed || state.busy) || undefined,
                 title: tr(svc.allowed ? "Switches automatic processing on or off. Polling settings stay unchanged." : "Choose a polling mode under Settings first."),
                 onclick: () => setService({enabled: on ? 0 : 1})}, el("span", {class: "hero-sync-dot", "aria-hidden": "true"}), tr(on ? "Sync on" : "Sync off"));
             put(subscription, 
-                el("span", {class: `hero-sync-lamp ${on ? "is-on" : ""}`, "aria-hidden": "true"}),
+                el("span", {class: `hero-sync-lamp ${active ? "is-on" : ""}`, "aria-hidden": "true"}),
                 el("div", {class: "hero-sync-subscription-text"}, el("h3", {text: tr("Subscription Service")}), el("p", {text: tr(label)})),
                 button);
         }
@@ -253,7 +254,10 @@
             const monitorNote = svc.mode === "MONITOR" ? el("p", {class: "hero-sync-hint", text: tr("Monitor only reads Contacts and Projects; it never changes data.")}) : null;
             put(service, 
                 el("div", {class: "hero-sync-service-grid"},
-                    el("div", {class: "hero-sync-sub hero-sync-sub-areas"}, el("h3", {text: tr("Sync Services")}), el("p", {class: "hero-sync-hint", text: tr("Enable or disable synchronization per area.")}), switches, monitorNote),
+                    el("div", {class: "hero-sync-sub hero-sync-sub-areas"}, el("h3", {text: tr("Sync Services")}), el("p", {class: "hero-sync-hint", text: tr("Enable or disable synchronization per area.")}), switches, monitorNote,
+                        el("button", {type: "button", onclick: showSyncEvidence, text: tr("Execution status")}),
+                        svc.mode === "OFF" ? el("button", {type: "button", disabled: state.busy,
+                            onclick: reviewBoundSync, text: tr("Compare bound objects once")}) : null),
                     el("div", {class: "hero-sync-sub hero-sync-sub-mode"},
                         el("div", {class: "hero-sync-row"}, el("h3", {text: tr("Mode")}), el("span", {class: `hero-sync-mode mode-${String(svc.mode).toLowerCase()}`, text: tr(MODE_LABELS[svc.mode] || svc.mode)})),
                         readonly("Exec. time", svc.execution_window || tr("Any time")),
@@ -264,11 +268,64 @@
                     el("div", {class: "hero-sync-sub hero-sync-sub-info"}, el("h3", {text: tr("Service Information")}),
                         readonly("Polling interval", String(svc.interval_minutes), "min"),
                         readonly("Page size", String(svc.page_size)),
+                        readonly("Page Overlap", String(svc.page_overlap)),
+                        readonly("Fast Mode", tr(svc.fast_available ? "Available" : "Unavailable")),
                         readonly("Retry limit", String(svc.retry_limit)),
                         readonly("Retry backoff", String(svc.retry_backoff_seconds), "sec"),
                         readonly("Requests per minute", String(svc.rate_limit)),
                         el("p", {class: "hero-sync-hint", text: tr("Edit these values under Settings.")}))),
                 svc.sync_error ? el("p", {class: "hero-sync-error", text: diagnostic(svc.sync_error)}) : null);
+        }
+
+        async function showSyncEvidence() {
+            try {
+                const plan = await call("runtime_plan_status", {source_instance: state.data.source_instance, include_execution: 1});
+                const last = plan.last_execution;
+                const lines = [
+                    [tr("Runtime plan"), [plan.state, plan.generation].filter(Boolean).join(" · ")],
+                    [tr("Read service"), plan.graphql_service],
+                    [tr("Mapping version"), plan.graphql_mapping],
+                    [tr("Confirmed cursor fingerprint"), plan.confirmed_position],
+                    [tr("Run"), last && [last.sync_run_id, last.state].join(" · ")],
+                    [tr("Processed"), last?.processed_count],
+                    [tr("Skipped"), last?.skipped_count],
+                ];
+                frappe.msgprint(lines.map(pair => pair.map(value =>
+                    frappe.utils.escape_html(String(value ?? "—"))).join(": ")).join("<br>"));
+            } catch (error) {
+                say(error.message, "error");
+            }
+        }
+
+        async function reviewBoundSync() {
+            const source = state.data.source_instance;
+            const revision = state.data.source_revision;
+            try {
+                const plan = await call("runtime_plan_status", {source_instance: source});
+                if (plan.state !== "APPROVED") {
+                    say(tr("An approved runtime plan is required."), "error");
+                    return;
+                }
+                const approval = {request_id: crypto.randomUUID(), plan_key: plan.plan_key,
+                    expected_plan_generation: plan.generation, expected_source_revision: revision,
+                    scope: "BOUND_OBJECTS", confirmed: 1};
+                const details = [source, plan.graphql_service, plan.graphql_mapping, plan.generation]
+                    .map(value => frappe.utils.escape_html(String(value))).join(" · ");
+                frappe.confirm(format("Compare and update up to 50 existing bound objects? {0}", details), async () => {
+                    state.busy = true; renderAll();
+                    try {
+                        const result = await call("start_sync_once", approval, "POST");
+                        say(format("Run {0}: {1}. Reserved {2}/50, processed {3}, skipped {4}.",
+                            result.run, result.status, result.reserved, result.processed, result.skipped));
+                    } catch (error) {
+                        say(error.message, "error");
+                    } finally {
+                        state.busy = false; await refresh();
+                    }
+                });
+            } catch (error) {
+                say(error.message, "error");
+            }
         }
 
         async function setService(args) {
@@ -379,6 +436,7 @@
             if (run.project_phase_state && run.action === "Project Migration") facts.push(["Projects phase", phaseSummary(run.project_phase_state, run.project_phase_processed)]);
             if (Number(run.testing_enabled)) {
                 facts.push(["Testing", testingSummary(run)]);
+                if (run.identity_limit) facts.push(["Reserved identities", `${run.reserved_identities}/${run.identity_limit}`]);
                 facts.push(...testingAreaSummaries(run));
             }
             const actions = el("div", {class: "hero-sync-detail-actions"},

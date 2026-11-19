@@ -115,14 +115,16 @@ class RecordLimitedSource:
         if remaining <= 0: return SourcePage((), None)
         page = reader(offset)
         self.executed_actions += 1
-        self.records_received += len(page.records)
-        prior['received'] += len(page.records)
+        received = (getattr(page, "offset_checkpoint", None) or {}).get("count", len(page.records))
+        self.records_received += received
+        prior['received'] += received
         rows = page.records[:remaining]
         prior['processed'] += len(rows)
         reached = prior['processed'] >= self.maximum
         prior['status'] = 'LIMIT_REACHED' if reached else 'COMPLETED'
         if reached: self.status = 'LIMIT_REACHED'
-        return SourcePage(tuple(rows), None if reached else page.next_offset)
+        return SourcePage(tuple(rows), None if reached else page.next_offset,
+                          getattr(page, "offset_checkpoint", None), getattr(page, "changed_overlap_ids", frozenset()))
 
     def customers(self, offset=0): return self._page('HeroCustomers', self.source.customers, offset)
     def projects(self, offset=0): return self._page('HeroProjectMatches', self.source.projects, offset)
@@ -196,12 +198,16 @@ def relationship_fingerprint(operation, record, customer_paths=()):
     return sha256(json.dumps(value, sort_keys=True, separators=(',', ':'), default=str).encode()).hexdigest()
 
 
-def prepare_project_cohort(client, read, maximum):
+def prepare_project_cohort(client, read, maximum, *, page_overlap=0):
     """Read a bounded anchor sample using the selected approved project reader."""
     from hero_integration.services.direct_runtime import fetch_page
     validate_limit(maximum)
     if maximum is None:
         raise ValueError('A related test sample requires an explicit project limit.')
+    from hero_integration.services.offset_pagination import advance, validate_overlap
+    if page_overlap:
+        validate_overlap(page_overlap, read.page_size)
+    window = None
     rows, offset, seen, pages = [], 0, set(), 0
     while len(rows) < maximum:
         if pages >= 1000:
@@ -210,6 +216,12 @@ def prepare_project_cohort(client, read, maximum):
         pages += 1
         if not page:
             break
+        if page_overlap:
+            window = advance(page, offset=offset, size=read.page_size, overlap=page_overlap,
+                             previous=window.checkpoint if window else None, identity=read.plan.source_identity)
+            if window.changed:
+                raise ValueError("A project changed while selecting the related test cohort; restart selection.")
+            page = window.rows
         identities = [str(read.plan.source_identity(row)) for row in page]
         if any(not identity for identity in identities) or len(set(identities)) != len(identities) or seen.intersection(identities):
             raise ValueError('The project sample reader repeated or omitted an identity.')
@@ -219,7 +231,7 @@ def prepare_project_cohort(client, read, maximum):
         if any(type(row.get('is_deleted')) is not bool for row in page):
             raise ValueError('The project sample requires an explicit project deletion state.')
         rows.extend([row for row in page if not row['is_deleted']][:maximum - len(rows)])
-        offset += len(page)
+        offset = window.next_offset if window else offset + len(page)
     return project_cohort(rows, read.plan, maximum)
 
 
@@ -309,9 +321,12 @@ class RelatedProjectSource(RecordLimitedSource):
             page = reader(offset)
             self.scan_pages[operation] = self.scan_pages.get(operation, 0) + 1
             self.executed_actions += 1
-            self.records_received += len(page.records)
-            prior['received'] += len(page.records)
-            if page.next_offset is not None and (type(page.next_offset) is not int or page.next_offset <= offset or not page.records):
+            received = (getattr(page, "offset_checkpoint", None) or {}).get("count", len(page.records))
+            self.records_received += received
+            prior['received'] += received
+            if page.next_offset is not None and (
+                    type(page.next_offset) is not int or page.next_offset <= offset
+                    or (not page.records and not getattr(page, "offset_checkpoint", None))):
                 raise ValueError('Related test source pagination did not advance safely.')
             values = [row.get('id') if isinstance(row, dict) else None for row in page.records]
             if any(not isinstance(value, (str, int)) or isinstance(value, bool) or not str(value).strip() for value in values):
@@ -344,7 +359,8 @@ class RelatedProjectSource(RecordLimitedSource):
                     self.status = 'BLOCKED'
             else:
                 prior['status'] = ''
-            return SourcePage(rows, None if all_found else page.next_offset)
+            return SourcePage(rows, None if all_found else page.next_offset,
+                              getattr(page, "offset_checkpoint", None), getattr(page, "changed_overlap_ids", frozenset()))
 
     def customers(self, offset=0):
         return self._related_page('HeroCustomers', self.source.customers, offset, field='id',

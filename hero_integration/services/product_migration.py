@@ -23,6 +23,7 @@ import json
 import time
 
 import frappe
+from hero_integration.services.execution_budget import BudgetReached, current_budget, mapped_dependencies
 
 from hero_integration.services import direct_operations as direct
 from hero_integration.services import direct_runtime as runtime
@@ -448,8 +449,8 @@ def apply_price(item_code: str, price_list: str, plan: dict) -> dict:
 # ---------------------------------------------------------------- run
 
 def reset() -> None:
+    # The accepting transaction also owns the run, parent linkage and after-commit enqueue.
     frappe.db.set_default(STATE_KEY, "")
-    frappe.db.commit()
 
 
 def _state() -> dict:
@@ -480,7 +481,7 @@ def fetch_page(client, offset: int, size: int = PAGE_SIZE, read=None) -> list[di
 
 
 def sync_products(client=None, *, source_instance: str | None = None, time_budget: int = TIME_BUDGET_SECONDS,
-                  should_stop=None, max_pages: int = 2000, read=None, progress=None, record_limit=None, run_name=None) -> dict:
+                  should_stop=None, max_pages: int = 2000, read=None, progress=None, record_limit=None, run_name=None, page_overlap=0) -> dict:
     """Process articles from the saved offset until done, stopped or the time budget ends.
 
     ``source_instance`` is the HERO source ``client`` reads from; lookups, new
@@ -494,6 +495,9 @@ def sync_products(client=None, *, source_instance: str | None = None, time_budge
         raise RuntimeError("A HERO source instance is required.")
     read = read or runtime.resolve_read(OPERATION, source_instance)
     from hero_integration.services.migration_testing import bounded_rows, processed, test_state, save_test_state, validate_checkpoint
+    from hero_integration.services.offset_pagination import advance, validate_overlap
+    if page_overlap:
+        validate_overlap(page_overlap, read.page_size)
     state = test_state(run_name, OPERATION) if record_limit is not None else _state()
     save = (lambda value: save_test_state(run_name, OPERATION, value)) if record_limit is not None else _save
     if record_limit is not None:
@@ -501,9 +505,10 @@ def sync_products(client=None, *, source_instance: str | None = None, time_budge
         if state.get('done'):
             return state
     # A finished pass, another source or a changed mapping starts over (unchanged articles are skipped).
-    if state.get("done") or state.get("source_instance") != source_instance or state.get("mapping") != read.mapping_version:
+    if (state.get("done") or state.get("source_instance") != source_instance
+            or state.get("mapping") != read.mapping_version or state.get("page_overlap", 0) != page_overlap):
         state = {}
-    state.update(source_instance=source_instance, mapping=read.mapping_version, mapping_origin=read.origin)
+    state.update(source_instance=source_instance, mapping=read.mapping_version, mapping_origin=read.origin, page_overlap=page_overlap)
     counts = state.setdefault("counts", {})
     state.update(done=False, stopped=False, last_error=None)
     links, masters = _links(source_instance), _Masters()
@@ -517,18 +522,29 @@ def sync_products(client=None, *, source_instance: str | None = None, time_budge
             state["stopped"] = True
             break
         page_size = min(read.page_size, record_limit - processed(counts)) if record_limit is not None else read.page_size
+        if page_overlap:
+            page_size = read.page_size
         received = fetch_page(client, offset, page_size, read)
+        window = None
+        if page_overlap:
+            window = advance(received, offset=offset, size=page_size, overlap=page_overlap,
+                             previous=state.get("offset_window"), identity=lambda row: row.get("product_id"))
+            if window.changed:
+                links = _links(source_instance)
         fingerprint = hashlib.sha256(json.dumps(received, sort_keys=True, separators=(',', ':'),
                                                  default=str).encode()).hexdigest() if received else ''
         if fingerprint and state.get('last_page_fingerprint') == fingerprint:
             raise ValueError('HERO repeated a product page; pagination cannot safely continue.')
-        rows = bounded_rows(state, received, record_limit)
+        rows = bounded_rows(state, window.rows if window else received, record_limit)
         counts["requests"] = counts.get("requests", 0) + 1
         for row in rows:
             key = str(row.get("product_id") or "")
             if not key:
                 counts["skipped_no_id"] = counts.get("skipped_no_id", 0) + 1
                 continue
+            if budget := current_budget():
+                scoped_row = {**row, '_hero_source_instance': source_instance}
+                budget.reserve_many([(SOURCE_TYPE, key), *mapped_dependencies(read.plan, scoped_row, 'Item')])
             try:
                 warnings = []
                 result = upsert(row, links.get(key), masters, source_instance, read=read, relation_warnings=warnings)
@@ -540,6 +556,8 @@ def sync_products(client=None, *, source_instance: str | None = None, time_budge
                         action='product_relation_review', target_doctype='Item', target_name=target_name,
                         detail='Article imported; a related price requires a stable source identity.')
                 frappe.db.commit()
+            except BudgetReached:
+                raise
             except Exception as error:
                 frappe.db.rollback()
                 masters = _Masters()  # rollback invalidates both master existence and Supplier-name caches
@@ -553,7 +571,11 @@ def sync_products(client=None, *, source_instance: str | None = None, time_budge
             counts[result] = counts.get(result, 0) + 1
             if result != 'failed' and warnings:
                 counts['pending_review'] = counts.get('pending_review', 0) + 1
-        offset += len(rows)
+        if window:
+            state["offset_window"] = window.checkpoint
+            offset = window.next_offset or 0
+        else:
+            offset += len(rows)
         state["offset"] = offset
         if received:
             state['last_page_fingerprint'] = fingerprint

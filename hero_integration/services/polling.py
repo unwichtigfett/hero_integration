@@ -1,7 +1,7 @@
 """Bounded polling modes; OFF never enters this module from the scheduler."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timezone as dt_timezone
 import re
 import time
@@ -28,6 +28,7 @@ class MonitorResult:
     incomplete_sources: tuple[str, ...] = ()
     customer_next_offset: int = 0
     project_next_offset: int = 0
+    offset_checkpoints: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -35,6 +36,7 @@ class _PageCount:
     records: int
     next_offset: int
     incomplete: bool
+    checkpoint: dict | None = None
 
 
 def effective_mode(settings) -> str:
@@ -54,6 +56,16 @@ def runtime_plan(settings) -> dict[str, object]:
     timezone = str(getattr(settings, "polling_timezone", "UTC") or "UTC").strip()
     full_inventory = bool(getattr(settings, "polling_full_inventory", 0))
     unsupported = _invalid_numeric_settings(settings)
+    from hero_integration.services.offset_pagination import validate_overlap
+    page_size = _bounded_value(getattr(settings, "polling_page_size", 100), 1, 1000, 100)
+    read_mode = getattr(settings, "polling_read_mode", "") or "NORMAL"
+    try:
+        overlap = validate_overlap(getattr(settings, "polling_page_overlap", 0), page_size)
+    except ValueError:
+        overlap = 0
+        unsupported.append("setting polling_page_overlap")
+    if read_mode != "NORMAL":
+        unsupported.append("Fast Mode requires a verified HERO change-discovery contract.")
     if strategy != "OFFSET":
         unsupported.append("pagination strategy " + strategy)
     if not _timezone_is_valid(timezone):
@@ -64,7 +76,7 @@ def runtime_plan(settings) -> dict[str, object]:
         "execution_window": str(getattr(settings, "polling_execution_window", "") or "").strip(),
         "interval_minutes": _bounded_value(getattr(settings, "polling_interval_minutes", 60), 1, 1440, 60),
         "bootstrap": bool(getattr(settings, "polling_bootstrap", 0)),
-        "page_size": _bounded_value(getattr(settings, "polling_page_size", 100), 1, 1000, 100),
+        "page_size": page_size, "page_overlap": overlap, "read_mode": read_mode, "fast_available": False,
         "pagination_strategy": strategy, "allow_backfill": bool(getattr(settings, "polling_allow_backfill", 0)),
         "full_inventory": full_inventory, "max_pages": MAX_FULL_INVENTORY_PAGES if full_inventory else 1,
         "reconciliation": bool(getattr(settings, "polling_reconciliation", 0)),
@@ -111,7 +123,7 @@ def scheduler_due(settings, now: datetime, last_success: object = None, *, syste
     return elapsed < 0 or elapsed >= interval * 60
 
 
-def monitor(source, plan: dict[str, object] | None = None, *, customer_offset: int = 0, project_offset: int = 0, record_observer=None) -> MonitorResult:
+def monitor(source, plan: dict[str, object] | None = None, *, customer_offset: int = 0, project_offset: int = 0, record_observer=None, offset_checkpoints=None) -> MonitorResult:
     """Read selected source pages with a finite, progress-checked policy."""
     plan = plan or {"sources": list(POLLING_SOURCES), "max_pages": MAX_FULL_INVENTORY_PAGES, "rate_limit": 10000}
     minimum_interval = 60 / max(int(plan.get("rate_limit", 10000)), 1)
@@ -119,15 +131,19 @@ def monitor(source, plan: dict[str, object] | None = None, *, customer_offset: i
     page_size = plan.get("page_size")
     if type(page_size) is not int or not 1 <= page_size <= 1000:
         page_size = None
+    overlap = plan.get("page_overlap", 0)
+    offset_checkpoints = offset_checkpoints or {}
     counts: dict[str, _PageCount] = {}
     if "HeroCustomers" in plan["sources"]:
-        counts["HeroCustomers"] = _count_pages(source.customers, customer_offset, max_pages, minimum_interval, record_observer, "HeroCustomers", page_size)
+        counts["HeroCustomers"] = _count_pages(source.customers, customer_offset, max_pages, minimum_interval, record_observer, "HeroCustomers", page_size, overlap, offset_checkpoints.get("HeroCustomers"))
     if "HeroProjectMatches" in plan["sources"]:
-        counts["HeroProjectMatches"] = _count_pages(source.projects, project_offset, max_pages, minimum_interval, record_observer, "HeroProjectMatches", page_size)
+        counts["HeroProjectMatches"] = _count_pages(source.projects, project_offset, max_pages, minimum_interval, record_observer, "HeroProjectMatches", page_size, overlap, offset_checkpoints.get("HeroProjectMatches"))
     incomplete = tuple(name for name, item in counts.items() if item.incomplete)
     customers = counts.get("HeroCustomers", _PageCount(0, 0, False))
     projects = counts.get("HeroProjectMatches", _PageCount(0, 0, False))
-    return MonitorResult(customers.records, projects.records, source.source_instance, incomplete, customers.next_offset, projects.next_offset)
+    return MonitorResult(customers.records, projects.records, source.source_instance, incomplete,
+                         customers.next_offset, projects.next_offset,
+                         {name: item.checkpoint for name, item in counts.items() if item.checkpoint})
 
 
 def run_monitor() -> None:
@@ -147,7 +163,6 @@ def run_monitor() -> None:
         detail = "Materialized monitoring observed one bounded read page; full coverage is not claimed and no business records were written."
         event = _record_event("MONITOR", "Incomplete", detail, result)
         settings = frappe.get_single("HERO Integration Settings")
-        settings.last_successful_sync = frappe.utils.now_datetime()
         settings.sync_status, settings.sync_error = "MONITOR incomplete", ""
         settings.save(ignore_permissions=True)
         if plan["notifications"]:
@@ -165,18 +180,18 @@ def run_monitor() -> None:
         frappe.log_error(title="HERO materialized monitoring failed")
 
 
-def record_scheduler_outcome(mode: str, status: str, detail: str, *, run: str = "", source_instance: str = "") -> str | None:
+def record_scheduler_outcome(mode: str, status: str, detail: str, *, run: str = "", sync_run: str = "", source_instance: str = "") -> str | None:
     """Record each queued run; deduplicate repeated scheduler skips or failures."""
     import frappe
 
     settings = frappe.get_single("HERO Integration Settings")
     source_instance = source_instance or str(getattr(settings, "hero_source_instance", "") or "default")
     label = f"{mode} {status.lower()}"
-    if run:
-        event = _record_event(mode, status, detail, run=run, source_instance=source_instance)
+    if run or sync_run:
+        event = _record_event(mode, status, detail, run=run, sync_run=sync_run, source_instance=source_instance)
         # A started run ends the previous skip/failure state: the next identical failure is new again
         # and the page no longer shows the outdated error. Written directly; no Settings validation.
-        frappe.db.set_single_value("HERO Integration Settings", {"sync_status": label, "sync_error": ""})
+        frappe.db.set_single_value("HERO Integration Settings", {"sync_status": label, "sync_error": detail if status in {"Failed", "Incomplete"} else ""})
         return event
     if (getattr(settings, "sync_status", "") or "") == label and (getattr(settings, "sync_error", "") or "") == detail:
         return None
@@ -187,13 +202,13 @@ def record_scheduler_outcome(mode: str, status: str, detail: str, *, run: str = 
 
 
 def _record_event(mode: str, status: str, detail: str, result: MonitorResult | None = None, *,
-                  run: str = "", source_instance: str = "") -> str:
+                  run: str = "", sync_run: str = "", source_instance: str = "") -> str:
     import frappe
 
     if not source_instance and result is None:
         settings = frappe.get_single("HERO Integration Settings")
         source_instance = str(getattr(settings, "hero_source_instance", "") or "default")
-    event = frappe.get_doc({"doctype": "HERO Polling Event", "mode": mode, "status": status, "run": run or None,
+    event = frappe.get_doc({"doctype": "HERO Polling Event", "mode": mode, "status": status, "run": run or None, "sync_run": sync_run or None,
         "source_instance": result.source_instance if result else source_instance, "customer_records": result.customer_records if result else 0,
         "project_records": result.project_records if result else 0, "detail": detail})
     event.insert(ignore_permissions=True)
@@ -258,7 +273,17 @@ def _notify_polling_event(event_name: str, detail: str) -> None:
             "email_content": recipient_diagnostic(user, detail)}).insert(ignore_permissions=True)
 
 
-def _count_pages(reader, offset: int, max_pages: int, minimum_interval: float, record_observer=None, operation: str = "", page_size: int | None = None) -> _PageCount:
+def _count_pages(reader, offset: int, max_pages: int, minimum_interval: float, record_observer=None, operation: str = "", page_size: int | None = None, overlap: int = 0, offset_window=None) -> _PageCount:
+    from hero_integration.services.offset_pagination import advance, validate_overlap
+    from hero_integration.sources.hero import SourcePage
+    if overlap:
+        if offset and not offset_window:
+            raise PaginationProgressError("Overlapping offset scans require their previous page checkpoint.")
+        if page_size is None:
+            raise PaginationProgressError("Page Overlap requires an approved offset page size.")
+        actual = getattr(getattr(reader, "__self__", None), "contract", None)
+        page_size = min(page_size, getattr(actual, "page_size", page_size))
+        validate_overlap(overlap, page_size)
     count = pages = 0
     seen_offsets: set[int] = set()
     seen_identities: set[str] = set()
@@ -278,13 +303,24 @@ def _count_pages(reader, offset: int, max_pages: int, minimum_interval: float, r
             raise PaginationProgressError("HERO response exceeds the configured page size.")
         if page.next_offset is not None and (type(page.next_offset) is not int or page.next_offset <= current_offset or not page.records):
             raise PaginationProgressError("HERO pagination did not advance; monitoring stopped safely.")
+        physical_count = len(page.records)
+        if overlap and (offset_window or page.next_offset is not None):
+            if page.next_offset is not None and page.next_offset != current_offset + physical_count:
+                raise PaginationProgressError("The reader does not expose contiguous offset positions.")
+            try:
+                window = advance(page.records, offset=current_offset, size=page_size, previous=offset_window, overlap=overlap)
+            except ValueError as exc:
+                raise PaginationProgressError(str(exc)) from exc
+            next_offset = window.next_offset if page.next_offset is not None else None
+            page = SourcePage(window.rows, next_offset, window.checkpoint, window.changed)
+            offset_window = window.checkpoint
         identities = []
         for record in page.records:
             identity = record.get('id') if isinstance(record, dict) else None
             if not isinstance(identity, (int, str)) or isinstance(identity, bool) or not str(identity).strip():
                 raise PaginationProgressError("HERO source identity is missing or invalid; monitoring stopped safely.")
             identities.append(str(identity))
-        if len(set(identities)) != len(identities) or seen_identities.intersection(identities):
+        if len(set(identities)) != len(identities) or seen_identities.intersection(identities).difference(getattr(page, "changed_overlap_ids", ())):
             raise PaginationProgressError("HERO source identity repeated across pages; monitoring stopped safely.")
         seen_identities.update(identities)
         count += len(page.records)
@@ -292,11 +328,11 @@ def _count_pages(reader, offset: int, max_pages: int, minimum_interval: float, r
             for record in page.records:
                 record_observer(operation, record)
         if page.next_offset is None:
-            if page_size is not None and len(page.records) == page_size:
+            if page_size is not None and physical_count == page_size:
                 return _PageCount(count, current_offset, True)
             return _PageCount(count, 0, False)
         current_offset = page.next_offset
-    return _PageCount(count, current_offset, True)
+    return _PageCount(count, current_offset, True, offset_window if overlap else None)
 
 
 def _as_datetime(value: object) -> datetime | None:

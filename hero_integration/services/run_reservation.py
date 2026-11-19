@@ -9,7 +9,7 @@ from __future__ import annotations
 LOCK_NAME = "hero_integration:active_run"
 SLOT_DOCTYPE = "HERO Integration Sync State"
 SLOT_FIELD = "active_run"
-LEGACY_TERMINAL_STATES = frozenset({"Completed", "Completed With Conflicts", "Failed", "Cancelled", "Blocked"})
+LEGACY_TERMINAL_STATES = frozenset({"Completed", "Completed With Conflicts", "Failed", "Cancelled", "Blocked", "Budget Reached"})
 
 
 def acquire(frappe) -> bool:
@@ -51,3 +51,36 @@ def locked_b8_runs(frappe, site: str):
         "SELECT name, sync_run_id FROM `tabHERO Sync Run Ledger` "
         "WHERE site_scope=%s AND state='RUNNING' FOR UPDATE", (site,), as_dict=True,
     )
+
+
+def locked_pending_migrations(frappe):
+    """Include committed intake and sliced file/full runs, which may have no lease."""
+    return frappe.db.sql(
+        "SELECT name FROM `tabHERO Integration Run` WHERE state IN ('Queued','Running') "
+        "ORDER BY name FOR UPDATE", as_dict=True,
+    )
+
+
+def admit_migration(frappe, *, parent="", resume=""):
+    """Serialize acceptance with the sync ledger through the caller's transaction.
+
+    A full run may submit its own next child. A resume is permitted to recover
+    its own lease. Other queued work retains its place.
+    """
+    if not acquire(frappe):
+        raise frappe.ValidationError("The HERO execution slot could not be reserved.")
+    try:
+        slot = locked_legacy_slot(frappe)
+        allowed = {value for value in (parent, resume) if value}
+        if slot and slot not in allowed and legacy_slot_is_active(frappe, slot):
+            raise frappe.ValidationError("Another HERO migration owns the execution slot.")
+        if locked_b8_runs(frappe, frappe.local.site):
+            raise frappe.ValidationError("Another HERO sync run owns the execution slot.")
+        pending = {row.name for row in locked_pending_migrations(frappe)}
+        if pending - allowed:
+            raise frappe.ValidationError("Another HERO migration is queued or running.")
+        if parent and (parent not in pending or
+                       frappe.db.get_value("HERO Integration Run", parent, "action") != "Full Migration"):
+            raise frappe.ValidationError("The owning full migration is no longer active.")
+    finally:
+        release(frappe)

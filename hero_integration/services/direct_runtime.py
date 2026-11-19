@@ -182,14 +182,21 @@ def fetch_page(client, read: DirectRead, offset: int, size: int | None = None) -
         options = ({'selected_paths':read.projection_paths,'preserve_paths':read.projection_preserve_paths}
                    if read.projection_paths is not None else {})
         request = materialize_saved_query(read.snapshot, read.document, page_variables(read, offset, size),**options)
-        return records(read, client.query(request.document, request.variables))
+        rows = records(read, client.query(request.document, request.variables))
+        if len(rows) > size:
+            raise ValueError("Response exceeds the requested direct reader page size.")
+        return rows
     except ValueError:
         raise
     except Exception:
         if size <= 50:
             raise
         half = size // 2
-        return fetch_page(client, read, offset, half) + fetch_page(client, read, offset + half, size - half)
+        first = fetch_page(client, read, offset, half)
+        if len(first) < half:
+            # Let the caller advance by the actual length of a short page.
+            return first
+        return first + fetch_page(client, read, offset + half, size - half)
 
 
 def belongs(operation: str, record: dict) -> bool:
