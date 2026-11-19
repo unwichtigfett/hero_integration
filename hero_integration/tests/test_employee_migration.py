@@ -132,6 +132,46 @@ class TestEmployeeWrites(unittest.TestCase):
         self.write_link.assert_not_called()
         self.assertNotIn('phone', self.user)
 
+    def test_resume_after_local_and_source_edits_preserves_local_employee(self):
+        # Use the real employee writer and baseline guard across both invocations.
+        isolate_direct_materialization(self)
+        checkpoint = {}
+        self.fake.only_for = Mock()
+        self.db.get_value = lambda dt, filters, field: checkpoint.get(filters["defkey"])
+        self.db.set_default = checkpoint.__setitem__
+        self.db.commit, self.db.rollback = Mock(), Mock()
+        self.fake.get_all = lambda dt, **kw: ["de"] if dt == "Language" else self.get_all(dt, **kw)
+        client = SimpleNamespace(query=lambda *a: {"partners": [self.row, {"id": 999}]})
+        with patch.object(em, "preflight", return_value=("Company", "snapshot", "query", "partners")), \
+             patch("hero_integration.services.deferred_references.require_storage"), \
+             patch.object(em, "remember_relationships"):
+            def resume(**kw):
+                return em.sync_employees(client, source_instance="source-a", run_name="run-1", **kw)
+
+            first = resume()
+            employee = next(doc for doc in self.new_docs if doc.doctype == "Employee")
+            self.docs[("Employee", employee.name)] = employee
+            baseline = {"first_name": employee.first_name}
+            self.links["partner"] = Doc(target_name=employee.name, target_field_hashes=json.dumps(baseline),
+                                        target_payload_hash=em._digest(baseline))
+            self.write_link.reset_mock()
+            employee["first_name"] = "Local"
+            self.row.update(first_name="Changed", full_name="Changed Employee")
+            self.assertFalse(resume(time_budget=0)["done"])
+            final = resume()
+            reviewed = resume(continue_on_conflict=True)
+        self.assertTrue(reviewed["done"])
+        self.assertEqual(reviewed["counts"]["conflict"], 2)
+        self.assertEqual(reviewed["source_fingerprints"], first["source_fingerprints"])
+        self.assertEqual(first["done_ids"], [101])
+        self.assertFalse(final["done"])
+        self.assertIn("changed in ERPNext", final["errors"]["101"])
+        self.assertEqual(final["source_fingerprints"], first["source_fingerprints"])
+        self.assertEqual(final["counts"]["unique_processed"], 2)
+        self.assertEqual(employee["first_name"], "Local")
+        self.assertEqual(len(self.new_docs), 1)
+        self.write_link.assert_not_called()
+
     def test_admin_account_cannot_be_adopted(self):
         self.row['user']['email'] = 'Administrator'
         with self.assertRaises(em.EmployeeMigrationBlocked):
@@ -253,6 +293,40 @@ class TestEmployeeResume(unittest.TestCase):
         self.assertEqual(final['counts']['conflict'], 0)
         self.assertNotIn('last_error', final)
 
+    def test_changed_completed_partner_is_rechecked_before_finishing_resume(self):
+        rows = [{'id': 1, 'first_name': 'Ada'}, {'id': 2, 'first_name': 'Lin'}]
+        self.client.query = lambda *args: {'partners': rows}
+        with patch.object(em, 'upsert', side_effect=['added', em.EmployeeMigrationBlocked('Review')]):
+            self.assertFalse(self.run_import()['done'])
+        rows[0]['first_name'] = 'Ida'
+        with patch.object(em, 'upsert', side_effect=['updated', 'added']) as write:
+            state = self.run_import()
+        self.assertEqual([c.args[0]['id'] for c in write.call_args_list], [1, 2])
+        self.assertTrue(state['done'])
+        self.assertEqual(state['counts']['unique_processed'], 2)
+        rows[0]['irrelevant'] = 'outside the mapping'
+        with patch.object(em, 'upsert') as write:
+            self.assertTrue(self.run_import()['done'])
+            write.assert_not_called()
+
+    def test_changed_version_write_failure_blocks_after_independent_rows(self):
+        rows = [{"id": 1, "first_name": "Ada"}, {"id": 2}]
+        self.client.query = lambda *args: {"partners": rows}
+        with patch.object(em, "upsert", side_effect=["added", em.EmployeeMigrationBlocked("Review")]):
+            first = self.run_import()
+        rows[0]["first_name"] = "Ida"
+        with patch.object(em, "upsert", side_effect=[RuntimeError("write failed"), "added"]):
+            failed = self.run_import(continue_on_conflict=True)
+        self.assertFalse(failed["done"])
+        self.assertTrue(failed["last_error"])
+        self.assertEqual(failed["source_fingerprints"]["1"], first["source_fingerprints"]["1"])
+        with patch.object(em, "upsert", return_value="updated") as write:
+            final = self.run_import(continue_on_conflict=True)
+        self.assertEqual([c.args[0]["id"] for c in write.call_args_list], [1])
+        self.assertTrue(final["done"])
+        self.assertEqual(final["counts"]["failed"], 0)
+        self.assertEqual(final["counts"]["unique_processed"], 2)
+
     def test_progress_uses_run_longtext_and_keeps_legacy_checkpoint(self):
         legacy = {'counts': {'added': 1}, 'done_ids': [1], 'outcomes': {'1': 'added'}}
         self.stored[em.STATE_KEY.format('run-1')] = json.dumps(legacy)
@@ -263,7 +337,7 @@ class TestEmployeeResume(unittest.TestCase):
         self.fake.db.set_value = lambda doctype, name, field, value, **kwargs: run_fields.__setitem__(field, value)
         with patch.object(em, 'upsert', return_value='added') as upsert:
             state = self.run_import()
-        self.assertEqual(upsert.call_count, 1)
+        self.assertEqual([c.args[0]["id"] for c in upsert.call_args_list], [1, 2])
         self.assertEqual(state['done_ids'], [1, 2])
         self.assertEqual(json.loads(run_fields['employee_progress_json'])['done_ids'], [1, 2])
         self.assertEqual(json.loads(self.stored[em.STATE_KEY.format('run-1')]), legacy)
