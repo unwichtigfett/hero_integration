@@ -231,11 +231,11 @@ class TestAreaStart(unittest.TestCase):
         start.assert_called_once_with(action="Schedule Migration", dry_run=0, scheduled=False,
                                       graphql_service="SVC-NEW", source_instance="main")
 
-    def test_missing_service_or_active_run_is_explained_and_nothing_starts(self):
+    def test_missing_service_is_explained_and_running_rows_reach_locked_admission(self):
         with self.assertRaisesRegex(ValueError, "Event Migration needs an approved read service"):
             self.start({})
-        with self.assertRaisesRegex(ValueError, "Another HERO run is still queued or running"):
-            self.start({"HeroCalendarEvents": [{"service": "SVC"}]}, existing_runs=True)
+        _, start = self.start({"HeroCalendarEvents": [{"service": "SVC"}]}, existing_runs=True)
+        start.assert_called_once()
 
 
 class TestPendingRelationshipsApi(unittest.TestCase):

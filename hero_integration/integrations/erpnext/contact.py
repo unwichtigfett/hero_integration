@@ -149,10 +149,13 @@ def _set_primary_child(contact, table: str, value_field: str, primary_field: str
     matching = [row for row in rows if _field_value(row, value_field) == value]
     if matching:
         row = matching[0]
-        if not _field_value(row, primary_field):
-            _set_field(row, primary_field, 1)
-            return True
-        return False
+        changed = False
+        for child in rows:
+            desired = int(child is row)
+            if bool(_field_value(child, primary_field)) != bool(desired):
+                _set_field(child, primary_field, desired)
+                changed = True
+        return changed
     primary_rows = [row for row in rows if _field_value(row, primary_field)]
     if len(primary_rows) == 1:
         _set_field(primary_rows[0], value_field, value)

@@ -66,6 +66,14 @@ class FileConflict(TransferError):
 
 # ---------------------------------------------------------------- download
 
+def _byte_count(value):
+    if isinstance(value, str) and value.isascii() and value.isdecimal():
+        return int(value)
+    if type(value) is int and value >= 0:
+        return value
+    return None
+
+
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
@@ -98,19 +106,26 @@ class Downloader:
             raise TransferError("HERO download URL is not on the HERO file path.")
         return url
 
-    def fetch(self, url: str, target: str, expected_size: int | None = None) -> tuple[int, str]:
+    def fetch(self, url: str, target: str, expected_size: int | str | None = None) -> tuple[int, str]:
         """Write ``url`` to ``target``; returns (bytes, md5). Retries 429/5xx/transport."""
         request = urllib.request.Request(self.check_url(url), headers={"Authorization": f"Bearer {self.token_provider()}"})
-        if expected_size and expected_size > self.max_bytes:
+        expected = _byte_count(expected_size)
+        if expected is not None and expected > self.max_bytes:
             raise TransferError(f"File is larger than {self.max_bytes // 2**20} MB.")
         for attempt in range(self.retries + 1):
             try:
-                return self._stream(request, target)
+                size, digest = self._stream(request, target)
+                if expected is None or size == expected:
+                    return size, digest
+                retry, reason = True, "size differs from HERO metadata"
             except urllib.error.HTTPError as error:
                 retry = error.code == 429 or error.code >= 500
                 reason = f"HTTP {error.code}"
             except (urllib.error.URLError, OSError) as error:
                 retry, reason = True, type(error).__name__
+            except TransferError:
+                _remove(target)
+                raise
             _remove(target)
             if not retry or attempt == self.retries:
                 raise TransferError(f"HERO download failed ({reason}).")
@@ -120,8 +135,8 @@ class Downloader:
     def _stream(self, request, target: str) -> tuple[int, str]:
         digest, size = hashlib.md5(usedforsecurity=False), 0
         with self.opener.open(request, timeout=self.timeout) as response, open(target, "wb") as out:
-            declared = response.headers.get("Content-Length")
-            if declared and declared.isdigit() and int(declared) > self.max_bytes:
+            declared = _byte_count(response.headers.get("Content-Length"))
+            if declared is not None and declared > self.max_bytes:
                 raise TransferError(f"File is larger than {self.max_bytes // 2**20} MB.")
             while chunk := response.read(CHUNK):
                 size += len(chunk)
@@ -129,8 +144,7 @@ class Downloader:
                     raise TransferError(f"File is larger than {self.max_bytes // 2**20} MB.")
                 digest.update(chunk)
                 out.write(chunk)
-        if declared and declared.isdigit() and int(declared) != size:
-            _remove(target)
+        if declared is not None and declared != size:
             raise OSError("Download ended before Content-Length.")
         return size, digest.hexdigest()
 
@@ -836,13 +850,14 @@ def transfer(phase: str, *, source_instance: str | None = None, client=None, dow
                     frappe.log_error(title="HERO file transfer failed",
                                      message=f"HERO file {row.get('id')} ({row.get('filename')}): {error}")
                 continue
-            bump("bytes_planned", int(row.get("size") or 0))
+            planned = _byte_count(row.get("size")) or 0
+            bump("bytes_planned", planned)
             if dry_run:
                 mapped_values(read, row)
                 bump("would_update" if link else "would_add")
                 bump(f"target_{(target[0] or 'none').lower()}")
                 continue
-            if shutil.disk_usage(partial_dir).free - int(row.get("size") or 0) < min_free:
+            if shutil.disk_usage(partial_dir).free - planned < min_free:
                 state["last_error"] = "Not enough free disk space; transfer paused."
                 save(state)
                 return state

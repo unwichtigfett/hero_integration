@@ -15,16 +15,17 @@ ROOT = Path(__file__).resolve().parents[2]
 
 class TestReleaseCiGate(unittest.TestCase):
     def run_gate(self, *, offline_status=0, site_status=0, fixture_status=0, offline_count=2, site_count=2,
-                 offline_outcome=None, site_outcome=None, native_outcome=None, native_status=0, stale_site=False):
+                 offline_outcome=None, site_outcome=None, native_outcome=None, native_status=0, stale_site=False,
+                 pytest_outcome=None, pytest_count=1, pytest_status=0):
         function = (ROOT / 'ci/test-gates.sh').read_text()
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             app = root / 'apps/hero_integration'
             (app / 'ci').mkdir(parents=True)
             (app / 'ci/check-test-report.py').write_text((ROOT / 'ci/check-test-report.py').read_text())
-            manifest = {phase: {'critical': [f'synthetic.{phase}.test_0']} for phase in ('offline', 'site', 'native')}
+            manifest = {phase: {'critical': [f'synthetic.{phase}.test_0']} for phase in ('offline', 'pytest', 'site', 'native')}
             (app / 'ci/required-tests.json').write_text(json.dumps(manifest))
-            for phase, count, outcome in [('offline', offline_count, offline_outcome), ('site', site_count, site_outcome), ('native', 6, native_outcome)]:
+            for phase, count, outcome in [('offline', offline_count, offline_outcome), ('pytest', pytest_count, pytest_outcome), ('site', site_count, site_outcome), ('native', 6, native_outcome)]:
                 suite = ET.Element('testsuite')
                 for i in range(count):
                     case = ET.SubElement(suite, 'testcase', classname=f'synthetic.{phase}', name=f'test_{i}')
@@ -40,6 +41,10 @@ if [[ "$1" == ci/run-offline-tests.py ]]; then
   cp "$HERO_TEST_LOG_DIR/offline-fixture.xml" "$3"
   printf "Ran %s tests in 0s\\n" "$OFFLINE_COUNT"
   exit "$OFFLINE_STATUS"
+fi
+if [[ "$1" == ci/run-pytest-functions.py ]]; then
+  cp "$HERO_TEST_LOG_DIR/pytest-fixture.xml" "${2#--junitxml=}"
+  exit "$PYTEST_STATUS"
 fi
 exec "$REAL_PYTHON" "$@"
 ''')
@@ -68,11 +73,20 @@ printf 'GATE_PASSED\\n'
             env = dict(os.environ, MIN_TESTS='1', HERO_TEST_LOG_DIR=tmp,
                        OFFLINE_STATUS=str(offline_status), SITE_STATUS=str(site_status), FIXTURE_STATUS=str(fixture_status),
                        OFFLINE_COUNT=str(offline_count), SITE_COUNT=str(site_count), NATIVE_STATUS=str(native_status), TRACE=str(root / 'trace'),
-                       REAL_PYTHON=sys.executable, STALE_SITE=str(int(stale_site)), SITE='hero-ci.localhost')
+                       REAL_PYTHON=sys.executable, STALE_SITE=str(int(stale_site)), SITE='hero-ci.localhost',
+                       PYTEST_STATUS=str(pytest_status))
             result = subprocess.run(['bash', '-euo', 'pipefail', '-c', script], cwd=root, env=env,
                                     text=True, capture_output=True)
             trace = (root / 'trace').read_text() if (root / 'trace').exists() else ''
             return result, trace
+
+    def test_pytest_required_failure_skip_missing_and_process_error_stop_gate(self):
+        for changes in ({'pytest_outcome': 'failure'}, {'pytest_outcome': 'skipped'},
+                        {'pytest_count': 0}, {'pytest_status': 7}):
+            with self.subTest(changes=changes):
+                result, trace = self.run_gate(**changes)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(trace, '')
 
     def test_offline_failure_is_propagated_before_site_tests(self):
         result, trace = self.run_gate(offline_status=7)

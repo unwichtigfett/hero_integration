@@ -529,8 +529,11 @@ def _claim_run(run) -> bool:
         if locked_b8_runs(frappe, frappe.local.site):
             _block_run(run, "A bound synchronization run is active; migration was not started.")
             return False
+        state = frappe.db.get_value("HERO Integration Run", run.name, "state", for_update=True)
+        if state in TERMINAL_STATES:
+            return False
         now = now_datetime()
-        if active_run == run.name and frappe.db.get_value("HERO Integration Run", run.name, "state", for_update=True) == "Running":
+        if active_run == run.name and state == "Running":
             if run_lease_alive(run.name, now, lock=True):
                 return False
             # A duplicate or retried job of the same run after its worker died.
@@ -539,10 +542,10 @@ def _claim_run(run) -> bool:
         if active_run and active_run != run.name:
             active_state = frappe.db.get_value("HERO Integration Run", active_run, "state", for_update=True)
             if active_state not in TERMINAL_STATES:
-                if run_lease_alive(active_run, now, lock=True):
+                from hero_integration.services.run_reservation import recover_stopped_owner
+                if not recover_stopped_owner(frappe, active_run):
                     _block_run(run, f"Another HERO run is active: {active_run}.")
                     return False
-                _interrupt_run(active_run, now)
         frappe.db.sql(
             "UPDATE `tabSingles` SET `value` = %s WHERE `doctype` = %s AND `field` = %s",
             (run.name, "HERO Integration Sync State", "active_run"),

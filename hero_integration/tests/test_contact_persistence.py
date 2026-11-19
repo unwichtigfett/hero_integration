@@ -52,6 +52,19 @@ class TestDeferredCustomerHooks(unittest.TestCase):
 
 
 class TestContactPersistence(unittest.TestCase):
+    def test_existing_secondary_values_become_unique_primaries(self):
+        from hero_integration.integrations.erpnext.contact import _set_primary_child
+        for table, field, flag in (("email_ids", "email_id", "is_primary"),
+                                   ("phone_nos", "phone", "is_primary_phone"),
+                                   ("phone_nos", "phone", "is_primary_mobile_no")):
+            with self.subTest(flag=flag):
+                rows = [_Document(**{field: "old", flag: 1}), _Document(**{field: "new", flag: 0})]
+                contact = _Document(**{table: rows})
+                self.assertTrue(_set_primary_child(contact, table, field, flag, "new"))
+                self.assertEqual([row[flag] for row in rows], [0, 1])
+                self.assertEqual(len(contact[table]), 2)
+                self.assertFalse(_set_primary_child(contact, table, field, flag, "new"))
+
     def test_home_phone_is_added_once_to_an_exclusive_customer_contact(self):
         customer = _Document(name="CUST-001", customer_primary_contact="CONT-001")
         contact = _Document(

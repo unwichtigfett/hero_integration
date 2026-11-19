@@ -59,7 +59,7 @@ def test_int_overflow_rejected_in_typed_text_and_default_inputs(value):
         validate_argument_values(model, {})
 
 
-@pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf"), 10**400])
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf"), pytest.param(10**400, id="unrepresentable-integer")])
 def test_non_finite_or_unrepresentable_float_rejected(value):
     schema, model = numeric_model("Float")
     with pytest.raises(GraphQLArgumentValueError, match="must be finite"):

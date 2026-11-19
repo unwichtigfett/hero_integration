@@ -85,6 +85,7 @@ def test_file_details_materialize_against_approved_snapshot():
 class TestDownloader(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.dir)
         self.target = os.path.join(self.dir, "x.part")
         sleeper = patch.object(ft.time, "sleep", lambda s: None)
         sleeper.start()
@@ -115,6 +116,7 @@ class TestDownloader(unittest.TestCase):
         downloader, _ = self.make(_Response(b"x" * 2048, length=0), max_bytes=1024)
         with self.assertRaises(ft.TransferError):
             downloader.fetch(URL, self.target)
+        self.assertFalse(os.path.exists(self.target))
         downloader, _ = self.make(max_bytes=1024)
         with self.assertRaises(ft.TransferError):
             downloader.fetch(URL, self.target, expected_size=4096)
@@ -132,6 +134,29 @@ class TestDownloader(unittest.TestCase):
         downloader, opener = self.make(_Response(b"abc", length=10), _Response(b"abcdefghij"))
         self.assertEqual(downloader.fetch(URL, self.target)[0], 10)
         self.assertEqual(len(opener.requests), 2)
+
+    def test_hero_size_mismatch_retries_and_removes_partial_file(self):
+        downloader, opener = self.make(*[_Response(b"abc") for _ in range(3)])
+        with self.assertRaises(ft.TransferError):
+            downloader.fetch(URL, self.target, expected_size=10)
+        self.assertEqual(len(opener.requests), 3)
+        self.assertFalse(os.path.exists(self.target))
+
+    def test_hero_size_retry_success_and_empty_files(self):
+        downloader, _ = self.make(_Response(b"abc"), _Response(b"abcdefghij"))
+        self.assertEqual(downloader.fetch(URL, self.target, expected_size=10)[0], 10)
+        downloader, _ = self.make(_Response(b""))
+        self.assertEqual(downloader.fetch(URL, self.target, expected_size=0)[0], 0)
+
+    def test_unknown_size_and_nonempty_body_with_zero_metadata(self):
+        response = _Response(b"abc")
+        response.headers.clear()
+        downloader, _ = self.make(response)
+        self.assertEqual(downloader.fetch(URL, self.target, expected_size=None)[0], 3)
+        downloader, _ = self.make(*[_Response(b"abc") for _ in range(3)])
+        with self.assertRaises(ft.TransferError):
+            downloader.fetch(URL, self.target, expected_size=0)
+        self.assertFalse(os.path.exists(self.target))
 
 
 def _page(nodes, end, more):
@@ -441,6 +466,29 @@ class TestSourceAndTargetBinding(_FileFixture):
             'target_doctype': 'Project', 'target_name': 'FOREIGN', 'sync_status': 'Synchronized'}
         self.assertNotIn('42', ft._bindings('project', 'Project', 'source-a'))
         self.assertNotIn('88', ft._bindings('project', 'Project', 'source-a'))
+
+    def test_truncated_transfer_preserves_blob_links_and_source_baselines(self):
+        before = copy.deepcopy(self.db.committed)
+        for identity in (5, 7):
+            row = {"id": identity, "uuid": "sample", "filename": "Angebot.pdf", "modified": "2",
+                   "size": 10, "downloadUrl": URL, "category": "offer"}
+            downloader = ft.Downloader("login.hero-software.de", lambda: "fixture", retries=0,
+                                       opener=_Opener(_Response(b"abc", length=3)))
+            state = self.run_transfer([row], {"sample": {"uuid": "sample"}}, downloader=downloader)
+            self.assertEqual(state["counts"].get("failed"), 1)
+            self.assertFalse(state["counts"].get("added") or state["counts"].get("updated"))
+            self.assertEqual(self.db.committed, before)
+            with open(self.path("old.pdf"), "rb") as stream:
+                self.assertEqual(stream.read(), b"old")
+            self.assertFalse(any(name.endswith(".part") for _, _, files in os.walk(self.root) for name in files))
+
+        complete = ft.Downloader("login.hero-software.de", lambda: "fixture", retries=0,
+                                 opener=_Opener(_Response(b"0123456789")))
+        state = self.run_transfer([row], {"sample": {"uuid": "sample"}}, downloader=complete)
+        self.assertEqual(state["counts"].get("added"), 1)
+        link = next(link for link in self.db.committed["HERO Integration Link"].values() if link["source_id"] == "7")
+        self.assertEqual(link["source_payload_hash"], ft.source_hash(row))
+        self.assertEqual(link["sync_status"], "Synchronized")
 
     def test_new_file_link_records_the_run_source(self):
         row = {"id": 7, "uuid": "u7", "filename": "Rechnung.pdf", "modified": "1", "size": 3,

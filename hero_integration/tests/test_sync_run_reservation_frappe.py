@@ -48,6 +48,27 @@ class TestSyncRunReservationMariaDB(IntegrationTestCase):
         frappe.set_user(self.original_user)
         super().tearDown()
 
+    def test_stopped_worker_is_fenced_after_new_admission(self):
+        from datetime import timedelta
+        from unittest.mock import patch
+        from frappe.utils import now_datetime
+        from hero_integration.services import migration, run_reservation
+
+        run = frappe.get_doc({'doctype': 'HERO Integration Run', 'action': 'Customer Migration',
+                              'mode': 'Execute', 'state': 'Queued'}).insert()
+        self.legacy_names.append(run.name)
+        frappe.db.commit()
+        self.assertTrue(migration._claim_run(run))
+        frappe.db.set_value('HERO Integration Run', run.name, 'lease_expires_on', now_datetime() - timedelta(seconds=1))
+        with patch('frappe.utils.background_jobs.get_job_status', return_value='started'):
+            with self.assertRaises(frappe.ValidationError):
+                run_reservation.admit_migration(frappe)
+        with patch('frappe.utils.background_jobs.get_job_status', return_value='failed'):
+            run_reservation.admit_migration(frappe)
+        self.assertEqual(frappe.db.get_value('HERO Integration Run', run.name, 'state'), 'Failed')
+        self.assertFalse(migration._claim_run(run))
+        self.assertFalse(migration._locked_active_run())
+
     def test_two_distinct_run_ids_get_only_one_site_reservation(self):
         start, results = Barrier(2), Queue()
         def claim(name):
