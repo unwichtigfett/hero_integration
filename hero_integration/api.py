@@ -9,17 +9,8 @@ from uuid import uuid4
 import frappe
 
 from hero_integration.services.localized_error import translate_error
+from hero_integration.services.run_reservation import NATIVE_ACTIONS as ACTIONS
 
-
-ACTIONS = {
-    "Customer Migration",
-    "Project Migration",
-    "Cheap Data Migration",
-    "Full Data Migration",
-    "Sync",
-    "Projection Migration",
-    "Schedule Migration",
-}
 TERMINAL_STATES = {"Completed", "Completed With Conflicts", "Failed", "Cancelled", "Blocked", "Budget Reached"}
 MUTATION_EXECUTION_DISABLED = "HERO_MUTATION_EXECUTION_DISABLED"
 ACTIVE_MUTATION_RESERVATION = "active"
@@ -464,7 +455,8 @@ def cancel_run(run_name: str) -> dict[str, str]:
 def resume_run(run_name: str) -> dict[str, str]:
     frappe.only_for("System Manager")
     run = frappe.get_doc("HERO Integration Run", run_name)
-    if run.state not in {"Failed", "Cancelled", "Blocked"}:
+    recover_running = run.state == "Running" and getattr(run, "action", "") in ACTIONS
+    if not recover_running and run.state not in {"Failed", "Cancelled", "Blocked"}:
         frappe.throw(frappe._("Only failed, cancelled, or blocked runs can resume."))
     from hero_integration.services.file_migration import RUN_ACTIONS, SourceBindingError, resume as resume_file_run
 
@@ -481,7 +473,11 @@ def resume_run(run_name: str) -> dict[str, str]:
     from hero_integration.services.migration import _assert_checkpoint_contract
     from hero_integration.services.run_reservation import admit_migration
     from hero_integration.services.file_migration import _parent_run
-    admit_migration(frappe, parent=_parent_run(run.name), resume=run.name)
+    if recover_running:
+        admit_migration(frappe, parent=_parent_run(run.name), resume=run.name, recover_running=True)
+        run.reload()
+    else:
+        admit_migration(frappe, parent=_parent_run(run.name), resume=run.name)
     _assert_checkpoint_contract(run, lock=True)
     validate_run_mappings(run)
     # Replay from the beginning through durable identity links. Offset-only
@@ -638,16 +634,12 @@ def sync_page_state() -> dict[str, object]:
 def sync_area_start(area: str) -> dict[str, object]:
     """Start or update one data area with the newest approved read service of the active mapping."""
     frappe.only_for("System Manager")
-    from hero_integration.services.sync_page import ACTIVE_STATES
-
     from hero_integration.services.file_migration import AREA_KEYS
 
     key = str(area or "").strip().lower()
     instance = _configured_source_instance()
     _assert_manual_prerequisite(key, instance)
     if key in AREA_KEYS:
-        if frappe.db.exists("HERO Integration Run", {"state": ["in", list(ACTIVE_STATES)]}):
-            frappe.throw(frappe._("Another HERO run is still queued or running. Start this area when it has finished."))
         from hero_integration.services.file_migration import SourceBindingError, start
 
         try:
@@ -655,8 +647,6 @@ def sync_area_start(area: str) -> dict[str, object]:
         except SourceBindingError as error:
             frappe.throw(frappe._(str(error)))
     item = _sync_area(area)
-    if frappe.db.exists("HERO Integration Run", {"state": ["in", list(ACTIVE_STATES)]}):
-        frappe.throw(frappe._("Another HERO run is still queued or running. Start this area when it has finished."))
     services = _sync_area_read_services(instance).get(item.operation) or []
     if not services:
         frappe.throw(_sync_area_blocker(item, instance, translate=True))

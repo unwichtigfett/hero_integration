@@ -1,5 +1,11 @@
 {
   "offline": {
+    "file length and contact primary changes": [
+      "hero_integration.tests.test_file_transfer.TestDownloader.test_hero_size_mismatch_retries_and_removes_partial_file",
+      "hero_integration.tests.test_file_transfer.TestDownloader.test_hero_size_retry_success_and_empty_files",
+      "hero_integration.tests.test_file_transfer.TestDownloader.test_unknown_size_and_nonempty_body_with_zero_metadata",
+      "hero_integration.tests.test_contact_persistence.TestContactPersistence.test_existing_secondary_values_become_unique_primaries"
+    ],
     "two-branch release gate": [
       "hero_integration.tests.test_release_ci_contract.TestReleaseCiGate.test_dev_ci_and_manual_release_are_separate",
       "hero_integration.tests.test_release_promotion.TestPromotion.test_only_exact_manual_approval_after_green_gates_can_publish",
@@ -95,6 +101,59 @@
     "employee resume and bound conflict": [
       "hero_integration.tests.test_employee_migration.TestEmployeeResume.test_changed_completed_partner_is_rechecked_before_finishing_resume",
       "hero_integration.tests.test_employee_migration.TestEmployeeWrites.test_resume_after_local_and_source_edits_preserves_local_employee"
+    ],
+    "release review reconciliation": [
+      "hero_integration.tests.test_file_transfer.TestSourceAndTargetBinding.test_truncated_transfer_preserves_blob_links_and_source_baselines",
+      "hero_integration.tests.test_sync_run_reservation.TestSyncRunReservation.test_admission_recovers_only_expired_native_owner_without_viable_job",
+      "hero_integration.tests.test_employee_migration.TestEmployeeWrites.test_partner_id_preserves_identity_when_source_email_changes",
+      "hero_integration.tests.test_polling_hardening.TestScheduledEntry.test_off_paused_and_invalid_window_never_start_a_poll",
+      "hero_integration.tests.test_test_site_reset.TestTestSiteReset.test_new_revision_builds_the_app_and_resets_without_backups",
+      "hero_integration.tests.test_test_site_reset.TestTestSiteReset.test_low_space_blocks_a_new_revision_before_build_or_reset",
+      "hero_integration.tests.test_b8_runtime_bridge_contract.TestB8RuntimeBridgeContract.test_preflight_revalidates_the_current_plan_before_any_runtime_execution",
+      "hero_integration.tests.test_auto_sync_areas.TestAutoSyncRouting.test_each_approved_area_reaches_scheduled_runtime_when_multiple_areas_enabled",
+      "hero_integration.tests.test_sync_run_reservation.TestSyncRunReservation.test_full_parent_only_admits_recovery_of_its_stopped_child"
+    ]
+  },
+  "pytest": {
+    "numeric argument materialization": [
+      "hero_integration.tests.materializer.test_graphql_numeric_arguments.test_int_boundaries_preserve_values[-2147483648]",
+      "hero_integration.tests.materializer.test_graphql_numeric_arguments.test_int_boundaries_preserve_values[0]",
+      "hero_integration.tests.materializer.test_graphql_numeric_arguments.test_int_boundaries_preserve_values[2147483647]",
+      "hero_integration.tests.materializer.test_graphql_numeric_arguments.test_int_overflow_rejected_in_typed_text_and_default_inputs[-2147483649]",
+      "hero_integration.tests.materializer.test_graphql_numeric_arguments.test_int_overflow_rejected_in_typed_text_and_default_inputs[2147483648]",
+      "hero_integration.tests.materializer.test_graphql_numeric_arguments.test_non_finite_or_unrepresentable_float_rejected[nan]",
+      "hero_integration.tests.materializer.test_graphql_numeric_arguments.test_non_finite_or_unrepresentable_float_rejected[inf]",
+      "hero_integration.tests.materializer.test_graphql_numeric_arguments.test_non_finite_or_unrepresentable_float_rejected[-inf]",
+      "hero_integration.tests.materializer.test_graphql_numeric_arguments.test_non_finite_or_unrepresentable_float_rejected[unrepresentable-integer]",
+      "hero_integration.tests.materializer.test_graphql_numeric_arguments.test_non_finite_float_text_and_default_rejected[NaN]",
+      "hero_integration.tests.materializer.test_graphql_numeric_arguments.test_non_finite_float_text_and_default_rejected[Infinity]",
+      "hero_integration.tests.materializer.test_graphql_numeric_arguments.test_non_finite_float_text_and_default_rejected[-Infinity]",
+      "hero_integration.tests.materializer.test_graphql_numeric_arguments.test_non_finite_float_text_and_default_rejected[1e999]",
+      "hero_integration.tests.materializer.test_graphql_numeric_arguments.test_finite_float_inputs_are_not_silently_rewritten[0]",
+      "hero_integration.tests.materializer.test_graphql_numeric_arguments.test_finite_float_inputs_are_not_silently_rewritten[-0.0]",
+      "hero_integration.tests.materializer.test_graphql_numeric_arguments.test_finite_float_inputs_are_not_silently_rewritten[0.5]",
+      "hero_integration.tests.materializer.test_graphql_numeric_arguments.test_finite_float_inputs_are_not_silently_rewritten[1e+308]",
+      "hero_integration.tests.materializer.test_graphql_numeric_arguments.test_nested_input_list_reports_exact_offending_path[Int-2147483648]",
+      "hero_integration.tests.materializer.test_graphql_numeric_arguments.test_nested_input_list_reports_exact_offending_path[Float-inf]",
+      "hero_integration.tests.materializer.test_graphql_numeric_arguments.test_invalid_numeric_types_remain_rejected[Int-True]",
+      "hero_integration.tests.materializer.test_graphql_numeric_arguments.test_invalid_numeric_types_remain_rejected[Float-False]",
+      "hero_integration.tests.materializer.test_graphql_numeric_arguments.test_invalid_numeric_types_remain_rejected[Int-1.5]",
+      "hero_integration.tests.materializer.test_graphql_numeric_arguments.test_omission_explicit_null_and_server_default_remain_distinct",
+      "hero_integration.tests.materializer.test_graphql_numeric_arguments.test_integer_id_is_not_restricted_to_graphql_int_range",
+      "hero_integration.tests.materializer.test_graphql_numeric_arguments.test_nested_numeric_text_and_default_report_the_offending_path[Int-{\"values\":[1,2147483648]}]",
+      "hero_integration.tests.materializer.test_graphql_numeric_arguments.test_nested_numeric_text_and_default_report_the_offending_path[Float-{\"values\":[1,1e999]}]",
+      "hero_integration.tests.materializer.test_graphql_numeric_arguments.test_nested_text_preserves_unknown_and_custom_scalar_values",
+      "hero_integration.tests.materializer.test_graphql_numeric_arguments.test_numeric_list_text_preserves_invalid_shape_rejection",
+      "hero_integration.tests.materializer.test_graphql_numeric_arguments.test_nested_text_rejects_boolean_without_converting_it",
+      "hero_integration.tests.materializer.test_graphql_numeric_arguments.test_graphql_default_large_number_obeys_declared_scalar[Float]",
+      "hero_integration.tests.materializer.test_graphql_numeric_arguments.test_graphql_default_large_number_obeys_declared_scalar[ID]",
+      "hero_integration.tests.materializer.test_graphql_numeric_arguments.test_graphql_default_nested_int_boundary_and_omission",
+      "hero_integration.tests.materializer.test_graphql_numeric_arguments.test_default_must_be_unambiguous_constant_graphql_value[{values: [$x]}]",
+      "hero_integration.tests.materializer.test_graphql_numeric_arguments.test_default_must_be_unambiguous_constant_graphql_value[{values: [1}]",
+      "hero_integration.tests.materializer.test_graphql_numeric_arguments.test_default_must_be_unambiguous_constant_graphql_value[{values: [1], values: [2]}]",
+      "hero_integration.tests.materializer.test_graphql_numeric_arguments.test_default_must_be_unambiguous_constant_graphql_value[{values: [1]} extra]",
+      "hero_integration.tests.materializer.test_graphql_numeric_arguments.test_graphql_default_preserves_enum_boolean_null_and_escaped_string",
+      "hero_integration.tests.materializer.test_graphql_numeric_arguments.test_nested_objects_and_custom_scalar_defaults_preserve_contents"
     ]
   },
   "site": {
@@ -105,7 +164,8 @@
     ],
     "atomic site reservation": [
       "hero_integration.tests.test_sync_run_reservation_frappe.TestSyncRunReservationMariaDB.test_two_distinct_run_ids_get_only_one_site_reservation",
-      "hero_integration.tests.test_sync_run_reservation_frappe.TestSyncRunReservationMariaDB.test_legacy_migration_and_b8_cannot_claim_together"
+      "hero_integration.tests.test_sync_run_reservation_frappe.TestSyncRunReservationMariaDB.test_legacy_migration_and_b8_cannot_claim_together",
+      "hero_integration.tests.test_sync_run_reservation_frappe.TestSyncRunReservationMariaDB.test_stopped_worker_is_fenced_after_new_admission"
     ],
     "checkpoint persistence and concurrent changes": [
       "hero_integration.tests.test_run_checkpoint_frappe.TestCheckpointMariaDB.test_acknowledged_customer_survives_later_contract_conflict_and_interruption",
@@ -126,6 +186,9 @@
     ],
     "employee resume retains budget slots": [
       "hero_integration.tests.test_execution_budget.TestExecutionBudgetMariaDB.test_changed_employee_resume_uses_original_partner_and_user_slots"
+    ],
+    "native contact primary switch": [
+      "hero_integration.tests.test_contact_primary_frappe.TestContactPrimary.test_existing_secondary_children_pass_native_validation"
     ]
   },
   "native": {

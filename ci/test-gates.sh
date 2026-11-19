@@ -10,7 +10,8 @@ run_hero_test_gates() {
   report_dir=$(cd "$report_dir" && pwd) || return "$?"
   # Remove only this invocation's exact result files; a stale report cannot pass.
   rm -f "$report_dir/offline.xml" "$report_dir/site.xml" \
-    "$report_dir/offline.log" "$report_dir/site.log" "$report_dir/native.xml" "$report_dir/native.log" || return "$?"
+    "$report_dir/offline.log" "$report_dir/site.log" "$report_dir/native.xml" "$report_dir/native.log" \
+    "$report_dir/pytest.xml" "$report_dir/pytest.log" || return "$?"
   git -c safe.directory="$app" -C "$app" rev-parse HEAD > "$report_dir/source.txt" || return "$?"
   git -c safe.directory="$app" -C "$app" status --short >> "$report_dir/source.txt" || return "$?"
   printf 'Tested checkout (revision and any local changes):\n'
@@ -27,6 +28,17 @@ run_hero_test_gates() {
   fi
   "$python" "$app/ci/check-test-report.py" --phase offline \
     --report "$report_dir/offline.xml" --minimum "$minimum" || return "$?"
+
+  if (cd "$app" && "$python" ci/run-pytest-functions.py --junitxml="$report_dir/pytest.xml") \
+      > "$report_dir/pytest.log" 2>&1; then
+    cat "$report_dir/pytest.log" || return "$?"
+  else
+    local pytest_rc=$?
+    cat "$report_dir/pytest.log"
+    return "$pytest_rc"
+  fi
+  "$python" "$app/ci/check-test-report.py" --phase pytest \
+    --report "$report_dir/pytest.xml" --minimum 1 || return "$?"
 
   # The deadline is mapping-owned, so a clean install does not create it.
   # Provision the checked-in schema only on this explicitly selected test site.

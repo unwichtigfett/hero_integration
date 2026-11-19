@@ -85,12 +85,19 @@ class TestCiTestReport(unittest.TestCase):
 
     def test_required_manifest_resolves_to_real_test_methods(self):
         manifest = json.loads((ROOT / 'ci/required-tests.json').read_text())
-        self.assertEqual(set(manifest), {'offline', 'site', 'native'})
+        self.assertEqual(set(manifest), {'offline', 'pytest', 'site', 'native'})
         for phase, groups in manifest.items():
             self.assertTrue(groups)
             for group, identities in groups.items():
                 self.assertTrue(identities, group)
                 for identity in identities:
+                    if phase == 'pytest':
+                        module, function = identity.split('[', 1)[0].rsplit('.', 1)
+                        path = ROOT / (module.replace('.', '/') + '.py')
+                        tree = ast.parse(path.read_text())
+                        functions = {node.name for node in tree.body if isinstance(node, ast.FunctionDef)}
+                        self.assertIn(function, functions, identity)
+                        continue
                     module, class_name, method = identity.rsplit('.', 2)
                     path = ROOT / (module.replace('.', '/') + '.py')
                     tree = ast.parse(path.read_text())

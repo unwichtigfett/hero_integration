@@ -41,3 +41,28 @@ class TestAutoSyncRouting(unittest.TestCase):
             execution_runtime.execute("migration", run_name="M2")
             file.assert_called_once_with("M2")
             fake.get_single.assert_not_called()
+
+    def test_each_approved_area_reaches_scheduled_runtime_when_multiple_areas_enabled(self):
+        import json
+        from hero_integration.services.sync_page import AREAS
+        adapter = sync_runtime_adapter
+        settings = SimpleNamespace(polling_mode='AUTO_SYNC', hero_source_instance='fixture',
+                                   source_binding_revision=2, source_binding_confirmed_revision=2)
+        fake = Mock(local=SimpleNamespace(site='fixture'), session=SimpleNamespace(user='Administrator'))
+        fake.get_single.return_value = settings
+        selection = SimpleNamespace(execution_mode='AUTO_SYNC', graphql_mapping='mapping')
+        executable = SimpleNamespace(selection=selection)
+        with patch.object(adapter, '_runtime_plan_service') as service, \
+             patch.object(adapter, '_require_latest_validated_snapshot'), patch.object(adapter, '_run') as execute:
+            service.return_value.resolve_executable_plan.return_value = executable
+            for index, area in enumerate(AREAS):
+                for candidate in AREAS:
+                    setattr(settings, candidate.setting, int(candidate != AREAS[(index + 1) % len(AREAS)]))
+                fake.db.get_value.return_value = json.dumps({'target_operation': area.operation})
+                adapter.run_scheduled_auto_sync(frappe_module=fake)
+                execute.assert_called_once_with(executable, fake, automatic=True)
+                execute.reset_mock()
+            settings.source_binding_confirmed_revision = 1
+            with self.assertRaises(adapter.RuntimeBridgeError):
+                adapter.run_scheduled_auto_sync(frappe_module=fake)
+            execute.assert_not_called()

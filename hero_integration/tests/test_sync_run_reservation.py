@@ -122,3 +122,51 @@ class TestSyncRunReservation(unittest.TestCase):
         with self.assertRaises(SyncConflict):
             FrappeSyncLedger(frappe).claim(SyncRun("other", "site", "Administrator", 1, False))
         self.assertNotIn("INSERT RUN",events)
+
+    def test_admission_recovers_only_expired_native_owner_without_viable_job(self):
+        import frappe
+        from datetime import datetime, timedelta
+        now = datetime(2026, 1, 1)
+        for state, action, seconds, job, recover in (
+            ('Running', 'Customer Migration', -1, None, True),
+            ('Running', 'Customer Migration', -1, 'failed', True),
+            ('Running', 'Customer Migration', -1, 'stopped', True),
+            ('Running', 'Customer Migration', -1, 'started', False),
+            ('Running', 'Customer Migration', -1, 'queued', False),
+            ('Running', 'Customer Migration', -1, 'scheduled', False),
+            ('Running', 'Customer Migration', 60, None, False),
+            ('Queued', 'Customer Migration', -1, 'queued', False),
+            ('Running', 'Full Migration', -1, None, False),
+        ):
+            with self.subTest(state=state, action=action, seconds=seconds, job=job):
+                fake, _ = self.facade(legacy='' if job == 'failed' else 'old', legacy_state=state, pending=('old',))
+                fake.ValidationError = frappe.ValidationError
+                row = SimpleNamespace(state=state, action=action, started_on=now,
+                                      lease_expires_on=now + timedelta(seconds=seconds))
+                fake.db.get_value = Mock(return_value=row)
+                with patch.object(migration, 'frappe', fake), patch.object(migration, '_interrupt_run') as stop, \
+                     patch.object(migration, "_release_run"), patch.object(migration, "now_datetime", return_value=now), patch('frappe.utils.background_jobs.get_job_status', return_value=job):
+                    if recover:
+                        run_reservation.admit_migration(fake)
+                        stop.assert_called_once()
+                    else:
+                        with self.assertRaises(frappe.ValidationError):
+                            run_reservation.admit_migration(fake)
+                        stop.assert_not_called()
+
+    def test_full_parent_only_admits_recovery_of_its_stopped_child(self):
+        import frappe
+        for active_job in (True, False):
+            fake, _ = self.facade(legacy='child', pending=('full', 'child'))
+            fake.ValidationError = frappe.ValidationError
+            fake.db.get_value = Mock(return_value='Full Migration')
+            with patch.object(run_reservation, 'recover_stopped_owner', return_value=not active_job) as recovery:
+                with self.assertRaises(frappe.ValidationError):
+                    run_reservation.admit_migration(fake)
+                recovery.assert_not_called()
+                if active_job:
+                    with self.assertRaises(frappe.ValidationError):
+                        run_reservation.admit_migration(fake, parent='full', resume='child', recover_running=True)
+                else:
+                    run_reservation.admit_migration(fake, parent='full', resume='child', recover_running=True)
+                recovery.assert_called_once_with(fake, 'child')

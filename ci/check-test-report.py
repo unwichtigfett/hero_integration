@@ -77,7 +77,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--report", required=True)
     parser.add_argument("--manifest", default=str(Path(__file__).with_name("required-tests.json")))
-    parser.add_argument("--phase", choices=("offline", "site", "native"), required=True)
+    parser.add_argument("--phase", choices=("offline", "pytest", "site", "native"), required=True)
     parser.add_argument("--minimum", type=int, default=1000)
     args = parser.parse_args()
     try:

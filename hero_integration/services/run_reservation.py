@@ -6,6 +6,16 @@ transaction commit. All run checks below are current reads, not snapshot reads.
 """
 from __future__ import annotations
 
+NATIVE_ACTIONS = {
+    "Customer Migration",
+    "Project Migration",
+    "Cheap Data Migration",
+    "Full Data Migration",
+    "Sync",
+    "Projection Migration",
+    "Schedule Migration",
+}
+
 LOCK_NAME = "hero_integration:active_run"
 SLOT_DOCTYPE = "HERO Integration Sync State"
 SLOT_FIELD = "active_run"
@@ -61,7 +71,29 @@ def locked_pending_migrations(frappe):
     )
 
 
-def admit_migration(frappe, *, parent="", resume=""):
+def recover_stopped_owner(frappe, slot):
+    """Called under the Singles and run row locks, in the admission transaction."""
+    from frappe.utils.background_jobs import get_job_status
+    from hero_integration.services import migration
+
+    row = frappe.db.get_value("HERO Integration Run", slot,
+                              ["state", "action", "started_on", "lease_expires_on"], as_dict=True, for_update=True)
+    if not row or row.state != "Running" or row.action not in NATIVE_ACTIONS:
+        return False
+    if not (row.started_on or row.lease_expires_on):
+        return False
+    now = migration.now_datetime()
+    if migration.run_lease_alive(slot, now, lock=True):
+        return False
+    job = get_job_status(f"hero-integration:{frappe.local.site}:{slot}")
+    if job not in {None, "failed", "finished", "stopped", "canceled"}:
+        return False
+    migration._interrupt_run(slot, now)
+    migration._release_run(slot)
+    return True
+
+
+def admit_migration(frappe, *, parent="", resume="", recover_running=False):
     """Serialize acceptance with the sync ledger through the caller's transaction.
 
     A full run may submit its own next child. A resume is permitted to recover
@@ -72,13 +104,19 @@ def admit_migration(frappe, *, parent="", resume=""):
     try:
         slot = locked_legacy_slot(frappe)
         allowed = {value for value in (parent, resume) if value}
-        if slot and slot not in allowed and legacy_slot_is_active(frappe, slot):
-            raise frappe.ValidationError("Another HERO migration owns the execution slot.")
         if locked_b8_runs(frappe, frappe.local.site):
             raise frappe.ValidationError("Another HERO sync run owns the execution slot.")
         pending = {row.name for row in locked_pending_migrations(frappe)}
-        if pending - allowed:
-            raise frappe.ValidationError("Another HERO migration is queued or running.")
+        if slot and slot not in allowed and slot not in pending and legacy_slot_is_active(frappe, slot):
+            raise frappe.ValidationError("Another HERO migration owns the execution slot.")
+        others = pending - allowed
+        if others:
+            # A full parent or queued sibling keeps its place. A single native
+            # claim can also survive loss of its Singles pointer.
+            if len(others) != 1 or not recover_stopped_owner(frappe, next(iter(others))):
+                raise frappe.ValidationError("Another HERO migration is queued or running.")
+        if recover_running and (not resume or slot not in ("", resume) or not recover_stopped_owner(frappe, resume)):
+            raise frappe.ValidationError("Only a stopped worker with an expired reservation can resume.")
         if parent and (parent not in pending or
                        frappe.db.get_value("HERO Integration Run", parent, "action") != "Full Migration"):
             raise frappe.ValidationError("The owning full migration is no longer active.")
