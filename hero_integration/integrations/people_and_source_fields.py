@@ -145,17 +145,13 @@ def upgrade_projects_to_ids() -> str:
 
 def run_partner_ids() -> dict:
     from hero_integration.install import ensure_hero_source_fields
-    from hero_integration.integrations.hero_people import _client, sync_users
 
     previous = frappe.session.user
     frappe.set_user("Administrator")
     report = {}
     try:
         ensure_hero_source_fields()
-        try:
-            report["people"] = sync_users(_client())
-        except Exception as error:  # HERO unreachable: the daily job fills the IDs later
-            report["people"] = f"not synchronised: {error}"
+        report["people"] = "Employee imports require an explicit migration run."
         frappe.db.savepoint("hero_partner_ids")
         try:
             report["projects"] = upgrade_projects_to_ids()
