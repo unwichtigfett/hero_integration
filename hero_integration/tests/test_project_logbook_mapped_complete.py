@@ -24,7 +24,7 @@ class TestMappedLogbookPagination(TestCase):
             calls.append((document, variables))
             value = pages.pop(0)
             return {'project_matches': value}
-        source = NS(contract=contract, service=NS(query_document='exact approved document'),
+        source = NS(contract=contract, page_overlap=0, service=NS(query_document='exact approved document'),
                     client=NS(query=query), revalidate=lambda: contract)
         source._saved_request = lambda variables: NS(document=source.service.query_document, variables=variables)
         return source, calls

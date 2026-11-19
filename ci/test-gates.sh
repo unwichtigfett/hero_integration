@@ -35,6 +35,7 @@ run_hero_test_gates() {
   # These tests commit through multiple real MariaDB connections. Opt in only on
   # the explicitly disposable site created by the caller, never the test server.
   if HERO_RUN_RESERVATION_TEST_SITE="$site" HERO_WRITEBACK_SOURCE_TEST_SITE="$site" \
+      HERO_EXECUTION_BUDGET_TEST_SITE="$site" HERO_CI_TEST_SITE="$site" HERO_SYNTHETIC_POLLING_TEST=1 \
       HERO_CHECKPOINT_TEST_SITE="$site" bench --site "$site" run-tests --app hero_integration \
       --junit-xml-output "$report_dir/site.xml" > "$report_dir/site.log" 2>&1; then
     cat "$report_dir/site.log" || return "$?"
