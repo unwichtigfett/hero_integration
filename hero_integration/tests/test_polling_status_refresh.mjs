@@ -13,17 +13,17 @@ class Element {
 }
 const flush = () => new Promise(resolve => setImmediate(resolve));
 
-function setup() {
+function setup(dialogs = {}) {
     const timers = new Map(), calls = [], host = new Element('main');
     let id = 0;
     const data = {active_run: null, areas: [], file_areas: [], service: {mode: 'AUTO_SYNC', running: true, interval_minutes: 60},
         metrics: {records: {}, polling: {runs: 0, pass: 0, fail: 0, incomplete: 0, skipped: 0, period_days: 30}}};
     const document = {hidden: false, createElement: tag => new Element(tag), createElementNS: (_, tag) => new Element(tag)};
-    const context = {window: {}, document, setTimeout(fn, ms) { timers.set(++id, {fn, ms}); return id; }, clearTimeout(key) { timers.delete(key); },
-        frappe: {call({method, type, callback}) {
-            calls.push({method, type});
+    const context = {window: {}, document, crypto: {randomUUID: () => "synthetic-request"}, setTimeout(fn, ms) { timers.set(++id, {fn, ms}); return id; }, clearTimeout(key) { timers.delete(key); },
+        frappe: {...dialogs, utils: {escape_html: String}, call({method, args, type, callback}) {
+            calls.push({method, type, args});
             callback({message: method.endsWith('sync_page_state') ? data : method.endsWith('sync_page_pending_relationships')
-                ? data.pending_response : {rows: [], start: 0, total: 0}});
+                ? data.pending_response : method.endsWith('runtime_plan_status') ? data.plan : {rows: [], start: 0, total: 0}});
             return Promise.resolve();
         }}};
     vm.runInNewContext(readFileSync(new URL('../public/js/hero_migration.js', import.meta.url), 'utf8'), context);
@@ -136,5 +136,25 @@ test('pending relationships disappear from the list after resolution', async () 
     app.data.pending_response = {available: true, start: 0, total: 0, rows: []};
     await app.tick();
     assert.ok(app.host.querySelectorAll('p').some(el => el.textContent === 'No pending relationships.'));
+    app.view.destroy();
+});
+
+test('execution evidence and the unconfirmed one-shot dialog only read the approved plan', async () => {
+    const shown = [];
+    const app = setup({msgprint: () => shown.push('status'), confirm: () => shown.push('confirmation')});
+    await flush();
+    app.data.source_instance = 'fixture';
+    app.data.service.mode = 'OFF';
+    app.data.plan = {state: 'APPROVED', plan_key: 'fixture-plan', generation: 3};
+    await app.tick();
+    app.calls.length = 0;
+    for (const label of ['Execution status', 'Compare bound objects once']) {
+        await app.host.querySelectorAll('button').find(button => button.textContent === label).listeners.click();
+    }
+    assert.deepEqual(shown, ['status', 'confirmation']);
+    assert.deepEqual(app.calls.map(c => [c.method, c.type, c.args.source_instance, c.args.include_execution]), [
+        ['hero_integration.api.runtime_plan_status', 'GET', 'fixture', 1],
+        ['hero_integration.api.runtime_plan_status', 'GET', 'fixture', undefined],
+    ]);
     app.view.destroy();
 });

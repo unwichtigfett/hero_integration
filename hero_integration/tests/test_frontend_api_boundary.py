@@ -216,6 +216,10 @@ class TestFrontendApiBoundary(unittest.TestCase):
             "hero_integration.services.sync_runtime_adapter._runtime_plan_service", return_value=service
         ):
             status = api.runtime_plan_status("isolated-source")
+            self.assertFalse(service.approve_calls)
+            self.assertEqual(frappe.only_for_calls, ["System Manager"])
+            with patch.object(api, "frappe", _Frappe(roles=(), user="Guest")), self.assertRaises(PermissionError):
+                api.runtime_plan_status("isolated-source", include_execution=1)
             approved = api.runtime_plan_approve("a" * 64, expected_revision=4)
 
         self.assertEqual(status["state"], "DRAFT")
