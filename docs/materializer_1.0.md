@@ -288,19 +288,9 @@ full Task/Project/Employee intake calls during relationship realization and chec
 that local scalar values and their old field baselines survive.
 
 
-## Independent development and release lane
+## Build and release
 
-The materializer worktree is `/home/dev/codex-wt-graphql-materializer` on
-`hero_int_dev_opt`. It is independent of the standard app checkout used by
-`hero_int_dev`. The opt Docker stack is maintained in the operations project
-`/home/dev/frappe-vps1-docker`; its project, data and Redis volumes are separate.
-Two sites inside one Bench would share app code and are not used for this split.
-
-A push through `pipe --opt start` runs GitHub Actions and the Woodpecker install
-test before promotion from `hero_int_dev_opt` to `hero_int_opt`. Normal development
-continues to promote from `hero_int_dev` to `hero_int_1.0`. The opt lane uses
-`opt-v<version>` tags and can create its release branch on the first successful
-promotion. Both lanes retain non-forced atomic branch/tag publication and reject
-a diverged release branch. The shared standard test-site updater is not invoked
-by the opt lane. Actual opt development-site deployment is a separate operation,
-`pipe --opt deploy`, after the operations installer has run as root.
+Materializer and runtime changes use the shared GitHub and Woodpecker test gates on
+`hero_int_dev`. The required-test manifest includes the compiler, cache and native
+relationship tests. See [release candidates](release_candidates.md) for UI operation
+and the approval that publishes a tested revision to `hero_int_release`.

@@ -2,28 +2,10 @@ name: CI
 
 on:
   pull_request:
-    branches: [hero_int_dev, hero_int_release, hero_int_1.0, hero_int_dev_opt, hero_int_opt]
-  workflow_dispatch:
-    inputs:
-      install_apps:
-        description: Apps to install on the disposable site
-        type: choice
-        default: erpnext,helpdesk,hero_integration
-        options:
-          - none
-          - erpnext
-          - helpdesk
-          - erpnext,helpdesk
-          - erpnext,hero_integration
-          - erpnext,helpdesk,hero_integration
+    branches: [hero_int_dev]
   push:
-    branches:
-      - hero_int_dev
-      - hero_int_release
-      - integration/**
-      - hero_int_1.0
-      - hero_int_dev_opt
-      - hero_int_opt
+    branches: [hero_int_dev]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -33,6 +15,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v6
         with:
           python-version: "3.14"
@@ -40,6 +24,11 @@ jobs:
       - run: python -m compileall -q hero_integration
       - run: python -m unittest hero_integration.tests.test_portable_release
       - run: python -m build
+      - uses: actions/upload-artifact@v6
+        with:
+          name: hero-package-${{ github.sha }}
+          path: dist/
+          if-no-files-found: error
 
   install-test:
     runs-on: ubuntu-latest
@@ -57,14 +46,13 @@ jobs:
         image: redis:6.2-alpine@sha256:63d5174750e285bc3069c4519c53c8b6de6ebe70715140a6c9d21d6f04b77319
     env:
       DB_ROOT_PASSWORD: ci-throwaway-root
-      INSTALL_APPS: ${{ inputs.install_apps || 'erpnext,helpdesk,hero_integration' }}
     steps:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
       - name: Prepare isolated workspace
         run: chown -R frappe:frappe "$GITHUB_WORKSPACE"
-      - name: Install selected apps and run complete HERO tests
+      - name: Install ERPNext, Helpdesk and HERO and run the complete test gates
         shell: bash
         run: su -s /bin/bash frappe -c 'bash "$GITHUB_WORKSPACE/ci/github-install-test.sh"'
       - name: Retain test reports and complete logs

@@ -149,43 +149,34 @@ printf 'GATE_PASSED\\n'
             self.assertIn('run_hero_test_gates', source)
             self.assertNotIn('TEST_FAILED', source)
 
-    def test_manual_no_hero_selection_cannot_pass_a_maintained_branch_gate(self):
-        source = (ROOT / 'ci/github-install-test.sh').read_text().split('cd /tmp', 1)[0]
-        for branch in ('hero_int_dev', 'hero_int_1.0', 'hero_int_dev_opt', 'hero_int_opt', 'diagnostic-feature'):
-            with self.subTest(branch=branch):
-                env = dict(os.environ, GITHUB_WORKSPACE=str(ROOT), DB_ROOT_PASSWORD='synthetic',
-                           INSTALL_APPS='none', GITHUB_REF_NAME=branch, GITHUB_BASE_REF='')
-                result = subprocess.run(['bash', '-c', source], env=env, text=True, capture_output=True)
-                self.assertEqual(result.returncode, 0 if branch == 'diagnostic-feature' else 2)
-
-    def test_workflows_preserve_independent_standard_and_opt_lanes(self):
+    def test_dev_ci_and_manual_release_are_separate(self):
         import yaml
 
         github = yaml.load((ROOT / '.github/workflows/ci.yml').read_text(), Loader=yaml.BaseLoader)
-        expected = ['hero_int_dev_opt', 'hero_int_opt']
-        self.assertTrue(all(branch in github['on']['push']['branches'] for branch in expected))
-        self.assertTrue(all(branch in github['on']['pull_request']['branches'] for branch in expected))
-        woodpecker = yaml.safe_load((ROOT / '.woodpecker/opt.yml').read_text())
-        self.assertEqual(woodpecker['when'], [{'event': ['manual', 'push'], 'branch': expected}])
-        steps = {step['name']: step for step in woodpecker['steps']}
-        self.assertNotIn('update-test-site', steps)
-        self.assertNotIn('promote', steps)
-        self.assertEqual(steps['promote-opt']['depends_on'], ['install-test'])
-        self.assertEqual(steps['promote-opt']['when'][0]['event'], 'manual')
-        self.assertIn('RELEASE_APPROVED', steps['promote-opt']['when'][0]['evaluate'])
-        standard = yaml.safe_load((ROOT / '.woodpecker/standard.yml').read_text())
-        self.assertEqual(standard['when'], [{'event': ['manual', 'push'], 'branch': ['hero_int_dev', 'hero_int_release', 'hero_int_1.0', 'integration/*']}])
-        stdsteps = {step['name']: step for step in standard['steps']}
-        self.assertEqual(stdsteps['promote']['depends_on'], ['install-test'])
-        self.assertEqual(stdsteps['update-test-site']['when'][0]['event'], 'manual')
-        self.assertIn('DEPLOY_APPROVED', stdsteps['update-test-site']['when'][0]['evaluate'])
-        for branch in ('hero_int_dev', 'hero_int_1.0'):
-            self.assertIn(branch, github['on']['push']['branches'])
+        self.assertEqual(set(github['on']), {'push', 'pull_request', 'workflow_dispatch'})
+        for trigger in ('push', 'pull_request'):
+            self.assertEqual(github['on'][trigger]['branches'], ['hero_int_dev'])
+        self.assertEqual(github['permissions'], {'contents': 'read'})
+        self.assertEqual(set(github['jobs']), {'package', 'install-test'})
+        configs = list((ROOT / '.woodpecker').glob('*.yml'))
+        self.assertEqual([p.name for p in configs], ['standard.yml'])
+        workflow = yaml.safe_load(configs[0].read_text())
+        self.assertEqual(workflow['when'], [{'event': ['manual', 'push'], 'branch': 'hero_int_dev'}])
+        steps = {s['name']: s for s in workflow['steps']}
+        self.assertEqual(set(steps), {'wait-github', 'install-test', 'promote'})
+        self.assertEqual(steps['install-test']['depends_on'], ['wait-github'])
+        self.assertIn('bash ci/bench-install-test.sh', steps['install-test']['commands'])
+        self.assertEqual(steps['promote']['depends_on'], ['install-test'])
+        self.assertEqual(steps['promote']['when'], [{'event': 'manual', 'branch': 'hero_int_dev',
+                         'evaluate': 'CI_COMMIT_MESSAGE == "MANUAL: RELEASE_APPROVED @ hero_int_dev"'}])
+        self.assertEqual(steps['promote']['environment']['GITHUB_TOKEN'], {'from_secret': 'github_release_token'})
+        for name in ('wait-github', 'install-test'):
+            self.assertNotIn('from_secret', str(steps[name]))
 
     def test_company_setup_handles_bench_zero_output_and_query_failures(self):
         source = (ROOT / 'ci/github-install-test.sh').read_text()
-        setup = source.split('  # The setup wizard is deliberately absent on this disposable site.\n', 1)[1]
-        setup = setup.split('  run_hero_test_gates\n', 1)[0]
+        setup = source.split('# The setup wizard is deliberately absent on this disposable site.\n', 1)[1]
+        setup = setup.split('run_hero_test_gates\n', 1)[0]
         for count, status, should_insert in (('', 0, True), ('0', 0, True), ('1', 0, False), ('', 7, False)):
             with self.subTest(count=count, status=status), tempfile.TemporaryDirectory() as tmp:
                 trace = Path(tmp) / 'trace'
@@ -208,19 +199,6 @@ bench() {
 
 
 class TestArchitectureWorkflowIsolation(unittest.TestCase):
-    def test_the_named_workflow_is_canonical_and_uses_its_own_installer(self):
-        import yaml
-
-        configs = list((ROOT / '.woodpecker').glob('*.yml'))
-        self.assertEqual(sorted(p.name for p in configs), ['opt.yml', 'standard.yml'])
-        self.assertFalse((ROOT / '.woodpecker.yml').exists())
-        steps = {step['name']: step for step in yaml.safe_load((ROOT / '.woodpecker/opt.yml').read_text())['steps']}
-        self.assertIn('ci/opt-install-test.sh', '\n'.join(steps['install-test']['commands']))
-        self.assertTrue((ROOT / 'ci/opt-install-test.sh').is_file())
-        self.assertTrue((ROOT / 'ci/bench-install-test.sh').is_file())
-        for lane in ('standard', 'opt'):
-            self.assertIn('/bench-install-test.sh', (ROOT / f'ci/{lane}-install-test.sh').read_text())
-
     def test_required_architecture_groups_cannot_be_silently_dropped(self):
         manifest = json.loads((ROOT / 'ci/required-tests.json').read_text())
         expected = ['opt document compiler', 'opt schema cache isolation', 'opt request scoped caches', 'opt finite selection architecture']
