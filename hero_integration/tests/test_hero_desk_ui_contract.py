@@ -39,9 +39,20 @@ class TestHeroDeskUiContract(unittest.TestCase):
         self.assertNotIn('simple_mapping_create', mapping)
         migration = MIGRATION_JS.read_text()
         # The technical Pending Sync area left the Synchronization page; its plan is resolved on the server.
-        for removed in ("pending_sync", "Pending Sync", "Load approved plan", "runtime_plan_status", "Source instance'"):
+        for removed in ("pending_sync", "Pending Sync", "Load approved plan", "runtime_plan_approve", "Source instance'"):
             with self.subTest(removed=removed):
                 self.assertNotIn(removed, migration)
+        # Execution evidence and the pre-confirmation dialog may inspect the plan
+        # with GET. Neither status read grants authority to start or approve it.
+        sections = dict(re.findall(r"        async function (\w+)\([^)]*\) \{(.*?)^        \}", migration, re.M | re.S))
+        status = 'call("runtime_plan_status",'
+        self.assertEqual({name for name, body in sections.items() if status in body},
+                         {"showSyncEvidence", "reviewBoundSync"})
+        self.assertEqual(migration.count("runtime_plan_status"), 2)
+        self.assertEqual(re.findall(r'call\("([^"]+)"', sections["showSyncEvidence"]), ["runtime_plan_status"])
+        dialog = sections["reviewBoundSync"]
+        self.assertLess(dialog.index(status), dialog.index("frappe.confirm("))
+        self.assertLess(dialog.index("frappe.confirm("), dialog.index('call("start_sync_once", approval, "POST")'))
         self.assertNotIn("sync_hero_preview", migration)
         self.assertNotIn("sync_hero_execute", migration)
 
