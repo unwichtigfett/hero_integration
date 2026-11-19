@@ -83,7 +83,7 @@ class SyncState:
 @dataclass(frozen=True, slots=True)
 class SyncRun:
     run_id:str; site_scope:str; actor:str; expected_generation:int; automatic:bool; request_fingerprint:str=""
-    source_instance:str=""; plan_key:str=""; plan_generation:int=0; source_revision:int=0
+    source_instance:str=""; plan_key:str=""; plan_generation:int=0; source_revision:int=0; execution_scope:str=""
     def __post_init__(self): _text(self.run_id,"run id"); _text(self.site_scope,"site scope"); _text(self.actor,"actor");
 
 class ChangeProvider(Protocol):
@@ -169,7 +169,8 @@ class FrappeSyncLedger:
                 "actor": run.actor, "automatic": int(run.automatic), "state": "RUNNING",
                 "request_fingerprint": run.request_fingerprint, "source_instance": run.source_instance,
                 "plan_key": run.plan_key, "plan_generation": run.plan_generation,
-                "source_revision": run.source_revision,
+                "source_revision": run.source_revision, "execution_scope": run.execution_scope,
+                "confirmed_position": sha256(state_doc.cursor.encode()).hexdigest()[:16] if state_doc.cursor else "",
             }).insert()
         except frappe.QueryDeadlockError as error:
             # The caller owns rollback; this attempt must neither retry nor
@@ -215,22 +216,27 @@ class FrappeSyncLedger:
     def rollback(self):
         self._frappe().db.rollback()
 
-    def progress(self,run,processed,skipped):
-        self._frappe().db.sql("UPDATE `tabHERO Sync Run Ledger` SET processed_count=%s, skipped_count=%s "
+    def progress(self,run,processed,skipped,rows_read):
+        from frappe.utils import now_datetime
+        self._frappe().db.sql("UPDATE `tabHERO Sync Run Ledger` SET modified=%s, processed_count=%s, skipped_count=%s, rows_read=%s "
             "WHERE name=%s AND site_scope=%s AND state='RUNNING'",
-            (processed,skipped,run.run_id,run.site_scope))
+            (now_datetime(),processed,skipped,rows_read,run.run_id,run.site_scope))
 
     def release(self,run):
         self.finish(run, "COMPLETED", 0, 0)
 
-    def finish(self,run,status,processed,skipped):
+    def finish(self,run,status,processed,skipped,rows_read=None):
         frappe=self._scope(run.site_scope)
         rows=frappe.db.sql("SELECT name FROM `tabHERO Sync Run Ledger` WHERE site_scope=%s AND sync_run_id=%s AND state='RUNNING' FOR UPDATE", (run.site_scope,run.run_id), as_dict=True)
         if rows:
             doc=frappe.get_doc(self.RUN,rows[0].name,for_update=True)
+            state = self.state(run.site_scope)
+            doc.confirmed_position = sha256(state.cursor.encode()).hexdigest()[:16] if state and state.cursor else ""
             doc.state=str(status)
             doc.processed_count=processed
             doc.skipped_count=skipped
+            if rows_read is not None:
+                doc.rows_read = rows_read
             doc.save()
 
 class FrappeBoundIndex:
@@ -398,6 +404,7 @@ class FrappeBoundProcessor:
             changes.append({"binding":bound.identity_key,"doctype":bound.target_doctype,"name":bound.target_name,
                             "field":bound.target_field,"previous_source":bound.acknowledged_source_fingerprint,
                             "previous_target":previous,"new_source":source_fp,"action":decision})
+        updated_documents = sum(bool(updates) for _, updates in targets.values())
         for target_key in sorted(targets):
             target,updates = targets[target_key]
             if updates:
@@ -422,6 +429,8 @@ class FrappeBoundProcessor:
                 "source_instance":first.source_instance,"object_type":self.object_type,"external_id":identity,
                 "source_version":str(version) if version!="" else state_fingerprint(record,present=True),
                 "mapping_name":self.mapping_name,"mapping_revision":self.mapping_revision,"run_id":self.run_id,
+                "updated_documents": updated_documents,
+                "unchanged_documents": len(targets) - updated_documents if not blocked else 0,
                 "outcome":"CONFLICT" if blocked else "APPLIED","field_changes":json.dumps(changes)
             }).insert(ignore_permissions=True)
         return SyncStatus.CONFLICT if blocked else True
@@ -482,13 +491,13 @@ class SyncEngine:
         rollback = getattr(self.ledger, "rollback", lambda: None)
         finish = getattr(self.ledger, "finish", None)
         commit()
-        processed = skipped = 0
+        processed = skipped = rows_read = 0
         outcome = SyncStatus.FAILED
 
         def checkpoint_record():
             progress = getattr(self.ledger, "progress", None)
             if progress:
-                progress(run, processed, skipped)
+                progress(run, processed, skipped, rows_read)
             commit()
 
         def stop(status, diagnostic):
@@ -530,6 +539,7 @@ class SyncEngine:
                         self.revalidate()
                         commit()  # Never span a remote read with Frappe evidence/target locks.
                     page = self._changes(cursor)
+                    rows_read += len(page.records)
                 if len(page.records) > self.plan.sealed.contract.page_size:
                     return stop(SyncStatus.INCOMPLETE, "provider exceeded approved page size")
                 if page.next_cursor is not None and (not page.next_cursor or page.next_cursor in seen_cursors):
@@ -559,10 +569,12 @@ class SyncEngine:
                     commit()
                     if bounded:
                         record = self.provider.read_bound(identity)
+                        rows_read += 1
                         if not isinstance(record, Mapping) or _identity(record, identity_path) != identity:
                             return stop(SyncStatus.INCOMPLETE, "identity reader returned unexpected identity")
                     elif fast:
                         record = fast(record)
+                        rows_read += 1
                         if _identity(record, identity_path) != identity:
                             raise SyncConflict("Detail does not match the approved identity binding.")
                     if self.revalidate:
@@ -604,7 +616,7 @@ class SyncEngine:
             return stop(SyncStatus.FAILED, "redacted provider or local failure")
         finally:
             if finish:
-                finish(run, outcome, processed, skipped)
+                finish(run, outcome, processed, skipped, rows_read)
                 commit()
             else:
                 self.ledger.release(run)

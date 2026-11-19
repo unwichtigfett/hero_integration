@@ -415,6 +415,7 @@ def sync_employees(client, *, source_instance, run_name, should_stop=None, progr
     require_storage(frappe)
     state.update(stamp=stamp, done=False, stopped=False)
     rows = _records({'rows': runtime.fetch_page(client, read, 0)}, 'rows')
+    state["counts"]["rows_read"] = state["counts"].get("rows_read", 0) + len(rows)
     if record_limit is not None:
         if state.get('testing_record_limit') not in (None, record_limit):
             raise EmployeeMigrationBlocked('The frozen testing record limit changed; start a new run.')
@@ -522,6 +523,7 @@ def sync_employees(client, *, source_instance, run_name, should_stop=None, progr
             state["counts"][previous] -= 1
         state["outcomes"][str(record["id"])] = result
         state["counts"][result] = state["counts"].get(result, 0) + 1
+        state["counts"]["unique_processed"] = len(state["outcomes"])
         save_progress(state)
         frappe.db.commit()
         if progress:

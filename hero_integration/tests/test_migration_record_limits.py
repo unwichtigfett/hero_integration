@@ -209,7 +209,9 @@ class TestMigrationRecordLimits(unittest.TestCase):
         self.assertEqual(write.call_count, 5)
         fixture.client.query.assert_called_once()
         self.assertEqual(fixture.client.query.call_args.args[1], {'ids': [1, 2, 3, 4, 5], 'first': 5})
-        self.assertEqual(second['counts'], {'conflict': 1, 'updated': 4})
+        self.assertEqual({key: second['counts'][key] for key in ('conflict', 'updated', 'unique_processed')},
+                         {'conflict': 1, 'updated': 4, 'unique_processed': 5})
+        self.assertEqual(second['counts']['rows_read'], 26)
         self.assertNotIn('last_error', second)
 
     def test_product_finished_test_checkpoint_is_reused_without_production_cursor(self):

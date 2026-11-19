@@ -100,6 +100,8 @@
         } catch (_) { return null; }
     }
     function testingSummary(run) {
+        if (run.identity_limit) return format("{0}/{1} reserved · {2} available", number(run.reserved_identities),
+            number(run.identity_limit), number(run.identity_limit - run.reserved_identities));
         const result = testingResults(run);
         if (Number.isInteger(result?.record_limit) && result.record_limit > 0) {
             if (result.selection === 'related_projects') return format('{0} · up to {1} selected projects and related records',
@@ -158,8 +160,9 @@
         const manual = el("section", {class: "hero-sync-panel hero-sync-manual", "data-views": "migration", "aria-labelledby": "hero-sync-manual-title"});
         const service = el("section", {class: "hero-sync-panel hero-sync-service", "data-views": "sync", "aria-label": tr("Sync Services")});
         const states = el("section", {class: "hero-sync-panel hero-sync-states", "data-views": "migration sync", "aria-label": tr("States")});
+        const live = el("section", {class: "hero-sync-panel hero-sync-live", hidden: true, "aria-label": tr("Run progress")});
         const work = el("section", {class: "hero-sync-panel hero-sync-work", "data-views": "runtime"});
-        const root = el("section", {class: "hero-sync", "data-view": state.view}, viewSwitch, head, subscription, manual, service, states, work);
+        const root = el("section", {class: "hero-sync", "data-view": state.view}, viewSwitch, head, subscription, manual, service, states, live, work);
         // The frame is the size container: the layout follows the space the page really has.
         const frame = el("div", {class: "hero-sync-frame"}, root);
         host.append(frame);
@@ -400,6 +403,41 @@
                 el("span", {text: format("{0} processed", number(row.processed)) + (row.conflict_records ? " · " + format("{0} conflicts", number(row.conflict_records)) : "")}));
         }
 
+        function renderLive(rows) {
+            live.hidden = !rows.length;
+            const countLabels = {rows_read: "Source rows read", processed: "Processed identities",
+                created: "Created", updated: "Updated", unchanged: "Unchanged", skipped: "Skipped",
+                conflicts: "Conflicts", errors: "Errors"};
+            const statusLabels = {RUNNING: "Running", Started: "Running", SUCCEEDED: "Completed",
+                BOUNDED_COMPLETE: "Bound comparison complete", CONFLICT: "Completed With Conflicts",
+                BUDGET_REACHED: "Budget Reached", FAILED: "Failed", ABORTED: "Cancelled",
+                RECONCILIATION_REQUIRED: "Reconciliation required", PARTIAL: "Incomplete", INCOMPLETE: "Incomplete"};
+            put(live, el("h3", {text: tr("Run progress")}), rows.map(row => {
+                const budget = row.budget;
+                const sections = row.children || [];
+                return el("article", {class: "hero-sync-panel"},
+                    el("h4", {}, tr(row.action), " · ", row.name, " · ", statusBadge(statusLabels[row.state] || row.state)),
+                    row.active ? el("progress", {"aria-label": tr("Execution active")}) : null,
+                    row.phase ? readonly("Phase", tr(row.phase)) : null,
+                    row.quiet ? el("p", {text: tr("Waiting for a new progress confirmation")}) : null,
+                    el("div", {class: "hero-sync-metrics"}, Object.entries(countLabels).map(([key, label]) =>
+                        readonly(label, row.counts[key] == null ? "—" : number(row.counts[key])))),
+                    budget ? readonly("Identity budget", format("{0}/{1} reserved · {2} available",
+                        number(budget.used), number(budget.limit), number(budget.remaining))) : null,
+                    row.pending != null ? readonly("Open relationships", number(row.pending)) : null,
+                    row.checkpoint != null ? readonly("Confirmed position", Array.isArray(row.checkpoint) ?
+                        row.checkpoint.join(" / ") : row.checkpoint) : null,
+                    readonly("Started", formatDateTime(row.start)),
+                    readonly("Duration", format("{0} min {1} s", Math.floor(row.elapsed / 60), row.elapsed % 60)),
+                    readonly("Last confirmed change", formatDateTime(row.modified)),
+                    sections.length ? readonly("Child runs", format("{0} started · {1} terminal · {2} pending",
+                        sections.filter(c => c.state !== "Pending").length,
+                        sections.filter(c => !["Pending", "Queued", "Running"].includes(c.state)).length,
+                        sections.filter(c => c.state === "Pending").length)) : null,
+                    sections.length ? el("ul", {}, sections.map(child => el("li", {}, tr(child.action), " · ", tr(child.state)))) : null);
+            }));
+        }
+
         function renderHistory(main, side) {
             const data = state.runs;
             if (!data) { add(main, el("p", {class: "hero-sync-hint", text: tr("Loading runtime history …")})); }
@@ -436,7 +474,7 @@
             if (run.project_phase_state && run.action === "Project Migration") facts.push(["Projects phase", phaseSummary(run.project_phase_state, run.project_phase_processed)]);
             if (Number(run.testing_enabled)) {
                 facts.push(["Testing", testingSummary(run)]);
-                if (run.identity_limit) facts.push(["Reserved identities", `${run.reserved_identities}/${run.identity_limit}`]);
+
                 facts.push(...testingAreaSummaries(run));
             }
             const actions = el("div", {class: "hero-sync-detail-actions"},
@@ -654,7 +692,7 @@
             try {
                 state.data = await call("sync_page_state");
             } catch (error) {
-                if (!state.data) { root.replaceChildren(el("p", {class: "hero-sync-error", text: error.message})); return; }
+                if (!state.data) { say(error.message, "error"); schedule(); return; }
                 say(error.message, "error");
             }
             renderAll();
@@ -666,18 +704,85 @@
             // Idle refresh also discovers runs started by the scheduler or another user.
             if (!state.destroyed && root.isConnected) {
                 state.timer = setTimeout(() => {
-                    if (state.destroyed || !root.isConnected) return;
+                    if (state.destroyed) return;
+                    if (!root.isConnected) { destroy(); return; }
                     if (document.hidden || state.busy) schedule();
                     else refresh();
                 }, state.data?.active_run ? REFRESH_MS : IDLE_REFRESH_MS);
             }
         }
 
+        // Realtime invalidates the snapshot. Counts and ordering always come from a
+        // single serialized GET. A disconnected socket leaves the five-second timer alive.
+        const stopLive = watchProgress({
+            fetchRows: async names => (await call("sync_page_runs", {live: 1, watched: JSON.stringify(names)})).rows,
+            render: renderLive, failed: () => { if (!live.hidden) say(tr("Progress refresh delayed"), "warn"); },
+            realtime: frappe.realtime, visible: () => !document.hidden && root.isConnected,
+        });
         renderView();
         manual.append(el("p", {class: "hero-sync-hint", text: tr("Loading stored synchronization state …")}));
         refresh();
-        return {destroy() { state.destroyed = true; clearTimeout(state.timer); }};
+        const container = page.main.closest?.(".page-container");
+        function destroy() {
+            if (state.destroyed) return;
+            state.destroyed = true;
+            clearTimeout(state.timer);
+            stopLive();
+            container?.off("hide.heroRunProgress", onHide);
+        }
+        function onHide(event) { if (event.target === container[0]) destroy(); }
+        container?.on("hide.heroRunProgress", onHide);
+        return {destroy};
     }
 
-    window.hero_integration_migration = Object.freeze({mount, diagnostic, formatDateTime, phaseSummary, testingSummary, testingAreaSummaries});
+    function watchProgress({fetchRows, render, failed, realtime, visible}) {
+        const types = ["HERO Integration Run", "HERO Sync Run Ledger", "HERO Polling Event"];
+        let stopped = false, loading = false, timer, last = 0, names = [];
+        const changed = new Set();
+        function schedule(delay) {
+            clearTimeout(timer);
+            if (!stopped) timer = setTimeout(read, delay);
+        }
+        async function read() {
+            if (stopped || loading) return;
+            if (!visible()) { schedule(REFRESH_MS); return; }
+            loading = true;
+            try {
+                const requested = [...new Set([...names, ...changed])].slice(0, 64);
+                changed.clear();
+                const rows = await fetchRows(requested);
+                if (!stopped) {
+                    // Retain the last terminal group until a new run takes its place.
+                    const active = rows.filter(row => row.active);
+                    names = active.map(row => row.name).slice(0, 64);
+                    if (rows.length) render(rows);
+                }
+            } catch (_) { if (!stopped) failed(); }
+            finally { loading = false; last = Date.now(); schedule(REFRESH_MS); }
+        }
+        const notify = event => {
+            if (stopped || !types.includes(event?.doctype)) return;
+            if (typeof event.name === "string" && changed.size < 32) changed.add(event.name);
+            if (!loading) schedule(Math.max(0, last + 1000 - Date.now()));
+        };
+        const connectedClient = realtime?.socket && !realtime.disabled && realtime.on && realtime.off &&
+            realtime.doctype_subscribe && realtime.doctype_unsubscribe;
+        const subscribe = () => types.forEach(t => realtime.doctype_subscribe(t));
+        if (connectedClient) {
+            realtime.on("connect", subscribe);
+            realtime.on("list_update", notify);
+            subscribe();
+        }
+        read();
+        return () => {
+            stopped = true; clearTimeout(timer);
+            if (connectedClient) {
+                realtime.off("list_update", notify);
+                realtime.off("connect", subscribe);
+                types.forEach(t => realtime.doctype_unsubscribe(t));
+            }
+        };
+    }
+
+    window.hero_integration_migration = Object.freeze({mount, watchProgress, diagnostic, formatDateTime, phaseSummary, testingSummary, testingAreaSummaries});
 })();

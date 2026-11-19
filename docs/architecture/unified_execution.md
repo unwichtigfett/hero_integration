@@ -27,3 +27,11 @@ Operators can inspect the integration run, polling event, sync run, budget use a
 ## Verification boundary
 
 Synthetic regressions exercise Fast metadata/detail selection, overlap, replay and existing migration handlers. Isolated Frappe, MariaDB and Redis tests cover concurrent admission at identity 51, queue dispatch with polling OFF, native document events, rollback before acknowledgment, conflict preservation and relationship recovery. The reference-schema validation used the stored introspection document. No live HERO request or external webhook delivery was part of acceptance.
+
+## Live run progress
+
+System Managers can follow executions on the Migration / Synchronization page. Its read-only progress view projects committed run counters, identity receipts, child checkpoints, pending relationships and the root budget. Replayed identities consume one slot. The source-row read count can include overlap. Document outcomes refer to primary targets reported by the handler. Older runs may lack specific counters and display a dash.
+
+The full-run card lists the frozen stages and their children. A successful full run also requires terminal mandatory relationships and reconciliation. Budget occupancy and elapsed time are displayed separately. With no authoritative source total the activity bar is indeterminate. Five minutes without a confirmation displays a waiting message. It does not stop the worker.
+
+The Desk page rereads its authorized projection on native list updates and every five seconds while visible. It releases subscriptions and timers on close. Progress refresh reads site data only. The additive fields and lookup indexes are applied through the existing Frappe DocType synchronization.

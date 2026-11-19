@@ -191,7 +191,7 @@ def run_materialized_monitor(*, frappe_module=None, client=None):
     operation = contract.target_operation
     return MonitorResult(len(records) if operation == "HeroCustomers" else 0,
                          len(records) if operation == "HeroProjectMatches" else 0,
-                         source, (operation,))
+                         source, (operation,), rows_read=len(records))
 
 
 def _validate_execution_evidence(frappe, plans, executable, materialized, polling, binding_revision,
@@ -402,7 +402,8 @@ def _run(executable, frappe, *, automatic: bool, provider=None, run_id=None, fin
     )
     state = engine.configure(configuration)
     run = SyncRun(run_id, selection.site_scope, executable.actor, state.generation, automatic, fingerprint,
-                  selection.source_instance, executable.plan_key, executable.generation, revision)
+                  selection.source_instance, executable.plan_key, executable.generation, revision,
+                  ("BOUND_OBJECTS" if bounded else "DELTA") if budget else "")
     if bounded:
         result = engine.compare_bound(run)
     else:

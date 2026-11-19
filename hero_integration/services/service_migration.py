@@ -441,6 +441,7 @@ def sync_services(client, *, source_instance, run_name, downloader, should_stop=
             state["stopped"] = True
             break
         received = runtime.fetch_page(client, read, state["offset"])
+        state["counts"]["rows_read"] = state["counts"].get("rows_read", 0) + len(received)
         window = None
         start_index = 0
         rows = received
@@ -524,11 +525,13 @@ def sync_services(client, *, source_instance, run_name, downloader, should_stop=
                 state["counts"][previous] -= 1
             state["outcomes"][str(row["id"])] = result
             state["counts"][result] = state["counts"].get(result, 0) + 1
+            state["counts"]["unique_processed"] = len(state["outcomes"])
             state.pop("last_error", None)
             state.pop("blocked_source_id", None)
             frappe.db.set_default(key, json.dumps(state))
             frappe.db.commit()
             if progress:
+                state["counts"]["confirmed_offset"] = state.get("offset")
                 progress(state["counts"])
         if blocked or state["stopped"]:
             break

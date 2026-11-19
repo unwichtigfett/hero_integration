@@ -4,6 +4,9 @@
  "module": "HERO Integration",
  "autoname": "field:event_id",
  "fields": [
+  {"fieldname": "updated_documents", "label": "Updated documents", "fieldtype": "Int", "read_only": 1},
+  {"fieldname": "unchanged_documents", "label": "Unchanged documents", "fieldtype": "Int", "read_only": 1},
+
   {
    "fieldname": "event_id",
    "label": "Event Id",
@@ -56,6 +59,7 @@
   },
   {
    "fieldname": "run_id",
+   "search_index": 1,
    "label": "Run Id",
    "fieldtype": "Data",
    "read_only": 1

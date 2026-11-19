@@ -481,7 +481,7 @@ def fetch_page(client, offset: int, size: int = PAGE_SIZE, read=None) -> list[di
 
 
 def sync_products(client=None, *, source_instance: str | None = None, time_budget: int = TIME_BUDGET_SECONDS,
-                  should_stop=None, max_pages: int = 2000, read=None, progress=None, record_limit=None, run_name=None, page_overlap=0) -> dict:
+                  should_stop=None, max_pages: int = 2000, read=None, progress=None, record_limit=None, run_name=None, page_overlap=0, observe_identity=None) -> dict:
     """Process articles from the saved offset until done, stopped or the time budget ends.
 
     ``source_instance`` is the HERO source ``client`` reads from; lookups, new
@@ -525,6 +525,7 @@ def sync_products(client=None, *, source_instance: str | None = None, time_budge
         if page_overlap:
             page_size = read.page_size
         received = fetch_page(client, offset, page_size, read)
+        counts["rows_read"] = counts.get("rows_read", 0) + len(received)
         window = None
         if page_overlap:
             window = advance(received, offset=offset, size=page_size, overlap=page_overlap,
@@ -569,6 +570,8 @@ def sync_products(client=None, *, source_instance: str | None = None, time_budge
                     record_output(run=run_name, source_type=SOURCE_TYPE, source_id=key, result='BLOCKED_RECORD',
                         action='product_import_failed', detail=f'Article import failed ({type(error).__name__}); see Error Log.')
             counts[result] = counts.get(result, 0) + 1
+            if observe_identity:
+                observe_identity(key, counts)
             if result != 'failed' and warnings:
                 counts['pending_review'] = counts.get('pending_review', 0) + 1
         if window:
@@ -587,6 +590,7 @@ def sync_products(client=None, *, source_instance: str | None = None, time_budge
             break
         save(state)
         if progress:
+            counts["confirmed_offset"] = state.get("offset")
             progress(counts)
         if time.monotonic() > deadline:
             break

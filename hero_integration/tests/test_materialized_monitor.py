@@ -151,7 +151,7 @@ class TestScheduledMonitor(unittest.TestCase):
         settings.last_successful_sync = datetime(2025, 12, 1)
         settings.polling_notifications = False
         fake = types.ModuleType("frappe")
-        fake.db = SimpleNamespace(rollback=Mock())
+        fake.db = Mock()
         fake.get_single = Mock(return_value=settings)
         fake.utils = SimpleNamespace(now_datetime=lambda: datetime(2026, 1, 1))
         result = polling.MonitorResult(1, 0, "source", ("HeroCustomers",))
@@ -161,7 +161,11 @@ class TestScheduledMonitor(unittest.TestCase):
             polling.run_monitor()
         run.assert_called_once_with(frappe_module=fake)
         event.assert_called_once()
-        self.assertEqual(event.call_args.args[:2], ("MONITOR", "Incomplete"))
+        self.assertEqual(event.call_args.args[:2], ("MONITOR", "Started"))
+        fake.db.commit.assert_called_once()
+        self.assertEqual(fake.db.set_value.call_args.args[1:], ("event", {
+            "status": "Incomplete", "detail": fake.db.set_value.call_args.args[2]["detail"],
+            "customer_records": 1, "project_records": 0, "rows_read": 1}))
         self.assertEqual(settings.sync_status, "MONITOR incomplete")
         self.assertEqual(settings.last_successful_sync, datetime(2025, 12, 1))
         self.assertEqual(fake.get_single.call_count, 2)
@@ -170,20 +174,21 @@ class TestScheduledMonitor(unittest.TestCase):
         from hero_integration.services import polling
         settings = SimpleNamespace(polling_mode="MONITOR", sync_status="", sync_error="", save=Mock())
         fake = types.ModuleType("frappe")
-        fake.db = SimpleNamespace(rollback=Mock())
+        fake.db = Mock()
         fake.get_single = Mock(return_value=settings)
         with patch.dict(sys.modules, {"frappe": fake}), \
              patch.object(sync_runtime_adapter, "run_materialized_monitor", side_effect=sync_runtime_adapter.RuntimeBridgeError("No approved plan.")), \
-             patch.object(polling, "record_scheduler_outcome") as outcome:
+             patch.object(polling, "_record_event", return_value="event"):
             polling.run_monitor()
-        outcome.assert_called_once_with("MONITOR", "Skipped", "Materialized monitoring is blocked: No approved plan.")
+        self.assertEqual(fake.db.set_value.call_args.args[:2], ("HERO Polling Event", "event"))
+        self.assertEqual(fake.db.set_value.call_args.args[2]["status"], "Skipped")
 
     def test_monitor_failure_reloads_settings_instead_of_saving_a_stale_source(self):
         from hero_integration.services import polling
         old = SimpleNamespace(polling_mode='MONITOR', save=Mock())
         current = SimpleNamespace(save=Mock())
         fake = types.ModuleType('frappe')
-        fake.db = SimpleNamespace(rollback=Mock())
+        fake.db = Mock()
         fake.get_single = Mock(side_effect=[old, current])
         fake.log_error = Mock()
         with patch.dict(sys.modules, {'frappe': fake}), \
@@ -199,12 +204,12 @@ class TestScheduledMonitor(unittest.TestCase):
         sensitive = 'synthetic-secret-from-exception'
         settings = SimpleNamespace(polling_mode='MONITOR', save=Mock())
         fake = types.ModuleType('frappe')
-        fake.db = SimpleNamespace(rollback=Mock())
+        fake.db = Mock()
         fake.get_single = Mock(return_value=settings)
         fake.log_error = Mock()
 
         def record_event(*args):
-            fake.db.rollback.assert_called_once()
+            return "event"
 
         with patch.dict(sys.modules, {'frappe': fake}), \
              patch.object(sync_runtime_adapter, 'run_materialized_monitor', side_effect=ValueError(sensitive)), \
@@ -212,6 +217,8 @@ class TestScheduledMonitor(unittest.TestCase):
             polling.run_monitor()
 
         event.assert_called_once()
-        self.assertNotIn(sensitive, str(event.call_args))
+        fake.db.rollback.assert_called_once()
+        self.assertEqual(fake.db.set_value.call_args.args[2]["status"], "Failed")
+        self.assertNotIn(sensitive, str(fake.db.set_value.call_args))
         self.assertNotIn(sensitive, settings.sync_error)
         self.assertNotIn(sensitive, str(fake.log_error.call_args))

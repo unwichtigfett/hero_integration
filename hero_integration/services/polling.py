@@ -29,6 +29,7 @@ class MonitorResult:
     customer_next_offset: int = 0
     project_next_offset: int = 0
     offset_checkpoints: dict = field(default_factory=dict)
+    rows_read: int | None = None
 
 
 @dataclass(frozen=True)
@@ -158,10 +159,14 @@ def run_monitor() -> None:
         _record_event("MONITOR", "Skipped", "Polling configuration is not supported by the approved runtime contract; no HERO request was made.")
         return
     from hero_integration.services.sync_runtime_adapter import RuntimeBridgeError, run_materialized_monitor
+    event = _record_event("MONITOR", "Started", "Reading approved page.")
+    frappe.db.commit()  # Visible while the existing reader waits for its response.
     try:
         result = run_materialized_monitor(frappe_module=frappe)
         detail = "Materialized monitoring observed one bounded read page; full coverage is not claimed and no business records were written."
-        event = _record_event("MONITOR", "Incomplete", detail, result)
+        frappe.db.set_value("HERO Polling Event", event, {"status": "Incomplete", "detail": detail,
+            "customer_records": result.customer_records, "project_records": result.project_records,
+            "rows_read": result.rows_read if result.rows_read is not None else result.customer_records + result.project_records})
         settings = frappe.get_single("HERO Integration Settings")
         settings.sync_status, settings.sync_error = "MONITOR incomplete", ""
         settings.save(ignore_permissions=True)
@@ -169,11 +174,13 @@ def run_monitor() -> None:
             _notify_polling_event(event, detail)
     except RuntimeBridgeError as error:
         frappe.db.rollback()
-        record_scheduler_outcome("MONITOR", "Skipped", f"Materialized monitoring is blocked: {error}")
+        frappe.db.set_value("HERO Polling Event", event, {"status": "Skipped", "detail": "Monitoring plan unavailable."})
+        frappe.db.set_single_value("HERO Integration Settings", {"sync_status": "MONITOR skipped",
+            "sync_error": str(error)})
     except Exception:
         frappe.db.rollback()
         settings = frappe.get_single("HERO Integration Settings")
-        _record_event("MONITOR", "Failed", "Materialized monitoring failed; see the redacted server error log.")
+        frappe.db.set_value("HERO Polling Event", event, {"status": "Failed", "detail": "Materialized monitoring failed."})
         settings.sync_status = "MONITOR failed"
         settings.sync_error = "Materialized monitoring failed or is not approved; see the redacted server error log."
         settings.save(ignore_permissions=True)
