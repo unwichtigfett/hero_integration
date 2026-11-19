@@ -16,6 +16,7 @@ class TestExecutionBudgetMariaDB(unittest.TestCase):
     def setUp(self):
         import frappe
         self.assertEqual(frappe.local.site, SITE)
+        self.assertTrue(frappe.conf.allow_tests)
         self.budget = ExecutionBudget('migration', 'budget-test-' + uuid4().hex, 'synthetic')
 
     def tearDown(self):
@@ -81,6 +82,28 @@ class TestExecutionBudgetMariaDB(unittest.TestCase):
                 fixture.run_import(record_limit=1, cohort_user_ids=['106'], cohort_partner_ids=[])
         self.assertEqual([call.args[0]['id'] for call in write.call_args_list], [1])
         self.assertEqual(self.budget.used(), 49)
+
+    def test_changed_employee_resume_uses_original_partner_and_user_slots(self):
+        from hero_integration.services import employee_migration as employees
+        from hero_integration.tests.test_employee_migration import TestEmployeeResume
+
+        fixture = TestEmployeeResume()
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        rows = [{"id": 1, "user_id": 101, "first_name": "Ada"}, {"id": 2, "user_id": 102}]
+        fixture.client.query = lambda *args: {"partners": rows}
+        with patch.object(employees, "current_budget", return_value=self.budget):
+            with patch.object(employees, "upsert", side_effect=["added", employees.EmployeeMigrationBlocked("Review")]):
+                first = fixture.run_import()
+            self.assertFalse(first["done"])
+            self.assertEqual(self.budget.used(), 4)
+            rows[0]["first_name"] = "Ida"
+            with patch.object(employees, "upsert", side_effect=["updated", "added"]) as write:
+                final = fixture.run_import()
+            self.assertEqual([c.args[0]["id"] for c in write.call_args_list], [1, 2])
+            self.assertTrue(final["done"])
+            self.assertEqual(final["counts"]["unique_processed"], 2)
+            self.assertEqual(self.budget.used(), 4)
 
     def test_file_admission_precedes_detail_blob_and_native_storage(self):
         from hero_integration.services import file_transfer

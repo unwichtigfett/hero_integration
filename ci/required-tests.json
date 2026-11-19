@@ -86,6 +86,15 @@
     ],
     "opt finite selection architecture": [
       "hero_integration.tests.test_query_draft.TestQueryDraft.test_recursive_selection_is_not_bounded_by_the_retired_editor_depth_limit"
+    ],
+    "scheduler execution authorities": [
+      "hero_integration.tests.test_auto_sync_areas.TestAutoSyncRouting.test_scheduled_sync_cannot_enqueue_initial_imports",
+      "hero_integration.tests.test_auto_sync_areas.TestAutoSyncRouting.test_off_or_disabled_scheduler_suppresses_automatic_execution",
+      "hero_integration.tests.test_auto_sync_areas.TestAutoSyncRouting.test_manual_import_dispatch_uses_persisted_action_without_polling_settings"
+    ],
+    "employee resume and bound conflict": [
+      "hero_integration.tests.test_employee_migration.TestEmployeeResume.test_changed_completed_partner_is_rechecked_before_finishing_resume",
+      "hero_integration.tests.test_employee_migration.TestEmployeeWrites.test_resume_after_local_and_source_edits_preserves_local_employee"
     ]
   },
   "site": {
@@ -103,6 +112,20 @@
       "hero_integration.tests.test_run_checkpoint_frappe.TestCheckpointMariaDB.test_concurrent_field_change_waits_for_checkpoint_then_rejects_stale_continuation",
       "hero_integration.tests.test_run_checkpoint_frappe.TestCheckpointMariaDB.test_actual_run_reader_releases_database_locks_before_transport",
       "hero_integration.tests.test_run_checkpoint_frappe.TestCheckpointMariaDB.test_mapping_publication_uses_same_transaction_scoped_root_lock"
+    ],
+    "global budget under MariaDB concurrency": [
+      "hero_integration.tests.test_execution_budget.TestExecutionBudgetMariaDB.test_concurrent_50th_identity_and_relationship_retry",
+      "hero_integration.tests.test_execution_budget.TestExecutionBudgetMariaDB.test_outer_rollback_does_not_lose_reservation_or_commit_business_writes",
+      "hero_integration.tests.test_execution_budget.TestExecutionBudgetMariaDB.test_employee_outside_first_sample_cannot_exceed_the_root_budget",
+      "hero_integration.tests.test_execution_budget.TestExecutionBudgetMariaDB.test_file_admission_precedes_detail_blob_and_native_storage",
+      "hero_integration.tests.test_execution_budget.TestExecutionBudgetMariaDB.test_project_relation_replay_cannot_create_a_51st_identity"
+    ],
+    "synthetic scheduler and manual queue": [
+      "hero_integration.tests.test_polling_synthetic_frappe.TestSyntheticPollingMariaDB.test_scheduler_with_no_approved_plan_records_skip_without_importing",
+      "hero_integration.tests.test_polling_synthetic_frappe.TestSyntheticPollingMariaDB.test_manual_employee_import_with_scheduler_and_polling_off"
+    ],
+    "employee resume retains budget slots": [
+      "hero_integration.tests.test_execution_budget.TestExecutionBudgetMariaDB.test_changed_employee_resume_uses_original_partner_and_user_slots"
     ]
   },
   "native": {

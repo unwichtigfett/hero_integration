@@ -13,9 +13,11 @@ from hero_integration import api, tasks
 
 class TestSyntheticPollingMariaDB(TestCase):
     def setUp(self):
-        if (not os.environ.get('HERO_TEST_PRIVATE_SITE') or os.environ.get('HERO_TEST_PRIVATE_SITE') != frappe.local.site or
-                os.environ.get('HERO_SYNTHETIC_POLLING_TEST') != '1'):
+        site = os.environ.get('HERO_CI_TEST_SITE') or os.environ.get('HERO_TEST_PRIVATE_SITE')
+        if not site or os.environ.get('HERO_SYNTHETIC_POLLING_TEST') != '1':
             self.skipTest('Requires explicitly selected synthetic Frappe site')
+        self.assertEqual(site, frappe.local.site)
+        self.assertTrue(frappe.conf.allow_tests)
         frappe.set_user('Administrator')
         self.source = 'synthetic-poll-' + uuid4().hex[:12]
         self.settings_fields = ('polling_mode', 'sync_service_paused', 'polling_interval_minutes',

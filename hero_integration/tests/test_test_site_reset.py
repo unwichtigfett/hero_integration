@@ -20,7 +20,7 @@ REVISION = "a" * 40
 
 
 class TestTestSiteReset(unittest.TestCase):
-    def run_update(self, *, command=None, reset_error=None, revision=REVISION):
+    def run_update(self, *, command=None, reset_error=None, revision=REVISION, free_gib=20):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             site = root / "sites/frappe-test"
@@ -52,6 +52,7 @@ class TestTestSiteReset(unittest.TestCase):
                                 FAILURE_STATE=root / "retry.json", LOCKFILE=root / "lock", log=None, backup=None,
                                 maintenance=False, stopped=False, switched=False,
                                 migration_started=False, old_env=None), \
+                 patch.object(updater.shutil, "disk_usage", return_value=Mock(free=free_gib * 1024**3)), \
                  patch.object(updater.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)), \
                  patch.object(updater, "head", return_value=revision), \
                  patch.object(updater, "run", side_effect=run), \
@@ -92,6 +93,14 @@ class TestTestSiteReset(unittest.TestCase):
         reset.assert_called_once_with()
         backup_site.assert_not_called()
         backup_data.assert_not_called()
+
+    def test_low_space_blocks_a_new_revision_before_build_or_reset(self):
+        revision = "b" * 40
+        status, _, _, _, _, build, reset = self.run_update(
+            command=f"update:blank:{revision}", revision=revision, free_gib=14)
+        self.assertEqual(status, 1)
+        build.assert_not_called()
+        reset.assert_not_called()
 
     def test_timer_skips_an_unchanged_commit_and_does_not_reset(self):
         status, bench, compose, backup_site, backup_data, build, reset = self.run_update(command="")

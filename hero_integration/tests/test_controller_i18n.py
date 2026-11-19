@@ -13,7 +13,7 @@ class TestControllerTranslations(unittest.TestCase):
     def test_settings_validation_translates_error_and_keeps_validation(self):
         messages = {'Schema refresh interval must be between {0} and {1} minutes.': 'Intervall {0} bis {1}.'}
         fake = SimpleNamespace(only_for=lambda role: None, _=lambda value: messages.get(value, value))
-        document = SimpleNamespace(_update_source_binding=lambda: None, hero_api_url='')
+        document = SimpleNamespace(_update_source_binding=lambda: None, hero_api_url='', get={}.get)
         with patch.object(settings, 'frappe', fake), patch.object(settings, 'refresh_interval', return_value=0):
             with self.assertRaisesRegex(ValueError, '^Intervall '):
                 settings.HEROIntegrationSettings.validate(document)
