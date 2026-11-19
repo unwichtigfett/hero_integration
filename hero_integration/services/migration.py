@@ -792,6 +792,11 @@ def _mapping_plan_for_run(run, target_operation: str):
 
 def _record_offset_checkpoint(run, page, phase, offset, processed, *, complete=False):
     evidence = getattr(page, "offset_checkpoint", None)
+    if (processed == 1 and not complete) or (complete and not processed):
+        # Count reads (including replay) separately from distinct processed identities.
+        counts = json.loads(getattr(run, "progress_counts_json", None) or "{}")
+        counts["rows_read"] = counts.get("rows_read", 0) + (evidence or {}).get("count", len(page.records))
+        run.progress_counts_json = json.dumps(counts)
     if evidence is not None:
         run.page_checkpoint_json = json.dumps({"phase": phase, "offset": offset, "processed": processed,
                                               "page_complete": complete, "window": evidence})
@@ -2592,7 +2597,8 @@ def decide_review(link, decision: str) -> None:
 def _record_result(run, source_type: str, record: dict[str, object], result: Result) -> None:
     from hero_integration.services.deferred_references import remember
     remember(run, source_type, record, result)
-    source_id = str(record.get("id")) if isinstance(record.get("id"), int) else "unknown"
+    identity = record.get("id")
+    source_id = str(identity) if type(identity) in (str, int) and str(identity).strip() else "unknown"
     record_output(
         run=run.name, source_type=source_type, source_id=source_id, result=result.code,
         action="preview" if run.mode == "Preview" else "hero_to_frappe",

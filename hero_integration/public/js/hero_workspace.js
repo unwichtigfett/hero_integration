@@ -23,7 +23,7 @@
     const LEGACY_SECTION_TO_TOOL = Object.freeze({analyzer: "analyzer", graph: "graph", services: "services"});
     // Dynamically inserted styles need a release token. Keep frappe.require()
     // JavaScript URLs query-free so Frappe can select its loader and version.
-    const ASSET_RELEASE = "20261104.2";
+    const ASSET_RELEASE = "20261119.1";
     const ASSETS = [
         "/assets/hero_integration/css/hero_tools.css",
         "/assets/hero_integration/css/hero_adapter.css",

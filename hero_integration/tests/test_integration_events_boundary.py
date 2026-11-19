@@ -51,6 +51,8 @@ class TestIntegrationOutputBoundary(unittest.TestCase):
             result = integration_events.list_outputs(limit_start=-10, limit_page_length=500)
         self.assertEqual((result["limit_start"], result["limit_page_length"]), (0, 100))
         self.assertEqual(result["records"], [{"name": "synthetic", "outcome": "FAILED"}])
+        self.assertIn(["technical_action", "!=", "identity_checkpoint"], query.call_args.kwargs["or_filters"])
+        self.assertIn(["technical_action", "is", "not set"], query.call_args.kwargs["or_filters"])
         fields = query.call_args.kwargs["fields"]
         self.assertNotIn("detail", fields)
         self.assertNotIn("source_payload", fields)

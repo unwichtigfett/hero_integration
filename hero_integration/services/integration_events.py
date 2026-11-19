@@ -77,6 +77,23 @@ def record_output(
     return record.name
 
 
+def record_processed_page(run, source_type, identities):
+    """Batch idempotent primary-identity observations with the existing page checkpoint."""
+    from hashlib import sha256
+    import json
+
+    now = now_datetime()
+    actor = frappe.session.user
+    rows = []
+    for identity in identities:
+        key = sha256(json.dumps([run, source_type, str(identity)]).encode()).hexdigest()
+        rows.append((key, now, now, actor, actor, run, source_type, str(identity), "OBSERVED",
+                     "identity_checkpoint", OUTPUT_SCHEMA_VERSION, "integration.result", "hero_integration", now))
+    frappe.db.bulk_insert("HERO Integration Record", ["name", "creation", "modified", "owner", "modified_by",
+        "run", "source_type", "source_id", "result", "technical_action", "output_schema_version",
+        "event_type", "origin", "observed_at"], rows, ignore_duplicates=True)
+
+
 @_whitelist()
 def list_outputs(limit_start: int = 0, limit_page_length: int = 20) -> dict[str, Any]:
     """Return a paginated, System-Manager-only projection of durable results."""
@@ -93,7 +110,9 @@ def list_outputs(limit_start: int = 0, limit_page_length: int = 20) -> dict[str,
     return {
         "schema_version": OUTPUT_SCHEMA_VERSION,
         "records": [{**row, "outcome": migration_outcome(row.get("result", ""))} for row in frappe.get_all(
-            "HERO Integration Record", fields=fields, order_by="creation desc",
+            "HERO Integration Record", fields=fields,
+            or_filters=[["technical_action", "!=", "identity_checkpoint"], ["technical_action", "is", "not set"]],
+            order_by="creation desc",
             limit_start=start, limit_page_length=page_length,
         )],
         "limit_start": start,

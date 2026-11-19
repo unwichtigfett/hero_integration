@@ -404,9 +404,25 @@ def _process_file_slice(run, config):
     def cancelled() -> bool:
         return frappe.db.get_value("HERO Integration Run", run.name, "state") == "Cancelled"
 
+    page_identities = set()
+    settled_counts = None
+
+    def observe_identity(identity, counts):
+        nonlocal settled_counts
+        page_identities.add(identity)
+        settled_counts = counts
+
+    def publish_counts(counts):
+        if page_identities:
+            from hero_integration.services.integration_events import record_processed_page
+            kind = "file_upload" if run.action in FILE_ACTIONS else "supply_product"
+            record_processed_page(run.name, kind, page_identities)
+            page_identities.clear()
+        frappe.db.set_value("HERO Integration Run", run.name, run_counts(counts, action=run.action))
+
     def progress(counts: dict) -> None:
         # Called after every page, so the Synchronization page shows the counts while the slice runs.
-        frappe.db.set_value("HERO Integration Run", run.name, run_counts(counts))
+        publish_counts(counts)
         frappe.db.commit()
 
     from hero_integration.services.migration_testing import record_limit, persist
@@ -415,35 +431,46 @@ def _process_file_slice(run, config):
     client, downloader, instance = _client_and_downloader(config)
     overlap = int(getattr(run, "page_overlap", 0) or 0)
     paging = {"page_overlap": overlap} if overlap else {}
-    if run.action == SERVICE_ACTION:
-        from hero_integration.services.service_migration import sync_services
+    try:
+        if run.action == SERVICE_ACTION:
+            from hero_integration.services.service_migration import sync_services
 
-        state = sync_services(client, source_instance=instance, run_name=run.name, downloader=downloader,
-                              should_stop=cancelled, progress=progress, verify_source=lambda: bound_configuration(run),
-                              record_limit=maximum, continue_on_conflict=True, **paging)
-    elif run.action == EMPLOYEE_ACTION:
-        from hero_integration.services.employee_migration import sync_employees
+            state = sync_services(client, source_instance=instance, run_name=run.name, downloader=downloader,
+                                  should_stop=cancelled, progress=progress, verify_source=lambda: bound_configuration(run),
+                                  record_limit=maximum, continue_on_conflict=True, **paging)
+        elif run.action == EMPLOYEE_ACTION:
+            from hero_integration.services.employee_migration import sync_employees
 
-        args = {'cohort_user_ids': cohort['user_ids'], 'cohort_partner_ids': cohort['partner_ids']} if cohort is not None else {}
-        state = sync_employees(client, source_instance=instance, run_name=run.name,
-                               should_stop=cancelled, progress=progress, verify_source=lambda: bound_configuration(run),
-                               record_limit=maximum, continue_on_conflict=True, **args)
-    elif run.action == PRODUCT_ACTION:
-        from hero_integration.services.product_migration import sync_products
+            args = {'cohort_user_ids': cohort['user_ids'], 'cohort_partner_ids': cohort['partner_ids']} if cohort is not None else {}
+            state = sync_employees(client, source_instance=instance, run_name=run.name,
+                                   should_stop=cancelled, progress=progress, verify_source=lambda: bound_configuration(run),
+                                   record_limit=maximum, continue_on_conflict=True, **args)
+        elif run.action == PRODUCT_ACTION:
+            from hero_integration.services.product_migration import sync_products
 
-        state = sync_products(client, source_instance=instance, should_stop=cancelled, progress=progress,
-                              record_limit=maximum, run_name=run.name, **paging)
-    else:
-        args = {'cohort': cohort} if cohort is not None else {}
-        state = transfer(FILE_ACTIONS[run.action], source_instance=instance, client=client,
-                         downloader=downloader, should_stop=cancelled, progress=progress,
-                         record_limit=maximum, run_name=run.name, **args, **paging)
+            state = sync_products(client, source_instance=instance, should_stop=cancelled, progress=progress,
+                                  record_limit=maximum, run_name=run.name, observe_identity=observe_identity, **paging)
+        else:
+            args = {'cohort': cohort} if cohort is not None else {}
+            state = transfer(FILE_ACTIONS[run.action], source_instance=instance, client=client,
+                             downloader=downloader, should_stop=cancelled, progress=progress,
+                             record_limit=maximum, run_name=run.name, observe_identity=observe_identity, **args, **paging)
+    except execution_budget.BudgetReached:
+        # Earlier items in this page may have committed individually. Publish
+        # their outcomes after discarding the rejected item's transaction. The
+        # completed-page offset stays where the reader last confirmed it.
+        frappe.db.rollback()
+        if page_identities:
+            publish_counts(settled_counts)
+            frappe.db.commit()
+        raise
     counts = state.get("counts") or {}
     if maximum is not None:
         persist(run.name, DIRECT_OPERATIONS[run.action], state)
     problems = counts.get("failed", 0) + counts.get("conflict", 0) + int(any(
         state.get(key) for key in ('testing_missing_user_ids', 'testing_ambiguous_user_ids', 'testing_missing_partner_ids')))
-    frappe.db.set_value("HERO Integration Run", run.name, run_counts(counts))
+    counts["confirmed_offset"] = state.get("offset")
+    publish_counts(counts)
     frappe.db.commit()
     if state.get("stopped"):
         return  # cancelled by the user; the run keeps its Cancelled state
@@ -465,13 +492,21 @@ def _process_file_slice(run, config):
         _finish(run.name, "Completed With Conflicts" if problems else "Completed", detail)
 
 
-def run_counts(counts: dict) -> dict:
+def run_counts(counts: dict, *, action=None) -> dict:
     """Run fields for the counts of a product or file pass."""
     skipped = counts.get("updated", 0) + counts.get("unchanged", 0) + sum(v for k, v in counts.items() if k.startswith("skipped_"))
     problems = counts.get("failed", 0) + counts.get("conflict", 0)
     values = {"created_records": counts.get("added", 0), "skipped_records": skipped,
               "conflict_records": problems, "error_message": summary(counts)}
     values["processed"] = values["created_records"] + skipped + values["conflict_records"]
+    if action:
+        values["progress_counts_json"] = json.dumps({
+            "rows_read": counts.get("rows_read"), "created": counts.get("added", 0),
+            "updated": counts.get("updated", 0), "unchanged": counts.get("unchanged", 0),
+            "skipped": sum(v for k, v in counts.items() if k.startswith("skipped_")),
+            "conflicts": counts.get("conflict", 0), "errors": counts.get("failed", 0),
+            "processed": counts.get("unique_processed"), "offset": counts.get("confirmed_offset"),
+        })
     return values
 
 

@@ -30,19 +30,23 @@ function setup() {
     const main = {empty() { return main; }, addClass() { return main; }, get() { return host; }};
     const view = context.window.hero_integration_migration.mount({main});
     async function tick() {
-        assert.equal(timers.size, 1);
-        const [key, timer] = [...timers][0]; timers.delete(key); timer.fn(); await flush();
+        // Advance both the live heartbeat and the independently scheduled page refresh.
+        assert.equal(timers.size, 2);
+        for (const [key, timer] of [...timers]) {
+            if (timers.delete(key)) timer.fn();
+        }
+        await flush();
     }
     return {data, document, view, calls, timers, tick, host};
 }
 
 test('idle page discovers automatic runs, shows outcomes, and resumes idle refresh', async () => {
     const app = setup(); await flush();
-    assert.equal([...app.timers.values()][0].ms, 30000);
+    assert.deepEqual([...app.timers.values()].map(t => t.ms).sort((a,b) => a-b), [5000, 30000]);
     app.data.active_run = {name: 'RUN-1'};
     app.data.metrics.polling = {...app.data.metrics.polling, runs: 1, running: 1, last_status: 'Running'};
     await app.tick();
-    assert.equal([...app.timers.values()][0].ms, 5000);
+    assert.deepEqual([...app.timers.values()].map(t => t.ms), [5000, 5000]);
     const text = app.host.querySelectorAll('span').map(el => el.textContent);
     assert.ok(text.includes('Running'));
     const metric = label => app.host.querySelectorAll('div').find(el => el.className === 'hero-sync-metric' && el.children[0].textContent === label).children[1].textContent;
@@ -52,7 +56,7 @@ test('idle page discovers automatic runs, shows outcomes, and resumes idle refre
     app.data.active_run = null;
     app.data.metrics.polling = {...app.data.metrics.polling, running: 0, pass: 1, last_status: 'Succeeded'};
     await app.tick();
-    assert.equal([...app.timers.values()][0].ms, 30000);
+    assert.deepEqual([...app.timers.values()].map(t => t.ms).sort((a,b) => a-b), [5000, 30000]);
     assert.ok(app.host.querySelectorAll('span').some(el => el.textContent === 'Succeeded'));
     assert.equal(metric('Runs'), '1');
     assert.equal(metric('Running'), '0');

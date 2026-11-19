@@ -98,7 +98,7 @@ class TestPaging(unittest.TestCase):
         with patch.object(pm, 'frappe', fake), patch.object(pm, '_links', return_value={}), \
                 patch.object(pm, 'upsert', side_effect=import_article):
             state = pm.sync_products(_Client(2), source_instance='source-a', read=BUILTIN)
-        self.assertEqual(state['counts'], {'requests': 2, 'failed': 1, 'added': 1})
+        self.assertEqual(state['counts'], {'requests': 2, 'rows_read': 2, 'failed': 1, 'added': 1})
         self.assertEqual(len(accepted), 1)
         self.assertEqual(len([entry for entry in created if entry[0] == 'Supplier']), 2)
         self.assertEqual(len([entry for entry in created if entry[0] == 'UOM']), 2)

@@ -619,7 +619,7 @@ def reset_phase(phase: str) -> None:
 
 def transfer(phase: str, *, source_instance: str | None = None, client=None, downloader=None, dry_run: bool = False,
              time_budget: int = TIME_BUDGET_SECONDS, min_free: int = MIN_FREE_BYTES, should_stop=None,
-             progress=None, record_limit=None, run_name=None, cohort=None, page_overlap=0) -> dict:
+             progress=None, record_limit=None, run_name=None, cohort=None, page_overlap=0, observe_identity=None) -> dict:
     """Process one phase from its saved offset until done or the time budget ends.
 
     ``source_instance`` is the HERO source the client reads from; every lookup,
@@ -697,14 +697,19 @@ def transfer(phase: str, *, source_instance: str | None = None, client=None, dow
     deadline = time.monotonic() + time_budget
     state.update(phase=phase, done=False, last_error=None, stopped=False)
 
+    current_identity = None
     def bump(key, amount=1):
         counts[key] = counts.get(key, 0) + amount
+        if observe_identity and current_identity is not None and (
+                key in {"added", "updated", "unchanged", "failed", "conflict"} or key.startswith("skipped_")):
+            observe_identity(current_identity, counts)
 
     while True:
         if record_limit is not None and cohort is None and processed(counts) >= record_limit:
             state.update(testing_limit_reached=True)
             break
         page = direct_runtime.fetch_page(client, read, state["offset"])
+        bump("rows_read", len(page))
         bump("requests")
         if not page:
             break
@@ -754,7 +759,8 @@ def transfer(phase: str, *, source_instance: str | None = None, client=None, dow
                 if not dry_run:
                     save(state)  # retry this page; committed files are skipped later
                 return state
-            link = known.get(direct_runtime.identity(read, row))
+            current_identity = direct_runtime.identity(read, row)
+            link = known.get(current_identity)
             unchanged = bool(link) and link.source_payload_hash == source_hash(row)
             unchanged = unchanged and bool(frappe.db.exists("File", link.target_name))
             reason = skip_reason(row, detail)
@@ -865,6 +871,7 @@ def transfer(phase: str, *, source_instance: str | None = None, client=None, dow
         if not dry_run:
             save(state)
             if progress:
+                counts["confirmed_offset"] = state.get("offset")
                 progress(counts)
         if time.monotonic() > deadline:
             return state

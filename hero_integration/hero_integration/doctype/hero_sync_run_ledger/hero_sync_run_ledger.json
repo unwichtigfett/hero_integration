@@ -5,6 +5,10 @@
  "autoname": "field:sync_run_id",
  "track_changes": 1,
  "fields": [
+  {"fieldname": "execution_scope", "label": "Execution scope", "fieldtype": "Data", "read_only": 1},
+  {"fieldname": "confirmed_position", "label": "Confirmed position", "fieldtype": "Data", "read_only": 1},
+  {"fieldname": "rows_read", "label": "Source rows read", "fieldtype": "Int", "read_only": 1},
+
   {
    "fieldname": "sync_run_id",
    "label": "Sync Run ID",
@@ -36,7 +40,7 @@
    "read_only": 1
   },
   {
-   "fieldname": "state",
+   "fieldname": "state", "search_index": 1,
    "label": "State",
    "fieldtype": "Select",
    "options": "RUNNING\nABORTED\nCOMPLETED\nSUCCEEDED\nPARTIAL\nFAILED\nCONFLICT\nBOUNDED_COMPLETE\nBUDGET_REACHED\nINCOMPLETE\nRECONCILIATION_REQUIRED",

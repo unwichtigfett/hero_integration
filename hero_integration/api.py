@@ -692,11 +692,18 @@ def sync_service_set(enabled: int | bool | str | None = None, area: str = "",
 
 
 @frappe.whitelist(methods=["GET"])
-def sync_page_runs(start: int | str = 0, page_size: int | str = 8) -> dict[str, object]:
+def sync_page_runs(start: int | str = 0, page_size: int | str = 8, live: int = 0, watched: str = "[]") -> dict[str, object]:
     """One page of the runtime history, newest first."""
     frappe.only_for("System Manager")
     from hero_integration.services.sync_page import action_label
 
+    if live:
+        from hero_integration.services.run_progress import cards
+        names = json.loads(watched)
+        if not isinstance(names, list) or len(names) > 64 or any(
+                not isinstance(n, str) or len(n) > 140 for n in names):
+            frappe.throw(frappe._("Invalid run selection."))
+        return {"rows": cards(names)}
     start = _mapping_int(start, "start", 0, 2147483647)
     page_size = _mapping_int(page_size, "page_size", 1, 50)
     rows = frappe.get_all("HERO Integration Run", fields=RUN_LIST_FIELDS, order_by="creation desc",
@@ -725,9 +732,8 @@ def sync_page_run_detail(run_name: str) -> dict[str, object]:
     if budget:
         detail["reserved_identities"] = budget.used()
         detail["identity_limit"] = budget.limit
-    outcomes: dict[str, int] = {}
-    for row in frappe.get_all("HERO Integration Record", filters={"run": run.name}, fields=["result"], limit_page_length=5000):
-        outcomes[row["result"]] = outcomes.get(row["result"], 0) + 1
+    outcomes = dict(frappe.db.sql("""SELECT result, COUNT(*) FROM `tabHERO Integration Record`
+        WHERE run=%s AND COALESCE(technical_action,'') <> 'identity_checkpoint' GROUP BY result""", (run.name,)))
     detail.update({
         "area": action_label(run.action),
         "outcomes": outcomes,
@@ -1114,7 +1120,7 @@ def graph_view(snapshot_name: str) -> dict[str, object]:
 
 # Compatibility endpoints use saved snapshots without proxies or GraphQL execution.
 @frappe.whitelist()
-def workspace_context(snapshot_name: str = "") -> dict[str, object]:
+def workspace_context(snapshot_name: str = "", include_activity: int = 0) -> dict[str, object]:
     frappe.only_for("System Manager")
     rows = _schema_snapshot_rows()
     snapshots = [_workspace_snapshot_metadata(row) for row in rows]
@@ -1122,7 +1128,12 @@ def workspace_context(snapshot_name: str = "") -> dict[str, object]:
         latest = _newest_validated_snapshot(rows, snapshots)
         snapshot_name = latest["name"] if latest else ""
     selected = next((item for item in snapshots if item["name"] == snapshot_name and item["usable"]), None)
+    activity = {}
+    if include_activity:
+        from hero_integration.services.run_progress import has_activity
+        activity["has_active_execution"] = bool(has_activity())
     return {
+        **activity,
         "connection_id": selected["name"] if selected else "",
         "binding_generation": 0,
         "schema_fingerprint": selected["schema_fingerprint"] if selected else "",

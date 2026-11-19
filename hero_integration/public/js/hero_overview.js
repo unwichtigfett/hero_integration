@@ -176,6 +176,9 @@
             toolLink("Mapping Editor", "mapping"),
             toolLink("Settings", "settings")
         );
+        const activeLink = toolLink("View active run", "synchronization");
+        activeLink.hidden = true;
+        links.append(activeLink);
         const toolbar = el("div", "hero-overview-toolbar");
         toolbar.append(actions, links);
 
@@ -202,6 +205,7 @@
         function render() {
             const c = context || {};
             const s = settings || {};
+            activeLink.hidden = !c.has_active_execution;
             const [localAccess, localAccessState] = localConfigurationAccess(context);
             const [mutationExecution, mutationExecutionState] = mutationExecutionStatus(settings);
             const [automaticSynchronization, automaticSynchronizationState] = automaticSynchronizationStatus(settings);
@@ -242,7 +246,7 @@
             try {
                 settings = await platform.api(SETTINGS);
                 try {
-                    context = await platform.api(CONTEXT, snapshotName ? {snapshot_name: snapshotName} : {});
+                    context = await platform.api(CONTEXT, {snapshot_name: snapshotName, include_activity: 1});
                     say(uiText("HERO status is current."), "ok");
                 } catch (_) {
                     context = null;

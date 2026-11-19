@@ -29,7 +29,7 @@ class TestSyncRunReservation(unittest.TestCase):
             if 'FROM `tabHERO Sync Run Ledger`' in query:
                 return [SimpleNamespace(name=name, sync_run_id=name) for name in b8]
             raise AssertionError(query)
-        doc = SimpleNamespace(generation=1, insert=Mock(side_effect=lambda: events.append('INSERT RUN')))
+        doc = SimpleNamespace(generation=1, cursor=None, insert=Mock(side_effect=lambda: events.append('INSERT RUN')))
         frappe = SimpleNamespace(local=SimpleNamespace(site='site'), session=SimpleNamespace(user='Administrator'),
             QueryDeadlockError=QueryDeadlockError,
             get_roles=lambda: [], has_permission=Mock(),

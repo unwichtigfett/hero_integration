@@ -1,7 +1,8 @@
 {
  "doctype":"DocType", "name":"HERO Polling Event", "module":"HERO Integration", "autoname":"format:HERO-POLL-{#####}", "track_changes":1,
  "fields":[
-  {"fieldname":"mode","label":"Mode","fieldtype":"Select","options":"MONITOR\nAUTO_SYNC","reqd":1,"read_only":1,"in_list_view":1}, {"fieldname":"status","label":"Status","fieldtype":"Select","options":"Started\nSucceeded\nConflicts\nIncomplete\nFailed\nSkipped","reqd":1,"read_only":1,"in_list_view":1},
+  {"fieldname":"rows_read","label":"Source rows read","fieldtype":"Int","read_only":1},
+  {"fieldname":"mode","label":"Mode","fieldtype":"Select","options":"MONITOR\nAUTO_SYNC","reqd":1,"read_only":1,"in_list_view":1}, {"fieldname":"status", "search_index": 1,"label":"Status","fieldtype":"Select","options":"Started\nSucceeded\nConflicts\nIncomplete\nFailed\nSkipped","reqd":1,"read_only":1,"in_list_view":1},
   {"fieldname":"run","label":"Run","fieldtype":"Link","options":"HERO Integration Run","read_only":1,"in_list_view":1},
   {"fieldname":"sync_run","label":"Sync Run","fieldtype":"Link","options":"HERO Sync Run Ledger","read_only":1},
   {"fieldname":"source_instance","label":"Source Instance","fieldtype":"Data","read_only":1}, {"fieldname":"customer_records","label":"Customer Records","fieldtype":"Int","read_only":1}, {"fieldname":"project_records","label":"Project Records","fieldtype":"Int","read_only":1},

@@ -198,13 +198,14 @@
 @container hero-sync (min-width: 720px) {
     .hero-integration-ui .hero-sync {
         grid-template-columns: minmax(0, 1.6fr) minmax(300px, 1fr);
-        grid-template-areas: "head sub" "manual manual" "service service" "states states" "work work";
+        grid-template-areas: "head sub" "manual manual" "service service" "states states" "live live" "work work";
     }
     .hero-integration-ui .hero-sync-head { grid-area: head; }
     .hero-integration-ui .hero-sync-subscription { grid-area: sub; }
     .hero-integration-ui .hero-sync-manual { grid-area: manual; }
     .hero-integration-ui .hero-sync-service { grid-area: service; }
     .hero-integration-ui .hero-sync-states { grid-area: states; }
+    .hero-integration-ui .hero-sync-live { grid-area: live; }
     .hero-integration-ui .hero-sync-work { grid-area: work; }
 }
 @container hero-sync (min-width: 900px) {
@@ -216,7 +217,7 @@
 @container hero-sync (min-width: 1180px) {
     .hero-integration-ui .hero-sync {
         grid-template-columns: minmax(0, 2.3fr) minmax(340px, 1fr);
-        grid-template-areas: "head sub" "manual service" "states states" "work work";
+        grid-template-areas: "head sub" "manual service" "states states" "live live" "work work";
     }
 }
 /* Small or low windows: one view at a time (Migration · Sync · Runtime). */

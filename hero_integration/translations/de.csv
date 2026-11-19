@@ -3984,3 +3984,26 @@ Confirmed cursor fingerprint,Fingerabdruck des bestätigten Cursors
 Sync Run,Synchronisierungslauf
 Scheduler disabled,Scheduler deaktiviert
 Reserved identities,Reservierte Quellidentitäten
+Run progress,Lauffortschritt
+Confirmed run counts,Bestätigte Laufzähler
+Source rows read,Gelesene Quelldatensätze
+Processed identities,Verarbeitete Quellidentitäten
+Identity budget,Identitätsbudget
+{0}/{1} reserved · {2} available,{0}/{1} belegt · {2} frei
+Waiting for a new progress confirmation,Seit fünf Minuten keine neue Fortschrittsbestätigung
+Last confirmed change,Letzte bestätigte Änderung
+View active run,Aktiven Lauf anzeigen
+Execution active,Ausführung läuft
+Execution scope,Ausführungsumfang
+Updated documents,Aktualisierte Dokumente
+Unchanged documents,Unveränderte Dokumente
+Open relationships,Offene Beziehungsauflösungen
+Bound comparison complete,Vergleich gebundener Objekte abgeschlossen
+Waiting for dependencies,Wartet auf Abhängigkeiten
+Relationship reconciliation,Beziehungsauflösung
+Progress refresh delayed,Fortschrittsanzeige wird verzögert aktualisiert
+{0} min {1} s,{0} min {1} s
+{0} started · {1} terminal · {2} pending,{0} begonnen · {1} beendet · {2} ausstehend
+Child runs,Kindläufe
+Invalid run selection.,Ungültige Laufauswahl.
+Confirmed position,Bestätigte Position
