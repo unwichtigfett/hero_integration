@@ -192,3 +192,62 @@ def _contains_dynamic_value(value: object) -> bool:
 def _frappe():
     import frappe
     return frappe
+
+
+class ApprovedBoundReader:
+    """Compare only explicitly bound objects using the approved selection and a schema-proven filter."""
+
+    def __init__(self, materialized, raw_schema, source_revision, rate_limit):
+        from hero_integration.services.graphql_schema_cache import compiled_schema
+        from hero_integration.services.sync_engine import ChangeCapabilities
+
+        self.plan = materialized
+        self.raw_schema = raw_schema
+        self.schema = compiled_schema(raw_schema)
+        self.source_revision = source_revision
+        self.rate_limit = rate_limit
+        self.capabilities = ChangeCapabilities(False, False, True)
+        self.client = None
+
+    def read_bound(self, identity):
+        from hero_integration.client.graphql import HeroGraphQLClient
+        from hero_integration.client.settings import get_configuration
+        from hero_integration.graphql_protocol.graphql_operation_materializer import GraphQLOperationMaterializer
+        from hero_integration.graphql_protocol.graphql_result_decoder import decode_graphql_result
+        from hero_integration.graphql_protocol.transport import Response
+        from hero_integration.services.project_identity_read import CollectionIdentityReader, ProjectIdentityReader
+        from hero_integration.services.read_contract import value_at
+
+        contract = self.plan.sealed.contract
+        original = self.plan.request
+        variables = dict(original.variables)
+        singular = contract.target_operation == "HeroProjectMatches"
+        if singular:
+            narrowed, variables = ProjectIdentityReader(None, self.raw_schema, identity).request(
+                original.document, variables, allow_alias=True)
+        else:
+            narrowed = CollectionIdentityReader(None, self.raw_schema, contract.target_operation,
+                contract.identity_path, identity).request(original.document, allow_alias=True)
+            if narrowed == original.document:
+                raise RuntimeReconstructionError("No schema-proven identity filter exists for this approved reader.")
+        request = GraphQLOperationMaterializer.materialize_document(
+            self.schema.core, self.schema.fingerprint, narrowed, variables)
+        config = get_configuration(fresh=True)
+        if (not config.source_binding_confirmed or config.source_binding_revision != self.source_revision
+                or config.source_instance != self.plan.source_instance):
+            raise RuntimeReconstructionError("The confirmed source changed before the bound read.")
+        if self.client is None:
+            self.client = HeroGraphQLClient(config.endpoint, lambda: config.api_token,
+                timeout=config.timeout_seconds, max_retries=0, requests_per_minute=self.rate_limit)
+        data = self.client.query(request.document, dict(request.variables))
+        if singular:
+            # B2 decodes the original approved collection shape, including its alias.
+            data = {contract.records_path: [data.get(contract.records_path)]}
+        decode_graphql_result(original, Response(True, json.dumps({"data": data}), True))
+        records = value_at(data, contract.records_path)
+        if not isinstance(records, list) or len(records) != 1 or not isinstance(records[0], dict):
+            raise RuntimeReconstructionError("HERO returned an ambiguous or missing bound object.")
+        actual = value_at(records[0], contract.identity_path)
+        if type(actual) not in (str, int) or str(actual) != str(identity):
+            raise RuntimeReconstructionError("The bound object response has the wrong source identity.")
+        return records[0]

@@ -69,6 +69,7 @@ class FakeFrappeMigrationHarness:
     @classmethod
     def _install_fake_frappe(cls):
         frappe_module = types.ModuleType("frappe")
+        frappe_module.whitelist = lambda **kwargs: lambda method: method
         frappe_module.db = cls.frappe.db
         frappe_module.get_doc = cls.frappe.get_doc
         frappe_module.get_all = cls.frappe.get_all

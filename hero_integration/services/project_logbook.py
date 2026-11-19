@@ -372,6 +372,9 @@ def sync_mapped_entries(plan, record, project, *, preview=False, conflicts=None)
                        for path in config['context_paths']}
             values['custom_hero_logbook_context'] = json.dumps(context, sort_keys=True, ensure_ascii=False)
         planned.append((key, values, str(identity), restricted, entry.get('custom_text')))
+    from hero_integration.services.execution_budget import current_budget
+    if budget := current_budget():
+        budget.reserve_many((SOURCE_TYPE, key) for key, *_ in planned)
     if preview:
         return len(planned)
     project_doc = frappe.get_doc('Project', project, for_update=True)
@@ -553,6 +556,11 @@ def complete_mapped_histories(source, records, variables):
             if type(identity) not in {int, str} or not str(identity).strip() or str(identity) in seen:
                 raise ReadContractError('Logbook pagination repeated or omitted an identity.')
             seen.add(str(identity))
+        from hero_integration.services.execution_budget import current_budget
+        if budget := current_budget():
+            children = [(SOURCE_TYPE, _digest([source.source_instance, parent, str(value_at(entry, config['identity_path']))]))
+                        for entry in page]
+            budget.reserve_many([('project', parent), *children])
     check(entries)
     page = entries
     for _ in range(config['max_pages']):

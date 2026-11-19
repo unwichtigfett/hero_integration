@@ -12,7 +12,7 @@ class QueryDeadlockError(RuntimeError):
 
 
 class TestSyncRunReservation(unittest.TestCase):
-    def facade(self, *, legacy='', legacy_state='Running', b8=(), acquired=True):
+    def facade(self, *, legacy='', legacy_state='Running', b8=(), pending=(), acquired=True):
         events = []
         def sql(query, args=None, as_dict=False):
             events.append(query)
@@ -22,12 +22,14 @@ class TestSyncRunReservation(unittest.TestCase):
                 return []
             if 'SELECT `value`' in query:
                 return [SimpleNamespace(value=legacy)]
+            if 'WHERE state IN' in query:
+                return [SimpleNamespace(name=name) for name in pending]
             if 'FROM `tabHERO Integration Run`' in query:
                 return [SimpleNamespace(state=legacy_state)]
             if 'FROM `tabHERO Sync Run Ledger`' in query:
                 return [SimpleNamespace(name=name, sync_run_id=name) for name in b8]
             raise AssertionError(query)
-        doc = SimpleNamespace(insert=Mock(side_effect=lambda: events.append('INSERT RUN')))
+        doc = SimpleNamespace(generation=1, insert=Mock(side_effect=lambda: events.append('INSERT RUN')))
         frappe = SimpleNamespace(local=SimpleNamespace(site='site'), session=SimpleNamespace(user='Administrator'),
             QueryDeadlockError=QueryDeadlockError,
             get_roles=lambda: [], has_permission=Mock(),
@@ -41,10 +43,11 @@ class TestSyncRunReservation(unittest.TestCase):
         self.assertIn('GET_LOCK', events[0])
         self.assertIn('tabSingles', events[1])
         self.assertIn('FOR UPDATE', events[1])
-        self.assertIn('tabHERO Sync Run Ledger', events[2])
+        self.assertIn('tabHERO Integration Run', events[2])
+        self.assertIn('tabHERO Sync Run Ledger', events[3])
         self.assertIn('FOR UPDATE', events[2])
-        self.assertEqual(events[3], 'INSERT RUN')
-        self.assertIn('RELEASE_LOCK', events[4])
+        self.assertEqual(events[4], 'INSERT RUN')
+        self.assertIn('RELEASE_LOCK', events[5])
         frappe.db.commit.assert_not_called()
         frappe.db.rollback.assert_not_called()
 
@@ -63,7 +66,7 @@ class TestSyncRunReservation(unittest.TestCase):
         self.assertIn('RELEASE_LOCK', events[-1])
         frappe, _events = self.facade(legacy='finished', legacy_state='Completed')
         FrappeSyncLedger(frappe).claim(SyncRun('one', 'site', 'Administrator', 1, False))
-        frappe.get_doc.assert_called_once()
+        self.assertEqual(frappe.get_doc.call_count,2)
 
     def test_failed_setup_lock_does_not_claim_or_release_an_unowned_lock(self):
         frappe, events = self.facade(acquired=False)
@@ -113,3 +116,9 @@ class TestSyncRunReservation(unittest.TestCase):
                     frappe.get_doc.assert_not_called()
                 frappe.db.commit.assert_not_called()
                 frappe.db.rollback.assert_not_called()
+
+    def test_committed_child_without_a_legacy_slot_blocks_sync(self):
+        frappe, events = self.facade(pending=("queued-child",))
+        with self.assertRaises(SyncConflict):
+            FrappeSyncLedger(frappe).claim(SyncRun("other", "site", "Administrator", 1, False))
+        self.assertNotIn("INSERT RUN",events)

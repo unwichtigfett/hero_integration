@@ -13,6 +13,7 @@ import traceback
 from pathlib import Path
 
 import frappe
+from hero_integration.services import execution_budget
 from hero_integration.services.performance import measured, profiled
 
 MAIN = 'HERO Pending Reference'
@@ -272,9 +273,7 @@ def remember(run, source_type, record, result):
          result_code='PENDING_REVIEW' if getattr(result, 'pending_relation', False) else result.code)
 
 
-def remember_file(run_name, source, operation, read, record, detail, *, cohort=None):
-    if not run_name or _replaying.get() or not installed():
-        return
+def file_dependencies(detail, cohort=None):
     document = (detail or {}).get('customer_document') or {}
     links = (detail or {}).get('file_upload_links') or []
     projects = [row.get('project_match_id') for row in (detail or {}).get('file_upload_matches') or []]
@@ -282,13 +281,20 @@ def remember_file(run_name, source, operation, read, record, detail, *, cohort=N
     customers = [document.get('contact_id')] + [row.get('customer_id') for row in links]
     deps = [('project', str(v)) for v in projects if type(v) is int and v > 0]
     deps += [('customer', str(v)) for v in customers if type(v) is int and v > 0]
-    observation = {'row': record, 'detail': detail}
     if cohort is not None:
         project_ids, customer_ids = set(cohort['project_ids']), set(cohort['customer_ids'])
         deps = [(kind, identity) for kind, identity in deps if identity in (project_ids if kind == 'project' else customer_ids)]
-        observation['scope'] = {'project_ids': sorted(project_ids), 'customer_ids': sorted(customer_ids)}
+    return sorted(set(deps))
+
+
+def remember_file(run_name, source, operation, read, record, detail, *, cohort=None):
+    if not run_name or _replaying.get() or not installed():
+        return
+    observation = {'row': record, 'detail': detail}
+    if cohort is not None:
+        observation['scope'] = {key: sorted(set(cohort[key])) for key in ('project_ids', 'customer_ids')}
     save(run_name, source, operation, read.plan.source_identity(record), read.mapping_version,
-         observation, sorted(set(deps)))
+         observation, file_dependencies(detail, cohort))
 
 
 def invalidate(source, operation, identity):
@@ -322,6 +328,8 @@ def dependencies_ready(source, operation, dependencies, *, availability=None):
 
 
 def save(run_name, source, operation, identity, version, record, dependencies, *, result_code=None, defer_empty=False):
+    if budget := execution_budget.current_budget():
+        budget.reserve_many(dependencies)
     name = observation_key(source, operation, identity, run_name)
     for observed in _observations(source, operation, identity):
         if observed.name != name:
@@ -356,7 +364,10 @@ def save(run_name, source, operation, identity, version, record, dependencies, *
                          for kind, value in dependencies]})
     with _write_scope():
         doc.save(ignore_permissions=True) if exists else doc.insert(ignore_permissions=True)
-    frappe.db.after_commit.add(lambda: wake_reference(name))
+    if not execution_budget.current_budget():
+        frappe.db.after_commit.add(lambda: wake_reference(name))
+    # Bounded children notify reconcile_completed_run with their exact origin.
+
 
 
 def _enqueue_dependency(source, kind, identity, *, after='', enqueue_after_commit=False):
@@ -367,6 +378,10 @@ def _enqueue_dependency(source, kind, identity, *, after='', enqueue_after_commi
 
 
 def binding_updated(doc, method=None):
+    if execution_budget.current_budget():
+        # Full migration reconciles its own completed children. A bounded
+        # write must not wake historical observations from unrelated imports.
+        return
     if (doc.source_type not in TARGETS or doc.sync_status != 'Synchronized' or not installed()):
         return
     if not frappe.db.sql('''SELECT d.name FROM `tabHERO Pending Dependency` d
@@ -611,6 +626,20 @@ def resolve_one(name, *, dependency=None):
     # Keep its observation intact until that exact run completed successfully.
     if run.state != 'Completed':
         return
+    with execution_budget.run_scope(run) as budget:
+        if budget:
+            kinds = {operation: kind for kind, operation in OPERATIONS.items()}
+            kinds.update(HeroEmployees='partner', HeroServices='supply_service',
+                         HeroDocuments='file_upload', HeroPictures='file_upload')
+            identity = pending.source_id
+            if pending.operation in ('HeroDocuments', 'HeroPictures'):
+                identity = _source_observation(pending)['row']['id']
+            budget.reserve_many([(kinds[pending.operation], identity),
+                                 *((row.source_type, row.source_id) for row in pending.dependencies)])
+        return _resolve_admitted(pending, run, name, dependency)
+
+
+def _resolve_admitted(pending, run, name, dependency):
     record = _source_observation(pending) if pending.operation in OPERATIONS.values() else None
     first_attempt = not getattr(pending, 'realization_started', 1)
     if first_attempt:

@@ -26,7 +26,7 @@ class TestMaterializedMonitor(unittest.TestCase):
         self.frappe.db = SimpleNamespace(rollback=Mock(), sql=lambda query, *a, **kw:
             [self.rule] if "tabHERO Frappe Mapping" in query else [(7,)])
         self.plan = SimpleNamespace(generation=7, plan_key="synthetic-plan")
-        self.executable = SimpleNamespace(selection=self.selection, generation=7)
+        self.executable = SimpleNamespace(selection=self.selection, plan_key=self.plan.plan_key, generation=7)
         self.service = SimpleNamespace(current_approved=lambda *a: self.plan,
                                        resolve_executable_plan=lambda *a: self.executable)
         self.client = SimpleNamespace(query=Mock(return_value={"things": [{"id": "1", "name": "test"}]}))
@@ -148,6 +148,7 @@ class TestScheduledMonitor(unittest.TestCase):
     def test_scheduler_records_only_bounded_observation_and_no_sync_checkpoint(self):
         from hero_integration.services import polling
         settings = SimpleNamespace(polling_mode="MONITOR", sync_status="", sync_error="", save=Mock())
+        settings.last_successful_sync = datetime(2025, 12, 1)
         settings.polling_notifications = False
         fake = types.ModuleType("frappe")
         fake.db = SimpleNamespace(rollback=Mock())
@@ -162,7 +163,7 @@ class TestScheduledMonitor(unittest.TestCase):
         event.assert_called_once()
         self.assertEqual(event.call_args.args[:2], ("MONITOR", "Incomplete"))
         self.assertEqual(settings.sync_status, "MONITOR incomplete")
-        self.assertEqual(settings.last_successful_sync, datetime(2026, 1, 1))
+        self.assertEqual(settings.last_successful_sync, datetime(2025, 12, 1))
         self.assertEqual(fake.get_single.call_count, 2)
 
     def test_unapproved_plan_is_a_visible_skip_not_a_legacy_query(self):

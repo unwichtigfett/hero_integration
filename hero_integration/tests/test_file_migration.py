@@ -406,8 +406,10 @@ class TestSourceBinding(unittest.TestCase):
                                db=SimpleNamespace(set_default=lambda *a: None, commit=lambda: None, table_exists=lambda name: True))
         with patch.object(fm, "frappe", fake), patch.object(fm, "_configuration", return_value=_config()), \
                 patch.object(fm, "_enqueue"), patch.object(fm.direct_runtime, "resolve_read"), \
+                patch("hero_integration.services.run_reservation.admit_migration") as admission, \
                 patch("hero_integration.services.file_transfer.reset_phase"):
             fm.start("Document Migration")
+        admission.assert_called_once_with(fake, parent="")
         self.assertEqual((created[0].source_instance, created[0].source_binding_revision), ("source-a", 3))
         with patch.object(fm, "frappe", fake), patch.object(fm, "_configuration", return_value=_config(confirmed=False)), \
                 self.assertRaises(fm.SourceBindingError):
@@ -427,7 +429,7 @@ class TestSourceBinding(unittest.TestCase):
         with patch.object(fm, "frappe", fake), patch.object(fm, "now_datetime", lambda: "now"), \
                 patch.object(fm, "_configuration", return_value=_config(instance="source-b")), \
                 patch.object(fm, "on_run_finished"), patch.object(fm, "_file_slice") as file_slice:
-            fm.execute("R")
+            fm._execute("R")
         file_slice.assert_not_called()
         self.assertEqual(db.runs["R"]["state"], "Blocked")
         self.assertIn("another HERO source", db.runs["R"]["error_message"])
@@ -504,7 +506,7 @@ class TestEveryStartPathIsSourceBound(unittest.TestCase):
                                     db=SimpleNamespace(exists=lambda *a, **k: None, table_exists=lambda name: True, set_default=lambda *a: None,
                                                        commit=lambda: None),
                                     log_error=lambda **kwargs: self.queued.append(("logged", kwargs)))
-        for target in (patch.object(api, "frappe", self.fake), patch.object(ft, "frappe", self.fake),
+        for target in (patch("hero_integration.services.run_reservation.admit_migration"), patch.object(api, "frappe", self.fake), patch.object(ft, "frappe", self.fake),
                        patch("hero_integration.services.sync_page.manual_prerequisite", return_value=""),
                        patch.object(fm, "frappe", self.fake), patch.object(fm.direct_runtime, "resolve_read"),
                        patch.object(fm, "_enqueue", side_effect=lambda name: self.queued.append(name)),
@@ -556,8 +558,10 @@ class TestFullRelationshipRetry(unittest.TestCase):
 
     def test_retry_queues_only_frozen_relationship_scope_without_scalar_restart(self):
         with patch.object(fm,'frappe',self.fake),patch.object(fm,'bound_configuration'), \
+                patch('hero_integration.services.run_reservation.admit_migration') as admission, \
                 patch.object(fm,'_enqueue') as enqueue,patch.object(fm,'_start_step') as start:
             result=fm.retry_full_relationships('FULL')
+        admission.assert_called_once_with(self.fake, resume='FULL')
         self.assertEqual(result['phase'],'relationships')
         self.fake.only_for.assert_called_once_with('System Manager')
         self.run.check_permission.assert_called_once_with('write')

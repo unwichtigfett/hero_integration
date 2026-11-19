@@ -12,6 +12,10 @@ from hero_integration.services.schema_refresh import INTERVAL_MAX, INTERVAL_MIN,
 class HEROIntegrationSettings(Document):
     def validate(self):
         frappe.only_for("System Manager")
+        from hero_integration.services.offset_pagination import validate_overlap
+        validate_overlap(self.get("polling_page_overlap"), int(self.get("polling_page_size") or 100))
+        if (self.get("polling_read_mode") or "NORMAL") != "NORMAL":
+            frappe.throw(frappe._("Fast Mode requires a verified HERO change-discovery contract."))
         self._update_source_binding()
         if self.hero_api_url:
             hosts = {line.strip().lower() for line in (self.allowed_hero_hosts or "").splitlines() if line.strip()}

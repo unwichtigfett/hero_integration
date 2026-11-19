@@ -31,7 +31,7 @@ SETTINGS_KEYS = (
     "scheduled_sync_enabled", "sync_service_paused",
     "sync_area_contacts", "sync_area_projects", "sync_area_events", "sync_area_tasks",
     "polling_mode", "polling_interval_minutes", "polling_timezone", "polling_execution_window",
-    "polling_bootstrap", "polling_page_size", "polling_pagination_strategy", "polling_allow_backfill",
+    "polling_bootstrap", "polling_page_size", "polling_page_overlap", "polling_read_mode", "polling_pagination_strategy", "polling_allow_backfill",
     "polling_full_inventory", "polling_reconciliation", "polling_retry_limit", "polling_retry_backoff_seconds",
     "polling_timeout_seconds", "polling_rate_limit", "polling_concurrency", "polling_notifications",
 )

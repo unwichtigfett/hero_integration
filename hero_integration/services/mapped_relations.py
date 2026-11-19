@@ -132,11 +132,21 @@ def _valid_iban(value):
     return int(numeric) % 97 == 1
 
 
+def source_identities(items):
+    for item in items:
+        yield (item.get('source_type', item['config']['kind']), item['identity'])
+        if item.get('price_list_identity'):
+            yield ('sales_price_list', item['price_list_identity'])
+
+
 def sync(plan, record, parent_doctype, parent_name, *, preview=False):
     """Apply configured child relations inside the caller's import transaction."""
     items = prepare(plan, record, parent_doctype, parent_name)
     counts = {'created': 0, 'updated': 0, 'unchanged': 0, 'conflicts': 0, 'planned': len(items)}
     if not items: return counts
+    from hero_integration.services.execution_budget import current_budget
+    if budget := current_budget():
+        budget.reserve_many(source_identities(items))
     parent = frappe.get_doc(parent_doctype, parent_name) if frappe.db.exists(parent_doctype, parent_name) else None
     frappe.has_permission(parent_doctype, 'write' if parent else 'create', doc=parent, throw=True)
     if preview:

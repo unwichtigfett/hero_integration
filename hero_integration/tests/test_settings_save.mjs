@@ -35,7 +35,7 @@ test("settings use translated labels and interpolate the confirmed binding revis
 test("settings save omits removed fields and preserves other controls", async () => {
     const settings = {enabled: true, api_url: "https://example.invalid/graphql", timeout_seconds: 30,
         allowed_hero_hosts: "example.invalid", hero_source_instance: "default", api_token_status: "NOT_CONFIGURED",
-        polling: {mode: "OFF", data_sources: [], filters: {HeroCustomers: {search: "unsupported"}}, bootstrap: true},
+        polling: {mode: "OFF", page_overlap: 10, read_mode: "NORMAL", data_sources: [], filters: {HeroCustomers: {search: "unsupported"}}, bootstrap: true},
         testing: {enabled: false, max_actions: 5}};
     const calls = [];
     const api = async (method, payload) => {
@@ -63,6 +63,9 @@ test("settings save omits removed fields and preserves other controls", async ()
     await save.handlers.click();
     assert.equal(calls.length, 1);
     assert.equal(calls[0].polling_bootstrap, true);
+    assert.equal(calls[0].polling_page_overlap, 10);
+    assert.equal(calls[0].polling_read_mode, "NORMAL");
+    assert.equal(workspace.find(el => el.tag === "option" && el.value === "FAST").disabled, true);
     assert.equal(calls[0].timeout_seconds, 30);
     assert.ok(workspace.find(el => el.textContent === "Settings saved."));
 });
@@ -128,7 +131,7 @@ test("a late settings response does not update a destroyed view", async () => {
 test("failed settings save reports an error and restores controls", async () => {
     const settings = {enabled: true, api_url: "https://example.invalid/graphql", timeout_seconds: 30,
         allowed_hero_hosts: "example.invalid", hero_source_instance: "default", api_token_status: "NOT_CONFIGURED",
-        polling: {mode: "OFF", data_sources: [], filters: {}, bootstrap: false},
+        polling: {mode: "OFF", page_overlap: 10, read_mode: "NORMAL", data_sources: [], filters: {}, bootstrap: false},
         testing: {enabled: false, max_actions: 5}};
     const calls = [];
     const api = async (method) => {

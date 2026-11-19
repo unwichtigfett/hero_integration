@@ -116,3 +116,48 @@ def offset_provider(offset_reader: Callable[[int], object]) -> GuardedChangeProv
         ProviderContract(ProviderCapability.UNSUPPORTED),
         lambda _cursor: (_ for _ in ()).throw(ProviderCapabilityError("Offset reader must not run.")),
     )
+
+
+class FastChangeProvider(GuardedChangeProvider):
+    """Two-stage transport for a reviewed ordered delta stream of immutable revisions.
+
+    The metadata reader and schema-validating exact-object reader must belong to
+    the same approved source and operation contract. Offset discovery cannot be
+    upgraded by providing a revision field or a point lookup.
+    """
+
+    def __init__(self, contract, read_indicators, read_detail, validate_detail, *,
+                 identity_of, version_of, object_type=None, tuple_watermark_verified=None):
+        super().__init__(contract, read_indicators, tuple_watermark_verified=tuple_watermark_verified)
+        if not contract.permits_change_read() or not all(map(callable, (
+                read_detail, validate_detail, identity_of, version_of))):
+            raise ProviderCapabilityError("Fast discovery requires proven delta and exact detail contracts.")
+        self.object_type = object_type
+        self._read_detail = read_detail
+        self._validate_detail = validate_detail
+        self._identity_of = identity_of
+        self._version_of = version_of
+
+    @staticmethod
+    def version(indicator):
+        value = indicator.get("version")
+        if set(indicator) != {"id", "version"} or type(value) not in (str, int) or not str(value).strip():
+            raise ProviderCapabilityError("Change metadata lacks an immutable identity/version pair.")
+        return value
+
+    def changes(self, cursor):
+        page = super().changes(cursor)
+        for record in page.records:
+            self.version(record)
+            if type(record["id"]) not in (str, int) or not str(record["id"]).strip():
+                raise ProviderCapabilityError("Change metadata identity is invalid.")
+        return page
+
+    def detail_for(self, indicator):
+        version = self.version(indicator)
+        identity = str(indicator["id"])
+        detail = self._read_detail(identity)
+        if (self._validate_detail(detail) is not True or str(self._identity_of(detail)) != identity
+                or type(self._version_of(detail)) != type(version) or self._version_of(detail) != version):
+            raise ProviderCapabilityError("Exact detail no longer matches approved identity, version and schema.")
+        return detail

@@ -1,0 +1,59 @@
+{
+  "doctype": "DocType",
+  "name": "HERO Execution Budget",
+  "module": "HERO Integration",
+  "autoname": "hash",
+  "fields": [
+    {
+      "fieldname": "scope",
+      "label": "Execution Scope",
+      "fieldtype": "Data",
+      "read_only": 1
+    },
+    {
+      "fieldname": "run_id",
+      "label": "Root Run",
+      "fieldtype": "Data",
+      "read_only": 1
+    },
+    {
+      "fieldname": "source_instance",
+      "label": "Source Instance",
+      "fieldtype": "Data",
+      "read_only": 1
+    },
+    {
+      "fieldname": "record_limit",
+      "label": "Identity Limit",
+      "fieldtype": "Int",
+      "read_only": 1
+    },
+    {
+      "fieldname": "used",
+      "label": "Reserved Identities",
+      "fieldtype": "Int",
+      "read_only": 1
+    },
+    {
+      "fieldname": "identities_json",
+      "label": "Reserved Source Identities",
+      "fieldtype": "Long Text",
+      "read_only": 1
+    }
+  ],
+  "field_order": [
+    "scope",
+    "run_id",
+    "source_instance",
+    "record_limit",
+    "used",
+    "identities_json"
+  ],
+  "permissions": [
+    {
+      "role": "System Manager",
+      "read": 1
+    }
+  ],
+  "engine": "InnoDB"
+}

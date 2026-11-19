@@ -1,18 +1,12 @@
-"""Canonical B8 runtime entrypoints with fail-closed preflight ownership.
-
-This boundary resolves the persisted runtime plan before a provider exists.
-It intentionally does not compile a second GraphQL request or treat an offset
-reader as a change provider while B7 materialized runtime persistence is absent.
-"""
+"""Resolve and revalidate the approved source and reader around B8 execution."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from hashlib import sha256
+import json
 from uuid import uuid4
 
 from hero_integration.services.localized_error import LocalizedError
-
-
-BLOCKED_NO_B7_MATERIALIZED_RUNTIME = "BLOCKED_NO_B7_MATERIALIZED_RUNTIME"
 
 
 class RuntimeBridgeError(LocalizedError):
@@ -25,6 +19,7 @@ class RuntimePreflight:
     plan_key: str
     generation: int
     source_instance: str
+    run_id: str = ""
 
 
 def _frappe(frappe_module=None):
@@ -96,11 +91,7 @@ def _require_confirmed_source_binding(settings) -> None:
 
 
 def run_scheduled_auto_sync(*, frappe_module=None) -> RuntimePreflight:
-    """Revalidate the selected AUTO_SYNC plan before any provider construction.
-
-    The blocked status is not an execution success. It says only that the
-    canonical plan remains valid while its B7 materialized runtime is missing.
-    """
+    """Resolve the active source, schema, area and plan before constructing a change provider."""
     frappe = _frappe(frappe_module)
     settings = frappe.get_single("HERO Integration Settings")
     from hero_integration.services.polling import effective_mode
@@ -138,8 +129,6 @@ def run_materialized_monitor(*, frappe_module=None, client=None):
     from hero_integration.client.settings import get_configuration
     from hero_integration.client.graphql import HeroGraphQLClient
     from hero_integration.services.mapping_runtime import effective_rule_fingerprint
-    from hero_integration.hero_integration.doctype.hero_graphql_mapping.hero_graphql_mapping import lock_exchange_context
-    import json
 
     frappe = _frappe(frappe_module)
     frappe.db.rollback()  # MONITOR owns no business writes; start with current committed evidence.
@@ -166,6 +155,8 @@ def run_materialized_monitor(*, frappe_module=None, client=None):
     _require_latest_validated_snapshot(frappe, settings, source, executable.selection)
     _require_area_enabled(frappe, settings, executable.selection)
     materialized = reconstruct_materialized_read_plan(executable.selection, frappe_module=frappe)
+    from hero_integration.services.offset_pagination import validate_overlap
+    validate_overlap(polling.get("page_overlap", 0), materialized.sealed.contract.page_size)
     if materialized.sealed.contract.page_size > polling["page_size"]:
         raise RuntimeBridgeError("The approved read page size exceeds the monitoring limit.")
     configuration = get_configuration()
@@ -187,32 +178,8 @@ def run_materialized_monitor(*, frappe_module=None, client=None):
     data = transport.query(request.document, dict(request.variables))
     decode_graphql_result(request, Response(True, json.dumps({"data": data}), True))
     frappe.db.rollback()
-    # Reuse the existing runtime generation, mapping-root and field-rule locks.
-    # These locks protect only acknowledgement, after transport has completed.
-    rows = frappe.db.sql("SELECT generation FROM `tabHERO Runtime Plan` WHERE plan_key=%s FOR UPDATE",
-                         (approved.plan_key,))
-    if len(rows) != 1 or int(rows[0][0]) != approved.generation:
-        raise RuntimeBridgeError("Monitoring runtime generation changed during transport.")
-    frappe.db.sql("SELECT field FROM `tabSingles` WHERE doctype=%s FOR UPDATE", ("HERO Integration Settings",))
-    latest_settings = frappe.get_single("HERO Integration Settings")
-    _require_confirmed_source_binding(latest_settings)
-    if (int(getattr(latest_settings, "source_binding_revision", 0) or 0) != binding_revision
-            or effective_mode(latest_settings) != "MONITOR" or runtime_plan(latest_settings) != polling
-            or str(getattr(latest_settings, "hero_source_instance", "default") or "default").strip() != source):
-        raise RuntimeBridgeError("Monitoring source/configuration changed during transport.")
-    mapping = frappe.get_doc("HERO GraphQL Mapping", executable.selection.graphql_mapping)
-    lock_exchange_context(mapping.source_instance or '', mapping.schema_snapshot, mapping.direction)
-    for doctype, name in (("HERO GraphQL Mapping", mapping.name),
-                          ("HERO GraphQL Service", executable.selection.graphql_service),
-                          ("HERO GraphQL Schema Snapshot", executable.selection.schema_snapshot)):
-        frappe.get_doc(doctype, name, for_update=True)
-    current = plans.resolve_executable_plan(site, source, approved.generation, True, actor)
-    _require_latest_validated_snapshot(frappe, latest_settings, source, current.selection)
-    if (current.selection != executable.selection
-            or reconstruct_materialized_read_plan(current.selection, frappe_module=frappe) != materialized
-            or effective_rule_fingerprint(materialized.sealed.contract.definition_ids,
-                mapping.name, lock=True, frappe_module=frappe) != rule_hash):
-        raise RuntimeBridgeError("Monitoring reader, schema or effective field rules changed during transport.")
+    _validate_execution_evidence(frappe, plans, executable, materialized, polling, binding_revision,
+                                 rule_hash, site, source, actor, automatic=True)
     contract = materialized.sealed.contract
     records = value_at(data, contract.records_path)
     if not isinstance(records, list) or len(records) > contract.page_size or not all(isinstance(row, dict) for row in records):
@@ -225,6 +192,42 @@ def run_materialized_monitor(*, frappe_module=None, client=None):
     return MonitorResult(len(records) if operation == "HeroCustomers" else 0,
                          len(records) if operation == "HeroProjectMatches" else 0,
                          source, (operation,))
+
+
+def _validate_execution_evidence(frappe, plans, executable, materialized, polling, binding_revision,
+                                 rule_hash, site, source, actor, *, automatic):
+    from hero_integration.services.b8_runtime import reconstruct_materialized_read_plan
+    from hero_integration.services.polling import runtime_plan
+    from hero_integration.services.mapping_runtime import effective_rule_fingerprint
+    from hero_integration.hero_integration.doctype.hero_graphql_mapping.hero_graphql_mapping import lock_exchange_context
+
+    # Reuse the existing runtime generation, mapping-root and field-rule locks.
+    # These locks protect only acknowledgement, after transport has completed.
+    rows = frappe.db.sql("SELECT generation FROM `tabHERO Runtime Plan` WHERE plan_key=%s FOR UPDATE",
+                         (executable.plan_key,))
+    if len(rows) != 1 or int(rows[0][0]) != executable.generation:
+        raise RuntimeBridgeError("Monitoring runtime generation changed during transport.")
+    frappe.db.sql("SELECT field FROM `tabSingles` WHERE doctype=%s FOR UPDATE", ("HERO Integration Settings",))
+    latest_settings = frappe.get_single("HERO Integration Settings")
+    _require_confirmed_source_binding(latest_settings)
+    if (int(getattr(latest_settings, "source_binding_revision", 0) or 0) != binding_revision
+            or runtime_plan(latest_settings) != polling
+            or str(getattr(latest_settings, "hero_source_instance", "default") or "default").strip() != source):
+        raise RuntimeBridgeError("Monitoring source/configuration changed during transport.")
+    mapping = frappe.get_doc("HERO GraphQL Mapping", executable.selection.graphql_mapping)
+    lock_exchange_context(mapping.source_instance or '', mapping.schema_snapshot, mapping.direction)
+    for doctype, name in (("HERO GraphQL Mapping", mapping.name),
+                          ("HERO GraphQL Service", executable.selection.graphql_service),
+                          ("HERO GraphQL Schema Snapshot", executable.selection.schema_snapshot)):
+        frappe.get_doc(doctype, name, for_update=True)
+    current = plans.resolve_executable_plan(site, source, executable.generation, automatic, actor)
+    _require_latest_validated_snapshot(frappe, latest_settings, source, current.selection)
+    _require_area_enabled(frappe, latest_settings, current.selection)
+    if (current.selection != executable.selection
+            or reconstruct_materialized_read_plan(current.selection, frappe_module=frappe) != materialized
+            or effective_rule_fingerprint(materialized.sealed.contract.definition_ids,
+                mapping.name, lock=True, frappe_module=frappe) != rule_hash):
+        raise RuntimeBridgeError("Monitoring reader, schema or effective field rules changed during transport.")
 
 
 def _require_area_enabled(frappe, settings, selection) -> None:
@@ -260,14 +263,70 @@ def run_pending_sync(expected_plan_generation: int, *, frappe_module=None, provi
     actor = getattr(getattr(frappe, "session", None), "user", "")
     service = _runtime_plan_service(frappe)
     executable = service.resolve_executable_plan(site_scope, source_instance, expected_plan_generation, False, actor)
+    _require_latest_validated_snapshot(frappe, settings, source_instance, executable.selection)
+    _require_area_enabled(frappe, settings, executable.selection)
     return _run(executable, frappe, automatic=False, provider=provider)
 
 
-def _run(executable, frappe, *, automatic: bool, provider=None) -> RuntimePreflight:
+def run_one_shot(*, request_id, plan_key, expected_plan_generation, expected_source_revision,
+                 confirmed, scope="BOUND_OBJECTS", frappe_module=None):
+    """Consume one explicit approval. Replaying its UUID only reads its receipt."""
+    from uuid import UUID
+    from hero_integration.services.polling import effective_mode
+    from hero_integration.services.execution_budget import ExecutionBudget
+    from hero_integration.services.sync_engine import FrappeSyncLedger
+
+    frappe = _frappe(frappe_module)
+    frappe.only_for("System Manager")
+    if str(confirmed) != "1" or scope not in ("BOUND_OBJECTS", "DELTA"):
+        raise RuntimeBridgeError("Explicit bounded synchronization approval is required.")
+    try:
+        run_id = UUID(str(request_id)).hex
+        generation = int(expected_plan_generation)
+        revision = int(expected_source_revision)
+    except (TypeError, ValueError):
+        raise RuntimeBridgeError("A request UUID and approved plan/source revisions are required.") from None
+    actor, site = frappe.session.user, frappe.local.site
+    settings = frappe.get_single("HERO Integration Settings")
+    source = str(settings.hero_source_instance or "default").strip()
+    fingerprint = sha256(json.dumps(
+        [site, actor, source, revision, plan_key, generation, scope, 50]
+    ).encode()).hexdigest()
+    budget = ExecutionBudget("sync", run_id, source)
+    def receipt():
+        row = frappe.db.get_value(FrappeSyncLedger.RUN, run_id,
+            ["request_fingerprint", "actor", "site_scope", "state", "processed_count", "skipped_count"], as_dict=True)
+        if not row:
+            return None
+        if row.actor != actor or row.site_scope != site or row.request_fingerprint != fingerprint:
+            raise RuntimeBridgeError("This synchronization approval belongs to a different request.")
+        return {"run": run_id, "status": row.state, "scope": scope, "plan_key": plan_key,
+                "budget_id": budget.budget_id, "reserved": budget.used(), "limit": 50,
+                "processed": row.processed_count, "skipped": row.skipped_count}
+
+    prior = receipt()
+    if prior:
+        return prior
+    if effective_mode(settings) != "OFF" or revision != int(settings.source_binding_revision or 0):
+        raise RuntimeBridgeError("A one-shot requires polling OFF and the reviewed source revision.")
+    _require_confirmed_source_binding(settings)
+    plan = _runtime_plan_service(frappe).resolve_executable_plan(site, source, generation, False, actor)
+    if plan.plan_key != plan_key:
+        raise RuntimeBridgeError("The reviewed runtime plan changed.")
+    _require_latest_validated_snapshot(frappe, settings, source, plan.selection)
+    _require_area_enabled(frappe, settings, plan.selection)
+    _run(plan, frappe, automatic=False, run_id=run_id, fingerprint=fingerprint,
+         budget=budget, bounded=(scope == "BOUND_OBJECTS"))
+    result = receipt()
+    if result is None:
+        raise RuntimeBridgeError("Synchronization finished without a durable execution receipt.")
+    return result
+
+
+def _run(executable, frappe, *, automatic: bool, provider=None, run_id=None, fingerprint="", budget=None, bounded=False) -> RuntimePreflight:
     from hero_integration.services.b8_runtime import reconstruct_materialized_read_plan
     from hero_integration.services.polling import effective_mode
     from hero_integration.services.sync_engine import (
-        ChangeCapabilities,
         FrappeBoundIndex,
         FrappeBoundProcessor,
         FrappeSyncLedger,
@@ -288,15 +347,67 @@ def _run(executable, frappe, *, automatic: bool, provider=None) -> RuntimePrefli
         executable.selection.mapping_revision,
         executable.selection.schema_fingerprint,
     )
+    from hero_integration.services.polling import runtime_plan
+    from hero_integration.services.execution_budget import BudgetReached
+    from hero_integration.services.mapping_runtime import effective_rule_fingerprint
+    from hero_integration.services.b8_runtime import ApprovedBoundReader
+
+    polling = runtime_plan(settings)
+    if polling["unsupported_sources"]:
+        raise RuntimeBridgeError("The polling configuration is unsupported.")
+    selection = executable.selection
+    contract = materialized.sealed.contract
+    run_id = run_id or uuid4().hex
+    revision = int(getattr(settings, "source_binding_revision", 0) or 0)
+    provider = provider or _UnprovenProvider()
+    if bounded:
+        raw = frappe.get_doc("HERO GraphQL Schema Snapshot", selection.schema_snapshot).snapshot_json
+        provider = ApprovedBoundReader(materialized, raw, revision, polling["rate_limit"])
+    object_type = None
+    if bounded or provider.capabilities.complete_change_discovery:
+        from graphql import get_named_type
+        from hero_integration.services.graphql_schema_cache import compiled_schema
+        raw = frappe.get_doc("HERO GraphQL Schema Snapshot", selection.schema_snapshot).snapshot_json
+        schema = compiled_schema(raw).core
+        object_type = get_named_type(schema.query_type.fields[materialized.request.protocol_field_name].type).name
+        if getattr(provider, "object_type", object_type) != object_type:
+            raise RuntimeBridgeError("Provider object type differs from the approved reader.")
+
+    rules = effective_rule_fingerprint(contract.definition_ids, selection.graphql_mapping, frappe_module=frappe)
+    configuration = replace(configuration, contract_fingerprint=sha256(json.dumps([
+        executable.plan_key, executable.generation, revision, materialized.request.request_fingerprint,
+        rules, polling["page_overlap"], polling["read_mode"],
+    ]).encode()).hexdigest())
+    plans = _runtime_plan_service(frappe)
+
+    def validate():
+        _validate_execution_evidence(frappe, plans, executable, materialized, polling, revision, rules,
+                                     selection.site_scope, selection.source_instance, executable.actor,
+                                     automatic=automatic)
+
+    def reserve(kind, identity):
+        try:
+            budget.reserve(kind, identity)
+        except BudgetReached:
+            return False
+        return True
+
     engine = SyncEngine(
-        FrappeSyncLedger(frappe), materialized, provider or _UnprovenProvider(),
-        FrappeBoundIndex(frappe),
-        FrappeBoundProcessor(materialized.sealed.contract.mapping_revision, materialized.sealed.contract.definition_ids, frappe),
+        FrappeSyncLedger(frappe), materialized, provider,
+        FrappeBoundIndex(frappe, object_type=object_type, definition_ids=contract.definition_ids),
+        FrappeBoundProcessor(contract.mapping_revision, contract.definition_ids, frappe, run_id=run_id,
+            object_type=object_type, mapping_name=selection.graphql_mapping, identity_path=contract.identity_path,
+            contract_fingerprint=configuration.contract_fingerprint),
+        reserve_identity=reserve if budget else None, revalidate=validate, object_type=object_type,
     )
     state = engine.configure(configuration)
-    run = SyncRun(uuid4().hex, executable.selection.site_scope, executable.actor, state.generation, automatic)
-    result = engine.poll(run) if automatic else engine.pending_sync(run)
-    return RuntimePreflight(result.status.value, executable.plan_key, result.generation, executable.selection.source_instance)
+    run = SyncRun(run_id, selection.site_scope, executable.actor, state.generation, automatic, fingerprint,
+                  selection.source_instance, executable.plan_key, executable.generation, revision)
+    if bounded:
+        result = engine.compare_bound(run)
+    else:
+        result = engine.poll(run) if automatic else engine.pending_sync(run)
+    return RuntimePreflight(result.status.value, executable.plan_key, executable.generation, executable.selection.source_instance, run_id)
 
 
 class _UnprovenProvider:

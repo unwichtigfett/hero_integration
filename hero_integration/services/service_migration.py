@@ -337,6 +337,21 @@ def remember_relationships(run_name, instance, company, read, row, detail, resul
     link = scoped_link(instance, SOURCE_TYPE, identity, 'Item')
     if not link:
         raise ServiceBlocked('Service relationship observations require their imported source identity.')
+    dependencies = _composition_dependencies(detail)
+    save(run_name, instance, OPERATION, identity, read.mapping_version,
+        {'row':row, 'detail':detail, 'company':company, 'target_name':link.target_name,
+         'source_hash':link.source_payload_hash}, sorted(dependencies), defer_empty=True)
+
+
+def _composition_details(client, snapshot, ids):
+    request = _composition_request(snapshot, ids)
+    detailed = client.query(request.document, request.variables).get("supply_services")
+    if not isinstance(detailed, list) or len(detailed) != len(ids) or {d.get("id") for d in detailed} != set(ids):
+        raise ServiceBlocked("HERO returned an incomplete service composition list.")
+    return {d["id"]: d for d in detailed}
+
+
+def _composition_dependencies(detail):
     dependencies = set()
     for component in detail['positions']:
         kind = 'supply_product' if component['__typename'] == 'Documents_SupplyProduct' else 'WageGroup'
@@ -344,9 +359,7 @@ def remember_relationships(run_name, instance, company, read, row, detail, resul
     file = detail.get('file_upload') or {}
     if file.get('id') is not None and not file.get('is_deleted'):
         dependencies.add(('service_file', str(file['id'])))
-    save(run_name, instance, OPERATION, identity, read.mapping_version,
-        {'row':row, 'detail':detail, 'company':company, 'target_name':link.target_name,
-         'source_hash':link.source_payload_hash}, sorted(dependencies), defer_empty=True)
+    return dependencies
 
 
 def realize_relationships(pending, config):
@@ -400,10 +413,13 @@ def realize_relationships(pending, config):
 
 
 def sync_services(client, *, source_instance, run_name, downloader, should_stop=None, progress=None, verify_source=None,
-                  time_budget=1200, read=None, record_limit=None, continue_on_conflict=False):
+                  time_budget=1200, read=None, record_limit=None, continue_on_conflict=False, page_overlap=0):
     from hero_integration.services.migration_testing import validate_checkpoint
     frappe.only_for("System Manager")
     read = read or runtime.resolve_read(OPERATION, source_instance)
+    from hero_integration.services.offset_pagination import advance, fingerprint, validate_overlap
+    if page_overlap:
+        validate_overlap(page_overlap, read.page_size)
     company, schema = preflight(source_instance, read)
     key = "hero_service_migration:" + run_name
     raw = frappe.db.get_value('DefaultValue', {'parent': '__default', 'defkey': key}, 'defvalue')
@@ -424,25 +440,41 @@ def sync_services(client, *, source_instance, run_name, downloader, should_stop=
         if should_stop and should_stop():
             state["stopped"] = True
             break
-        rows = bounded_rows(state, runtime.fetch_page(client, read, state["offset"]), record_limit)
+        received = runtime.fetch_page(client, read, state["offset"])
+        window = None
+        start_index = 0
+        rows = received
+        if page_overlap:
+            window = advance(received, offset=state["offset"], size=read.page_size, overlap=page_overlap,
+                             previous=state.get("offset_window"))
+            page_hash = fingerprint(received)
+            if state.get("pending_page_hash", page_hash) != page_hash:
+                raise ServiceBlocked("The interrupted service page changed; its checkpoint cannot be resumed.")
+            start_index = int(state.get("pending_page_index", 0))
+            rows = window.rows[start_index:]
+            if received and not rows:
+                state.update(offset=window.next_offset, offset_window=window.checkpoint)
+                state.pop("pending_page_hash", None)
+                state.pop("pending_page_index", None)
+                continue
+        rows = bounded_rows(state, rows, record_limit)
         if not rows:
             state["done"] = True
             break
         ids = [row.get("id") for row in rows]
         if any(type(identity) is not int or identity <= 0 for identity in ids) or len(set(ids)) != len(ids):
             raise ServiceBlocked("HERO returned invalid or duplicate service identities.")
-        if ids != sorted(ids) or (state.get("last_id") is not None and ids[0] <= state["last_id"]):
+        new_ids = [identity for identity in ids if not window or str(identity) not in window.changed]
+        if ids != sorted(ids) or (new_ids and state.get("last_id") is not None and new_ids[0] <= state["last_id"]):
             raise ServiceBlocked("Service pagination changed or repeated; start a new run.")
         snapshot = runtime.validated_snapshot(read, source_instance, frappe_module=frappe)
         if snapshot.fingerprint != schema:
             raise ServiceBlocked('The service schema changed; start a new run.')
-        request = _composition_request(snapshot, ids)
-        detailed = client.query(request.document, request.variables).get("supply_services")
-        if not isinstance(detailed, list) or len(detailed) != len(ids) or {d.get("id") for d in detailed} != set(ids):
-            raise ServiceBlocked("HERO returned an incomplete service composition list.")
-        details = {d["id"]: d for d in detailed}
+        from hero_integration.services.execution_budget import current_budget
+        budget = current_budget()
+        details = {} if budget else _composition_details(client, snapshot, ids)
         blocked = False
-        for row in rows:
+        for index, row in enumerate(rows, start_index):
             if time.monotonic() >= deadline:
                 break
             if should_stop and should_stop():
@@ -450,9 +482,14 @@ def sync_services(client, *, source_instance, run_name, downloader, should_stop=
                 break
             if verify_source:
                 verify_source()
+            if budget:
+                budget.reserve(SOURCE_TYPE, row['id'])
+                details = _composition_details(client, snapshot, [row['id']])
             detail = details[row["id"]]
             if detail.get("modified") != row.get("modified") or detail.get("company_id") != row.get("company_id"):
                 raise ServiceBlocked("Service changed between its record and composition reads; retry the slice.")
+            if budget:
+                budget.reserve_many(_composition_dependencies(detail))
             try:
                 result = upsert(row, detail, read, source_instance, company, downloader)
                 remember_relationships(run_name, source_instance, company, read, row, detail, result)
@@ -472,8 +509,16 @@ def sync_services(client, *, source_instance, run_name, downloader, should_stop=
                 if not continue_on_conflict:
                     blocked = True
                     break  # retry exactly this identity on explicit legacy resume
-            state["offset"] += 1
-            state["last_id"] = row["id"]
+            if window:
+                if index + 1 == len(window.rows):
+                    state.update(offset=window.next_offset, offset_window=window.checkpoint)
+                    state.pop("pending_page_hash", None)
+                    state.pop("pending_page_index", None)
+                else:
+                    state.update(pending_page_hash=page_hash, pending_page_index=index + 1)
+            else:
+                state["offset"] += 1
+            state["last_id"] = max(row["id"], state.get("last_id", row["id"]))
             previous = state.setdefault("outcomes", {}).get(str(row["id"]))
             if previous:
                 state["counts"][previous] -= 1

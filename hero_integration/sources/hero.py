@@ -138,6 +138,8 @@ def customer_query(contract_version: str) -> str:
 class SourcePage:
     records: tuple[dict[str, object], ...]
     next_offset: int | None
+    offset_checkpoint: dict | None = None
+    changed_overlap_ids: frozenset[str] = frozenset()
 
 
 class GraphQLServiceSource:
@@ -147,6 +149,8 @@ class GraphQLServiceSource:
         self.source_instance = source_instance.strip() or "default"
         self.query_adapter = getattr(contract, "adapter_options", None) or {}
         self.revalidate = revalidate
+        self.page_overlap = 0
+        self._offset_checkpoint = None
 
     @classmethod
     def approved(cls, client, operation, source_instance):
@@ -320,6 +324,7 @@ class GraphQLServiceSource:
         unpaged = bool(direct.get('unpaged'))
         if unpaged and (offset != 0 or self.contract.variables):
             raise ReadContractError('A nonpaginated employee read requires its single approved request.')
+        from hero_integration.services.offset_pagination import advance, validate_overlap
         lookup = self.contract.target_operation == 'HeroLookup'
         one_shot_lookup = False
         lookup_bound = None
@@ -335,6 +340,8 @@ class GraphQLServiceSource:
                 raise ReadContractError('A nonpaginated lookup can only read its approved single request.')
             if not one_shot_lookup and self.contract.page_size > lookup_bound:
                 raise ReadContractError('Lookup page size exceeds its approved record bound.')
+        if self.page_overlap and not (one_shot_lookup or unpaged):
+            validate_overlap(self.page_overlap, self.contract.page_size)
         with measure('read.approval'):
             if callable(self.revalidate) and self.revalidate() != self.contract:
                 raise ReadContractError('Read approval changed before transport.')
@@ -401,6 +408,13 @@ class GraphQLServiceSource:
         annotated = tuple({**row, "_hero_source_instance": self.source_instance} for row in records)
         if one_shot_lookup or unpaged:
             return SourcePage(annotated, None)
+        if self.page_overlap:
+            # An explicit replay starts at zero under the same frozen reader contract.
+            window = advance(annotated, offset=offset, size=self.contract.page_size, overlap=self.page_overlap,
+                             previous=self._offset_checkpoint if offset else None,
+                             identity=lambda row: value_at(row, self.contract.identity_path))
+            self._offset_checkpoint = window.checkpoint
+            return SourcePage(window.rows, window.next_offset, window.checkpoint, window.changed)
         # Only an empty page ends an offset scan.
         return SourcePage(annotated, offset + len(records) if records else None)
 

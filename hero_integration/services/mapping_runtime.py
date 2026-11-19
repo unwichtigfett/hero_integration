@@ -325,22 +325,24 @@ def plan_from_definitions(operation: str, definitions: list[MappingSpec] | tuple
     return plan
 
 
-def active_mapping_plan(operation: str, *, definition_ids: tuple[str, ...] = (), target_operation: str = "", mapping_name: str = "", native_task: bool = False, lock_rules: bool = False) -> MappingPlan:
+def active_mapping_plan(operation: str, *, definition_ids: tuple[str, ...] = (), target_operation: str = "", mapping_name: str = "", native_task: bool = False, lock_rules: bool = False, bound_fields_only: bool = False) -> MappingPlan:
     from hero_integration.services.read_contract import page_read_cache
     cache = page_read_cache() if not lock_rules else None
-    key = ('plan', operation, tuple(definition_ids), target_operation, mapping_name, native_task)
+    key = ('plan', operation, tuple(definition_ids), target_operation, mapping_name, native_task, bound_fields_only)
     if cache is not None and key in cache:
         return cache[key]
     plan = _active_mapping_plan(operation, definition_ids=definition_ids, target_operation=target_operation,
-        mapping_name=mapping_name, native_task=native_task, lock_rules=lock_rules)
+        mapping_name=mapping_name, native_task=native_task, lock_rules=lock_rules, bound_fields_only=bound_fields_only)
     if cache is not None:
         cache[key] = plan
     return plan
 
 
-def _active_mapping_plan(operation: str, *, definition_ids: tuple[str, ...] = (), target_operation: str = "", mapping_name: str = "", native_task: bool = False, lock_rules: bool = False) -> MappingPlan:
+def _active_mapping_plan(operation: str, *, definition_ids: tuple[str, ...] = (), target_operation: str = "", mapping_name: str = "", native_task: bool = False, lock_rules: bool = False, bound_fields_only: bool = False) -> MappingPlan:
     import frappe
 
+    if bound_fields_only and (not definition_ids or not mapping_name):
+        raise MappingPlanError('Bound updates require explicitly approved field rules and mapping.')
     if definition_ids and (not mapping_name or len(set(definition_ids)) != len(definition_ids)):
         raise MappingPlanError('Explicit rule IDs require an explicit active mapping and unique bindings.')
     if native_task and (not definition_ids or not mapping_name or len(set(definition_ids)) != len(definition_ids)):
@@ -445,6 +447,16 @@ def _active_mapping_plan(operation: str, *, definition_ids: tuple[str, ...] = ()
                     validate_spec(spec, metadata)
                 except ValueError as error:
                     raise MappingPlanError('Native field authorization is no longer valid.') from error
+    if bound_fields_only:
+        # A bound update obtains identity and destination from B6. Initial
+        # intake requirements such as Company and new document naming do not apply.
+        if adapter_options:
+            from hero_integration.services.query_mapping import validate_query_adapter
+            validate_query_adapter(adapter_options, definitions)
+        else:
+            for spec in definitions:
+                validate_spec(spec, metadata)
+        return MappingPlan(operation, tuple(definitions), target_operation or operation, adapter_options)
     return plan_from_definitions(operation, definitions, target_operation=target_operation, native_task=native_task, adapter_options=adapter_options)
 
 

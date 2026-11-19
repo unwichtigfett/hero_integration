@@ -15,7 +15,7 @@ class ProjectIdentityReader:
         if not self.hero_id.isdigit() or int(self.hero_id) <= 0:
             raise ValueError('The bound external identity is invalid.')
 
-    def request(self, document, variables):
+    def request(self, document, variables, *, allow_alias=False):
         from hero_integration.services.mapped_update_v2 import MappedUpdateError
         tree = parse(document)
         operations = [node for node in tree.definitions if isinstance(node, OperationDefinitionNode)]
@@ -28,11 +28,13 @@ class ProjectIdentityReader:
             raise MappedUpdateError('The approved Project reader cannot be narrowed to its bound identity.')
         kind = one.type.of_type if is_non_null_type(one.type) else one.type
         field = operations[0].selection_set.selections[0]
-        if (is_list_type(kind) or not isinstance(field, FieldNode) or field.name.value != 'project_matches' or field.alias or field.directives
+        if (is_list_type(kind) or not isinstance(field, FieldNode) or field.name.value != 'project_matches' or (field.alias and not allow_alias) or field.directives
                 or any(argument.name.value not in {'first', 'offset', 'orderBy'} for argument in field.arguments)):
             raise MappedUpdateError('The approved Project reader cannot be narrowed to its bound identity.')
         tree = deepcopy(tree); operation = next(node for node in tree.definitions if isinstance(node, OperationDefinitionNode))
         field = operation.selection_set.selections[0]
+        if allow_alias and field.alias is None:
+            field.alias = field.name  # Keep the approved response key for result decoding.
         field.name = NameNode(value='project_match')
         field.arguments = (ArgumentNode(name=NameNode(value='project_match_id'), value=IntValueNode(value=self.hero_id)),)
         used = set()
@@ -82,7 +84,7 @@ class CollectionIdentityReader:
         self.schema_fingerprint = compiled.fingerprint
         self.area, self.identity_path, self.hero_id, self.file_uuid = area, identity_path, str(hero_id), file_uuid
 
-    def request(self, document):
+    def request(self, document, *, allow_alias=False):
         from graphql import GraphQLInputObjectType
         from graphql.language.ast import ListValueNode, StringValueNode, ObjectValueNode, ObjectFieldNode
         tree = parse(document)
@@ -90,7 +92,7 @@ class CollectionIdentityReader:
         if len(operations) != 1 or operations[0].operation.value != 'query' or len(operations[0].selection_set.selections) != 1:
             return document
         field = operations[0].selection_set.selections[0]
-        if not isinstance(field, FieldNode) or field.alias or field.directives:
+        if not isinstance(field, FieldNode) or (field.alias and not allow_alias) or field.directives:
             return document
         root = self.schema.query_type.fields.get(field.name.value)
         binding = self.ROOTS.get((self.area, field.name.value))

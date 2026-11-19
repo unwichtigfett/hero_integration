@@ -140,6 +140,26 @@ class TestServiceRun(unittest.TestCase):
         self.assertEqual(write.call_count,1)
         self.assertEqual(state['counts']['added'],2)
 
+    def test_overlap_resume_keeps_physical_page_and_only_retries_unconfirmed_rows(self):
+        self.rows.extend([{"id": i, "company_id": 9, "modified": "now"} for i in (3, 4)])
+        self.fetch.side_effect = lambda client, read, offset: self.rows[offset:offset + read.page_size]
+        with patch.object(sm, "upsert", side_effect=["added", sm.ServiceBlocked("Review")]):
+            state = self.run_sync(page_overlap=1)
+        self.assertEqual((state["offset"], state["pending_page_index"]), (0, 1))
+        with patch.object(sm, "upsert", return_value="added") as write:
+            state = self.run_sync(page_overlap=1)
+        self.assertTrue(state["done"])
+        self.assertEqual([call.args[0]["id"] for call in write.call_args_list], [2, 3, 4])
+        self.assertEqual([call.args[2] for call in self.fetch.call_args_list], [0, 0, 1, 2, 3, 4])
+
+    def test_changed_interrupted_overlap_page_is_rejected_before_write(self):
+        with patch.object(sm, "upsert", side_effect=["added", sm.ServiceBlocked("Review")]):
+            self.run_sync(page_overlap=1)
+        self.rows[0]["modified"] = "later"
+        with patch.object(sm, "upsert") as write, self.assertRaisesRegex(sm.ServiceBlocked, "page changed"):
+            self.run_sync(page_overlap=1)
+        write.assert_not_called()
+
     def test_cancelled_run_writes_nothing(self):
         with patch.object(sm,'upsert') as write:
             state=self.run_sync(should_stop=lambda:True)

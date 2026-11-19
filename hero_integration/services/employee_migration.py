@@ -12,6 +12,7 @@ import json
 import time
 
 import frappe
+from hero_integration.services.execution_budget import current_budget
 
 from hero_integration.integrations.erpnext.company import project_company
 from hero_integration.integrations.hero_people import _existing_user, PARTNER_FIELD, USER_ID_FIELD
@@ -497,6 +498,12 @@ def sync_employees(client, *, source_instance, run_name, should_stop=None, progr
             break
         if verify_source:
             verify_source()
+        if budget := current_budget():
+            identities = [('partner', record['id'])]
+            user = record.get('user_id') or (record.get('user') or {}).get('id')
+            if user:
+                identities.append(('User', user))
+            budget.reserve_many(identities)
         try:
             result = upsert(record, source_instance, company, languages, read=read)
             remember_relationships(run_name, source_instance, company, read, record)

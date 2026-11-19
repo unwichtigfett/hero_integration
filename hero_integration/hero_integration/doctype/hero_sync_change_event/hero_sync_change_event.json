@@ -1,0 +1,84 @@
+{
+ "doctype": "DocType",
+ "name": "HERO Sync Change Event",
+ "module": "HERO Integration",
+ "autoname": "field:event_id",
+ "fields": [
+  {
+   "fieldname": "event_id",
+   "label": "Event Id",
+   "fieldtype": "Data",
+   "read_only": 1,
+   "unique": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "site_scope",
+   "label": "Site Scope",
+   "fieldtype": "Data",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_instance",
+   "label": "Source Instance",
+   "fieldtype": "Data",
+   "read_only": 1
+  },
+  {
+   "fieldname": "object_type",
+   "label": "Object Type",
+   "fieldtype": "Data",
+   "read_only": 1
+  },
+  {
+   "fieldname": "external_id",
+   "label": "External Id",
+   "fieldtype": "Data",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_version",
+   "label": "Source Version",
+   "fieldtype": "Data",
+   "read_only": 1
+  },
+  {
+   "fieldname": "mapping_name",
+   "label": "Mapping Name",
+   "fieldtype": "Data",
+   "read_only": 1
+  },
+  {
+   "fieldname": "mapping_revision",
+   "label": "Mapping Revision",
+   "fieldtype": "Int",
+   "read_only": 1
+  },
+  {
+   "fieldname": "run_id",
+   "label": "Run Id",
+   "fieldtype": "Data",
+   "read_only": 1
+  },
+  {
+   "fieldname": "outcome",
+   "label": "Outcome",
+   "fieldtype": "Data",
+   "read_only": 1
+  },
+  {
+   "fieldname": "field_changes",
+   "label": "Field Changes",
+   "fieldtype": "Code",
+   "read_only": 1,
+   "options": "JSON"
+  }
+ ],
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1
+  }
+ ],
+ "modified": "2026-11-19 17:00:00.000000"
+}
