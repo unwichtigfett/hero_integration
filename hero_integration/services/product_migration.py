@@ -23,6 +23,8 @@ import json
 import time
 
 import frappe
+from hero_integration.services.binding_registry import BindingConflict
+from hero_integration.services.file_migration import DirectContractChanged
 from hero_integration.services.execution_budget import BudgetReached, current_budget, mapped_dependencies
 
 from hero_integration.services import direct_operations as direct
@@ -138,12 +140,9 @@ class _Masters:
         return self.names[key]
 
 
-def _links(source_instance: str) -> dict:
-    rows = frappe.get_all("HERO Integration Link", filters={"source_type": SOURCE_TYPE, "source_instance": source_instance},
-                          fields=["name", "source_id", "target_name", "source_payload_hash", "target_payload_hash",
-                                  "target_field_hashes", "sync_status", "conflict_detail"],
-                          limit_page_length=0)
-    return {row.source_id: row for row in rows}
+def _links(source_instance, identities):
+    return runtime.page_links(frappe, source_instance, SOURCE_TYPE, identities, [
+        "target_name", "source_payload_hash", "target_payload_hash", "target_field_hashes", "sync_status", "conflict_detail"])
 
 
 class PriceConflict(Exception):
@@ -205,7 +204,9 @@ def upsert(row: dict, link, masters: _Masters, source_instance: str, read=None, 
         return "conflict"  # the taken item code waits for approve (link that Item) or decline
     if link and (not link.target_name or not frappe.db.exists("Item", link.target_name)):
         return _conflict(link, source, "The linked Item no longer exists in ERPNext; review the binding before importing.")
-    if link and link.source_payload_hash == source and not relations:
+    from hero_integration.services.execution_runtime import adapter_baseline, field_decisions, preserve_local_fields
+    if (link and link.source_payload_hash == source and not relations
+            and "apply" not in field_decisions("Item", link.target_name).values()):
         return "unchanged"
     item = frappe.get_doc("Item", link.target_name) if link else None
     if item is None and frappe.db.exists("Item", values["item_code"]):
@@ -240,7 +241,8 @@ def upsert(row: dict, link, masters: _Masters, source_instance: str, read=None, 
     if item is not None:
         # A partial Send advances only its confirmed fields. An old aggregate
         # cannot acknowledge the remaining fields, nor veto a valid partial update.
-        changed = (owned_field_digests(item, tuple(baseline_fields)) != baseline_fields
+        changed = (adapter_baseline(item, owned_field_digests(item, tuple(baseline_fields)), baseline_fields,
+                                    verify=True) != baseline_fields
                    if baseline_fields else bool(link.target_payload_hash)
                    and owned_digest(item, OWNED) != link.target_payload_hash)
         if changed:
@@ -277,6 +279,8 @@ def upsert(row: dict, link, masters: _Masters, source_instance: str, read=None, 
     if item is None:
         fields = {**{key: value for key, value in REQUIRED_FALLBACKS.items() if not fields.get(key)}, **{
             key: value for key, value in fields.items() if value is not None or key not in REQUIRED_FALLBACKS}}
+    if item is not None:
+        preserve_local_fields(item, fields)
     if not adopted:
         masters.for_item(fields)
     if item is None:
@@ -315,7 +319,7 @@ def upsert(row: dict, link, masters: _Masters, source_instance: str, read=None, 
         relation_warnings.append(relation_pending)
     link_values = {"sync_status": "Pending Review" if relation_pending else "Synchronized", "target_name": item.name, "source_payload_hash": source,
                    "target_payload_hash": owned_digest(item, owned), "conflict_detail": relation_pending,
-                   "target_field_hashes": json.dumps({"prices": prices, "fields": owned_field_digests(item, owned),
+                   "target_field_hashes": json.dumps({"prices": prices, "fields": adapter_baseline(item, owned_field_digests(item, owned), baseline_fields),
                                                      **({'adopted_locally': True} if adopted else {}),
                                                      **({"supplier": supplier_baseline} if supplier_baseline else {})},
                                                      sort_keys=True),
@@ -494,12 +498,13 @@ def sync_products(client=None, *, source_instance: str | None = None, time_budge
     if not isinstance(source_instance, str) or not source_instance.strip():
         raise RuntimeError("A HERO source instance is required.")
     read = read or runtime.resolve_read(OPERATION, source_instance)
-    from hero_integration.services.migration_testing import bounded_rows, processed, test_state, save_test_state, validate_checkpoint
+    from hero_integration.services.migration_testing import bounded_rows, processed, validate_checkpoint
     from hero_integration.services.offset_pagination import advance, validate_overlap
     if page_overlap:
         validate_overlap(page_overlap, read.page_size)
-    state = test_state(run_name, OPERATION) if record_limit is not None else _state()
-    save = (lambda value: save_test_state(run_name, OPERATION, value)) if record_limit is not None else _save
+    state, save = runtime.run_progress(read, run_name, _state, _save, record_limit=record_limit)
+    if read.validate_write and state.get("done"):
+        return state
     if record_limit is not None:
         validate_checkpoint(state, record_limit, source_instance=source_instance, mapping=read.mapping_version)
         if state.get('done'):
@@ -511,7 +516,7 @@ def sync_products(client=None, *, source_instance: str | None = None, time_budge
     state.update(source_instance=source_instance, mapping=read.mapping_version, mapping_origin=read.origin, page_overlap=page_overlap)
     counts = state.setdefault("counts", {})
     state.update(done=False, stopped=False, last_error=None)
-    links, masters = _links(source_instance), _Masters()
+    masters = _Masters()
     deadline = time.monotonic() + time_budget
     offset = int(state.get("offset") or 0)
     for _ in range(max_pages):
@@ -530,14 +535,13 @@ def sync_products(client=None, *, source_instance: str | None = None, time_budge
         if page_overlap:
             window = advance(received, offset=offset, size=page_size, overlap=page_overlap,
                              previous=state.get("offset_window"), identity=lambda row: row.get("product_id"))
-            if window.changed:
-                links = _links(source_instance)
         fingerprint = hashlib.sha256(json.dumps(received, sort_keys=True, separators=(',', ':'),
                                                  default=str).encode()).hexdigest() if received else ''
         if fingerprint and state.get('last_page_fingerprint') == fingerprint:
             raise ValueError('HERO repeated a product page; pagination cannot safely continue.')
         rows = bounded_rows(state, window.rows if window else received, record_limit)
         counts["requests"] = counts.get("requests", 0) + 1
+        links = _links(source_instance, [str(row["product_id"]) for row in rows if row.get("product_id")]) if rows else {}
         for row in rows:
             key = str(row.get("product_id") or "")
             if not key:
@@ -548,7 +552,8 @@ def sync_products(client=None, *, source_instance: str | None = None, time_budge
                 budget.reserve_many([(SOURCE_TYPE, key), *mapped_dependencies(read.plan, scoped_row, 'Item')])
             try:
                 warnings = []
-                result = upsert(row, links.get(key), masters, source_instance, read=read, relation_warnings=warnings)
+                result = runtime.process_record(read, row, source_instance, SOURCE_TYPE, run_name,
+                    lambda: upsert(row, links.get(key), masters, source_instance, read=read, relation_warnings=warnings))
                 if warnings and run_name:
                     from hero_integration.services.integration_events import record_output
                     target_name = frappe.db.get_value('HERO Integration Link',
@@ -559,6 +564,15 @@ def sync_products(client=None, *, source_instance: str | None = None, time_budge
                 frappe.db.commit()
             except BudgetReached:
                 raise
+            except DirectContractChanged:
+                raise
+            except BindingConflict as error:
+                frappe.db.rollback()
+                masters = _Masters()
+                result = "conflict"
+                from hero_integration.services.integration_events import record_output
+                record_output(run=run_name, source_type=SOURCE_TYPE, source_id=key, result="CONFLICT",
+                              action="product_binding_conflict", detail=str(error))
             except Exception as error:
                 frappe.db.rollback()
                 masters = _Masters()  # rollback invalidates both master existence and Supplier-name caches

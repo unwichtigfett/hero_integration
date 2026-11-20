@@ -102,7 +102,8 @@ class TestRunProgress(IntegrationTestCase):
         self.addCleanup(cleanup)
         frappe.db.commit()
         row = frappe.get_doc(run_progress.RUN, self.root)
-        with patch("hero_integration.services.file_transfer._client_and_downloader", return_value=(None,None,"fixture")), \
+        with patch.object(file_migration, "_direct_reader"), \
+                patch("hero_integration.services.file_transfer._client_and_downloader", return_value=(None,None,"fixture")), \
                 patch("hero_integration.services.product_migration.sync_products", side_effect=capped), \
                 self.assertRaises(BudgetReached):
             file_migration._process_file_slice(row, object())

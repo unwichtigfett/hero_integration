@@ -116,6 +116,8 @@ class TestSavedReadContract(unittest.TestCase):
 
 class TestGeneratedTaskRead(unittest.TestCase):
     def setUp(self):
+        from hero_integration.tests.saved_reader_fixture import isolate_binding_storage
+        isolate_binding_storage(self)
         from hero_integration import api  # Load with the real framework before replacing the DB boundary.
         from hero_integration.services.direct_mapping import MappingSpec
         from hero_integration.services.graphql_graph import analyze_snapshot
@@ -145,7 +147,7 @@ class TestGeneratedTaskRead(unittest.TestCase):
                   'mapping_definition_ids': ['id', 'title', 'user', 'project', 'due'], 'variables': {'first': '$page_size', 'offset': '$offset'},
                   'page_size': 2, 'native_task_onboarding': {'confirmed': True, 'source_instance': 'synthetic', 'source_type': 'Task'}}
         request, config['generated_task_seal'] = task_materialization(self.snapshot, config, self.plan)
-        self.mapping = SimpleNamespace(name='MAP', status='Active', schema_snapshot='SNAP', schema_fingerprint=fingerprint,
+        self.mapping = SimpleNamespace(name='MAP', definition_id='test-task-map', status='Active', schema_snapshot='SNAP', schema_fingerprint=fingerprint,
             mapping_revision=3, mapping_json=json.dumps(config), operation_name='tasks', operation_kind='QUERY',
             direction='QUERY_TO_FRAPPE', source_instance='synthetic')
         self.service = SimpleNamespace(name='SERVICE', operation_name='tasks', status='Validated', schema_snapshot='SNAP',

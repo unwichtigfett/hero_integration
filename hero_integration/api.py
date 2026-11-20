@@ -455,10 +455,10 @@ def cancel_run(run_name: str) -> dict[str, str]:
 def resume_run(run_name: str) -> dict[str, str]:
     frappe.only_for("System Manager")
     run = frappe.get_doc("HERO Integration Run", run_name)
-    recover_running = run.state == "Running" and getattr(run, "action", "") in ACTIONS
+    from hero_integration.services.file_migration import RUN_ACTIONS, SLICE_ACTIONS, SourceBindingError, resume as resume_file_run
+    recover_running = run.state == "Running" and getattr(run, "action", "") in {*ACTIONS, *SLICE_ACTIONS}
     if not recover_running and run.state not in {"Failed", "Cancelled", "Blocked"}:
         frappe.throw(frappe._("Only failed, cancelled, or blocked runs can resume."))
-    from hero_integration.services.file_migration import RUN_ACTIONS, SourceBindingError, resume as resume_file_run
 
     if _as_bool(getattr(run, "testing_enabled", 0)) and not getattr(run, "execution_budget_run", None):
         frappe.throw(frappe._("Testing imports cannot resume; start a new bounded run."))

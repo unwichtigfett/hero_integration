@@ -13,7 +13,7 @@ import json
 from typing import Protocol
 
 from hero_integration.graphql_protocol.operation_kind import GraphQLOperationKind
-from hero_integration.services.binding_registry import BindingRegistryService, FieldBinding, BindingState, FrappeBindingStorage, state_fingerprint
+from hero_integration.services.binding_registry import BindingRegistryService, FieldBinding, BindingState, FrappeBindingStorage, native_fingerprint, state_fingerprint
 from hero_integration.services.mapping_registry_model import MappingDirection
 from hero_integration.services.migration_engine import SealedRead
 from hero_integration.services.localized_error import LocalizedError
@@ -245,26 +245,52 @@ class FrappeBoundIndex:
         self.definition_ids=frozenset(definition_ids) if definition_ids is not None else None
         self._frappe_module=frappe_module
         self.object_type=object_type
-    def fields(self, site_scope, source_instance):
+    def _scope_query(self, site_scope, source_instance):
         storage = FrappeBindingStorage(self._frappe_module)
         frappe = storage._scope(site_scope)
         field = frappe.qb.DocType(storage.FIELD)
         parent = frappe.qb.DocType(storage.OBJECT)
-        query = (frappe.qb.from_(field).left_join(parent).on(field.object_binding == parent.name)
-            .select(field.star,parent.external_object_id,parent.object_type,
-                    parent.site_scope.as_("parent_site"),parent.source_instance.as_("parent_source"))
-            .where((field.site_scope == site_scope) & (field.source_instance == source_instance)
-                   & (field.direction == MappingDirection.HERO_TO_FRAPPE.value)))
+        query = (frappe.qb.from_(field).join(parent).on(field.object_binding == parent.name)
+                 .where((field.site_scope == site_scope) & (field.source_instance == source_instance)
+                        & (field.direction == MappingDirection.HERO_TO_FRAPPE.value)))
+        if self.object_type:
+            query = query.where(parent.object_type == self.object_type)
         if self.definition_ids is not None:
-            if not self.definition_ids:
-                return ()
             query = query.where(field.mapping_definition_id.isin(sorted(self.definition_ids)))
+        return storage, query, parent, field
+
+    def identities(self, site_scope, source_instance):
+        from frappe.utils import now_datetime
+
+        if self.definition_ids == frozenset():
+            return
+        _, query, parent, field = self._scope_query(site_scope, source_instance)
+        cutoff = now_datetime()
+        query = (query.where((parent.creation <= cutoff) & (field.creation <= cutoff))
+                 .select(parent.external_object_id).distinct().orderby(parent.external_object_id).limit(50))
+        after = None
+        while True:
+            page = (query.where(parent.external_object_id > after) if after is not None else query).run(pluck=True)
+            if not page:
+                return
+            yield from page
+            after = page[-1]
+
+    def fields(self, site_scope, source_instance):
+        return self.fields_for_ids(site_scope, source_instance, None)
+
+    def fields_for_ids(self, site_scope, source_instance, identities):
+        if self.definition_ids == frozenset() or identities is not None and not identities:
+            return ()
+        storage, query, parent, field = self._scope_query(site_scope, source_instance)
+        query = query.select(field.star, parent.external_object_id, parent.object_type,
+                             parent.site_scope.as_("parent_site"), parent.source_instance.as_("parent_source"))
+        if identities is not None:
+            query = query.where(parent.external_object_id.isin(identities))
         result = []
         for row in query.orderby(field.identity_key).run(as_dict=True):
             if row.parent_site != site_scope or row.parent_source != source_instance or not row.external_object_id:
                 raise SyncConflict("Bound field has no current object binding.")
-            if self.object_type and row.object_type != self.object_type:
-                continue
             binding = storage._field(row)
             result.append(BoundField(row.external_object_id,binding,tuple(binding.source_field.split("."))))
         return tuple(result)
@@ -307,14 +333,44 @@ class FrappeBoundProcessor:
         return self._frappe().db.get_value(self.EVENT, self._event_id(identity,event_key,fields), "outcome") == "APPLIED"
 
     def _approved_plan(self, frappe, source):
-        from hero_integration.services.mapping_runtime import active_mapping_plan
+        from hero_integration.services.mapping_runtime import BindingContract, active_mapping_plan
         mapping = frappe.get_doc("HERO GraphQL Mapping", self.mapping_name, for_update=True)
         if (mapping.source_instance != source or int(mapping.mapping_revision) != self.mapping_revision
                 or mapping.status != "Active" or mapping.direction != "QUERY_TO_FRAPPE"):
             raise SyncConflict("Bound write mapping changed.")
         operation = json.loads(mapping.mapping_json)["target_operation"]
-        return active_mapping_plan(operation, definition_ids=self.definition_ids, mapping_name=self.mapping_name,
+        plan = active_mapping_plan(operation, definition_ids=self.definition_ids, mapping_name=self.mapping_name,
                                    bound_fields_only=True)
+        return replace(plan, binding_contract=BindingContract(source, self.object_type, mapping.definition_id,
+                                                              self.mapping_revision))
+
+    @staticmethod
+    def supports_scalar(spec, target):
+        from hero_integration.services.direct_mapping import SYSTEM_FIELDS
+
+        field = target.meta.get_field(spec.target_field)
+        return (spec.target_doctype == target.doctype and spec.purpose == "Field" and not spec.relation
+                and spec.transformation in {"Trim", "Identity", "Scalar Text", "Positive Int To Text", "Local Date",
+                                            "Local Datetime", "Number", "Integer", "Value Map"}
+                and spec.target_field not in SYSTEM_FIELDS
+                and spec.target_field not in {"custom_hero_source_id", "custom_hero_customer_number",
+                    "custom_hero_project_number", "custom_hero_due_date", "item_code", "file_name", "user_id"}
+                and target.doctype != "User" and field and not field.is_virtual and not field.fetch_from
+                and (not field.read_only or spec.target_field.startswith("custom_hero_"))
+                and field.fieldtype in {"Data", "Small Text", "Text", "Long Text", "Select", "Int", "Float",
+                                        "Currency", "Check", "Date", "Datetime", "Time"}
+                and int(field.permlevel or 0) in target.get_permlevel_access("write"))
+
+    @staticmethod
+    def project_scalar(plan, spec, record, source):
+        from hero_integration.services.query_mapping import mapped_values
+
+        single = replace(plan, definitions=(spec,))
+        scoped = dict(record, _hero_source_instance=source)
+        values = (mapped_values(single, scoped, allow_partial=True, target_doctype=spec.target_doctype)
+                  if plan.adapter_options else single.values(scoped, allow_partial=True))
+        value = values.get(spec.target_field)
+        return None if value is None or value == "" or isinstance(value, (dict, list)) else value
 
     def process(self, record, fields):
         # Compatibility with pre-release direct callers that have no run envelope.
@@ -324,9 +380,7 @@ class FrappeBoundProcessor:
         if not fields or not self.run_id or not self.mapping_name or not self.object_type:
             return False
         from frappe.modules.utils import get_module_app
-        from hero_integration.services.direct_mapping import SYSTEM_FIELDS
         from hero_integration.services.change_detection import managed_target_update
-        from hero_integration.services.query_mapping import mapped_values
         frappe = self._frappe()
         storage = FrappeBindingStorage(frappe)
         bindings = BindingRegistryService(storage)
@@ -341,10 +395,19 @@ class FrappeBoundProcessor:
         changes = []
         ack = []
         blocked = False
+        incomplete = False
+        owners = {}
+        from hero_integration.services.execution_runtime import link_source_type, locked_provenance
+        source_type = link_source_type(plan.target_operation or plan.operation)
+        deleted = any(rule.purpose == "Lifecycle Flag" and rule.source_path in {"is_deleted", "deleted"}
+                      and record.get(rule.source_path) is True for rule in plan.definitions)
         destinations = set()
         for field in sorted(fields,key=lambda item:item.binding.identity_key):
-            bound = storage._field(frappe.get_doc(storage.FIELD, field.binding.identity_key, for_update=True))
-            parent = storage._object(frappe.get_doc(storage.OBJECT, bound.object_binding_key, for_update=True))
+            parent = storage.object(first.site_scope, field.binding.object_binding_key, for_update=True)
+            bound = storage.field(first.site_scope, field.binding.identity_key, for_update=True)
+            if (not parent or not bound or bound.object_binding_key != parent.identity_key or parent.reconciliation
+                    or parent.mapping_definition_id not in {plan.binding_contract.definition_id, *self.definition_ids}):
+                raise SyncConflict("The bound object no longer has its approved mapping identity.")
             spec = rules.get(bound.mapping_definition_id)
             target_key = (bound.target_doctype,bound.target_name)
             if (field.object_id != identity or bound.site_scope != first.site_scope or
@@ -360,33 +423,39 @@ class FrappeBoundProcessor:
                 raise SyncConflict("Multiple bindings address one destination field.")
             destinations.add((*target_key,bound.target_field))
             if target_key not in targets:
-                target = frappe.get_doc(*target_key,for_update=True)
+                if not source_type:
+                    raise SyncConflict("Missing source identity contract for the native target.")
+                from hero_integration.services.binding_registry import BindingConflict
+                try:
+                    link = locked_provenance(first.source_instance, source_type, identity, bound.target_doctype)
+                except BindingConflict as error:
+                    raise SyncConflict(str(error)) from error
+                if link and (link.target_name != bound.target_name or link.sync_status != "Synchronized"):
+                    raise SyncConflict("The native link requires review before polling.")
+                owners[target_key] = (parent.identity_key, link.name if link else parent.identity_key)
+                try:
+                    target = frappe.get_doc(*target_key, for_update=True)
+                except frappe.DoesNotExistError as error:
+                    raise SyncConflict("The bound native target no longer exists.") from error
                 target.check_permission("write")
                 if get_module_app(target.meta.module) != bound.target_app:
                     raise SyncConflict("Target app no longer owns the bound document.")
                 targets[target_key] = (target,{})
             target,updates = targets[target_key]
-            df = target.meta.get_field(bound.target_field)
-            # Native relations, child tables and derived/adapter transforms need
-            # explicit write contracts of their own. They cannot fall back to identity.
-            if (spec.purpose != "Field" or spec.relation or spec.transformation not in {
-                    "Trim","Identity","Scalar Text","Positive Int To Text"}
-                    or spec.target_field in SYSTEM_FIELDS or not df or df.is_virtual or df.fetch_from
-                    or (df.read_only and not spec.target_field.startswith("custom_hero_"))
-                    or df.fieldtype not in {"Data","Small Text","Text","Long Text","Select","Int","Float","Currency","Check"}
-                    or int(df.permlevel or 0) not in target.get_permlevel_access("write")):
-                return False
-            single_field = replace(plan,definitions=(spec,))
-            scoped_record = dict(record, _hero_source_instance=bound.source_instance)
-            if plan.adapter_options:
-                values = mapped_values(single_field,scoped_record,allow_partial=True,target_doctype=bound.target_doctype)
-            else:
-                values = single_field.values(scoped_record,allow_partial=True)
-            projected = values.get(bound.target_field)
-            if projected is None or projected == "" or isinstance(projected,(dict,list)):
-                return False
-            source_fp = state_fingerprint(projected,present=True)
-            previous = state_fingerprint(target.get(bound.target_field),present=True)
+            if deleted:
+                blocked = True
+                changes.append({"binding": bound.identity_key, "field": bound.target_field, "action": "SOURCE_DELETED"})
+                continue
+            supported = self.supports_scalar(spec, target)
+            projected = self.project_scalar(plan, spec, record, bound.source_instance) if supported else None
+            if projected is None:
+                incomplete = True
+                changes.append({"binding": bound.identity_key, "field": bound.target_field,
+                                "action": "OMITTED" if supported else "UNSUPPORTED"})
+                continue
+            fieldtype = target.meta.get_field(bound.target_field).fieldtype
+            source_fp = native_fingerprint(projected, fieldtype)
+            previous = native_fingerprint(target.get(bound.target_field), fieldtype)
             decision = bindings.inbound_reconciliation(bound,active_mapping_revision=self.mapping_revision,
                                                        source_fingerprint=source_fp,target_fingerprint=previous)
             if bound.state in {BindingState.MAPPING_CHANGED, BindingState.RECONCILIATION_REQUIRED}:
@@ -409,11 +478,12 @@ class FrappeBoundProcessor:
             target,updates = targets[target_key]
             if updates:
                 target.update(updates)
-                with managed_target_update(target.doctype,target.name,event_id):
+                binding_owner, link_owner = owners[target_key]
+                with managed_target_update(*target_key, binding_owner), managed_target_update(*target_key, link_owner):
                     target.save()
         for bound,target_key,source_fp in ack:
             saved = frappe.get_doc(*target_key,for_update=True)
-            actual = state_fingerprint(saved.get(bound.target_field),present=True)
+            actual = native_fingerprint(saved.get(bound.target_field), saved.meta.get_field(bound.target_field).fieldtype)
             if actual != source_fp:
                 raise SyncConflict("Native lifecycle modified the proposed bound value.")
             bindings.record_verified_acknowledgment(bound,expected_revision=bound.revision,
@@ -422,18 +492,19 @@ class FrappeBoundProcessor:
                 version=bound.acknowledged_version+1)
         # Internal receipts have read-only user permissions. Only this checked,
         # nonwhitelisted writer creates them. Conflicts are specific to a run.
-        if blocked:
-            event_id = self._event_id(identity,("conflict",event_id,self.run_id),fields)
+        outcome = "CONFLICT" if blocked else "PARTIAL" if incomplete else "APPLIED"
+        if outcome != "APPLIED":
+            event_id = self._event_id(identity,(outcome,event_id,self.run_id),fields)
         if not frappe.db.exists(self.EVENT,event_id):
             frappe.get_doc({"doctype":self.EVENT,"event_id":event_id,"site_scope":first.site_scope,
                 "source_instance":first.source_instance,"object_type":self.object_type,"external_id":identity,
                 "source_version":str(version) if version!="" else state_fingerprint(record,present=True),
                 "mapping_name":self.mapping_name,"mapping_revision":self.mapping_revision,"run_id":self.run_id,
                 "updated_documents": updated_documents,
-                "unchanged_documents": len(targets) - updated_documents if not blocked else 0,
-                "outcome":"CONFLICT" if blocked else "APPLIED","field_changes":json.dumps(changes)
+                "unchanged_documents": len(targets) - updated_documents if outcome == "APPLIED" else 0,
+                "outcome":outcome,"field_changes":json.dumps(changes)
             }).insert(ignore_permissions=True)
-        return SyncStatus.CONFLICT if blocked else True
+        return SyncStatus.CONFLICT if blocked else SyncStatus.PARTIAL if incomplete else True
 
 def scheduler_due(configuration:PollingConfiguration, elapsed_seconds:object)->bool:
     """Pure scheduler gate; scheduler registration and job enqueueing are external."""
@@ -512,16 +583,19 @@ class SyncEngine:
             if not bounded and (not caps.cursor or not caps.complete_change_discovery):
                 return stop(SyncStatus.RECONCILIATION_REQUIRED if caps.bounded_comparison else SyncStatus.INCOMPLETE,
                             "provider cannot prove complete cursor discovery")
-            fields = tuple(self.index.fields(run.site_scope, state.configuration.source_instance))
+            source = state.configuration.source_instance
+            page_fields = getattr(self.index, "fields_for_ids", None)
             by_object = {}
-            for field in fields:
-                if field.binding.mapping_revision != state.configuration.mapping_revision:
-                    return stop(SyncStatus.RECONCILIATION_REQUIRED, "bound field mapping revision changed")
-                by_object.setdefault(field.object_id, []).append(field)
-            commit()  # No database snapshot or destination lock spans remote acquisition.
-            if bounded and not by_object:
-                return stop(SyncStatus.INCOMPLETE, "no eligible existing bound objects")
-            identities = iter(sorted(by_object)) if bounded else None
+            if page_fields is None:
+                for field in self.index.fields(run.site_scope, source):
+                    if field.binding.mapping_revision != state.configuration.mapping_revision:
+                        return stop(SyncStatus.RECONCILIATION_REQUIRED, "bound field mapping revision changed")
+                    by_object.setdefault(field.object_id, []).append(field)
+            identities = None
+            if bounded:
+                identities = (self.index.identities(run.site_scope, source) if page_fields
+                              else iter(sorted(by_object)))
+            commit()
             cursor = state.cursor
             seen_cursors = {cursor}
             coverage = set(state.coverage)
@@ -530,6 +604,8 @@ class SyncEngine:
                 if bounded:
                     bound_id = next(identities, None)
                     if bound_id is None:
+                        if processed + skipped == 0:
+                            return stop(SyncStatus.INCOMPLETE, "no eligible existing bound objects")
                         if self.revalidate:
                             self.revalidate()
                         return stop(SyncStatus.BOUNDED_COMPLETE, "reviewed existing identities compared; global cursor unchanged")
@@ -544,6 +620,14 @@ class SyncEngine:
                     return stop(SyncStatus.INCOMPLETE, "provider exceeded approved page size")
                 if page.next_cursor is not None and (not page.next_cursor or page.next_cursor in seen_cursors):
                     return stop(SyncStatus.PARTIAL, "repeated cursor")
+                if page_fields:
+                    path = ("id",) if bounded or getattr(self.provider, "detail_for", None) else identity_path
+                    ids = tuple(dict.fromkeys(_identity(row, path) for row in page.records))
+                    by_object = {}
+                    for field in page_fields(run.site_scope, source, ids):
+                        if field.binding.mapping_revision != state.configuration.mapping_revision:
+                            return stop(SyncStatus.RECONCILIATION_REQUIRED, "bound field mapping revision changed")
+                        by_object.setdefault(field.object_id, []).append(field)
                 for position,record in enumerate(page.records):
                     fast = getattr(self.provider, "detail_for", None)
                     identity = _identity(record) if (bounded or fast) else _identity(record, identity_path)
@@ -551,6 +635,8 @@ class SyncEngine:
                         return stop(SyncStatus.BUDGET_REACHED, "global test budget exhausted")
                     selected = tuple(by_object.get(identity, ()))
                     if not selected:
+                        if bounded:
+                            return stop(SyncStatus.PARTIAL, "bound identity changed during comparison")
                         skipped += 1
                         checkpoint_record()
                         continue
@@ -584,6 +670,8 @@ class SyncEngine:
                               self.processor.process(record, selected))
                     if result == SyncStatus.CONFLICT:
                         return stop(SyncStatus.CONFLICT, "binding or field baseline conflict")
+                    if result == SyncStatus.PARTIAL:
+                        return stop(SyncStatus.PARTIAL, "bound record omitted a required or supported field")
                     if not result:
                         return stop(SyncStatus.PARTIAL, "local processing was not durable")
                     processed += 1

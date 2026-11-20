@@ -10,6 +10,7 @@ links, conflicts, masters, download, attachment) stays in their own code.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from collections.abc import Callable
 
 from hero_integration.services import direct_operations as direct
 from hero_integration.services.direct_mapping import MISSING, MappingSpec, lookup
@@ -31,6 +32,9 @@ class DirectRead:
     snapshot: object | None = None
     projection_paths: tuple[str, ...] | None = None
     projection_preserve_paths: tuple[str, ...] = ()
+
+    service_revision: int = 0
+    validate_write: Callable[[], None] | None = None
 
     @property
     def mapping_version(self) -> str:
@@ -115,24 +119,30 @@ def approved_read(operation: str, source_instance: str) -> DirectRead | None:
     import frappe
 
     from hero_integration import api
-    from hero_integration.services.mapping_runtime import active_mapping_plan
-    from hero_integration.services.read_contract import from_documents
-
     services = api._sync_area_read_services(source_instance).get(operation) or []
     if not services:
         return None
     service = frappe.get_doc("HERO GraphQL Service", services[0]["service"])
     mapping = frappe.get_doc("HERO GraphQL Mapping", services[0]["mapping"])
     snapshot = frappe.get_doc("HERO GraphQL Schema Snapshot", services[0]["snapshot"])
+    return read_from_documents(operation, service, mapping, snapshot)
+
+
+def read_from_documents(operation, service, mapping, snapshot):
+    from hero_integration.services.mapping_runtime import active_mapping_plan
+    from hero_integration.services.read_contract import from_documents
+
     contract = from_documents(service, mapping, snapshot)  # proves the sealed query and the frozen rules
+    if contract.target_operation != operation:
+        raise ValueError("The approved reader targets a different migration area.")
     plan = active_mapping_plan(service.operation_name, definition_ids=contract.definition_ids,
-                               target_operation=operation, mapping_name=mapping.name)
+                               target_operation=operation, mapping_name=mapping.name).with_reader(service, mapping, snapshot, contract)
     from hero_integration.services.mapping_contract_v1 import StoredSnapshot
     stored = StoredSnapshot(snapshot.name, snapshot.snapshot_json, snapshot.schema_fingerprint,
                             snapshot.source_instance, snapshot.analysis_status)
     return DirectRead(operation, plan, service.query_document, contract.records_path, dict(contract.variables),
                       contract.page_size, service.name, mapping.name, stored,
-                      contract.projection_paths,contract.projection_preserve_paths)
+                      contract.projection_paths, contract.projection_preserve_paths, contract.service_revision)
 
 
 def resolve_read(operation: str, source_instance: str) -> DirectRead:
@@ -252,4 +262,68 @@ def price_values(plan, record: dict) -> dict:
             raw = None
         result[spec.relation] = direct.resolve(spec.transformation, raw, record) \
             if spec.transformation in direct.TRANSFORMS else direct.price(raw)
+    return result
+
+
+
+def process_record(read, row, instance, source_type, run_name, write):
+    """Pass the native adapter through the same object and scalar write fence."""
+    from hero_integration.services.execution_runtime import process_migration_record
+
+    if read.validate_write:
+        read.validate_write()
+    return process_migration_record(read.plan, row, instance, source_type, write, evidence=run_name,
+                                    successful=lambda status: status in {"added", "updated", "unchanged"})
+
+
+def realize_record(read, row, pending, source_type, write):
+    from hero_integration.services.execution_runtime import process_migration_record
+
+    if read.validate_write:
+        read.validate_write()
+    return process_migration_record(read.plan, row, pending.source_instance, source_type, write,
+                                    relationships_only=True, evidence=pending.origin_run, successful=lambda result: False)
+
+def run_progress(read, run_name, legacy_load, legacy_save, *, record_limit=None):
+    """Load the file/article cursor from its originating run and preserve the area status view."""
+    import json
+    import frappe
+    from hero_integration.services.migration_testing import test_state, save_test_state
+
+    if record_limit is not None:
+        load = lambda: test_state(run_name, read.operation)
+        store = lambda state: save_test_state(run_name, read.operation, state)
+    else:
+        load, store = legacy_load, legacy_save
+    if not read.validate_write:
+        return load(), store
+
+    raw = frappe.db.get_value("HERO Integration Run", run_name, "page_checkpoint_json")
+    saved = json.loads(raw) if raw else {}
+    if saved and (saved.get("operation") != read.operation or saved.get("mapping") != read.mapping_version
+                  or not isinstance(saved.get("progress"), dict)):
+        raise ValueError("The direct migration checkpoint does not match its frozen reader.")
+
+    def save(state):
+        read.validate_write()
+        checkpoint = {"operation": read.operation, "mapping": read.mapping_version, "progress": state}
+        frappe.db.set_value("HERO Integration Run", run_name, "page_checkpoint_json", json.dumps(checkpoint),
+                            update_modified=False)
+        store(state)  # Same transaction as the existing area/test progress projection and commit.
+
+    return saved.get("progress", {}), save
+
+
+def page_links(frappe, instance, kind, identities, fields):
+    """Fetch the migration provenance of just the current page, rejecting duplicate claims."""
+    from hero_integration.services.binding_registry import BindingConflict
+
+    if not identities:
+        return {}
+    rows = frappe.get_all("HERO Integration Link", filters={"source_system": "HERO", "source_instance": instance,
+        "source_type": kind, "source_id": ["in", list(identities)]}, fields=["name", "source_id", *fields],
+        limit_page_length=0)
+    result = {row.source_id: row for row in rows}
+    if len(result) != len(rows):
+        raise BindingConflict("More than one migration link claims a source identity.")
     return result

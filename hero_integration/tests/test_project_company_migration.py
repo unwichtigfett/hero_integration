@@ -1080,7 +1080,7 @@ class _FakeFrappe:
     def has_permission(doctype, permission_type, name):
         return doctype == "Company" and permission_type == "read" and name == "Executing Company"
 
-    def get_doc(self, *args):
+    def get_doc(self, *args, **kwargs):
         if len(args) == 2:
             doctype, name = args
             if doctype in {"Customer", "Project"}:

@@ -665,17 +665,21 @@ def _resolve_admitted(pending, run, name, dependency):
         config = get_configuration(fresh=True)
         if config.source_instance != pending.source_instance:
             raise ValueError('The configured source changed.')
+        direct_read = None
+        if pending.operation in {"HeroEmployees", "HeroServices", "HeroDocuments", "HeroPictures"}:
+            from hero_integration.services.file_migration import _direct_reader
+            direct_read = _direct_reader(run, expected_state="Completed", operation=pending.operation)
         if pending.operation == 'HeroServices':
             from hero_integration.services.service_migration import realize_relationships
             from hero_integration.services.file_migration import bound_configuration
             bound_configuration(run, configuration=config)
-            code = realize_relationships(pending, config)
+            code = realize_relationships(pending, config, read=direct_read)
             bound_configuration(run, configuration=get_configuration(fresh=True))
         elif pending.operation == 'HeroEmployees':
             from hero_integration.services.employee_migration import realize_relationships
             from hero_integration.services.file_migration import bound_configuration
             bound_configuration(run, configuration=config)
-            code = realize_relationships(pending)
+            code = realize_relationships(pending, read=direct_read)
             bound_configuration(run, configuration=get_configuration(fresh=True))
         elif pending.operation in {'HeroDocuments', 'HeroPictures'}:
             from hero_integration.services.file_transfer import FileConflict
@@ -683,7 +687,7 @@ def _resolve_admitted(pending, run, name, dependency):
             if bound_configuration(run, configuration=config).source_instance != pending.source_instance:
                 raise ValueError('The deferred file source changed.')
             try:
-                code = _resolve_file(pending)
+                code = _resolve_file(pending, read=direct_read)
             except FileConflict as error:
                 links = frappe.get_all('HERO Integration Link', filters={'source_instance': pending.source_instance,
                     'source_type': 'file_upload', 'source_id': pending.source_id},
@@ -710,21 +714,25 @@ def _resolve_admitted(pending, run, name, dependency):
                 raise ValueError('The deferred source identity changed.')
             _verify_origin_binding(pending, proof)
             from hero_integration.services.employee_migration import historical_user_scope
-            with historical_user_scope(pending.source_instance, historical):
+            def realize_native():
                 if (pending.operation in {'HeroTasks','HeroProjectMatches','HeroCalendarEvents'} and
                         (getattr(plan,'adapter_options',None) or {}).get('version')==2):
                     if pending.operation=='HeroTasks':
                         m._load_task_user_directory(None,pending.operation)
-                    result = m._migrate_isolated(lambda:m.realize_mapped_bindings(record,run,plan))
+                    return m.realize_mapped_bindings(record, run, plan)
                 elif pending.operation in {'HeroCustomers', 'HeroProjectMatches'}:
                     action = m._migrate_customer if pending.operation == 'HeroCustomers' else m._migrate_project
-                    result = m._migrate_isolated(lambda: action(record, run))
+                    return action(record, run, plan=plan)
                 else:
                     # A long-lived worker must not reuse another run's legacy User directory.
                     m._load_task_user_directory(None, pending.operation)
                     mapping = frappe.get_doc('HERO GraphQL Mapping', run.graphql_mapping)
                     scope = m._projection_task_scope(run, plan, mapping, source.source_instance, source.source_instance)
-                    result = m._migrate_projection_record(record, run, plan, scope)
+                    return m._migrate_projection_record(record, run, plan, scope)
+
+            kind = next(kind for kind, operation in OPERATIONS.items() if operation == pending.operation)
+            with historical_user_scope(pending.source_instance, historical):
+                result = m._migrate_with_binding(record, run, plan, kind, realize_native, relationships_only=True)
             code = result.code
             pending_detail = ''
             if getattr(result, 'pending_relation', False) and code in {
@@ -809,12 +817,15 @@ def _resolve_available_project_assignee(pending, user_id):
     assignments = [row for row in record.get('project_match_assignments') or []
                    if isinstance(row, dict) and type(row.get('user_id')) is int and str(row['user_id']) == user_id]
     if assignments:
-        sync(link.target_name, {**record, 'project_match_assignments': assignments}, allow_removals=False)
+        from hero_integration.services.execution_runtime import process_migration_record
+        process_migration_record(plan, record, pending.source_instance, "project",
+            lambda: sync(link.target_name, {**record, 'project_match_assignments': assignments}, allow_removals=False),
+            evidence=run.name, successful=lambda result: False, relationships_only=True)
 
 
-def _resolve_file(pending):
+def _resolve_file(pending, *, read=None):
     from hero_integration.services import file_transfer as files, direct_runtime
-    read = direct_runtime.resolve_read(pending.operation, pending.source_instance)
+    read = read or direct_runtime.resolve_read(pending.operation, pending.source_instance)
     if read.mapping_version != pending.mapping_version:
         raise ValueError('The approved file mapping changed.')
     observation = json.loads(pending.record_json)
@@ -842,9 +853,12 @@ def _resolve_file(pending):
         raise ValueError('The file attachment is still unresolved.')
     phase = 'images' if pending.operation == 'HeroPictures' else 'documents'
     folder = files._folder(files.ROOT_FOLDER, files.PHASE_FOLDER[phase])
-    files._assert_target_baseline(link, files.mapped_values(read, row), lock=True)
-    files.relink(link, target, folder)
-    fields = files.mapped_values(read, row)
-    frappe.db.set_value('HERO Integration Link', link.name, {'target_field_hashes': files._target_baseline(link.target_name, fields),
-        'last_synced_on': frappe.utils.now_datetime()})
-    return 'UPDATED'
+    def attach():
+        files._assert_target_baseline(link, files.mapped_values(read, row), lock=True)
+        files.relink(link, target, folder)
+        fields = files.mapped_values(read, row)
+        frappe.db.set_value('HERO Integration Link', link.name, {'target_field_hashes': files._target_baseline(link.target_name, fields),
+            'last_synced_on': frappe.utils.now_datetime()})
+        return 'UPDATED'
+
+    return direct_runtime.realize_record(read, row, pending, files.SOURCE_TYPE, attach)

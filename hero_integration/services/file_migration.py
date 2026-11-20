@@ -42,6 +42,10 @@ class SourceBindingError(RuntimeError):
     """The HERO source of a run is unconfirmed or no longer the configured one."""
 
 
+class DirectContractChanged(SourceBindingError):
+    """The worker lost its source, mapping or persisted run before confirmation."""
+
+
 # ---------------------------------------------------------------- source binding
 
 def _configuration():
@@ -219,7 +223,7 @@ def start(action: str, parent: str = "") -> str:
     config = confirmed_configuration()
     from hero_integration.services.migration_testing import configuration, run_metadata
     parent_run = frappe.get_doc('HERO Integration Run', parent) if parent else None
-    require_mappings(action, config.source_instance)
+    reads = require_mappings(action, config.source_instance)
     if action == EMPLOYEE_ACTION:
         from hero_integration.services.employee_migration import preflight
 
@@ -248,6 +252,13 @@ def start(action: str, parent: str = "") -> str:
         run.execution_budget_run = getattr(parent_run, 'execution_budget_run', None)
         if parent_run.action == FULL_ACTION and testing['testing_enabled'] and not run.execution_budget_run:
             raise SourceBindingError('The earlier full test has no provable global budget; start a new full test.')
+    if action in SLICE_ACTIONS:
+        from hero_integration.services.migration import bind_run_checkpoint
+        reader = reads[DIRECT_OPERATIONS[action]]
+        run.graphql_service, run.graphql_mapping = reader.origin, reader.mapping
+        run.service_revision = reader.service_revision
+        run.mapping_revision = reader.plan.binding_contract.revision
+        bind_run_checkpoint(run)
     run.insert(ignore_permissions=True)
     if not parent and testing['testing_enabled']:
         run.db_set('execution_budget_run', run.name, update_modified=False)
@@ -269,16 +280,39 @@ def start(action: str, parent: str = "") -> str:
 
 
 def resume(run) -> None:
-    """Continue a failed, cancelled or blocked file/full run where it stopped."""
+    """Recover an interrupted slice only after acquiring its worker's own lock."""
+    if run.state == "Running" and run.action in SLICE_ACTIONS:
+        from frappe.utils.file_lock import LockTimeoutError
+        from frappe.utils.synchronization import filelock
+
+        try:
+            with filelock(_area_lock(run.action), timeout=1):
+                _resume(run, recovering=True)
+        except LockTimeoutError as error:
+            raise SourceBindingError("The direct migration still has an active worker.") from error
+    else:
+        _resume(run)
+
+
+def _resume(run, *, recovering=False):
+    """Continue the original contract, budget and checkpoint."""
     from hero_integration.services.migration_testing import record_limit
     if record_limit(run) is not None and not execution_budget.for_run(run):
         raise SourceBindingError('Testing imports cannot resume; start a new bounded run.')
     config = bound_configuration(run)
     steps = _full(run.name).get("steps", list(FULL_STEPS)) if run.action == FULL_ACTION else None
-    require_mappings(run.action, config.source_instance, steps=steps)
+    if run.action in SLICE_ACTIONS:
+        _check_direct_contract(run, lock=True)
+    else:
+        require_mappings(run.action, config.source_instance, steps=steps)
     from hero_integration.services.run_reservation import admit_migration
     admit_migration(frappe, parent=_parent_run(run.name), resume=run.name)
-    run.state, run.error_message, run.finished_on = "Queued", "", None
+    if recovering:
+        current = frappe.get_doc("HERO Integration Run", run.name, for_update=True)
+        if current.state != "Running" or current.started_on != run.started_on:
+            raise SourceBindingError("The direct migration changed before recovery.")
+        run = current
+    run.state, run.started_on, run.error_message, run.finished_on = "Queued", None, "", None
     run.save(ignore_permissions=True)
     if run.action == FULL_ACTION:
         state = _full(run.name)
@@ -346,7 +380,7 @@ def execute(run_name: str) -> None:
 
 
 def _execute(run_name: str) -> None:
-    run = frappe.get_doc("HERO Integration Run", run_name)
+    run = frappe.get_doc("HERO Integration Run", run_name, for_update=True)
     if run.state not in ACTIVE:
         return
     frappe.set_user(run.owner)
@@ -354,7 +388,7 @@ def _execute(run_name: str) -> None:
         run.state = "Running"
         run.started_on = run.started_on or now_datetime()
         run.save(ignore_permissions=True)
-        frappe.db.commit()
+    frappe.db.commit()
     try:
         config = bound_configuration(run)
         with execution_budget.run_scope(run):
@@ -364,24 +398,28 @@ def _execute(run_name: str) -> None:
                 _file_slice(run, config)
     except execution_budget.BudgetReached as error:
         frappe.db.rollback()
-        _finish(run.name, 'Budget Reached', str(error))
+        _finish(run.name, 'Budget Reached', str(error), started_on=getattr(run, "started_on", None))
     except SourceBindingError as error:
         frappe.db.rollback()
-        _finish(run.name, "Blocked", str(error))
+        _finish(run.name, "Blocked", str(error), started_on=getattr(run, "started_on", None))
     except Exception as error:
         frappe.db.rollback()
         frappe.log_error(title=f"HERO {run.action} failed")
-        _finish(run.name, "Failed", f"{type(error).__name__}: {str(error)[:300]}")
+        _finish(run.name, "Failed", f"{type(error).__name__}: {str(error)[:300]}", started_on=getattr(run, "started_on", None))
+
+
+def _area_lock(action):
+    return {
+        EMPLOYEE_ACTION: 'hero_employee_migration', PRODUCT_ACTION: 'hero_product_migration',
+        SERVICE_ACTION: 'hero_service_migration',
+    }.get(action, 'hero_file_transfer')
 
 
 def _file_slice(run, config) -> None:
     """Hold the area lock through its checkpoint and terminal decision."""
     from frappe.utils.file_lock import LockTimeoutError
     from frappe.utils.synchronization import filelock
-    lock_name = {
-        EMPLOYEE_ACTION: 'hero_employee_migration', PRODUCT_ACTION: 'hero_product_migration',
-        SERVICE_ACTION: 'hero_service_migration',
-    }.get(run.action, 'hero_file_transfer')
+    lock_name = _area_lock(run.action)
     acquired = False
     try:
         with filelock(lock_name, timeout=5):
@@ -396,6 +434,37 @@ def _file_slice(run, config) -> None:
         # The current owner advances the durable checkpoint. A duplicate
         # delivery must not overwrite its run with a terminal failure.
         return
+
+
+def _check_direct_contract(run, *, lock=False):
+    from hero_integration.services.migration import _assert_checkpoint_contract
+    from hero_integration.services.mapping_runtime import MappingPlanError
+
+    try:
+        _assert_checkpoint_contract(run, lock=lock)
+    except (MappingPlanError, ValueError) as error:
+        raise DirectContractChanged(str(error)) from error
+
+
+def _direct_reader(run, *, expected_state="Running", operation=None):
+    from dataclasses import replace
+
+    if operation and DIRECT_OPERATIONS.get(run.action) != operation:
+        raise DirectContractChanged("Deferred operation differs from its originating migration.")
+    _check_direct_contract(run)
+    service = frappe.get_doc("HERO GraphQL Service", run.graphql_service)
+    mapping = frappe.get_doc("HERO GraphQL Mapping", run.graphql_mapping)
+    snapshot = frappe.get_doc("HERO GraphQL Schema Snapshot", service.schema_snapshot)
+    read = direct_runtime.read_from_documents(DIRECT_OPERATIONS[run.action], service, mapping, snapshot)
+
+    def validate_write():
+        current = frappe.get_doc("HERO Integration Run", run.name, for_update=True)
+        if (current.state != expected_state or current.started_on != run.started_on
+                or current.owner != frappe.session.user or current.checkpoint_contract_json != run.checkpoint_contract_json):
+            raise DirectContractChanged("The direct migration no longer owns its approved checkpoint.")
+        _check_direct_contract(run, lock=True)
+
+    return replace(read, validate_write=validate_write)
 
 
 def _process_file_slice(run, config):
@@ -421,6 +490,7 @@ def _process_file_slice(run, config):
         frappe.db.set_value("HERO Integration Run", run.name, run_counts(counts, action=run.action))
 
     def progress(counts: dict) -> None:
+        read.validate_write()
         # Called after every page, so the Synchronization page shows the counts while the slice runs.
         publish_counts(counts)
         frappe.db.commit()
@@ -428,9 +498,13 @@ def _process_file_slice(run, config):
     from hero_integration.services.migration_testing import record_limit, persist
     maximum = record_limit(run)
     cohort = related_test_for_run(run) if maximum is not None and run.action in {*FILE_ACTIONS, EMPLOYEE_ACTION} else None
-    client, downloader, instance = _client_and_downloader(config)
+    from hero_integration.client.settings import get_configuration
+    read = _direct_reader(run)
+    def token():
+        return bound_configuration(run, configuration=get_configuration(fresh=True)).api_token
+    client, downloader, instance = _client_and_downloader(config, token_provider=token)
     overlap = int(getattr(run, "page_overlap", 0) or 0)
-    paging = {"page_overlap": overlap} if overlap else {}
+    paging = {"read": read, **({"page_overlap": overlap} if overlap else {})}
     try:
         if run.action == SERVICE_ACTION:
             from hero_integration.services.service_migration import sync_services
@@ -444,7 +518,7 @@ def _process_file_slice(run, config):
             args = {'cohort_user_ids': cohort['user_ids'], 'cohort_partner_ids': cohort['partner_ids']} if cohort is not None else {}
             state = sync_employees(client, source_instance=instance, run_name=run.name,
                                    should_stop=cancelled, progress=progress, verify_source=lambda: bound_configuration(run),
-                                   record_limit=maximum, continue_on_conflict=True, **args)
+                                   record_limit=maximum, continue_on_conflict=True, read=read, **args)
         elif run.action == PRODUCT_ACTION:
             from hero_integration.services.product_migration import sync_products
 
@@ -461,9 +535,13 @@ def _process_file_slice(run, config):
         # completed-page offset stays where the reader last confirmed it.
         frappe.db.rollback()
         if page_identities:
+            read.validate_write()
             publish_counts(settled_counts)
             frappe.db.commit()
         raise
+    if state.get("stopped"):
+        return
+    read.validate_write()
     counts = state.get("counts") or {}
     if maximum is not None:
         persist(run.name, DIRECT_OPERATIONS[run.action], state)
@@ -472,11 +550,9 @@ def _process_file_slice(run, config):
     counts["confirmed_offset"] = state.get("offset")
     publish_counts(counts)
     frappe.db.commit()
-    if state.get("stopped"):
-        return  # cancelled by the user; the run keeps its Cancelled state
     if state.get("last_error"):
         detail = (f"{state['blocked_source_id']}: " if state.get("blocked_source_id") else "") + state["last_error"]
-        _finish(run.name, "Blocked", f"{detail} {summary(counts)}")
+        _finish(run.name, "Blocked", f"{detail} {summary(counts)}", started_on=getattr(run, "started_on", None))
     elif not state.get("done"):
         _enqueue(run.name)
         frappe.db.commit()
@@ -489,7 +565,7 @@ def _process_file_slice(run, config):
         historical = len(state.get('testing_historical_user_ids', []))
         if historical:
             detail += ' ' + frappe._('{0} deleted HERO users are retained as historical references; no accounts were created for them.').format(historical)
-        _finish(run.name, "Completed With Conflicts" if problems else "Completed", detail)
+        _finish(run.name, "Completed With Conflicts" if problems else "Completed", detail, started_on=getattr(run, "started_on", None))
 
 
 def run_counts(counts: dict, *, action=None) -> dict:
@@ -521,8 +597,9 @@ def summary(counts: dict) -> str:
     return text + "."
 
 
-def _finish(run_name: str, state: str, message: str) -> None:
-    if frappe.db.get_value("HERO Integration Run", run_name, "state") == "Cancelled":
+def _finish(run_name: str, state: str, message: str, *, started_on=None) -> None:
+    current = frappe.db.get_value("HERO Integration Run", run_name, ["state", "started_on"], for_update=True)
+    if not current or current[0] not in ACTIVE or (started_on is not None and current[1] != started_on):
         return
     values = {"state": state, "finished_on": now_datetime(), "error_message": message[:1000]}
     if state == 'Budget Reached':

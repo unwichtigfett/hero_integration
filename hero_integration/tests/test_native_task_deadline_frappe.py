@@ -1,5 +1,7 @@
 """Run only against an explicitly named private Frappe site."""
 import os
+from datetime import datetime
+from zoneinfo import ZoneInfo
 import unittest
 from types import SimpleNamespace
 
@@ -39,7 +41,9 @@ class TestNativeTaskDeadline(unittest.TestCase):
         # The legacy lifecycle intentionally also projects the due *day* to
         # ERPNext's end date; the separate field retains the precise instant.
         self.assertEqual(str(task.exp_end_date)[:10], '2026-10-29')
-        self.assertEqual(str(task.get('custom_hero_due_date'))[:19], '2026-10-29 09:30:00')
+        zone = ZoneInfo(frappe.db.get_single_value("System Settings", "time_zone"))
+        expected = datetime.fromisoformat(self.row["due_date"]).astimezone(zone).replace(tzinfo=None)
+        self.assertEqual(task.get("custom_hero_due_date"), expected)
         link = frappe.get_doc('HERO Integration Link', {'source_key': 'HERO:deadline37-fixture:Task:839371'})
         baseline = decode(link.source_field_hashes)['custom_hero_due_date']
         old = task.get('custom_hero_due_date')
@@ -60,7 +64,7 @@ class TestNativeTaskDeadline(unittest.TestCase):
         link = frappe.get_doc('HERO Integration Link', {'source_key': 'HERO:deadline37-fixture:Task:839371'})
         self.assertEqual(link.sync_status, 'Conflict')
 
-    def test_project_uses_existing_binding_and_null_preserves_it(self):
+    def test_intake_defers_project_and_null_preserves_a_native_selection(self):
         project = frappe.get_doc({'doctype': 'Project', 'project_name': 'Synthetic Task Project 37',
                                   'company': frappe.db.get_single_value('Global Defaults', 'default_company')}).insert()
         frappe.get_doc({'doctype': 'HERO Integration Link', 'source_system': 'HERO', 'source_type': 'project',
@@ -71,8 +75,11 @@ class TestNativeTaskDeadline(unittest.TestCase):
         result = self.apply(row)
         self.assertEqual(result.code, 'CREATED')
         task = frappe.get_doc('Task', result.target_name)
-        self.assertEqual(task.project, project.name)
-        self.assertEqual(self.apply({**row, 'target_project_match_id': None}).code, 'CONFLICT')
+        self.assertFalse(task.project)
+        task.project = project.name
+        task.save()
+        repeated = self.apply({**row, 'target_project_match_id': None})
+        self.assertEqual(repeated.code, 'SKIPPED', repeated.detail)
         task.reload()
         self.assertEqual(task.project, project.name)
         self.assertEqual(self.apply({**row, 'id': 839373, 'target_project_match_id': 839999}).code, 'BLOCKED_RECORD')

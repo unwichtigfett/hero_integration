@@ -1,8 +1,9 @@
-"""Dispatch persisted import work and bound sync work without changing their write authority.
+"""Dispatch imports and sync runs and fence each native migration adapter.
 
 Only the scheduler decides when to call the scheduled operations. Existing
 queue paths remain callable for jobs created before an upgrade.
 """
+from contextvars import ContextVar
 import frappe
 
 
@@ -43,3 +44,208 @@ def execute(operation, *, run_name="", **context):
         finally:
             run_reservation.release(frappe)
     raise ValueError("Unknown HERO execution operation.")
+
+
+# Native adapters may compute prices, create contacts or defer references. Only
+# confirmed scalar fields participate in the generic polling writer.
+_migration_decisions = ContextVar("hero_migration_field_decisions", default=None)
+
+
+def field_decisions(doctype, name):
+    context = _migration_decisions.get()
+    return context[2] if context and context[:2] == (doctype, name) else {}
+
+
+def adapter_baseline(doc, current, prior, *, verify=False):
+    """Keep independent domain fields under their native checks and preserve local edits."""
+    if _migration_decisions.get() is None:
+        return current
+    decisions = field_decisions(doc.doctype, doc.name)
+    if not decisions:
+        return current
+    return {field: prior[field] if field in prior and field in decisions
+            and (verify or decisions[field] in {None, "local"}) else value for field, value in current.items()}
+
+
+def preserve_local_fields(doc, values):
+    """Share the field decision with specialized native writers before their save."""
+    if _migration_decisions.get() is None:
+        return
+    decisions = field_decisions(doc.doctype, doc.name)
+    for field in values.keys() & decisions.keys():
+        if decisions[field] in {None, "local"}:
+            values[field] = doc.get(field)
+
+
+def bound_outcome(outcome, doctype, name, tracked):
+    """Use the canonical field baseline when legacy provenance predates a sync."""
+    from dataclasses import replace
+
+    decisions = {field: action for field, action in field_decisions(doctype, name).items() if field in tracked}
+    if not decisions:
+        return outcome
+    groups = {key: set(getattr(outcome, key)) - decisions.keys() for key in outcome.__dataclass_fields__}
+    for field, group in decisions.items():
+        if group:
+            groups[group].add(field)
+    return replace(outcome, **{key: frozenset(fields) for key, fields in groups.items()})
+
+
+def locked_provenance(instance, source_type, identity, doctype):
+    from hero_integration.services.binding_registry import BindingConflict
+
+    rows = frappe.db.get_values("HERO Integration Link", dict(source_system="HERO", source_instance=instance,
+        source_type=source_type, source_id=identity), ["name", "target_doctype", "target_name", "sync_status"],
+        as_dict=True, limit=2, for_update=True)
+    if len(rows) > 1 or rows and rows[0].target_doctype != doctype:
+        raise BindingConflict("Migration provenance does not identify one compatible target.")
+    return rows[0] if rows else None
+
+
+def link_source_type(operation):
+    from hero_integration.services.projection_contracts import CONTRACTS
+
+    if operation in CONTRACTS:
+        return CONTRACTS[operation]["source_type"]
+    return {"HeroCustomers": "customer", "HeroProjectMatches": "project", "HeroEmployees": "partner",
+            "HeroProducts": "supply_product", "HeroServices": "supply_service", "HeroDocuments": "file_upload",
+            "HeroPictures": "file_upload"}.get(operation)
+
+
+def process_migration_record(plan, record, instance, source_type, write, *, evidence, successful, relationships_only=False):
+    """Fence a domain adapter and publish its verified binding in the caller's transaction.
+
+    The approved reader establishes the source type and definition. Technical links
+    retain the adapter's relation evidence. An existing registry claim and the link
+    must agree before the adapter sees the row. Nothing here commits the transaction.
+    """
+    import frappe
+    from frappe.modules.utils import get_module_app
+    from hero_integration.services.binding_registry import (
+        BindingConflict, BindingRegistryService, BindingState, FrappeBindingStorage, native_fingerprint,
+    )
+    from hero_integration.services.change_detection import managed_target_update
+    from hero_integration.services.mapping_registry_model import MappingDirection
+    from hero_integration.services.sync_engine import FrappeBoundProcessor
+
+    contract = plan.binding_contract
+    if contract is None or contract.source_instance != instance:
+        raise BindingConflict("Migration record lacks its approved source and mapping.")
+    identity = plan.source_identity(record)
+    doctype = plan.target_doctype
+    site = frappe.local.site
+    storage = FrappeBindingStorage(frappe)
+    registry = BindingRegistryService(storage)
+    parent = storage.lock_source_object(site, instance, contract.object_type, doctype, identity)
+    link_filters = dict(source_system="HERO", source_instance=instance, source_type=source_type, source_id=identity)
+
+    def provenance():
+        link = locked_provenance(instance, source_type, identity, doctype)
+        return (link.target_name, link.sync_status) if link else (None, None)
+
+    name, status = provenance()
+    if record.get("_hero_source_instance", instance) != instance:
+        raise BindingConflict("The record belongs to a different source instance.")
+    if relationships_only and (not name or status != "Synchronized"):
+        raise BindingConflict("Deferred work requires its synchronized native target.")
+    if parent and (parent.lifecycle != "VALID" or parent.reconciliation or parent.target_name != name
+                   or parent.mapping_revision != contract.revision or parent.mapping_definition_id != contract.definition_id):
+        raise BindingConflict("Existing object binding differs from migration provenance or approved revision.")
+    try:
+        before = frappe.get_doc(doctype, name, for_update=True) if name else None
+    except frappe.DoesNotExistError as error:
+        raise BindingConflict("The bound native target no longer exists.") from error
+    if before:
+        before.check_permission("write")
+    else:
+        frappe.has_permission(doctype, "create", throw=True)
+    rules = {rule.definition_id: rule for rule in plan.definitions}
+    fields = {}
+    protected = {}
+    decisions = {}
+    deleted = record.get("is_deleted") is True or record.get("deleted") is True
+    if parent:
+        for binding in storage.fields_for_object(site, parent.identity_key, for_update=True):
+            if binding.direction != MappingDirection.HERO_TO_FRAPPE:
+                continue
+            rule = rules.get(binding.mapping_definition_id)
+            field = binding.target_field
+            if (not rule or binding.mapping_revision != contract.revision
+                    or (binding.source_instance, binding.target_app, binding.target_doctype, binding.target_name)
+                    != (instance, get_module_app(before.meta.module), doctype, name)
+                    or (rule.source_path, rule.target_field) != (binding.source_field, field)
+                    or field in fields or not FrappeBoundProcessor.supports_scalar(rule, before)
+                    or binding.state in {BindingState.MAPPING_CHANGED, BindingState.RECONCILIATION_REQUIRED}):
+                raise BindingConflict("Stored field binding requires reconciliation before migration.")
+            fieldtype = before.meta.get_field(field).fieldtype
+            current = native_fingerprint(before.get(field), fieldtype)
+            if relationships_only or deleted:
+                protected[field] = current
+                decisions[field] = None
+                continue
+            incoming = FrappeBoundProcessor.project_scalar(plan, rule, record, instance)
+            remote = native_fingerprint(incoming, fieldtype) if incoming is not None else None
+            decision = registry.inbound_reconciliation(binding, active_mapping_revision=contract.revision,
+                                                       source_fingerprint=remote, target_fingerprint=current)
+            if decision in {"CONFLICT", "UNACKNOWLEDGED", "MAPPING_CHANGED"}:
+                raise BindingConflict(f"Concurrent or unconfirmed mapped field requires review: {field}.")
+            if decision in {"KEEP_LOCAL", "OMITTED"}:
+                protected[field] = current
+                decisions[field] = "local" if decision == "KEEP_LOCAL" else None
+            elif decision == "APPLY_SOURCE":
+                decisions[field] = "apply"
+            else:
+                decisions[field] = "unchanged" if remote == binding.acknowledged_source_fingerprint else "converged"
+            fields[field] = binding
+
+    token = _migration_decisions.set((doctype, name, decisions))
+    try:
+        with managed_target_update(doctype, name, None):
+            result = write()
+    finally:
+        _migration_decisions.reset(token)
+    target_name, status = provenance()
+    if name and target_name != name:
+        raise BindingConflict("Migration changed an existing target identity.")
+    if not target_name:
+        if successful(result):
+            raise BindingConflict("Completed migration has no persistent target identity.")
+        return result
+    target = frappe.get_doc(doctype, target_name, for_update=True)
+    for field, prior in protected.items():
+        if native_fingerprint(target.get(field), target.meta.get_field(field).fieldtype) != prior:
+            raise BindingConflict(f"Migration would overwrite an unconfirmed local field: {field}.")
+    if relationships_only or deleted or not successful(result) or status != "Synchronized":
+        return result
+    if source_type == "supply_product":
+        from hero_integration.services.product_migration import _link_baseline
+        link = frappe.db.get_value("HERO Integration Link", link_filters, ["target_field_hashes"], as_dict=True,
+                                   for_update=True)
+        if _link_baseline(link).get("adopted_locally"):
+            return result  # Native adopted Items retain their explicit review contract.
+    parent = registry.create_or_resolve_object_binding(site_scope=site, source_instance=instance,
+        object_type=contract.object_type, external_object_id=identity, target_app=get_module_app(target.meta.module),
+        target_doctype=doctype, target_name=target.name, mapping_definition_id=contract.definition_id,
+        mapping_revision=contract.revision)
+    for rule in plan.definitions:
+        field = rule.target_field
+        if field in protected or not FrappeBoundProcessor.supports_scalar(rule, target):
+            continue
+        incoming = FrappeBoundProcessor.project_scalar(plan, rule, record, instance)
+        if incoming is None:
+            continue
+        fieldtype = target.meta.get_field(field).fieldtype
+        actual = native_fingerprint(target.get(field), fieldtype)
+        if actual != native_fingerprint(incoming, fieldtype):
+            if field in fields:
+                raise BindingConflict(f"Native lifecycle did not confirm the mapped field: {field}.")
+            continue  # A domain-specific projection has no generic write authority.
+        binding = fields.get(field) or registry.create_or_resolve_field_binding(parent, source_field=rule.source_path,
+            target_field=field, mapping_definition_id=rule.definition_id, mapping_revision=contract.revision,
+            direction=MappingDirection.HERO_TO_FRAPPE)
+        if (binding.acknowledged_source_fingerprint, binding.acknowledged_target_fingerprint) != (actual, actual):
+            registry.record_verified_acknowledgment(binding, expected_revision=binding.revision,
+                mapping_definition_id=rule.definition_id, mapping_revision=contract.revision,
+                source_fingerprint=actual, target_fingerprint=actual, evidence_id=evidence,
+                version=binding.acknowledged_version + 1)
+    return result

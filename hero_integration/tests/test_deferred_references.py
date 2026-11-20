@@ -237,6 +237,9 @@ class TestDeferredReplay(TestCase):
             endpoint=NS(url='https://same-endpoint.invalid/graphql'))
         self.fake = NS(get_doc=lambda dt,name,**kw:self.pending if dt==deferred.MAIN else self.run,
             set_user=Mock(), only_for=Mock(), db=NS(set_value=Mock()))
+        from hero_integration.tests.saved_reader_fixture import isolate_binding_storage
+        isolate_binding_storage(self)
+        self.enterContext(patch("hero_integration.services.file_migration._direct_reader"))
         self.apply = Mock(return_value=migration.Result('UPDATED', '', 'Project', 'PROJECT-7'))
         self.plan = NS(mapping_version='plan', source_identity=lambda row:str(row['id']))
         for p in (patch.object(deferred, 'frappe', self.fake), patch.object(deferred, 'available', return_value=True),
@@ -244,7 +247,7 @@ class TestDeferredReplay(TestCase):
                   patch('hero_integration.client.settings.get_configuration', side_effect=lambda **kw:self.config),
                   patch.object(migration, 'validate_run_mappings'), patch.object(migration, '_source_for_run'),
                   patch.object(migration, '_mapping_plan_for_run', return_value=self.plan),
-                  patch.object(migration, '_migrate_isolated', side_effect=lambda callback:callback()),
+                  patch.object(migration, '_migrate_isolated', side_effect=lambda callback, **kwargs:callback()),
                   patch.object(migration, '_migrate_project', self.apply),
                   patch('hero_integration.services.integration_events.record_output')):
             p.start(); self.addCleanup(p.stop)
@@ -252,7 +255,7 @@ class TestDeferredReplay(TestCase):
     def test_customer_arriving_later_uses_normal_reconciliation_and_original_actor(self):
         deferred.resolve_one('pending')
         self.fake.set_user.assert_called_once_with('Administrator')
-        self.apply.assert_called_once_with({'id': 7, '_hero_source_instance': 'source-a'}, self.run)
+        self.apply.assert_called_once_with({'id': 7, '_hero_source_instance': 'source-a'}, self.run, plan=self.plan)
         self.assertEqual(self.fake.db.set_value.call_args.args[2]['status'], 'Resolved')
         self.assertEqual(self.fake.db.set_value.call_args.args[2]['record_json'], '')
         self.assertFalse(deferred._replaying.get())
@@ -364,7 +367,7 @@ class TestDeferredReplay(TestCase):
     def test_file_replay_checks_binding_again_before_allowing_commit(self):
         from hero_integration.services.file_migration import SourceBindingError
         self.pending.operation = 'HeroDocuments'
-        def changed(_pending):
+        def changed(_pending, *, read):
             self.config.source_binding_revision = 2
             return 'UPDATED'
         with patch.object(deferred, '_resolve_file', side_effect=changed):

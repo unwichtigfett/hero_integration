@@ -1,6 +1,6 @@
 # HERO migration and polling runtime
 
-The local candidate builds on HERO 1.1.0, commit `0dd4f61a91e44133fb7400c347b95d99dd1eba5e`. The entry point is `services.execution_runtime.execute`. Import workers resolve their handler from the stored action. Existing queue method names remain valid for jobs already in Redis.
+The entry point is `services.execution_runtime.execute`. Import workers resolve their handler from the stored action. Existing queue method names remain valid for jobs already in Redis.
 
 | Trigger | Authority | Effect |
 | --- | --- | --- |
@@ -9,6 +9,14 @@ The local candidate builds on HERO 1.1.0, commit `0dd4f61a91e44133fb7400c347b95d
 | Scheduled AUTO_SYNC | Enabled scheduler, due interval, approved automatic plan and proven change provider | Updates eligible fields of existing bound objects. Missing change coverage prevents cursor advancement. |
 | Manual pending sync | Explicit request for the approved plan generation | Uses the same bound-object processor and change-provider checks. |
 | Administrative one-shot | System Manager POST, explicit confirmation, request identity, approved plan generation and source revision, polling OFF | Compares known bound IDs or requests verified delta discovery. The request has its own persistent 50-identity budget and schedules no successor. |
+
+## Native intake and verified baselines
+
+Each persisted migration worker resolves the approved source, reader and mapping. `process_migration_record` acquires the source claim and checks integration-link provenance before invoking its domain adapter. The adapter owns native ERPNext validation, relationships and document creation. The runtime rereads the stored target and publishes object and eligible scalar field bindings in the same transaction. Preview operates on the existing read-only path. A pending review, deleted source, adopted Item or failed native validation cannot establish a new scalar baseline.
+
+The source claim includes site, source instance, schema object type, destination DocType and external identity. The destination claim also checks the native record name. Existing claims with another mapping identity or revision require review. Post-success relationship work checks its originating run and mapping, and retains scalar acknowledgments made since the original read.
+
+A runtime plan can use an approved saved migration query. Its schema, projection and variables pass through the existing GraphQL materializer. Historical logical service names resolve to the actual reviewed root. Universal B8 mappings continue to require their separate operation seal. Conditional and fragment-based saved selections require additional result-binding support.
 
 ## Budget and recovery
 
@@ -27,6 +35,8 @@ Operators can inspect the integration run, polling event, sync run, budget use a
 ## Verification boundary
 
 Synthetic regressions exercise Fast metadata/detail selection, overlap, replay and existing migration handlers. Isolated Frappe, MariaDB and Redis tests cover concurrent admission at identity 51, queue dispatch with polling OFF, native document events, rollback before acknowledgment, conflict preservation and relationship recovery. The reference-schema validation used the stored introspection document. No live HERO request or external webhook delivery was part of acceptance.
+
+Local native edits append a redacted `HERO Integration Record` in the document transaction. Its identity includes the object binding, native save timestamp and changed field fingerprints. A rollback removes the observation. A later edit returning a field to its previous value creates a new transition. Polling and migration scope their writes to suppress echoes. Reading an observation starts no outbound work.
 
 ## Live run progress
 

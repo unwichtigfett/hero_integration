@@ -563,12 +563,24 @@ class FrappeRuntimePlanReferences:
             and mapping.schema_snapshot == selection.schema_snapshot
             and mapping.schema_fingerprint == selection.schema_fingerprint
             and mapping.source_instance == selection.source_instance
-            and mapping.operation_name == selection.operation_name
             and mapping.operation_kind == "QUERY"
             and mapping.direction == "QUERY_TO_FRAPPE"
             and mapping.status == "Active"
         ):
             raise RuntimePlanError("Runtime plan GraphQL mapping is stale or mismatched.")
+
+        if mapping.operation_name != selection.operation_name:
+            # Historical migration services name their logical operation, while
+            # their mapping names the actual GraphQL root.
+            from hero_integration.services.b8_runtime import saved_runtime_read
+            try:
+                config = json.loads(mapping.mapping_json)
+                if (config["target_operation"] != selection.operation_name
+                        or {"b8_compilation", "b8_canonical_operation"}.intersection(config)):
+                    raise ValueError
+                saved_runtime_read(service, mapping, snapshot)
+            except (KeyError, TypeError, ValueError, RuntimeError, AttributeError) as error:
+                raise RuntimePlanError("Runtime plan operation differs from its approved reader.") from error
 
     def _frappe(self):
         if self._frappe_module is not None:

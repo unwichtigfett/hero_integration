@@ -13,6 +13,8 @@ import tempfile
 import time
 
 import frappe
+from hero_integration.services.binding_registry import BindingConflict
+from hero_integration.services.file_migration import DirectContractChanged
 
 from hero_integration.services import direct_runtime as runtime, product_migration as products
 from hero_integration.services.direct_mapping import lookup, MISSING
@@ -148,7 +150,8 @@ def baseline_check(link, doc):
         return {}
     baseline = json.loads(link.target_field_hashes or "{}")
     fields = baseline.get("values")
-    if not fields or products.digest(normalized(doc, fields)) != link.target_payload_hash:
+    from hero_integration.services.execution_runtime import adapter_baseline
+    if not fields or products.digest(adapter_baseline(doc, normalized(doc, fields), fields, verify=True)) != link.target_payload_hash:
         raise ServiceBlocked("The service article or activity type was edited locally; review the conflict.")
     return baseline
 
@@ -304,7 +307,10 @@ def upsert(row, detail, read, instance, company, downloader):
         file = frappe.get_doc("File", prior_attachment["name"], for_update=True)
         if not file.is_private or file.attached_to_doctype != "Item" or file.attached_to_name != item.name or file.content_hash != prior_attachment.get("hash"):
             raise ServiceBlocked("The service attachment was changed locally.")
-    if link and link.source_payload_hash == source:
+    from hero_integration.services.execution_runtime import adapter_baseline, field_decisions, preserve_local_fields
+    if item:
+        preserve_local_fields(item, fields)
+    if link and link.source_payload_hash == source and "apply" not in field_decisions("Item", item.name).values():
         return "unchanged"
     is_new = item is None
     item = item or frappe.get_doc({"doctype": "Item", "item_code": code})
@@ -317,7 +323,7 @@ def upsert(row, detail, read, instance, company, downloader):
     attachment = baseline.get("attachment")
     item.reload()  # baseline reflects stored native numeric/default and child-row normalization
     owned = set(fields) | {"barcodes"} | set(baseline.get("values", {}))
-    values = normalized(item, owned)
+    values = adapter_baseline(item, normalized(item, owned), baseline.get("values", {}))
     write_link(link, instance, SOURCE_TYPE, identity, item, source, values,
                extra={"price": price_state, "attachment": attachment})
     return "added" if is_new else "updated"
@@ -362,14 +368,14 @@ def _composition_dependencies(detail):
     return dependencies
 
 
-def realize_relationships(pending, config):
+def realize_relationships(pending, config, *, read=None):
     """Realize one frozen calculation without repeating the scalar import."""
     from hero_integration.services.deferred_references import realizing
     if not realizing():
         raise ServiceBlocked('Service relationships are owned by the post-success realization service.')
     observation = json.loads(pending.record_json)
     row, detail = observation['row'], observation['detail']
-    read = runtime.resolve_read(OPERATION, pending.source_instance)
+    read = read or runtime.resolve_read(OPERATION, pending.source_instance)
     company, _schema = preflight(pending.source_instance, read)
     if (runtime.identity(read, row) != pending.source_id or read.mapping_version != pending.mapping_version
             or company != observation['company']):
@@ -399,17 +405,20 @@ def realize_relationships(pending, config):
                 products.digest(_stable_detail({'file_upload':detail.get('file_upload')}))):
             raise ServiceBlocked('The service changed before its attachment could be realized.')
         file = current[0].get('file_upload')
-    calculation = composition(detail.get('positions'), pending.source_instance)
-    from hero_integration.services.change_detection import managed_target_update
-    with managed_target_update('Item', item.name, link.name):
-        item.set(CALCULATION, calculation)
-        item.save(ignore_permissions=True)
-    attachment = attach_file(file, item, pending.source_instance, downloader, baseline.get('attachment'))
-    item.reload()
-    values = normalized(item, set(baseline['values']) | {CALCULATION})
-    write_link(link, pending.source_instance, SOURCE_TYPE, pending.source_id, item, link.source_payload_hash, values,
-               extra={'price':baseline.get('price'), 'attachment':attachment})
-    return 'UPDATED'
+    def link_components():
+        calculation = composition(detail.get('positions'), pending.source_instance)
+        from hero_integration.services.change_detection import managed_target_update
+        with managed_target_update('Item', item.name, link.name):
+            item.set(CALCULATION, calculation)
+            item.save(ignore_permissions=True)
+        attachment = attach_file(file, item, pending.source_instance, downloader, baseline.get('attachment'))
+        item.reload()
+        values = normalized(item, set(baseline['values']) | {CALCULATION})
+        write_link(link, pending.source_instance, SOURCE_TYPE, pending.source_id, item, link.source_payload_hash, values,
+                   extra={'price':baseline.get('price'), 'attachment':attachment})
+        return 'UPDATED'
+
+    return runtime.realize_record(read, row, pending, SOURCE_TYPE, link_components)
 
 
 def sync_services(client, *, source_instance, run_name, downloader, should_stop=None, progress=None, verify_source=None,
@@ -492,11 +501,14 @@ def sync_services(client, *, source_instance, run_name, downloader, should_stop=
             if budget:
                 budget.reserve_many(_composition_dependencies(detail))
             try:
-                result = upsert(row, detail, read, source_instance, company, downloader)
+                result = runtime.process_record(read, row, source_instance, SOURCE_TYPE, run_name,
+                    lambda: upsert(row, detail, read, source_instance, company, downloader))
                 remember_relationships(run_name, source_instance, company, read, row, detail, result)
+            except DirectContractChanged:
+                raise
             except Exception as error:
                 frappe.db.rollback()
-                result = "conflict" if isinstance(error, (ServiceBlocked, products.PriceConflict)) else "failed"
+                result = "conflict" if isinstance(error, (ServiceBlocked, products.PriceConflict, BindingConflict)) else "failed"
                 state["last_error"] = str(error) if result == "conflict" else "Service validation failed; check the error log."
                 state["blocked_source_id"] = str(row["id"])
                 if result == "failed":

@@ -43,6 +43,8 @@ class TestTaskAssignmentPlanning(unittest.TestCase):
             cls.package.migration = cls._saved_alias
 
     def setUp(self):
+        from hero_integration.tests.saved_reader_fixture import isolate_binding_storage
+        isolate_binding_storage(self)
         self.run = NS(name='RUN', mode='Preview', mapping_revision=1)
         self.record = {'id': 7, 'target_user_id': 8, 'author_user_id': None}
         self.recipient = NS(name='USER-BINDING', target_name='user@example.invalid')

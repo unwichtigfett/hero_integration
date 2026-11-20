@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 from hero_integration.services.binding_registry import (
-    BindingConflict, BindingRegistryError, BindingRegistryService, BindingState,
+    BindingConflict, BindingRegistryError, BindingRegistryService, BindingState, ObjectBinding,
     FrappeBindingStorage, InMemoryBindingStorage, state_fingerprint,
 )
 from hero_integration.services.mapping_registry_model import MappingDirection
@@ -28,15 +28,17 @@ class TestBindingRegistry(unittest.TestCase):
         return self.service.create_or_resolve_field_binding(parent, **values)
 
     def test_identity_separates_source_type_target_and_mapping_revision(self):
+        # Stored keys from older revisions remain addressable. Admission separately
+        # rejects conflicting claims to a source identity or destination.
         first = self.obj()
-        self.assertNotEqual(first.identity_key, self.obj(site_scope="two.test").identity_key)
-        self.assertNotEqual(first.identity_key, self.obj(source_instance="hero-b").identity_key)
-        self.assertNotEqual(first.identity_key, self.obj(object_type="Company").identity_key)
-        self.assertNotEqual(first.identity_key, self.obj(external_object_id="43").identity_key)
-        self.assertNotEqual(first.identity_key, self.obj(target_app="other-app").identity_key)
-        self.assertNotEqual(first.identity_key, self.obj(target_name="CUST-2").identity_key)
-        self.assertNotEqual(first.identity_key, self.obj(mapping_definition_id="other-rule").identity_key)
-        self.assertNotEqual(first.identity_key, self.obj(mapping_revision=2).identity_key)
+        from dataclasses import asdict
+        values = asdict(first)
+        for field in ("identity_key", "revision", "lifecycle", "reconciliation"):
+            del values[field]
+        for changes in (dict(site_scope="two.test"), dict(source_instance="hero-b"), dict(object_type="Company"),
+                        dict(external_object_id="43"), dict(target_app="other-app"), dict(target_name="CUST-2"),
+                        dict(mapping_definition_id="other-rule"), dict(mapping_revision=2)):
+            self.assertNotEqual(first.identity_key, ObjectBinding.create(**(values | changes)).identity_key)
 
     def test_user_binding_accepts_canonical_email_identifier(self):
         user = self.obj(object_type='User', target_app='frappe', target_doctype='User', target_name='person@example.invalid')
@@ -48,7 +50,7 @@ class TestBindingRegistry(unittest.TestCase):
     def test_creation_rejects_incompatible_existing_object_under_same_key(self):
         canonical = self.obj()
         inconsistent = replace(canonical, external_object_id="99")
-        storage = SimpleNamespace(object=Mock(return_value=inconsistent), put_object=Mock())
+        storage = SimpleNamespace(put_object=Mock(return_value=inconsistent))
         service = BindingRegistryService(storage)
         with self.assertRaisesRegex(BindingConflict, "incompatible"):
             service.create_or_resolve_object_binding(
@@ -58,7 +60,7 @@ class TestBindingRegistry(unittest.TestCase):
                 target_name=canonical.target_name, mapping_definition_id=canonical.mapping_definition_id,
                 mapping_revision=canonical.mapping_revision,
             )
-        storage.put_object.assert_not_called()
+        storage.put_object.assert_called_once()
 
     def test_object_and_field_creation_are_idempotent_and_site_scoped(self):
         parent = self.obj()

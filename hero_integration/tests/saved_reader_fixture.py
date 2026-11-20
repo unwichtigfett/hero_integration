@@ -8,6 +8,18 @@ from unittest.mock import patch
 from hero_integration.sources.hero import GraphQLServiceSource
 
 
+def isolate_binding_storage(test):
+    """Run domain adapter fixtures without a site. Native tests cover the registry transaction."""
+    owner = patch("hero_integration.services.execution_runtime.process_migration_record",
+                  side_effect=lambda plan, row, instance, kind, write, **kwargs: write())
+    owner.start()
+    test.addCleanup(owner.stop)
+    direct = patch("hero_integration.services.direct_runtime.process_record",
+                   side_effect=lambda read, row, instance, kind, run, write: write())
+    direct.start()
+    test.addCleanup(direct.stop)
+
+
 def isolate_direct_materialization(test):
     """Keep legacy importer fixtures focused on paging/checkpoints and writes.
 
@@ -15,6 +27,7 @@ def isolate_direct_materialization(test):
     Only the compiler/storage seam is doubled; paging and import guards run.
     Real schema compilation and rejection are covered by the runtime tests.
     """
+    isolate_binding_storage(test)
     from dataclasses import replace
     from hero_integration.services import direct_runtime
     original = direct_runtime.fetch_page

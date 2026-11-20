@@ -30,6 +30,8 @@ from urllib.parse import urlsplit
 from uuid import uuid4
 
 import frappe
+from hero_integration.services.binding_registry import BindingConflict
+from hero_integration.services.file_migration import DirectContractChanged
 
 from hero_integration.services import direct_runtime
 
@@ -167,11 +169,24 @@ def details(client, rows: list[dict], read, source_instance: str) -> dict[str, d
     """Project/customer/document data per uuid, fetched in batches."""
     found = {}
     for start in range(0, len(rows), DETAIL_BATCH):
-        uuids = [row["uuid"] for row in rows[start:start + DETAIL_BATCH]]
+        batch = rows[start:start + DETAIL_BATCH]
+        expected = {row.get("uuid"): row.get("id") for row in batch}
+        if (len(expected) != len(batch) or any(not isinstance(key, str) or not key or
+                type(value) not in (int, str) or not str(value) for key, value in expected.items())
+                or found.keys() & expected.keys()):
+            raise TransferError("File detail request contains missing or duplicate identities.")
+        uuids = list(expected)
         request = _detail_request(read, source_instance, uuids)
         data = client.query(request.document, request.variables)
-        for item in (data or {}).get("file_uploads") or []:
-            found[item.get("uuid")] = item
+        items = data.get("file_uploads") if isinstance(data, dict) else None
+        if not isinstance(items, list) or len(items) != len(expected):
+            raise TransferError("File detail response is missing requested identities.")
+        for item in items:
+            key = item.get("uuid") if isinstance(item, dict) else None
+            if (not isinstance(key, str) or key not in expected or key in found
+                    or type(item.get("id")) not in (int, str) or str(item["id"]) != str(expected[key])):
+                raise TransferError("File detail response does not match the requested identities.")
+            found[key] = item
     return found
 
 
@@ -243,11 +258,9 @@ def _bindings(source_type: str, doctype: str, source_instance: str) -> dict[str,
             and bindings[0][2] in ('Synchronized', 'Conflict')}
 
 
-def _known_files(source_instance: str) -> dict[str, dict]:
-    rows = frappe.get_all("HERO Integration Link", filters={"source_type": SOURCE_TYPE, "source_instance": source_instance},
-                          fields=["name", "source_id", "target_name", "source_payload_hash", "target_field_hashes",
-                                  "target_payload_hash", "mapping_version", "sync_status"], limit_page_length=0)
-    return {row.source_id: row for row in rows}
+def _known_files(source_instance, identities):
+    return direct_runtime.page_links(frappe, source_instance, SOURCE_TYPE, identities, [
+        "target_name", "source_payload_hash", "target_field_hashes", "target_payload_hash", "mapping_version", "sync_status"])
 
 
 def _folder(*parts: str) -> str:
@@ -280,10 +293,10 @@ class StoredFile:
 
 
 def commit_file(row: dict, size: int, md5: str, temp: str, target: tuple, folder: str, existing,
-                source_instance: str, read=None) -> str:
+                source_instance: str, read=None, *, run_name=None) -> str:
     """Store and commit one file. Blobs are only removed once the database agrees:
     the replaced blob after a successful commit, the new blob after any failure."""
-    stored = store(row, size, md5, temp, target, folder, existing, source_instance, read)
+    stored = store(row, size, md5, temp, target, folder, existing, source_instance, read, run_name=run_name)
     try:
         frappe.db.commit()
     except Exception:
@@ -295,7 +308,7 @@ def commit_file(row: dict, size: int, md5: str, temp: str, target: tuple, folder
     return stored.file_name
 
 
-def store(row: dict, size: int, md5: str, temp: str, target: tuple, folder: str, existing, source_instance: str, read=None) -> StoredFile:
+def store(row: dict, size: int, md5: str, temp: str, target: tuple, folder: str, existing, source_instance: str, read=None, *, run_name=None) -> StoredFile:
     """Move the downloaded blob into place and create or update the File and its link (not committed)."""
     operation = "HeroPictures" if row.get("category") == "images" else "HeroDocuments"
     read = read or direct_runtime.resolve_read(operation, source_instance)
@@ -307,7 +320,12 @@ def store(row: dict, size: int, md5: str, temp: str, target: tuple, folder: str,
     file_url = f"/private/files/hero-{row['id']}-{uuid4().hex}-{safe_name(row.get('filename'))}"
     os.replace(temp, _disk_path(file_url))
     try:
-        return _record(row, size, md5, file_url, target, folder, existing, source_instance, read)
+        from hero_integration.services.execution_runtime import process_migration_record
+        if read.validate_write:
+            read.validate_write()
+        return process_migration_record(read.plan, row, source_instance, SOURCE_TYPE,
+            lambda: _record(row, size, md5, file_url, target, folder, existing, source_instance, read),
+            evidence=run_name or "file-storage", successful=lambda result: isinstance(result, StoredFile))
     except Exception:
         frappe.db.rollback()  # the File row goes back to the previous blob, which is still on disk
         _remove(_disk_path(file_url))
@@ -448,19 +466,14 @@ def reconcile_legacy_file(existing, read, row, target, folder, source_instance, 
         raise FileConflict('The imported file was changed locally and requires review.')
     if dry_run:
         return 'would_update'
-    try:
-        if repairs:
-            document = _save_file(link.target_name, repairs, repairs, existing.name)
-        baseline = {**json.loads(field_hashes(fields)), 'version': 2, 'mapped_fields': sorted(fields),
-                    'target': _target_hash(link.target_name, fields, document=document),
-                    'legacy': {'fields': digest, 'mapping_version': getattr(link, 'mapping_version', '')}}
-        frappe.db.set_value('HERO Integration Link', existing.name, {'target_field_hashes': json.dumps(baseline),
-            'mapping_version': read.mapping_version, 'sync_status': 'Synchronized', 'conflict_detail': '',
-            'last_synced_on': frappe.utils.now_datetime()})
-        frappe.db.commit()
-    except Exception:
-        frappe.db.rollback()
-        raise
+    if repairs:
+        document = _save_file(link.target_name, repairs, repairs, existing.name)
+    baseline = {**json.loads(field_hashes(fields)), 'version': 2, 'mapped_fields': sorted(fields),
+                'target': _target_hash(link.target_name, fields, document=document),
+                'legacy': {'fields': digest, 'mapping_version': getattr(link, 'mapping_version', '')}}
+    frappe.db.set_value('HERO Integration Link', existing.name, {'target_field_hashes': json.dumps(baseline),
+        'mapping_version': read.mapping_version, 'sync_status': 'Synchronized', 'conflict_detail': '',
+        'last_synced_on': frappe.utils.now_datetime()})
     return 'updated' if repairs else 'unchanged'
 
 
@@ -507,6 +520,9 @@ def _assert_target_baseline(existing, fields, *, lock=False):
 def _record_conflict(existing, reason, *, dry_run=False):
     if not dry_run:
         frappe.db.rollback()
+        if not existing:
+            frappe.log_error(title="HERO file binding requires review", message=str(reason))
+            return
         status = frappe.db.get_value('HERO Integration Link', existing.name, 'sync_status')
         values = {'conflict_detail': str(reason)}
         if status not in {'Pending Review', 'Rejected', 'Source Deleted'}:
@@ -523,7 +539,7 @@ def _record(row, size, md5, file_url, target, folder, existing, source_instance,
     old_url = None
     created = (row.get("created") or "").replace("T", " ")[:19]
     metadata = {"creation": created} if created else {}
-    if existing and frappe.db.exists("File", existing.target_name):
+    if existing:
         _assert_target_baseline(existing, fields, lock=True)
         old_url = frappe.db.get_value("File", existing.target_name, "file_url")
         # The old blob stays until the commit succeeded (see commit_file).
@@ -613,7 +629,7 @@ def _save_state(phase: str, state: dict) -> None:
     frappe.db.commit()
 
 
-def _client_and_downloader(config=None):
+def _client_and_downloader(config=None, *, token_provider=None):
     """Client and downloader for ``config``; without one only for the confirmed source binding."""
     from hero_integration.client.graphql import HeroGraphQLClient
 
@@ -621,8 +637,9 @@ def _client_and_downloader(config=None):
         from hero_integration.services.file_migration import confirmed_configuration
 
         config = confirmed_configuration()
-    client = HeroGraphQLClient(config.endpoint, lambda: config.api_token, config.timeout_seconds, max_retries=2)
-    return client, Downloader(config.endpoint.host, lambda: config.api_token), config.source_instance
+    token_provider = token_provider or (lambda: config.api_token)
+    client = HeroGraphQLClient(config.endpoint, token_provider, config.timeout_seconds, max_retries=2)
+    return client, Downloader(config.endpoint.host, token_provider), config.source_instance
 
 
 def reset_phase(phase: str) -> None:
@@ -633,7 +650,7 @@ def reset_phase(phase: str) -> None:
 
 def transfer(phase: str, *, source_instance: str | None = None, client=None, downloader=None, dry_run: bool = False,
              time_budget: int = TIME_BUDGET_SECONDS, min_free: int = MIN_FREE_BYTES, should_stop=None,
-             progress=None, record_limit=None, run_name=None, cohort=None, page_overlap=0, observe_identity=None) -> dict:
+             progress=None, record_limit=None, run_name=None, cohort=None, page_overlap=0, observe_identity=None, read=None) -> dict:
     """Process one phase from its saved offset until done or the time budget ends.
 
     ``source_instance`` is the HERO source the client reads from; every lookup,
@@ -654,13 +671,15 @@ def transfer(phase: str, *, source_instance: str | None = None, client=None, dow
         from hero_integration.services.deferred_references import require_storage
         if not isinstance(run_name, str) or not run_name.strip():
             raise TransferError('File migration requires its originating integration run.')
-    read = direct_runtime.resolve_read(operation, source_instance)
+    read = read or direct_runtime.resolve_read(operation, source_instance)
     from hero_integration.services.offset_pagination import advance, validate_overlap
     if page_overlap:
         validate_overlap(page_overlap, read.page_size)
-    from hero_integration.services.migration_testing import bounded_rows, processed, test_state, save_test_state, validate_checkpoint
-    state = {} if dry_run else test_state(run_name, operation) if record_limit is not None else _state(phase)
-    save = (lambda value: save_test_state(run_name, operation, value)) if record_limit is not None else (lambda value: _save_state(phase, value))
+    from hero_integration.services.migration_testing import bounded_rows, processed, validate_checkpoint
+    state, save = ({}, None) if dry_run else direct_runtime.run_progress(
+        read, run_name, lambda: _state(phase), lambda value: _save_state(phase, value), record_limit=record_limit)
+    if read.validate_write and state.get("done"):
+        return state
     if record_limit is not None:
         validate_checkpoint(state, record_limit, source_instance=source_instance, mapping=read.mapping_version)
         if cohort is not None:
@@ -691,7 +710,6 @@ def transfer(phase: str, *, source_instance: str | None = None, client=None, dow
         project_ids, customer_ids = set(cohort['project_ids']), set(cohort['customer_ids'])
         projects = {key: value for key, value in projects.items() if key in project_ids}
         customers = {key: value for key, value in customers.items() if key in customer_ids}
-    known = _known_files(source_instance)
     from hero_integration.services.execution_budget import BudgetReached, current_budget
     if not dry_run and not current_budget():
         allow_unlimited_attachments()
@@ -731,14 +749,13 @@ def transfer(phase: str, *, source_instance: str | None = None, client=None, dow
         if page_overlap:
             window = advance(page, offset=state["offset"], size=read.page_size, overlap=page_overlap,
                              previous=state.get("offset_window"), identity=lambda row: direct_runtime.identity(read, row))
-            if window.changed:
-                known = _known_files(source_instance)
         identities = [direct_runtime.identity(read, row) for row in page]
         if len(set(identities)) != len(identities):
             raise TransferError("HERO returned duplicate file identities in a page.")
         page_fingerprint = hashlib.sha256(json.dumps(identities, separators=(',', ':')).encode()).hexdigest()
         if state.get('last_page_fingerprint') == page_fingerprint:
             raise TransferError("HERO repeated a file page; pagination cannot safely continue.")
+        known = _known_files(source_instance, identities)
         candidates = [row for row in (window.rows if window else page) if direct_runtime.belongs(operation, row)]
         if cohort is None:
             candidates = bounded_rows(state, candidates, record_limit)
@@ -796,20 +813,31 @@ def transfer(phase: str, *, source_instance: str | None = None, client=None, dow
             # The run-scoped observation retains every eligible target identity.
             target = resolved_target if dry_run else (None, None)
             fields = mapped_values(read, row)
+            def remember_attachment():
+                from hero_integration.services.deferred_references import remember_file
+                remember_file(run_name, source_instance, operation, read, row, detail, cohort=cohort)
+
             try:
-                if not dry_run:
-                    from hero_integration.services.deferred_references import remember_file
-                    remember_file(run_name, source_instance, operation, read, row, detail, cohort=cohort)
-                reconciled = reconcile_legacy_file(link, read, row, resolved_target, folders[bool(resolved_target[0])], source_instance, dry_run=dry_run)
-                if reconciled:
-                    bump(reconciled)
-                    if not dry_run:
-                        bump('baselines_verified')
-                    continue
+                if link and _legacy_fields_digest(link.get('target_field_hashes') if isinstance(link, dict)
+                                                  else getattr(link, 'target_field_hashes', None)) is not None:
+                    def upgrade():
+                        return reconcile_legacy_file(link, read, row, resolved_target,
+                            folders[bool(resolved_target[0])], source_instance, dry_run=dry_run)
+                    reconciled = upgrade() if dry_run else direct_runtime.process_record(
+                        read, row, source_instance, SOURCE_TYPE, run_name, upgrade)
+                    if reconciled:
+                        if not dry_run:
+                            remember_attachment()
+                            frappe.db.commit()
+                            bump('baselines_verified')
+                        bump(reconciled)
+                        continue
                 _assert_target_baseline(link, fields, lock=not dry_run and unchanged)
             except BudgetReached:
                 raise
-            except FileConflict as error:
+            except DirectContractChanged:
+                raise
+            except (FileConflict, BindingConflict) as error:
                 _record_conflict(link, error, dry_run=dry_run)
                 bump('conflict')
                 continue
@@ -826,22 +854,29 @@ def transfer(phase: str, *, source_instance: str | None = None, client=None, dow
                     if dry_run:
                         bump("would_update" if changed else "unchanged")
                         continue
-                    moved = relink(link, target, folders[bool(target[0])])
-                    if changed:
-                        _save_file(link.target_name, fields, fields, link.name)
-                    if changed or moved:
-                        frappe.db.set_value("HERO Integration Link", link.name, {
-                            "target_field_hashes": _target_baseline(link.target_name, fields),
-                            "mapping_version": read.mapping_version, "sync_status": "Synchronized",
-                            "conflict_detail": '', "last_synced_on": frappe.utils.now_datetime()})
+                    moved = False
+                    def update_metadata():
+                        nonlocal moved
+                        moved = relink(link, target, folders[bool(target[0])])
+                        if changed:
+                            _save_file(link.target_name, fields, fields, link.name)
+                        if changed or moved:
+                            frappe.db.set_value("HERO Integration Link", link.name, {
+                                "target_field_hashes": _target_baseline(link.target_name, fields),
+                                "mapping_version": read.mapping_version, "sync_status": "Synchronized",
+                                "conflict_detail": '', "last_synced_on": frappe.utils.now_datetime()})
+                        return 'updated' if changed or moved else 'unchanged'
+
+                    status = direct_runtime.process_record(read, row, source_instance, SOURCE_TYPE,
+                                                           run_name, update_metadata)
+                    remember_attachment()
                     frappe.db.commit()
                     if moved:
                         bump("relinked")
-                    if changed or moved:
-                        bump("updated")
-                    else:
-                        bump("unchanged")
-                except FileConflict as error:
+                    bump(status)
+                except DirectContractChanged:
+                    raise
+                except (FileConflict, BindingConflict) as error:
                     _record_conflict(link, error)
                     bump('conflict')
                 except Exception as error:
@@ -864,10 +899,13 @@ def transfer(phase: str, *, source_instance: str | None = None, client=None, dow
             temp = os.path.join(partial_dir, f"{row['id']}.part")
             try:
                 size, md5 = downloader.fetch(row["downloadUrl"], temp, row.get("size"))
-                commit_file(row, size, md5, temp, target, folders[bool(target[0])], link, source_instance, read)
+                remember_attachment()
+                commit_file(row, size, md5, temp, target, folders[bool(target[0])], link, source_instance, read, run_name=run_name)
                 bump("updated" if link else "added")
                 bump("bytes", size)
-            except FileConflict as error:
+            except DirectContractChanged:
+                raise
+            except (FileConflict, BindingConflict) as error:
                 _remove(temp)
                 _record_conflict(link, error)
                 bump('conflict')

@@ -29,9 +29,15 @@ class BindingState(StrEnum):
 def _id(value: object, label: str) -> str:
     if not isinstance(value, str) or not _ID.fullmatch(value): raise BindingRegistryError(f"{label} must be a stable non-secret identifier.")
     return value
+def _native_name(value, label):
+    if not isinstance(value, str) or not 0 < len(value) <= 140 or value.strip() != value or not value.isprintable():
+        raise BindingRegistryError(f"Invalid {label}.")
+    return value
+
 def _target_id(value: object, doctype: str) -> str:
-    if doctype == 'User' and isinstance(value, str) and _USER_ID.fullmatch(value): return value
-    return _id(value, 'target document')
+    if doctype == "User" and (not isinstance(value, str) or not _USER_ID.fullmatch(value)):
+        raise BindingRegistryError("Invalid native User name.")
+    return _native_name(value, "native target document name")
 def _hash(value: object, label: str) -> str:
     if not isinstance(value, str) or not _HASH.fullmatch(value): raise BindingRegistryError(f"{label} must be a SHA-256 fingerprint.")
     return value
@@ -43,6 +49,41 @@ def state_fingerprint(value: object, *, present: bool) -> str:
     except (TypeError, ValueError) as error: raise BindingRegistryError("State must be JSON-serializable.") from error
     return sha256(encoded.encode()).hexdigest()
 
+def native_fingerprint(value, fieldtype):
+    """Fingerprint a projected or stored scalar in its native field domain."""
+    from datetime import date, datetime, time, timedelta
+    from decimal import Decimal
+
+    if value is not None:
+        if fieldtype == "Check" and value in (0, 1, "0", "1"):
+            value = int(value)
+        elif fieldtype in {"Date", "Datetime", "Time"}:
+            if fieldtype == "Time" and isinstance(value, timedelta) and timedelta() <= value < timedelta(days=1):
+                value = (datetime.min + value).time()
+            try:
+                parsed = {"Date": date, "Datetime": datetime, "Time": time}[fieldtype].fromisoformat(str(value))
+            except ValueError as error:
+                raise BindingRegistryError("Invalid native temporal field representation.") from error
+            if getattr(parsed, "tzinfo", None) is not None:
+                raise BindingRegistryError("Native temporal values must use the approved local time conversion.")
+            value = str(parsed)
+        elif fieldtype in {"Float", "Currency", "Int"} and type(value) in (float, int, Decimal):
+            number = Decimal(str(value))
+            if not number.is_finite() or (fieldtype == "Int" and number != number.to_integral_value()):
+                raise BindingRegistryError("Invalid value for the native numeric field.")
+            if fieldtype == "Int":
+                value = int(number)
+            else:
+                # Retain the existing Frappe float fingerprint when lossless.
+                approximate = float(number) if number else 0.0
+                if Decimal(str(approximate)) == number:
+                    value = approximate
+                else:
+                    exact = format(number, "f")
+                    value = {"decimal": exact.rstrip("0").rstrip(".") if "." in exact else exact}
+    return state_fingerprint(value, present=True)
+
+
 @dataclass(frozen=True, slots=True)
 class ObjectBinding:
     identity_key: str; site_scope: str; source_instance: str; object_type: str; external_object_id: str; target_app: str; target_doctype: str; target_name: str; mapping_definition_id: str; mapping_revision: int; revision: int = 1; lifecycle: str = "VALID"; reconciliation: str = ""
@@ -50,7 +91,9 @@ class ObjectBinding:
     def create(cls, *, site_scope: str, source_instance: str, object_type: str, external_object_id: str, target_app: str, target_doctype: str, target_name: str, mapping_definition_id: str, mapping_revision: int) -> "ObjectBinding":
         return cls(_key("hero-object-binding-v1", site=site_scope, source=source_instance, object_type=object_type, external=external_object_id, app=target_app, doctype=target_doctype, name=target_name, definition=mapping_definition_id, mapping_revision=mapping_revision), site_scope, source_instance, object_type, external_object_id, target_app, target_doctype, target_name, mapping_definition_id, mapping_revision)
     def __post_init__(self) -> None:
-        for label, value in zip(("identity", "site", "source", "object type", "external object", "target app", "target DocType", "mapping definition"), (self.identity_key, self.site_scope, self.source_instance, self.object_type, self.external_object_id, self.target_app, self.target_doctype, self.mapping_definition_id)): _id(value, label)
+        for label, value in zip(("identity", "site", "source", "object type", "target app", "mapping definition"), (self.identity_key, self.site_scope, self.source_instance, self.object_type, self.target_app, self.mapping_definition_id)): _id(value, label)
+        _native_name(self.external_object_id, "external identity")
+        _native_name(self.target_doctype, "native target DocType")
         _target_id(self.target_name, self.target_doctype)
         if not isinstance(self.mapping_revision, int) or self.mapping_revision < 1 or not isinstance(self.revision, int) or self.revision < 1: raise BindingRegistryError("Binding revisions must be positive.")
 
@@ -61,15 +104,16 @@ class FieldBinding:
     def create(cls, parent: ObjectBinding, *, source_field: str, target_field: str, mapping_definition_id: str, mapping_revision: int, direction: MappingDirection) -> "FieldBinding":
         return cls(_key("hero-field-binding-v1", parent=parent.identity_key, source_field=source_field, target_field=target_field, definition=mapping_definition_id, mapping_revision=mapping_revision, direction=direction.value), parent.identity_key, parent.site_scope, parent.source_instance, source_field, parent.target_app, parent.target_doctype, parent.target_name, target_field, mapping_definition_id, mapping_revision, direction)
     def __post_init__(self) -> None:
-        for label, value in zip(("identity", "object binding", "site", "source", "source field", "target app", "target DocType", "target field", "mapping definition"), (self.identity_key, self.object_binding_key, self.site_scope, self.source_instance, self.source_field, self.target_app, self.target_doctype, self.target_field, self.mapping_definition_id)): _id(value, label)
+        for label, value in zip(("identity", "object binding", "site", "source", "source field", "target app", "target field", "mapping definition"), (self.identity_key, self.object_binding_key, self.site_scope, self.source_instance, self.source_field, self.target_app, self.target_field, self.mapping_definition_id)): _id(value, label)
+        _native_name(self.target_doctype, "native target DocType")
         _target_id(self.target_name, self.target_doctype)
         if not isinstance(self.mapping_revision, int) or self.mapping_revision < 1 or not isinstance(self.revision, int) or self.revision < 1 or self.acknowledged_version < 0: raise BindingRegistryError("Field binding revisions are invalid.")
         for value in (self.acknowledged_source_fingerprint, self.acknowledged_target_fingerprint):
             if value is not None: _hash(value, "Acknowledged state")
 
 class BindingStorage(Protocol):
-    def object(self, site: str, key: str) -> ObjectBinding | None: ...
-    def field(self, site: str, key: str) -> FieldBinding | None: ...
+    def object(self, site: str, key: str, *, for_update=False) -> ObjectBinding | None: ...
+    def field(self, site: str, key: str, *, for_update=False) -> FieldBinding | None: ...
     def fields_for_object(self, site: str, parent: str) -> tuple[FieldBinding, ...]: ...
     def fields_for_source(self, site: str, source_instance: str) -> tuple[FieldBinding, ...]: ...
     def put_object(self, value: ObjectBinding) -> ObjectBinding: ...
@@ -79,22 +123,28 @@ class BindingStorage(Protocol):
 class InMemoryBindingStorage:
     """Deterministic provider; not evidence of MariaDB locking or uniqueness."""
     def __init__(self) -> None: self._lock = RLock(); self._objects = {}; self._fields = {}
-    def object(self, site, key): return self._objects.get((site, key))
-    def field(self, site, key): return self._fields.get((site, key))
+    def object(self, site, key, *, for_update=False): return self._objects.get((site, key))
+    def field(self, site, key, *, for_update=False): return self._fields.get((site, key))
     def fields_for_object(self, site, parent): return tuple(sorted((v for (s, _), v in self._fields.items() if s == site and v.object_binding_key == parent), key=lambda v: v.identity_key))
     def fields_for_source(self, site, source_instance): return tuple(sorted((v for (s, _), v in self._fields.items() if s == site and v.source_instance == source_instance), key=lambda v: v.identity_key))
     def put_object(self, value):
         with self._lock:
-            prior = self.object(value.site_scope, value.identity_key)
-            if prior is None: self._objects[(value.site_scope, value.identity_key)] = value; return value
-            return prior
+            for prior in self._objects.values():
+                if ((prior.site_scope, prior.source_instance, prior.object_type, prior.target_doctype)
+                        == (value.site_scope, value.source_instance, value.object_type, value.target_doctype)
+                        and (prior.external_object_id == value.external_object_id or prior.target_name == value.target_name)):
+                    return compatible_binding(prior, value)
+            self._objects[(value.site_scope, value.identity_key)] = value
+            return value
     def put_field(self, value):
         with self._lock:
-            prior = self.field(value.site_scope, value.identity_key)
-            if prior is None:
-                if self.object(value.site_scope, value.object_binding_key) is None: raise BindingRegistryError("Field binding parent does not exist.")
-                self._fields[(value.site_scope, value.identity_key)] = value; return value
-            return prior
+            if self.object(value.site_scope, value.object_binding_key) is None:
+                raise BindingRegistryError("Field binding parent does not exist.")
+            for prior in self.fields_for_object(value.site_scope, value.object_binding_key):
+                if prior.direction == value.direction and prior.target_field == value.target_field:
+                    return compatible_binding(prior, value)
+            self._fields[(value.site_scope, value.identity_key)] = value
+            return value
     def update_field(self, value, expected_revision):
         with self._lock:
             old = self.field(value.site_scope, value.identity_key)
@@ -104,12 +154,15 @@ class InMemoryBindingStorage:
 class BindingRegistryService:
     def __init__(self, storage: BindingStorage) -> None: self._storage = storage
     def create_or_resolve_object_binding(self, **kwargs) -> ObjectBinding:
-        candidate = ObjectBinding.create(**kwargs); old = self._storage.object(candidate.site_scope, candidate.identity_key)
-        return self._compatible(self._storage.put_object(candidate) if old is None else old, candidate)
+        candidate = ObjectBinding.create(**kwargs)
+        return self._compatible(self._storage.put_object(candidate), candidate)
     def create_or_resolve_field_binding(self, parent: ObjectBinding, **kwargs) -> FieldBinding:
-        if self._storage.object(parent.site_scope, parent.identity_key) != parent: raise BindingRegistryError("Field binding requires its canonical persisted parent.")
-        candidate = FieldBinding.create(parent, **kwargs); old = self._storage.field(candidate.site_scope, candidate.identity_key)
-        return self._compatible(self._storage.put_field(candidate) if old is None else old, candidate)
+        if self._storage.object(parent.site_scope, parent.identity_key, for_update=True) != parent: raise BindingRegistryError("Field binding requires its canonical persisted parent.")
+        candidate = FieldBinding.create(parent, **kwargs)
+        if (parent.lifecycle != "VALID" or parent.reconciliation or
+                (candidate.direction == MappingDirection.HERO_TO_FRAPPE and candidate.mapping_revision != parent.mapping_revision)):
+            raise BindingConflict("Field binding requires a current parent and mapping.")
+        return self._compatible(self._storage.put_field(candidate), candidate)
     @staticmethod
     def _compatible(old, candidate):
         return compatible_binding(old, candidate)
@@ -123,7 +176,11 @@ class BindingRegistryService:
         _hash(source_fingerprint, "source acknowledgment"); _hash(target_fingerprint, "target acknowledgment")
         if expected_revision != binding.revision or version < binding.acknowledged_version: raise BindingConflict("Acknowledgment is stale.")
         if version == binding.acknowledged_version and (binding.acknowledged_source_fingerprint, binding.acknowledged_target_fingerprint) not in {(None, None), (source_fingerprint, target_fingerprint)}: raise BindingConflict("Acknowledgment conflicts with recorded evidence.")
-        if version == binding.acknowledged_version and binding.state == BindingState.SYNCHRONIZED: return binding
+        if version == binding.acknowledged_version and binding.state == BindingState.SYNCHRONIZED:
+            current = self._storage.field(binding.site_scope, binding.identity_key, for_update=True)
+            if current != binding:
+                raise BindingConflict("Acknowledgment was superseded.")
+            return current
         return self._storage.update_field(replace(binding, revision=binding.revision + 1, state=BindingState.SYNCHRONIZED, acknowledged_source_fingerprint=source_fingerprint, acknowledged_target_fingerprint=target_fingerprint, acknowledged_version=version, reconciliation=""), expected_revision)
     @staticmethod
     def change_state(binding: FieldBinding, *, active_mapping_revision: int | None, mapping_available: bool, source_fingerprint: str | None, target_fingerprint: str | None) -> BindingState:
@@ -180,23 +237,59 @@ class FrappeBindingStorage:
         user = getattr(getattr(frappe, "session", None), "user", None)
         if user != "Administrator" and "System Manager" not in frappe.get_roles(): raise PermissionError("System Manager or Administrator authority is required.")
         frappe.has_permission(doctype, permission, throw=True)
-    def object(self, site, key):
-        frappe = self._scope(site); rows = frappe.get_all(self.OBJECT, filters={"site_scope": site, "identity_key": key}, fields=["name"])
-        if len(rows) > 1: raise BindingConflict("Object binding identity is not unique.")
-        return None if not rows else self._object(frappe.get_doc(self.OBJECT, rows[0].name))
-    def field(self, site, key):
-        frappe = self._scope(site); rows = frappe.get_all(self.FIELD, filters={"site_scope": site, "identity_key": key}, fields=["name"])
-        if len(rows) > 1: raise BindingConflict("Field binding identity is not unique.")
-        return None if not rows else self._field(frappe.get_doc(self.FIELD, rows[0].name))
-    def fields_for_object(self, site, parent):
-        frappe = self._scope(site); rows = frappe.get_all(self.FIELD, filters={"site_scope": site, "object_binding": parent}, fields=["name"], order_by="identity_key asc")
-        return tuple(self._field(frappe.get_doc(self.FIELD, row.name)) for row in rows)
+    def object(self, site, key, *, for_update=False):
+        frappe = self._scope(site)
+        rows = frappe.db.get_values(self.OBJECT, {"site_scope": site, "identity_key": key}, "*",
+                                    as_dict=True, limit=2, for_update=for_update)
+        if len(rows) > 1:
+            raise BindingConflict("Object binding identity is not unique.")
+        return self._object(rows[0]) if rows else None
+
+    def field(self, site, key, *, for_update=False):
+        frappe = self._scope(site)
+        rows = frappe.db.get_values(self.FIELD, {"site_scope": site, "identity_key": key}, "*",
+                                    as_dict=True, limit=2, for_update=for_update)
+        if len(rows) > 1:
+            raise BindingConflict("Field binding identity is not unique.")
+        return self._field(rows[0]) if rows else None
+
+    def fields_for_object(self, site, parent, *, for_update=False):
+        frappe = self._scope(site)
+        rows = frappe.db.get_values(self.FIELD, {"site_scope": site, "object_binding": parent}, "*",
+                                    as_dict=True, order_by="identity_key asc", for_update=for_update)
+        return tuple(self._field(row) for row in rows)
     def fields_for_source(self, site, source_instance):
-        frappe = self._scope(site); rows = frappe.get_all(self.FIELD, filters={"site_scope": site, "source_instance": source_instance}, fields=["name"], order_by="identity_key asc")
-        return tuple(self._field(frappe.get_doc(self.FIELD, row.name)) for row in rows)
+        frappe = self._scope(site)
+        rows = frappe.get_all(self.FIELD, filters={"site_scope": site, "source_instance": source_instance},
+                              fields=["*"], order_by="identity_key asc")
+        return tuple(self._field(row) for row in rows)
+    def lock_source_object(self, site, source, object_type, doctype, identity):
+        from hero_integration.hero_integration.doctype.hero_frappe_mapping.hero_frappe_mapping import _lock_active_target
+        frappe = self._scope(site)
+        scope = [site, source, object_type, doctype]
+        _lock_active_target("object-binding", "source", _key("source", scope=scope, identifier=identity))
+        rows = frappe.db.sql("""SELECT * FROM `tabHERO Object Binding`
+            WHERE site_scope=%s AND source_instance=%s AND object_type=%s AND target_doctype=%s
+            AND external_object_id=%s LIMIT 2 FOR UPDATE""", (*scope, identity), as_dict=True)
+        if len(rows) > 1:
+            raise BindingConflict("Multiple object bindings claim this source identity.")
+        return self._object(rows[0]) if rows else None
+
     def put_object(self, value):
-        frappe = self._scope(value.site_scope); self._write(frappe, self.OBJECT, "create"); old = self.object(value.site_scope, value.identity_key)
-        if old is not None: return old
+        frappe = self._scope(value.site_scope)
+        self._write(frappe, self.OBJECT, "create")
+        from hero_integration.hero_integration.doctype.hero_frappe_mapping.hero_frappe_mapping import _lock_active_target
+        scope = [value.site_scope, value.source_instance, value.object_type, value.target_doctype]
+        for kind, identifier in (("source", value.external_object_id), ("target", value.target_name)):
+            _lock_active_target("object-binding", kind, _key(kind, scope=scope, identifier=identifier))
+        rows = frappe.db.sql("""SELECT * FROM `tabHERO Object Binding`
+            WHERE site_scope=%s AND source_instance=%s AND object_type=%s AND target_doctype=%s
+            AND (external_object_id=%s OR target_name=%s) LIMIT 2 FOR UPDATE""",
+            (*scope, value.external_object_id, value.target_name), as_dict=True)
+        if len(rows) > 1:
+            raise BindingConflict("Multiple object bindings claim this identity or destination.")
+        if rows:
+            return compatible_binding(self._object(rows[0]), value)
         try:
             frappe.get_doc({"doctype": self.OBJECT, "identity_key": value.identity_key, "site_scope": value.site_scope, "source_instance": value.source_instance, "object_type": value.object_type, "external_object_id": value.external_object_id, "target_app": value.target_app, "target_doctype": value.target_doctype, "target_name": value.target_name, "mapping_definition_id": value.mapping_definition_id, "mapping_revision": value.mapping_revision, "binding_revision": value.revision, "lifecycle": value.lifecycle, "reconciliation": value.reconciliation}).insert()
             return value
@@ -204,11 +297,16 @@ class FrappeBindingStorage:
             return self._after_duplicate(error, lambda: self.object(value.site_scope, value.identity_key), value)
     def put_field(self, value):
         frappe = self._scope(value.site_scope); self._write(frappe, self.FIELD, "create")
-        parent = self.object(value.site_scope, value.object_binding_key)
-        if parent is None: raise BindingRegistryError("Field binding parent does not exist.")
+        parent = self._object(frappe.get_doc(self.OBJECT, value.object_binding_key, for_update=True))
+        if parent.site_scope != value.site_scope or parent.lifecycle != "VALID" or parent.reconciliation:
+            raise BindingConflict("Field binding parent is invalid.")
         if (value.source_instance, value.target_app, value.target_doctype, value.target_name) != (parent.source_instance, parent.target_app, parent.target_doctype, parent.target_name): raise BindingRegistryError("Field binding does not match its object binding identity.")
-        old = self.field(value.site_scope, value.identity_key)
-        if old is not None: return old
+        rows = frappe.db.get_values(self.FIELD, {"site_scope": value.site_scope, "object_binding": parent.identity_key,
+            "direction": value.direction.value, "target_field": value.target_field}, "*", as_dict=True, limit=2, for_update=True)
+        if len(rows) > 1:
+            raise BindingConflict("Multiple field bindings claim this destination.")
+        if rows:
+            return compatible_binding(self._field(rows[0]), value)
         try:
             frappe.get_doc({"doctype": self.FIELD, "identity_key": value.identity_key, "object_binding": value.object_binding_key, "site_scope": value.site_scope, "source_instance": value.source_instance, "source_field": value.source_field, "target_app": value.target_app, "target_doctype": value.target_doctype, "target_name": value.target_name, "target_field": value.target_field, "mapping_definition_id": value.mapping_definition_id, "mapping_revision": value.mapping_revision, "direction": value.direction.value, "binding_revision": value.revision, "sync_state": value.state.value, "acknowledged_source_fingerprint": value.acknowledged_source_fingerprint, "acknowledged_target_fingerprint": value.acknowledged_target_fingerprint, "acknowledged_version": value.acknowledged_version, "reconciliation": value.reconciliation}).insert()
             return value
@@ -246,5 +344,8 @@ def compatible_binding(existing, candidate):
     )
     identity_only = replace(existing, **{name: getattr(candidate, name) for name in mutable})
     if identity_only != candidate:
-        raise BindingConflict("Canonical binding identity collides with incompatible state.")
+        from dataclasses import fields
+        differing = [field.name for field in fields(candidate)
+                     if getattr(identity_only, field.name) != getattr(candidate, field.name)]
+        raise BindingConflict("Canonical binding identity has incompatible fields: " + ", ".join(differing))
     return existing

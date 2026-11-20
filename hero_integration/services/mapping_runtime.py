@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Callable
 from hero_integration.services.localized_error import LocalizedError
 from hero_integration.services.projection_contracts import CONTRACTS as PROJECTIONS, validate_projection_record
@@ -50,17 +50,39 @@ class MappedValues(dict):
 
 
 @dataclass(frozen=True)
+class BindingContract:
+    source_instance: str
+    object_type: str
+    definition_id: str
+    revision: int
+
+
+@dataclass(frozen=True)
 class MappingPlan:
     operation: str
     definitions: tuple[MappingSpec, ...]
     target_operation: str = ""
     adapter_options: dict = field(default_factory=dict)
 
+    binding_contract: BindingContract | None = None
+
+    def with_reader(self, service, mapping, snapshot, contract):
+        from hero_integration.services.graphql_schema_cache import compiled_schema
+        from hero_integration.services.read_contract import record_object_type
+
+        schema = compiled_schema(snapshot.snapshot_json).core
+        object_type = record_object_type(schema, service.query_document, contract.records_path)
+        return replace(self, binding_contract=BindingContract(mapping.source_instance, object_type,
+                       mapping.definition_id, contract.mapping_revision))
+
     @property
     def target_doctype(self) -> str:
         if self.adapter_options:
             from hero_integration.services.query_mapping import ROOTS
             return ROOTS[self.target_operation or self.operation][1]
+        if (self.target_operation or self.operation) == "HeroTasks" and any(
+                rule.target_doctype == "Task" and rule.purpose == "Record Name" for rule in self.definitions):
+            return "Task"
         if (self.target_operation or self.operation) in PROJECTIONS:
             return PROJECTIONS[self.target_operation or self.operation]['target_doctype']
         return "Customer" if (self.target_operation or self.operation) == "HeroCustomers" else "Project"

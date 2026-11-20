@@ -12,6 +12,8 @@ import json
 import time
 
 import frappe
+from hero_integration.services.binding_registry import BindingConflict
+from hero_integration.services.file_migration import DirectContractChanged
 from hero_integration.services.execution_budget import current_budget
 
 from hero_integration.integrations.erpnext.company import project_company
@@ -141,7 +143,8 @@ def _assert_unchanged(link, doc):
     if not link:
         return
     baseline = json.loads(link.target_field_hashes or "{}")
-    if not baseline or _digest(_values(doc, baseline)) != link.target_payload_hash:
+    from hero_integration.services.execution_runtime import adapter_baseline
+    if not baseline or _digest(adapter_baseline(doc, _values(doc, baseline), baseline, verify=True)) != link.target_payload_hash:
         raise EmployeeMigrationBlocked("The imported employee or user was changed in ERPNext; review the conflict.")
 
 
@@ -159,7 +162,8 @@ def _assert_new_fields(link, doc, values):
 
 def _write_link(link, instance, source_type, source_id, doc, values, record, mapping_version):
     previous = json.loads(link.target_field_hashes or "{}") if link else {}
-    baseline = _values(doc, set(values) | set(previous))
+    from hero_integration.services.execution_runtime import adapter_baseline
+    baseline = adapter_baseline(doc, _values(doc, set(values) | set(previous)), previous)
     changes = {"target_doctype": doc.doctype, "target_name": doc.name, "sync_status": "Synchronized",
                "source_payload_hash": _digest(record), "target_payload_hash": _digest(baseline),
                "target_field_hashes": json.dumps(baseline, sort_keys=True), "mapping_version": mapping_version,
@@ -177,25 +181,17 @@ def _ensure_user_object_binding(read, instance, source_id, user_name):
     if not read.mapping:
         return False  # Builtin plans are templates; live execution requires an approved reader.
     from hero_integration.services.binding_registry import BindingRegistryService, FrappeBindingStorage
-    from hero_integration.hero_integration.doctype.hero_frappe_mapping.hero_frappe_mapping import _lock_active_target
     site = frappe.local.site
-    _lock_active_target('employee-user-binding', site, _digest([instance, str(source_id)]))
-    existing = frappe.get_all('HERO Object Binding', filters={
-        'site_scope': site, 'source_instance': instance, 'object_type': 'User',
-        'external_object_id': str(source_id), 'target_doctype': 'User', 'lifecycle': 'VALID'},
-        fields=['name', 'target_name'], limit_page_length=2)
-    if existing:
-        if len(existing) != 1 or existing[0].target_name != user_name:
-            raise EmployeeMigrationBlocked('The employee User object binding is ambiguous or points to another account.')
-        return False
+    storage = FrappeBindingStorage(frappe)
+    existing = storage.lock_source_object(site, instance, "User", "User", str(source_id))
     mapping = frappe.get_doc('HERO GraphQL Mapping', read.mapping)
     if mapping.source_instance != instance or mapping.status != 'Active':
         raise EmployeeMigrationBlocked('The employee mapping no longer belongs to the approved source.')
-    BindingRegistryService(FrappeBindingStorage(frappe)).create_or_resolve_object_binding(
+    BindingRegistryService(storage).create_or_resolve_object_binding(
         site_scope=site, source_instance=instance, object_type='User', external_object_id=str(source_id),
         target_app='frappe', target_doctype='User', target_name=user_name,
         mapping_definition_id=mapping.definition_id, mapping_revision=int(mapping.mapping_revision))
-    return True
+    return existing is None
 
 
 def upsert(record, instance, company, languages, read=None):
@@ -267,6 +263,8 @@ def upsert(record, instance, company, languages, read=None):
     if not user_link and not new_user:
         _assert_adoptable(user, user_values)
     if employee:
+        from hero_integration.services.execution_runtime import preserve_local_fields
+        preserve_local_fields(employee, employee_values)
         _assert_unchanged(employee_link, employee)
         _assert_new_fields(employee_link, employee, employee_values)
         if not employee_link:
@@ -330,7 +328,7 @@ def remember_relationships(run_name, instance, company, read, record):
          'source_hash':_digest(record)}, [('User', str(user_id)), ('partner', str(record['id']))], defer_empty=True)
 
 
-def realize_relationships(pending):
+def realize_relationships(pending, *, read=None):
     """Recheck the saved import and realize only its own Employee/User relation."""
     from hero_integration.services.deferred_references import available, realizing
     if not realizing():
@@ -339,7 +337,7 @@ def realize_relationships(pending):
     record = observation['record']
     if str(record['id']) != pending.source_id:
         raise EmployeeMigrationBlocked('The deferred employee source identity changed.')
-    read = runtime.resolve_read(OPERATION, pending.source_instance)
+    read = read or runtime.resolve_read(OPERATION, pending.source_instance)
     company, _snapshot, _document, _path = preflight(pending.source_instance, read=read)
     if not read.mapping or read.mapping_version != pending.mapping_version or company != observation['company']:
         raise EmployeeMigrationBlocked('The deferred employee mapping or company changed.')
@@ -369,30 +367,33 @@ def realize_relationships(pending):
             'target_doctype':doc.doctype,'target_name':doc.name},pluck='name',limit_page_length=2)
         if any(name != link.name for name in others):
             raise EmployeeMigrationBlocked('The ERPNext employee or user is bound to another HERO identity.')
-    created = _ensure_user_object_binding(read,pending.source_instance,user_id,user_doc.name)
-    if employee_doc.user_id != user_doc.name:
-        from hero_integration.services.change_detection import managed_target_update
-        with managed_target_update('User',user_doc.name,user.name), \
-             managed_target_update('Employee',employee_doc.name,employee.name):
-            employee_doc.user_id = user_doc.name
-            employee_doc.save(ignore_permissions=True)
-        employee_doc.reload();user_doc.reload()
-        _write_link(employee,pending.source_instance,'partner',record['id'],employee_doc,
-                    {'user_id':user_doc.name},record,read.mapping_version)
-        _write_link(user,pending.source_instance,'User',user_id,user_doc,{},record,read.mapping_version)
-    elif created:
-        from hero_integration.services.deferred_references import binding_updated
-        binding_updated(user)
-    if not available(pending.source_instance, 'User', user_id):
-        raise EmployeeMigrationBlocked('The employee User object binding was not realized.')
-    return 'UPDATED'
+    def link_user():
+        created = _ensure_user_object_binding(read,pending.source_instance,user_id,user_doc.name)
+        if employee_doc.user_id != user_doc.name:
+            from hero_integration.services.change_detection import managed_target_update
+            with managed_target_update('User',user_doc.name,user.name), \
+                 managed_target_update('Employee',employee_doc.name,employee.name):
+                employee_doc.user_id = user_doc.name
+                employee_doc.save(ignore_permissions=True)
+            employee_doc.reload();user_doc.reload()
+            _write_link(employee,pending.source_instance,'partner',record['id'],employee_doc,
+                        {'user_id':user_doc.name},record,read.mapping_version)
+            _write_link(user,pending.source_instance,'User',user_id,user_doc,{},record,read.mapping_version)
+        elif created:
+            from hero_integration.services.deferred_references import binding_updated
+            binding_updated(user)
+        if not available(pending.source_instance, 'User', user_id):
+            raise EmployeeMigrationBlocked('The employee User object binding was not realized.')
+        return 'UPDATED'
+
+    return runtime.realize_record(read, record, pending, "partner", link_user)
 
 
-def sync_employees(client, *, source_instance, run_name, should_stop=None, progress=None, time_budget=1200, verify_source=None, record_limit=None, continue_on_conflict=False, cohort_user_ids=None, cohort_partner_ids=None):
+def sync_employees(client, *, source_instance, run_name, should_stop=None, progress=None, time_budget=1200, verify_source=None, record_limit=None, continue_on_conflict=False, cohort_user_ids=None, cohort_partner_ids=None, read=None):
     from hero_integration.services.migration_testing import validate_limit
     validate_limit(record_limit)
     frappe.only_for("System Manager")
-    read = runtime.resolve_read(OPERATION, source_instance)
+    read = read or runtime.resolve_read(OPERATION, source_instance)
     company, snapshot, document, path = preflight(source_instance, read=read)
     stamp = _digest([company, JOINING_DATE, snapshot, document, read.mapping_version, VERSION])
     has_column = getattr(frappe.db, 'has_column', None)
@@ -523,11 +524,14 @@ def sync_employees(client, *, source_instance, run_name, should_stop=None, progr
                 identities.append(('User', user))
             budget.reserve_many(identities)
         try:
-            result = upsert(record, source_instance, company, languages, read=read)
+            result = runtime.process_record(read, record, source_instance, "partner", run_name,
+                lambda: upsert(record, source_instance, company, languages, read=read))
             remember_relationships(run_name, source_instance, company, read, record)
+        except DirectContractChanged:
+            raise
         except Exception as error:
             frappe.db.rollback()
-            result = "conflict" if isinstance(error, EmployeeMigrationBlocked) else "failed"
+            result = "conflict" if isinstance(error, (EmployeeMigrationBlocked, BindingConflict)) else "failed"
             # Keep the failed identity retryable when this run is resumed.
             rejected[identity] = fingerprint
             errors[identity] = str(error)[:300] if result == "conflict" else "Employee validation failed."

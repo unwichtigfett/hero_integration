@@ -337,3 +337,26 @@ def value_at(value: object, path: str) -> object:
             raise ReadContractError("The selected response path {0} is absent.", repr(path))
         current = current[segment]
     return current
+
+
+def record_object_type(schema, document, records_path):
+    """Resolve the GraphQL type at the approved response path, including aliases and edges."""
+    from graphql import get_named_type, parse
+    from graphql.language import FieldNode, OperationDefinitionNode
+
+    operations = [item for item in parse(document).definitions if isinstance(item, OperationDefinitionNode)]
+    if len(operations) != 1 or operations[0].operation.value != "query":
+        raise ReadContractError("The reader must contain one approved query.")
+    selections = operations[0].selection_set
+    owner = schema.query_type
+    for part in records_path.split("."):
+        matches = [item for item in selections.selections if isinstance(item, FieldNode)
+                   and (item.alias or item.name).value == part] if selections else []
+        if len(matches) != 1 or matches[0].name.value not in getattr(owner, "fields", {}):
+            raise ReadContractError("The approved record path has no unique schema object type.")
+        field = matches[0]
+        owner = get_named_type(owner.fields[field.name.value].type)
+        selections = field.selection_set
+    if not getattr(owner, "fields", None):
+        raise ReadContractError("The approved record path must describe an object.")
+    return owner.name

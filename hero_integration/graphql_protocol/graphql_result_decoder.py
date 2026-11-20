@@ -15,6 +15,7 @@ from .graphql_response import (
 )
 from .transport import Response
 from .graphql_operation_materializer import (
+    GraphQLDocumentRequest,
     GraphQLOperationRequest,
     GraphQLResultBinding,
 )
@@ -318,7 +319,7 @@ def _validate_projected(
 
 
 def decode_graphql_result(
-    request: GraphQLOperationRequest,
+    request: GraphQLOperationRequest | GraphQLDocumentRequest,
     response: Response,
 ) -> GraphQLDecodedResult:
     """Decode one transport response through sealed result bindings.
@@ -329,7 +330,7 @@ def decode_graphql_result(
 
     if not isinstance(
         request,
-        GraphQLOperationRequest,
+        (GraphQLOperationRequest, GraphQLDocumentRequest),
     ):
         raise TypeError(
             "request must be a GraphQLOperationRequest."

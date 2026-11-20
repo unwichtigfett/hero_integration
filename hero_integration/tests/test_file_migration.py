@@ -15,10 +15,13 @@ class _DB:
     def __init__(self):
         self.runs, self.defaults = {}, {}
 
-    def get_value(self, doctype, name, field):
+    def get_value(self, doctype, name, field, **kwargs):
         if doctype == 'DefaultValue':
             return self.defaults.get(name['defkey'])
-        return self.runs.get(name, {}).get(field)
+        row = self.runs.get(name, {})
+        if isinstance(field, (tuple, list)):
+            return tuple(row.get(key) for key in field) if row else None
+        return row.get(field)
 
     def set_value(self, doctype, name, values, value=None):
         if isinstance(values, str):
@@ -271,6 +274,38 @@ class TestFullMigrationChain(unittest.TestCase):
 
 
 class TestFileSlice(unittest.TestCase):
+    def test_busy_direct_worker_cannot_be_recovered(self):
+        from frappe.utils.file_lock import LockTimeoutError
+
+        run = SimpleNamespace(name="R", state="Running", action=fm.PRODUCT_ACTION)
+        with patch("frappe.utils.synchronization.filelock", side_effect=LockTimeoutError), patch.object(fm, "_resume") as resume:
+            with self.assertRaises(fm.SourceBindingError):
+                fm.resume(run)
+        resume.assert_not_called()
+
+    def test_interrupted_direct_slice_uses_its_existing_checkpoint(self):
+        run = SimpleNamespace(name="R", state="Running", action=fm.PRODUCT_ACTION, started_on="old")
+        current = SimpleNamespace(**vars(run), save=lambda **kwargs: None, page_checkpoint_json="saved")
+        with patch("frappe.utils.synchronization.filelock", return_value=contextlib.nullcontext()), patch.object(
+            fm, "frappe", SimpleNamespace(get_doc=lambda *args, **kwargs: current)
+        ), patch.object(fm, "bound_configuration", return_value=_config()), patch.object(fm, "_check_direct_contract"), \
+                patch.object(fm, "_parent_run", return_value=""), patch("hero_integration.services.run_reservation.admit_migration"), \
+                patch.object(fm, "_enqueue") as enqueue:
+            fm.resume(run)
+        self.assertEqual((current.state, current.started_on, current.page_checkpoint_json), ("Queued", None, "saved"))
+        enqueue.assert_called_once_with("R")
+
+    def test_late_worker_cannot_finish_a_resumed_run(self):
+        db = _DB()
+        db.runs["R"] = {"state": "Running", "started_on": "second"}
+        with patch.object(fm, "frappe", SimpleNamespace(db=db)), patch.object(fm, "on_run_finished") as finished:
+            fm._finish("R", "Failed", "late failure", started_on="first")
+        self.assertEqual(db.runs["R"]["state"], "Running")
+        finished.assert_not_called()
+
+    def setUp(self):
+        self.reader = self.enterContext(patch.object(fm, "_direct_reader")).return_value
+
     def run_slice(self, state):
         db = _DB()
         db.runs["R"] = {"state": "Running"}
@@ -285,7 +320,9 @@ class TestFileSlice(unittest.TestCase):
                       return_value=("client", "downloader", "source-a")) as build, \
                 patch("hero_integration.services.file_transfer.transfer", return_value=state) as transfer:
             fm._file_slice(SimpleNamespace(name="R", action="Document Migration"), config)
-        build.assert_called_once_with(config)
+        self.assertIs(build.call_args.args[0], config)
+        self.assertTrue(callable(build.call_args.kwargs["token_provider"]))
+        self.assertIs(transfer.call_args.kwargs["read"], self.reader)
         self.assertEqual(transfer.call_args.kwargs["source_instance"], "source-a")
         self.assertEqual((transfer.call_args.kwargs["client"], transfer.call_args.kwargs["downloader"]),
                          ("client", "downloader"))
@@ -407,6 +444,7 @@ class TestSourceBinding(unittest.TestCase):
         with patch.object(fm, "frappe", fake), patch.object(fm, "_configuration", return_value=_config()), \
                 patch.object(fm, "_enqueue"), patch.object(fm.direct_runtime, "resolve_read"), \
                 patch("hero_integration.services.run_reservation.admit_migration") as admission, \
+                patch("hero_integration.services.migration.bind_run_checkpoint"), \
                 patch("hero_integration.services.file_transfer.reset_phase"):
             fm.start("Document Migration")
         admission.assert_called_once_with(fake, parent="")
@@ -425,7 +463,7 @@ class TestSourceBinding(unittest.TestCase):
 
         run = _Run(name="R", state="Running", owner="admin", action="Document Migration",
                    source_instance="source-a", source_binding_revision=3)
-        fake = SimpleNamespace(db=db, get_doc=lambda *a: run, set_user=lambda user: None, log_error=lambda **k: None)
+        fake = SimpleNamespace(db=db, get_doc=lambda *a, **k: run, set_user=lambda user: None, log_error=lambda **k: None)
         with patch.object(fm, "frappe", fake), patch.object(fm, "now_datetime", lambda: "now"), \
                 patch.object(fm, "_configuration", return_value=_config(instance="source-b")), \
                 patch.object(fm, "on_run_finished"), patch.object(fm, "_file_slice") as file_slice:
@@ -457,8 +495,8 @@ class TestMappingReadiness(unittest.TestCase):
     def test_resume_preserves_blocked_run_when_mapping_is_unapproved(self):
         run = SimpleNamespace(action="Picture Migration", state="Blocked")
         with patch.object(fm, "bound_configuration", return_value=_config()), \
-                patch.object(fm.direct_runtime, "resolve_read", side_effect=ValueError("approve mapping")), \
-                self.assertRaisesRegex(ValueError, "approve mapping"):
+                patch.object(fm, "_check_direct_contract", side_effect=fm.DirectContractChanged("stale mapping")), \
+                self.assertRaisesRegex(fm.SourceBindingError, "stale mapping"):
             fm.resume(run)
         self.assertEqual(run.state, "Blocked")
 
@@ -522,6 +560,7 @@ class TestEveryStartPathIsSourceBound(unittest.TestCase):
         self.assertEqual((self.inserted, self.queued), ([], []))
 
     def test_central_start_creates_a_bound_run(self):
+        self.enterContext(patch("hero_integration.services.migration.bind_run_checkpoint"))
         with patch.object(fm, "_configuration", return_value=_config()):
             self.assertEqual(self.api.sync_area_start("pictures")["run"], "RUN-1")
         self.assertEqual((self.inserted[0].action, self.inserted[0].source_instance,

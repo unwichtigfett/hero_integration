@@ -22,7 +22,9 @@ class TestProductPendingMariaDB(TestCase):
         self.row = {**ROW, 'product_id': self.identity, 'nr': self.identity, 'base_price': None, 'list_price': None,
                     'sales_prices': [{'id': None, 'supply_sales_price_id': 10, 'net_price_per_unit': 12.5,
                                       'supply_sales_price': {'is_default': False}}]}
+        from hero_integration.services.mapping_runtime import BindingContract
         self.read = replace(BUILTIN, plan=replace(BUILTIN.plan,
+            binding_contract=BindingContract("synthetic", "SupplyProductVersion", "product-fixture", 1),
             adapter_options={'version': 2, 'native_relations': [PRICES]}))
 
     def tearDown(self):
@@ -31,7 +33,8 @@ class TestProductPendingMariaDB(TestCase):
 
     def test_article_is_saved_and_missing_price_can_be_reconciled_later(self):
         warnings = []
-        result = product.upsert(self.row, None, product._Masters(), 'synthetic', self.read, relation_warnings=warnings)
+        result = product.runtime.process_record(self.read, self.row, "synthetic", product.SOURCE_TYPE, "product-fixture",
+            lambda: product.upsert(self.row, None, product._Masters(), 'synthetic', self.read, relation_warnings=warnings))
         self.assertEqual(result, 'added')
         link = frappe.get_doc('HERO Integration Link', {'source_type': 'supply_product',
                               'source_instance': 'synthetic', 'source_id': self.identity})
@@ -45,10 +48,14 @@ class TestProductPendingMariaDB(TestCase):
             frappe.get_doc({'doctype': 'Price List', 'price_list_name': 'Standard Selling',
                             'currency': 'EUR', 'selling': 1, 'buying': 0, 'enabled': 1}).insert()
         self.row['sales_prices'][0]['id'] = 991234
-        outcome = product.upsert(self.row, link, product._Masters(), 'synthetic', self.read)
+        self.assertFalse(frappe.db.exists("HERO Object Binding", {"external_object_id": self.identity}))
+        outcome = product.runtime.process_record(self.read, self.row, "synthetic", product.SOURCE_TYPE, "product-fixture",
+            lambda: product.upsert(self.row, link, product._Masters(), 'synthetic', self.read))
         self.assertEqual(outcome, 'updated')
         link.reload()
         self.assertEqual((link.sync_status, link.conflict_detail), ('Synchronized', ''))
+        self.assertTrue(frappe.db.exists("HERO Object Binding", {"external_object_id": self.identity,
+            "target_name": link.target_name, "source_instance": "synthetic"}))
         self.assertEqual(frappe.db.count('Item Price', {'item_code': link.target_name, 'price_list': 'Standard Selling'}), 1)
 
     def test_bounded_run_reports_import_and_pending_price_separately(self):

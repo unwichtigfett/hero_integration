@@ -109,6 +109,8 @@ class TestTaxAndBaseline(unittest.TestCase):
 
 class TestServiceRun(unittest.TestCase):
     def setUp(self):
+        from hero_integration.tests.saved_reader_fixture import isolate_binding_storage
+        isolate_binding_storage(self)
         self.saved={}
         self.read=SimpleNamespace(page_size=2,mapping_version='mapping-v1')
         self.rows=[{'id':1,'company_id':9,'modified':'now'},{'id':2,'company_id':9,'modified':'now'}]

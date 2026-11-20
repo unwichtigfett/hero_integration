@@ -195,7 +195,8 @@ class _TxDB:
         self.counter = 0
 
     def _match(self, row, filters):
-        return all(row.get(key) == value for key, value in filters.items())
+        return all(row.get(key) in value[1] if isinstance(value, list) and value[0] == "in"
+                   else row.get(key, "HERO" if key == "source_system" else None) == value for key, value in filters.items())
 
     def exists(self, doctype, name):
         rows = self.data.get(doctype, {})
@@ -385,7 +386,8 @@ class _ListClient:
 
     def query(self, document, variables):
         if "uuids" in variables:
-            return {"file_uploads": [self.detail_rows[uuid] for uuid in variables["uuids"]]}
+            ids = {row["uuid"]: row["id"] for row in self.rows}
+            return {"file_uploads": [{"id": ids[uuid], **self.detail_rows[uuid]} for uuid in variables["uuids"]]}
         offset = variables.get('offset', 0)
         first = variables.get('first', len(self.rows))
         return {"FileUpload_FileUploads": _page(self.rows[offset:offset + first], "end", False)}
@@ -416,7 +418,7 @@ class TestSourceAndTargetBinding(_FileFixture):
             source_system="HERO", source_payload_hash=ft.source_hash(row),
             target_field_hashes=ft._target_baseline("F1", {"file_name": "image.png"}))
         self.db.commit()
-        pending = SimpleNamespace(operation="HeroPictures", source_instance="source-a", source_id="5",
+        pending = SimpleNamespace(origin_run="synthetic-run",operation="HeroPictures", source_instance="source-a", source_id="5",
             mapping_version=read.mapping_version, record_json=json.dumps({"row": row,
                 "detail": {"file_upload_matches": [{"project_match_id": 42}]}}))
         saved = []
@@ -512,8 +514,8 @@ class TestSourceAndTargetBinding(_FileFixture):
         self.assertEqual(observed.args[5]['file_upload_matches'], [{'project_match_id': 42}])
 
     def test_known_files_of_another_source_are_not_reused(self):
-        self.assertEqual(list(ft._known_files("source-a")), ["5"])
-        self.assertEqual(ft._known_files("source-b"), {})
+        self.assertEqual(list(ft._known_files("source-a", ["5"])), ["5"])
+        self.assertEqual(ft._known_files("source-b", ["5"]), {})
 
     def test_unchanged_unassigned_file_waits_even_when_its_project_exists(self):
         row = {"id": 5, "uuid": "u5", "filename": "Angebot.pdf", "modified": "1", "size": 3,

@@ -63,7 +63,21 @@ class TestSyntheticPollingMariaDB(TestCase):
         frappe.db.set_single_value("HERO Integration Settings", "polling_mode", "OFF")
         frappe.db.commit()
         config = SimpleNamespace(source_instance=self.source, source_binding_revision=3, source_binding_confirmed=True)
-        read = SimpleNamespace(mapping_version="test-read")
+        # This case exercises native queue admission/dispatch. The synthetic empty
+        # reader has real database link targets and no network transport.
+        for doctype in ("HERO GraphQL Schema Snapshot", "HERO GraphQL Mapping", "HERO GraphQL Service"):
+            fixture = frappe.get_doc({"doctype": doctype, "name": self.source, "schema_snapshot": self.source})
+            fixture.db_insert()
+            self.addCleanup(frappe.db.delete, doctype, self.source)
+        from dataclasses import replace
+        from hero_integration.services.mapping_runtime import BindingContract
+        reader = file_migration.direct_runtime.builtin_read("HeroEmployees")
+        plan = replace(reader.plan, binding_contract=BindingContract(self.source, "Partner", "employees", 1))
+        read = replace(reader, plan=plan, origin=self.source, mapping=self.source, service_revision=1)
+        self.enterContext(patch("hero_integration.services.migration._run_checkpoint_contract",
+                                return_value={"version": 1, "source_instance": self.source}))
+        self.enterContext(patch("hero_integration.services.migration.get_configuration", return_value=config))
+        self.enterContext(patch.object(file_migration.direct_runtime, "read_from_documents", return_value=read))
         queue = get_queue("long")
         with patch.object(file_migration, "_configuration", return_value=config), \
              patch.object(file_migration.direct_runtime, "resolve_read", return_value=read), \

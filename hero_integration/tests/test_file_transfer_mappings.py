@@ -21,7 +21,8 @@ class _Client:
     def query(self, document, variables):
         if "uuids" in variables:
             self.details.extend(variables["uuids"])
-            return {"file_uploads": [{"uuid": uuid, "file_upload_matches": [{"project_match_id": 42}]}
+            ids = {row["uuid"]: row["id"] for row in self.rows}
+            return {"file_uploads": [{"uuid": uuid, "id": ids[uuid], "file_upload_matches": [{"project_match_id": 42}]}
                                      for uuid in variables["uuids"]]}
         self.calls.append((document, dict(variables)))
         offset = variables.get("offset", variables.get("start"))
@@ -462,7 +463,7 @@ class TestFileMappingImport(_FileFixture):
             'source_instance': 'source-a', 'target_doctype': 'Project', 'target_name': 'PROJECT-OUTSIDE'}
         self.db.commit()
         read = rt.builtin_read('HeroDocuments')
-        pending = SimpleNamespace(operation='HeroDocuments', source_instance='source-a', source_id='7',
+        pending = SimpleNamespace(origin_run="synthetic-run",operation='HeroDocuments', source_instance='source-a', source_id='7',
             mapping_version=read.mapping_version, record_json=json.dumps({'row': row,
                 'detail': {'file_upload_matches': [{'project_match_id': 99}, {'project_match_id': 42}]},
                 'scope': {'project_ids': ['42'], 'customer_ids': []}}))
@@ -497,7 +498,7 @@ class TestFileMappingImport(_FileFixture):
         self.db.data['HERO Integration Link']['PA'] = project_link
         self.db.commit()
         read = rt.builtin_read('HeroDocuments')
-        pending = SimpleNamespace(operation='HeroDocuments', source_instance='source-a', source_id='7',
+        pending = SimpleNamespace(origin_run="synthetic-run",operation='HeroDocuments', source_instance='source-a', source_id='7',
             mapping_version=read.mapping_version, record_json=json.dumps({'row': row, 'detail': detail}))
         with patch.object(deferred, 'frappe', ft.frappe), patch.object(rt, 'resolve_read', return_value=read), \
              patch.object(ft, '_folder', return_value='Home/HERO/Dokumente'):

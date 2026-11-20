@@ -4007,3 +4007,7 @@ Progress refresh delayed,Fortschrittsanzeige wird verzögert aktualisiert
 Child runs,Kindläufe
 Invalid run selection.,Ungültige Laufauswahl.
 Confirmed position,Bestätigte Position
+The reader must contain one approved query.,Der Reader muss genau eine freigegebene Abfrage enthalten.
+The approved record path has no unique schema object type.,Der freigegebene Datensatzpfad hat keinen eindeutigen Schema-Objekttyp.
+The approved record path must describe an object.,Der freigegebene Datensatzpfad muss ein Objekt beschreiben.
+Runtime plan operation differs from its approved reader.,Die Operation des Laufzeitplans weicht vom freigegebenen Reader ab.

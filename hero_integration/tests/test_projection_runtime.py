@@ -109,7 +109,7 @@ class TestProjectionRuntime(unittest.TestCase):
             def save(self): self.saves += 1
         target = Target()
         fake = SimpleNamespace(db=SimpleNamespace(exists=lambda *args: True, savepoint=lambda *args: None),
-                               get_doc=lambda *args: target)
+                               get_doc=lambda *args, **kwargs: target)
         def baseline(_link, _source_hash, _target_hash, source, target_hashes, _version):
             link.source_field_hashes = encode(source)
             link.target_field_hashes = encode(target_hashes)
@@ -135,7 +135,7 @@ class TestProjectionRuntime(unittest.TestCase):
         link = SimpleNamespace(name='LINK', target_doctype='Event', target_name='EV-1', mapping_version='old',
             source_field_hashes=encode(field_hashes(original)), target_field_hashes=encode(field_hashes(original)))
         target = SimpleNamespace(name='EV-1', get=lambda field: original.get(field))
-        fake = SimpleNamespace(db=SimpleNamespace(exists=lambda *args: True), get_doc=lambda *args: target)
+        fake = SimpleNamespace(db=SimpleNamespace(exists=lambda *args: True), get_doc=lambda *args, **kwargs: target)
         with patch.object(migration, 'frappe', fake), patch.object(migration, '_target_available', return_value=True), \
              patch.object(migration, '_link', return_value=link), patch.object(migration, '_observe_link'), \
              patch.object(migration, '_save_link') as save:
@@ -163,7 +163,7 @@ class TestProjectionRuntime(unittest.TestCase):
             def save(self): self.saves += 1
         target = Target()
         fake = SimpleNamespace(db=SimpleNamespace(exists=lambda *args: True, savepoint=lambda *args: None),
-                               get_doc=lambda *args: target)
+                               get_doc=lambda *args, **kwargs: target)
         values = {'subject': 'Changed remotely', 'description': 'New source field'}
         with patch.object(migration, 'frappe', fake), patch.object(migration, '_target_available', return_value=True), \
              patch.object(migration, '_link', return_value=link), patch.object(migration, '_observe_link'), \

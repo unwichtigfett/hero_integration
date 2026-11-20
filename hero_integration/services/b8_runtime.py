@@ -35,6 +35,8 @@ def reconstruct_materialized_read_plan(selection: RuntimePlanSelection, *, frapp
         service = frappe.get_doc("HERO GraphQL Service", selection.graphql_service)
         mapping = frappe.get_doc("HERO GraphQL Mapping", selection.graphql_mapping)
         payload = _mapping_payload(mapping.mapping_json)
+        if not {"b8_compilation", "b8_canonical_operation"}.intersection(payload):
+            return saved_runtime_read(service, mapping, snapshot)
         draft = _draft(_compilation_input(payload), selection)
         validated = SnapshotAdapter().adapt(StoredSnapshot(
             snapshot.name, snapshot.snapshot_json, snapshot.schema_fingerprint,
@@ -53,6 +55,23 @@ def reconstruct_materialized_read_plan(selection: RuntimePlanSelection, *, frapp
     ):
         raise RuntimeReconstructionError("Reconstructed B2 request differs from the approved B7 read.")
     return MaterializedReadPlan(sealed, request, selection.source_instance)
+
+
+def saved_runtime_read(service, mapping, snapshot):
+    """Compile the migration reader with the same projections and its approved native variables."""
+    from hero_integration.graphql_protocol.graphql_operation_materializer import GraphQLOperationMaterializer
+    from hero_integration.services.direct_runtime import page_variables
+    from hero_integration.services.graphql_schema_cache import compiled_schema
+    from hero_integration.services.mapping_contract_v1 import materialize_saved_query
+    from hero_integration.services.read_contract import from_documents
+
+    contract = from_documents(service, mapping, snapshot)
+    request = materialize_saved_query(snapshot, service.query_document, page_variables(contract, 0),
+        selected_paths=contract.projection_paths, preserve_paths=contract.projection_preserve_paths)
+    schema = compiled_schema(snapshot.snapshot_json).core
+    request = GraphQLOperationMaterializer.bind_saved_query_result(schema, request, root_name=mapping.operation_name)
+    sealed = SealedRead(contract, request.document, snapshot.schema_fingerprint, _hash_text(request.document))
+    return MaterializedReadPlan(sealed, request, mapping.source_instance)
 
 
 def canonical_operation_contract(selection: RuntimePlanSelection, request) -> dict[str, object]:
@@ -206,17 +225,18 @@ class ApprovedBoundReader:
         self.schema = compiled_schema(raw_schema)
         self.source_revision = source_revision
         self.rate_limit = rate_limit
-        self.capabilities = ChangeCapabilities(False, False, True)
+        try:
+            self.identity_request("1")
+        except ValueError:
+            bounded = False
+        else:
+            bounded = True
+        self.capabilities = ChangeCapabilities(False, False, bounded)
         self.client = None
 
-    def read_bound(self, identity):
-        from hero_integration.client.graphql import HeroGraphQLClient
-        from hero_integration.client.settings import get_configuration
+    def identity_request(self, identity):
         from hero_integration.graphql_protocol.graphql_operation_materializer import GraphQLOperationMaterializer
-        from hero_integration.graphql_protocol.graphql_result_decoder import decode_graphql_result
-        from hero_integration.graphql_protocol.transport import Response
         from hero_integration.services.project_identity_read import CollectionIdentityReader, ProjectIdentityReader
-        from hero_integration.services.read_contract import value_at
 
         contract = self.plan.sealed.contract
         original = self.plan.request
@@ -232,12 +252,29 @@ class ApprovedBoundReader:
                 raise RuntimeReconstructionError("No schema-proven identity filter exists for this approved reader.")
         request = GraphQLOperationMaterializer.materialize_document(
             self.schema.core, self.schema.fingerprint, narrowed, variables)
+        return request, singular
+
+    def _configuration(self):
+        from hero_integration.client.settings import get_configuration
+
         config = get_configuration(fresh=True)
         if (not config.source_binding_confirmed or config.source_binding_revision != self.source_revision
                 or config.source_instance != self.plan.source_instance):
             raise RuntimeReconstructionError("The confirmed source changed before the bound read.")
+        return config
+
+    def read_bound(self, identity):
+        from hero_integration.client.graphql import HeroGraphQLClient
+        from hero_integration.graphql_protocol.graphql_result_decoder import decode_graphql_result
+        from hero_integration.graphql_protocol.transport import Response
+        from hero_integration.services.read_contract import value_at
+
+        contract = self.plan.sealed.contract
+        original = self.plan.request
+        request, singular = self.identity_request(identity)
+        config = self._configuration()
         if self.client is None:
-            self.client = HeroGraphQLClient(config.endpoint, lambda: config.api_token,
+            self.client = HeroGraphQLClient(config.endpoint, lambda: self._configuration().api_token,
                 timeout=config.timeout_seconds, max_retries=0, requests_per_minute=self.rate_limit)
         data = self.client.query(request.document, dict(request.variables))
         if singular:

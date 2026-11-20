@@ -224,11 +224,51 @@ def next_baseline(
     return dict(sorted(result.items()))
 
 
+def _managed_owner(doc, owner):
+    return any(kind == doc.doctype and name in (None, doc.name) and current in (None, owner)
+               for kind, name, current in _managed_target.get())
+
+
+def _observe_bound_changes(frappe, doc, previous):
+    """Capture a native save once per bound object in the document transaction."""
+    from hero_integration.services.binding_registry import native_fingerprint
+    from hero_integration.services.integration_events import record_output
+
+    parent = frappe.qb.DocType("HERO Object Binding")
+    field = frappe.qb.DocType("HERO Field Binding")
+    rows = (frappe.qb.from_(parent).join(field).on(field.object_binding == parent.name)
+            .select(parent.name, parent.source_instance, parent.external_object_id, parent.object_type, field.target_field)
+            .where((parent.site_scope == frappe.local.site) & (parent.target_doctype == doc.doctype)
+                   & (parent.target_name == doc.name) & (field.site_scope == parent.site_scope)
+                   & (field.source_instance == parent.source_instance) & (field.target_name == parent.target_name)
+                   & (field.target_doctype == parent.target_doctype))).run(as_dict=True)
+    groups = {}
+    covered = {}
+    for row in rows:
+        group = (row.name, row.source_instance, row.external_object_id, row.object_type)
+        covered.setdefault((row.source_instance, row.external_object_id), set()).add(row.target_field)
+        if _managed_owner(doc, row.name):
+            continue
+        meta = doc.meta.get_field(row.target_field)
+        if meta is None:
+            continue
+        before = native_fingerprint(previous.get(row.target_field), meta.fieldtype)
+        after = native_fingerprint(doc.get(row.target_field), meta.fieldtype)
+        if before != after:
+            groups.setdefault(group, {})[row.target_field] = (before, after)
+    for (binding, instance, identity, kind), changes in groups.items():
+        key = hashlib.sha256(json.dumps([binding, str(doc.modified), changes], sort_keys=True).encode()).hexdigest()
+        record_output(source_type=kind, source_id=identity, result="OBSERVED", action="frappe_change_observed",
+                      origin="frappe", correlation_id=binding, target_doctype=doc.doctype, target_name=doc.name,
+                      changed_fields=sorted(changes), event_id=key)
+    return covered
+
+
 def observe_frappe_target_change(doc, method=None) -> None:
     """Record a mapped local edit without scheduling outbound work.
 
-    The wildcard hook considers only targets of app-owned Links. It preserves
-    baselines so later HERO changes to the same field remain conflicts.
+    Object and field bindings scope the native transition. Older integration
+    links continue to observe their own mapped fields.
     """
     del method
     import frappe
@@ -242,16 +282,21 @@ def observe_frappe_target_change(doc, method=None) -> None:
     if personal_publication_active():
         return
 
+    if doc.doctype in {"HERO Integration Record", "HERO Integration Link", "HERO Object Binding",
+                       "HERO Field Binding", "HERO Sync Change Event"}:
+        return
+    before_save = getattr(doc, "get_doc_before_save", None)
+    previous = before_save() if before_save else None
+    covered = _observe_bound_changes(frappe, doc, previous) if previous else {}
     links = frappe.get_all(
         "HERO Integration Link",
         filters={"target_doctype": doc.doctype, "target_name": doc.name},
-        fields=["name", "source_type", "source_id", "target_field_hashes", "observed_target_hash"],
+        fields=["name", "source_instance", "source_type", "source_id", "target_field_hashes", "observed_target_hash"],
     )
     for row in links:
         # A specific owner suppresses only its link. A relation writer using
         # None owns the target save itself, before a relation link is present.
-        if any(kind == doc.doctype and name in (None, doc.name) and owner in (None, row.name)
-               for kind, name, owner in _managed_target.get()):
+        if _managed_owner(doc, row.name):
             continue
         baseline = decode(row.get("target_field_hashes"))
         if not baseline:
@@ -271,12 +316,15 @@ def observe_frappe_target_change(doc, method=None) -> None:
         current_values = {field: str(doc.get(field) or "") if employee_baseline else doc.get(field) for field in baseline}
         current_hashes = field_hashes(current_values)
         fields = changed_fields(baseline, current_hashes)
+        if previous:
+            fields = {field for field in baseline if not _same_mapped_value(previous.get(field), doc.get(field))}
+        fields -= covered.get((row.get("source_instance"), row.source_id), set())
         if not fields:
             continue
         observed_hash = hashlib.sha256(
             json.dumps(current_values, ensure_ascii=False, sort_keys=True, default=str, separators=(",", ":")).encode()
         ).hexdigest()
-        if observed_hash == (row.get("observed_target_hash") or ""):
+        if not previous and observed_hash == (row.get("observed_target_hash") or ""):
             continue
         link = frappe.get_doc("HERO Integration Link", row.name)
         link.observed_target_hash = observed_hash
@@ -293,4 +341,7 @@ def observe_frappe_target_change(doc, method=None) -> None:
             target_doctype=doc.doctype,
             target_name=doc.name,
             changed_fields=sorted(fields),
+            **({"event_id": hashlib.sha256(json.dumps([row.name, str(doc.modified), observed_hash,
+                                                        sorted(fields)]).encode()).hexdigest(), "origin": "frappe",
+                "correlation_id": row.name} if previous else {}),
         )

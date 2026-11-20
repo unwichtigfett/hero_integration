@@ -49,6 +49,7 @@ class TestApprovedBoundReader(unittest.TestCase):
 
     def test_unknown_filter_changed_source_or_wrong_response_identity(self):
         reader = self.reader("other", "HeroCustomers", {})
+        self.assertFalse(reader.capabilities.bounded_comparison)
         with self.assertRaises(RuntimeReconstructionError):
             reader.read_bound("7")
         reader.client.query.assert_not_called()

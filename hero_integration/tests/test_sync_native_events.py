@@ -89,6 +89,7 @@ class TestNativeSyncEvents(IntegrationTestCase):
 
     def clear_fixture(self):
         frappe.db.rollback()
+        frappe.db.delete("HERO Integration Record", {"correlation_id": self.parent.identity_key})
         frappe.db.delete("HERO Sync Change Event",{"site_scope":self.site,"external_id":self.identity})
         frappe.db.delete("HERO Sync Run Ledger",{"request_fingerprint":self.identity})
         frappe.db.delete("HERO Sync State Ledger",{"site_scope":self.site})
@@ -118,6 +119,33 @@ class TestNativeSyncEvents(IntegrationTestCase):
 
         with patch.object(Document,"run_method",observed):
             yield
+
+    def test_bound_native_changes_capture_committed_transitions_once(self):
+        from hero_integration.services.change_detection import observe_frappe_target_change
+
+        initial_generation = self.ledger.state(self.site).generation
+        filters = {"correlation_id": self.parent.identity_key, "origin": "frappe"}
+        self.doc.customer_details = "local"
+        self.doc.save()
+        observe_frappe_target_change(self.doc)
+        self.assertEqual(frappe.db.count("HERO Integration Record", filters), 1)
+        frappe.db.rollback()
+        self.assertEqual(frappe.db.count("HERO Integration Record", filters), 0)
+        self.doc.reload()
+        for value in ("local", "local", self.identity, "local"):
+            self.doc.customer_details = value
+            self.doc.save()
+            frappe.db.commit()
+        rows = frappe.get_all("HERO Integration Record", filters=filters,
+                              fields=["source_id", "changed_fields", "target_name"], order_by="creation asc")
+        self.assertEqual([(row.source_id, row.changed_fields, row.target_name) for row in rows],
+                         [(self.identity, "customer_details", self.doc.name)] * 3)
+        self.assertEqual(self.ledger.state(self.site).generation, initial_generation)
+
+    def test_inbound_save_does_not_observe_its_own_binding(self):
+        self.assertEqual(self.run_sync().status, SyncStatus.SUCCEEDED)
+        self.assertFalse(frappe.db.exists("HERO Integration Record", {
+            "correlation_id": self.parent.identity_key, "origin": "frappe"}))
 
     def test_native_event_ack_and_replay_after_cursor_failure(self):
         self.pages[None]=ChangePage((self.payload,),"page-two",False)

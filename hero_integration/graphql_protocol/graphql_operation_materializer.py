@@ -212,6 +212,8 @@ class GraphQLDocumentRequest:
     mutation_safety_request: GraphQLWriteRequest | None
     _canonical_variables: str
 
+    result_bindings: tuple[GraphQLResultBinding, ...] = ()
+
     @property
     def variables(self):
         return json.loads(self._canonical_variables)
@@ -385,6 +387,42 @@ class GraphQLOperationMaterializer:
             raise
         except (TypeError, ValueError, GraphQLError) as error:
             raise GraphQLOperationMaterializationError('The GraphQL document cannot be materialized.') from error
+
+    @staticmethod
+    def bind_saved_query_result(schema, request, *, root_name):
+        """Bind unconditional saved selections to their schema types and response aliases."""
+        from graphql import get_named_type
+        from graphql.language.ast import FieldNode
+
+        if not isinstance(request, GraphQLDocumentRequest) or request.operation_kind is not GraphQLOperationKind.QUERY:
+            raise GraphQLOperationMaterializationError("A materialized saved query is required.")
+        tree = GraphQLOperationMaterializer.validate_document(schema, request.document, allowed_kinds=("query",))
+        if len(tree.definitions) != 1:
+            raise GraphQLOperationMaterializationError("Saved result binding requires one direct selection.")
+        operation = tree.definitions[0]
+        roots = operation.selection_set.selections
+        if (operation.directives or len(roots) != 1 or not isinstance(roots[0], FieldNode)
+                or roots[0].name.value != root_name):
+            raise GraphQLOperationMaterializationError("Saved result root differs from the mapping.")
+        bindings = []
+
+        def visit(owner, fields, path=(), ids=()):
+            for node in fields:
+                if not isinstance(node, FieldNode) or node.directives or node.name.value not in owner.fields:
+                    raise GraphQLOperationMaterializationError("Conditional or unresolved result selection.")
+                name = node.name.value
+                field = owner.fields[name]
+                current = (*path, (node.alias or node.name).value)
+                nodes = (*ids, f"field:{owner.name}.{name}")
+                if node.selection_set:
+                    visit(get_named_type(field.type), node.selection_set.selections, current, nodes)
+                else:
+                    bindings.append(GraphQLResultBinding(current[1:], nodes, ("data", *current), str(field.type)))
+
+        visit(schema.query_type, roots)
+        if len({binding.response_path for binding in bindings}) != len(bindings):
+            raise GraphQLOperationMaterializationError("Saved result contains duplicate field paths.")
+        return replace(request, result_bindings=tuple(bindings))
 
     @staticmethod
     def materialize_projected_query(schema, fingerprint, document, variables, selected_paths, *, preserve_paths=()):

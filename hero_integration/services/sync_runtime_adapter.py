@@ -365,11 +365,11 @@ def _run(executable, frappe, *, automatic: bool, provider=None, run_id=None, fin
         provider = ApprovedBoundReader(materialized, raw, revision, polling["rate_limit"])
     object_type = None
     if bounded or provider.capabilities.complete_change_discovery:
-        from graphql import get_named_type
+        from hero_integration.services.read_contract import record_object_type
         from hero_integration.services.graphql_schema_cache import compiled_schema
         raw = frappe.get_doc("HERO GraphQL Schema Snapshot", selection.schema_snapshot).snapshot_json
         schema = compiled_schema(raw).core
-        object_type = get_named_type(schema.query_type.fields[materialized.request.protocol_field_name].type).name
+        object_type = record_object_type(schema, materialized.request.document, contract.records_path)
         if getattr(provider, "object_type", object_type) != object_type:
             raise RuntimeBridgeError("Provider object type differs from the approved reader.")
 

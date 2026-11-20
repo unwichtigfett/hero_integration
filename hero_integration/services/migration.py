@@ -10,6 +10,7 @@ from uuid import uuid4
 
 import frappe
 from hero_integration.services import execution_budget
+from hero_integration.services.binding_registry import BindingConflict
 from frappe.utils import get_datetime, now_datetime
 
 from hero_integration.client.graphql import HeroGraphQLClient
@@ -790,7 +791,7 @@ def _mapping_plan_for_run(run, target_operation: str):
         mapping_name=contract.mapping_name,
         native_task=json.loads(mapping.mapping_json).get('native_task_onboarding') is not None,
         lock_rules=False,
-    )
+    ).with_reader(service, mapping, snapshot, contract)
 
 
 def _record_offset_checkpoint(run, page, phase, offset, processed, *, complete=False):
@@ -836,6 +837,9 @@ def _process_phase(run, phase: str, reader, *, checkpoint=None) -> bool:
             _set_phase_state(run, phase, "Blocked")
             _block_run(run, "Cannot resume without a verified source snapshot and page identity evidence.")
         return False
+    operation = "HeroCustomers" if phase == "customer" else "HeroProjectMatches"
+    plan = _mapping_plan_for_run(run, operation) if getattr(run, "graphql_mapping", None) else None
+    migrate = _migrate_customer if phase == "customer" else _migrate_project
     seen_ids: set[str] = set()
     while True:
         _cancel_if_requested(run)
@@ -863,11 +867,13 @@ def _process_phase(run, phase: str, reader, *, checkpoint=None) -> bool:
                 continue
             _cancel_if_requested(run)
             with checkpoint():
-                if budget := execution_budget.current_budget():
-                    operation = 'HeroCustomers' if phase == 'customer' else 'HeroProjectMatches'
-                    _reserve_mapped_record(budget, phase, record, _mapping_plan_for_run(run, operation))
-                migrate = _migrate_customer if phase == "customer" else _migrate_project
-                result = _migrate_isolated(lambda: migrate(record, run))
+                if plan is not None:
+                    if budget := execution_budget.current_budget():
+                        _reserve_mapped_record(budget, phase, record, plan)
+                    result = _migrate_with_binding(record, run, plan, phase, lambda: migrate(record, run, plan=plan))
+                else:
+                    # Legacy direct previews have no executable run contract.
+                    result = _migrate_isolated(lambda: migrate(record, run))
                 _record_result(run, phase, record, result)
                 _record_phase_result(run, phase, result)
                 run.resume_phase = phase
@@ -914,10 +920,10 @@ def _persist_testing_result(run, source: TestingPreviewSource) -> None:
         frappe.log_error(title="HERO testing preview metadata could not be recorded")
 
 
-def _migrate_customer(record: dict[str, object], run) -> Result:
+def _migrate_customer(record: dict[str, object], run, *, plan=None) -> Result:
     from hero_integration.services.query_mapping import IncompleteMappedAddress
     try:
-        plan = _mapping_plan_for_run(run, "HeroCustomers")
+        plan = plan or _mapping_plan_for_run(run, "HeroCustomers")
         source_id = plan.source_identity(record)
         if getattr(plan, 'adapter_options', None) and any(type(record.get(flag)) is not bool for flag in ('is_deleted', 'is_contact_person')):
             raise MappingPlanError('Mapped Customer lifecycle flags must be explicitly returned as booleans.')
@@ -1131,12 +1137,23 @@ def _reserve_mapped_record(budget, kind, record, plan):
     budget.reserve_many([(kind, identity), *dependencies])
 
 
-def _migrate_isolated(migrate) -> Result:
+def _migrate_with_binding(record, run, plan, kind, write, *, relationships_only=False):
+    from hero_integration.services.execution_runtime import process_migration_record
+    if run.mode == "Preview":
+        return _migrate_isolated(write)
+    return _migrate_isolated(lambda: process_migration_record(plan, record, _source_instance(record), kind,
+        write, relationships_only=relationships_only, evidence=run.name, successful=lambda result: result.code in {
+            "CREATED", "UPDATED", "SKIPPED", "CONVERGED", "OBSERVED"} and bool(result.target_name)), savepoint="hero_runtime_record")
+
+
+def _migrate_isolated(migrate, savepoint="hero_record") -> Result:
     """Run one record so that an ERPNext validation error blocks only this record."""
-    savepoint = "hero_record"
     frappe.db.savepoint(savepoint)
     try:
         return migrate()
+    except BindingConflict as error:
+        frappe.db.rollback(save_point=savepoint)
+        return Result("CONFLICT", str(error))
     except Exception as error:
         if not isinstance(error, _rejections()):
             raise
@@ -1303,7 +1320,8 @@ def _process_projection(run, source, *, checkpoint=None) -> None:
                 if budget := execution_budget.current_budget():
                     _reserve_mapped_record(budget, PROJECTIONS[operation]['source_type'], record, plan)
                     _prefetch_project_references(source, operation, [record])
-                result = _migrate_projection_record(record, run, plan, task_scope)
+                result = _migrate_with_binding(record, run, plan, PROJECTIONS[operation]['source_type'],
+                    lambda: _migrate_projection_record(record, run, plan, task_scope))
                 _record_result(run, PROJECTIONS[operation]['source_type'], record, result)
                 run.resume_phase = operation
                 run.resume_offset, run.resume_record_index = offset, index + 1
@@ -2021,11 +2039,11 @@ def _project_assignments_after_import(record,run,result,source_id,source_instanc
     return result
 
 
-def _migrate_project(record: dict[str, object], run) -> Result:
+def _migrate_project(record: dict[str, object], run, *, plan=None) -> Result:
     if not _target_available("Project"):
         return Result("UNAVAILABLE", "Project is not installed on this site.")
     try:
-        plan = _mapping_plan_for_run(run, "HeroProjectMatches")
+        plan = plan or _mapping_plan_for_run(run, "HeroProjectMatches")
         source_id = plan.source_identity(record)
         source_instance = _source_instance(record)
         existing = _link("project", source_id, source_instance)
@@ -2357,7 +2375,7 @@ def _upsert(
             if run.mode != "Preview":
                 _mark_link_conflict(existing, "Stored target reference no longer exists.")
             return Result("CONFLICT", "Stored target reference no longer exists.")
-        target = frappe.get_doc(existing.target_doctype, existing.target_name)
+        target = frappe.get_doc(existing.target_doctype, existing.target_name, for_update=run.mode != "Preview")
         snapshot = target_snapshot or (lambda item: _target_values(item, values))
         prior_source = decode_hashes(getattr(existing, "source_field_hashes", ""))
         prior_target = decode_hashes(getattr(existing, "target_field_hashes", ""))
@@ -2402,7 +2420,9 @@ def _upsert(
             # Events omit unconfirmed values entirely: their acknowledged
             # baselines are carried forward instead of being compared.
             comparison.omit(set(prior_source) | set(prior_target))
-        outcome = comparison.reconcile(prior_source, prior_target, target_values)
+        from hero_integration.services.execution_runtime import bound_outcome
+        outcome = bound_outcome(comparison.reconcile(prior_source, prior_target, target_values),
+                                doctype, target.name, comparison.tracked)
         if source_type == 'project' and doctype == 'Project':
             outcome = _reconcile_project_notes_representation(outcome, record, values, target_values)
         if outcome.conflicts:

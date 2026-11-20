@@ -215,7 +215,7 @@ class TestMigrationRecordLimits(unittest.TestCase):
         self.assertNotIn('last_error', second)
 
     def test_product_finished_test_checkpoint_is_reused_without_production_cursor(self):
-        read = SimpleNamespace(mapping_version='mapping-v1', origin='approved', page_size=100)
+        read = SimpleNamespace(operation='HeroProducts', validate_write=None, mapping_version='mapping-v1', origin='approved', page_size=100)
         saved = {}
 
         def save(run, operation, state):
@@ -362,7 +362,7 @@ class TestFullMigrationSerialization(unittest.TestCase):
         from hero_integration.services import file_transfer as files
         state = {'done': True, 'offset': 26, 'source_instance': 'source', 'mapping': 'v1',
                  'testing_record_limit': 5, 'counts': {'added': 5}}
-        with patch.object(files.direct_runtime, 'resolve_read', return_value=SimpleNamespace(mapping_version='v1')), \
+        with patch.object(files.direct_runtime, 'resolve_read', return_value=SimpleNamespace(plan=SimpleNamespace(), operation='HeroDocuments', validate_write=None, mapping_version='v1')), \
              patch.object(testing, 'test_state', return_value=state), \
              patch.object(files, '_state', side_effect=AssertionError('production cursor')), \
              patch.object(files, '_save_state', side_effect=AssertionError('production cursor')), \

@@ -12,7 +12,7 @@ import frappe
 
 from hero_integration.services import deferred_references as deferred, migration
 from hero_integration.services.direct_mapping import MappingSpec
-from hero_integration.services.mapping_runtime import plan_from_definitions
+from hero_integration.services.mapping_runtime import BindingContract, plan_from_definitions
 
 
 class TestSyntheticDeferredMariaDB(TestCase):
@@ -147,7 +147,8 @@ class TestSyntheticDeferredMariaDB(TestCase):
             # Match the deployed opt MariaDB session; restore the private site's
             # stricter default after this repeatable-read concurrency fixture.
             frappe.db.sql('SET SESSION innodb_snapshot_isolation=OFF')
-            connection = pymysql.connect(unix_socket=frappe.db.socket, user=frappe.db.user,
+            connection = pymysql.connect(host=frappe.db.host or "localhost", port=frappe.db.port or 3306,
+                unix_socket=frappe.db.socket, user=frappe.db.user,
                 password=frappe.db.password, database=frappe.db.cur_db_name, autocommit=True)
             for status in ('Synchronized', 'Rejected'):
                 frappe.db.rollback()
@@ -183,6 +184,22 @@ class TestSyntheticDeferredMariaDB(TestCase):
 
     @contextmanager
     def _resolution_context(self):
+        from dataclasses import is_dataclass, replace
+        from hero_integration.services import direct_runtime, file_migration
+        from hero_integration.services.mapping_runtime import BindingContract
+
+        def bound(plan):
+            contract = BindingContract(self.source, plan.target_doctype, "synthetic-mapping", 1)
+            if is_dataclass(plan):
+                return replace(plan, binding_contract=contract)
+            plan.binding_contract = contract
+            return plan
+
+        def direct(run, *, expected_state, operation):
+            self.assertEqual(run.state, expected_state)
+            read = direct_runtime.resolve_read(operation, self.source)
+            return replace(read, plan=bound(read.plan))
+
         original = frappe.get_doc
         def get_doc(doctype, name=None, **kwargs):
             if doctype == 'HERO GraphQL Mapping' and not name:
@@ -192,7 +209,8 @@ class TestSyntheticDeferredMariaDB(TestCase):
                    return_value=SimpleNamespace(source_instance=self.source, source_binding_confirmed=True, source_binding_revision=1)), \
              patch.object(migration, 'validate_run_mappings'), patch.object(migration, '_source_for_run',
                    return_value=SimpleNamespace(source_instance=self.source, source_binding_confirmed=True, source_binding_revision=1)), \
-             patch.object(migration, '_mapping_plan_for_run', return_value=self.plan), \
+             patch.object(file_migration, "_direct_reader", side_effect=direct), \
+             patch.object(migration, '_mapping_plan_for_run', return_value=bound(self.plan)), \
              patch.object(migration, '_projection_task_scope', return_value=self.scope), \
              patch.object(frappe, 'get_doc', side_effect=get_doc):
             yield
@@ -724,7 +742,8 @@ class TestSyntheticDeferredMariaDB(TestCase):
         self.assertFalse(frappe.get_doc('Task', result.target_name).project)
         frappe.db.set_value('HERO Integration Run', self.run.name, 'state', 'Completed')
         self._resolve(pending)
-        self.assertEqual(frappe.get_doc('Task', result.target_name).project, project.name)
+        self.assertEqual(frappe.get_doc('Task', result.target_name).project, project.name,
+                         frappe.db.get_value(deferred.MAIN, pending, 'detail'))
         self.assertEqual(frappe.db.get_value(deferred.MAIN, pending, 'status'), 'Resolved')
 
     def test_local_project_selected_between_import_and_realization_is_preserved(self):
@@ -991,7 +1010,7 @@ class TestSyntheticDeferredMariaDB(TestCase):
         pending = deferred.observation_key(self.source, 'HeroCustomers', '888', self.run.name)
         filters = {'source_instance': self.source, 'source_type': 'customer_address', 'source_id': '2'}
         self.assertFalse(frappe.db.exists('HERO Integration Link', filters))
-        with patch.object(migration, '_migrate_customer', side_effect=lambda row, run:
+        with patch.object(migration, '_migrate_customer', side_effect=lambda row, run, **kwargs:
                 migration._sync_mapped_relations(self.plan, row, result, run)):
             self._resolve(pending)
             self.assertFalse(frappe.db.exists('HERO Integration Link', filters))
@@ -1013,7 +1032,8 @@ class TestSyntheticDeferredMariaDB(TestCase):
         record = {'id': 777, 'address': {'id': 1}, '_hero_source_instance': self.source,
                   'customer_addresses': [{'is_deleted': False, 'address': {'id': 2, 'street': 'Example 2',
                       'city': 'Example City', 'zipcode': '12345', 'country': {'code': 'DE'}}}]}
-        plan = SimpleNamespace(definitions=[], adapter_options={'native_relations': [ADDRESSES]},
+        plan = SimpleNamespace(binding_contract=BindingContract(self.source, 'Contact', 'synthetic-map', 1),
+                               definitions=[], adapter_options={'native_relations': [ADDRESSES]},
                                target_doctype='Customer', mapping_version='fixture', source_identity=lambda _: '777')
         result = migration.Result('SKIPPED', 'Customer synchronized.', 'Customer', customer.name)
         actual = migration._sync_mapped_relations(plan, record, result, self.run)
@@ -1043,7 +1063,7 @@ class TestSyntheticDeferredMariaDB(TestCase):
              patch.object(migration, 'validate_run_mappings'), \
              patch.object(migration, '_source_for_run', return_value=SimpleNamespace(source_instance=self.source, source_binding_confirmed=True, source_binding_revision=1)), \
              patch.object(migration, '_mapping_plan_for_run', return_value=plan), \
-             patch.object(migration, '_migrate_customer', side_effect=lambda row, run: migration._sync_mapped_relations(plan, row, result, run)):
+             patch.object(migration, '_migrate_customer', side_effect=lambda row, run, **kwargs: migration._sync_mapped_relations(plan, row, result, run)):
             deferred.resolve_one(pending, dependency=('customer_address', '2'))
         self.assertEqual(frappe.db.get_value(deferred.MAIN, pending, 'status'), 'Resolved')
         self.assertEqual(frappe.db.count('Address', {'address_title': 'Synthetic secondary address'}), 1)
@@ -1065,7 +1085,8 @@ class TestSyntheticDeferredMariaDB(TestCase):
         record = {'id': 777, 'address': {'id': 1}, '_hero_source_instance': self.source,
                   'customer_addresses': [{'is_deleted': False, 'address': {'id': 2, 'street': 'Example 2',
                       'city': 'Example City', 'zipcode': '12345', 'country': None}}]}
-        plan = SimpleNamespace(definitions=[], adapter_options={'native_relations': [ADDRESSES]},
+        plan = SimpleNamespace(binding_contract=BindingContract(self.source, 'Contact', 'synthetic-map', 1),
+                               definitions=[], adapter_options={'native_relations': [ADDRESSES]},
                                target_doctype='Customer', mapping_version='fixture', source_identity=lambda _: '777')
         result = migration.Result('SKIPPED', 'Customer synchronized.', 'Customer', customer.name)
         actual = migration._sync_mapped_relations(plan, record, result, self.run)

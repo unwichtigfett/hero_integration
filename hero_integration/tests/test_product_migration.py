@@ -58,6 +58,10 @@ class _Client:
 
 
 class TestPaging(unittest.TestCase):
+    def setUp(self):
+        from hero_integration.tests.saved_reader_fixture import isolate_binding_storage
+        isolate_binding_storage(self)
+
     def test_rollback_discards_supplier_and_other_master_caches_before_next_article(self):
         saved, documents, created, accepted = {}, {}, [], []
 
@@ -120,7 +124,8 @@ class TestPaging(unittest.TestCase):
         with patch.object(pm, "frappe", fake), patch.object(pm, "_links", return_value={}) as links, \
                 patch.object(pm, "upsert", side_effect=lambda row, link, m, instance, **kw: seen.append(row["product_id"]) or "added"):
             state = pm.sync_products(client, source_instance="source-a", read=BUILTIN)
-        links.assert_called_once_with("source-a")
+        self.assertEqual([len(call.args[1]) for call in links.call_args_list], [500, 500, 200])
+        self.assertTrue(all(call.args[0] == "source-a" for call in links.call_args_list))
         self.assertEqual(len(seen), 1200)
         self.assertEqual([offset for _, offset in client.calls], [0, 500, 1000, 1200])
         self.assertTrue(state["done"])
@@ -195,6 +200,10 @@ CUSTOMER_BOX = {"item_code": "PV-1001", "price_list": pm.SELLING, "uom": "Box", 
 
 
 class TestManagedPrices(unittest.TestCase):
+    def setUp(self):
+        from hero_integration.tests.saved_reader_fixture import isolate_binding_storage
+        isolate_binding_storage(self)
+
     def plan_and_apply(self, prices, rate=100, managed=None):
         db = _PriceDB(prices)
         with patch.object(pm, "frappe", _price_frappe(db)):
@@ -264,7 +273,7 @@ class TestManagedPrices(unittest.TestCase):
         calls = []
         fake = SimpleNamespace(get_all=lambda doctype, filters, fields, limit_page_length: calls.append(filters) or [])
         with patch.object(pm, "frappe", fake):
-            pm._links("source-b")
+            pm._links("source-b", ["product"])
         self.assertEqual(calls[0]["source_instance"], "source-b")
         saved = {pm.STATE_KEY: json.dumps({"source_instance": "source-b", "offset": 500})}
         db = SimpleNamespace(get_default=lambda key:None, get_value=lambda dt,filters,field:saved.get(filters['defkey']), set_default=lambda k, v: saved.__setitem__(k, v),

@@ -36,6 +36,18 @@ class TestSync(unittest.TestCase):
   self.field=BoundField("1",self.binding,("name",))
  def engine(self,provider,processor=None,fields=None): return SyncEngine(self.ledger,plan(),provider,Index([self.field] if fields is None else fields),processor or Processor())
  def configured(self,engine): return engine.configure(self.config)
+ def test_delta_fetches_bindings_only_for_identities_on_the_page(self):
+  from unittest.mock import Mock
+  provider = Provider({None: ChangePage(({"id": "1"}, {"id": "2"}), None, True, "w")})
+  engine = self.engine(provider)
+  engine.index = Mock(spec=["fields", "fields_for_ids"])
+  engine.index.fields.side_effect = AssertionError("full binding scan")
+  engine.index.fields_for_ids.return_value = (self.field,)
+  state = self.configured(engine)
+  result = engine.pending_sync(SyncRun("specific", "site", "admin", state.generation, False))
+  self.assertEqual(result.status, SyncStatus.SUCCEEDED)
+  engine.index.fields_for_ids.assert_called_once_with("site", "hero", ("1", "2"))
+
  def test_enabled_polling_obeys_interval_gate_and_uses_same_bound_path(self):
   enabled=PollingConfiguration("site",True,60,"hero",1,FP); provider=Provider({None:ChangePage(({"id":"1","name":"Ada"},),None,True,"w")}); engine=self.engine(provider); state=engine.configure(enabled)
   self.assertFalse(scheduler_due(enabled,59)); self.assertTrue(scheduler_due(enabled,60))

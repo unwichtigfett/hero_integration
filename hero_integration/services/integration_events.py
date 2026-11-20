@@ -47,6 +47,7 @@ def record_output(
     correlation_id: str | None = None,
     origin: str = "hero_integration",
     changed_fields: list[str] | None = None,
+    event_id: str | None = None,
 ) -> str:
     """Persist one technical outcome after the caller's business write is known.
 
@@ -73,7 +74,21 @@ def record_output(
             "changed_fields": redacted_changed_fields(changed_fields),
         }
     )
-    record.insert(ignore_permissions=True)
+    if event_id:
+        # Hash-autonamed Documents can regenerate their name after a duplicate
+        # insert. Keep the content-derived primary key for every redelivery.
+        now = record.observed_at
+        values = record.as_dict()
+        columns = ["source_type", "source_id", "result", "detail", "target_doctype", "target_name",
+                   "output_schema_version", "event_type", "technical_action", "correlation_id",
+                   "origin", "observed_at", "changed_fields"]
+        actor = frappe.session.user
+        frappe.db.bulk_insert("HERO Integration Record",
+            ["name", "creation", "modified", "owner", "modified_by", *columns],
+            [(event_id, now, now, actor, actor, *(values[key] for key in columns))], ignore_duplicates=True)
+        return event_id
+    else:
+        record.insert(ignore_permissions=True)
     return record.name
 
 
